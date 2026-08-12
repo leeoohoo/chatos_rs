@@ -42,6 +42,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
         source_session_id: None,
@@ -61,7 +62,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
                 workspace_id: "workspace-1".to_string(),
                 relative_root: Some("apps/backend".to_string()),
             }),
-            sandbox_provider: SandboxProviderKind::LocalConnector,
+            sandbox_provider: SandboxProviderKind::None,
             sandbox_pairing_id: None,
             source_type: Some("local_connector".to_string()),
             revision: "project-revision".to_string(),
@@ -123,6 +124,31 @@ async fn start_local_connector(
                 .get(LOCAL_CONNECTOR_PROJECT_ID_HEADER)
                 .and_then(|value| value.to_str().ok()),
             Some("project-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_SESSION_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("session-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<i64>().ok()),
+            Some(i64::MAX)
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_RUN_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_TASK_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("task-1")
         );
         assert_eq!(
             headers

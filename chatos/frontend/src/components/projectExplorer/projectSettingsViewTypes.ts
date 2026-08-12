@@ -33,11 +33,6 @@ export interface ProjectRunSettingsViewProps {
   envPreview: string;
   environmentHints: string[];
   envVarsPlaceholder: string;
-  sandboxToggleVisible: boolean;
-  sandboxEnabled: boolean | null;
-  sandboxLoading: boolean;
-  sandboxSaving: boolean;
-  sandboxError: string | null;
   showTerminalUi: boolean;
   selectedRunTargetId: string | null;
   starting: boolean;
@@ -61,7 +56,6 @@ export interface ProjectRunSettingsViewProps {
   onSaveCustomToolchain: (kind: string) => void;
   onEnvVarsDraftChange: (value: string) => void;
   onSaveEnvVarsDraft: () => void;
-  onSandboxEnabledChange: (enabled: boolean) => void;
   onRunnerStart: () => void;
   onRunnerStop: () => void;
   onRunnerRestart: () => void;

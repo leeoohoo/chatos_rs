@@ -81,14 +81,7 @@ fn build_execution_context(
     let workspace = (workspace_provider == WorkspaceProviderKind::LocalConnector)
         .then_some(local_workspace)
         .flatten();
-    let sandbox_provider = environment
-        .map(|environment| match environment.sandbox_provider {
-            RuntimeEnvironmentProvider::LocalConnector => SandboxProviderKind::LocalConnector,
-            RuntimeEnvironmentProvider::Harness
-            | RuntimeEnvironmentProvider::CloudSandboxManager => SandboxProviderKind::Cloud,
-            RuntimeEnvironmentProvider::None => SandboxProviderKind::None,
-        })
-        .unwrap_or(SandboxProviderKind::None);
+    let sandbox_provider = resolve_sandbox_provider(project, environment);
     let source_type = match project.source_type {
         ProjectSourceType::Local => "local",
         ProjectSourceType::LocalConnector => "local_connector",
@@ -150,6 +143,24 @@ fn resolve_workspace_provider(
     }
 }
 
+fn resolve_sandbox_provider(
+    project: &ProjectRecord,
+    environment: Option<&ProjectRuntimeEnvironmentRecord>,
+) -> SandboxProviderKind {
+    match project.source_type {
+        ProjectSourceType::Local | ProjectSourceType::LocalConnector => SandboxProviderKind::None,
+        ProjectSourceType::Cloud => environment
+            .map(|environment| match environment.sandbox_provider {
+                RuntimeEnvironmentProvider::Harness
+                | RuntimeEnvironmentProvider::CloudSandboxManager => SandboxProviderKind::Cloud,
+                RuntimeEnvironmentProvider::LocalConnector | RuntimeEnvironmentProvider::None => {
+                    SandboxProviderKind::None
+                }
+            })
+            .unwrap_or(SandboxProviderKind::None),
+    }
+}
+
 fn parse_local_connector_workspace(root_path: &str) -> Option<WorkspaceExecutionTarget> {
     // Compatibility import only. New consumers read this normalized context and never parse roots.
     let workspace = parse_local_connector_workspace_root(root_path)?;
@@ -193,6 +204,43 @@ fn required_text<'a>(value: &'a str, field: &str) -> Result<&'a str, ApiError> {
 mod tests {
     use super::*;
 
+    fn project(source_type: ProjectSourceType) -> ProjectRecord {
+        ProjectRecord {
+            id: "project-1".to_string(),
+            creator_user_id: None,
+            creator_username: None,
+            creator_display_name: None,
+            owner_user_id: Some("user-1".to_string()),
+            owner_username: None,
+            owner_display_name: None,
+            name: "Project".to_string(),
+            root_path: Some("local://connector/device-1/workspace-1".to_string()),
+            git_url: None,
+            source_type,
+            execution_plane: crate::models::ProjectExecutionPlane::Cloud,
+            cloud_import_source: crate::models::CloudImportSource::Empty,
+            import_status: crate::models::ProjectImportStatus::Ready,
+            source_git_url: None,
+            harness_space_identifier: None,
+            harness_repo_identifier: None,
+            harness_repo_path: None,
+            harness_git_url: None,
+            harness_git_ssh_url: None,
+            harness_default_branch: None,
+            harness_provision_status: None,
+            harness_provision_error: None,
+            harness_provisioned_at: None,
+            import_error: None,
+            import_started_at: None,
+            import_finished_at: None,
+            description: None,
+            status: crate::models::ProjectStatus::Active,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            archived_at: None,
+        }
+    }
+
     #[test]
     fn local_connector_root_becomes_normalized_workspace_context() {
         let workspace =
@@ -213,5 +261,17 @@ mod tests {
             "local://connector/device-1/workspace-1/apps%2F..%2Fsecrets",
         )
         .is_none());
+    }
+
+    #[test]
+    fn local_projects_never_expose_a_sandbox_provider() {
+        assert_eq!(
+            resolve_sandbox_provider(&project(ProjectSourceType::Local), None),
+            SandboxProviderKind::None
+        );
+        assert_eq!(
+            resolve_sandbox_provider(&project(ProjectSourceType::LocalConnector), None),
+            SandboxProviderKind::None
+        );
     }
 }

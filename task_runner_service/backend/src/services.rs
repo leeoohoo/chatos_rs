@@ -32,6 +32,8 @@ use crate::models::{
 use crate::platform_queue::TaskQueueTopology;
 use crate::store::AppStore;
 
+pub(crate) const MCP_RUN_FINALIZATION_ERROR_PREFIX: &str = "MCP runtime run finalization failed";
+
 mod batch_ops;
 mod builtin_providers;
 mod chatos_async_dispatch;

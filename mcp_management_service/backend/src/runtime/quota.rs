@@ -302,7 +302,6 @@ mod tests {
             mutation_may_have_started: false,
             cancel_supported: true,
             status: RuntimeInvocationStatus::Queued,
-            async_execution: true,
             created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
             started_at_unix_ms: None,
             completed_at_unix_ms: None,
@@ -310,9 +309,6 @@ mod tests {
             terminal_error_code: None,
             terminal_error_message: None,
             file_modification_outcome: None,
-            result_reply_to: None,
-            result_event_id: None,
-            result_event_pending: false,
             expires_at: DateTime::from_millis(expires_at_unix * 1_000),
             expires_at_unix,
         }

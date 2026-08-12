@@ -5,14 +5,17 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::{RuntimeInvocationResultEvent, RuntimeInvocationStatus};
+use chatos_mcp_service::{McpToolCallCommand, McpToolCallResult};
 use futures_util::StreamExt;
 use lapin::{
-    options::{BasicAckOptions, BasicConsumeOptions, BasicQosOptions, QueueDeclareOptions},
+    options::{
+        BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, BasicQosOptions,
+        ConfirmSelectOptions, QueueDeclareOptions,
+    },
+    publisher_confirm::Confirmation,
     types::FieldTable,
-    Connection, ConnectionProperties,
+    BasicProperties, Channel, Connection, ConnectionProperties,
 };
-use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{info, warn};
 
@@ -43,7 +46,9 @@ impl McpInvocationResultQueueConfig {
 
 struct ResultBus {
     config: McpInvocationResultQueueConfig,
-    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<RuntimeInvocationResultEvent>>>>,
+    _publisher_connection: Connection,
+    publisher_channel: Channel,
+    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<McpToolCallResult>>>>,
 }
 
 static RESULT_BUS: OnceLock<ResultBus> = OnceLock::new();
@@ -56,10 +61,13 @@ pub async fn initialize_mcp_invocation_result_queue(
         return Err("MCP invocation result queue is already initialized".to_string());
     }
     let (connection, consumer) = open_consumer(&config).await?;
+    let (publisher_connection, publisher_channel) = open_publisher(&config).await?;
     let waiters = Arc::new(Mutex::new(HashMap::new()));
     RESULT_BUS
         .set(ResultBus {
             config: config.clone(),
+            _publisher_connection: publisher_connection,
+            publisher_channel,
             waiters: Arc::clone(&waiters),
         })
         .map_err(|_| "MCP invocation result queue is already initialized".to_string())?;
@@ -67,9 +75,7 @@ pub async fn initialize_mcp_invocation_result_queue(
     Ok(())
 }
 
-pub(crate) fn prepare_result_waiter(
-    correlation_id: String,
-) -> Result<McpInvocationResultWaiter, String> {
+pub(crate) fn prepare_result_waiter(batch_id: String) -> Result<McpToolCallResultWaiter, String> {
     let bus = RESULT_BUS
         .get()
         .ok_or_else(|| "MCP invocation result queue is not initialized".to_string())?;
@@ -78,30 +84,30 @@ pub(crate) fn prepare_result_waiter(
         .waiters
         .lock()
         .map_err(|_| "MCP invocation result waiter registry is poisoned".to_string())?;
-    if waiters.insert(correlation_id.clone(), sender).is_some() {
-        return Err("MCP invocation result correlation id is already active".to_string());
+    if waiters.insert(batch_id.clone(), sender).is_some() {
+        return Err("MCP tool call batch id is already active".to_string());
     }
-    Ok(McpInvocationResultWaiter {
-        correlation_id,
+    Ok(McpToolCallResultWaiter {
+        batch_id,
         reply_to: bus.config.queue_name.clone(),
         receiver: Some(receiver),
         waiters: Arc::clone(&bus.waiters),
     })
 }
 
-pub(crate) struct McpInvocationResultWaiter {
-    correlation_id: String,
+pub(crate) struct McpToolCallResultWaiter {
+    batch_id: String,
     reply_to: String,
-    receiver: Option<oneshot::Receiver<RuntimeInvocationResultEvent>>,
-    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<RuntimeInvocationResultEvent>>>>,
+    receiver: Option<oneshot::Receiver<McpToolCallResult>>,
+    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<McpToolCallResult>>>>,
 }
 
-impl McpInvocationResultWaiter {
+impl McpToolCallResultWaiter {
     pub(crate) fn reply_to(&self) -> &str {
         self.reply_to.as_str()
     }
 
-    pub(crate) async fn wait(mut self, timeout: Duration) -> Result<Value, String> {
+    pub(crate) async fn wait(mut self, timeout: Duration) -> Result<McpToolCallResult, String> {
         let receiver = self
             .receiver
             .take()
@@ -115,60 +121,62 @@ impl McpInvocationResultWaiter {
                 )
             })?
             .map_err(|_| "MCP invocation result consumer stopped before delivery".to_string())?;
-        terminal_event_result(event)
+        Ok(event)
     }
 }
 
-impl Drop for McpInvocationResultWaiter {
+impl Drop for McpToolCallResultWaiter {
     fn drop(&mut self) {
         if let Ok(mut waiters) = self.waiters.lock() {
-            waiters.remove(self.correlation_id.as_str());
+            waiters.remove(self.batch_id.as_str());
         }
     }
 }
 
-fn terminal_event_result(event: RuntimeInvocationResultEvent) -> Result<Value, String> {
-    match event.status {
-        RuntimeInvocationStatus::Completed => event.terminal_result.ok_or_else(|| {
-            format!(
-                "accepted MCP invocation {} completed without a terminal result",
-                event.invocation_id
-            )
-        }),
-        RuntimeInvocationStatus::Failed => Err(format_terminal_error("failed", &event)),
-        RuntimeInvocationStatus::Cancelled => Err(format_terminal_error("cancelled", &event)),
-        RuntimeInvocationStatus::UnknownExecutionState => {
-            Err(format_terminal_error("unknown_execution_state", &event))
-        }
-        status => Err(format!(
-            "MCP invocation result event {} has non-terminal status {status:?}",
-            event.event_id
+pub(crate) async fn publish_tool_call_command(
+    command_queue: &str,
+    command: &McpToolCallCommand,
+) -> Result<(), String> {
+    let bus = RESULT_BUS
+        .get()
+        .ok_or_else(|| "MCP tool call queue is not initialized".to_string())?;
+    let payload = serde_json::to_vec(command).map_err(|error| error.to_string())?;
+    let confirmation = bus
+        .publisher_channel
+        .basic_publish(
+            "",
+            command_queue,
+            BasicPublishOptions {
+                mandatory: true,
+                ..BasicPublishOptions::default()
+            },
+            payload.as_slice(),
+            BasicProperties::default()
+                .with_content_type("application/json".into())
+                .with_delivery_mode(2)
+                .with_message_id(command.batch_id.clone().into())
+                .with_correlation_id(command.batch_id.clone().into())
+                .with_reply_to(command.reply_to.clone().into()),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| error.to_string())?;
+    match confirmation {
+        Confirmation::Ack(None) => Ok(()),
+        Confirmation::Ack(Some(_)) => Err(format!(
+            "RabbitMQ returned unroutable MCP tool call command for {command_queue}"
         )),
+        Confirmation::Nack(_) => Err("RabbitMQ rejected MCP tool call command".to_string()),
+        Confirmation::NotRequested => {
+            Err("RabbitMQ publisher confirm is not enabled for MCP tool calls".to_string())
+        }
     }
-}
-
-fn format_terminal_error(outcome: &str, event: &RuntimeInvocationResultEvent) -> String {
-    let mut message = format!(
-        "accepted MCP invocation {} ended with status {outcome}",
-        event.invocation_id
-    );
-    if let Some(code) = event.terminal_error_code {
-        message.push_str(format!(" (code={code})").as_str());
-    }
-    if let Some(detail) = event
-        .terminal_error_message
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        message.push_str(format!(": {detail}").as_str());
-    }
-    message
 }
 
 async fn run_consumer(
     config: McpInvocationResultQueueConfig,
-    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<RuntimeInvocationResultEvent>>>>,
+    waiters: Arc<Mutex<HashMap<String, oneshot::Sender<McpToolCallResult>>>>,
     mut initial: Option<(Connection, lapin::Consumer)>,
 ) {
     loop {
@@ -189,36 +197,35 @@ async fn run_consumer(
                         async move {
                             match delivery {
                                 Ok(delivery) => {
-                                    let event = serde_json::from_slice::<RuntimeInvocationResultEvent>(
+                                    let event = serde_json::from_slice::<McpToolCallResult>(
                                         delivery.data.as_slice(),
                                     );
                                     match event {
                                         Ok(event) => {
-                                            let sender = waiters
-                                                .lock()
-                                                .ok()
-                                                .and_then(|mut waiters| {
-                                                    waiters.remove(event.correlation_id.as_str())
+                                            let sender =
+                                                waiters.lock().ok().and_then(|mut waiters| {
+                                                    waiters.remove(event.batch_id.as_str())
                                                 });
                                             if let Some(sender) = sender {
                                                 let _ = sender.send(event);
                                             } else {
                                                 warn!(
-                                                    correlation_id = event.correlation_id.as_str(),
-                                                    invocation_id = event.invocation_id.as_str(),
-                                                    "MCP invocation result event has no active waiter"
+                                                    batch_id = event.batch_id.as_str(),
+                                                    "MCP tool call result has no active waiter"
                                                 );
                                             }
                                         }
                                         Err(error) => warn!(
                                             error = error.to_string().as_str(),
-                                            "invalid MCP invocation result event"
+                                            "invalid MCP tool call result"
                                         ),
                                     }
-                                    if let Err(error) = delivery.ack(BasicAckOptions::default()).await {
+                                    if let Err(error) =
+                                        delivery.ack(BasicAckOptions::default()).await
+                                    {
                                         warn!(
                                             error = error.to_string().as_str(),
-                                            "acknowledge MCP invocation result event failed"
+                                            "acknowledge MCP tool call result failed"
                                         );
                                     }
                                 }
@@ -280,29 +287,35 @@ async fn open_consumer(
     Ok((connection, consumer))
 }
 
+async fn open_publisher(
+    config: &McpInvocationResultQueueConfig,
+) -> Result<(Connection, Channel), String> {
+    let connection = Connection::connect(
+        config.rabbitmq_url.as_str(),
+        ConnectionProperties::default(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let channel = connection
+        .create_channel()
+        .await
+        .map_err(|error| error.to_string())?;
+    channel
+        .confirm_select(ConfirmSelectOptions::default())
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok((connection, channel))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use chatos_mcp_service::McpToolCallResultStatus;
 
     #[test]
-    fn terminal_result_event_preserves_original_tool_result() {
-        let result = terminal_event_result(RuntimeInvocationResultEvent {
-            event_id: "event-1".to_string(),
-            correlation_id: "request-1".to_string(),
-            invocation_id: "invocation-1".to_string(),
-            session_id: "session-1".to_string(),
-            caller_service: "task-runner".to_string(),
-            resource_id: "resource-1".to_string(),
-            exposed_tool_name: "demo".to_string(),
-            status: RuntimeInvocationStatus::Completed,
-            occurred_at_unix_ms: 1,
-            terminal_result: Some(
-                serde_json::json!({"content": [{"type": "text", "text": "done"}]}),
-            ),
-            terminal_error_code: None,
-            terminal_error_message: None,
-        })
-        .unwrap();
-        assert_eq!(result["content"][0]["text"], "done");
+    fn tool_call_result_status_is_wire_stable() {
+        assert_eq!(
+            serde_json::to_string(&McpToolCallResultStatus::UnknownExecutionState).unwrap(),
+            "\"unknown_execution_state\""
+        );
     }
 }

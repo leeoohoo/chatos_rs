@@ -14,6 +14,7 @@ use chatos_mcp_management_sdk::{
     SandboxExecutionTarget,
 };
 use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
+use futures_util::TryStreamExt;
 use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
 use mongodb::options::{IndexOptions, ReplaceOptions};
 use mongodb::{Client, Collection, IndexModel};
@@ -45,7 +46,7 @@ use self::external_http::{
     PersistedExternalHttpProviderBinding,
 };
 
-const SNAPSHOT_SCHEMA_VERSION: i32 = 5;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 6;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_HEADERS: usize = 64;
 const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
@@ -143,6 +144,7 @@ pub struct RuntimeSessionSnapshot {
     pub project_id: String,
     pub device_id: Option<String>,
     pub run_id: Option<String>,
+    pub execution_scope_generation: Option<i64>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
     pub source_session_id: Option<String>,
@@ -229,6 +231,8 @@ struct StoredRuntimeSessionDocument {
     schema_version: i32,
     expires_at: DateTime,
     expires_at_unix: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    execution_scope_hash: Option<String>,
     nonce: Binary,
     encrypted_snapshot: Binary,
 }
@@ -248,6 +252,7 @@ struct PersistedRuntimeSessionSnapshot {
     project_id: String,
     device_id: Option<String>,
     run_id: Option<String>,
+    execution_scope_generation: Option<i64>,
     turn_id: Option<String>,
     task_id: Option<String>,
     source_session_id: Option<String>,
@@ -456,6 +461,51 @@ impl RuntimeSessionStore {
         }
     }
 
+    pub async fn remove_run_sessions(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: &str,
+    ) -> Result<Vec<Arc<RuntimeSessionSnapshot>>, String> {
+        let candidates = match self.backend.as_ref() {
+            RuntimeSessionStoreBackend::Memory(sessions) => sessions
+                .read()
+                .await
+                .values()
+                .filter(|snapshot| {
+                    snapshot.owner_user_id == owner_user_id
+                        && snapshot.project_id == project_id
+                        && snapshot.run_id.as_deref() == Some(run_id)
+                })
+                .map(|snapshot| snapshot.session_id.clone())
+                .collect::<Vec<_>>(),
+            RuntimeSessionStoreBackend::Mongo(store) => store
+                .collection
+                .find(
+                    doc! {
+                        "execution_scope_hash": execution_scope_hash(owner_user_id, project_id, run_id),
+                        "expires_at_unix": { "$gt": chrono::Utc::now().timestamp() },
+                    },
+                    None,
+                )
+                .await
+                .map_err(|error| format!("find Runtime Sessions for terminal run failed: {error}"))?
+                .map_ok(|document| document.session_id)
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| {
+                    format!("read Runtime Sessions for terminal run failed: {error}")
+                })?,
+        };
+        let mut removed = Vec::new();
+        for session_id in candidates {
+            if let Some(snapshot) = self.remove(session_id.as_str()).await? {
+                removed.push(snapshot);
+            }
+        }
+        Ok(removed)
+    }
+
     pub async fn stats(&self) -> Result<RuntimeSessionStoreStats, String> {
         let now = chrono::Utc::now().timestamp();
         match self.backend.as_ref() {
@@ -523,6 +573,9 @@ impl StoredRuntimeSessionDocument {
         let mut hasher = Sha256::new();
         hasher.update(self.schema_version.to_be_bytes());
         hasher.update(self.expires_at_unix.to_be_bytes());
+        if let Some(scope_hash) = self.execution_scope_hash.as_deref() {
+            hasher.update(scope_hash.as_bytes());
+        }
         hasher.update(self.nonce.bytes.as_slice());
         hasher.update(self.encrypted_snapshot.bytes.as_slice());
         hasher.finalize().into()
@@ -575,6 +628,13 @@ impl SnapshotCipher {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
             expires_at_unix: snapshot.expires_at_unix,
+            execution_scope_hash: snapshot.run_id.as_deref().map(|run_id| {
+                execution_scope_hash(
+                    snapshot.owner_user_id.as_str(),
+                    snapshot.project_id.as_str(),
+                    run_id,
+                )
+            }),
             nonce: Binary {
                 subtype: BinarySubtype::Generic,
                 bytes: nonce.to_vec(),
@@ -629,6 +689,16 @@ impl SnapshotCipher {
     }
 }
 
+fn execution_scope_hash(owner_user_id: &str, project_id: &str, run_id: &str) -> String {
+    let identity = format!(
+        "{}\u{1f}{}\u{1f}{}",
+        owner_user_id.trim(),
+        project_id.trim(),
+        run_id.trim()
+    );
+    hex::encode(Sha256::digest(identity.as_bytes()))
+}
+
 impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
     type Error = String;
 
@@ -653,6 +723,7 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             project_id: snapshot.project_id.clone(),
             device_id: snapshot.device_id.clone(),
             run_id: snapshot.run_id.clone(),
+            execution_scope_generation: snapshot.execution_scope_generation,
             turn_id: snapshot.turn_id.clone(),
             task_id: snapshot.task_id.clone(),
             source_session_id: snapshot.source_session_id.clone(),
@@ -709,6 +780,7 @@ impl PersistedRuntimeSessionSnapshot {
             project_id: self.project_id,
             device_id: self.device_id,
             run_id: self.run_id,
+            execution_scope_generation: self.execution_scope_generation,
             turn_id: self.turn_id,
             task_id: self.task_id,
             source_session_id: self.source_session_id,

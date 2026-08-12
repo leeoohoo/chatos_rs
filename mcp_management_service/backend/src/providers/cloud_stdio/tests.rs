@@ -427,6 +427,7 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
         source_session_id: None,

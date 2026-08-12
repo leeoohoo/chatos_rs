@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub(crate) mod configs;
+pub(crate) mod execution_scope;
 pub(crate) mod manifest;
 #[path = "config_provider.rs"]
 pub(crate) mod provider;

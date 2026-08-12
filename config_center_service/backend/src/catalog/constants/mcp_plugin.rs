@@ -4,8 +4,6 @@ pub const MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY: &str =
     "mcp_management.async_tool.dispatch_mode";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY_CONFIG_KEY: &str =
     "mcp_management.async_tool.worker_concurrency";
-pub const MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER_CONFIG_KEY: &str =
-    "mcp_management.async_tool.local_queue_buffer";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY: &str =
     "mcp_management.async_tool.rabbitmq_url";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
@@ -26,10 +24,6 @@ pub const MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY: &str =
     "mcp_management.pressure.report_interval_ms";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY: &str =
     "mcp_management.async_tool.rabbitmq_reconnect_ms";
-pub const MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
-    "mcp_management.async_tool.result_outbox_reconcile_ms";
-pub const MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
-    "mcp_management.async_tool.result_outbox_batch_size";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
     "mcp_management.async_tool.max_delivery_attempts";
 pub const MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY: &str =

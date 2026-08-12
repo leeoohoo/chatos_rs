@@ -23,6 +23,7 @@ const REQUIRED_INTERNAL_CALLERS: [&str; 4] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsyncToolDispatchMode {
+    #[cfg(test)]
     LocalQueue,
     RabbitMq,
 }
@@ -39,6 +40,7 @@ impl AsyncToolDispatchMode {
 
     pub const fn as_str(self) -> &'static str {
         match self {
+            #[cfg(test)]
             Self::LocalQueue => "local_queue",
             Self::RabbitMq => "rabbitmq",
         }
@@ -49,14 +51,11 @@ impl AsyncToolDispatchMode {
 pub struct AsyncToolDispatchTopology {
     pub mode: AsyncToolDispatchMode,
     pub worker_concurrency: usize,
-    pub local_queue_buffer: usize,
     pub queue_max_length: u32,
     pub queue_max_bytes: u64,
     pub rabbitmq_reconnect_delay: Duration,
     pub max_delivery_attempts: u32,
     pub retry_delay: Duration,
-    pub result_outbox_reconcile_interval: Duration,
-    pub result_outbox_batch_size: i64,
     pub rabbitmq_url: Option<String>,
     pub rabbitmq_exchange: Option<String>,
     pub cancellation_exchange: Option<String>,
@@ -76,16 +75,6 @@ impl AsyncToolDispatchTopology {
                     "MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY is too large".to_string()
                 })
             })?;
-        let local_queue_buffer = match mode {
-            AsyncToolDispatchMode::LocalQueue => {
-                required_u64("MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER")?
-                    .try_into()
-                    .map_err(|_| {
-                        "MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER is too large".to_string()
-                    })?
-            }
-            AsyncToolDispatchMode::RabbitMq => 0,
-        };
         let max_delivery_attempts =
             required_u32("MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS")?;
         let queue_max_length = required_u32("MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH")?;
@@ -95,59 +84,56 @@ impl AsyncToolDispatchTopology {
         )?);
         let retry_delay =
             Duration::from_millis(required_u64("MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS")?);
-        let result_outbox_reconcile_interval = Duration::from_millis(required_u64(
-            "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS",
-        )?);
-        let result_outbox_batch_size = i64::from(required_u32(
-            "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE",
-        )?);
         let rabbitmq_url = match mode {
             AsyncToolDispatchMode::RabbitMq => {
                 Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL")?)
             }
+            #[cfg(test)]
             AsyncToolDispatchMode::LocalQueue => None,
         };
         let rabbitmq_exchange = match mode {
             AsyncToolDispatchMode::RabbitMq => Some(required_text(
                 "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE",
             )?),
+            #[cfg(test)]
             AsyncToolDispatchMode::LocalQueue => None,
         };
         let cancellation_exchange = match mode {
             AsyncToolDispatchMode::RabbitMq => Some(required_text(
                 "MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE",
             )?),
+            #[cfg(test)]
             AsyncToolDispatchMode::LocalQueue => None,
         };
         let queue_name = match mode {
             AsyncToolDispatchMode::RabbitMq => {
                 Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE")?)
             }
+            #[cfg(test)]
             AsyncToolDispatchMode::LocalQueue => None,
         };
         let retry_queue_name = match mode {
             AsyncToolDispatchMode::RabbitMq => {
                 Some(required_text("MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE")?)
             }
+            #[cfg(test)]
             AsyncToolDispatchMode::LocalQueue => None,
         };
         let dead_letter_queue_name = match mode {
             AsyncToolDispatchMode::RabbitMq => Some(required_text(
                 "MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE",
             )?),
+            #[cfg(test)]
             AsyncToolDispatchMode::LocalQueue => None,
         };
         let topology = Self {
             mode,
             worker_concurrency,
-            local_queue_buffer,
             queue_max_length,
             queue_max_bytes,
             rabbitmq_reconnect_delay,
             max_delivery_attempts,
             retry_delay,
-            result_outbox_reconcile_interval,
-            result_outbox_batch_size,
             rabbitmq_url,
             rabbitmq_exchange,
             cancellation_exchange,
@@ -198,29 +184,9 @@ impl AsyncToolDispatchTopology {
                     .to_string(),
             );
         }
-        if !(Duration::from_millis(100)..=Duration::from_secs(5 * 60))
-            .contains(&self.result_outbox_reconcile_interval)
-        {
-            return Err(
-                "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS must be between 100 and 300000"
-                    .to_string(),
-            );
-        }
-        if !(1..=10_000).contains(&self.result_outbox_batch_size) {
-            return Err(
-                "MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE must be between 1 and 10000"
-                    .to_string(),
-            );
-        }
         match self.mode {
-            AsyncToolDispatchMode::LocalQueue => {
-                if self.local_queue_buffer == 0 {
-                    return Err(
-                        "MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER must be at least 1"
-                            .to_string(),
-                    );
-                }
-            }
+            #[cfg(test)]
+            AsyncToolDispatchMode::LocalQueue => {}
             AsyncToolDispatchMode::RabbitMq => {
                 if self
                     .rabbitmq_url
@@ -706,14 +672,11 @@ impl AppConfig {
             async_tool_dispatch_topology: AsyncToolDispatchTopology {
                 mode: AsyncToolDispatchMode::LocalQueue,
                 worker_concurrency: 4,
-                local_queue_buffer: 64,
                 queue_max_length: 10_000,
                 queue_max_bytes: 256 * 1024 * 1024,
                 rabbitmq_reconnect_delay: Duration::from_secs(3),
                 max_delivery_attempts: 5,
                 retry_delay: Duration::from_secs(5),
-                result_outbox_reconcile_interval: Duration::from_secs(5),
-                result_outbox_batch_size: 128,
                 rabbitmq_url: None,
                 rabbitmq_exchange: None,
                 cancellation_exchange: None,
@@ -830,14 +793,11 @@ mod tests {
         let topology = AsyncToolDispatchTopology {
             mode: AsyncToolDispatchMode::RabbitMq,
             worker_concurrency: 2,
-            local_queue_buffer: 0,
             queue_max_length: 10_000,
             queue_max_bytes: 256 * 1024 * 1024,
             rabbitmq_reconnect_delay: Duration::from_secs(3),
             max_delivery_attempts: 5,
             retry_delay: Duration::from_secs(5),
-            result_outbox_reconcile_interval: Duration::from_secs(5),
-            result_outbox_batch_size: 128,
             rabbitmq_url: None,
             rabbitmq_exchange: Some("mcp_management".to_string()),
             cancellation_exchange: Some("mcp_management.cancellations".to_string()),

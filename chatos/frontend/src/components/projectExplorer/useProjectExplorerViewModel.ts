@@ -84,7 +84,6 @@ export const useProjectExplorerViewModel = ({
     client,
     project,
     enabled: settingsTabActive && !cloudProjectSource,
-    sandboxSettingEnabled: Boolean(project?.id) && !cloudProjectSource,
     terminalUiEnabled,
   });
 

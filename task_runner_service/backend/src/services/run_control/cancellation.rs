@@ -84,6 +84,10 @@ impl RunService {
             run.finished_at = Some(now_rfc3339());
             run.updated_at = now_rfc3339();
             self.store.save_run(run.clone()).await?;
+            if let Some(task_record) = self.store.get_task(&run.task_id).await? {
+                self.notify_mcp_management_run_finalized(&task_record, &run)
+                    .await;
+            }
             self.store
                 .append_run_event(TaskRunEventRecord::new(
                     run_id.to_string(),
@@ -199,7 +203,6 @@ impl RunService {
                 );
             }
             task.mcp_config.execution_service_id = Some(execution_service_id);
-            self.validate_sandbox_route_for_task(&task).await?;
             task.updated_at = now_rfc3339();
             self.store.save_task(task).await?;
         }

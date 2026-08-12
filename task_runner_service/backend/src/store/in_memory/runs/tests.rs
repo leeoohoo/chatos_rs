@@ -322,6 +322,28 @@ fn successful_run_post_process_outbox_is_monotonic_across_stale_saves() {
 }
 
 #[test]
+fn every_terminal_status_requests_run_lifecycle_post_process() {
+    for (index, status) in [
+        TaskRunStatus::Succeeded,
+        TaskRunStatus::Failed,
+        TaskRunStatus::Cancelled,
+        TaskRunStatus::Blocked,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let store = test_store();
+        let mut run = queued_run();
+        run.id = format!("run-{index}");
+        run.status = status;
+        run.finished_at = Some(now_rfc3339());
+        let saved = store.save_run(run).expect("save terminal run");
+        assert!(saved.post_process_event_pending);
+        assert_eq!(store.list_pending_run_post_processes(10).len(), 1);
+    }
+}
+
+#[test]
 fn terminal_cleanup_failure_returns_event_to_outbox_until_completed() {
     let store = test_store();
     let mut run = queued_run();

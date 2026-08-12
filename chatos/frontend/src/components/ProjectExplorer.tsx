@@ -73,11 +73,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     fallbackTab: fallbackWorkspaceTab,
   });
   const workspaceTabs = React.useMemo(
-    () => resolveVisibleWorkspaceTabs(
-      cloudProjectSource,
-      !cloudProjectSource && projectSettingsProps.sandboxEnabled === true,
-    ),
-    [cloudProjectSource, projectSettingsProps.sandboxEnabled],
+    () => resolveVisibleWorkspaceTabs(cloudProjectSource),
+    [cloudProjectSource],
   );
 
   React.useEffect(() => {

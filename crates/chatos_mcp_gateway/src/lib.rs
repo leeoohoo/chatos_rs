@@ -111,11 +111,20 @@ fn build_gateway_server(
     if session.runtime_token.trim().is_empty() {
         return Err("MCP Management runtime session returned an empty runtime token".to_string());
     }
+    if session.mcp_command_queue.trim().is_empty() {
+        return Err("MCP Management runtime session returned an empty command queue".to_string());
+    }
     let mut server = McpHttpServer::new("mcp_management", session.mcp_server_url.clone())
-        .with_headers(HashMap::from([(
-            "authorization".to_string(),
-            format!("Bearer {}", session.runtime_token),
-        )]))
+        .with_headers(HashMap::from([
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", session.runtime_token),
+            ),
+            (
+                "x-chatos-mcp-command-queue".to_string(),
+                session.mcp_command_queue.clone(),
+            ),
+        ]))
         .with_timeout(default_timeout)
         .with_async_result_transport(async_result_transport)
         .with_preserved_tool_names()
@@ -137,6 +146,7 @@ mod tests {
             route_revision: "route-1".to_string(),
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
+            mcp_command_queue: "mcp_management.async.dispatch".to_string(),
             runtime_token: "runtime-token".to_string(),
             configured_mcp_count: 1,
             exposed_tool_count: 1,
@@ -156,7 +166,7 @@ mod tests {
         )
         .expect("gateway server");
 
-        assert_eq!(server.headers.as_ref().map(HashMap::len), Some(1));
+        assert_eq!(server.headers.as_ref().map(HashMap::len), Some(2));
         assert_eq!(
             server
                 .headers

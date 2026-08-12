@@ -40,8 +40,6 @@ use crate::catalog::{
     MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY,
     MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY,
     MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
-    MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY,
-    MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY,
     MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY,
     MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY, MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
     MCP_MANAGEMENT_EMBEDDED_WORK_DIR_CONFIG_KEY, MCP_MANAGEMENT_HOST_CONFIG_KEY,
@@ -1227,10 +1225,6 @@ fn mcp_management_async_dispatch_backfill_adds_all_service_defaults() {
     assert!(changed_keys
         .contains(&MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys
-        .contains(&MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string()));
-    assert!(changed_keys
         .contains(&MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY.to_string()));
@@ -1286,10 +1280,6 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
             json!(12),
         ),
         (
-            MCP_MANAGEMENT_ASYNC_TOOL_LOCAL_QUEUE_BUFFER_CONFIG_KEY.to_string(),
-            json!(256),
-        ),
-        (
             MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY.to_string(),
             json!(DEFAULT_LOCAL_RABBITMQ_URL),
         ),
@@ -1316,14 +1306,6 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         (
             MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string(),
             json!(3_000),
-        ),
-        (
-            MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string(),
-            json!(5_000),
-        ),
-        (
-            MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
-            json!(128),
         ),
         (
             MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
@@ -1514,18 +1496,6 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
             .env
             .get("MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS"),
         Some(&"3000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_RECONCILE_MS"),
-        Some(&"5000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("MCP_MANAGEMENT_ASYNC_TOOL_RESULT_OUTBOX_BATCH_SIZE"),
-        Some(&"128".to_string())
     );
     assert_eq!(
         snapshot

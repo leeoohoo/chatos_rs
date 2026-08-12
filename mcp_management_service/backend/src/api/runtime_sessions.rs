@@ -56,24 +56,13 @@ pub(super) async fn resolve_runtime_session(
         .clone()
         .map(|items| normalized_unique_items(items, "requested_mcp_ids", 200))
         .transpose()?;
-    let mut project_context = state
+    let project_context = state
         .project_context_client
         .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
-    if project_context.sandbox_provider == SandboxProviderKind::LocalConnector {
-        let pairing_id = state
-            .providers
-            .resolve_local_sandbox_pairing(&project_context)
-            .await
-            .map_err(|error| ApiError::conflict(error.message))?;
-        if pairing_id.is_none() {
-            return Err(ApiError::conflict(
-                "Local Connector sandbox is configured, but the Project Context device/workspace has no active enabled and ready sandbox pairing",
-            ));
-        }
-        project_context.sandbox_pairing_id = pairing_id;
-    }
+    let execution_scope_workspace_provider = project_context.workspace_provider;
+    let execution_scope_run_id = normalized(request.run_id.clone());
     validate_context_overrides(&request, &project_context)?;
     let device_id = project_context
         .workspace
@@ -381,7 +370,7 @@ pub(super) async fn resolve_runtime_session(
             tool_result.tools.as_slice(),
             request.locale.as_deref(),
         );
-        let snapshot = RuntimeSessionSnapshot {
+        let mut snapshot = RuntimeSessionSnapshot {
             session_id: session_id.clone(),
             caller_service,
             trace_id: trace_id.clone(),
@@ -393,6 +382,7 @@ pub(super) async fn resolve_runtime_session(
             project_id: request.project_id.trim().to_string(),
             device_id,
             run_id: normalized(request.run_id),
+            execution_scope_generation: None,
             turn_id: normalized(request.turn_id),
             task_id: normalized(request.task_id),
             source_session_id: normalized(request.source_session_id),
@@ -432,11 +422,47 @@ pub(super) async fn resolve_runtime_session(
             outcome: "succeeded".to_string(),
         };
         session_audit.validate().map_err(ApiError::internal)?;
-        state
-            .runtime_sessions
-            .insert(snapshot)
-            .await
-            .map_err(ApiError::internal)?;
+        if let Some(run_id) = execution_scope_run_id.as_deref() {
+            match state
+                .runtime_execution_scopes
+                .attach_session(
+                    request.owner_user_id.trim(),
+                    request.project_id.trim(),
+                    run_id,
+                    execution_scope_workspace_provider,
+                    session_id.as_str(),
+                    grant.expires_at_unix,
+                )
+                .await
+            {
+                Ok(generation) => snapshot.execution_scope_generation = Some(generation),
+                Err(error) => {
+                    return Err(match error {
+                        crate::runtime::RuntimeExecutionScopeStoreError::Terminal => {
+                            ApiError::conflict("runtime run is already terminal")
+                        }
+                        crate::runtime::RuntimeExecutionScopeStoreError::Unavailable(error) => {
+                            ApiError::internal(error)
+                        }
+                    })
+                }
+            }
+        }
+        if let Err(error) = state.runtime_sessions.insert(snapshot).await {
+            if let Some(run_id) = execution_scope_run_id.as_deref() {
+                let _ = state
+                    .runtime_execution_scopes
+                    .detach_session(
+                        request.owner_user_id.trim(),
+                        request.project_id.trim(),
+                        run_id,
+                        execution_scope_workspace_provider,
+                        session_id.as_str(),
+                    )
+                    .await;
+            }
+            return Err(ApiError::internal(error));
+        }
         let _ = chatos_service_runtime::record_internal_resource_access(&session_audit);
         Ok(Json(RuntimeSessionResponse {
             session_id,
@@ -444,6 +470,12 @@ pub(super) async fn resolve_runtime_session(
             route_revision,
             expires_at: grant.expires_at,
             mcp_server_url: format!("{}/mcp", state.config.public_base_url),
+            mcp_command_queue: state
+                .config
+                .async_tool_dispatch_topology
+                .queue_name
+                .clone()
+                .ok_or_else(|| ApiError::internal("MCP command queue is not configured"))?,
             runtime_token: grant.token,
             configured_mcp_count,
             exposed_tool_count,
@@ -550,6 +582,19 @@ pub(super) async fn close_runtime_session(
         .close_session(snapshot.session_id.as_str())
         .await;
     state.providers.close_session(&snapshot).await;
+    if let Some(run_id) = snapshot.run_id.as_deref() {
+        state
+            .runtime_execution_scopes
+            .detach_session(
+                snapshot.owner_user_id.as_str(),
+                snapshot.project_id.as_str(),
+                run_id,
+                snapshot.project_context.workspace_provider,
+                snapshot.session_id.as_str(),
+            )
+            .await
+            .map_err(ApiError::internal)?;
+    }
     let reclaimed_invocations = reclaimed_invocations.map_err(|error| {
         tracing::error!(
             session_id = snapshot.session_id.as_str(),

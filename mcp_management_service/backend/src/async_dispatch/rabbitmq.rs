@@ -17,18 +17,19 @@ use tracing::{info, warn};
 
 use crate::config::AsyncToolDispatchTopology;
 use crate::state::AppState;
+use chatos_mcp_service::{
+    McpToolCallCommand, McpToolCallResult, McpToolCallResultItem, McpToolCallResultStatus,
+    MCP_ERROR_INTERNAL,
+};
 
 use super::{
-    fail_async_invocation, AsyncToolEnqueueError, InvocationCancellationEvent, ProcessOutcome,
-    QueuedAsyncToolCallEnvelope, INITIAL_DELIVERY_ATTEMPT, RABBITMQ_CANCELLATION_CONSUMER_TAG,
+    AsyncToolEnqueueError, InvocationCancellationEvent, RABBITMQ_CANCELLATION_CONSUMER_TAG,
     RABBITMQ_CONSUMER_TAG,
 };
 
 pub(super) struct RabbitMqPublisher {
     pub(super) _connection: Connection,
     pub(super) channel: Channel,
-    pub(super) exchange: String,
-    pub(super) queue_name: String,
     pub(super) cancellation_exchange: String,
 }
 
@@ -58,7 +59,7 @@ pub(super) async fn run_rabbitmq_consumer_loop(
                             let topology = topology.clone();
                             let channel = channel.clone();
                             tokio::spawn(async move {
-                                if let Err(error) = handle_rabbitmq_delivery(
+                                if let Err(error) = handle_tool_call_command_delivery(
                                     state, topology, channel, delivery, permit,
                                 )
                                 .await
@@ -90,6 +91,170 @@ pub(super) async fn run_rabbitmq_consumer_loop(
             }
         }
         tokio::time::sleep(topology.rabbitmq_reconnect_delay).await;
+    }
+}
+
+async fn handle_tool_call_command_delivery(
+    state: AppState,
+    topology: AsyncToolDispatchTopology,
+    channel: Channel,
+    delivery: lapin::message::Delivery,
+    permit: OwnedSemaphorePermit,
+) -> Result<(), String> {
+    let command = match serde_json::from_slice::<McpToolCallCommand>(&delivery.data) {
+        Ok(command) => command.normalize_delivery_attempt(),
+        Err(error) => {
+            publish_payload(
+                &channel,
+                topology.rabbitmq_exchange.as_deref().unwrap_or_default(),
+                topology
+                    .dead_letter_queue_name
+                    .as_deref()
+                    .unwrap_or_default(),
+                delivery.data.as_slice(),
+            )
+            .await
+            .map_err(|publish_error| {
+                format!("publish invalid MCP tool call command to DLQ failed: {publish_error}")
+            })?;
+            delivery
+                .ack(BasicAckOptions::default())
+                .await
+                .map_err(|ack_error| ack_error.to_string())?;
+            return Err(format!("invalid MCP tool call command: {error}"));
+        }
+    };
+    let result = crate::api::mcp::execute_tool_call_command(&state, &command).await;
+    drop(permit);
+    match result {
+        Ok(result) => {
+            if let Err(error) =
+                publish_tool_call_result(&channel, command.reply_to.as_str(), &result).await
+            {
+                delivery
+                    .nack(BasicNackOptions {
+                        multiple: false,
+                        requeue: true,
+                    })
+                    .await
+                    .map_err(|nack_error| nack_error.to_string())?;
+                return Err(format!("publish MCP tool call result failed: {error}"));
+            }
+            delivery
+                .ack(BasicAckOptions::default())
+                .await
+                .map_err(|error| error.to_string())
+        }
+        Err(error) => {
+            if let Some(retry) = command.next_retry(topology.max_delivery_attempts) {
+                publish_command_to_queue(
+                    &channel,
+                    topology.rabbitmq_exchange.as_deref().unwrap_or_default(),
+                    topology.retry_queue_name.as_deref().unwrap_or_default(),
+                    &retry,
+                )
+                .await?;
+                delivery
+                    .ack(BasicAckOptions::default())
+                    .await
+                    .map_err(|ack_error| ack_error.to_string())
+            } else {
+                let result = exhausted_tool_call_result(&command, error.as_str());
+                if let Err(publish_error) =
+                    publish_tool_call_result(&channel, command.reply_to.as_str(), &result).await
+                {
+                    delivery
+                        .nack(BasicNackOptions {
+                            multiple: false,
+                            requeue: true,
+                        })
+                        .await
+                        .map_err(|nack_error| nack_error.to_string())?;
+                    return Err(format!(
+                        "publish exhausted MCP tool call result failed: {publish_error}"
+                    ));
+                }
+                delivery
+                    .ack(BasicAckOptions::default())
+                    .await
+                    .map_err(|ack_error| ack_error.to_string())
+            }
+        }
+    }
+}
+
+async fn publish_command_to_queue(
+    channel: &Channel,
+    exchange: &str,
+    queue_name: &str,
+    command: &McpToolCallCommand,
+) -> Result<(), String> {
+    let payload = serde_json::to_vec(command).map_err(|error| error.to_string())?;
+    publish_payload(channel, exchange, queue_name, payload.as_slice())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+async fn publish_tool_call_result(
+    channel: &Channel,
+    reply_to: &str,
+    result: &McpToolCallResult,
+) -> Result<(), String> {
+    let payload = serde_json::to_vec(result).map_err(|error| error.to_string())?;
+    let confirmation = channel
+        .basic_publish(
+            "",
+            reply_to,
+            BasicPublishOptions {
+                mandatory: true,
+                ..BasicPublishOptions::default()
+            },
+            payload.as_slice(),
+            BasicProperties::default()
+                .with_content_type("application/json".into())
+                .with_delivery_mode(2)
+                .with_message_id(result.event_id.clone().into())
+                .with_correlation_id(result.batch_id.clone().into()),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| error.to_string())?;
+    match confirmation {
+        Confirmation::Ack(None) => Ok(()),
+        Confirmation::Ack(Some(_)) => Err(format!(
+            "RabbitMQ returned unroutable MCP tool call result for {reply_to}"
+        )),
+        Confirmation::Nack(_) => Err("RabbitMQ rejected MCP tool call result".to_string()),
+        Confirmation::NotRequested => {
+            Err("RabbitMQ publisher confirm is not enabled for MCP tool call results".to_string())
+        }
+    }
+}
+
+fn exhausted_tool_call_result(command: &McpToolCallCommand, error: &str) -> McpToolCallResult {
+    McpToolCallResult {
+        event_id: format!("mcp_batch_result_{}", uuid::Uuid::new_v4().simple()),
+        batch_id: command.batch_id.clone(),
+        session_id: String::new(),
+        run_id: None,
+        items: command
+            .calls
+            .iter()
+            .map(|call| McpToolCallResultItem {
+                invocation_id: call.invocation_id.clone(),
+                tool_call_id: call.tool_call_id.clone(),
+                call_index: call.call_index,
+                name: call.name.clone(),
+                status: McpToolCallResultStatus::Failed,
+                result: None,
+                error_code: Some(MCP_ERROR_INTERNAL),
+                error: Some(format!(
+                    "MCP tool call command failed after {} attempts: {error}",
+                    command.delivery_attempt.max(1)
+                )),
+            })
+            .collect(),
     }
 }
 
@@ -171,138 +336,6 @@ pub(super) async fn run_cancellation_consumer_loop(
     }
 }
 
-async fn handle_rabbitmq_delivery(
-    state: AppState,
-    topology: AsyncToolDispatchTopology,
-    channel: Channel,
-    delivery: lapin::message::Delivery,
-    permit: OwnedSemaphorePermit,
-) -> Result<(), String> {
-    let envelope = match serde_json::from_slice::<QueuedAsyncToolCallEnvelope>(&delivery.data) {
-        Ok(envelope) => envelope.normalize_delivery_attempt(),
-        Err(error) => {
-            let dead_letter_queue = topology
-                .dead_letter_queue_name
-                .as_deref()
-                .unwrap_or_default();
-            if let Err(publish_error) = publish_payload(
-                &channel,
-                topology.rabbitmq_exchange.as_deref().unwrap_or_default(),
-                dead_letter_queue,
-                delivery.data.as_slice(),
-            )
-            .await
-            {
-                delivery
-                    .nack(BasicNackOptions {
-                        multiple: false,
-                        requeue: true,
-                    })
-                    .await
-                    .map_err(|nack_error| nack_error.to_string())?;
-                return Err(format!(
-                    "publish invalid async envelope to DLQ failed: {publish_error}"
-                ));
-            }
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|ack_error| ack_error.to_string())?;
-            return Err(format!("invalid async tool dispatch envelope: {error}"));
-        }
-    };
-    let outcome = super::process_envelope(state.clone(), &envelope).await;
-    drop(permit);
-    settle_rabbitmq_delivery(&state, &topology, &channel, delivery, envelope, outcome).await
-}
-
-pub(super) async fn settle_rabbitmq_delivery(
-    state: &AppState,
-    topology: &AsyncToolDispatchTopology,
-    channel: &Channel,
-    delivery: lapin::message::Delivery,
-    envelope: QueuedAsyncToolCallEnvelope,
-    outcome: ProcessOutcome,
-) -> Result<(), String> {
-    match outcome {
-        ProcessOutcome::Ack => delivery
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|error| error.to_string()),
-        ProcessOutcome::Retry(error) => {
-            let (target_queue, retry_envelope, exhausted_message) =
-                if let Some(retry) = envelope.next_retry(topology.max_delivery_attempts) {
-                    warn!(
-                        invocation_id = envelope.invocation_id.as_str(),
-                        delivery_attempt = retry.delivery_attempt,
-                        max_delivery_attempts = topology.max_delivery_attempts,
-                        retry_delay_ms = topology.retry_delay.as_millis(),
-                        error = error.as_str(),
-                        "rabbitmq async tool dispatch scheduled a retry"
-                    );
-                    (
-                        topology.retry_queue_name.as_deref().unwrap_or_default(),
-                        retry,
-                        None,
-                    )
-                } else {
-                    let message = format!(
-                        "async tool dispatch failed after {} attempts: {error}",
-                        envelope.delivery_attempt.max(INITIAL_DELIVERY_ATTEMPT)
-                    );
-                    (
-                        topology
-                            .dead_letter_queue_name
-                            .as_deref()
-                            .unwrap_or_default(),
-                        envelope.clone(),
-                        Some(message),
-                    )
-                };
-            if let Err(publish_error) = publish_envelope_to_queue(
-                channel,
-                topology.rabbitmq_exchange.as_deref().unwrap_or_default(),
-                target_queue,
-                &retry_envelope,
-            )
-            .await
-            {
-                delivery
-                    .nack(BasicNackOptions {
-                        multiple: false,
-                        requeue: true,
-                    })
-                    .await
-                    .map_err(|nack_error| nack_error.to_string())?;
-                return Err(format!(
-                    "republish async tool dispatch failed: {publish_error}"
-                ));
-            }
-            if let Some(message) = exhausted_message {
-                if let Err(persist_error) =
-                    fail_async_invocation(state, envelope.invocation_id.as_str(), message.as_str())
-                        .await
-                {
-                    delivery
-                        .nack(BasicNackOptions {
-                            multiple: false,
-                            requeue: true,
-                        })
-                        .await
-                        .map_err(|nack_error| nack_error.to_string())?;
-                    return Err(format!(
-                        "persist exhausted async invocation failure failed: {persist_error}"
-                    ));
-                }
-            }
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|ack_error| ack_error.to_string())
-        }
-    }
-}
-
 pub(super) fn unavailable_rabbitmq_queue_stats() -> RabbitMqQueueRuntimeStats {
     RabbitMqQueueRuntimeStats {
         enabled: true,
@@ -334,18 +367,6 @@ pub(super) async fn open_rabbitmq_publisher(
     ensure_rabbitmq_topology(&channel, topology)
         .await
         .map_err(AsyncToolEnqueueError::Unavailable)?;
-    let exchange = topology.rabbitmq_exchange.clone().ok_or_else(|| {
-        AsyncToolEnqueueError::Unavailable(
-            "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE is required for RabbitMQ dispatch"
-                .to_string(),
-        )
-    })?;
-    let queue_name = topology.queue_name.clone().ok_or_else(|| {
-        AsyncToolEnqueueError::Unavailable(
-            "MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE is required for RabbitMQ dispatch"
-                .to_string(),
-        )
-    })?;
     let cancellation_exchange = topology.cancellation_exchange.clone().ok_or_else(|| {
         AsyncToolEnqueueError::Unavailable(
             "MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE is required for RabbitMQ dispatch"
@@ -355,21 +376,8 @@ pub(super) async fn open_rabbitmq_publisher(
     Ok(RabbitMqPublisher {
         _connection: connection,
         channel,
-        exchange,
-        queue_name,
         cancellation_exchange,
     })
-}
-
-pub(super) async fn publish_envelope_to_queue(
-    channel: &Channel,
-    exchange: &str,
-    queue_name: &str,
-    envelope: &QueuedAsyncToolCallEnvelope,
-) -> Result<(), AsyncToolEnqueueError> {
-    let payload = serde_json::to_vec(envelope)
-        .map_err(|error| AsyncToolEnqueueError::Unavailable(error.to_string()))?;
-    publish_payload(channel, exchange, queue_name, payload.as_slice()).await
 }
 
 async fn publish_payload(

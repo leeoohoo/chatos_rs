@@ -138,7 +138,6 @@ fn runtime_invocation_response(
                 RuntimeInvocationStatus::UnknownExecutionState
             }
         },
-        async_execution: record.async_execution,
         created_at_unix_ms: record.created_at_unix_ms,
         started_at_unix_ms: record.started_at_unix_ms,
         completed_at_unix_ms: record.completed_at_unix_ms,

@@ -1004,6 +1004,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chatos_mcp_management_sdk",
+ "chatos_mcp_service",
  "chatos_service_runtime",
  "futures-util",
  "hex",

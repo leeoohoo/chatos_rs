@@ -110,6 +110,7 @@ impl RunService {
             }
 
             if let Ok(Some(mut task_record)) = self.store.get_task(&run.task_id).await {
+                let terminal_task = task_record.clone();
                 task_record.status = task_status;
                 task_record.result_summary = Some(message.clone());
                 task_record.last_run_id = Some(run.id.clone());
@@ -120,6 +121,8 @@ impl RunService {
                         run.task_id, run.id, err
                     );
                 }
+                self.notify_mcp_management_run_finalized(&terminal_task, &run)
+                    .await;
             }
 
             self.store.clear_cancel_requested(&run.id);

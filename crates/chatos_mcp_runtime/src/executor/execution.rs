@@ -20,6 +20,7 @@ use crate::types::{
 use super::McpExecutor;
 
 const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
+const MCP_MANAGEMENT_SERVER_NAME: &str = "mcp_management";
 
 impl McpExecutor {
     pub async fn execute_tools_stream(
@@ -28,6 +29,11 @@ impl McpExecutor {
         context: ToolCallContext,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
+        if self.is_mcp_management_command(tool_calls) {
+            return self
+                .execute_mcp_management_batch(tool_calls, context, on_tool_result)
+                .await;
+        }
         if self.tool_lifecycle_hook.is_none() && self.should_parallelize_tool_batch(tool_calls) {
             return self
                 .execute_tools_parallel(tool_calls, context, on_tool_result)
@@ -59,6 +65,280 @@ impl McpExecutor {
             },
         )
         .await
+    }
+
+    fn is_mcp_management_command(&self, tool_calls: &[Value]) -> bool {
+        if tool_calls.is_empty() {
+            return false;
+        }
+        let mut has_mcp_management_tool = false;
+        for tool_call in tool_calls {
+            let Some(name) = crate::tool_call::extract_tool_call_name(tool_call) else {
+                continue;
+            };
+            let Some(name) = self.resolve_tool_name(name) else {
+                continue;
+            };
+            let Some(info) = self.tool_metadata.get(name) else {
+                continue;
+            };
+            if info.server_name != MCP_MANAGEMENT_SERVER_NAME
+                || info.server_type != "http"
+                || info.server_async_result_transport
+                    != crate::types::McpAsyncResultTransport::RabbitMq
+            {
+                return false;
+            }
+            has_mcp_management_tool = true;
+        }
+        has_mcp_management_tool
+    }
+
+    async fn execute_mcp_management_batch(
+        &self,
+        tool_calls: &[Value],
+        context: ToolCallContext,
+        on_tool_result: Option<ToolResultCallback>,
+    ) -> Vec<ToolResult> {
+        struct PreparedCall {
+            invocation_id: String,
+            call_id: String,
+            name: String,
+            original_name: String,
+            arguments: Value,
+            preflight_error: Option<String>,
+            lifecycle_event: Option<ToolLifecycleEvent>,
+        }
+
+        let mut prepared = Vec::with_capacity(tool_calls.len());
+        let mut shared: Option<ToolInfo> = None;
+        let mut batch_timeout = std::time::Duration::ZERO;
+        for tool_call in tool_calls {
+            let name = crate::tool_call::extract_tool_call_name(tool_call)
+                .unwrap_or("")
+                .to_string();
+            let call_id = crate::tool_call::extract_tool_call_id(tool_call)
+                .unwrap_or("")
+                .to_string();
+            let info = self
+                .resolve_tool_name(name.as_str())
+                .and_then(|resolved_name| self.tool_metadata.get(resolved_name))
+                .filter(|info| info.server_name == MCP_MANAGEMENT_SERVER_NAME)
+                .cloned();
+            if shared.is_none() {
+                shared = info.clone().or_else(|| {
+                    self.tool_metadata
+                        .values()
+                        .find(|info| info.server_name == MCP_MANAGEMENT_SERVER_NAME)
+                        .cloned()
+                });
+            }
+            let arguments = crate::arguments::parse_tool_args(
+                crate::tool_call::clone_tool_call_arguments(tool_call),
+            );
+            let mut preflight_error = None;
+            let arguments = match arguments {
+                Ok(arguments) => arguments,
+                Err(error) => {
+                    preflight_error = Some(format!("invalid tool arguments: {error}"));
+                    json!({})
+                }
+            };
+            if info.is_none() {
+                preflight_error = Some(format!("tool not found: {name}"));
+            }
+            let lifecycle_event = info.as_ref().and_then(|info| {
+                sha256_json(&arguments)
+                    .map(|arguments_sha256| ToolLifecycleEvent {
+                        tool_name: name.clone(),
+                        original_name: info.original_name.clone(),
+                        server_name: info.server_name.clone(),
+                        server_type: info.server_type.clone(),
+                        arguments_sha256,
+                        outcome: None,
+                        result_sha256: None,
+                    })
+                    .ok()
+            });
+            batch_timeout = batch_timeout.saturating_add(
+                info.as_ref()
+                    .and_then(|info| info.server_timeout)
+                    .unwrap_or(std::time::Duration::from_secs(15)),
+            );
+            prepared.push(PreparedCall {
+                invocation_id: format!("mcp_invocation_{}", uuid::Uuid::new_v4().simple()),
+                call_id,
+                name: name.clone(),
+                original_name: info
+                    .as_ref()
+                    .map(|info| info.original_name.clone())
+                    .unwrap_or(name),
+                arguments,
+                preflight_error,
+                lifecycle_event,
+            });
+        }
+        if let Some(hook) = &self.tool_lifecycle_hook {
+            for call in &mut prepared {
+                if call.preflight_error.is_none() {
+                    if let Some(lifecycle_event) = call.lifecycle_event.as_ref() {
+                        if let Err(error) = hook.before_tool_use(lifecycle_event).await {
+                            call.preflight_error = Some(format!(
+                                "PreToolUse Hook blocked tool {}: {error}",
+                                lifecycle_event.tool_name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        let Some(info) = shared else {
+            return batch_error_results(
+                tool_calls,
+                &context,
+                on_tool_result.as_ref(),
+                "MCP Management transport is unavailable",
+                false,
+            );
+        };
+        let batch_id = format!("mcp_batch_{}", uuid::Uuid::new_v4().simple());
+        let waiter = match crate::result_queue::prepare_result_waiter(batch_id.clone()) {
+            Ok(waiter) => waiter,
+            Err(error) => {
+                return batch_error_results(
+                    tool_calls,
+                    &context,
+                    on_tool_result.as_ref(),
+                    error.as_str(),
+                    false,
+                )
+            }
+        };
+        let command = chatos_mcp_service::McpToolCallCommand {
+            batch_id: batch_id.clone(),
+            runtime_token: info.runtime_bearer_token().unwrap_or_default().to_string(),
+            reply_to: waiter.reply_to().to_string(),
+            calls: prepared
+                .iter()
+                .enumerate()
+                .map(
+                    |(call_index, call)| chatos_mcp_service::McpToolCallCommandItem {
+                        invocation_id: call.invocation_id.clone(),
+                        tool_call_id: call.call_id.clone(),
+                        call_index,
+                        name: call.original_name.clone(),
+                        arguments: call.arguments.clone(),
+                        preflight_error: call.preflight_error.clone(),
+                    },
+                )
+                .collect(),
+            delivery_attempt: 1,
+        };
+        let command_queue = info.mcp_command_queue().unwrap_or_default();
+        let result = crate::result_queue::publish_tool_call_command(command_queue, &command)
+            .await
+            .and_then(|_| Ok(()));
+        let batch_result = match result {
+            Ok(()) => waiter.wait(batch_timeout).await,
+            Err(error) => Err(error),
+        };
+        let outcomes = match batch_result {
+            Ok(result) if result.batch_id == batch_id && result.items.len() == prepared.len() => {
+                result
+                    .items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        if item.call_index != index
+                            || item.tool_call_id != prepared[index].call_id
+                            || item.invocation_id != prepared[index].invocation_id
+                        {
+                            return Err(
+                                "MCP tool call result order or identity changed".to_string()
+                            );
+                        }
+                        match item.status {
+                            chatos_mcp_service::McpToolCallResultStatus::Completed => {
+                                item.result.ok_or_else(|| {
+                                    "MCP tool call completed without a result".to_string()
+                                })
+                            }
+                            status => Err(item.error.unwrap_or_else(|| {
+                                format!("MCP tool call ended with status {status:?}")
+                            })),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }
+            Ok(_) => {
+                vec![Err("MCP tool call result batch shape changed".to_string()); prepared.len()]
+            }
+            Err(error) => vec![Err(error); prepared.len()],
+        };
+        let mut tool_results = Vec::with_capacity(prepared.len());
+        for (call, outcome) in prepared.into_iter().zip(outcomes) {
+            let PreparedCall {
+                call_id,
+                name,
+                mut lifecycle_event,
+                ..
+            } = call;
+            let mut result = match outcome {
+                Ok(value) => {
+                    if let Some(event) = lifecycle_event.as_mut() {
+                        event.outcome = Some(ToolLifecycleOutcome::Succeeded);
+                        event.result_sha256 = sha256_json(&value).ok();
+                    }
+                    let (content, result) = self.normalize_tool_result(
+                        &value,
+                        context.tool_result_max_chars.or(self.tool_result_max_chars),
+                    );
+                    crate::execution::tool_result_success(
+                        call_id,
+                        name,
+                        context.conversation_turn_id.clone(),
+                        content,
+                        result,
+                    )
+                }
+                Err(error) => {
+                    if let Some(event) = lifecycle_event.as_mut() {
+                        event.outcome = Some(ToolLifecycleOutcome::Failed);
+                        event.result_sha256 = Some(hex::encode(Sha256::digest(error.as_bytes())));
+                    }
+                    crate::execution::tool_result_error(
+                        call_id,
+                        name,
+                        context.conversation_turn_id.clone(),
+                        format!("工具执行失败: {error}"),
+                        false,
+                    )
+                }
+            };
+            if let Some(hook) = &self.tool_lifecycle_hook {
+                if let Some(lifecycle_event) = lifecycle_event.as_ref() {
+                    if let Err(error) = hook.after_tool_use(lifecycle_event).await {
+                        result = crate::execution::tool_result_error(
+                            result.tool_call_id,
+                            result.name,
+                            result.conversation_turn_id,
+                            format!(
+                                "PostToolUse Hook failed after tool (underlying_tool_succeeded={}): {error}",
+                                lifecycle_event.outcome == Some(ToolLifecycleOutcome::Succeeded)
+                            ),
+                            true,
+                        );
+                    }
+                }
+            }
+            if let Some(callback) = on_tool_result.as_ref() {
+                if context.is_active() {
+                    callback(&result);
+                }
+            }
+            tool_results.push(result);
+        }
+        tool_results
     }
     async fn execute_tools_parallel(
         &self,
@@ -206,6 +486,37 @@ impl McpExecutor {
     }
 }
 
+fn batch_error_results(
+    tool_calls: &[Value],
+    context: &ToolCallContext,
+    on_tool_result: Option<&ToolResultCallback>,
+    message: &str,
+    fatal_error: bool,
+) -> Vec<ToolResult> {
+    tool_calls
+        .iter()
+        .map(|tool_call| {
+            let result = crate::execution::tool_result_error(
+                crate::tool_call::extract_tool_call_id(tool_call)
+                    .unwrap_or("")
+                    .to_string(),
+                crate::tool_call::extract_tool_call_name(tool_call)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                context.conversation_turn_id.clone(),
+                format!("工具执行失败: {message}"),
+                fatal_error,
+            );
+            if let Some(callback) = on_tool_result {
+                if context.is_active() {
+                    callback(&result);
+                }
+            }
+            result
+        })
+        .collect()
+}
+
 fn sha256_json(value: &impl serde::Serialize) -> Result<String, ToolCallError> {
     serde_json::to_vec(value)
         .map(|bytes| hex::encode(Sha256::digest(bytes)))
@@ -279,7 +590,10 @@ fn normalized_context_value(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_remote_tool_call_error;
+    use super::{classify_remote_tool_call_error, McpExecutor};
+    use crate::registry::BuiltinToolRegistry;
+    use crate::types::{McpAsyncResultTransport, ParsedToolDefinition};
+    use serde_json::json;
 
     #[test]
     fn destroyed_or_expired_sandbox_lease_is_fatal() {
@@ -295,5 +609,42 @@ mod tests {
     fn ordinary_remote_tool_failure_remains_non_fatal() {
         let error = classify_remote_tool_call_error("No such file or directory".to_string());
         assert!(!error.is_fatal());
+    }
+
+    #[test]
+    fn single_and_multiple_mcp_management_calls_use_the_same_command_path() {
+        let mut executor = McpExecutor::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+        executor.register_available_tool(
+            "mcp_management",
+            "mcp_management",
+            "http",
+            Some("http://127.0.0.1/mcp".to_string()),
+            None,
+            None,
+            None,
+            McpAsyncResultTransport::RabbitMq,
+            None,
+            None,
+            true,
+            ParsedToolDefinition {
+                name: "read_file".to_string(),
+                description: "read".to_string(),
+                parameters: json!({"type": "object"}),
+            },
+            json!({"name": "read_file"}),
+        );
+        assert!(executor.is_mcp_management_command(&[json!({
+            "id": "call-1",
+            "function": {"name": "read_file", "arguments": {}}
+        })]));
+        assert!(executor.is_mcp_management_command(&[
+            json!({"id": "call-1", "function": {"name": "read_file", "arguments": {}}}),
+            json!({"id": "call-2", "function": {"name": "missing_tool", "arguments": {}}}),
+        ]));
     }
 }

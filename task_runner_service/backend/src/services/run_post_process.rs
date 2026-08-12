@@ -135,15 +135,17 @@ impl RunService {
         if run.post_process_completed || run.post_process_dead_lettered {
             return Ok(());
         }
-        if run.status != TaskRunStatus::Succeeded {
-            self.store.mark_run_post_process_completed(run_id).await?;
-            return Ok(());
-        }
         let task = self
             .store
             .get_task(run.task_id.as_str())
             .await?
             .ok_or_else(|| format!("Run post-process task not found: {}", run.task_id))?;
+        self.finalize_mcp_management_run(&task, &run).await?;
+
+        if run.status != TaskRunStatus::Succeeded {
+            self.store.mark_run_post_process_completed(run_id).await?;
+            return Ok(());
+        }
 
         if !run.memory_summary_processed {
             let summary_job_run_id = if run.summary_job_run_id.is_some()

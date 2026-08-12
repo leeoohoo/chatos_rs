@@ -69,17 +69,6 @@ export const getRunStatusTone = (status: string): string => {
   return 'text-muted-foreground border-border bg-background';
 };
 
-export const getSandboxStatusText = (
-  loading: boolean,
-  saving: boolean,
-  enabled: boolean | null,
-  t: TranslateFn,
-): string => {
-  if (loading) return t('runSettings.sandboxLoading');
-  if (saving) return t('runSettings.sandboxSaving');
-  return t(enabled ? 'runSettings.sandboxEnabled' : 'runSettings.sandboxDisabled');
-};
-
 export const formatRunTargetSource = (target: ProjectRunTarget, t: TranslateFn): string => {
   const kind = (target.kind || '').trim();
   const entrypoint = (target.entrypoint || '').trim();

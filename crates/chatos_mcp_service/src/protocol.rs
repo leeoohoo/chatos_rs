@@ -19,6 +19,81 @@ pub const MCP_ERROR_INVOCATION_CANCELLED: i32 = -32010;
 pub const MCP_ERROR_UNKNOWN_EXECUTION_STATE: i32 = -32011;
 pub const MCP_ERROR_CAPACITY_EXHAUSTED: i32 = -32012;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallCommand {
+    pub batch_id: String,
+    pub runtime_token: String,
+    pub reply_to: String,
+    pub calls: Vec<McpToolCallCommandItem>,
+    #[serde(default = "initial_delivery_attempt")]
+    pub delivery_attempt: u32,
+}
+
+impl McpToolCallCommand {
+    pub fn normalize_delivery_attempt(mut self) -> Self {
+        self.delivery_attempt = self.delivery_attempt.max(1);
+        self
+    }
+
+    pub fn next_retry(&self, max_delivery_attempts: u32) -> Option<Self> {
+        if self.delivery_attempt.max(1) >= max_delivery_attempts {
+            return None;
+        }
+        let mut retry = self.clone();
+        retry.delivery_attempt = self.delivery_attempt.max(1).saturating_add(1);
+        Some(retry)
+    }
+}
+
+fn initial_delivery_attempt() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallCommandItem {
+    pub invocation_id: String,
+    pub tool_call_id: String,
+    pub call_index: usize,
+    pub name: String,
+    pub arguments: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallResult {
+    pub event_id: String,
+    pub batch_id: String,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub items: Vec<McpToolCallResultItem>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolCallResultStatus {
+    Completed,
+    Failed,
+    Cancelled,
+    UnknownExecutionState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallResultItem {
+    pub invocation_id: String,
+    pub tool_call_id: String,
+    pub call_index: usize,
+    pub name: String,
+    pub status: McpToolCallResultStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct CancelledNotificationParams {
     #[serde(rename = "requestId")]

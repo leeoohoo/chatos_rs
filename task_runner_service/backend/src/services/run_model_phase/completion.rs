@@ -112,6 +112,7 @@ impl RunService {
                 return;
             }
         }
+        self.notify_mcp_management_run_finalized(task, run).await;
 
         let event_type = match run.status {
             TaskRunStatus::Succeeded => "completed",
@@ -170,6 +171,87 @@ impl RunService {
         }
         self.enqueue_terminal_side_effects(run).await;
         self.store.clear_cancel_requested(&run.id);
+    }
+}
+
+impl RunService {
+    pub(in crate::services) async fn notify_mcp_management_run_finalized(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+    ) {
+        if let Err(error) = self.finalize_mcp_management_run(task, run).await {
+            warn!(
+                task_id = task.id.as_str(),
+                run_id = run.id.as_str(),
+                error = %error,
+                "notify MCP Management that run finalized failed; durable post-process will retry"
+            );
+        }
+    }
+
+    pub(in crate::services) async fn finalize_mcp_management_run(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+    ) -> Result<(), String> {
+        use chatos_mcp_management_sdk::{
+            FinalizeRuntimeRunRequest, McpManagementClient, McpManagementClientConfig,
+            RuntimeRunTerminalStatus,
+        };
+
+        let status = match run.status {
+            TaskRunStatus::Succeeded => RuntimeRunTerminalStatus::Succeeded,
+            TaskRunStatus::Failed => RuntimeRunTerminalStatus::Failed,
+            TaskRunStatus::Cancelled => RuntimeRunTerminalStatus::Cancelled,
+            TaskRunStatus::Blocked => RuntimeRunTerminalStatus::Blocked,
+            TaskRunStatus::Queued | TaskRunStatus::Running => return Ok(()),
+        };
+        let owner_user_id = task
+            .owner_user_id
+            .as_deref()
+            .or(task.creator_user_id.as_deref())
+            .unwrap_or(task.subject_id.as_str())
+            .trim();
+        if owner_user_id.is_empty() {
+            return Err(format!(
+                "{}: owner identity is missing",
+                crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+            ));
+        }
+        let config = match McpManagementClientConfig::from_env("task-runner").await {
+            Ok(config) => config,
+            Err(error) => {
+                return Err(format!(
+                    "{}: load client config: {error}",
+                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+                ));
+            }
+        };
+        let client = match McpManagementClient::new(config) {
+            Ok(client) => client,
+            Err(error) => {
+                return Err(format!(
+                    "{}: initialize client: {error}",
+                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+                ));
+            }
+        };
+        client
+            .finalize_runtime_run(&FinalizeRuntimeRunRequest {
+                owner_user_id: owner_user_id.to_string(),
+                project_id: crate::models::normalize_project_id(Some(task.project_id.clone())),
+                run_id: run.id.clone(),
+                status,
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                format!(
+                    "{}: {error}",
+                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+                )
+            })
     }
 }
 

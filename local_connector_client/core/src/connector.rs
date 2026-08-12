@@ -372,9 +372,17 @@ async fn handle_text_message(
             tracing_stdout(format!("service message: {message_type}").as_str());
             None
         }
-        MCP_RELAY_MESSAGE_TYPE => {
-            Some(handle_mcp_request(value, state, database, history_recorder).await)
-        }
+        MCP_RELAY_MESSAGE_TYPE => Some(
+            handle_mcp_request(
+                value,
+                state,
+                database,
+                http_client,
+                sandbox_runtime,
+                history_recorder,
+            )
+            .await,
+        ),
         "sandbox_request" => Some(
             handle_sandbox_request(value, state, http_client, sandbox_runtime, history_recorder)
                 .await,

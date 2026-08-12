@@ -13,6 +13,7 @@ mod dispatcher_prepare_plugins;
 mod dispatcher_prepare_sandbox;
 #[path = "dispatcher_prepare/system.rs"]
 mod dispatcher_prepare_system;
+mod dispatcher_run_lifecycle;
 mod dispatcher_runtime;
 mod dispatcher_runtime_lifecycle;
 mod dispatcher_sandbox;

@@ -289,6 +289,7 @@ pub struct RuntimeSessionResponse {
     pub route_revision: String,
     pub expires_at: String,
     pub mcp_server_url: String,
+    pub mcp_command_queue: String,
     pub runtime_token: String,
     pub configured_mcp_count: usize,
     #[serde(default)]
@@ -305,6 +306,29 @@ pub struct RuntimeSessionResponse {
 pub struct CloseRuntimeSessionResponse {
     pub session_id: String,
     pub closed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeRunTerminalStatus {
+    Succeeded,
+    Failed,
+    Cancelled,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalizeRuntimeRunRequest {
+    pub owner_user_id: String,
+    pub project_id: String,
+    pub run_id: String,
+    pub status: RuntimeRunTerminalStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalizeRuntimeRunResponse {
+    pub run_id: String,
+    pub finalized: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,8 +354,6 @@ pub struct RuntimeInvocationResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_tool_name: Option<String>,
     pub status: RuntimeInvocationStatus,
-    #[serde(default)]
-    pub async_execution: bool,
     pub created_at_unix_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_unix_ms: Option<i64>,
@@ -345,25 +367,6 @@ pub struct RuntimeInvocationResponse {
     pub terminal_error_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_modification_outcome: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeInvocationResultEvent {
-    pub event_id: String,
-    pub correlation_id: String,
-    pub invocation_id: String,
-    pub session_id: String,
-    pub caller_service: String,
-    pub resource_id: String,
-    pub exposed_tool_name: String,
-    pub status: RuntimeInvocationStatus,
-    pub occurred_at_unix_ms: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_result: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_error_code: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

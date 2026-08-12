@@ -43,10 +43,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .config
             .async_tool_dispatch_topology
             .worker_concurrency,
-        async_tool_local_queue_buffer = app_state
-            .config
-            .async_tool_dispatch_topology
-            .local_queue_buffer,
         async_tool_max_delivery_attempts = app_state
             .config
             .async_tool_dispatch_topology
@@ -92,13 +88,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(handle) = app_state
         .async_tool_dispatch
         .spawn_cancellation_consumer(app_state.clone())
-    {
-        background_handles.push(handle);
-    }
-    if let Some(handle) =
-        mcp_management_service_backend::result_events::spawn_result_event_publisher(
-            app_state.clone(),
-        )
     {
         background_handles.push(handle);
     }

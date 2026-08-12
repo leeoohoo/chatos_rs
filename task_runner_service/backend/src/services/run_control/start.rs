@@ -177,9 +177,6 @@ impl RunService {
         let sandbox_enabled = self
             .should_route_task_to_sandbox(&runtime_task, capability_policy.is_some())
             .await?;
-        if sandbox_enabled {
-            self.validate_sandbox_route_for_task(&runtime_task).await?;
-        }
 
         let run_id = Uuid::new_v4().to_string();
         let skill_snapshots = capability_policy

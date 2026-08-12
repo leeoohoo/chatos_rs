@@ -281,7 +281,7 @@ impl MongoStore {
         self.runs
             .find(
                 doc! {
-                    "status": "succeeded",
+                    "status": { "$in": ["succeeded", "failed", "cancelled", "blocked"] },
                     "post_process_event_pending": true,
                     "post_process_dead_lettered": { "$ne": true },
                 },
@@ -459,7 +459,7 @@ impl MongoStore {
             .update_one(
                 doc! {
                     "id": run_id,
-                    "status": "succeeded",
+                    "status": { "$in": ["succeeded", "failed", "cancelled", "blocked"] },
                     "post_process_completed": { "$ne": true },
                     "post_process_dead_lettered": true,
                 },

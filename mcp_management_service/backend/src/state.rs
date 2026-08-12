@@ -9,8 +9,9 @@ use crate::providers::{
 };
 use crate::routing::RoutingEngine;
 use crate::runtime::{
-    RuntimeGrantService, RuntimeInvocationQuota, RuntimeInvocationQuotaLimits,
-    RuntimeInvocationStore, RuntimeSessionCacheLimits, RuntimeSessionStore,
+    RuntimeExecutionScopeStore, RuntimeGrantService, RuntimeInvocationQuota,
+    RuntimeInvocationQuotaLimits, RuntimeInvocationStore, RuntimeSessionCacheLimits,
+    RuntimeSessionStore,
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 #[cfg(not(test))]
@@ -44,6 +45,7 @@ pub struct AppState {
     pub providers: ProviderDispatcher,
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
+    pub runtime_execution_scopes: RuntimeExecutionScopeStore,
     pub runtime_invocations: RuntimeInvocationStore,
     pub async_tool_dispatch: AsyncToolDispatch,
 }
@@ -132,6 +134,10 @@ impl AppState {
                 }
             }
         };
+        let runtime_execution_scopes = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => RuntimeExecutionScopeStore::connect(database_url).await?,
+            None => RuntimeExecutionScopeStore::memory(),
+        };
         let async_tool_dispatch =
             AsyncToolDispatch::new(config.async_tool_dispatch_topology.clone());
         let state = Self {
@@ -145,13 +151,10 @@ impl AppState {
             project_context_client,
             providers,
             runtime_sessions,
+            runtime_execution_scopes,
             runtime_invocations,
             async_tool_dispatch,
         };
-        state
-            .async_tool_dispatch
-            .start_local_worker(state.clone())
-            .await?;
         Ok(state)
     }
 }

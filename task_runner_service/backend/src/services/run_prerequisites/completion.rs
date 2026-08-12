@@ -27,6 +27,7 @@ impl RunService {
                 return;
             }
         }
+        self.notify_mcp_management_run_finalized(task, run).await;
         if let Err(err) = self
             .store
             .append_run_event(TaskRunEventRecord::new(
@@ -91,6 +92,7 @@ impl RunService {
                 return;
             }
         }
+        self.notify_mcp_management_run_finalized(task, run).await;
         if let Err(err) = self
             .store
             .append_run_event(TaskRunEventRecord::new(

@@ -59,6 +59,7 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
         source_session_id: Some("conversation-1".to_string()),

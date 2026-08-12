@@ -5,8 +5,8 @@ mod catalog;
 mod health;
 mod invocations;
 pub(crate) mod mcp;
-mod queue_operations;
 mod routes;
+mod runtime_runs;
 mod runtime_session_metadata;
 mod runtime_sessions;
 mod system;
@@ -75,16 +75,16 @@ pub fn build_internal_router(state: AppState) -> Router {
                 post(runtime_sessions::close_runtime_session),
             )
             .route(
+                "/api/internal/runtime/runs/finalize",
+                post(runtime_runs::finalize_runtime_run),
+            )
+            .route(
                 "/api/internal/runtime/invocations/{invocation_id}",
                 get(invocations::get_runtime_invocation),
             )
             .route(
                 "/api/internal/runtime/invocations/{invocation_id}/cancel",
                 post(invocations::cancel_runtime_invocation),
-            )
-            .route(
-                "/api/internal/queue-operations/async-tool/archive",
-                post(queue_operations::archive_async_tool_dead_letter),
             )
             .with_state(state),
         "internal",
@@ -166,7 +166,6 @@ mod tests {
                 mutation_may_have_started: false,
                 cancel_supported: true,
                 status: RuntimeInvocationStatus::Running,
-                async_execution: false,
                 created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                 started_at_unix_ms: Some(chrono::Utc::now().timestamp_millis()),
                 completed_at_unix_ms: None,
@@ -174,9 +173,6 @@ mod tests {
                 terminal_error_code: None,
                 terminal_error_message: None,
                 file_modification_outcome: None,
-                result_reply_to: None,
-                result_event_id: None,
-                result_event_pending: false,
                 expires_at: DateTime::from_millis(
                     (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
                 ),
@@ -229,7 +225,6 @@ mod tests {
                 mutation_may_have_started: false,
                 cancel_supported: true,
                 status: RuntimeInvocationStatus::Running,
-                async_execution: true,
                 created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                 started_at_unix_ms: Some(chrono::Utc::now().timestamp_millis()),
                 completed_at_unix_ms: None,
@@ -237,9 +232,6 @@ mod tests {
                 terminal_error_code: None,
                 terminal_error_message: None,
                 file_modification_outcome: None,
-                result_reply_to: None,
-                result_event_id: None,
-                result_event_pending: false,
                 expires_at: DateTime::from_millis(
                     (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
                 ),
@@ -306,7 +298,6 @@ mod tests {
                 mutation_may_have_started: false,
                 cancel_supported: true,
                 status: RuntimeInvocationStatus::Queued,
-                async_execution: true,
                 created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                 started_at_unix_ms: None,
                 completed_at_unix_ms: None,
@@ -314,9 +305,6 @@ mod tests {
                 terminal_error_code: None,
                 terminal_error_message: None,
                 file_modification_outcome: None,
-                result_reply_to: None,
-                result_event_id: None,
-                result_event_pending: false,
                 expires_at: DateTime::from_millis(
                     (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
                 ),
@@ -365,26 +353,6 @@ mod tests {
             Some(&serde_json::json!(3_000))
         );
         assert_eq!(
-            body.pointer("/async_tool_dispatch/result_outbox_reconcile_ms"),
-            Some(&serde_json::json!(5_000))
-        );
-        assert_eq!(
-            body.pointer("/async_tool_dispatch/result_outbox_batch_size"),
-            Some(&serde_json::json!(128))
-        );
-        assert_eq!(
-            body.pointer("/async_tool_dispatch/runtime/enqueue_accepted_total"),
-            Some(&serde_json::json!(0))
-        );
-        assert_eq!(
-            body.pointer("/async_tool_dispatch/runtime/enqueue_capacity_rejected_total"),
-            Some(&serde_json::json!(0))
-        );
-        assert_eq!(
-            body.pointer("/async_tool_dispatch/runtime/enqueue_unavailable_total"),
-            Some(&serde_json::json!(0))
-        );
-        assert_eq!(
             body.pointer("/async_tool_dispatch/runtime/cancellation_consumer_connected"),
             Some(&serde_json::json!(false))
         );
@@ -399,10 +367,6 @@ mod tests {
         assert_eq!(
             body.pointer("/runtime_invocations/queued"),
             Some(&serde_json::json!(1))
-        );
-        assert_eq!(
-            body.pointer("/runtime_invocations/pending_result_events"),
-            Some(&serde_json::json!(0))
         );
         assert_eq!(
             body.pointer("/runtime_invocations/registration/store_unavailable"),

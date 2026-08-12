@@ -113,90 +113,6 @@ impl RuntimeInvocationStore {
         .await
     }
 
-    pub async fn pending_result_events(
-        &self,
-        limit: i64,
-    ) -> Result<Vec<PendingRuntimeInvocationResultEvent>, String> {
-        let now = chrono::Utc::now().timestamp();
-        let records = match self.backend.as_ref() {
-            RuntimeInvocationStoreBackend::Memory(invocations) => {
-                let mut invocations = invocations.write().await;
-                invocations.retain(|_, record| record.expires_at_unix > now);
-                invocations
-                    .values()
-                    .filter(|record| record.result_event_pending)
-                    .take(limit.max(1) as usize)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            }
-            RuntimeInvocationStoreBackend::Mongo(collection) => collection
-                .find(
-                    doc! {
-                        "result_event_pending": true,
-                        "expires_at": { "$gt": DateTime::now() },
-                    },
-                    FindOptions::builder()
-                        .sort(doc! { "completed_at_unix_ms": 1 })
-                        .limit(limit.max(1))
-                        .build(),
-                )
-                .await
-                .map_err(|error| {
-                    format!("load pending Runtime Invocation result events failed: {error}")
-                })?
-                .try_collect::<Vec<_>>()
-                .await
-                .map_err(|error| {
-                    format!("read pending Runtime Invocation result events failed: {error}")
-                })?,
-        };
-        records
-            .into_iter()
-            .map(pending_result_event_from_record)
-            .collect()
-    }
-
-    pub async fn acknowledge_result_event(
-        &self,
-        invocation_id: &str,
-        event_id: &str,
-    ) -> Result<bool, String> {
-        match self.backend.as_ref() {
-            RuntimeInvocationStoreBackend::Memory(invocations) => {
-                let mut invocations = invocations.write().await;
-                let Some(record) = invocations.get_mut(invocation_id) else {
-                    return Ok(false);
-                };
-                if !record.result_event_pending
-                    || record.result_event_id.as_deref() != Some(event_id)
-                {
-                    return Ok(false);
-                }
-                record.result_event_pending = false;
-                Ok(true)
-            }
-            RuntimeInvocationStoreBackend::Mongo(collection) => collection
-                .update_one(
-                    doc! {
-                        "_id": invocation_id,
-                        "result_event_id": event_id,
-                        "result_event_pending": true,
-                    },
-                    doc! { "$set": { "result_event_pending": false } },
-                    None,
-                )
-                .await
-                .map(|result| result.modified_count == 1)
-                .map_err(|error| {
-                    format!("acknowledge Runtime Invocation result event failed: {error}")
-                }),
-        }
-    }
-
-    pub async fn wait_for_result_event_signal(&self) {
-        self.result_event_notify.notified().await;
-    }
-
     async fn transition_status(
         &self,
         invocation_id: &str,
@@ -253,7 +169,6 @@ impl RuntimeInvocationStore {
         error_message: Option<String>,
     ) -> Result<bool, String> {
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let result_event_id = format!("mcp_result_{}", Uuid::new_v4().simple());
         let file_modification_outcome =
             terminal_file_modification_outcome(to, result.as_ref(), error_message.as_deref());
         let result = sanitize_terminal_result(result)?;
@@ -277,10 +192,6 @@ impl RuntimeInvocationStore {
                     } else {
                         None
                     };
-                if record.async_execution {
-                    record.result_event_id = Some(result_event_id);
-                    record.result_event_pending = true;
-                }
                 Ok(Some(record.clone()))
             }
             RuntimeInvocationStoreBackend::Mongo(collection) => {
@@ -328,17 +239,6 @@ impl RuntimeInvocationStore {
                         ]
                     },
                 );
-                set_doc.insert(
-                    "result_event_id",
-                    doc! {
-                        "$cond": [
-                            "$async_execution",
-                            result_event_id,
-                            bson::Bson::Null,
-                        ]
-                    },
-                );
-                set_doc.insert("result_event_pending", "$async_execution");
                 collection
                     .find_one_and_update(
                         doc! {
@@ -365,7 +265,6 @@ impl RuntimeInvocationStore {
                     "release terminal Runtime Invocation quota reservation failed"
                 );
             }
-            self.result_event_notify.notify_one();
         }
         Ok(transitioned_record.is_some())
     }
@@ -376,67 +275,6 @@ fn terminal_process_wait_timed_out(result: &Value) -> bool {
     payload.get("timed_out").and_then(Value::as_bool) == Some(true)
         && payload.get("completed").and_then(Value::as_bool) == Some(false)
         && payload.get("wait_status").and_then(Value::as_str) == Some("timeout")
-}
-
-fn pending_result_event_from_record(
-    record: RuntimeInvocationRecord,
-) -> Result<PendingRuntimeInvocationResultEvent, String> {
-    let reply_to = record
-        .result_reply_to
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            format!(
-                "pending Runtime Invocation {} is missing result_reply_to",
-                record.invocation_id
-            )
-        })?;
-    let event_id = record.result_event_id.clone().ok_or_else(|| {
-        format!(
-            "pending Runtime Invocation {} is missing result_event_id",
-            record.invocation_id
-        )
-    })?;
-    let status = match record.status {
-        RuntimeInvocationStatus::Completed => {
-            chatos_mcp_management_sdk::RuntimeInvocationStatus::Completed
-        }
-        RuntimeInvocationStatus::Failed => {
-            chatos_mcp_management_sdk::RuntimeInvocationStatus::Failed
-        }
-        RuntimeInvocationStatus::Cancelled => {
-            chatos_mcp_management_sdk::RuntimeInvocationStatus::Cancelled
-        }
-        RuntimeInvocationStatus::UnknownExecutionState => {
-            chatos_mcp_management_sdk::RuntimeInvocationStatus::UnknownExecutionState
-        }
-        other => {
-            return Err(format!(
-                "pending Runtime Invocation {} has non-terminal status {}",
-                record.invocation_id,
-                other.as_str()
-            ))
-        }
-    };
-    Ok(PendingRuntimeInvocationResultEvent {
-        reply_to,
-        event: chatos_mcp_management_sdk::RuntimeInvocationResultEvent {
-            event_id,
-            correlation_id: record.request_id_key,
-            invocation_id: record.invocation_id,
-            session_id: record.session_id,
-            caller_service: record.caller_service,
-            resource_id: record.resource_id,
-            exposed_tool_name: record.exposed_tool_name,
-            status,
-            occurred_at_unix_ms: record
-                .completed_at_unix_ms
-                .unwrap_or(record.created_at_unix_ms),
-            terminal_result: record.terminal_result,
-            terminal_error_code: record.terminal_error_code,
-            terminal_error_message: record.terminal_error_message,
-        },
-    })
 }
 
 fn terminal_file_modification_outcome(

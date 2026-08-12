@@ -92,7 +92,7 @@ fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecor
 }
 
 fn ensure_run_post_process_pending(run: &mut TaskRunRecord) {
-    if run.status == TaskRunStatus::Succeeded
+    if task_run_status_is_terminal(run.status)
         && !run.post_process_completed
         && !run.post_process_dead_lettered
         && !run.post_process_event_enqueued

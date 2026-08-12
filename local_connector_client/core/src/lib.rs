@@ -181,6 +181,8 @@ pub async fn run_local_connector() -> Result<()> {
     });
     let _sandbox_lease_reaper =
         sandbox::lease::spawn_local_sandbox_lease_reaper(runtime.sandbox_runtime.clone());
+    let _execution_scope_reaper =
+        mcp::execution_scope::spawn_local_execution_scope_reaper(runtime.sandbox_runtime.clone());
     if let Some(refresh) = managed_requirements.background_refresh {
         refresh.spawn(runtime.http_client.clone());
     }

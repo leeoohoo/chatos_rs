@@ -4,6 +4,43 @@
 use super::*;
 
 impl RuntimeInvocationStore {
+    pub async fn discard_queued_registration(
+        &self,
+        invocation_id: &str,
+        session_id: &str,
+    ) -> Result<bool, String> {
+        let record = match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => {
+                let mut invocations = invocations.write().await;
+                let removable = invocations.get(invocation_id).is_some_and(|record| {
+                    record.session_id == session_id
+                        && record.status == RuntimeInvocationStatus::Queued
+                });
+                removable
+                    .then(|| invocations.remove(invocation_id))
+                    .flatten()
+            }
+            RuntimeInvocationStoreBackend::Mongo(collection) => collection
+                .find_one_and_delete(
+                    doc! {
+                        "_id": invocation_id,
+                        "session_id": session_id,
+                        "status": RuntimeInvocationStatus::Queued.as_str(),
+                    },
+                    None,
+                )
+                .await
+                .map_err(|error| {
+                    format!("discard queued Runtime Invocation registration failed: {error}")
+                })?,
+        };
+        let Some(record) = record else {
+            return Ok(false);
+        };
+        self.quota.release(&record).await?;
+        Ok(true)
+    }
+
     pub async fn request_cancel_by_request(
         &self,
         session_id: &str,

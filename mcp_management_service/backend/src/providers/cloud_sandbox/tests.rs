@@ -150,6 +150,7 @@ async fn cloud_sandbox_call_uses_signed_manager_proxy_and_bound_headers() {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
         source_session_id: None,

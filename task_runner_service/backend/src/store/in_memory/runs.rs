@@ -345,7 +345,7 @@ impl InMemoryStore {
             .runs
             .values()
             .filter(|run| {
-                run.status == TaskRunStatus::Succeeded
+                task_run_status_is_terminal(run.status)
                     && run.post_process_event_pending
                     && !run.post_process_dead_lettered
             })
@@ -469,7 +469,7 @@ impl InMemoryStore {
         let Some(run) = data.runs.get_mut(run_id) else {
             return false;
         };
-        if run.status != TaskRunStatus::Succeeded
+        if !task_run_status_is_terminal(run.status)
             || run.post_process_completed
             || !run.post_process_dead_lettered
         {

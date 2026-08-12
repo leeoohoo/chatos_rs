@@ -46,13 +46,6 @@ struct LocalConnectorResolvedSandboxRoute {
 }
 
 impl RunService {
-    pub(crate) async fn validate_sandbox_route_for_task(
-        &self,
-        task: &TaskRecord,
-    ) -> Result<(), String> {
-        self.sandbox_route_for_task(task).await.map(|_| ())
-    }
-
     pub(super) async fn sandbox_route_for_task(
         &self,
         task: &TaskRecord,

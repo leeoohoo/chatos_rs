@@ -364,7 +364,7 @@ fn push_tool_result(
     results.push(result);
 }
 
-fn tool_result_success(
+pub(crate) fn tool_result_success(
     tool_call_id: String,
     name: String,
     conversation_turn_id: Option<String>,
@@ -386,7 +386,7 @@ fn tool_result_success(
     }
 }
 
-fn tool_result_error(
+pub(crate) fn tool_result_error(
     tool_call_id: String,
     name: String,
     conversation_turn_id: Option<String>,

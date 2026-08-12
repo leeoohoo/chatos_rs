@@ -17,7 +17,6 @@ const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
 const MCP_TOOLS_LIST_ERROR_CACHE_TTL: Duration = Duration::from_secs(10);
 const MCP_HTTP_RESPONSE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const MCP_HTTP_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
-const MCP_RESULT_REPLY_TO_HEADER: &str = "x-mcp-result-reply-to";
 static MCP_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
     OnceLock::new();
@@ -110,17 +109,7 @@ pub async fn jsonrpc_http_call_with_client(
     client: Option<&reqwest::Client>,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
-    jsonrpc_http_call_with_id(
-        url,
-        headers,
-        method,
-        params,
-        timeout,
-        id.as_str(),
-        None,
-        client,
-    )
-    .await
+    jsonrpc_http_call_with_id(url, headers, method, params, timeout, id.as_str(), client).await
 }
 
 pub async fn jsonrpc_http_tool_call_cancellable(
@@ -150,16 +139,14 @@ pub async fn jsonrpc_http_tool_call_cancellable_with_client(
     client: Option<&reqwest::Client>,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
-    let result_waiter = match async_result_transport {
-        McpAsyncResultTransport::Disabled => None,
-        McpAsyncResultTransport::RabbitMq => Some(crate::result_queue::prepare_result_waiter(
-            serde_json::to_string(&Value::String(id.clone())).map_err(|error| error.to_string())?,
-        )?),
-    };
+    if async_result_transport == McpAsyncResultTransport::RabbitMq {
+        return Err(
+            "RabbitMQ MCP tools must use the unified tool call command channel".to_string(),
+        );
+    }
     let mut cancellation_guard =
         HttpCancellationGuard::new(url, headers, id.as_str(), timeout, client.cloned());
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
-    let started = Instant::now();
     let result = match jsonrpc_http_call_with_id(
         url,
         headers,
@@ -167,29 +154,11 @@ pub async fn jsonrpc_http_tool_call_cancellable_with_client(
         params,
         Some(request_timeout),
         id.as_str(),
-        result_waiter.as_ref().map(|waiter| waiter.reply_to()),
         client,
     )
     .await
     {
-        Ok(response) => {
-            if let Some(invocation_id) = accepted_invocation_id(&response) {
-                let waiter = result_waiter.ok_or_else(|| {
-                    format!(
-                        "tools/call {url} accepted invocation {invocation_id} without a configured MQ result consumer"
-                    )
-                })?;
-                let remaining = request_timeout.checked_sub(started.elapsed()).ok_or_else(|| {
-                    format!(
-                        "tools/call {url} accepted invocation {invocation_id}, but MQ result delivery exceeded timeout={}s",
-                        request_timeout.as_secs()
-                    )
-                })?;
-                waiter.wait(remaining).await
-            } else {
-                Ok(response)
-            }
-        }
+        Ok(response) => Ok(response),
         Err(error) => Err(error),
     };
     cancellation_guard.disarm();
@@ -203,7 +172,6 @@ async fn jsonrpc_http_call_with_id(
     params: Value,
     timeout: Option<Duration>,
     id: &str,
-    result_reply_to: Option<&str>,
     client: Option<&reqwest::Client>,
 ) -> Result<Value, String> {
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -221,9 +189,6 @@ async fn jsonrpc_http_call_with_id(
         for (key, value) in prepare_http_headers(headers)? {
             request = request.header(key.as_str(), value.as_str());
         }
-    }
-    if let Some(reply_to) = result_reply_to {
-        request = request.header(MCP_RESULT_REPLY_TO_HEADER, reply_to);
     }
     let response = request
         .send()
@@ -387,20 +352,6 @@ fn mcp_http_client() -> Result<reqwest::Client, String> {
                 .map_err(|err| err.to_string())
         })
         .clone()
-}
-
-fn accepted_invocation_id(response: &Value) -> Option<&str> {
-    if response.get("status").and_then(Value::as_str) != Some("accepted") {
-        return None;
-    }
-    if response.get("queued").and_then(Value::as_bool) != Some(true) {
-        return None;
-    }
-    response
-        .get("invocation_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 async fn read_http_response_body_limited(

@@ -61,12 +61,6 @@ impl RunService {
         tasks: &'a [TaskRecord],
     ) -> Pin<Box<dyn Future<Output = Result<Vec<TaskRunRecord>, String>> + Send + 'a>> {
         Box::pin(async move {
-            for task in tasks
-                .iter()
-                .filter(|task| task.mcp_config.requires_execution)
-            {
-                self.validate_sandbox_route_for_task(task).await?;
-            }
             let activated_at = now_rfc3339();
             let mut activated_tasks = Vec::with_capacity(tasks.len());
             for task in tasks {

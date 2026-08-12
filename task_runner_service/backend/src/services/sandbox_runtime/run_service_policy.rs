@@ -8,6 +8,30 @@ use chatos_sandbox_contract::{EffectiveSandboxPolicy, SandboxLeasePolicyRequest}
 use super::*;
 
 impl RunService {
+    async fn task_uses_local_connector_workspace(&self, task: &TaskRecord) -> Result<bool, String> {
+        let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
+        if project_id == crate::models::PUBLIC_PROJECT_ID
+            || !super::project_management_api_client::project_service_enabled(&self.config)
+        {
+            return Ok(false);
+        }
+        let project = super::project_management_api_client::sync_get_project(
+            &self.config,
+            project_id.as_str(),
+        )
+        .await?;
+        Ok(project.is_some_and(|project| {
+            project
+                .source_type
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|source_type| {
+                    source_type.eq_ignore_ascii_case("local")
+                        || source_type.eq_ignore_ascii_case("local_connector")
+                })
+        }))
+    }
+
     pub(in crate::services) async fn effective_sandbox_policy_for_task(
         &self,
         task: &TaskRecord,
@@ -72,6 +96,13 @@ impl RunService {
         authoritative_policy: bool,
     ) -> Result<bool, String> {
         if !task.mcp_config.enabled {
+            return Ok(false);
+        }
+        // Local project file and command execution is routed by MCP Management
+        // to the Local Connector workspace. The client owns whether those MCP
+        // calls run in a native process or Docker; Task Runner must not create
+        // or bind a local sandbox lease.
+        if self.task_uses_local_connector_workspace(task).await? {
             return Ok(false);
         }
         let sandbox_enabled = self.effective_sandbox_policy_for_task(task).await?;

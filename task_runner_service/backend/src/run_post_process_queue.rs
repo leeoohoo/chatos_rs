@@ -366,7 +366,12 @@ pub fn spawn_run_post_process_consumer(
                                         0
                                     }
                                 };
-                                if attempt >= topology.run_post_process_max_delivery_attempts {
+                                let lifecycle_retry = err.starts_with(
+                                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX,
+                                );
+                                if attempt >= topology.run_post_process_max_delivery_attempts
+                                    && !lifecycle_retry
+                                {
                                     if let Err(publish_err) = dead_letter_run_post_process(
                                         &channel,
                                         &topology,

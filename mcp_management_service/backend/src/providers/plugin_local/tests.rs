@@ -271,6 +271,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: None,
         task_id: None,
         source_session_id: None,
