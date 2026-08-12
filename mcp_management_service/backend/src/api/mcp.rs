@@ -584,54 +584,44 @@ async fn dispatch_provider_call(
     let started = Instant::now();
     let mut acquired_turn = false;
     let mut cancelled_before_start = false;
+    let mut deferred_turn = false;
     let mut coordination_error = None;
     if let Some(run_id) = snapshot.run_id.as_deref() {
-        loop {
-            match state
-                .runtime_execution_scopes
-                .try_acquire_invocation_turn(
-                    snapshot.owner_user_id.as_str(),
-                    snapshot.project_id.as_str(),
-                    run_id,
-                    snapshot.project_context.workspace_provider,
-                    invocation_id,
-                )
-                .await
-            {
-                Ok(RuntimeExecutionTurnState::Acquired) => {
-                    acquired_turn = true;
-                    break;
-                }
-                Ok(RuntimeExecutionTurnState::Terminal) => {
-                    cancelled_before_start = true;
-                    break;
-                }
-                Ok(RuntimeExecutionTurnState::Waiting) => {
-                    match state
-                        .runtime_invocations
-                        .cancellation_requested(invocation_id)
-                        .await
-                    {
-                        Ok(true) => {
-                            cancelled_before_start = true;
-                            break;
-                        }
-                        Ok(false) => tokio::time::sleep(std::time::Duration::from_millis(25)).await,
-                        Err(error) => {
-                            coordination_error = Some(error);
-                            break;
-                        }
+        match state
+            .runtime_execution_scopes
+            .try_acquire_invocation_turn(
+                snapshot.owner_user_id.as_str(),
+                snapshot.project_id.as_str(),
+                run_id,
+                snapshot.project_context.workspace_provider,
+                invocation_id,
+            )
+            .await
+        {
+            Ok(RuntimeExecutionTurnState::Acquired) => acquired_turn = true,
+            Ok(RuntimeExecutionTurnState::Terminal) => cancelled_before_start = true,
+            Ok(RuntimeExecutionTurnState::Waiting) => {
+                match state
+                    .runtime_invocations
+                    .cancellation_requested(invocation_id)
+                    .await
+                {
+                    Ok(true) => cancelled_before_start = true,
+                    Ok(false) => {
+                        deferred_turn = true;
+                        coordination_error = Some(
+                            "MCP invocation is waiting for its persisted run FIFO turn; defer the command delivery"
+                                .to_string(),
+                        )
                     }
-                }
-                Err(error) => {
-                    coordination_error = Some(error);
-                    break;
+                    Err(error) => coordination_error = Some(error),
                 }
             }
+            Err(error) => coordination_error = Some(error),
         }
     }
     if let Some(run_id) = snapshot.run_id.as_deref() {
-        if cancelled_before_start || coordination_error.is_some() {
+        if (cancelled_before_start || coordination_error.is_some()) && !deferred_turn {
             if let Err(error) = state
                 .runtime_execution_scopes
                 .release_invocation_turn(
