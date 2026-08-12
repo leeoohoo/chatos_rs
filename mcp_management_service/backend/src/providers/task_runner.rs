@@ -5,12 +5,13 @@ use std::time::Duration;
 
 use crate::runtime::RuntimeSessionSnapshot;
 
-use super::ProviderCallError;
+use super::{ProviderCallError, ProviderWaitingForUser};
 
 mod init;
 mod prepare;
 mod request_builder;
 mod runtime_calls;
+mod waiting_user;
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "task-runner";

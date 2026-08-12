@@ -12,6 +12,7 @@ use lapin::{
     types::{AMQPValue, FieldTable},
     BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind,
 };
+use serde::{Deserialize, Serialize};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn};
 
@@ -24,8 +25,61 @@ use chatos_mcp_service::{
 
 use super::{
     AsyncToolEnqueueError, InvocationCancellationEvent, RABBITMQ_CANCELLATION_CONSUMER_TAG,
-    RABBITMQ_CONSUMER_TAG,
+    RABBITMQ_CONSUMER_TAG, RABBITMQ_INVOCATION_CONSUMER_TAG,
+    RABBITMQ_INVOCATION_TERMINAL_CONSUMER_TAG,
 };
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InvocationReadyEvent {
+    event_id: String,
+    batch_id: String,
+    call_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InvocationTerminalEvent {
+    event_id: String,
+    invocation_id: String,
+    prompt_id: Option<String>,
+}
+
+pub(super) async fn publish_invocation_terminal_event(
+    channel: &Channel,
+    topology: &AsyncToolDispatchTopology,
+    invocation_id: &str,
+    prompt_id: Option<&str>,
+) -> Result<(), AsyncToolEnqueueError> {
+    let event = InvocationTerminalEvent {
+        event_id: prompt_id
+            .map(|prompt_id| format!("mcp_prompt_terminal_{prompt_id}"))
+            .unwrap_or_else(|| format!("mcp_invocation_terminal_{invocation_id}")),
+        invocation_id: invocation_id.to_string(),
+        prompt_id: prompt_id.map(ToOwned::to_owned),
+    };
+    let payload = serde_json::to_vec(&event)
+        .map_err(|error| AsyncToolEnqueueError::Unavailable(error.to_string()))?;
+    publish_payload(
+        channel,
+        topology.rabbitmq_exchange.as_deref().unwrap_or_default(),
+        terminal_queue_name(topology).as_str(),
+        payload.as_slice(),
+    )
+    .await
+}
+
+fn invocation_queue_name(topology: &AsyncToolDispatchTopology) -> String {
+    format!(
+        "{}.invocations",
+        topology.queue_name.as_deref().unwrap_or_default()
+    )
+}
+
+fn terminal_queue_name(topology: &AsyncToolDispatchTopology) -> String {
+    format!(
+        "{}.terminals",
+        topology.queue_name.as_deref().unwrap_or_default()
+    )
+}
 
 pub(super) struct RabbitMqPublisher {
     pub(super) _connection: Connection,
@@ -124,13 +178,12 @@ async fn handle_tool_call_command_delivery(
             return Err(format!("invalid MCP tool call command: {error}"));
         }
     };
-    let result = crate::api::mcp::execute_tool_call_command(&state, &command).await;
+    let result = crate::api::mcp::register_tool_call_command(&state, &command).await;
     drop(permit);
     match result {
-        Ok(result) => {
+        Ok(registered) => {
             if let Err(error) =
-                publish_tool_call_result(&channel, "", command.result_routing_key.as_str(), &result)
-                    .await
+                publish_batch_pending_event(&state, &topology, &channel, &registered.record).await
             {
                 delivery
                     .nack(BasicNackOptions {
@@ -139,7 +192,9 @@ async fn handle_tool_call_command_delivery(
                     })
                     .await
                     .map_err(|nack_error| nack_error.to_string())?;
-                return Err(format!("publish MCP tool call result failed: {error}"));
+                return Err(format!(
+                    "publish MCP tool batch continuation failed: {error}"
+                ));
             }
             delivery
                 .ack(BasicAckOptions::default())
@@ -187,6 +242,229 @@ async fn handle_tool_call_command_delivery(
             }
         }
     }
+}
+
+async fn publish_batch_pending_event(
+    state: &AppState,
+    topology: &AsyncToolDispatchTopology,
+    channel: &Channel,
+    batch: &crate::runtime::RuntimeToolBatchRecord,
+) -> Result<(), String> {
+    let Some(event) = batch.pending_event.clone() else {
+        return Ok(());
+    };
+    match event.clone() {
+        crate::runtime::RuntimeToolBatchPendingEvent::InvocationReady { call_index } => {
+            let ready = InvocationReadyEvent {
+                event_id: format!("mcp_invocation_ready_{}_{}", batch.batch_id, call_index),
+                batch_id: batch.batch_id.clone(),
+                call_index,
+            };
+            let payload = serde_json::to_vec(&ready).map_err(|error| error.to_string())?;
+            publish_payload(
+                channel,
+                topology.rabbitmq_exchange.as_deref().unwrap_or_default(),
+                invocation_queue_name(topology).as_str(),
+                payload.as_slice(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        }
+        crate::runtime::RuntimeToolBatchPendingEvent::AggregateResult => {
+            let result = batch.aggregate_result().ok_or_else(|| {
+                "completed Runtime Tool Batch has no aggregate result".to_string()
+            })?;
+            publish_tool_call_result(
+                channel,
+                "",
+                batch.command.result_routing_key.as_str(),
+                &result,
+            )
+            .await?;
+        }
+    }
+    state
+        .runtime_tool_batches
+        .acknowledge_pending_event(batch.batch_id.as_str(), &event)
+        .await
+}
+
+pub(super) async fn run_rabbitmq_invocation_consumer_loop(
+    state: AppState,
+    topology: AsyncToolDispatchTopology,
+) {
+    loop {
+        match open_named_consumer(
+            &topology,
+            invocation_queue_name(&topology).as_str(),
+            RABBITMQ_INVOCATION_CONSUMER_TAG,
+        )
+        .await
+        {
+            Ok((_connection, channel, mut consumer)) => {
+                while let Some(delivery) = consumer.next().await {
+                    let Ok(delivery) = delivery else { break };
+                    let outcome = match serde_json::from_slice::<InvocationReadyEvent>(
+                        &delivery.data,
+                    ) {
+                        Ok(event) => {
+                            let outcome = crate::api::mcp::execute_tool_batch_invocation(
+                                &state,
+                                event.batch_id.as_str(),
+                                event.call_index,
+                            )
+                            .await;
+                            let _ = state
+                                    .runtime_tool_batches
+                                    .acknowledge_pending_event(
+                                        event.batch_id.as_str(),
+                                        &crate::runtime::RuntimeToolBatchPendingEvent::InvocationReady {
+                                            call_index: event.call_index,
+                                        },
+                                    )
+                                    .await;
+                            outcome
+                        }
+                        Err(error) => Err(format!("invalid invocation-ready event: {error}")),
+                    };
+                    match outcome {
+                        Ok(batch) => {
+                            if let Err(error) =
+                                publish_batch_pending_event(&state, &topology, &channel, &batch)
+                                    .await
+                            {
+                                warn!(
+                                    error = error.as_str(),
+                                    "publish invocation continuation failed"
+                                );
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: true,
+                                    })
+                                    .await;
+                                continue;
+                            }
+                            let _ = delivery.ack(BasicAckOptions::default()).await;
+                        }
+                        Err(error) => {
+                            warn!(
+                                error = error.as_str(),
+                                "execute invocation-ready event failed"
+                            );
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: true,
+                                })
+                                .await;
+                        }
+                    }
+                }
+            }
+            Err(error) => warn!(error = error.as_str(), "MCP invocation consumer failed"),
+        }
+        tokio::time::sleep(topology.rabbitmq_reconnect_delay).await;
+    }
+}
+
+pub(super) async fn run_rabbitmq_terminal_consumer_loop(
+    state: AppState,
+    topology: AsyncToolDispatchTopology,
+) {
+    loop {
+        match open_named_consumer(
+            &topology,
+            terminal_queue_name(&topology).as_str(),
+            RABBITMQ_INVOCATION_TERMINAL_CONSUMER_TAG,
+        )
+        .await
+        {
+            Ok((_connection, channel, mut consumer)) => {
+                if let Err(error) = reconcile_pending_batches(&state, &topology, &channel).await {
+                    warn!(
+                        error = error.as_str(),
+                        "reconcile pending MCP batches failed"
+                    );
+                }
+                while let Some(delivery) = consumer.next().await {
+                    let Ok(delivery) = delivery else { break };
+                    let outcome =
+                        match serde_json::from_slice::<InvocationTerminalEvent>(&delivery.data) {
+                            Ok(event) => {
+                                if let Some(prompt_id) = event.prompt_id.as_deref() {
+                                    crate::api::mcp::resolve_waiting_user_tool_invocation(
+                                        &state, prompt_id,
+                                    )
+                                    .await
+                                } else {
+                                    crate::api::mcp::resume_terminal_tool_batch_invocation(
+                                        &state,
+                                        event.invocation_id.as_str(),
+                                    )
+                                    .await
+                                }
+                            }
+                            Err(error) => {
+                                Err(format!("invalid invocation-terminal event: {error}"))
+                            }
+                        };
+                    match outcome {
+                        Ok(Some(batch)) => {
+                            if let Err(error) =
+                                publish_batch_pending_event(&state, &topology, &channel, &batch)
+                                    .await
+                            {
+                                warn!(
+                                    error = error.as_str(),
+                                    "publish terminal continuation failed"
+                                );
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: true,
+                                    })
+                                    .await;
+                                continue;
+                            }
+                            let _ = delivery.ack(BasicAckOptions::default()).await;
+                        }
+                        Ok(None) => {
+                            let _ = delivery.ack(BasicAckOptions::default()).await;
+                        }
+                        Err(error) => {
+                            warn!(
+                                error = error.as_str(),
+                                "reduce invocation-terminal event failed"
+                            );
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: true,
+                                })
+                                .await;
+                        }
+                    }
+                }
+            }
+            Err(error) => warn!(
+                error = error.as_str(),
+                "MCP invocation terminal consumer failed"
+            ),
+        }
+        tokio::time::sleep(topology.rabbitmq_reconnect_delay).await;
+    }
+}
+
+async fn reconcile_pending_batches(
+    state: &AppState,
+    topology: &AsyncToolDispatchTopology,
+    channel: &Channel,
+) -> Result<(), String> {
+    for batch in state.runtime_tool_batches.list_pending(1_000).await? {
+        publish_batch_pending_event(state, topology, channel, &batch).await?;
+    }
+    Ok(())
 }
 
 async fn publish_command_to_queue(
@@ -538,6 +816,32 @@ async fn ensure_rabbitmq_topology(
         )
         .await
         .map_err(|error| error.to_string())?;
+    for internal_queue in [
+        invocation_queue_name(topology),
+        terminal_queue_name(topology),
+    ] {
+        channel
+            .queue_declare(
+                internal_queue.as_str(),
+                QueueDeclareOptions {
+                    durable: true,
+                    ..QueueDeclareOptions::default()
+                },
+                FieldTable::default(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        channel
+            .queue_bind(
+                internal_queue.as_str(),
+                exchange,
+                internal_queue.as_str(),
+                QueueBindOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     let retry_delay_ms = u32::try_from(topology.retry_delay.as_millis())
         .map_err(|_| "MCP async retry delay is too large for RabbitMQ".to_string())?;
     let mut retry_arguments = FieldTable::default();
@@ -593,6 +897,45 @@ async fn ensure_rabbitmq_topology(
         .await
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+async fn open_named_consumer(
+    topology: &AsyncToolDispatchTopology,
+    queue_name: &str,
+    consumer_tag: &str,
+) -> Result<(Connection, Channel, lapin::Consumer), String> {
+    let rabbitmq_url = topology.rabbitmq_url.as_deref().ok_or_else(|| {
+        "MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL is required for RabbitMQ dispatch".to_string()
+    })?;
+    let connection = Connection::connect(rabbitmq_url, ConnectionProperties::default())
+        .await
+        .map_err(|error| error.to_string())?;
+    let channel = connection
+        .create_channel()
+        .await
+        .map_err(|error| error.to_string())?;
+    channel
+        .confirm_select(ConfirmSelectOptions::default())
+        .await
+        .map_err(|error| error.to_string())?;
+    ensure_rabbitmq_topology(&channel, topology).await?;
+    let prefetch_count = u16::try_from(topology.worker_concurrency).map_err(|_| {
+        "MCP async tool worker concurrency exceeds RabbitMQ prefetch range".to_string()
+    })?;
+    channel
+        .basic_qos(prefetch_count, BasicQosOptions::default())
+        .await
+        .map_err(|error| error.to_string())?;
+    let consumer = channel
+        .basic_consume(
+            queue_name,
+            consumer_tag,
+            BasicConsumeOptions::default(),
+            FieldTable::default(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok((connection, channel, consumer))
 }
 
 async fn open_cancellation_consumer(

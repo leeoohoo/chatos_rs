@@ -91,6 +91,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         background_handles.push(handle);
     }
+    if let Some(handle) = app_state
+        .async_tool_dispatch
+        .spawn_invocation_consumer(app_state.clone())
+    {
+        background_handles.push(handle);
+    }
+    if let Some(handle) = app_state
+        .async_tool_dispatch
+        .spawn_terminal_consumer(app_state.clone())
+    {
+        background_handles.push(handle);
+    }
     let service_id = std::env::var("CHATOS_SERVICE_ID")
         .ok()
         .filter(|value| !value.trim().is_empty())

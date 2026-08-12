@@ -23,7 +23,8 @@ use super::internal_auth::{
 };
 use super::mcp::{
     get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog, list_plugin_connectors,
-    list_task_capability_catalog, mcp_entrypoint, mcp_management_entrypoint, preview_mcp_prompt,
+    list_task_capability_catalog, mcp_entrypoint, mcp_management_ask_user_prompt,
+    mcp_management_ask_user_start, mcp_management_entrypoint, preview_mcp_prompt,
 };
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -274,6 +275,14 @@ pub fn build_internal_router(state: AppState) -> Router {
         .route(
             "/internal/mcp-management/mcp/{system_key}",
             post(mcp_management_entrypoint),
+        )
+        .route(
+            "/internal/mcp-management/mcp/{system_key}/start",
+            post(mcp_management_ask_user_start),
+        )
+        .route(
+            "/internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}",
+            post(mcp_management_ask_user_prompt),
         )
         .merge(chatos_internal::router())
         .with_state(state)

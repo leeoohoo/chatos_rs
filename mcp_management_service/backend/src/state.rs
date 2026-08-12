@@ -11,7 +11,7 @@ use crate::routing::RoutingEngine;
 use crate::runtime::{
     RuntimeExecutionScopeStore, RuntimeGrantService, RuntimeInvocationQuota,
     RuntimeInvocationQuotaLimits, RuntimeInvocationStore, RuntimeSessionCacheLimits,
-    RuntimeSessionStore,
+    RuntimeSessionStore, RuntimeToolBatchStore,
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 #[cfg(not(test))]
@@ -47,6 +47,7 @@ pub struct AppState {
     pub runtime_sessions: RuntimeSessionStore,
     pub runtime_execution_scopes: RuntimeExecutionScopeStore,
     pub runtime_invocations: RuntimeInvocationStore,
+    pub runtime_tool_batches: RuntimeToolBatchStore,
     pub async_tool_dispatch: AsyncToolDispatch,
 }
 
@@ -138,6 +139,10 @@ impl AppState {
             Some(database_url) => RuntimeExecutionScopeStore::connect(database_url).await?,
             None => RuntimeExecutionScopeStore::memory(),
         };
+        let runtime_tool_batches = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => RuntimeToolBatchStore::connect(database_url).await?,
+            None => RuntimeToolBatchStore::memory(),
+        };
         let async_tool_dispatch =
             AsyncToolDispatch::new(config.async_tool_dispatch_topology.clone());
         let state = Self {
@@ -153,6 +158,7 @@ impl AppState {
             runtime_sessions,
             runtime_execution_scopes,
             runtime_invocations,
+            runtime_tool_batches,
             async_tool_dispatch,
         };
         Ok(state)

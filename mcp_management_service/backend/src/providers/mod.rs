@@ -56,7 +56,7 @@ use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
 use plugin_routes::PluginRouteDispatcher;
 use project_service::ProjectServiceProvider;
-pub use project_service::{ProviderCallError, ProviderCallOutcome};
+pub use project_service::{ProviderCallError, ProviderCallOutcome, ProviderWaitingForUser};
 use sandbox_images::SandboxImagesProvider;
 pub(crate) use sandbox_images::{
     cloud_provider_ref as sandbox_images_cloud_provider_ref,

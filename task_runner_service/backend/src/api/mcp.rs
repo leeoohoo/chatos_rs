@@ -429,6 +429,74 @@ pub(super) async fn mcp_management_entrypoint(
     Json(response)
 }
 
+pub(super) async fn mcp_management_ask_user_start(
+    State(state): State<AppState>,
+    Path(system_key): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<JsonRpcRequest>,
+) -> Json<JsonRpcResponse> {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if let Err(error) = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[MCP_MANAGEMENT_CALLER],
+        MCP_TOOLS_CALL_SCOPE,
+    ) {
+        return Json(task_runner_mcp_error(id, -32001, error.message));
+    }
+    if system_key.parse::<chatos_mcp::SystemMcpKey>().ok()
+        != Some(chatos_mcp::SystemMcpKey::AskUser)
+    {
+        return Json(task_runner_mcp_error(
+            id,
+            -32602,
+            "only Ask User can be started",
+        ));
+    }
+    let binding = match mcp_management_binding_from_headers(&headers) {
+        Ok(binding) => binding,
+        Err(message) => return Json(task_runner_mcp_error(id, -32602, message)),
+    };
+    let response = dispatch_bound_ask_user_start(&state, request, &binding).await;
+    Json(response)
+}
+
+pub(super) async fn mcp_management_ask_user_prompt(
+    State(state): State<AppState>,
+    Path((system_key, prompt_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    if let Err(error) = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[MCP_MANAGEMENT_CALLER],
+        MCP_TOOLS_CALL_SCOPE,
+    ) {
+        return Json(json!({"error": error.message}));
+    }
+    if system_key.parse::<chatos_mcp::SystemMcpKey>().ok()
+        != Some(chatos_mcp::SystemMcpKey::AskUser)
+    {
+        return Json(json!({"error": "only Ask User prompts can be loaded"}));
+    }
+    if mcp_management_binding_from_headers(&headers).is_err() {
+        return Json(json!({"error": "invalid MCP Management binding"}));
+    }
+    match state
+        .ask_user_prompt_service
+        .get_prompt(prompt_id.as_str())
+        .await
+    {
+        Ok(Some(prompt)) => Json(json!({
+            "pending": prompt.status == crate::models::AskUserPromptStatus::Pending,
+            "kind": prompt.kind,
+            "response": prompt.response,
+        })),
+        Ok(None) => Json(json!({"error": "ask_user prompt was not found"})),
+        Err(error) => Json(json!({"error": error})),
+    }
+}
+
 async fn dispatch_bound_task_runner_tool(
     state: &AppState,
     request: JsonRpcRequest,
@@ -702,6 +770,72 @@ async fn dispatch_bound_ask_user(
             jsonrpc: "2.0",
             id,
             result: Some(result),
+            error: None,
+        },
+        Err(error) => task_runner_mcp_error(id, -32000, error),
+    }
+}
+
+async fn dispatch_bound_ask_user_start(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    if !is_task_runner_phase_agent(binding.agent_key) {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "configured Agent is not allowed to use Task Runner Ask User MCP",
+        );
+    }
+    let Some(task_id) = binding.task_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound task_id");
+    };
+    let Some(run_id) = binding.run_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound run_id");
+    };
+    let prompt_timeout_ms = match bound_ask_user_prompt_timeout_ms(binding) {
+        Ok(timeout_ms) => timeout_ms,
+        Err(message) => return task_runner_mcp_error(id, -32001, message),
+    };
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return task_runner_mcp_error(id, -32602, "Ask User tool name is required");
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let mut payload = match chatos_mcp::ask_user::prepare_prompt(
+        name,
+        arguments,
+        task_id,
+        run_id,
+        prompt_timeout_ms,
+    ) {
+        Ok(payload) => payload,
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if let Value::String(invocation_id) = &id {
+        payload.prompt_id = invocation_id.clone();
+        payload.tool_call_id = Some(invocation_id.clone());
+    }
+    match state
+        .ask_user_prompt_service
+        .create_prompt_without_wait(payload)
+        .await
+    {
+        Ok(prompt) => JsonRpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(json!({"prompt_id": prompt.id})),
             error: None,
         },
         Err(error) => task_runner_mcp_error(id, -32000, error),

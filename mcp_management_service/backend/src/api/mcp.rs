@@ -14,8 +14,8 @@ use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, RuntimeToolDe
 use chatos_mcp_service::MCP_ERROR_UNKNOWN_EXECUTION_STATE;
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, McpToolCallCommand,
-    McpToolCallResult, McpToolCallResultItem, McpToolCallResultStatus, MCP_ERROR_AUTH_REQUIRED,
-    MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS, MCP_ERROR_METHOD_NOT_FOUND, METHOD_INITIALIZE,
+    McpToolCallResultItem, McpToolCallResultStatus, MCP_ERROR_AUTH_REQUIRED, MCP_ERROR_INTERNAL,
+    MCP_ERROR_INVALID_PARAMS, MCP_ERROR_METHOD_NOT_FOUND, METHOD_INITIALIZE,
     METHOD_NOTIFICATIONS_CANCELLED, METHOD_NOTIFICATIONS_INITIALIZED, METHOD_PING,
     METHOD_TOOLS_LIST,
 };
@@ -25,7 +25,8 @@ use serde_json::{json, Value};
 use crate::capabilities::route_allows_system_tool;
 use crate::runtime::{
     RuntimeExecutionTurnState, RuntimeInvocationRecord, RuntimeInvocationRegisterError,
-    RuntimeInvocationStatus, RuntimeSessionSnapshot,
+    RuntimeInvocationStatus, RuntimeSessionSnapshot, RuntimeToolBatchRecord,
+    RuntimeToolBatchStatus,
 };
 use crate::state::AppState;
 
@@ -131,10 +132,14 @@ async fn handle_session_request(
     }
 }
 
-pub(crate) async fn execute_tool_call_command(
+pub(crate) struct RegisteredToolBatch {
+    pub record: RuntimeToolBatchRecord,
+}
+
+pub(crate) async fn register_tool_call_command(
     state: &AppState,
     command: &McpToolCallCommand,
-) -> Result<McpToolCallResult, String> {
+) -> Result<RegisteredToolBatch, String> {
     let snapshot = state
         .runtime_sessions
         .get(command.mcp_runtime_session_ref.trim())
@@ -152,13 +157,21 @@ pub(crate) async fn execute_tool_call_command(
     if command.batch_id.trim().is_empty() || command.batch_id.len() > 200 {
         return Err("MCP tool call command batch_id is invalid".to_string());
     }
+    if let Some(existing) = state
+        .runtime_tool_batches
+        .get(command.batch_id.as_str())
+        .await?
+    {
+        if serde_json::to_value(&existing.command).map_err(|error| error.to_string())?
+            != serde_json::to_value(command).map_err(|error| error.to_string())?
+        {
+            return Err("Runtime Tool Batch id conflicts with a different command".to_string());
+        }
+        return Ok(RegisteredToolBatch { record: existing });
+    }
 
     struct RegisteredCall {
         call_index: usize,
-        route: ResolvedMcpRoute,
-        tool: RuntimeToolDescriptor,
-        arguments: Value,
-        mutation_may_have_started: bool,
     }
 
     let mut results = vec![None; command.calls.len()];
@@ -215,10 +228,7 @@ pub(crate) async fn execute_tool_call_command(
             ) {
                 results[call_index] = Some(result_item_from_record(call, existing));
             } else {
-                return Err(format!(
-                    "MCP invocation {} is already active; retry the command after it becomes terminal",
-                    call.invocation_id
-                ));
+                registered.push(RegisteredCall { call_index });
             }
             continue;
         }
@@ -297,13 +307,7 @@ pub(crate) async fn execute_tool_call_command(
             expires_at_unix: snapshot.expires_at_unix,
         };
         match register_runtime_invocation(state, &snapshot, invocation, false).await {
-            Ok(()) => registered.push(RegisteredCall {
-                call_index,
-                route,
-                tool,
-                arguments: call.arguments.clone(),
-                mutation_may_have_started,
-            }),
+            Ok(()) => registered.push(RegisteredCall { call_index }),
             Err(error) => {
                 results[call_index] = Some(failed_command_item(
                     call,
@@ -355,16 +359,86 @@ pub(crate) async fn execute_tool_call_command(
         }
     }
 
-    for registered_call in registered {
-        let call = &command.calls[registered_call.call_index];
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let record = RuntimeToolBatchRecord {
+        batch_id: command.batch_id.clone(),
+        command: command.clone(),
+        session_id: snapshot.session_id.clone(),
+        status: RuntimeToolBatchStatus::Active,
+        next_call_index: 0,
+        items: results,
+        invocation_ids: command
+            .calls
+            .iter()
+            .map(|call| call.invocation_id.clone())
+            .collect(),
+        waiting_user_prompt_ids: vec![None; command.calls.len()],
+        pending_event: None,
+        revision: 0,
+        created_at_unix_ms: now_ms,
+        updated_at_unix_ms: now_ms,
+        expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
+        expires_at_unix: snapshot.expires_at_unix,
+    };
+    let record = state.runtime_tool_batches.insert_or_get(record).await?;
+    Ok(RegisteredToolBatch { record })
+}
+
+#[cfg(test)]
+pub(crate) async fn execute_tool_call_command(
+    state: &AppState,
+    command: &McpToolCallCommand,
+) -> Result<chatos_mcp_service::McpToolCallResult, String> {
+    let mut batch = register_tool_call_command(state, command).await?.record;
+    while batch.status != RuntimeToolBatchStatus::Completed {
+        let call_index = batch.next_call_index;
+        let call = &batch.command.calls[call_index];
+        if batch.items[call_index].is_some() {
+            batch = state
+                .runtime_tool_batches
+                .record_terminal_item(
+                    batch.batch_id.as_str(),
+                    call_index,
+                    batch.items[call_index]
+                        .clone()
+                        .expect("checked persisted command result"),
+                )
+                .await?;
+            continue;
+        }
+        let snapshot = state
+            .runtime_sessions
+            .get(batch.session_id.as_str())
+            .await?
+            .ok_or_else(|| "runtime session was not found or has expired".to_string())?;
+        let tool = snapshot
+            .tools
+            .iter()
+            .find(|tool| tool.exposed_name == call.name)
+            .cloned()
+            .ok_or_else(|| format!("tool not found: {}", call.name))?;
+        let route = snapshot
+            .routes
+            .iter()
+            .find(|route| route.resource_id == tool.resource_id)
+            .cloned()
+            .ok_or_else(|| "tool route snapshot is missing".to_string())?;
+        let record = state
+            .runtime_invocations
+            .get_for_caller(
+                call.invocation_id.as_str(),
+                snapshot.caller_service.as_str(),
+            )
+            .await?
+            .ok_or_else(|| "Runtime Invocation record is missing".to_string())?;
         execute_async_tool_call(
             state.clone(),
             snapshot.clone(),
-            registered_call.route,
-            registered_call.tool,
-            registered_call.arguments,
+            route,
+            tool,
+            call.arguments.clone(),
             call.invocation_id.clone(),
-            registered_call.mutation_may_have_started,
+            record.mutation_may_have_started,
         )
         .await?;
         let record = state
@@ -374,38 +448,342 @@ pub(crate) async fn execute_tool_call_command(
                 snapshot.caller_service.as_str(),
             )
             .await?
-            .ok_or_else(|| "completed MCP invocation record is missing".to_string())?;
-        results[registered_call.call_index] = Some(result_item_from_record(call, record));
+            .ok_or_else(|| "completed Runtime Invocation record is missing".to_string())?;
+        batch = state
+            .runtime_tool_batches
+            .record_terminal_item(
+                batch.batch_id.as_str(),
+                call_index,
+                result_item_from_record(call, record),
+            )
+            .await?;
     }
-
-    Ok(McpToolCallResult {
-        event_id: format!("mcp_batch_result_{}", command.batch_id),
-        owner_service: command.owner_service.clone(),
-        agent_run_id: command.agent_run_id.clone(),
-        agent_key: command.agent_key.clone(),
-        ordering_lane_key: command.ordering_lane_key.clone(),
-        lane_seq: command.lane_seq,
-        generation: command.generation,
-        source_step_seq: command.source_step_seq,
-        batch_id: command.batch_id.clone(),
-        session_id: snapshot.session_id.clone(),
-        items: results
-            .into_iter()
-            .enumerate()
-            .map(|(index, result)| {
-                result.unwrap_or_else(|| {
-                    failed_command_item(
-                        &command.calls[index],
-                        MCP_ERROR_INTERNAL,
-                        "MCP invocation did not reach a terminal state".to_string(),
-                    )
-                })
-            })
-            .collect(),
-    })
+    batch
+        .aggregate_result()
+        .ok_or_else(|| "Runtime Tool Batch aggregate result is missing".to_string())
 }
 
-fn failed_command_item(
+pub(crate) async fn execute_tool_batch_invocation(
+    state: &AppState,
+    batch_id: &str,
+    call_index: usize,
+) -> Result<RuntimeToolBatchRecord, String> {
+    let batch = state
+        .runtime_tool_batches
+        .get(batch_id)
+        .await?
+        .ok_or_else(|| "Runtime Tool Batch was not found".to_string())?;
+    if batch.status == RuntimeToolBatchStatus::Completed {
+        return Ok(batch);
+    }
+    if call_index < batch.next_call_index {
+        return Ok(batch);
+    }
+    if batch.next_call_index != call_index {
+        return Err(format!(
+            "Runtime Tool Batch expected call {} but received ready call {call_index}",
+            batch.next_call_index
+        ));
+    }
+    let call = batch
+        .command
+        .calls
+        .get(call_index)
+        .ok_or_else(|| "Runtime Tool Batch call_index is out of range".to_string())?;
+    if let Some(item) = batch.items.get(call_index).cloned().flatten() {
+        return state
+            .runtime_tool_batches
+            .record_terminal_item(batch_id, call_index, item)
+            .await;
+    }
+    let snapshot = state
+        .runtime_sessions
+        .get(batch.session_id.as_str())
+        .await?
+        .ok_or_else(|| "runtime session was not found or has expired".to_string())?;
+    let record = state
+        .runtime_invocations
+        .get_for_caller(
+            call.invocation_id.as_str(),
+            snapshot.caller_service.as_str(),
+        )
+        .await?
+        .ok_or_else(|| "Runtime Tool Batch invocation record is missing".to_string())?;
+    if is_terminal_invocation_status(record.status) {
+        return state
+            .runtime_tool_batches
+            .record_terminal_item(batch_id, call_index, result_item_from_record(call, record))
+            .await;
+    }
+    if record.status == RuntimeInvocationStatus::WaitingForUser {
+        return Ok(batch);
+    }
+    let tool = snapshot
+        .tools
+        .iter()
+        .find(|tool| tool.exposed_name == call.name)
+        .cloned()
+        .ok_or_else(|| format!("tool not found in Runtime Session Snapshot: {}", call.name))?;
+    let route = snapshot
+        .routes
+        .iter()
+        .find(|route| route.resource_id == tool.resource_id)
+        .cloned()
+        .ok_or_else(|| "tool route snapshot is missing".to_string())?;
+    let mutation_may_have_started = record.mutation_may_have_started;
+    if route_waits_for_user(&route) {
+        match state
+            .runtime_execution_scopes
+            .try_acquire_invocation_turn(
+                snapshot.owner_user_id.as_str(),
+                snapshot.project_id.as_str(),
+                snapshot
+                    .run_id
+                    .as_deref()
+                    .ok_or_else(|| "Ask User invocation requires run_id".to_string())?,
+                snapshot.project_context.workspace_provider,
+                call.invocation_id.as_str(),
+            )
+            .await?
+        {
+            RuntimeExecutionTurnState::Waiting => return Ok(batch),
+            RuntimeExecutionTurnState::Terminal => {
+                state
+                    .runtime_invocations
+                    .cancel_without_start(call.invocation_id.as_str())
+                    .await?;
+            }
+            RuntimeExecutionTurnState::Acquired => {
+                if record.status == RuntimeInvocationStatus::Queued {
+                    if !state
+                        .runtime_invocations
+                        .mark_running(call.invocation_id.as_str())
+                        .await?
+                    {
+                        return Ok(batch);
+                    }
+                }
+                let waiting = match state
+                    .providers
+                    .start_waiting_user_call(
+                        &snapshot,
+                        &route,
+                        tool.original_name.as_str(),
+                        call.arguments.clone(),
+                        call.invocation_id.as_str(),
+                    )
+                    .await
+                {
+                    Ok(waiting) => waiting,
+                    Err(error) => {
+                        state
+                            .runtime_invocations
+                            .fail(call.invocation_id.as_str(), error.code, error.message)
+                            .await?;
+                        if let Some(run_id) = snapshot.run_id.as_deref() {
+                            state
+                                .runtime_execution_scopes
+                                .release_invocation_turn(
+                                    snapshot.owner_user_id.as_str(),
+                                    snapshot.project_id.as_str(),
+                                    run_id,
+                                    snapshot.project_context.workspace_provider,
+                                    call.invocation_id.as_str(),
+                                )
+                                .await?;
+                        }
+                        let record = state
+                            .runtime_invocations
+                            .get_for_caller(
+                                call.invocation_id.as_str(),
+                                snapshot.caller_service.as_str(),
+                            )
+                            .await?
+                            .ok_or_else(|| {
+                                "failed Ask User Runtime Invocation record is missing".to_string()
+                            })?;
+                        return state
+                            .runtime_tool_batches
+                            .record_terminal_item(
+                                batch_id,
+                                call_index,
+                                result_item_from_record(call, record),
+                            )
+                            .await;
+                    }
+                };
+                if !state
+                    .runtime_invocations
+                    .mark_waiting_for_user(call.invocation_id.as_str())
+                    .await?
+                {
+                    return Ok(batch);
+                }
+                return state
+                    .runtime_tool_batches
+                    .mark_waiting_for_user(batch_id, call_index, waiting.prompt_id)
+                    .await;
+            }
+        }
+    }
+    if record.status == RuntimeInvocationStatus::Running {
+        return Ok(batch);
+    }
+    execute_async_tool_call(
+        state.clone(),
+        snapshot.clone(),
+        route,
+        tool,
+        call.arguments.clone(),
+        call.invocation_id.clone(),
+        mutation_may_have_started,
+    )
+    .await?;
+    let record = state
+        .runtime_invocations
+        .get_for_caller(
+            call.invocation_id.as_str(),
+            snapshot.caller_service.as_str(),
+        )
+        .await?
+        .ok_or_else(|| "completed MCP invocation record is missing".to_string())?;
+    if !is_terminal_invocation_status(record.status) {
+        return Ok(batch);
+    }
+    state
+        .runtime_tool_batches
+        .record_terminal_item(batch_id, call_index, result_item_from_record(call, record))
+        .await
+}
+
+pub(crate) async fn resolve_waiting_user_tool_invocation(
+    state: &AppState,
+    prompt_id: &str,
+) -> Result<Option<RuntimeToolBatchRecord>, String> {
+    let Some(batch) = state
+        .runtime_tool_batches
+        .find_by_waiting_user_prompt(prompt_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Some(call_index) = batch
+        .waiting_user_prompt_ids
+        .iter()
+        .position(|item| item.as_deref() == Some(prompt_id))
+    else {
+        return Ok(None);
+    };
+    let call = &batch.command.calls[call_index];
+    let snapshot = state
+        .runtime_sessions
+        .get(batch.session_id.as_str())
+        .await?
+        .ok_or_else(|| "runtime session was not found or has expired".to_string())?;
+    let tool = snapshot
+        .tools
+        .iter()
+        .find(|tool| tool.exposed_name == call.name)
+        .cloned()
+        .ok_or_else(|| format!("tool not found in Runtime Session Snapshot: {}", call.name))?;
+    let route = snapshot
+        .routes
+        .iter()
+        .find(|route| route.resource_id == tool.resource_id)
+        .cloned()
+        .ok_or_else(|| "tool route snapshot is missing".to_string())?;
+    let Some(result) = state
+        .providers
+        .resolve_waiting_user_call(&snapshot, &route, prompt_id, call.invocation_id.as_str())
+        .await
+        .map_err(|error| error.message)?
+    else {
+        return Ok(Some(batch));
+    };
+    state
+        .runtime_invocations
+        .complete(call.invocation_id.as_str(), result)
+        .await?;
+    resume_terminal_tool_batch_invocation(state, call.invocation_id.as_str()).await
+}
+
+pub(crate) async fn resume_terminal_tool_batch_invocation(
+    state: &AppState,
+    invocation_id: &str,
+) -> Result<Option<RuntimeToolBatchRecord>, String> {
+    let Some(batch) = state
+        .runtime_tool_batches
+        .find_by_invocation(invocation_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Some(call_index) = batch
+        .command
+        .calls
+        .iter()
+        .position(|call| call.invocation_id == invocation_id)
+    else {
+        return Ok(None);
+    };
+    let call = &batch.command.calls[call_index];
+    let record = state
+        .runtime_invocations
+        .get_for_caller(invocation_id, batch.command.owner_service.as_str())
+        .await?
+        .ok_or_else(|| "resolved Runtime Tool Batch invocation record is missing".to_string())?;
+    if !is_terminal_invocation_status(record.status) {
+        return Ok(Some(batch));
+    }
+    let snapshot = state
+        .runtime_sessions
+        .get(batch.session_id.as_str())
+        .await?
+        .ok_or_else(|| "runtime session was not found or has expired".to_string())?;
+    let next_invocation_id = if let Some(run_id) = snapshot.run_id.as_deref() {
+        state
+            .runtime_execution_scopes
+            .release_invocation_turn_and_next(
+                snapshot.owner_user_id.as_str(),
+                snapshot.project_id.as_str(),
+                run_id,
+                snapshot.project_context.workspace_provider,
+                invocation_id,
+            )
+            .await?
+            .next_invocation_id
+    } else {
+        None
+    };
+    let batch = state
+        .runtime_tool_batches
+        .record_terminal_item(
+            batch.batch_id.as_str(),
+            call_index,
+            result_item_from_record(call, record),
+        )
+        .await?;
+    if let Some(next_invocation_id) = next_invocation_id {
+        return state
+            .runtime_tool_batches
+            .ensure_invocation_ready_for(next_invocation_id.as_str())
+            .await
+            .map(Some);
+    }
+    Ok(Some(batch))
+}
+
+fn is_terminal_invocation_status(status: RuntimeInvocationStatus) -> bool {
+    matches!(
+        status,
+        RuntimeInvocationStatus::Completed
+            | RuntimeInvocationStatus::Failed
+            | RuntimeInvocationStatus::Cancelled
+            | RuntimeInvocationStatus::UnknownExecutionState
+    )
+}
+
+pub(crate) fn failed_command_item(
     call: &chatos_mcp_service::McpToolCallCommandItem,
     error_code: i32,
     error: String,
@@ -422,7 +800,7 @@ fn failed_command_item(
     }
 }
 
-fn result_item_from_record(
+pub(crate) fn result_item_from_record(
     call: &chatos_mcp_service::McpToolCallCommandItem,
     record: RuntimeInvocationRecord,
 ) -> McpToolCallResultItem {

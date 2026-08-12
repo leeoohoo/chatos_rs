@@ -86,6 +86,10 @@ pub fn build_internal_router(state: AppState) -> Router {
                 "/api/internal/runtime/invocations/{invocation_id}/cancel",
                 post(invocations::cancel_runtime_invocation),
             )
+            .route(
+                "/api/internal/runtime/invocations/waiting-user/{prompt_id}/resolved",
+                post(invocations::notify_waiting_user_resolved),
+            )
             .with_state(state),
         "internal",
     )

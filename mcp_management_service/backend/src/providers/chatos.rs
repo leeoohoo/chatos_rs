@@ -7,13 +7,14 @@ use chatos_mcp_management_sdk::SandboxExecutionTarget;
 
 use crate::runtime::RuntimeSessionSnapshot;
 
-use super::{CloudSandboxProvider, ProviderCallError};
+use super::{CloudSandboxProvider, ProviderCallError, ProviderWaitingForUser};
 
 mod init;
 mod memory;
 mod prepare;
 mod request_builder;
 mod runtime_calls;
+mod waiting_user;
 use memory::is_memory_reader;
 pub(crate) use memory::memory_provider_ref;
 

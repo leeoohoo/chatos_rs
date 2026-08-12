@@ -30,6 +30,11 @@ pub enum RuntimeExecutionTurnState {
     Terminal,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleasedInvocationTurn {
+    pub next_invocation_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RuntimeExecutionScopeInvocationRef {
     invocation_id: String,
@@ -671,6 +676,25 @@ impl RuntimeExecutionScopeStore {
         provider: WorkspaceProviderKind,
         invocation_id: &str,
     ) -> Result<(), String> {
+        self.release_invocation_turn_and_next(
+            owner_user_id,
+            project_id,
+            run_id,
+            provider,
+            invocation_id,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn release_invocation_turn_and_next(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: &str,
+        provider: WorkspaceProviderKind,
+        invocation_id: &str,
+    ) -> Result<ReleasedInvocationTurn, String> {
         let id = scope_id(owner_user_id, project_id, run_id, provider);
         match self.backend.as_ref() {
             RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
@@ -682,11 +706,19 @@ impl RuntimeExecutionScopeStore {
                         .invocation_queue
                         .retain(|reference| reference.invocation_id != invocation_id);
                     scope.updated_at = DateTime::now();
+                    return Ok(ReleasedInvocationTurn {
+                        next_invocation_id: scope
+                            .invocation_queue
+                            .first()
+                            .map(|reference| reference.invocation_id.clone()),
+                    });
                 }
-                Ok(())
+                Ok(ReleasedInvocationTurn {
+                    next_invocation_id: None,
+                })
             }
             RuntimeExecutionScopeStoreBackend::Mongo(collection) => collection
-                .update_one(
+                .find_one_and_update(
                     doc! { "_id": id },
                     vec![doc! {
                         "$set": {
@@ -707,10 +739,16 @@ impl RuntimeExecutionScopeStore {
                             "updated_at": DateTime::now(),
                         }
                     }],
-                    None,
+                    FindOneAndUpdateOptions::builder()
+                        .return_document(ReturnDocument::After)
+                        .build(),
                 )
                 .await
-                .map(|_| ())
+                .map(|scope| ReleasedInvocationTurn {
+                    next_invocation_id: scope
+                        .and_then(|scope| scope.invocation_queue.first().cloned())
+                        .map(|reference| reference.invocation_id),
+                })
                 .map_err(|error| {
                     format!("release execution scope invocation turn failed: {error}")
                 }),

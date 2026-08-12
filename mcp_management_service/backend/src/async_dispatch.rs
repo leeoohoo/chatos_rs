@@ -17,6 +17,8 @@ use crate::config::{AsyncToolDispatchMode, AsyncToolDispatchTopology};
 use crate::state::AppState;
 
 const RABBITMQ_CONSUMER_TAG: &str = "mcp-management-async-tool-dispatch";
+const RABBITMQ_INVOCATION_CONSUMER_TAG: &str = "mcp-management-tool-invocation";
+const RABBITMQ_INVOCATION_TERMINAL_CONSUMER_TAG: &str = "mcp-management-tool-invocation-terminal";
 const RABBITMQ_CANCELLATION_CONSUMER_TAG: &str = "mcp-management-invocation-cancellations";
 
 mod rabbitmq;
@@ -27,6 +29,7 @@ mod tests;
 use rabbitmq::{dispatch_queue_arguments, ensure_publish_confirmed};
 use rabbitmq::{
     open_rabbitmq_publisher, run_cancellation_consumer_loop, run_rabbitmq_consumer_loop,
+    run_rabbitmq_invocation_consumer_loop, run_rabbitmq_terminal_consumer_loop,
     unavailable_rabbitmq_queue_stats, RabbitMqPublisher,
 };
 
@@ -186,6 +189,26 @@ impl AsyncToolDispatch {
         }))
     }
 
+    pub fn spawn_invocation_consumer(&self, state: AppState) -> Option<JoinHandle<()>> {
+        if self.topology.mode != AsyncToolDispatchMode::RabbitMq {
+            return None;
+        }
+        let topology = self.topology.clone();
+        Some(tokio::spawn(async move {
+            run_rabbitmq_invocation_consumer_loop(state, topology).await;
+        }))
+    }
+
+    pub fn spawn_terminal_consumer(&self, state: AppState) -> Option<JoinHandle<()>> {
+        if self.topology.mode != AsyncToolDispatchMode::RabbitMq {
+            return None;
+        }
+        let topology = self.topology.clone();
+        Some(tokio::spawn(async move {
+            run_rabbitmq_terminal_consumer_loop(state, topology).await;
+        }))
+    }
+
     pub async fn publish_cancellation(
         &self,
         invocation_id: &str,
@@ -244,5 +267,23 @@ impl AsyncToolDispatch {
                 ))
             }
         }
+    }
+
+    pub async fn publish_invocation_terminal(
+        &self,
+        invocation_id: &str,
+        prompt_id: Option<&str>,
+    ) -> Result<(), AsyncToolEnqueueError> {
+        if self.topology.mode != AsyncToolDispatchMode::RabbitMq {
+            return Ok(());
+        }
+        let publisher = self.rabbitmq_publisher().await?;
+        rabbitmq::publish_invocation_terminal_event(
+            &publisher.channel,
+            &self.topology,
+            invocation_id,
+            prompt_id,
+        )
+        .await
     }
 }

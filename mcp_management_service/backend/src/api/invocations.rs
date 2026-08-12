@@ -69,6 +69,25 @@ pub(super) async fn get_runtime_invocation(
     Ok(Json(runtime_invocation_response(record)))
 }
 
+pub(super) async fn notify_waiting_user_resolved(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(prompt_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let identity = require_internal_request_identity(
+        &state.config,
+        &headers,
+        "runtime.invocations.resolve_user",
+    )?;
+    identity.require_signed_trace_id()?;
+    state
+        .async_tool_dispatch
+        .publish_invocation_terminal(prompt_id.as_str(), Some(prompt_id.as_str()))
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(Json(json!({"prompt_id": prompt_id, "accepted": true})))
+}
+
 fn record_invocation_audit(
     identity: &InternalRequestIdentity,
     trace_id: String,

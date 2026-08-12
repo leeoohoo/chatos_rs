@@ -32,7 +32,7 @@ pub use agent_builder::{
     AgentBuilderStoreRef,
 };
 pub use ask_user::{
-    normalize_kv_fields, AskUserDecision, AskUserOptions, AskUserPromptPayload,
+    normalize_kv_fields, prepare_prompt, AskUserDecision, AskUserOptions, AskUserPromptPayload,
     AskUserResponseSubmission, AskUserService, AskUserStore, AskUserStoreRef,
     AskUserStreamChunkCallback, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };

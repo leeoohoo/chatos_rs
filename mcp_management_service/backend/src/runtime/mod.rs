@@ -7,9 +7,11 @@ mod invocation_store;
 mod plugin_mcp;
 mod quota;
 mod session_store;
+mod tool_batch_store;
 
 pub use execution_scope_store::{
-    RuntimeExecutionScopeStore, RuntimeExecutionScopeStoreError, RuntimeExecutionTurnState,
+    ReleasedInvocationTurn, RuntimeExecutionScopeStore, RuntimeExecutionScopeStoreError,
+    RuntimeExecutionTurnState,
 };
 pub use grant::{IssuedRuntimeGrant, RuntimeGrantClaims, RuntimeGrantService};
 pub use invocation_store::{
@@ -26,4 +28,8 @@ pub use quota::{
 pub use session_store::{
     CloudStdioProviderBinding, ExternalHttpProviderBinding, RuntimeSessionCacheLimits,
     RuntimeSessionSnapshot, RuntimeSessionStore, RuntimeSessionStoreStats,
+};
+pub use tool_batch_store::{
+    RuntimeToolBatchPendingEvent, RuntimeToolBatchRecord, RuntimeToolBatchStatus,
+    RuntimeToolBatchStore,
 };

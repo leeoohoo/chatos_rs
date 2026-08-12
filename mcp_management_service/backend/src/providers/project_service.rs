@@ -28,6 +28,11 @@ pub struct ProviderCallOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderWaitingForUser {
+    pub prompt_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderCallError {
     pub code: i32,
     pub message: String,
