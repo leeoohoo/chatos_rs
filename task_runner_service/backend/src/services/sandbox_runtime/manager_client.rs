@@ -6,11 +6,13 @@ use chatos_service_runtime::http_body::{
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
+use std::error::Error as StdError;
 use std::path::Path;
 use std::time::Duration;
 
 use chatos_sandbox_contract::SandboxLeasePolicyRequest;
 use serde_json::Value;
+use tracing::warn;
 
 use crate::models::{TaskRecord, TaskRunRecord};
 use crate::trace_context::InternalTraceContextExt;
@@ -126,13 +128,43 @@ impl SandboxManagerClient {
             .json(&payload)
             .with_internal_trace_context()
             .send()
-            .await
-            .map_err(|err| format!("request sandbox lease failed: {err}"))?;
+            .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(error) if self.is_local_connector() && attempt < 5 => {
+                    warn!(
+                        attempt = attempt + 1,
+                        error = format_reqwest_error(&error),
+                        "Local Connector sandbox lease request failed while the client may be reconnecting; retrying"
+                    );
+                    tokio::time::sleep(local_connector_retry_delay(attempt)).await;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "request sandbox lease failed: {}",
+                        format_reqwest_error(&error)
+                    ));
+                }
+            };
             let status = response.status();
             if !status.is_success() {
                 let body = read_error_body(response).await;
                 if body.contains("sandbox_lease_idempotency_in_progress") && attempt < 5 {
                     tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+                if self.is_local_connector()
+                    && matches!(status.as_u16(), 502 | 503 | 504)
+                    && attempt < 5
+                {
+                    warn!(
+                        attempt = attempt + 1,
+                        %status,
+                        error = body.as_str(),
+                        "Local Connector sandbox lease endpoint is temporarily unavailable; retrying"
+                    );
+                    tokio::time::sleep(local_connector_retry_delay(attempt)).await;
                     continue;
                 }
                 return Err(format!(
@@ -147,6 +179,12 @@ impl SandboxManagerClient {
             .map_err(|err| format!("decode sandbox lease response failed: {err}"));
         }
         Err("sandbox lease idempotency retry loop exhausted".to_string())
+    }
+
+    fn is_local_connector(&self) -> bool {
+        self.auth
+            .as_ref()
+            .is_some_and(|auth| auth.mode == SandboxManagerAuthMode::LocalConnector)
     }
 
     async fn create_environment_lease(
@@ -592,6 +630,25 @@ impl SandboxManagerClient {
             Ok(request)
         }
     }
+}
+
+pub(super) fn local_connector_retry_delay(attempt: usize) -> Duration {
+    const DELAYS_MS: [u64; 5] = [250, 500, 1_000, 2_000, 2_000];
+    Duration::from_millis(DELAYS_MS[attempt.min(DELAYS_MS.len() - 1)])
+}
+
+pub(super) fn format_reqwest_error(error: &reqwest::Error) -> String {
+    let mut detail = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_message = cause.to_string();
+        if !cause_message.is_empty() && !detail.contains(cause_message.as_str()) {
+            detail.push_str(": ");
+            detail.push_str(cause_message.as_str());
+        }
+        source = cause.source();
+    }
+    detail
 }
 
 fn apply_sandbox_audit_context(

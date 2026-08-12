@@ -453,7 +453,7 @@ fn report_ipc_connection_error(error: &anyhow::Error) {
     if is_benign_ipc_connection_shutdown(error) {
         return;
     }
-    tracing_stdout(format!("local connector IPC connection failed: {error}").as_str());
+    tracing_stdout(format!("local connector IPC connection failed: {error:#}").as_str());
 }
 
 fn is_benign_ipc_connection_shutdown(error: &anyhow::Error) -> bool {

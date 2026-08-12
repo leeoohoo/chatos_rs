@@ -3,7 +3,9 @@
 
 use reqwest::StatusCode;
 use serde::Deserialize;
+use tracing::warn;
 
+use super::manager_client::{format_reqwest_error, local_connector_retry_delay};
 use super::*;
 use crate::models::{TaskProjectRecord, PUBLIC_PROJECT_ID};
 use crate::services::project_management_api_client::{
@@ -705,51 +707,95 @@ async fn resolve_local_connector_sandbox_route(
         owner_user_id,
     )?;
     let service_base = local_connector_service_base_url(config)?;
-    let response = config
-        .local_connector_http_client
-        .get(format!(
-            "{}/api/local-connectors/sandbox-pairings",
-            service_base.trim_end_matches('/')
-        ))
-        .query(&[
-            ("active_only", "true"),
-            ("device_id", project_ref.device_id.as_str()),
-            ("workspace_id", project_ref.workspace_id.as_str()),
-        ])
-        .header("x-local-connector-caller", "task-runner")
-        .header("x-local-connector-internal-token", token)
-        .header("x-local-connector-owner-user-id", owner_user_id)
-        .with_internal_trace_context()
-        .send()
-        .await
-        .map_err(|err| format!("query Local Connector sandbox pairing failed: {err}"))?;
-    if response.status() == StatusCode::NOT_FOUND {
-        return Err(
-            "no active Local Connector sandbox pairing was found for this project".to_string(),
-        );
-    }
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "query Local Connector sandbox pairing returned HTTP {status}: {detail}"
-        ));
-    }
-    let pairing = response
-        .json::<Vec<LocalConnectorSandboxPairing>>()
-        .await
-        .map_err(|err| format!("decode Local Connector sandbox pairing failed: {err}"))?
-        .into_iter()
-        .find(|pairing| {
-            pairing.enabled
-                && pairing.device_id == project_ref.device_id
-                && pairing.workspace_id == project_ref.workspace_id
-                && pairing.sandbox_readiness.trim().eq_ignore_ascii_case("ready")
-        })
-        .ok_or_else(|| {
-            "no enabled, ready, and online Local Connector sandbox pairing was found for this project"
-                .to_string()
-        })?;
+    let endpoint = format!(
+        "{}/api/local-connectors/sandbox-pairings",
+        service_base.trim_end_matches('/')
+    );
+    let pairing = 'resolve: {
+        for attempt in 0..6 {
+            let response = config
+                .local_connector_http_client
+                .get(endpoint.as_str())
+                .query(&[
+                    ("active_only", "true"),
+                    ("device_id", project_ref.device_id.as_str()),
+                    ("workspace_id", project_ref.workspace_id.as_str()),
+                ])
+                .header("x-local-connector-caller", "task-runner")
+                .header("x-local-connector-internal-token", token.as_str())
+                .header("x-local-connector-owner-user-id", owner_user_id)
+                .with_internal_trace_context()
+                .send()
+                .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(error) if attempt < 5 => {
+                    warn!(
+                        attempt = attempt + 1,
+                        error = format_reqwest_error(&error),
+                        "Local Connector sandbox route query failed while the client may be reconnecting; retrying"
+                    );
+                    tokio::time::sleep(local_connector_retry_delay(attempt)).await;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "query Local Connector sandbox pairing failed: {}",
+                        format_reqwest_error(&error)
+                    ));
+                }
+            };
+            let status = response.status();
+            if status == StatusCode::NOT_FOUND {
+                return Err(
+                    "no active Local Connector sandbox pairing was found for this project"
+                        .to_string(),
+                );
+            }
+            if !status.is_success() {
+                let detail = response.text().await.unwrap_or_default();
+                if matches!(status.as_u16(), 502 | 503 | 504) && attempt < 5 {
+                    warn!(
+                        attempt = attempt + 1,
+                        %status,
+                        error = detail.as_str(),
+                        "Local Connector sandbox route is temporarily unavailable; retrying"
+                    );
+                    tokio::time::sleep(local_connector_retry_delay(attempt)).await;
+                    continue;
+                }
+                return Err(format!(
+                    "query Local Connector sandbox pairing returned HTTP {status}: {detail}"
+                ));
+            }
+            let pairing = response
+                .json::<Vec<LocalConnectorSandboxPairing>>()
+                .await
+                .map_err(|err| format!("decode Local Connector sandbox pairing failed: {err}"))?
+                .into_iter()
+                .find(|pairing| {
+                    pairing.enabled
+                        && pairing.device_id == project_ref.device_id
+                        && pairing.workspace_id == project_ref.workspace_id
+                        && pairing
+                            .sandbox_readiness
+                            .trim()
+                            .eq_ignore_ascii_case("ready")
+                });
+            if let Some(pairing) = pairing {
+                break 'resolve pairing;
+            }
+            if attempt < 5 {
+                tokio::time::sleep(local_connector_retry_delay(attempt)).await;
+                continue;
+            }
+            return Err(
+                "no enabled, ready, and online Local Connector sandbox pairing was found for this project"
+                    .to_string(),
+            );
+        }
+        unreachable!("Local Connector route retry loop always returns or resolves")
+    };
     let pairing_id = normalized_text(pairing.id.as_str())
         .ok_or_else(|| "Local Connector sandbox pairing id is empty".to_string())?
         .to_string();

@@ -29,6 +29,40 @@ fn relay_request(request_id: &str) -> RelayRequest {
     }
 }
 
+#[tokio::test]
+async fn active_session_requires_matching_owner_and_registered_websocket() {
+    let relay = ConnectorRelay::default();
+    assert!(!relay
+        .has_active_session("owner-1", "device-1")
+        .await
+        .expect("query empty relay"));
+
+    let (outbound, _inbound) = mpsc::channel(1);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    assert!(relay
+        .has_active_session("owner-1", "device-1")
+        .await
+        .expect("query registered relay"));
+    assert!(!relay
+        .has_active_session("owner-2", "device-1")
+        .await
+        .expect("query mismatched owner"));
+
+    relay.unregister_session("device-1", "session-1").await;
+    assert!(!relay
+        .has_active_session("owner-1", "device-1")
+        .await
+        .expect("query unregistered relay"));
+}
+
 async fn spawn_test_instance_listener(
     coordinator: ValkeyCoordinator,
     instance_id: String,
