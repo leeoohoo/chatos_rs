@@ -3,11 +3,9 @@
 
 use std::time::Duration;
 
-use async_trait::async_trait;
-use chatos_cloud_agent_protocol::{CloudAgentRunPhase, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
-    publish_cloud_agent_intent, CloudAgentConsumeDisposition, CloudAgentModelTrigger,
-    CloudAgentOutboxIntent, CloudAgentQueueOwner, CloudAgentRabbitMqTopology, CloudAgentRunStore,
+    publish_cloud_agent_intent, CloudAgentOutboxIntent, CloudAgentRabbitMqTopology,
+    CloudAgentRunStore, CloudAgentServiceRuntime,
 };
 use tokio::task::JoinHandle;
 
@@ -18,45 +16,8 @@ pub(crate) const TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY: &str = "cloud_agent.task_r
 pub(crate) const TASK_RUNNER_CLOUD_AGENT_RETRY_ROUTING_KEY: &str =
     "cloud_agent.task_runner.runtime.retry";
 
-#[derive(Clone)]
-struct TaskRunnerCloudAgentOwner {
-    run_service: RunService,
-}
-
-#[async_trait]
-impl CloudAgentQueueOwner for TaskRunnerCloudAgentOwner {
-    fn owner_service(&self) -> &'static str {
-        "task-runner"
-    }
-
-    fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
-        self.run_service.cloud_agent_store()
-    }
-
-    async fn consume_cloud_agent_event(
-        &self,
-        event_id: String,
-        agent_run_id: String,
-        trigger: CloudAgentModelTrigger,
-        expected_status: CloudAgentRunStatus,
-        expected_phase: CloudAgentRunPhase,
-    ) -> Result<CloudAgentConsumeDisposition, String> {
-        self.run_service
-            .consume_cloud_agent_event(
-                event_id,
-                agent_run_id,
-                trigger,
-                expected_status,
-                expected_phase,
-            )
-            .await
-    }
-
-    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
-        self.run_service
-            .finalize_cloud_agent_terminal(agent_run_id)
-            .await
-    }
+fn runtime(run_service: RunService) -> CloudAgentServiceRuntime<RunService> {
+    CloudAgentServiceRuntime::new(run_service, TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY)
 }
 
 fn cloud_agent_topology(
@@ -86,7 +47,7 @@ pub fn spawn_cloud_agent_outbox_reconciler(
         .expect("Task Runner Cloud Agent RabbitMQ topology must be configured");
     chatos_cloud_agent_runtime::spawn_cloud_agent_outbox_reconciler(
         cloud_topology,
-        TaskRunnerCloudAgentOwner { run_service },
+        runtime(run_service),
     )
 }
 
@@ -96,10 +57,7 @@ pub fn spawn_cloud_agent_consumer(
 ) -> JoinHandle<()> {
     let cloud_topology = cloud_agent_topology(&topology)
         .expect("Task Runner Cloud Agent RabbitMQ topology must be configured");
-    chatos_cloud_agent_runtime::spawn_cloud_agent_consumer(
-        cloud_topology,
-        TaskRunnerCloudAgentOwner { run_service },
-    )
+    chatos_cloud_agent_runtime::spawn_cloud_agent_consumer(cloud_topology, runtime(run_service))
 }
 
 pub(crate) async fn publish_dependency_resume(
@@ -140,9 +98,7 @@ pub(crate) async fn publish_dependency_resume(
     };
     publish_cloud_agent_intent(
         &cloud_agent_topology(topology)?,
-        &TaskRunnerCloudAgentOwner {
-            run_service: run_service.clone(),
-        },
+        &runtime(run_service.clone()),
         &intent,
     )
     .await

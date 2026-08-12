@@ -10,11 +10,10 @@ use chatos_ai_runtime::{
     AiRuntime, AiRuntimeOptions, ContextualTurnRequest, ContextualTurnRunner,
     McpRuntimeToolExecutor, MemoryContextOverflowRecovery, RuntimeRecordOptions, SaveRecordInput,
 };
-use chatos_cloud_agent_protocol::{CloudAgentRunPhase, CloudAgentRunRecord, CloudAgentRunStatus};
+use chatos_cloud_agent_protocol::{CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_trigger_execution_identity, cloud_agent_trigger_input_items,
-    consume_cloud_agent_single_step, create_cloud_agent_run, CloudAgentConsumeDisposition,
-    CloudAgentConsumeInput, CloudAgentModelTrigger, CloudAgentRunStore,
+    create_cloud_agent_run, CloudAgentModelTrigger, CloudAgentRunStore, CloudAgentServiceAdapter,
     CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor, CloudAgentSingleStepOutput,
     NewCloudAgentRun,
 };
@@ -22,36 +21,38 @@ use chatos_mcp_runtime::McpExecutor;
 use chrono::Utc;
 use std::sync::Arc;
 
-pub(crate) async fn consume_cloud_agent_event(
-    state: &AppState,
-    event_id: String,
-    agent_run_id: String,
-    trigger: CloudAgentModelTrigger,
-    expected_status: CloudAgentRunStatus,
-    expected_phase: CloudAgentRunPhase,
-) -> Result<CloudAgentConsumeDisposition, String> {
-    consume_cloud_agent_single_step(
-        &state.cloud_agent_store,
-        &ProjectEnvironmentSingleStepExecutor {
-            state: state.clone(),
-        },
-        CloudAgentConsumeInput {
-            agent_run_id,
-            event_id,
-            trigger,
-            expected_status,
-            expected_phase,
-            claim_token: uuid::Uuid::new_v4().to_string(),
-            claim_until: Utc::now() + chrono::Duration::seconds(30),
-            output_routing_key: crate::cloud_agent_queue::PROJECT_CLOUD_AGENT_ROUTING_KEY
-                .to_string(),
-        },
-    )
-    .await
-}
-
 struct ProjectEnvironmentSingleStepExecutor {
     state: AppState,
+}
+
+#[async_trait::async_trait]
+impl CloudAgentSingleStepExecutor for AppState {
+    async fn execute_single_step(
+        &self,
+        cloud_run: &CloudAgentRunRecord,
+        trigger: &CloudAgentModelTrigger,
+    ) -> Result<CloudAgentSingleStepExecution, String> {
+        ProjectEnvironmentSingleStepExecutor {
+            state: self.clone(),
+        }
+        .execute_single_step(cloud_run, trigger)
+        .await
+    }
+}
+
+#[async_trait::async_trait]
+impl CloudAgentServiceAdapter for AppState {
+    fn owner_service(&self) -> &'static str {
+        "project-service"
+    }
+
+    fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
+        self.cloud_agent_store.clone()
+    }
+
+    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
+        finalize_cloud_agent_terminal(self, agent_run_id).await
+    }
 }
 
 #[async_trait::async_trait]

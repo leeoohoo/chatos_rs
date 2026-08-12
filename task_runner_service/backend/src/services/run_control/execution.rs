@@ -5,14 +5,11 @@ use super::*;
 use crate::models::TaskMcpConfig;
 use crate::services::TaskRunnerCapabilityPolicy;
 use chatos_ai_runtime::TaskRunReport;
-use chatos_cloud_agent_protocol::{CloudAgentRunPhase, CloudAgentRunStatus};
+use chatos_cloud_agent_protocol::CloudAgentRunStatus;
 use chatos_cloud_agent_runtime::{
-    cloud_agent_trigger_execution_identity, consume_cloud_agent_single_step,
-    CloudAgentConsumeDisposition, CloudAgentConsumeInput, CloudAgentModelTrigger,
-    CloudAgentRunStore, CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor,
-    CloudAgentSingleStepOutput,
+    cloud_agent_trigger_execution_identity, CloudAgentModelTrigger, CloudAgentRunStore,
+    CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor, CloudAgentSingleStepOutput,
 };
-use chrono::Utc;
 
 impl RunService {
     pub(crate) async fn finalize_cloud_agent_terminal(
@@ -119,35 +116,6 @@ impl RunService {
                 .map_err(|error| error.to_string())?;
         }
         Ok(())
-    }
-
-    pub(crate) async fn consume_cloud_agent_event(
-        &self,
-        event_id: String,
-        agent_run_id: String,
-        trigger: CloudAgentModelTrigger,
-        expected_status: CloudAgentRunStatus,
-        expected_phase: CloudAgentRunPhase,
-    ) -> Result<CloudAgentConsumeDisposition, String> {
-        let executor = TaskRunnerSingleStepResolver {
-            service: self.clone(),
-        };
-        consume_cloud_agent_single_step(
-            &self.cloud_agent_store,
-            &executor,
-            CloudAgentConsumeInput {
-                agent_run_id,
-                event_id,
-                trigger,
-                expected_status,
-                expected_phase,
-                claim_token: uuid::Uuid::new_v4().to_string(),
-                claim_until: Utc::now() + chrono::Duration::seconds(30),
-                output_routing_key: crate::cloud_agent_queue::TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY
-                    .to_string(),
-            },
-        )
-        .await
     }
 
     pub async fn execute_claimed_run(&self, mut run: TaskRunRecord) {
@@ -530,6 +498,36 @@ impl CloudAgentSingleStepExecutor for TaskRunnerSingleStepResolver {
                 .with_mcp_runtime(mcp_runtime_session_ref, mcp_command_queue)
                 .with_retry_input_items(retry_input_items),
         ))
+    }
+}
+
+#[async_trait::async_trait]
+impl CloudAgentSingleStepExecutor for RunService {
+    async fn execute_single_step(
+        &self,
+        cloud_run: &chatos_cloud_agent_protocol::CloudAgentRunRecord,
+        trigger: &CloudAgentModelTrigger,
+    ) -> Result<CloudAgentSingleStepExecution, String> {
+        TaskRunnerSingleStepResolver {
+            service: self.clone(),
+        }
+        .execute_single_step(cloud_run, trigger)
+        .await
+    }
+}
+
+#[async_trait::async_trait]
+impl chatos_cloud_agent_runtime::CloudAgentServiceAdapter for RunService {
+    fn owner_service(&self) -> &'static str {
+        "task-runner"
+    }
+
+    fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
+        self.cloud_agent_store()
+    }
+
+    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
+        RunService::finalize_cloud_agent_terminal(self, agent_run_id).await
     }
 }
 

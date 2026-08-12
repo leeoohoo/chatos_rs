@@ -242,8 +242,6 @@ pub async fn analyze_project_runtime_environment(
     .await
 }
 
-pub(crate) use runtime::analysis::{consume_cloud_agent_event, finalize_cloud_agent_terminal};
-
 pub(super) fn compose_dependency_image_ref(
     image: &ProjectRuntimeEnvironmentImageRecord,
 ) -> Option<String> {

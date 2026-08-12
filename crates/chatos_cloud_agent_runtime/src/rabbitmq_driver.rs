@@ -21,8 +21,9 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::{
-    materialize_mcp_command, CloudAgentConsumeDisposition, CloudAgentModelTrigger,
-    CloudAgentOutboxIntent, CloudAgentRunStore, CloudAgentStateStore,
+    consume_cloud_agent_single_step, materialize_mcp_command, CloudAgentConsumeDisposition,
+    CloudAgentConsumeInput, CloudAgentModelTrigger, CloudAgentOutboxIntent, CloudAgentRunStore,
+    CloudAgentSingleStepExecutor, CloudAgentStateStore,
 };
 
 #[derive(Debug, Clone)]
@@ -76,6 +77,92 @@ pub trait CloudAgentQueueOwner: Clone + Send + Sync + 'static {
     ) -> Result<CloudAgentConsumeDisposition, String>;
 
     async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String>;
+}
+
+/// Service-owned hooks around the shared Cloud Agent state machine.
+///
+/// One adapter may serve any number of Agent keys in the owner service. The
+/// shared runtime owns delivery decoding, ordering checks, short claims,
+/// single-step reduction and outbox materialization; the adapter only builds
+/// one model step and performs owner-specific terminal work.
+#[async_trait]
+pub trait CloudAgentServiceAdapter:
+    CloudAgentSingleStepExecutor + Clone + Send + Sync + 'static
+{
+    fn owner_service(&self) -> &'static str;
+    fn cloud_agent_store(&self) -> CloudAgentStateStore;
+
+    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String>;
+}
+
+#[derive(Clone)]
+pub struct CloudAgentServiceRuntime<A> {
+    adapter: A,
+    output_routing_key: String,
+    claim_ttl: chrono::Duration,
+}
+
+impl<A> CloudAgentServiceRuntime<A>
+where
+    A: CloudAgentServiceAdapter,
+{
+    pub fn new(adapter: A, output_routing_key: impl Into<String>) -> Self {
+        Self {
+            adapter,
+            output_routing_key: output_routing_key.into(),
+            claim_ttl: chrono::Duration::seconds(30),
+        }
+    }
+
+    pub fn with_claim_ttl(mut self, claim_ttl: chrono::Duration) -> Self {
+        self.claim_ttl = claim_ttl;
+        self
+    }
+}
+
+#[async_trait]
+impl<A> CloudAgentQueueOwner for CloudAgentServiceRuntime<A>
+where
+    A: CloudAgentServiceAdapter,
+{
+    fn owner_service(&self) -> &'static str {
+        self.adapter.owner_service()
+    }
+
+    fn cloud_agent_store(&self) -> CloudAgentStateStore {
+        self.adapter.cloud_agent_store()
+    }
+
+    async fn consume_cloud_agent_event(
+        &self,
+        event_id: String,
+        agent_run_id: String,
+        trigger: CloudAgentModelTrigger,
+        expected_status: CloudAgentRunStatus,
+        expected_phase: CloudAgentRunPhase,
+    ) -> Result<CloudAgentConsumeDisposition, String> {
+        consume_cloud_agent_single_step(
+            &self.adapter.cloud_agent_store(),
+            &self.adapter,
+            CloudAgentConsumeInput {
+                agent_run_id,
+                event_id,
+                trigger,
+                expected_status,
+                expected_phase,
+                claim_token: uuid::Uuid::new_v4().to_string(),
+                claim_until: chrono::Utc::now() + self.claim_ttl,
+                output_routing_key: self.output_routing_key.clone(),
+            },
+        )
+        .await
+    }
+
+    async fn finalize_cloud_agent_terminal(&self, agent_run_id: &str) -> Result<(), String> {
+        self.adapter
+            .finalize_cloud_agent_terminal(agent_run_id)
+            .await
+    }
 }
 
 pub fn spawn_cloud_agent_outbox_reconciler<O>(
