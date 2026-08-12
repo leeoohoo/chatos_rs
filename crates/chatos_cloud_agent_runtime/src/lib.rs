@@ -16,8 +16,10 @@ use serde_json::Value;
 use std::future::Future;
 
 mod mongo_store;
+mod state_store;
 
 pub use mongo_store::{CloudAgentLaneRecord, MongoCloudAgentRunStore};
+pub use state_store::{CloudAgentStateStore, InMemoryCloudAgentRunStore};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CloudAgentClaim {
