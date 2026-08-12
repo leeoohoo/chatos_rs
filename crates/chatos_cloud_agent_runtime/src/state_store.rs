@@ -91,7 +91,7 @@ impl InMemoryCloudAgentRunStore {
         let Some(lane) = state.lanes.get_mut(ordering_lane_key) else {
             return Ok(None);
         };
-        if lane.active_lane_seq != completed_lane_seq || lane.next_lane_seq <= completed_lane_seq {
+        if lane.active_lane_seq != completed_lane_seq {
             return Ok(None);
         }
         lane.active_lane_seq = completed_lane_seq
@@ -190,32 +190,48 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
         if state.claims.get(claim.ordering.agent_run_id.as_str()) != Some(&claim.claim_token) {
             return Ok(false);
         }
-        let Some(run) = state.runs.get_mut(claim.ordering.agent_run_id.as_str()) else {
-            return Ok(false);
-        };
-        if run.ordering != claim.ordering
-            || run.status != claim.expected_status
-            || run.phase != claim.expected_phase
-            || run.version != claim.expected_version
         {
-            return Ok(false);
+            let Some(run) = state.runs.get_mut(claim.ordering.agent_run_id.as_str()) else {
+                return Ok(false);
+            };
+            if run.ordering != claim.ordering
+                || run.status != claim.expected_status
+                || run.phase != claim.expected_phase
+                || run.version != claim.expected_version
+            {
+                return Ok(false);
+            }
+            run.status = transition.next_status;
+            run.phase = transition.next_phase;
+            run.ordering.step_seq = transition.next_step_seq;
+            run.iteration = transition.next_iteration;
+            run.retry_count = transition.next_retry_count;
+            run.pending_batch_id = transition.pending_batch_id;
+            run.pending_tool_calls = transition.pending_tool_calls;
+            run.pending_tool_results = transition.pending_tool_results;
+            run.terminal_outcome = transition.terminal_outcome;
+            run.version = run.version.saturating_add(1);
+            run.updated_at = chrono::Utc::now();
         }
-        run.status = transition.next_status;
-        run.phase = transition.next_phase;
-        run.ordering.step_seq = transition.next_step_seq;
-        run.iteration = transition.next_iteration;
-        run.retry_count = transition.next_retry_count;
-        run.pending_batch_id = transition.pending_batch_id;
-        run.pending_tool_calls = transition.pending_tool_calls;
-        run.pending_tool_results = transition.pending_tool_results;
-        run.terminal_outcome = transition.terminal_outcome;
-        run.version = run.version.saturating_add(1);
-        run.updated_at = chrono::Utc::now();
         for intent in transition.outbox {
             state
                 .outbox
                 .entry(intent.event_id.clone())
                 .or_insert(intent);
+        }
+        if transition.next_status.is_terminal() {
+            let lane = state
+                .lanes
+                .get_mut(claim.ordering.ordering_lane_key.as_str())
+                .ok_or_else(|| "claimed Cloud Agent lane is missing".to_string())?;
+            if lane.active_lane_seq != claim.ordering.lane_seq {
+                return Err("claimed Cloud Agent lane changed before terminal commit".to_string());
+            }
+            lane.active_lane_seq = claim
+                .ordering
+                .lane_seq
+                .checked_add(1)
+                .ok_or_else(|| "lane_seq overflow".to_string())?;
         }
         state.claims.remove(claim.ordering.agent_run_id.as_str());
         Ok(true)
@@ -332,5 +348,110 @@ impl CloudAgentRunStore for CloudAgentStateStore {
             Self::Memory(store) => store.release_short_claim(claim).await,
             Self::Mongo(store) => store.release_short_claim(claim).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chatos_cloud_agent_protocol::{
+        CloudAgentOrdering, CloudAgentRunPhase, CloudAgentRunStatus,
+    };
+    use chrono::Utc;
+    use serde_json::Value;
+
+    fn run_record(run_id: &str, lane_seq: u64) -> CloudAgentRunRecord {
+        let now = Utc::now();
+        CloudAgentRunRecord {
+            ordering: CloudAgentOrdering {
+                ordering_lane_key: "task:task-1".to_string(),
+                lane_seq,
+                agent_run_id: run_id.to_string(),
+                generation: 1,
+                step_seq: 1,
+            },
+            owner_service: "task-runner".to_string(),
+            owner_entity_type: "task_run".to_string(),
+            owner_entity_id: run_id.to_string(),
+            owner_user_id: "user-1".to_string(),
+            agent_key: "task_runner_run_phase".to_string(),
+            status: CloudAgentRunStatus::ModelReady,
+            phase: CloudAgentRunPhase::Ready,
+            iteration: 0,
+            model_config_ref: "model-1".to_string(),
+            model_runtime_snapshot_ref: "snapshot-1".to_string(),
+            agent_prompt_revision: "1".to_string(),
+            agent_prompt_checksum: "checksum-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            mcp_runtime_session_ref: None,
+            previous_response_id: None,
+            continuation_mode: None,
+            pending_batch_id: None,
+            pending_tool_calls: Vec::new(),
+            pending_tool_results: Vec::new(),
+            current_input_items_ref: format!("task_run:{run_id}:input"),
+            usage_accumulator: Value::Null,
+            max_iterations: 10,
+            retry_count: 0,
+            deadline_at: None,
+            cancel_requested: false,
+            terminal_outcome: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_commit_advances_an_empty_lane_for_the_next_future_run() {
+        let store = InMemoryCloudAgentRunStore::new();
+        let first_seq = store.allocate_lane_seq("task:task-1").await.unwrap();
+        let first = run_record("run-1", first_seq);
+        store.insert_run(first.clone()).await.unwrap();
+        let claim = CloudAgentClaim {
+            ordering: first.ordering.clone(),
+            expected_status: first.status,
+            expected_phase: first.phase,
+            expected_version: first.version,
+            claim_token: "claim-1".to_string(),
+            claim_until: Utc::now() + chrono::Duration::seconds(30),
+        };
+        assert_eq!(
+            store.acquire_short_claim(&claim).await.unwrap(),
+            CloudAgentClaimResult::Acquired
+        );
+        assert!(store
+            .commit_transition(CloudAgentAtomicTransition {
+                claim,
+                next_status: CloudAgentRunStatus::Succeeded,
+                next_phase: CloudAgentRunPhase::Terminal,
+                next_step_seq: 2,
+                next_iteration: 1,
+                next_retry_count: 0,
+                pending_batch_id: None,
+                pending_tool_calls: Vec::new(),
+                pending_tool_results: Vec::new(),
+                terminal_outcome: Some(serde_json::json!({"ok": true})),
+                outbox: Vec::new(),
+            })
+            .await
+            .unwrap());
+
+        let second_seq = store.allocate_lane_seq("task:task-1").await.unwrap();
+        assert_eq!(second_seq, 2);
+        let second = run_record("run-2", second_seq);
+        store.insert_run(second.clone()).await.unwrap();
+        let second_claim = CloudAgentClaim {
+            ordering: second.ordering.clone(),
+            expected_status: second.status,
+            expected_phase: second.phase,
+            expected_version: second.version,
+            claim_token: "claim-2".to_string(),
+            claim_until: Utc::now() + chrono::Duration::seconds(30),
+        };
+        assert_eq!(
+            store.acquire_short_claim(&second_claim).await.unwrap(),
+            CloudAgentClaimResult::Acquired
+        );
     }
 }

@@ -198,13 +198,7 @@ impl MongoCloudAgentRunStore {
                 },
                 vec![doc! {
                     "$set": {
-                        "active_lane_seq": {
-                            "$cond": [
-                                { "$gte": ["$next_lane_seq", next] },
-                                next,
-                                "$active_lane_seq",
-                            ]
-                        },
+                        "active_lane_seq": next,
                         "version": { "$add": ["$version", 1_i64] },
                         "updated_at": DateTime::now(),
                     }
@@ -469,6 +463,35 @@ impl MongoCloudAgentRunStore {
                 )
                 .await
                 .map_err(|error| format!("persist Cloud Agent outbox intent failed: {error}"))?;
+        }
+        if transition.next_status.is_terminal() {
+            let completed = i64::try_from(claim.ordering.lane_seq)
+                .map_err(|_| "completed lane_seq exceeds MongoDB integer range".to_string())?;
+            let next = completed
+                .checked_add(1)
+                .ok_or_else(|| "lane_seq overflow".to_string())?;
+            let lane_result = self
+                .lanes
+                .update_one_with_session(
+                    doc! {
+                        "_id": claim.ordering.ordering_lane_key.as_str(),
+                        "active_lane_seq": completed,
+                    },
+                    doc! {
+                        "$set": {
+                            "active_lane_seq": next,
+                            "updated_at": DateTime::now(),
+                        },
+                        "$inc": { "version": 1_i64 },
+                    },
+                    None,
+                    session,
+                )
+                .await
+                .map_err(|error| format!("advance terminal Cloud Agent lane failed: {error}"))?;
+            if lane_result.modified_count != 1 {
+                return Err("claimed Cloud Agent lane changed before terminal commit".to_string());
+            }
         }
         Ok(true)
     }
