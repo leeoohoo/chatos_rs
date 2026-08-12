@@ -14,6 +14,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod mongo_store;
+
+pub use mongo_store::{CloudAgentLaneRecord, MongoCloudAgentRunStore};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CloudAgentClaim {
     pub ordering: CloudAgentOrdering,

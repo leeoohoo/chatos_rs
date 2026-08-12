@@ -939,6 +939,8 @@ dependencies = [
  "chatos_ai_runtime",
  "chatos_cloud_agent_protocol",
  "chrono",
+ "futures-util",
+ "mongodb",
  "serde",
  "serde_json",
 ]
