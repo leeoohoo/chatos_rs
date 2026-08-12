@@ -10,7 +10,6 @@ pub mod executor;
 pub mod naming;
 pub mod parallelism;
 pub mod registry;
-pub mod result_queue;
 pub mod rpc;
 pub mod schema;
 pub mod stdio_policy;
@@ -51,7 +50,6 @@ pub use execution::{execute_tool_calls_parallel, execute_tool_calls_stream};
 pub use executor::McpExecutor;
 pub use naming::{canonical_name_segment, canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 pub use registry::{BuiltinToolProvider, BuiltinToolRegistry};
-pub use result_queue::{initialize_mcp_invocation_result_queue, McpInvocationResultQueueConfig};
 pub use rpc::{
     extract_tools, invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_call_with_client,
     jsonrpc_http_tool_call_cancellable, jsonrpc_http_tool_call_cancellable_with_client,

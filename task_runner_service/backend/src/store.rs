@@ -257,6 +257,16 @@ impl RunTerminalSubscriptionRecord {
             created_at: now_rfc3339(),
         }
     }
+
+    pub(crate) fn cloud_agent(run_id: &str, parent_run_id: &str) -> Self {
+        Self {
+            id: format!("{run_id}:{parent_run_id}:cloud-agent"),
+            run_id: run_id.to_string(),
+            parent_run_id: parent_run_id.to_string(),
+            worker_id: "cloud-agent".to_string(),
+            created_at: now_rfc3339(),
+        }
+    }
 }
 
 #[derive(Clone)]

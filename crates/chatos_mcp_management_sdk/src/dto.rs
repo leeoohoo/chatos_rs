@@ -391,6 +391,12 @@ pub struct RuntimeSessionRoutesResponse {
     pub expires_at: String,
     pub routes: Vec<ResolvedMcpRoute>,
     pub tools: Vec<RuntimeToolDescriptor>,
+    #[serde(default)]
+    pub mcp_command_queue: String,
+    #[serde(default)]
+    pub mcp_server_url: String,
+    #[serde(default)]
+    pub runtime_token: String,
 }
 
 #[cfg(test)]

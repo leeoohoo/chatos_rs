@@ -25,18 +25,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = AppConfig::from_env()?;
     let _telemetry = init_tracing(&config)?;
     resolve_downstream_services(&mut config).await;
-    chatos_mcp_runtime::initialize_mcp_invocation_result_queue(
-        chatos_mcp_runtime::McpInvocationResultQueueConfig {
-            rabbitmq_url: config.mcp_result_rabbitmq_url.clone(),
-            queue_name: format!(
-                "{}.{}",
-                config.mcp_result_queue_prefix,
-                mcp_result_queue_instance_component(config.host, config.port)
-            ),
-        },
-    )
-    .await
-    .map_err(|error| format!("initialize Project Service MCP result queue failed: {error}"))?;
     let bind_addr = config.bind_addr();
     let internal_tls = ProjectServiceInternalTlsConfig::from_env(config.host, config.port)?;
     let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
@@ -72,19 +60,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
-}
-
-fn mcp_result_queue_instance_component(host: std::net::IpAddr, port: u16) -> String {
-    format!("{host}-{port}")
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 async fn resolve_downstream_services(config: &mut AppConfig) {

@@ -16,13 +16,12 @@ use task_runner_service_backend::{
     scheduler::spawn_task_scheduler,
     services::{spawn_chatos_callback_queue_consumer, spawn_chatos_callback_reconciler},
     spawn_ask_user_prompt_retention, spawn_ask_user_resolution_outbox_reconciler,
+    spawn_cloud_agent_consumer, spawn_cloud_agent_outbox_reconciler,
     spawn_run_cancel_outbox_reconciler, spawn_run_dispatch_outbox_reconciler,
     spawn_run_event_consumer, spawn_run_event_retention, spawn_run_post_process_consumer,
     spawn_run_post_process_outbox_reconciler, spawn_run_terminal_outbox_reconciler,
-    spawn_task_terminal_retention, spawn_worker_control_consumer,
-    worker::spawn_task_worker,
-    AppConfig, AppState, AskUserPromptRetentionPolicy, RunEventRetentionPolicy,
-    TaskTerminalRetentionPolicy,
+    spawn_task_terminal_retention, spawn_worker_control_consumer, AppConfig, AppState,
+    AskUserPromptRetentionPolicy, RunEventRetentionPolicy, TaskTerminalRetentionPolicy,
 };
 
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -61,14 +60,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _telemetry = init_tracing(&config)?;
     resolve_downstream_services(&mut config).await;
     let app_state = AppState::new(config.clone()).await?;
-    if config.worker_enabled() {
-        chatos_mcp_runtime::initialize_mcp_invocation_result_queue(
-            app_state
-                .task_queue_topology
-                .mcp_result_queue_config(config.worker_id.as_str())?,
-        )
-        .await?;
-    }
     tracing::info!(
         run_dispatch_mode = app_state.task_queue_topology.run_dispatch_mode.as_str(),
         callback_delivery_mode = app_state
@@ -138,6 +129,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         app_state.task_queue_topology.clone(),
         app_state.run_service.clone(),
     ));
+    background_handles.push(spawn_cloud_agent_outbox_reconciler(
+        app_state.task_queue_topology.clone(),
+        app_state.run_service.clone(),
+    ));
+    if config.worker_enabled() {
+        background_handles.push(spawn_cloud_agent_consumer(
+            app_state.task_queue_topology.clone(),
+            app_state.run_service.clone(),
+        ));
+    }
     background_handles.push(spawn_run_cancel_outbox_reconciler(
         app_state.task_queue_topology.clone(),
         app_state.run_service.clone(),
@@ -188,10 +189,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         background_handles.push(spawn_worker_control_consumer(
             config.clone(),
             app_state.task_queue_topology.clone(),
-            app_state.run_service.clone(),
-        ));
-        background_handles.push(spawn_task_worker(
-            config.clone(),
             app_state.run_service.clone(),
         ));
         background_handles.push(spawn_run_post_process_consumer(

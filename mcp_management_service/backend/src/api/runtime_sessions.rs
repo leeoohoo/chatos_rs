@@ -544,7 +544,53 @@ pub(super) async fn runtime_session_routes(
         ));
     }
     record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "read", "succeeded");
-    Ok(Json(snapshot.routes_response()))
+    let mut response = snapshot.routes_response();
+    response.mcp_command_queue = state
+        .config
+        .async_tool_dispatch_topology
+        .queue_name
+        .clone()
+        .ok_or_else(|| ApiError::internal("MCP command queue is not configured"))?;
+    response.mcp_server_url = format!("{}/mcp", state.config.public_base_url);
+    response.runtime_token = state
+        .runtime_grants
+        .issue_with_expires_at(runtime_grant_claims(&snapshot), snapshot.expires_at_unix)
+        .map_err(ApiError::internal)?
+        .token;
+    Ok(Json(response))
+}
+
+fn runtime_grant_claims(snapshot: &RuntimeSessionSnapshot) -> RuntimeGrantClaims {
+    RuntimeGrantClaims {
+        iss: String::new(),
+        sub: snapshot.caller_service.clone(),
+        aud: String::new(),
+        session_id: snapshot.session_id.clone(),
+        trace_id: snapshot.trace_id.clone(),
+        tenant_id: snapshot.tenant_id.clone(),
+        owner_user_id: snapshot.owner_user_id.clone(),
+        agent_key: snapshot.agent_key.clone(),
+        task_profile: snapshot.task_profile.clone(),
+        project_id: snapshot.project_id.clone(),
+        device_id: snapshot.device_id.clone(),
+        run_id: snapshot.run_id.clone(),
+        turn_id: snapshot.turn_id.clone(),
+        task_id: snapshot.task_id.clone(),
+        source_session_id: snapshot.source_session_id.clone(),
+        source_user_message_id: snapshot.source_user_message_id.clone(),
+        contact_agent_id: snapshot.contact_agent_id.clone(),
+        default_model_config_id: snapshot.default_model_config_id.clone(),
+        expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
+        policy_revision: snapshot.policy_revision.clone(),
+        route_revision: snapshot.route_revision.clone(),
+        allowed_resource_ids: snapshot
+            .routes
+            .iter()
+            .map(|route| route.resource_id.clone())
+            .collect(),
+        iat: 0,
+        exp: 0,
+    }
 }
 
 pub(super) async fn close_runtime_session(

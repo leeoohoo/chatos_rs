@@ -129,7 +129,8 @@ async fn handle_tool_call_command_delivery(
     match result {
         Ok(result) => {
             if let Err(error) =
-                publish_tool_call_result(&channel, command.reply_to.as_str(), &result).await
+                publish_tool_call_result(&channel, "", command.result_routing_key.as_str(), &result)
+                    .await
             {
                 delivery
                     .nack(BasicNackOptions {
@@ -160,8 +161,13 @@ async fn handle_tool_call_command_delivery(
                     .map_err(|ack_error| ack_error.to_string())
             } else {
                 let result = exhausted_tool_call_result(&command, error.as_str());
-                if let Err(publish_error) =
-                    publish_tool_call_result(&channel, command.reply_to.as_str(), &result).await
+                if let Err(publish_error) = publish_tool_call_result(
+                    &channel,
+                    "",
+                    command.result_routing_key.as_str(),
+                    &result,
+                )
+                .await
                 {
                     delivery
                         .nack(BasicNackOptions {
@@ -197,14 +203,15 @@ async fn publish_command_to_queue(
 
 async fn publish_tool_call_result(
     channel: &Channel,
-    reply_to: &str,
+    exchange: &str,
+    result_routing_key: &str,
     result: &McpToolCallResult,
 ) -> Result<(), String> {
     let payload = serde_json::to_vec(result).map_err(|error| error.to_string())?;
     let confirmation = channel
         .basic_publish(
-            "",
-            reply_to,
+            exchange,
+            result_routing_key,
             BasicPublishOptions {
                 mandatory: true,
                 ..BasicPublishOptions::default()
@@ -223,7 +230,7 @@ async fn publish_tool_call_result(
     match confirmation {
         Confirmation::Ack(None) => Ok(()),
         Confirmation::Ack(Some(_)) => Err(format!(
-            "RabbitMQ returned unroutable MCP tool call result for {reply_to}"
+            "RabbitMQ returned unroutable MCP tool call result for {result_routing_key}"
         )),
         Confirmation::Nack(_) => Err("RabbitMQ rejected MCP tool call result".to_string()),
         Confirmation::NotRequested => {
@@ -234,10 +241,16 @@ async fn publish_tool_call_result(
 
 fn exhausted_tool_call_result(command: &McpToolCallCommand, error: &str) -> McpToolCallResult {
     McpToolCallResult {
-        event_id: format!("mcp_batch_result_{}", uuid::Uuid::new_v4().simple()),
+        event_id: format!("mcp_batch_result_{}", command.batch_id),
+        owner_service: command.owner_service.clone(),
+        agent_run_id: command.agent_run_id.clone(),
+        agent_key: command.agent_key.clone(),
+        ordering_lane_key: command.ordering_lane_key.clone(),
+        lane_seq: command.lane_seq,
+        generation: command.generation,
+        source_step_seq: command.source_step_seq,
         batch_id: command.batch_id.clone(),
-        session_id: String::new(),
-        run_id: None,
+        session_id: command.mcp_runtime_session_ref.clone(),
         items: command
             .calls
             .iter()

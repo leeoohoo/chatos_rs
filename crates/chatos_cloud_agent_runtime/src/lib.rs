@@ -91,6 +91,8 @@ pub struct CloudAgentAtomicTransition {
     pub continuation_mode: Option<String>,
     pub current_input_items_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_runtime_session_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_batch_id: Option<String>,
     #[serde(default)]
     pub pending_tool_calls: Vec<Value>,
@@ -272,7 +274,12 @@ pub enum CloudAgentModelTrigger {
     ToolResults {
         event_id: String,
         batch_id: String,
+        source_step_seq: u64,
         items: Vec<Value>,
+    },
+    Continuation {
+        event_id: String,
+        payload: Value,
     },
     Retry {
         event_id: String,
@@ -317,6 +324,7 @@ pub fn reduce_single_step(
                     "cloud_agent:{}:{}:{}:tool_results",
                     claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
                 ),
+                mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
                 pending_batch_id: Some(batch_id.clone()),
                 pending_tool_calls: tool_calls.as_array().cloned().unwrap_or_default(),
                 pending_tool_results: Vec::new(),
@@ -353,6 +361,7 @@ pub fn reduce_single_step(
                 "cloud_agent:{}:{}:{}:continuation",
                 claim.ordering.agent_run_id, claim.ordering.generation, claim.ordering.step_seq
             ),
+            mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
@@ -388,6 +397,7 @@ pub fn reduce_single_step(
             previous_response_id: run.previous_response_id.clone(),
             continuation_mode: run.continuation_mode.clone(),
             current_input_items_ref: run.current_input_items_ref.clone(),
+            mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
             pending_batch_id: run.pending_batch_id.clone(),
             pending_tool_calls: run.pending_tool_calls.clone(),
             pending_tool_results: run.pending_tool_results.clone(),
@@ -418,6 +428,7 @@ pub fn reduce_single_step(
             previous_response_id: result.response_id.clone(),
             continuation_mode: None,
             current_input_items_ref: run.current_input_items_ref.clone(),
+            mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
@@ -449,6 +460,84 @@ pub fn reduce_single_step(
     Ok(transition)
 }
 
+pub fn materialize_mcp_command(
+    run: &CloudAgentRunRecord,
+    intent: &CloudAgentOutboxIntent,
+    mcp_runtime_session_ref: &str,
+    result_routing_key: &str,
+) -> Result<chatos_mcp_service::McpToolCallCommand, String> {
+    if intent.topic != "mcp_tool_call_command" {
+        return Err("only MCP tool command intents can be materialized".to_string());
+    }
+    let batch_id = intent
+        .payload
+        .get("batch_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "MCP command intent is missing batch_id".to_string())?;
+    let source_step_seq = intent
+        .payload
+        .get("source_step_seq")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "MCP command intent is missing source_step_seq".to_string())?;
+    let calls = intent
+        .payload
+        .get("calls")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "MCP command intent is missing calls".to_string())?
+        .iter()
+        .enumerate()
+        .map(|(call_index, call)| {
+            let tool_call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
+                .ok_or_else(|| format!("MCP command tool call {call_index} is missing id"))?;
+            let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)
+                .ok_or_else(|| format!("MCP command tool call {call_index} is missing name"))?;
+            let (arguments, preflight_error) =
+                match chatos_ai_runtime::tool_call::clone_tool_call_arguments(call) {
+                    Value::Object(arguments) => (Value::Object(arguments), None),
+                    Value::String(arguments) => match serde_json::from_str::<Value>(&arguments) {
+                        Ok(Value::Object(arguments)) => (Value::Object(arguments), None),
+                        Ok(_) => (
+                            Value::Object(Default::default()),
+                            Some("tool arguments must be an object".to_string()),
+                        ),
+                        Err(error) => (
+                            Value::Object(Default::default()),
+                            Some(format!("invalid tool arguments: {error}")),
+                        ),
+                    },
+                    _ => (
+                        Value::Object(Default::default()),
+                        Some("tool arguments must be an object".to_string()),
+                    ),
+                };
+            Ok(chatos_mcp_service::McpToolCallCommandItem {
+                invocation_id: format!("{batch_id}:{call_index}"),
+                tool_call_id: tool_call_id.to_string(),
+                call_index,
+                name: name.to_string(),
+                arguments,
+                preflight_error,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let command = chatos_mcp_service::McpToolCallCommand {
+        owner_service: run.owner_service.clone(),
+        agent_run_id: run.ordering.agent_run_id.clone(),
+        agent_key: run.agent_key.clone(),
+        ordering_lane_key: run.ordering.ordering_lane_key.clone(),
+        lane_seq: run.ordering.lane_seq,
+        generation: run.ordering.generation,
+        source_step_seq,
+        batch_id: batch_id.to_string(),
+        mcp_runtime_session_ref: mcp_runtime_session_ref.to_string(),
+        result_routing_key: result_routing_key.to_string(),
+        calls,
+        delivery_attempt: 1,
+    };
+    command.validate()?;
+    Ok(command)
+}
+
 fn terminal_transition(
     claim: CloudAgentClaim,
     status: CloudAgentRunStatus,
@@ -470,6 +559,7 @@ fn terminal_transition(
         previous_response_id: None,
         continuation_mode: None,
         current_input_items_ref,
+        mcp_runtime_session_ref: None,
         pending_batch_id: None,
         pending_tool_calls: Vec::new(),
         pending_tool_results: Vec::new(),

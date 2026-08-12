@@ -26,6 +26,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     agent_key: SystemAgentKey,
     sandbox_context: Option<&SandboxRuntimeContext>,
     tool_result_max_chars: usize,
+    existing_session_ref: Option<&str>,
 ) -> Result<ResolvedMcpManagementGateway, String> {
     let owner_user_id = normalized_task_owner_user_id(task)
         .ok_or_else(|| "task owner user id is required for MCP Management".to_string())?;
@@ -101,10 +102,11 @@ pub(super) async fn resolve_mcp_management_gateway(
             Duration::from_millis(TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS),
         );
     }
-    let resolved = builder
-        .resolve()
-        .await
-        .map_err(|error| format!("resolve Task Runner MCP gateway failed: {error}"))?;
+    let resolved = match existing_session_ref {
+        Some(session_ref) => builder.resolve_existing(session_ref).await,
+        None => builder.resolve().await,
+    }
+    .map_err(|error| format!("resolve Task Runner MCP gateway failed: {error}"))?;
     info!(
         task_id = task.id.as_str(),
         run_id = run.id.as_str(),
@@ -117,6 +119,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     Ok(ResolvedMcpManagementGateway {
         server: resolved.server,
         provider_skills_prompt: resolved.provider_skills_prompt,
+        mcp_command_queue: resolved.mcp_command_queue,
         runtime_session: resolved.runtime_session,
     })
 }
@@ -124,12 +127,13 @@ pub(super) async fn resolve_mcp_management_gateway(
 pub(super) struct ResolvedMcpManagementGateway {
     server: McpHttpServer,
     pub(super) provider_skills_prompt: Option<String>,
+    mcp_command_queue: String,
     runtime_session: McpManagementRuntimeSessionHandle,
 }
 
 impl ResolvedMcpManagementGateway {
-    pub(super) fn into_parts(self) -> (McpHttpServer, McpManagementRuntimeSessionHandle) {
-        (self.server, self.runtime_session)
+    pub(super) fn into_parts(self) -> (McpHttpServer, McpManagementRuntimeSessionHandle, String) {
+        (self.server, self.runtime_session, self.mcp_command_queue)
     }
 }
 

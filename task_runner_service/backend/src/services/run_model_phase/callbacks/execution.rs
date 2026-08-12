@@ -5,6 +5,57 @@ use super::*;
 use std::time::Instant;
 
 impl RunService {
+    pub(in crate::services) async fn prepare_single_model_step(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+        model_config: &ModelConfigRecord,
+        prepared_execution: PreparedModelExecution,
+    ) -> Result<PreparedSingleModelStep, String> {
+        let max_iterations = prepared_execution
+            .runtime_config
+            .max_iterations
+            .unwrap_or(DEFAULT_TASK_RUN_MAX_ITERATIONS);
+        let runtime_settings = self.effective_task_runner_runtime_settings().await?;
+        let review_policy = TaskExecutionReviewPolicy::new(
+            runtime_settings.review_read_only_iterations,
+            runtime_settings.review_missing_read_failures,
+            runtime_settings.review_repeat_interval_iterations,
+        );
+        let runtime_execution = self.build_runtime_execution_state(
+            run,
+            model_config,
+            &prepared_execution.run_spec,
+            prepared_execution.tool_result_model_budget_limits,
+            max_iterations,
+            review_policy,
+            task.mcp_config.requires_execution,
+            prepared_execution.effective_workspace_dir.as_str(),
+        );
+        let runtime_config = prepared_execution.runtime_config;
+        let runtime = runtime_config
+            .build_runtime_with_mcp_builder_and_memory_http_client(
+                prepared_execution.mcp_builder,
+                self.config.memory_engine_http_client.clone(),
+            )
+            .await?;
+        self.persist_mcp_runtime_snapshot(task, run, &runtime_config, &runtime)
+            .await;
+        let mut run_spec = prepared_execution.run_spec;
+        append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
+        Ok(PreparedSingleModelStep {
+            agent: prepared_execution.agent,
+            run_spec,
+            runtime,
+            runtime_options: runtime_execution.runtime_options,
+            mcp_runtime_session_ref: prepared_execution
+                .mcp_management_runtime_session
+                .session_id()
+                .to_string(),
+            mcp_command_queue: prepared_execution.mcp_command_queue,
+        })
+    }
+
     pub(in crate::services) async fn execute_prepared_model_run(
         &self,
         task: &TaskRecord,

@@ -8,10 +8,10 @@ use std::sync::{
 
 use chatos_agent::{TaskRunnerAgent, TaskRunnerRunSpecInput};
 use chatos_ai_runtime::{
-    AiRuntimeOptions, AiTurnReport, MemoryRecordScope, MemoryScope, RuntimeCallbacks,
-    TaskExecutionReviewPolicy, TaskFinalizationLifecycleHook, TaskMemoryRuntimeConfig,
-    TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits,
-    DEFAULT_TASK_RUN_MAX_ITERATIONS,
+    AiRuntimeOptions, AiSingleStepOutcome, AiTurnReport, MemoryRecordScope, MemoryScope,
+    RuntimeCallbacks, TaskExecutionReviewPolicy, TaskFinalizationLifecycleHook,
+    TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
+    ToolResultModelBudgetLimits, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
 use chatos_mcp_runtime::{BuiltinMcpPromptLocale, McpExecutorBuilder};
@@ -56,11 +56,114 @@ pub(in crate::services) struct PreparedModelExecution {
     runtime_config: TaskRuntimeConfig,
     mcp_builder: McpExecutorBuilder,
     mcp_management_runtime_session: McpManagementRuntimeSessionHandle,
+    mcp_command_queue: String,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     sandbox_context: Option<crate::services::sandbox_runtime::SandboxRuntimeContext>,
     harness_run_context: Option<HarnessRunContext>,
     effective_workspace_dir: String,
     plugin_sessions: Vec<PreparedPluginSession>,
+}
+
+pub(in crate::services) struct PreparedSingleModelStep {
+    pub(crate) agent: TaskRunnerAgent,
+    pub(crate) run_spec: TaskRunSpec,
+    pub(crate) runtime: TaskRuntime,
+    pub(crate) runtime_options: AiRuntimeOptions,
+    pub(crate) mcp_runtime_session_ref: String,
+    pub(crate) mcp_command_queue: String,
+}
+
+impl PreparedSingleModelStep {
+    pub(crate) fn continuation_input_items(&self) -> Vec<Value> {
+        self.run_spec.current_input_items.clone()
+    }
+
+    pub(crate) fn prepare_for_trigger(
+        mut self,
+        cloud_run: &chatos_cloud_agent_protocol::CloudAgentRunRecord,
+        trigger: &chatos_cloud_agent_runtime::CloudAgentModelTrigger,
+    ) -> Result<Self, String> {
+        self.run_spec.model_config.previous_response_id = cloud_run.previous_response_id.clone();
+        match trigger {
+            chatos_cloud_agent_runtime::CloudAgentModelTrigger::RunStarted { .. } => {}
+            chatos_cloud_agent_runtime::CloudAgentModelTrigger::Continuation {
+                payload, ..
+            } => {
+                self.run_spec.user_record = None;
+                self.run_spec.current_input_items = payload
+                    .get("input_items")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+            chatos_cloud_agent_runtime::CloudAgentModelTrigger::ToolResults { items, .. } => {
+                self.run_spec.user_record = None;
+                self.run_spec.current_input_items = mcp_result_input_items(
+                    cloud_run.pending_tool_calls.as_slice(),
+                    items.as_slice(),
+                )?;
+            }
+            chatos_cloud_agent_runtime::CloudAgentModelTrigger::Retry { payload, .. } => {
+                self.run_spec.user_record = None;
+                if let Some(items) = payload.get("input_items").and_then(Value::as_array) {
+                    self.run_spec.current_input_items = items.clone();
+                }
+            }
+        }
+        Ok(self)
+    }
+
+    pub(crate) async fn execute(
+        self,
+        iteration: usize,
+        reason: String,
+        model_attempt: usize,
+    ) -> Result<AiSingleStepOutcome, String> {
+        self.agent
+            .execute_once_with_runtime_options(
+                self.run_spec,
+                &self.runtime,
+                self.runtime_options,
+                iteration,
+                reason,
+                model_attempt,
+            )
+            .await
+    }
+}
+
+fn mcp_result_input_items(calls: &[Value], results: &[Value]) -> Result<Vec<Value>, String> {
+    if calls.len() != results.len() {
+        return Err("MCP aggregate result count does not match pending tool calls".to_string());
+    }
+    calls
+        .iter()
+        .zip(results)
+        .enumerate()
+        .map(|(index, (call, result))| {
+            let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
+                .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
+            let output = if result.get("status").and_then(Value::as_str) == Some("completed") {
+                result
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(Value::Null)
+                    .to_string()
+            } else {
+                result
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("MCP tool call failed")
+                    .to_string()
+            };
+            Ok(
+                chatos_ai_runtime::tool_call::build_function_call_output_item(
+                    call_id,
+                    output.as_str(),
+                ),
+            )
+        })
+        .collect()
 }
 
 impl RunService {
@@ -104,6 +207,7 @@ impl RunService {
                 effective_workspace_dir.as_str(),
                 &prerequisite_context,
                 capability_policy.as_ref(),
+                None,
             )
             .await
         {

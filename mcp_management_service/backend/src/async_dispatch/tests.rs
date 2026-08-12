@@ -6,9 +6,16 @@ use super::*;
 
 fn command(call_count: usize) -> McpToolCallCommand {
     McpToolCallCommand {
+        owner_service: "task-runner".to_string(),
+        agent_run_id: "run-1".to_string(),
+        agent_key: "task_runner_run_phase".to_string(),
+        ordering_lane_key: "task:task-1".to_string(),
+        lane_seq: 1,
+        generation: 1,
+        source_step_seq: 1,
         batch_id: "batch-1".to_string(),
-        runtime_token: "runtime-token".to_string(),
-        reply_to: "mcp.results.runtime-1".to_string(),
+        mcp_runtime_session_ref: "session-1".to_string(),
+        result_routing_key: "cloud_agent.task_runner.mcp_results".to_string(),
         calls: (0..call_count)
             .map(|call_index| McpToolCallCommandItem {
                 invocation_id: format!("invocation-{call_index}"),

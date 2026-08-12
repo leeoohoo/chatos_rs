@@ -185,6 +185,9 @@ impl RuntimeSessionSnapshot {
             expires_at: self.expires_at.clone(),
             routes: self.routes.clone(),
             tools: self.tools.clone(),
+            mcp_command_queue: String::new(),
+            mcp_server_url: String::new(),
+            runtime_token: String::new(),
         }
     }
 }

@@ -167,23 +167,25 @@ async fn persist_runtime_session(state: &AppState, snapshot: &RuntimeSessionSnap
         .expect("persist test Runtime Session");
 }
 
-fn runtime_token(state: &AppState, snapshot: &RuntimeSessionSnapshot) -> String {
-    state
-        .runtime_grants
-        .issue_with_expires_at(grant_claims(snapshot), snapshot.expires_at_unix)
-        .expect("issue test runtime token")
-        .token
-}
-
 fn tool_call_command(
-    state: &AppState,
+    _state: &AppState,
     snapshot: &RuntimeSessionSnapshot,
     calls: Vec<McpToolCallCommandItem>,
 ) -> McpToolCallCommand {
     McpToolCallCommand {
+        owner_service: snapshot.caller_service.clone(),
+        agent_run_id: snapshot
+            .run_id
+            .clone()
+            .unwrap_or_else(|| "run-1".to_string()),
+        agent_key: snapshot.agent_key.clone(),
+        ordering_lane_key: "task:task-1".to_string(),
+        lane_seq: 1,
+        generation: 1,
+        source_step_seq: 1,
         batch_id: "batch-1".to_string(),
-        runtime_token: runtime_token(state, snapshot),
-        reply_to: "test.mcp.results".to_string(),
+        mcp_runtime_session_ref: snapshot.session_id.clone(),
+        result_routing_key: "test.mcp.results".to_string(),
         calls,
         delivery_attempt: 1,
     }

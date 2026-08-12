@@ -314,20 +314,6 @@ impl TaskQueueTopology {
         Ok(())
     }
 
-    pub fn mcp_result_queue_config(
-        &self,
-        worker_id: &str,
-    ) -> Result<chatos_mcp_runtime::McpInvocationResultQueueConfig, String> {
-        let rabbitmq_url = self.rabbitmq_url.clone().ok_or_else(|| {
-            "TASK_RUNNER_RABBITMQ_URL is required for MCP result events".to_string()
-        })?;
-        let instance = rabbitmq_queue_component(worker_id)?;
-        Ok(chatos_mcp_runtime::McpInvocationResultQueueConfig {
-            rabbitmq_url,
-            queue_name: format!("{}.{}", self.mcp_result_queue_prefix, instance),
-        })
-    }
-
     pub fn worker_control_queue_name(&self, worker_id: &str) -> Result<String, String> {
         Ok(format!(
             "{}.{}",

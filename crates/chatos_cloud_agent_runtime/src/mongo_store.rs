@@ -483,6 +483,7 @@ impl MongoCloudAgentRunStore {
                         "record.previous_response_id": bson::to_bson(&transition.previous_response_id).map_err(|error| error.to_string())?,
                         "record.continuation_mode": bson::to_bson(&transition.continuation_mode).map_err(|error| error.to_string())?,
                         "record.current_input_items_ref": transition.current_input_items_ref.as_str(),
+                        "record.mcp_runtime_session_ref": bson::to_bson(&transition.mcp_runtime_session_ref).map_err(|error| error.to_string())?,
                         "record.pending_batch_id": bson::to_bson(&transition.pending_batch_id).map_err(|error| error.to_string())?,
                         "record.pending_tool_calls": bson::to_bson(&transition.pending_tool_calls).map_err(|error| error.to_string())?,
                         "record.pending_tool_results": bson::to_bson(&transition.pending_tool_results).map_err(|error| error.to_string())?,

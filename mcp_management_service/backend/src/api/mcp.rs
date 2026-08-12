@@ -21,7 +21,6 @@ use chatos_mcp_service::{
 };
 use mongodb::bson::DateTime;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use crate::capabilities::route_allows_system_tool;
 use crate::runtime::{
@@ -136,17 +135,16 @@ pub(crate) async fn execute_tool_call_command(
     state: &AppState,
     command: &McpToolCallCommand,
 ) -> Result<McpToolCallResult, String> {
-    let claims = state
-        .runtime_grants
-        .verify(command.runtime_token.trim())
-        .map_err(|_| "runtime session bearer token is invalid or expired".to_string())?;
     let snapshot = state
         .runtime_sessions
-        .get(claims.session_id.as_str())
+        .get(command.mcp_runtime_session_ref.trim())
         .await?
         .ok_or_else(|| "runtime session was not found or has expired".to_string())?;
-    if !grant_matches_snapshot(&claims, &snapshot) {
-        return Err("runtime session grant does not match its route snapshot".to_string());
+    command.validate()?;
+    if command.owner_service != snapshot.caller_service || command.agent_key != snapshot.agent_key {
+        return Err(
+            "MCP tool call command identity does not match its runtime session".to_string(),
+        );
     }
     if command.calls.is_empty() || command.calls.len() > 128 {
         return Err("MCP tool call command must contain between 1 and 128 calls".to_string());
@@ -381,10 +379,16 @@ pub(crate) async fn execute_tool_call_command(
     }
 
     Ok(McpToolCallResult {
-        event_id: format!("mcp_batch_result_{}", Uuid::new_v4().simple()),
+        event_id: format!("mcp_batch_result_{}", command.batch_id),
+        owner_service: command.owner_service.clone(),
+        agent_run_id: command.agent_run_id.clone(),
+        agent_key: command.agent_key.clone(),
+        ordering_lane_key: command.ordering_lane_key.clone(),
+        lane_seq: command.lane_seq,
+        generation: command.generation,
+        source_step_seq: command.source_step_seq,
         batch_id: command.batch_id.clone(),
         session_id: snapshot.session_id.clone(),
-        run_id: snapshot.run_id.clone(),
         items: results
             .into_iter()
             .enumerate()

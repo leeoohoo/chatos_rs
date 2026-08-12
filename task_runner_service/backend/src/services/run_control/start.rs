@@ -309,6 +309,7 @@ impl RunService {
             now,
         );
         run.agent_run_id = Some(agent_run_id);
+        run.dispatch_event_pending = false;
         run.agent_ordering_lane_key = Some(ordering_lane_key);
         run.agent_lane_seq = Some(lane_seq);
         run.execution_lane_key = task.execution_lane_key();
@@ -374,15 +375,6 @@ impl RunService {
         // run id/status before batch pause or cancellation decisions are made.
         self.try_send_task_callback("task.run.started", task_id, Some(&run))
             .await;
-        if let Err(err) = self.enqueue_run_dispatch_if_needed(&run).await {
-            warn!(
-                run_id = run.id.as_str(),
-                task_id = task_id,
-                error = err.as_str(),
-                "failed to enqueue queued run for rabbitmq dispatch"
-            );
-        }
-
         Ok(run)
     }
 

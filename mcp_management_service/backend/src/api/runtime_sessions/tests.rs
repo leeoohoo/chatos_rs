@@ -272,9 +272,15 @@ fn local_only_agents_cannot_create_managed_runtime_sessions() {
 }
 
 #[test]
-fn retired_local_task_runner_agents_cannot_create_runtime_sessions() {
-    assert!(parse_agent_key("task_runner_local_plan_phase").is_err());
-    assert!(parse_agent_key("task_runner_local_run_phase").is_err());
+fn local_named_task_runner_agents_are_cloud_managed_agents() {
+    assert_eq!(
+        parse_agent_key("task_runner_local_plan_phase").unwrap(),
+        SystemAgentKey::TaskRunnerLocalPlanPhase
+    );
+    assert_eq!(
+        parse_agent_key("task_runner_local_run_phase").unwrap(),
+        SystemAgentKey::TaskRunnerLocalRunPhase
+    );
 }
 
 #[test]

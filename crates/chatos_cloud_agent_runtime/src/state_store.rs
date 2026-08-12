@@ -226,6 +226,7 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
             run.previous_response_id = transition.previous_response_id;
             run.continuation_mode = transition.continuation_mode;
             run.current_input_items_ref = transition.current_input_items_ref;
+            run.mcp_runtime_session_ref = transition.mcp_runtime_session_ref;
             run.pending_batch_id = transition.pending_batch_id;
             run.pending_tool_calls = transition.pending_tool_calls;
             run.pending_tool_results = transition.pending_tool_results;
@@ -472,6 +473,7 @@ mod tests {
                 previous_response_id: None,
                 continuation_mode: None,
                 current_input_items_ref: "task_run:run-1:terminal".to_string(),
+                mcp_runtime_session_ref: None,
                 pending_batch_id: None,
                 pending_tool_calls: Vec::new(),
                 pending_tool_results: Vec::new(),

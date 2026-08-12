@@ -45,19 +45,6 @@ pub async fn run_server_from_env() -> Result<(), String> {
     let cfg = config::Config::init_global()?;
     logger::init_logger(cfg).map_err(|err| format!("Failed to init logger: {err}"))?;
 
-    chatos_mcp_runtime::initialize_mcp_invocation_result_queue(
-        chatos_mcp_runtime::McpInvocationResultQueueConfig {
-            rabbitmq_url: cfg.mcp_result_rabbitmq_url.clone(),
-            queue_name: format!(
-                "{}.{}",
-                cfg.mcp_result_queue_prefix,
-                mcp_result_queue_instance_component(cfg.host.as_str(), cfg.port)
-            ),
-        },
-    )
-    .await
-    .map_err(|error| format!("initialize Chatos MCP result queue failed: {error}"))?;
-
     if let Err(err) = modules::app_startup::initialize_runtime(cfg).await {
         error!("{err}");
         return Err(err);
@@ -99,19 +86,6 @@ pub async fn run_server_from_env() -> Result<(), String> {
     }
     logger::shutdown_telemetry()?;
     Ok(())
-}
-
-fn mcp_result_queue_instance_component(host: &str, port: u16) -> String {
-    format!("{host}-{port}")
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 async fn shutdown_signal() {

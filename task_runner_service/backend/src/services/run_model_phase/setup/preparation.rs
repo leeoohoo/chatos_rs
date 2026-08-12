@@ -20,6 +20,7 @@ pub(super) async fn prepare_model_execution(
     effective_workspace_dir: &str,
     prerequisite_context: &[PrerequisiteTaskContext],
     capability_policy: Option<&TaskRunnerCapabilityPolicy>,
+    mcp_runtime_session_ref: Option<&str>,
 ) -> Result<PreparedModelExecution, String> {
     let command_constraints =
         crate::services::plugin_runtime_relay::plugin_command_execution_constraints(run)?;
@@ -132,6 +133,7 @@ pub(super) async fn prepare_model_execution(
         task_agent_key,
         sandbox_context.as_ref(),
         tool_result_model_budget_limits.per_result_max_chars,
+        mcp_runtime_session_ref,
     )
     .await?;
     let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
@@ -162,7 +164,7 @@ pub(super) async fn prepare_model_execution(
     let memory_scope = build_memory_scope(service, task, run);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
-    let (mcp_management_server, mcp_management_runtime_session) =
+    let (mcp_management_server, mcp_management_runtime_session, mcp_command_queue) =
         mcp_management_gateway.into_parts();
     let mut mcp_builder = McpExecutorBuilder::new()
         .with_http_server(mcp_management_server)
@@ -180,6 +182,7 @@ pub(super) async fn prepare_model_execution(
         runtime_config,
         mcp_builder,
         mcp_management_runtime_session,
+        mcp_command_queue,
         tool_result_model_budget_limits,
         sandbox_context,
         harness_run_context,

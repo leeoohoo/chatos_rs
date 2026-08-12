@@ -283,27 +283,6 @@ pub struct ToolInfo {
     pub tool_info: Value,
 }
 
-impl ToolInfo {
-    pub(crate) fn mcp_command_queue(&self) -> Option<&str> {
-        self.server_headers
-            .as_ref()?
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("x-chatos-mcp-command-queue"))
-            .map(|(_, value)| value.trim())
-            .filter(|value| !value.is_empty())
-    }
-
-    pub(crate) fn runtime_bearer_token(&self) -> Option<&str> {
-        self.server_headers
-            .as_ref()?
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
-            .and_then(|(_, value)| value.trim().strip_prefix("Bearer "))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_call_id: String,

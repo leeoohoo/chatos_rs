@@ -83,6 +83,54 @@ impl McpManagementGatewayBuilder {
             exposed_tool_count: session.exposed_tool_count,
             effective_mcp_ids: session.effective_mcp_ids,
             provider_skills_prompt: session.provider_skills_prompt,
+            mcp_command_queue: session.mcp_command_queue,
+            runtime_token: session.runtime_token,
+            runtime_session,
+        })
+    }
+
+    pub async fn resolve_existing(self, session_id: &str) -> Result<ResolvedMcpGateway, String> {
+        let config = McpManagementClientConfig::from_env(self.caller_service.clone())
+            .await
+            .map_err(|error| format!("load MCP Management config failed: {error}"))?;
+        let client = McpManagementClient::new(config)
+            .map_err(|error| format!("initialize MCP Management client failed: {error}"))?;
+        let session = client
+            .runtime_session_routes(session_id)
+            .await
+            .map_err(|error| format!("resolve existing MCP runtime session failed: {error}"))?;
+        let runtime_session =
+            McpManagementRuntimeSessionHandle::new(client, session.session_id.clone());
+        let response = RuntimeSessionResponse {
+            session_id: session.session_id,
+            policy_revision: session.policy_revision,
+            route_revision: session.route_revision,
+            expires_at: session.expires_at,
+            mcp_server_url: session.mcp_server_url,
+            mcp_command_queue: session.mcp_command_queue,
+            runtime_token: session.runtime_token,
+            configured_mcp_count: session.routes.len(),
+            exposed_tool_count: session.tools.len(),
+            effective_mcp_ids: Vec::new(),
+            provider_skills_prompt: None,
+            unavailable_required_mcps: Vec::new(),
+        };
+        let server = build_gateway_server(
+            &response,
+            self.default_timeout,
+            self.tool_timeouts,
+            self.async_result_transport,
+        )?;
+        Ok(ResolvedMcpGateway {
+            server,
+            session_id: response.session_id,
+            route_revision: response.route_revision,
+            configured_mcp_count: response.configured_mcp_count,
+            exposed_tool_count: response.exposed_tool_count,
+            effective_mcp_ids: response.effective_mcp_ids,
+            provider_skills_prompt: response.provider_skills_prompt,
+            mcp_command_queue: response.mcp_command_queue,
+            runtime_token: response.runtime_token,
             runtime_session,
         })
     }
@@ -96,6 +144,8 @@ pub struct ResolvedMcpGateway {
     pub exposed_tool_count: usize,
     pub effective_mcp_ids: Vec<String>,
     pub provider_skills_prompt: Option<String>,
+    pub mcp_command_queue: String,
+    pub runtime_token: String,
     pub runtime_session: McpManagementRuntimeSessionHandle,
 }
 

@@ -938,6 +938,7 @@ dependencies = [
  "async-trait",
  "chatos_ai_runtime",
  "chatos_cloud_agent_protocol",
+ "chatos_mcp_service",
  "chrono",
  "futures-util",
  "mongodb",
