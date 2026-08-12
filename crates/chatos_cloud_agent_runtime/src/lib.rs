@@ -13,6 +13,7 @@ use chatos_cloud_agent_protocol::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::future::Future;
 
 mod mongo_store;
 
@@ -160,6 +161,95 @@ pub trait CloudAgentModelResolver: Send + Sync {
         run: &CloudAgentRunRecord,
         trigger: CloudAgentModelTrigger,
     ) -> Result<AiSingleStepRequest, String>;
+}
+
+#[derive(Debug, Clone)]
+pub struct CloudAgentConsumeInput {
+    pub agent_run_id: String,
+    pub event_id: String,
+    pub trigger: CloudAgentModelTrigger,
+    pub expected_status: CloudAgentRunStatus,
+    pub expected_phase: CloudAgentRunPhase,
+    pub claim_token: String,
+    pub claim_until: DateTime<Utc>,
+    pub output_routing_key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudAgentConsumeDisposition {
+    Committed,
+    Duplicate,
+    OutOfOrder,
+    Conflict,
+    Terminal,
+}
+
+/// Handles one AI Runtime delivery. The supplied executor must itself perform
+/// exactly one model request; `AiRuntime::execute_once` satisfies that contract.
+pub async fn consume_once<S, R, E, Fut>(
+    store: &S,
+    resolver: &R,
+    input: CloudAgentConsumeInput,
+    execute: E,
+) -> Result<CloudAgentConsumeDisposition, String>
+where
+    S: CloudAgentRunStore,
+    R: CloudAgentModelResolver,
+    E: FnOnce(AiSingleStepRequest) -> Fut,
+    Fut: Future<Output = Result<AiSingleStepOutcome, String>>,
+{
+    if input.agent_run_id.trim().is_empty()
+        || input.event_id.trim().is_empty()
+        || input.claim_token.trim().is_empty()
+        || input.output_routing_key.trim().is_empty()
+    {
+        return Err("cloud agent consumer input contains an empty identity".to_string());
+    }
+    let Some(run) = store.load_run(input.agent_run_id.as_str()).await? else {
+        return Ok(CloudAgentConsumeDisposition::Conflict);
+    };
+    if run.status.is_terminal() {
+        return Ok(CloudAgentConsumeDisposition::Terminal);
+    }
+    let claim = CloudAgentClaim {
+        ordering: run.ordering.clone(),
+        expected_status: input.expected_status,
+        expected_phase: input.expected_phase,
+        expected_version: run.version,
+        claim_token: input.claim_token,
+        claim_until: input.claim_until,
+    };
+    match store.acquire_short_claim(&claim).await? {
+        CloudAgentClaimResult::Acquired => {}
+        CloudAgentClaimResult::Duplicate => return Ok(CloudAgentConsumeDisposition::Duplicate),
+        CloudAgentClaimResult::OutOfOrder => return Ok(CloudAgentConsumeDisposition::OutOfOrder),
+        CloudAgentClaimResult::Conflict => return Ok(CloudAgentConsumeDisposition::Conflict),
+        CloudAgentClaimResult::Terminal => return Ok(CloudAgentConsumeDisposition::Terminal),
+    }
+    let result = async {
+        let request = resolver.resolve_single_step(&run, input.trigger).await?;
+        let outcome = execute(request).await?;
+        let transition = reduce_single_step(
+            &run,
+            claim.clone(),
+            input.event_id.as_str(),
+            input.output_routing_key.as_str(),
+            outcome,
+        )?;
+        store.commit_transition(transition).await
+    }
+    .await;
+    match result {
+        Ok(true) => Ok(CloudAgentConsumeDisposition::Committed),
+        Ok(false) => {
+            store.release_short_claim(&claim).await?;
+            Ok(CloudAgentConsumeDisposition::Conflict)
+        }
+        Err(error) => {
+            store.release_short_claim(&claim).await?;
+            Err(error)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
