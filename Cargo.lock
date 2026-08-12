@@ -932,6 +932,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_cloud_agent_runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chatos_ai_runtime",
+ "chatos_cloud_agent_protocol",
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chatos_config_sdk"
 version = "0.1.0"
 dependencies = [
