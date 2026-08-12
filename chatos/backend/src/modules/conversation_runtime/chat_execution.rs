@@ -50,6 +50,14 @@ use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap
 #[path = "chat_execution/lifecycle.rs"]
 mod lifecycle;
 
+pub(crate) use lifecycle::{
+    task_turn_review_metadata as cloud_task_turn_review_metadata,
+    track_project_execution_planner_completion as cloud_track_project_execution_planner_completion,
+    track_project_planning_integrity as cloud_track_project_planning_integrity,
+    ChatosRuntimeLifecycleHook as CloudChatosRuntimeLifecycleHook,
+    TaskTurnLifecycleState as CloudTaskTurnLifecycleState,
+};
+
 #[cfg(test)]
 use lifecycle::assistant_response_input_item;
 use lifecycle::{
@@ -189,7 +197,10 @@ impl ChatosStreamRuntime for AgentAiServer {
     }
 }
 
-fn merge_user_record_metadata(persisted: Option<Value>, generated: Option<Value>) -> Option<Value> {
+pub(super) fn merge_user_record_metadata(
+    persisted: Option<Value>,
+    generated: Option<Value>,
+) -> Option<Value> {
     match (persisted, generated) {
         (Some(Value::Object(mut persisted)), Some(Value::Object(generated))) => {
             persisted.extend(generated);
@@ -201,7 +212,7 @@ fn merge_user_record_metadata(persisted: Option<Value>, generated: Option<Value>
     }
 }
 
-fn build_chatos_user_record(
+pub(super) fn build_chatos_user_record(
     conversation_id: &str,
     turn_id: Option<String>,
     message_id: String,
@@ -223,7 +234,7 @@ fn build_chatos_user_record(
     }
 }
 
-fn build_chatos_record_options(
+pub(super) fn build_chatos_record_options(
     message_mode: &str,
     message_source: &str,
     hidden_turn: bool,
@@ -242,6 +253,8 @@ fn build_chatos_record_options(
     RuntimeRecordOptions {
         persist_assistant_records: true,
         persist_tool_records: true,
+        assistant_message_id: None,
+        tool_message_id_prefix: None,
         assistant_message_mode: Some(message_mode.to_string()),
         assistant_message_source: Some(message_source.to_string()),
         assistant_metadata: with_visibility(
@@ -520,7 +533,7 @@ pub fn build_agent_chat_options(
     }
 }
 
-fn compose_agent_instructions(
+pub(super) fn compose_agent_instructions(
     runtime_context: &ResolvedConversationRuntimeContext,
     model_runtime: &ResolvedChatModelConfig,
 ) -> Option<String> {
@@ -556,7 +569,7 @@ Write the final reply as a concise product delivery note for the user. Lead with
     )
 }
 
-fn task_follow_up_max_rounds_from_settings(settings: &Value) -> usize {
+pub(super) fn task_follow_up_max_rounds_from_settings(settings: &Value) -> usize {
     settings
         .get("TASK_FOLLOW_UP_MAX_ROUNDS")
         .and_then(Value::as_i64)
@@ -564,7 +577,7 @@ fn task_follow_up_max_rounds_from_settings(settings: &Value) -> usize {
         .unwrap_or(3)
 }
 
-fn max_iterations_from_settings(settings: &Value) -> usize {
+pub(super) fn max_iterations_from_settings(settings: &Value) -> usize {
     settings
         .get("MAX_ITERATIONS")
         .and_then(Value::as_i64)

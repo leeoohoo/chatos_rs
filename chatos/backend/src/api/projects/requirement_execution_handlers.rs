@@ -67,9 +67,10 @@ use rerun_support::{
 };
 use rerun_support::{
     expand_project_task_scope_to_actual_graph, expected_execution_project_task_ids,
-    load_expected_execution_project_task_ids, reconcile_requirement_planner_outcome,
-    RequirementPlannerRecovery,
+    load_expected_execution_project_task_ids,
 };
+
+pub(crate) use rerun_support::reconcile_requirement_planner_owner_context;
 
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct ExecuteRequirementRequest {

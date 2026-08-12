@@ -10,8 +10,8 @@ use tracing::warn;
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::ai_settings::attachment_total_max_bytes_from_settings;
 use crate::core::chat_stream::{
-    build_chat_stream_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result,
-    send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
+    enrich_chat_result_with_persisted_messages, handle_chat_result, send_tools_unavailable_event,
+    ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::services::agent_runtime::message_manager::MessageManager;
@@ -26,11 +26,9 @@ use crate::utils::log_helpers::log_chat_begin;
 use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
-use super::chat_execution::{
-    build_agent_chat_options, configure_chatos_stream_agent,
-    effective_codex_gateway_mcp_passthrough, prepare_mcp_execution, ChatExecutionInput,
-    ChatosAgentAiServer,
-};
+use super::chat_execution::{effective_codex_gateway_mcp_passthrough, prepare_mcp_execution};
+use super::cloud_agent::{start_chatos_cloud_agent, StartChatosCloudAgent};
+use super::guidance;
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
 use super::snapshot::{sync_chat_turn_snapshot, LiveRequestSnapshotContext};
 use super::turn_lifecycle::ActiveConversationTurn;
@@ -77,8 +75,8 @@ pub struct BootstrappedChatInput<'a> {
     pub content: &'a str,
     pub persisted_user_message_content: Option<String>,
     pub persisted_user_message_metadata: Option<Value>,
+    pub cloud_agent_owner_context: Option<Value>,
     pub model_runtime: &'a ResolvedChatModelConfig,
-    pub agent: ChatosAgentAiServer,
     pub bootstrap: CommonChatBootstrap,
 }
 
@@ -609,8 +607,8 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         content,
         persisted_user_message_content,
         persisted_user_message_metadata,
+        cloud_agent_owner_context,
         model_runtime,
-        agent,
         bootstrap,
     } = input;
     let CommonChatBootstrap {
@@ -625,10 +623,10 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
     let use_tools = runtime_context.use_tools;
     let sink = build_chat_event_sink(
         sender,
-        user_id,
+        user_id.clone(),
         session_id,
         Some(resolved_turn_id.clone()),
-        project_id,
+        project_id.clone(),
         Some(user_message_id.clone()),
     );
 
@@ -723,96 +721,74 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             return;
         }
     };
-    let mut callback_bundle = build_chat_stream_callbacks(&sink, session_id, false);
-    callback_bundle.callbacks.on_chunk = None;
-    callback_bundle.callbacks.on_thinking = None;
-    callback_bundle.callbacks.on_tools_start = None;
-    callback_bundle.callbacks.on_tools_stream = None;
-    callback_bundle.callbacks.on_tools_end = None;
-    let prepared = prepare_chat_execution(
-        sink,
-        prepared_mcp.unavailable_tools.as_slice(),
-        prepared_mcp.tool_metadata.clone(),
-        &runtime_context,
-        callback_bundle.callbacks.clone(),
-        callback_bundle.chunk_sent.clone(),
-        callback_bundle.streamed_content.clone(),
-        build_live_request_snapshot_context(&ChatLifecycleConfig {
-            session_id,
-            turn_id: resolved_turn_id.as_str(),
-            user_message_id: user_message_id.as_str(),
-            model_runtime,
-            use_tools,
-            unavailable_tools: prepared_mcp.unavailable_tools.as_slice(),
-            runtime_context: &runtime_context,
-            tool_metadata: &prepared_mcp.tool_metadata,
-        }),
-        "responses",
+    send_tools_unavailable_event(&sink, prepared_mcp.unavailable_tools.as_slice());
+    log_chat_begin(
+        session_id,
+        &model_runtime.model,
+        &model_runtime.base_url,
+        use_tools,
+        runtime_context.mcp_server_bundle.0.len(),
+        runtime_context.mcp_server_bundle.1.len() + runtime_context.mcp_server_bundle.2.len(),
+        !model_runtime.api_key.is_empty(),
     );
-    let mut agent = agent;
-    configure_chatos_stream_agent(
-        &mut agent,
+    guidance::register_active_turn(session_id, resolved_turn_id.as_str());
+    sync_execution_snapshot(
         session_id,
         resolved_turn_id.as_str(),
-        &runtime_context,
-        &effective_settings,
-        prepared_mcp.executor,
-    );
-    let unavailable_tools = prepared_mcp.unavailable_tools.clone();
-    let chat_options = build_agent_chat_options(
-        session_id,
-        model_runtime,
-        &runtime_context,
-        &effective_settings,
-        prepared_mcp.prefixed_input_items,
-        ChatExecutionInput {
-            use_tools,
-            max_tokens,
-            attachments,
-            callbacks: prepared.callbacks.clone(),
-            turn_id: resolved_turn_id.clone(),
-            user_message_id: user_message_id.clone(),
-            message_source: model_runtime.model.clone(),
-            persisted_user_message_content,
-            persisted_user_message_metadata,
-        },
-    );
-    let result = run_chat_lifecycle(
-        ChatLifecycleConfig {
-            session_id,
-            turn_id: resolved_turn_id.as_str(),
-            user_message_id: user_message_id.as_str(),
-            model_runtime,
-            use_tools,
-            unavailable_tools: unavailable_tools.as_slice(),
-            runtime_context: &runtime_context,
-            tool_metadata: &prepared.mcp_tool_metadata,
-        },
-        agent.execute(session_id, content, chat_options),
-    )
-    .await;
-
-    close_mcp_management_runtime_session(
-        &mut runtime_context,
-        session_id,
-        resolved_turn_id.as_str(),
-    )
-    .await;
-
-    finalize_chat_result(
-        &prepared.sink,
-        session_id,
-        resolved_turn_id.as_str(),
+        "running",
         user_message_id.as_str(),
-        true,
-        &prepared.chunk_sent,
-        &prepared.streamed_content,
-        result,
-        false,
-        || crate::utils::log_helpers::log_chat_cancelled(session_id),
-        crate::utils::log_helpers::log_chat_error,
+        model_runtime.model.as_str(),
+        model_runtime.provider.as_str(),
+        &prepared_mcp.tool_metadata,
+        prepared_mcp.unavailable_tools.as_slice(),
+        &runtime_context,
     )
     .await;
+    let start_result = start_chatos_cloud_agent(StartChatosCloudAgent {
+        user_id,
+        project_id,
+        session_id,
+        turn_id: resolved_turn_id.as_str(),
+        user_message_id: user_message_id.as_str(),
+        content,
+        persisted_user_message_content,
+        persisted_user_message_metadata,
+        attachments,
+        model_runtime,
+        effective_settings,
+        max_tokens,
+        runtime_context: &runtime_context,
+        prepared_mcp,
+        owner_context: cloud_agent_owner_context,
+    })
+    .await;
+    if let Err(error) = start_result {
+        close_mcp_management_runtime_session(
+            &mut runtime_context,
+            session_id,
+            resolved_turn_id.as_str(),
+        )
+        .await;
+        guidance::close_active_turn(session_id, resolved_turn_id.as_str());
+        let chunk_sent = Arc::new(AtomicBool::new(false));
+        let streamed_content = Arc::new(Mutex::new(String::new()));
+        finalize_chat_result(
+            &sink,
+            session_id,
+            resolved_turn_id.as_str(),
+            user_message_id.as_str(),
+            true,
+            &chunk_sent,
+            &streamed_content,
+            Err(error),
+            true,
+            || crate::utils::log_helpers::log_chat_cancelled(session_id),
+            crate::utils::log_helpers::log_chat_error,
+        )
+        .await;
+        return;
+    }
+    sink.send_done();
 }
 
 async fn close_mcp_management_runtime_session(

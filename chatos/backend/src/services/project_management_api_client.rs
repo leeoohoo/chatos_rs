@@ -577,6 +577,68 @@ pub struct SyncRequirementExecutionStateRequest {
     pub skip_done_work_items: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SyncExecutionLinksQueryRequest {
+    pub work_item_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncDeleteExecutionLinksRequest {
+    pub links: Vec<SyncExecutionLinkIdentity>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncExecutionLinkIdentity {
+    pub work_item_id: String,
+    pub link_id: String,
+}
+
+pub async fn sync_list_execution_links(
+    sync_secret: &str,
+    work_item_ids: Vec<String>,
+) -> Result<Vec<Value>, String> {
+    let config = crate::config::Config::try_get()?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/execution-links/query",
+        config
+            .project_service_internal_base_url
+            .trim()
+            .trim_end_matches('/')
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_READ_SCOPE,
+        )?
+        .json(&SyncExecutionLinksQueryRequest { work_item_ids }),
+    )
+    .await
+}
+
+pub async fn sync_delete_execution_links(
+    sync_secret: &str,
+    links: Vec<SyncExecutionLinkIdentity>,
+) -> Result<Value, String> {
+    let config = crate::config::Config::try_get()?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/execution-links/delete",
+        config
+            .project_service_internal_base_url
+            .trim()
+            .trim_end_matches('/')
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_SYNC_SCOPE,
+        )?
+        .json(&SyncDeleteExecutionLinksRequest { links }),
+    )
+    .await
+}
+
 pub async fn sync_work_item_task_runner_status(
     sync_secret: &str,
     work_item_id: &str,

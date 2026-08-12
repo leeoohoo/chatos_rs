@@ -244,6 +244,24 @@ pub struct SyncTaskRunnerWorkItemStatusResponse {
     pub link: ProjectWorkItemTaskRunnerLinkRecord,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SyncExecutionLinksQueryRequest {
+    #[serde(default)]
+    pub work_item_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SyncDeleteExecutionLinksRequest {
+    #[serde(default)]
+    pub links: Vec<SyncExecutionLinkIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncExecutionLinkIdentity {
+    pub work_item_id: String,
+    pub link_id: String,
+}
+
 fn default_true() -> bool {
     true
 }

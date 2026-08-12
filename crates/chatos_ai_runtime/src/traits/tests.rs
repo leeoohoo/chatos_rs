@@ -75,6 +75,8 @@ fn runtime_record_options_builders_configure_persistence() {
     let options = RuntimeRecordOptions::default()
         .with_persist_assistant_records(true)
         .with_persist_tool_records(true)
+        .with_assistant_message_id("cloud-run:1:assistant")
+        .with_tool_message_id_prefix("cloud-run:1:tool")
         .with_assistant_message_mode("task_assistant")
         .with_assistant_message_source("task_runner")
         .with_assistant_metadata(json!({"kind": "assistant"}))
@@ -84,6 +86,14 @@ fn runtime_record_options_builders_configure_persistence() {
 
     assert!(options.persist_assistant_records);
     assert!(options.persist_tool_records);
+    assert_eq!(
+        options.assistant_message_id.as_deref(),
+        Some("cloud-run:1:assistant")
+    );
+    assert_eq!(
+        options.tool_message_id_prefix.as_deref(),
+        Some("cloud-run:1:tool")
+    );
     assert_eq!(
         options.assistant_message_mode.as_deref(),
         Some("task_assistant")

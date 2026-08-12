@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::panic::AssertUnwindSafe;
 
 use axum::http::StatusCode;
 use chatos_project_execution::{
@@ -12,17 +11,14 @@ use chatos_project_execution::{
     select_unblocked_pending_work_items, sort_work_items_for_planning, ExecutionPlanIdentity,
     ExecutionPlane, NEXT_ACTION_PREVIEW_AND_CONFIRM, RECOVERY_ACTION_NONE, STATUS_PLANNING_STARTED,
 };
-use futures::FutureExt;
 use serde_json::{json, Value};
-use tracing::warn;
 
 use crate::api::chat_stream_common::ChatStreamRequest;
 use crate::core::auth::AuthUser;
-use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::modules::conversation_runtime::guidance;
-use crate::services::{access_token_scope, project_management_api_client};
+use crate::services::project_management_api_client;
 use crate::utils::abort_registry;
 
 use super::super::requirement_execution::{
@@ -37,7 +33,7 @@ use super::super::requirement_execution::{
 use super::rerun_support::ensure_old_cloud_execution_batch_ready_for_replacement;
 use super::{
     expected_execution_project_task_ids, load_cloud_execution_source_message,
-    reconcile_requirement_planner_outcome, ExecuteRequirementRequest, RequirementPlannerRecovery,
+    ExecuteRequirementRequest,
 };
 
 pub(super) async fn execute_requirement_inner(
@@ -315,34 +311,26 @@ pub(super) async fn execute_requirement_inner(
             .collect(),
     };
     let persisted_user_message_metadata = message.metadata.clone();
-    let recovery = RequirementPlannerRecovery {
-        access_token: access_token.clone(),
-        execution_group_id: execution_group_id.clone(),
-        executing_requirement_ids,
-        link_scope_work_items: all_work_items.clone(),
-        project_id: project.id.clone(),
-        project_service_base_url: cfg.project_service_base_url.clone(),
-        project_sync_secret,
-        replacement_identity,
-        replacement_work_items,
-        requirement_id: requirement_id.clone(),
-        selected_work_items: selected_work_items.clone(),
-        session_id: session.id.clone(),
-        task_runner_base_url: contact_runtime.task_runner_base_url.clone(),
-    };
     prepare_requirement_planner_turn(session.id.as_str(), execution_group_id.as_str());
-    access_token_scope::spawn_with_current_access_token(async move {
-        run_requirement_planner_background_job(
-            RunChatUsecaseInput {
-                sender: None,
-                req: chat_req,
-                persisted_user_message_content: Some(user_visible_content),
-                persisted_user_message_metadata,
-            },
-            recovery,
-        )
-        .await;
-    });
+    run_chat_usecase(RunChatUsecaseInput {
+        sender: None,
+        req: chat_req,
+        persisted_user_message_content: Some(user_visible_content),
+        persisted_user_message_metadata,
+        cloud_agent_owner_context: Some(json!({
+            "kind": "requirement_planner",
+            "project_id": project.id,
+            "requirement_id": requirement_id,
+            "session_id": session.id,
+            "execution_group_id": execution_group_id,
+            "executing_requirement_ids": executing_requirement_ids,
+            "link_scope_work_items": selected_work_items,
+            "selected_work_items": selected_work_items,
+            "replacement_identity": replacement_identity,
+            "replacement_work_items": replacement_work_items,
+        })),
+    })
+    .await;
 
     Ok(json!({
         "success": true,
@@ -374,57 +362,6 @@ pub(super) async fn execute_requirement_inner(
 pub(super) fn prepare_requirement_planner_turn(session_id: &str, execution_group_id: &str) {
     abort_registry::reset_turn(session_id, Some(execution_group_id));
     guidance::register_active_turn(session_id, execution_group_id);
-}
-
-async fn run_requirement_planner_background_job(
-    input: RunChatUsecaseInput,
-    recovery: RequirementPlannerRecovery,
-) {
-    let panic_detail = AssertUnwindSafe(run_chat_usecase(input))
-        .catch_unwind()
-        .await
-        .err()
-        .map(|payload| panic_payload_to_string(payload.as_ref()));
-    if let Some(detail) = panic_detail.as_deref() {
-        warn!(
-            session_id = recovery.session_id.as_str(),
-            execution_group_id = recovery.execution_group_id.as_str(),
-            panic = detail,
-            "requirement execution planner background task panicked"
-        );
-        if let Err(err) = set_task_runner_async_overall_status_for_session(
-            recovery.session_id.as_str(),
-            recovery.execution_group_id.as_str(),
-            "failed",
-        )
-        .await
-        {
-            warn!(
-                session_id = recovery.session_id.as_str(),
-                execution_group_id = recovery.execution_group_id.as_str(),
-                error = err.as_str(),
-                "failed to persist planner failure status after panic"
-            );
-        }
-    }
-    if let Err(err) = reconcile_requirement_planner_outcome(recovery).await {
-        warn!(
-            error = err.error.as_str(),
-            detail = err.detail.as_deref().unwrap_or_default(),
-            panic = panic_detail.as_deref().unwrap_or_default(),
-            "failed to reconcile requirement execution planner outcome"
-        );
-    }
-}
-
-fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&'static str>() {
-        return (*message).to_string();
-    }
-    if let Some(message) = payload.downcast_ref::<String>() {
-        return message.clone();
-    }
-    "non-string panic payload".to_string()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -766,22 +703,6 @@ mod runtime_environment_tests {
                 RuntimeEnvironmentInitializationAction::Analyze
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod panic_payload_tests {
-    use super::panic_payload_to_string;
-
-    #[test]
-    fn panic_payload_stringifies_common_payload_types() {
-        let owned = "owned panic".to_string();
-        assert_eq!(panic_payload_to_string(&owned), "owned panic");
-        assert_eq!(panic_payload_to_string(&"static panic"), "static panic");
-        assert_eq!(
-            panic_payload_to_string(&42usize),
-            "non-string panic payload"
-        );
     }
 }
 

@@ -34,6 +34,13 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         true,
         "Cloud Agent store initialized",
     );
+    super::conversation_runtime::cloud_agent::spawn_outbox_reconciler()?;
+    super::conversation_runtime::cloud_agent::spawn_consumer()?;
+    core::runtime_health::mark_runtime_check_ok(
+        "cloud_agent_runtime",
+        true,
+        "Cloud Agent consumer and outbox reconciler started",
+    );
 
     match crate::repositories::user_settings::purge_managed_runtime_settings().await {
         Ok(modified_count) => {

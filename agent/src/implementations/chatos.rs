@@ -209,6 +209,26 @@ mod tests {
         assert!(requirement.requires_project_management_mcp());
     }
 
+    #[test]
+    fn one_profile_factory_covers_all_four_chatos_cloud_agents() {
+        let keys = [
+            ChatosAgentProfile::from_project_locality(false, false, false).key(),
+            ChatosAgentProfile::from_project_locality(false, false, true).key(),
+            ChatosAgentProfile::from_project_locality(false, true, false).key(),
+            ChatosAgentProfile::from_project_locality(false, true, true).key(),
+        ];
+
+        assert_eq!(
+            keys,
+            [
+                SystemAgentKey::ChatosConversationAgent,
+                SystemAgentKey::ChatosLocalConversationAgent,
+                SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
+                SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
+            ]
+        );
+    }
+
     struct FakeStreamRuntime;
 
     #[async_trait]

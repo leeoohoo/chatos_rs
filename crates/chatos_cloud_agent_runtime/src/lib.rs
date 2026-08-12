@@ -374,6 +374,47 @@ pub fn cloud_agent_mcp_result_input_items(
         .collect()
 }
 
+pub fn cloud_agent_mcp_result_callback_payload(
+    calls: &[Value],
+    results: &[Value],
+) -> Result<Value, String> {
+    if calls.len() != results.len() {
+        return Err("MCP aggregate result count does not match pending tool calls".to_string());
+    }
+    let tool_results = calls
+        .iter()
+        .zip(results)
+        .enumerate()
+        .map(|(index, (call, result))| {
+            let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)
+                .ok_or_else(|| format!("pending tool call {index} has no name"))?;
+            let completed = result.get("status").and_then(Value::as_str) == Some("completed");
+            let content = if completed {
+                result
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(Value::Null)
+                    .to_string()
+            } else {
+                result
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("MCP tool call failed")
+                    .to_string()
+            };
+            Ok(serde_json::json!({
+                "name": name,
+                "success": completed,
+                "is_error": !completed,
+                "content": content,
+                "result": result.get("result").cloned().unwrap_or(Value::Null),
+                "error": result.get("error").cloned().unwrap_or(Value::Null),
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(serde_json::json!({ "tool_results": tool_results }))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudAgentConsumeDisposition {
     Committed,

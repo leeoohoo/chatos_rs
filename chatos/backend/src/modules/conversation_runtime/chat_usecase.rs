@@ -13,7 +13,6 @@ use serde_json::Value;
 use tracing::warn;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
-use super::chat_execution::init_chatos_stream_agent;
 use super::chat_runner::{
     build_chat_event_sink, run_bootstrapped_chat, run_bootstrapped_project_planning,
     BootstrappedChatInput, BootstrappedProjectPlanningInput,
@@ -25,6 +24,7 @@ pub struct RunChatUsecaseInput {
     pub req: ChatStreamRequest,
     pub persisted_user_message_content: Option<String>,
     pub persisted_user_message_metadata: Option<Value>,
+    pub cloud_agent_owner_context: Option<Value>,
 }
 
 pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
@@ -33,6 +33,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         req,
         persisted_user_message_content,
         persisted_user_message_metadata,
+        cloud_agent_owner_context,
     } = input;
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
@@ -113,7 +114,6 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         .await;
         return;
     }
-    let agent = init_chatos_stream_agent(&model_runtime, bootstrap.runtime_context.agent_profile);
     run_bootstrapped_chat(BootstrappedChatInput {
         sender: sender.clone(),
         user_id: req.user_id.clone(),
@@ -122,8 +122,8 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         content: &content,
         persisted_user_message_content,
         persisted_user_message_metadata,
+        cloud_agent_owner_context,
         model_runtime: &model_runtime,
-        agent,
         bootstrap,
     })
     .await;

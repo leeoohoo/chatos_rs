@@ -570,7 +570,7 @@ impl AiRuntime {
             .save_assistant_record(SaveAssistantRecordInput {
                 conversation_id,
                 conversation_turn_id: options.conversation_turn_id.clone(),
-                message_id: None,
+                message_id: options.record_options.assistant_message_id.clone(),
                 content: response.content.clone(),
                 reasoning: response.reasoning.clone(),
                 structured_payload: tool_calls
@@ -610,12 +610,18 @@ impl AiRuntime {
         let records = tool_results
             .iter()
             .filter(|result| should_persist_tool_result(result))
-            .map(|result| {
+            .enumerate()
+            .map(|(index, result)| {
                 let mut input = SaveToolRecordInput::from_tool_result(
                     conversation_id.clone(),
                     options.conversation_turn_id.clone(),
                     result,
                 );
+                input.message_id = options
+                    .record_options
+                    .tool_message_id_prefix
+                    .as_ref()
+                    .map(|prefix| format!("{prefix}:{index}"));
                 input.metadata = options.record_options.tool_metadata.clone();
                 input.message_mode = options.record_options.tool_message_mode.clone();
                 input.message_source = options.record_options.tool_message_source.clone();

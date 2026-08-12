@@ -24,10 +24,24 @@ use super::{
     IterativeContextRefresh, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
 };
 use crate::{
-    AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus,
-    ModelRequest, RuntimeBeforeModelRequest, RuntimeCallbacks, RuntimeFinalResponseAction,
-    RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook, ToolExecutor,
+    AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepRequest, AiTurnReport,
+    AiTurnStatus, MemoryRecordWriter, ModelRequest, RuntimeBeforeModelRequest, RuntimeCallbacks,
+    RuntimeFinalResponseAction, RuntimeFinalResponseContext, RuntimeIterationContext,
+    RuntimeLifecycleHook, RuntimeRecordOptions, SaveRecordInput, ToolExecutor,
 };
+
+#[derive(Clone, Default)]
+struct RecordingWriter {
+    records: Arc<Mutex<Vec<SaveRecordInput>>>,
+}
+
+#[async_trait]
+impl MemoryRecordWriter for RecordingWriter {
+    async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
+        self.records.lock().expect("record lock").push(input);
+        Ok(())
+    }
+}
 
 struct TestLifecycleHook;
 
@@ -232,6 +246,97 @@ async fn start_lifecycle_mock_provider(
         connection_headers,
         server,
     )
+}
+
+#[tokio::test]
+async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
+    let (base_url, _requests, _headers, server) = start_lifecycle_mock_provider(vec![json!({
+        "id": "response-final",
+        "status": "completed",
+        "output_text": "done"
+    })])
+    .await;
+    let writer = RecordingWriter::default();
+    let records = Arc::clone(&writer.records);
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "finish"}]),
+    )
+    .with_responses_support(true);
+    let options = AiRuntimeOptions::for_conversation("session-idempotent").with_record_options(
+        RuntimeRecordOptions::default()
+            .with_persist_assistant_records(true)
+            .with_assistant_message_id("cloud-run:1:assistant"),
+    );
+
+    AiRuntime::new(None)
+        .with_record_writer(Some(Arc::new(writer)))
+        .execute_once(AiSingleStepRequest::new(request, options))
+        .await
+        .expect("single step");
+    server.abort();
+
+    let records = records.lock().expect("record lock");
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].message_id.as_deref(),
+        Some("cloud-run:1:assistant")
+    );
+}
+
+#[tokio::test]
+async fn tool_records_use_the_runtime_supplied_deterministic_prefix() {
+    let (base_url, _requests, _headers, server) = start_lifecycle_mock_provider(vec![
+        json!({
+            "id": "response-tool",
+            "status": "completed",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "list_page",
+                "arguments": "{}"
+            }]
+        }),
+        json!({
+            "id": "response-final",
+            "status": "completed",
+            "output_text": "done"
+        }),
+    ])
+    .await;
+    let writer = RecordingWriter::default();
+    let records = Arc::clone(&writer.records);
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "use tool"}]),
+    )
+    .with_responses_support(true);
+    let options = AiRuntimeOptions::for_conversation("session-idempotent-tools")
+        .with_record_options(
+            RuntimeRecordOptions::default()
+                .with_persist_tool_records(true)
+                .with_tool_message_id_prefix("cloud-run:2:tool"),
+        );
+
+    AiRuntime::new(Some(Arc::new(PagingToolExecutor)))
+        .with_record_writer(Some(Arc::new(writer)))
+        .run_turn(request, options)
+        .await
+        .expect("tool turn");
+    server.abort();
+
+    let records = records.lock().expect("record lock");
+    let tool = records
+        .iter()
+        .find(|record| record.role == "tool")
+        .expect("tool record");
+    assert_eq!(tool.message_id.as_deref(), Some("cloud-run:2:tool:0"));
 }
 
 #[tokio::test]

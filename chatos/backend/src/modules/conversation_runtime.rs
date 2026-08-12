@@ -9,6 +9,8 @@ pub mod chat_execution;
 pub mod chat_runner;
 #[path = "conversation_runtime/chat_usecase.rs"]
 pub mod chat_usecase;
+#[path = "conversation_runtime/cloud_agent.rs"]
+pub mod cloud_agent;
 #[path = "conversation_runtime/context_history.rs"]
 pub mod context_history;
 #[path = "conversation_runtime/guidance.rs"]

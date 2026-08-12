@@ -22,34 +22,34 @@ use crate::services::ai_client_common::AiClientCallbacks;
 
 use super::system_input_item;
 
-pub(super) struct ChatosRuntimeLifecycleHook {
-    pub(super) session_id: String,
-    pub(super) turn_id: String,
-    pub(super) model_name: String,
-    pub(super) supports_images: Option<bool>,
-    pub(super) callbacks: AiClientCallbacks,
-    pub(super) max_task_follow_up_rounds: usize,
-    pub(super) task_turn: Arc<Mutex<TaskTurnLifecycleState>>,
+pub(crate) struct ChatosRuntimeLifecycleHook {
+    pub(crate) session_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) model_name: String,
+    pub(crate) supports_images: Option<bool>,
+    pub(crate) callbacks: AiClientCallbacks,
+    pub(crate) max_task_follow_up_rounds: usize,
+    pub(crate) task_turn: Arc<Mutex<TaskTurnLifecycleState>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(super) struct TaskTurnLifecycleState {
-    pub(super) follow_up_rounds: usize,
-    pub(super) mode: Option<TaskTurnFollowUpMode>,
-    pub(super) last_visible_response: Option<AiResponse>,
-    pub(super) review_locale: Option<InternalContextLocale>,
-    pub(super) review_attempted: bool,
-    pub(super) review_last_outcome: Option<TaskTurnReviewOutcome>,
-    pub(super) continuation_history: Vec<Value>,
-    pub(super) project_execution_plan_materialized: bool,
-    pub(super) project_planning_integrity_guard: bool,
-    pub(super) project_planning_write_failures: Vec<String>,
-    pub(super) project_planning_repair_rounds: usize,
-    pub(super) project_planning_repair_mutation_succeeded: bool,
-    pub(super) project_planning_pending_dependency_batch_signature: Option<String>,
-    pub(super) project_planning_dependency_write_cycle: Vec<String>,
-    pub(super) project_planning_last_verified_dependency_cycle: Vec<String>,
-    pub(super) project_planning_force_finalization: bool,
+pub(crate) struct TaskTurnLifecycleState {
+    pub(crate) follow_up_rounds: usize,
+    pub(crate) mode: Option<TaskTurnFollowUpMode>,
+    pub(crate) last_visible_response: Option<AiResponse>,
+    pub(crate) review_locale: Option<InternalContextLocale>,
+    pub(crate) review_attempted: bool,
+    pub(crate) review_last_outcome: Option<TaskTurnReviewOutcome>,
+    pub(crate) continuation_history: Vec<Value>,
+    pub(crate) project_execution_plan_materialized: bool,
+    pub(crate) project_planning_integrity_guard: bool,
+    pub(crate) project_planning_write_failures: Vec<String>,
+    pub(crate) project_planning_repair_rounds: usize,
+    pub(crate) project_planning_repair_mutation_succeeded: bool,
+    pub(crate) project_planning_pending_dependency_batch_signature: Option<String>,
+    pub(crate) project_planning_dependency_write_cycle: Vec<String>,
+    pub(crate) project_planning_last_verified_dependency_cycle: Vec<String>,
+    pub(crate) project_planning_force_finalization: bool,
 }
 
 const MAX_PROJECT_PLANNING_REPAIR_ROUNDS: usize = 3;
@@ -163,7 +163,7 @@ fn verified_dependency_cycle_repeats(signatures: &[String]) -> bool {
     unique.len() < signatures.len()
 }
 
-pub(super) fn track_project_planning_integrity(
+pub(crate) fn track_project_planning_integrity(
     mut callbacks: RuntimeCallbacks,
     state: Arc<Mutex<TaskTurnLifecycleState>>,
 ) -> RuntimeCallbacks {
@@ -282,7 +282,7 @@ pub(super) fn track_project_planning_integrity(
     callbacks
 }
 
-pub(super) fn track_project_execution_planner_completion(
+pub(crate) fn track_project_execution_planner_completion(
     mut callbacks: RuntimeCallbacks,
     state: Arc<Mutex<TaskTurnLifecycleState>>,
 ) -> RuntimeCallbacks {
@@ -554,7 +554,7 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
     }
 }
 
-pub(super) fn task_turn_review_metadata(state: &TaskTurnLifecycleState) -> Value {
+pub(crate) fn task_turn_review_metadata(state: &TaskTurnLifecycleState) -> Value {
     let outcome = match state.review_last_outcome {
         Some(TaskTurnReviewOutcome::Pass) => "pass",
         Some(TaskTurnReviewOutcome::NeedsMoreWork) => "needs_more_work",

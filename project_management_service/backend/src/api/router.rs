@@ -46,8 +46,9 @@ use super::runtime_environment::{
 };
 use super::runtime_environment_mcp::project_runtime_environment_mcp_entrypoint;
 use super::sync::{
-    sync_get_project, sync_get_project_runtime_environment, sync_import_project,
-    sync_list_projects, sync_requirement_execution_state, sync_task_runner_task_status,
+    sync_delete_execution_links, sync_get_project, sync_get_project_runtime_environment,
+    sync_import_project, sync_list_execution_links, sync_list_projects,
+    sync_requirement_execution_state, sync_task_runner_task_status,
     sync_task_runner_work_item_status,
 };
 use super::task_runner_links::{
@@ -267,6 +268,14 @@ pub fn build_internal_router(state: AppState) -> Router {
             .route(
                 "/api/chatos-sync/requirements/{requirement_id}/execution-state",
                 post(sync_requirement_execution_state),
+            )
+            .route(
+                "/api/chatos-sync/execution-links/query",
+                post(sync_list_execution_links),
+            )
+            .route(
+                "/api/chatos-sync/execution-links/delete",
+                post(sync_delete_execution_links),
             )
             .route("/mcp", post(mcp::mcp_entrypoint))
             .with_state(state),

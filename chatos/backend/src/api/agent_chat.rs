@@ -304,6 +304,7 @@ async fn stream_chat(sender: Option<SseSender>, req: ChatStreamRequest) {
         req,
         persisted_user_message_content: None,
         persisted_user_message_metadata: None,
+        cloud_agent_owner_context: None,
     })
     .await;
 }
