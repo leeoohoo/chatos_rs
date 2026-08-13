@@ -4,10 +4,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::models::TaskScheduleConfig;
-use tracing::warn;
-
 use super::*;
+use crate::models::TaskScheduleConfig;
 
 impl RunService {
     pub(crate) async fn set_project_execution_paused(
@@ -35,16 +33,6 @@ impl RunService {
         drop(start_guards);
         if paused {
             return Ok(Vec::new());
-        }
-        if let Err(err) = self
-            .enqueue_queued_runs_for_tasks(task_ids.as_slice())
-            .await
-        {
-            warn!(
-                task_count = task_ids.len(),
-                error = err.as_str(),
-                "failed to enqueue resumed queued runs for rabbitmq dispatch"
-            );
         }
         let mut refreshed_tasks = Vec::with_capacity(task_ids.len());
         for task_id in &task_ids {
@@ -263,6 +251,7 @@ mod tests {
     use crate::store::AppStore;
     use chatos_plugin_management_sdk::TaskPluginConfig;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
 
     fn test_config() -> AppConfig {
         AppConfig {

@@ -4,10 +4,13 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(test)]
+use chatos_agent::ChatosAgentProfile;
 use chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS;
 #[cfg(test)]
 use chatos_ai_runtime::{
     AiResponse, RuntimeFinalResponseAction, RuntimeFinalResponseContext, RuntimeIterationContext,
+    RuntimeLifecycleHook,
 };
 use chatos_ai_runtime::{RuntimeCallbacks, RuntimeRecordOptions, SaveRecordInput};
 use serde_json::{json, Value};
@@ -40,6 +43,12 @@ pub(crate) use lifecycle::{
     track_project_planning_integrity as cloud_track_project_planning_integrity,
     ChatosRuntimeLifecycleHook as CloudChatosRuntimeLifecycleHook,
     TaskTurnLifecycleState as CloudTaskTurnLifecycleState,
+};
+
+#[cfg(test)]
+use lifecycle::{
+    track_project_execution_planner_completion, track_project_planning_integrity,
+    ChatosRuntimeLifecycleHook, TaskTurnLifecycleState,
 };
 
 #[cfg(test)]

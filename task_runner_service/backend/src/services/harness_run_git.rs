@@ -44,6 +44,40 @@ pub(super) struct HarnessRunContext {
 }
 
 impl HarnessRunContext {
+    pub(super) fn from_run(run: &TaskRunRecord) -> Result<Option<Self>, String> {
+        let Some(value) = run.input_snapshot.get("harness") else {
+            return Ok(None);
+        };
+        let required = |key: &str| {
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| format!("persisted Harness context is missing {key}"))
+        };
+        Ok(Some(Self {
+            project_id: required("project_id")?,
+            repo_path: required("repo_path")?,
+            git_url: required("git_url")?,
+            base_branch: required("base_branch")?,
+            run_branch: required("run_branch")?,
+            base_commit: required("base_commit")?,
+            effective_workspace_dir: run
+                .input_snapshot
+                .get("effective_workspace_dir")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    "persisted Harness context is missing effective_workspace_dir".to_string()
+                })?,
+            owned_workspace_root: None,
+        }))
+    }
+
     pub(super) fn to_metadata(&self) -> serde_json::Value {
         json!({
             "enabled": true,

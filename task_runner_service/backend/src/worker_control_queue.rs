@@ -183,7 +183,6 @@ pub fn spawn_worker_control_consumer(
                                             true
                                         }
                                         RUN_TERMINAL_EVENT if event.parent_run_id.is_some() => {
-                                            run_service.signal_run_terminal(event.run_id.as_str());
                                             info!(
                                                     worker_id = config.worker_id.as_str(),
                                                     run_id = event.run_id.as_str(),

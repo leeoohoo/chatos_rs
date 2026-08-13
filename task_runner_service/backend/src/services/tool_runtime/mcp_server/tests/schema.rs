@@ -370,7 +370,7 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
 }
 
 #[test]
-fn mcp_model_list_is_strictly_scoped_to_current_owner() {
+fn admin_mcp_model_list_exposes_all_enabled_cloud_models() {
     let current_user = admin_user("user-1");
     let models = vec![
         model_config("own-enabled", "user-1", true),
@@ -380,7 +380,7 @@ fn mcp_model_list_is_strictly_scoped_to_current_owner() {
 
     let visible = model_configs_for_user(models, &current_user);
 
-    assert_eq!(visible.len(), 1);
+    assert_eq!(visible.len(), 2);
     assert_eq!(
         visible[0].get("id").and_then(|value| value.as_str()),
         Some("own-enabled")
@@ -392,7 +392,7 @@ fn mcp_model_list_is_strictly_scoped_to_current_owner() {
 }
 
 #[test]
-fn mcp_tool_schema_exposes_only_current_owner_enabled_model_choices() {
+fn admin_mcp_tool_schema_exposes_all_enabled_cloud_model_choices() {
     let current_user = admin_user("user-1");
     let models = vec![
         model_config("own-enabled", "user-1", true),
@@ -413,12 +413,15 @@ fn mcp_tool_schema_exposes_only_current_owner_enabled_model_choices() {
         .get("enum")
         .and_then(serde_json::Value::as_array)
         .expect("model enum");
-    assert_eq!(enum_values, &vec![json!("own-enabled")]);
+    assert_eq!(
+        enum_values,
+        &vec![json!("own-enabled"), json!("other-enabled")]
+    );
     let choices = model_schema
         .get("oneOf")
         .and_then(serde_json::Value::as_array)
         .expect("model choices");
-    assert_eq!(choices.len(), 1);
+    assert_eq!(choices.len(), 2);
     assert_eq!(choices[0].get("const"), Some(&json!("own-enabled")));
     assert!(choices[0]
         .get("title")

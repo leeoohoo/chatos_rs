@@ -384,7 +384,7 @@ pub fn message_item(role: &str, content: Value) -> Value {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agent-loop"))]
 mod tests {
     use std::sync::Arc;
     use std::time::Duration;

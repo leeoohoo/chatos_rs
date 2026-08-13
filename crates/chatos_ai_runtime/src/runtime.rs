@@ -755,5 +755,5 @@ fn runtime_tool_definition_name(tool: &Value) -> Option<&str> {
         .or_else(|| tool.get("function")?.get("name")?.as_str())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agent-loop"))]
 mod tests;

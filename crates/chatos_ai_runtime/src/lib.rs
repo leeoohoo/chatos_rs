@@ -76,10 +76,10 @@ pub use task::{
     tool_result_is_meaningful_engineering_action, tool_result_is_missing_targeted_read,
     tool_result_is_placeholder_progress_write, TaskBuiltinMcpPromptMode,
     TaskBuiltinMcpPromptSnapshot, TaskExecutionOutcome, TaskExecutionOutcomeStatus,
-    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
-    TaskExecutionReviewTrigger, TaskMcpInitMode, TaskMemoryRuntimeConfig, TaskRunReport,
-    TaskRunSpec, TaskRuntime, TaskRuntimeBuilder, TaskRuntimeConfig,
-    DEFAULT_TASK_RUN_MAX_ITERATIONS,
+    TaskExecutionProgressSnapshot, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
+    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger, TaskMcpInitMode,
+    TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeBuilder,
+    TaskRuntimeConfig, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 pub use tool_runtime::{
     append_responses_tool_results, append_tool_results, append_tool_results_with_budget,

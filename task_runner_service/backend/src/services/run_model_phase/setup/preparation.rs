@@ -21,6 +21,9 @@ pub(super) async fn prepare_model_execution(
     prerequisite_context: &[PrerequisiteTaskContext],
     capability_policy: Option<&TaskRunnerCapabilityPolicy>,
     mcp_runtime_session_ref: Option<&str>,
+    plugin_session_snapshots: Option<
+        Vec<crate::services::plugin_runtime_relay::PreparedPluginSessionSnapshot>,
+    >,
 ) -> Result<PreparedModelExecution, String> {
     let command_constraints =
         crate::services::plugin_runtime_relay::plugin_command_execution_constraints(run)?;
@@ -124,9 +127,13 @@ pub(super) async fn prepare_model_execution(
         runtime_config.builtin_prompt_mode = chatos_ai_runtime::TaskBuiltinMcpPromptMode::Effective;
     }
 
-    let prepared_plugin_runtime = service
-        .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
-        .await?;
+    let prepared_plugin_runtime = if let Some(snapshots) = plugin_session_snapshots {
+        service.restore_plugin_runtime(task, run, snapshots)?
+    } else {
+        service
+            .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
+            .await?
+    };
     let mcp_management_gateway = resolve_mcp_management_gateway(
         task,
         run,
@@ -184,8 +191,6 @@ pub(super) async fn prepare_model_execution(
         mcp_management_runtime_session,
         mcp_command_queue,
         tool_result_model_budget_limits,
-        sandbox_context,
-        harness_run_context,
         effective_workspace_dir,
         plugin_sessions: prepared_plugin_runtime.sessions,
     })

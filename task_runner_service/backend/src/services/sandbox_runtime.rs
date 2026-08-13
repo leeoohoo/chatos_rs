@@ -133,6 +133,15 @@ pub(super) struct SandboxRuntimeContext {
 }
 
 impl SandboxRuntimeContext {
+    pub(super) fn from_run(run: &TaskRunRecord) -> Result<Option<Self>, String> {
+        let Some(value) = run.input_snapshot.get("sandbox") else {
+            return Ok(None);
+        };
+        serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| format!("decode persisted sandbox context failed: {error}"))
+    }
+
     pub(super) fn provider_kind(&self) -> Result<SandboxProviderKind, String> {
         match self.provider.trim().to_ascii_lowercase().as_str() {
             "local_connector" => Ok(SandboxProviderKind::LocalConnector),

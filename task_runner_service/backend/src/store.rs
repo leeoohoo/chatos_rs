@@ -8,10 +8,7 @@ use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{self, doc, Bson, Document},
-    options::{
-        FindOneAndUpdateOptions, FindOneOptions, FindOptions, IndexOptions, ReplaceOptions,
-        ReturnDocument,
-    },
+    options::{FindOptions, IndexOptions, ReplaceOptions},
     Client, Collection, IndexModel,
 };
 use parking_lot::RwLock;
@@ -47,8 +44,7 @@ use self::codec::ask_user_prompt_status_to_str;
 use self::mongo_support::{
     bson_string_field, bson_usize_field, build_limit_stage, build_mongo_prompt_filter,
     build_mongo_run_filter, build_mongo_task_filter, build_skip_stage,
-    is_mongo_active_run_conflict, is_mongo_active_run_index_conflict,
-    is_mongo_execution_lane_conflict, mongo_find_options,
+    is_mongo_active_run_conflict, is_mongo_active_run_index_conflict, mongo_find_options,
 };
 use self::task_support::{
     apply_offset_limit, build_page_response, empty_task_stats, slice_page_items, task_due_at,
@@ -248,6 +244,7 @@ pub(crate) struct RunTerminalSubscriptionRecord {
 }
 
 impl RunTerminalSubscriptionRecord {
+    #[cfg(test)]
     pub(crate) fn new(run_id: &str, parent_run_id: &str, worker_id: &str) -> Self {
         Self {
             id: format!("{run_id}:{parent_run_id}:{worker_id}"),

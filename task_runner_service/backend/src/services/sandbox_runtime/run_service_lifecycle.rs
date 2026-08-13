@@ -4,30 +4,6 @@
 use super::*;
 
 impl RunService {
-    pub(in crate::services) async fn renew_active_sandbox_lease(
-        &self,
-        run_id: &str,
-    ) -> Result<(), String> {
-        let Some(run) = self.store.get_run(run_id).await? else {
-            return Ok(());
-        };
-        let Some(context) = sandbox_context_from_run(&run)? else {
-            return Ok(());
-        };
-        if context.provider_kind() != Ok(chatos_mcp_management_sdk::SandboxProviderKind::Cloud)
-            || !context.is_environment
-        {
-            return Ok(());
-        }
-        let auth = SandboxManagerAuth::for_context(&self.config, &context)?;
-        let client = SandboxManagerClient::new(context.manager_base_url.clone(), auth)?;
-        let ttl_seconds = self.effective_sandbox_lease_ttl_seconds().await?;
-        client
-            .renew_environment_lease(&context, ttl_seconds)
-            .await
-            .map(|_| ())
-    }
-
     pub(crate) async fn release_sandboxes_for_terminal_run(
         &self,
         run: &TaskRunRecord,

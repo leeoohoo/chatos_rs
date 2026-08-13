@@ -52,7 +52,7 @@ use relay_client::{
 #[cfg(test)]
 use session_runtime::filter_transient_model_input_for_runtime;
 pub(in crate::services) use session_runtime::{
-    cancel_prepared_plugin_sessions, PreparedPluginSession,
+    cancel_prepared_plugin_sessions, PreparedPluginSession, PreparedPluginSessionSnapshot,
 };
 
 #[derive(Default)]

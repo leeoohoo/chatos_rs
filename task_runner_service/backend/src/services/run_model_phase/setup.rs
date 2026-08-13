@@ -8,23 +8,6 @@ mod initialization;
 mod preparation;
 
 impl RunService {
-    pub(super) fn log_run_model_phase_start(
-        &self,
-        task: &TaskRecord,
-        model_config: &ModelConfigRecord,
-        run: &TaskRunRecord,
-        input: &StartTaskRunRequest,
-        effective_workspace_dir: &str,
-    ) {
-        initialization::log_run_model_phase_start(
-            run,
-            task,
-            model_config,
-            input,
-            effective_workspace_dir,
-        );
-    }
-
     pub(in crate::services) async fn initialize_model_phase(
         &self,
         task: &TaskRecord,
@@ -54,6 +37,9 @@ impl RunService {
         prerequisite_context: &[PrerequisiteTaskContext],
         capability_policy: Option<&TaskRunnerCapabilityPolicy>,
         mcp_runtime_session_ref: Option<&str>,
+        plugin_session_snapshots: Option<
+            Vec<crate::services::plugin_runtime_relay::PreparedPluginSessionSnapshot>,
+        >,
     ) -> Result<PreparedModelExecution, String> {
         preparation::prepare_model_execution(
             self,
@@ -65,6 +51,7 @@ impl RunService {
             prerequisite_context,
             capability_policy,
             mcp_runtime_session_ref,
+            plugin_session_snapshots,
         )
         .await
     }

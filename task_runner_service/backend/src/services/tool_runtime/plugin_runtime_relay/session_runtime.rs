@@ -16,6 +16,19 @@ use serde_json::{json, Map, Value};
 use super::{is_lower_sha256, PluginRelayClient};
 use crate::models::TaskRunEventRecord;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(in crate::services) struct PreparedPluginSessionSnapshot {
+    plugin_id: String,
+    release_id: String,
+    artifact_sha256: String,
+    component_key: String,
+    adapter_session_id: String,
+    component_kind: PluginComponentKind,
+    operations: BTreeSet<String>,
+    hook_snapshot_sha256: Option<String>,
+    ui_snapshot: Option<PluginUiSnapshot>,
+}
+
 #[derive(Clone)]
 pub(in crate::services) struct PreparedPluginSession {
     pub(super) relay: PluginRelayClient,
@@ -31,6 +44,38 @@ pub(in crate::services) struct PreparedPluginSession {
 }
 
 impl PreparedPluginSession {
+    pub(in crate::services) fn snapshot(&self) -> PreparedPluginSessionSnapshot {
+        PreparedPluginSessionSnapshot {
+            plugin_id: self.plugin_id.clone(),
+            release_id: self.release_id.clone(),
+            artifact_sha256: self.artifact_sha256.clone(),
+            component_key: self.component_key.clone(),
+            adapter_session_id: self.adapter_session_id.clone(),
+            component_kind: self.component_kind,
+            operations: self.operations.clone(),
+            hook_snapshot_sha256: self.hook_snapshot_sha256.clone(),
+            ui_snapshot: self.ui_snapshot.clone(),
+        }
+    }
+
+    pub(super) fn restore(
+        relay: PluginRelayClient,
+        snapshot: PreparedPluginSessionSnapshot,
+    ) -> Self {
+        Self {
+            relay,
+            plugin_id: snapshot.plugin_id,
+            release_id: snapshot.release_id,
+            artifact_sha256: snapshot.artifact_sha256,
+            component_key: snapshot.component_key,
+            adapter_session_id: snapshot.adapter_session_id,
+            component_kind: snapshot.component_kind,
+            operations: snapshot.operations,
+            hook_snapshot_sha256: snapshot.hook_snapshot_sha256,
+            ui_snapshot: snapshot.ui_snapshot,
+        }
+    }
+
     pub(super) fn identity_body(&self) -> Map<String, Value> {
         Map::from_iter([
             ("plugin_id".to_string(), json!(self.plugin_id)),

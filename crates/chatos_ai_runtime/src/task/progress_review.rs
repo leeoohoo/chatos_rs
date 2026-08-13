@@ -5,11 +5,12 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_CONFIRMED_PROJECT_PATHS: usize = 128;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionReviewPolicy {
     pub read_only_iterations: usize,
     pub missing_read_failures: usize,
@@ -36,7 +37,8 @@ impl Default for TaskExecutionReviewPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskExecutionReviewTrigger {
     ReadOnlyLoop,
     MissingTargetedReads,
@@ -55,7 +57,7 @@ impl TaskExecutionReviewTrigger {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionReviewCheckpoint {
     pub iteration: usize,
     pub trigger: TaskExecutionReviewTrigger,
@@ -77,6 +79,21 @@ pub struct TaskExecutionProgressState {
     placeholder_progress_write_iteration: AtomicUsize,
     stale_project_write_failure_iteration: AtomicUsize,
     confirmed_project_paths: Mutex<BTreeSet<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskExecutionProgressSnapshot {
+    pub policy: TaskExecutionReviewPolicy,
+    pub current_iteration: usize,
+    pub last_meaningful_action_iteration: usize,
+    pub last_review_iteration: usize,
+    pub checkpoints_since_action: usize,
+    pub project_mutation_generation: usize,
+    pub last_validated_generation: Option<usize>,
+    pub missing_targeted_read_failures_after_action: usize,
+    pub placeholder_progress_write_iteration: usize,
+    pub stale_project_write_failure_iteration: usize,
+    pub confirmed_project_paths: Vec<String>,
 }
 
 impl Default for TaskExecutionProgressState {
@@ -104,6 +121,73 @@ impl TaskExecutionProgressState {
 
     pub fn policy(&self) -> TaskExecutionReviewPolicy {
         self.policy
+    }
+
+    pub fn snapshot(&self) -> TaskExecutionProgressSnapshot {
+        TaskExecutionProgressSnapshot {
+            policy: self.policy,
+            current_iteration: self.current_iteration.load(Ordering::Relaxed),
+            last_meaningful_action_iteration: self
+                .last_meaningful_action_iteration
+                .load(Ordering::Relaxed),
+            last_review_iteration: self.last_review_iteration.load(Ordering::Relaxed),
+            checkpoints_since_action: self.checkpoints_since_action.load(Ordering::Relaxed),
+            project_mutation_generation: self.project_mutation_generation.load(Ordering::Relaxed),
+            last_validated_generation: match self.last_validated_generation.load(Ordering::Relaxed)
+            {
+                usize::MAX => None,
+                generation => Some(generation),
+            },
+            missing_targeted_read_failures_after_action: self
+                .missing_targeted_read_failures_after_action
+                .load(Ordering::Relaxed),
+            placeholder_progress_write_iteration: self
+                .placeholder_progress_write_iteration
+                .load(Ordering::Relaxed),
+            stale_project_write_failure_iteration: self
+                .stale_project_write_failure_iteration
+                .load(Ordering::Relaxed),
+            confirmed_project_paths: self.confirmed_project_paths(),
+        }
+    }
+
+    pub fn restore_snapshot(&self, snapshot: &TaskExecutionProgressSnapshot) {
+        self.current_iteration
+            .store(snapshot.current_iteration, Ordering::Relaxed);
+        self.last_meaningful_action_iteration
+            .store(snapshot.last_meaningful_action_iteration, Ordering::Relaxed);
+        self.last_review_iteration
+            .store(snapshot.last_review_iteration, Ordering::Relaxed);
+        self.checkpoints_since_action
+            .store(snapshot.checkpoints_since_action, Ordering::Relaxed);
+        self.project_mutation_generation
+            .store(snapshot.project_mutation_generation, Ordering::Relaxed);
+        self.last_validated_generation.store(
+            snapshot.last_validated_generation.unwrap_or(usize::MAX),
+            Ordering::Relaxed,
+        );
+        self.missing_targeted_read_failures_after_action.store(
+            snapshot.missing_targeted_read_failures_after_action,
+            Ordering::Relaxed,
+        );
+        self.placeholder_progress_write_iteration.store(
+            snapshot.placeholder_progress_write_iteration,
+            Ordering::Relaxed,
+        );
+        self.stale_project_write_failure_iteration.store(
+            snapshot.stale_project_write_failure_iteration,
+            Ordering::Relaxed,
+        );
+        if let Ok(mut paths) = self.confirmed_project_paths.lock() {
+            paths.clear();
+            paths.extend(
+                snapshot
+                    .confirmed_project_paths
+                    .iter()
+                    .take(MAX_CONFIRMED_PROJECT_PATHS)
+                    .cloned(),
+            );
+        }
     }
 
     pub fn begin_iteration(&self, iteration: usize) {

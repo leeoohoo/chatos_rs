@@ -24,8 +24,9 @@ pub use self::execution::TaskRunExecution;
 pub use self::memory::TaskMemoryRuntimeConfig;
 pub use self::progress_review::{
     tool_result_is_meaningful_engineering_action, tool_result_is_missing_targeted_read,
-    tool_result_is_placeholder_progress_write, TaskExecutionProgressState,
-    TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+    tool_result_is_placeholder_progress_write, TaskExecutionProgressSnapshot,
+    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
+    TaskExecutionReviewTrigger,
 };
 pub use self::report::{TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskRunReport};
 pub use self::runtime_builder::TaskRuntimeBuilder;
@@ -168,5 +169,5 @@ impl ContextualTurnRunner {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agent-loop"))]
 mod tests;

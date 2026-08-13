@@ -3,26 +3,6 @@
 
 use super::*;
 
-pub(super) fn log_run_model_phase_start(
-    run: &TaskRunRecord,
-    task: &TaskRecord,
-    model_config: &ModelConfigRecord,
-    input: &StartTaskRunRequest,
-    effective_workspace_dir: &str,
-) {
-    info!(
-        run_id = run.id.as_str(),
-        task_id = task.id.as_str(),
-        task_title = task.title.as_str(),
-        model_config_id = model_config.id.as_str(),
-        model = model_config.model.as_str(),
-        provider = model_config.provider.as_str(),
-        workspace_dir = effective_workspace_dir,
-        prompt_override = input.prompt_override.as_deref().unwrap_or(""),
-        "task runner begin execute_run"
-    );
-}
-
 pub(super) async fn initialize_model_phase(
     service: &RunService,
     task: &TaskRecord,

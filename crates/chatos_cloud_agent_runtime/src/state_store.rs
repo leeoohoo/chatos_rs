@@ -285,6 +285,23 @@ impl CloudAgentStateStore {
         ))
     }
 
+    pub async fn connect_to_database(
+        database_url: &str,
+        database_name: &str,
+    ) -> Result<Self, String> {
+        let client = mongodb::Client::with_uri_str(database_url)
+            .await
+            .map_err(|error| format!("connect Cloud Agent MongoDB failed: {error}"))?;
+        let database_name = database_name.trim();
+        if database_name.is_empty() {
+            return Err("Cloud Agent database name must not be empty".to_string());
+        }
+        let database = client.database(database_name);
+        Ok(Self::Mongo(
+            MongoCloudAgentRunStore::from_database(client, database).await?,
+        ))
+    }
+
     pub async fn from_mongodb_database(
         client: mongodb::Client,
         database: mongodb::Database,

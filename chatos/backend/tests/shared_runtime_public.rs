@@ -14,7 +14,7 @@ use chat_app_server_rs::shared_runtime::{
     AiTurnStatus, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, ModelRuntimeConfig,
     ResolvedChatModelConfig, RuntimeRecordOptions, RuntimeTurnSpec, SharedBuiltinMcpKind,
     SharedMcpExecutorBuilder, TaskBuiltinMcpPromptMode, TaskMcpInitMode, TaskMemoryRuntimeConfig,
-    TaskRunExecution, TaskRunSpec, TaskRuntimeBuilder, TaskRuntimeConfig,
+    TaskRunSpec, TaskRuntimeBuilder, TaskRuntimeConfig,
 };
 
 #[test]
@@ -200,19 +200,6 @@ fn shared_runtime_public_facade_exports_runtime_builder() {
         )));
     assert_eq!(task_runtime_config.mcp_init_mode, TaskMcpInitMode::Disabled);
     assert!(task_runtime_config.memory_engine.is_some());
-    let execution = TaskRunExecution::for_user_text(
-        task_runtime_config,
-        "task_1",
-        "run_1",
-        ModelRuntimeConfig::openai_compatible(
-            "http://127.0.0.1:8080/v1",
-            "test-key",
-            "task-model",
-            "gpt",
-        ),
-        "run task",
-    );
-    assert_eq!(execution.run_spec.task_id, "task_1");
 }
 
 #[test]

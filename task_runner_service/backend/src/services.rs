@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
 
 use chatos_ai_runtime::ToolResultModelBudgetLimits;
 use chatos_cloud_agent_runtime::CloudAgentStateStore;
@@ -75,7 +74,6 @@ mod run_post_process;
 mod run_prerequisites;
 mod run_recovery;
 mod run_service;
-pub(crate) use self::run_service::{worker_claim_expiry_grace, RejectedRunClaimHeartbeatAction};
 mod sandbox_runtime;
 mod schedule_helpers;
 mod status_display;
@@ -145,6 +143,7 @@ enum RunTriggerSource {
     Scheduler,
     Retry,
     AutomaticRetry,
+    Dependency,
 }
 
 #[derive(Clone)]
@@ -191,8 +190,6 @@ pub struct RunService {
     callback_delivery_locks: Arc<KeyedAsyncLockRegistry>,
     runtime_abort_tokens:
         Arc<parking_lot::Mutex<HashMap<String, tokio_util::sync::CancellationToken>>>,
-    run_terminal_waiters:
-        Arc<parking_lot::Mutex<HashMap<(String, String), tokio_util::sync::CancellationToken>>>,
     plugin_cloud_bundle_cache:
         Arc<parking_lot::Mutex<plugin_cloud_runtime::PluginCloudBundleCache>>,
 }

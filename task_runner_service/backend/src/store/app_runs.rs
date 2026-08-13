@@ -108,31 +108,6 @@ impl AppStore {
         }
     }
 
-    pub async fn claim_next_queued_run(
-        &self,
-        worker_id: &str,
-        claim_token: &str,
-        claim_until: &str,
-    ) -> Result<Option<TaskRunRecord>, String> {
-        match self {
-            Self::InMemory(store) => {
-                Ok(store.claim_next_queued_run(worker_id, claim_token, claim_until))
-            }
-            Self::Mongo(store) => {
-                store
-                    .claim_next_queued_run(worker_id, claim_token, claim_until)
-                    .await
-            }
-        }
-    }
-
-    pub async fn has_queued_run_waiting_for_execution(&self) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.has_queued_run_waiting_for_execution()),
-            Self::Mongo(store) => store.has_queued_run_waiting_for_execution().await,
-        }
-    }
-
     pub async fn set_queued_runs_dispatch_paused(
         &self,
         task_ids: &[String],
@@ -147,23 +122,6 @@ impl AppStore {
                     .set_queued_runs_dispatch_paused(task_ids, paused)
                     .await
             }
-        }
-    }
-
-    pub async fn list_pending_run_dispatches(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<TaskRunRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.list_pending_run_dispatches(limit)),
-            Self::Mongo(store) => store.list_pending_run_dispatches(limit).await,
-        }
-    }
-
-    pub async fn acknowledge_run_dispatch_event(&self, run_id: &str) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.acknowledge_run_dispatch_event(run_id)),
-            Self::Mongo(store) => store.acknowledge_run_dispatch_event(run_id).await,
         }
     }
 
@@ -298,43 +256,6 @@ impl AppStore {
         match self {
             Self::InMemory(store) => Ok(store.mark_terminal_cleanup_completed(run_id)),
             Self::Mongo(store) => store.mark_terminal_cleanup_completed(run_id).await,
-        }
-    }
-
-    pub async fn renew_run_claim(
-        &self,
-        run_id: &str,
-        worker_id: &str,
-        claim_token: &str,
-        claim_until: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => {
-                Ok(store.renew_run_claim(run_id, worker_id, claim_token, claim_until))
-            }
-            Self::Mongo(store) => {
-                store
-                    .renew_run_claim(run_id, worker_id, claim_token, claim_until)
-                    .await
-            }
-        }
-    }
-
-    pub async fn reconcile_expired_run_claims(
-        &self,
-        expired_before: &str,
-        reconciled_at: &str,
-        max_attempts: i64,
-    ) -> Result<Vec<TaskRunRecord>, String> {
-        match self {
-            Self::InMemory(store) => {
-                Ok(store.reconcile_expired_run_claims(expired_before, reconciled_at, max_attempts))
-            }
-            Self::Mongo(store) => {
-                store
-                    .reconcile_expired_run_claims(expired_before, reconciled_at, max_attempts)
-                    .await
-            }
         }
     }
 
@@ -531,13 +452,6 @@ impl AppStore {
         match self {
             Self::InMemory(store) => store.signal_local_run_abort(run_id),
             Self::Mongo(store) => store.signal_local_run_abort(run_id),
-        }
-    }
-
-    pub fn clear_local_run_abort(&self, run_id: &str) {
-        match self {
-            Self::InMemory(store) => store.clear_local_run_abort(run_id),
-            Self::Mongo(store) => store.clear_local_run_abort(run_id),
         }
     }
 

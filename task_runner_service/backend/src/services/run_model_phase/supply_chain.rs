@@ -14,8 +14,8 @@ pub(crate) struct NodeSupplyChainPolicy {
     pub(crate) install_script_allowlist: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub(super) struct SupplyChainEvidenceState {
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(in crate::services) struct SupplyChainEvidenceState {
     node_project_observed: bool,
     dependency_activity_observed: bool,
     lockfile_observed: bool,
@@ -30,12 +30,12 @@ pub(super) struct SupplyChainEvidenceState {
     pending_terminal_commands: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct NodePackageManifestEvidence {
     requirements: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum PackageManifestSessionEvent {
     Stage {
         session_id: String,
@@ -49,13 +49,13 @@ enum PackageManifestSessionEvent {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct CommandEvidence {
     command: String,
     exit_code: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct AuditEvidence {
     command: String,
     exit_code: Option<i64>,
@@ -63,7 +63,7 @@ struct AuditEvidence {
     vulnerabilities: Option<NodeVulnerabilityCounts>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RebuildEvidence {
     command: String,
     packages: Vec<String>,
@@ -86,7 +86,7 @@ struct TerminalWaitResult {
     output_truncated: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq, Eq)]
 pub(super) struct NodeVulnerabilityCounts {
     pub(super) total: u64,
     pub(super) info: u64,
@@ -97,9 +97,9 @@ pub(super) struct NodeVulnerabilityCounts {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub(super) struct SupplyChainAuditReport {
-    pub(super) applicable: bool,
-    pub(super) status: &'static str,
+pub(in crate::services) struct SupplyChainAuditReport {
+    pub(in crate::services) applicable: bool,
+    pub(in crate::services) status: &'static str,
     pub(super) baseline_revision: String,
     pub(super) audit_level: String,
     pub(super) package_manager: Option<String>,
@@ -286,7 +286,10 @@ impl SupplyChainEvidenceState {
         }
     }
 
-    pub(super) fn evaluate(&self, policy: &NodeSupplyChainPolicy) -> SupplyChainAuditReport {
+    pub(in crate::services) fn evaluate(
+        &self,
+        policy: &NodeSupplyChainPolicy,
+    ) -> SupplyChainAuditReport {
         if !self.node_project_observed || !self.dependency_activity_observed {
             return SupplyChainAuditReport {
                 applicable: false,
@@ -484,7 +487,7 @@ impl SupplyChainAuditReport {
         )
     }
 
-    pub(super) fn event_payload(&self) -> Value {
+    pub(in crate::services) fn event_payload(&self) -> Value {
         serde_json::to_value(self).unwrap_or_else(|_| json!({"status": "serialization_failed"}))
     }
 }

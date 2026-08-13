@@ -17,12 +17,17 @@ mod tests;
 const TASK_OUTCOME_REVIEW_REASON: &str = "task_execution_outcome_review";
 const TASK_EXECUTION_OUTCOME_METADATA_KEY: &str = "task_execution_outcome";
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(in crate::services) struct TaskRunnerLifecycleState {
+    pub(in crate::services) visible_response: Option<AiResponse>,
+    pub(in crate::services) execution_outcome: Option<TaskExecutionOutcome>,
+}
+
 struct TaskRunnerLifecycleHook {
     finalization: TaskFinalizationLifecycleHook,
     progress: Arc<TaskExecutionProgressState>,
     active_review: parking_lot::Mutex<Option<TaskExecutionReviewCheckpoint>>,
-    visible_response: parking_lot::Mutex<Option<AiResponse>>,
-    execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+    state: Arc<parking_lot::Mutex<TaskRunnerLifecycleState>>,
     requires_execution: bool,
     store: crate::store::AppStore,
     run_id: String,
@@ -32,7 +37,7 @@ impl TaskRunnerLifecycleHook {
     fn new(
         max_iterations: usize,
         progress: Arc<TaskExecutionProgressState>,
-        execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+        state: Arc<parking_lot::Mutex<TaskRunnerLifecycleState>>,
         requires_execution: bool,
         store: crate::store::AppStore,
         run_id: String,
@@ -41,8 +46,7 @@ impl TaskRunnerLifecycleHook {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
             progress,
             active_review: parking_lot::Mutex::new(None),
-            visible_response: parking_lot::Mutex::new(None),
-            execution_outcome,
+            state,
             requires_execution,
             store,
             run_id,
@@ -121,17 +125,18 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
     ) -> Result<RuntimeFinalResponseAction, String> {
         if context.reason == TASK_OUTCOME_REVIEW_REASON {
             let outcome = parse_task_execution_outcome(context.response.content.as_str())?;
-            *self.execution_outcome.lock() = Some(outcome);
-            let visible_response =
-                self.visible_response.lock().take().ok_or_else(|| {
-                    "task execution outcome review lost visible response".to_string()
-                })?;
+            let mut state = self.state.lock();
+            state.execution_outcome = Some(outcome);
+            let visible_response = state
+                .visible_response
+                .take()
+                .ok_or_else(|| "task execution outcome review lost visible response".to_string())?;
             return Ok(RuntimeFinalResponseAction::Replace(Box::new(
                 visible_response,
             )));
         }
 
-        *self.visible_response.lock() = Some(context.response.clone());
+        self.state.lock().visible_response = Some(context.response.clone());
         Ok(RuntimeFinalResponseAction::Continue {
             input_items: vec![
                 json!({
@@ -152,8 +157,9 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         &self,
         _context: RuntimeFinalResponseContext,
     ) -> Result<Option<Value>, String> {
-        self.execution_outcome
+        self.state
             .lock()
+            .execution_outcome
             .clone()
             .map(|outcome| {
                 serde_json::to_value(outcome)
@@ -274,7 +280,8 @@ impl RunService {
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
         let abort_token = tokio_util::sync::CancellationToken::new();
         let progress = Arc::new(TaskExecutionProgressState::new(review_policy));
-        let execution_outcome = Arc::new(parking_lot::Mutex::new(None));
+        let lifecycle_state =
+            Arc::new(parking_lot::Mutex::new(TaskRunnerLifecycleState::default()));
         let supply_chain_evidence =
             Arc::new(parking_lot::Mutex::new(SupplyChainEvidenceState::default()));
         let callbacks = self.build_runtime_callbacks(
@@ -295,8 +302,8 @@ impl RunService {
             .with_tool_result_model_budget_limits(Some(tool_result_model_budget_limits))
             .with_lifecycle_hook(Some(Arc::new(TaskRunnerLifecycleHook::new(
                 max_iterations,
-                progress,
-                Arc::clone(&execution_outcome),
+                Arc::clone(&progress),
+                Arc::clone(&lifecycle_state),
                 requires_execution,
                 self.store.clone(),
                 run.id.clone(),
@@ -311,7 +318,8 @@ impl RunService {
         RuntimeExecutionState {
             runtime_options,
             pending_stream_event,
-            execution_outcome,
+            lifecycle_state,
+            progress,
             supply_chain_evidence,
         }
     }

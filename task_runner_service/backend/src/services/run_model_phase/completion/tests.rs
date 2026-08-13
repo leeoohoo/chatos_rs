@@ -251,23 +251,6 @@ async fn runtime_abort_registration_observes_early_cancel_signal() {
     assert!(token.is_cancelled());
 }
 
-#[tokio::test]
-async fn dependency_terminal_signal_wakes_all_local_waiters_for_run() {
-    let (_, run_service) = test_services().await;
-    let first = tokio_util::sync::CancellationToken::new();
-    let second = tokio_util::sync::CancellationToken::new();
-    let unrelated = tokio_util::sync::CancellationToken::new();
-    run_service.register_run_terminal_waiter("dependency-run", "parent-1", first.clone());
-    run_service.register_run_terminal_waiter("dependency-run", "parent-2", second.clone());
-    run_service.register_run_terminal_waiter("other-run", "parent-3", unrelated.clone());
-
-    run_service.signal_run_terminal("dependency-run");
-
-    assert!(first.is_cancelled());
-    assert!(second.is_cancelled());
-    assert!(!unrelated.is_cancelled());
-}
-
 async fn create_task(service: &TaskService, title: &str, status: TaskStatus) -> TaskRecord {
     service
         .create_task(

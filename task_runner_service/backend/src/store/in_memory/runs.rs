@@ -228,61 +228,6 @@ impl InMemoryStore {
         Ok(persisted)
     }
 
-    pub(in crate::store) fn claim_next_queued_run(
-        &self,
-        worker_id: &str,
-        claim_token: &str,
-        claim_until: &str,
-    ) -> Option<TaskRunRecord> {
-        let mut data = self.inner.write();
-        let active_execution_lanes = data
-            .runs
-            .values()
-            .filter(|run| run.status == TaskRunStatus::Running)
-            .filter_map(|run| run.execution_lane_key.clone())
-            .collect::<BTreeSet<_>>();
-        let run_id = data
-            .runs
-            .values()
-            .filter(|run| run.status == TaskRunStatus::Queued && !run.dispatch_paused)
-            .filter(|run| {
-                run.execution_lane_key
-                    .as_deref()
-                    .is_none_or(|lane| !active_execution_lanes.contains(lane))
-            })
-            .min_by(|left, right| {
-                left.created_at
-                    .cmp(&right.created_at)
-                    .then_with(|| left.id.cmp(&right.id))
-            })
-            .map(|run| run.id.clone())?;
-        let run = data.runs.get_mut(&run_id)?;
-        run.status = TaskRunStatus::Running;
-        run.dispatch_event_pending = false;
-        run.worker_id = Some(worker_id.to_string());
-        run.claim_token = Some(claim_token.to_string());
-        run.claim_until = Some(claim_until.to_string());
-        run.attempt += 1;
-        let attempt_started_at = now_rfc3339();
-        run.begin_attempt(claim_token, attempt_started_at.as_str());
-        run.finished_at = None;
-        run.result_summary = None;
-        run.error_message = None;
-        if run.started_at.is_none() {
-            run.started_at = Some(attempt_started_at);
-        }
-        run.updated_at = now_rfc3339();
-        Some(run.clone())
-    }
-
-    pub(in crate::store) fn has_queued_run_waiting_for_execution(&self) -> bool {
-        self.inner
-            .read()
-            .runs
-            .values()
-            .any(|run| run.status == TaskRunStatus::Queued && !run.dispatch_paused)
-    }
-
     pub(in crate::store) fn set_queued_runs_dispatch_paused(
         &self,
         task_ids: &[String],
@@ -301,39 +246,6 @@ impl InMemoryStore {
             updated += 1;
         }
         updated
-    }
-
-    pub(in crate::store) fn list_pending_run_dispatches(&self, limit: usize) -> Vec<TaskRunRecord> {
-        let data = self.inner.read();
-        let mut runs = data
-            .runs
-            .values()
-            .filter(|run| {
-                run.status == TaskRunStatus::Queued
-                    && !run.dispatch_paused
-                    && run.dispatch_event_pending
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        runs.sort_by(|left, right| {
-            left.created_at
-                .cmp(&right.created_at)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        runs.truncate(limit.max(1));
-        runs
-    }
-
-    pub(in crate::store) fn acknowledge_run_dispatch_event(&self, run_id: &str) -> bool {
-        let mut data = self.inner.write();
-        let Some(run) = data.runs.get_mut(run_id) else {
-            return false;
-        };
-        if run.status != TaskRunStatus::Queued || !run.dispatch_event_pending {
-            return false;
-        }
-        run.dispatch_event_pending = false;
-        true
     }
 
     pub(in crate::store) fn list_pending_run_post_processes(
@@ -547,99 +459,6 @@ impl InMemoryStore {
         true
     }
 
-    pub(in crate::store) fn renew_run_claim(
-        &self,
-        run_id: &str,
-        worker_id: &str,
-        claim_token: &str,
-        claim_until: &str,
-    ) -> bool {
-        let mut data = self.inner.write();
-        let Some(run) = data.runs.get_mut(run_id) else {
-            return false;
-        };
-        if run.status != TaskRunStatus::Running
-            || run.worker_id.as_deref() != Some(worker_id)
-            || run.claim_token.as_deref() != Some(claim_token)
-        {
-            return false;
-        }
-        run.claim_until = Some(claim_until.to_string());
-        run.updated_at = now_rfc3339();
-        true
-    }
-
-    pub(in crate::store) fn reconcile_expired_run_claims(
-        &self,
-        expired_before: &str,
-        reconciled_at: &str,
-        max_attempts: i64,
-    ) -> Vec<TaskRunRecord> {
-        let mut data = self.inner.write();
-        let cancel_requested_runs = data.cancel_requested_runs.clone();
-        let mut terminal_run_ids = Vec::new();
-        let mut reconciled_runs = Vec::new();
-        for run in data.runs.values_mut() {
-            if run.status != TaskRunStatus::Running {
-                continue;
-            }
-            let expired = run
-                .claim_until
-                .as_deref()
-                .is_some_and(|claim_until| claim_until <= expired_before);
-            if !expired {
-                continue;
-            }
-            let was_cancel_requested =
-                run.cancel_requested || cancel_requested_runs.contains(run.id.as_str());
-            let attempt_status = if was_cancel_requested {
-                TaskRunAttemptStatus::Cancelled
-            } else if run.attempt < max_attempts.max(1) {
-                TaskRunAttemptStatus::Interrupted
-            } else {
-                TaskRunAttemptStatus::Failed
-            };
-            run.finish_current_attempt(attempt_status, reconciled_at);
-            if was_cancel_requested {
-                run.status = TaskRunStatus::Cancelled;
-                run.result_summary =
-                    Some("任务取消请求已生效；运行节点心跳过期后按取消收尾".to_string());
-                run.error_message = None;
-                run.finished_at = Some(reconciled_at.to_string());
-                ensure_terminal_callback_pending(run);
-                terminal_run_ids.push(run.id.clone());
-            } else if run.attempt < max_attempts.max(1) {
-                run.status = TaskRunStatus::Queued;
-                run.dispatch_event_pending = !run.dispatch_paused;
-                run.finished_at = None;
-                run.result_summary = Some("任务运行节点中断，已自动重新排队恢复".to_string());
-                run.error_message = None;
-                run.usage = None;
-                run.report = None;
-                run.summary_job_run_id = None;
-                run.chatos_callback_delivery = None;
-            } else {
-                run.status = TaskRunStatus::Failed;
-                run.result_summary = Some(format!(
-                    "任务运行节点连续中断，达到 {max_attempts} 次尝试上限后标记为失败"
-                ));
-                run.error_message = Some("worker claim expired".to_string());
-                run.finished_at = Some(reconciled_at.to_string());
-                ensure_terminal_callback_pending(run);
-                terminal_run_ids.push(run.id.clone());
-            }
-            run.updated_at = reconciled_at.to_string();
-            run.cancel_requested = false;
-            run.claim_token = None;
-            run.claim_until = None;
-            reconciled_runs.push(run.clone());
-        }
-        for run_id in terminal_run_ids {
-            data.cancel_requested_runs.remove(run_id.as_str());
-        }
-        reconciled_runs
-    }
-
     pub(in crate::store) fn list_pending_chatos_callback_runs(
         &self,
         now: &str,
@@ -749,10 +568,6 @@ impl InMemoryStore {
             .write()
             .cancel_requested_runs
             .insert(run_id.to_string());
-    }
-
-    pub(in crate::store) fn clear_local_run_abort(&self, run_id: &str) {
-        self.inner.write().cancel_requested_runs.remove(run_id);
     }
 
     pub(in crate::store) fn is_cancel_requested(&self, run_id: &str) -> bool {

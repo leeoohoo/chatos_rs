@@ -29,8 +29,8 @@ pub(super) use self::models::{
 mod models;
 use self::models::{
     sandbox_wait_deadline, CreateSandboxEnvironmentLeaseRequest, CreateSandboxLeaseRequest,
-    ReleaseSandboxRequest, RenewSandboxEnvironmentLeaseRequest, SandboxEnvironmentLeaseResponse,
-    SandboxLeaseRecordResponse, StartSandboxEnvironmentRequest,
+    ReleaseSandboxRequest, SandboxEnvironmentLeaseResponse, SandboxLeaseRecordResponse,
+    StartSandboxEnvironmentRequest,
 };
 
 pub(super) struct SandboxManagerClient {
@@ -479,36 +479,6 @@ impl SandboxManagerClient {
             .unwrap_or(if ok { "ok" } else { "unknown health failure" })
             .to_string();
         Ok(SandboxHealthResult { ok, message, raw })
-    }
-
-    pub(super) async fn renew_environment_lease(
-        &self,
-        context: &SandboxRuntimeContext,
-        ttl_seconds: u64,
-    ) -> Result<String, String> {
-        if !context.is_environment {
-            return Ok(context.expires_at.clone());
-        }
-        let payload = RenewSandboxEnvironmentLeaseRequest {
-            lease_id: context.lease_id.as_str(),
-            ttl_seconds,
-        };
-        let response = self
-            .apply_auth(self.client.post(format!(
-                "{}{}",
-                self.base_url,
-                self.api_path(
-                    format!("/sandbox-environments/{}/renew", context.sandbox_id).as_str()
-                )
-            )))?
-            .json(&payload)
-            .with_internal_trace_context()
-            .send()
-            .await
-            .map_err(|err| format!("request sandbox environment renewal failed: {err}"))?;
-        let renewed: SandboxEnvironmentLeaseResponse =
-            decode_success_json(response, "sandbox environment renewal request").await?;
-        Ok(renewed.expires_at)
     }
 
     pub(super) async fn release(

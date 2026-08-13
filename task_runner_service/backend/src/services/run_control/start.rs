@@ -80,6 +80,15 @@ impl RunService {
         .await
     }
 
+    pub(in crate::services) async fn start_dependency_run(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+    ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Dependency, None, None)
+            .await
+    }
+
     pub(crate) fn start_lock_for_task(&self, task_id: &str) -> KeyedAsyncLockHandle {
         self.start_locks.handle(task_id)
     }
@@ -208,6 +217,7 @@ impl RunService {
             "execution_environment_mode": execution_environment_mode,
             "sandbox_enabled": sandbox_enabled,
             "retry_of_run_id": retry_of_run_id,
+            "started_as_prerequisite": trigger == RunTriggerSource::Dependency,
         });
         let agent = chatos_agent::TaskRunnerAgent::new(agent_key);
         let agent_prompt =
@@ -221,9 +231,14 @@ impl RunService {
         let max_iterations =
             u32::try_from(self.effective_task_execution_max_iterations().await?)
                 .map_err(|_| "Task Runner max iterations exceeds Cloud Agent range".to_string())?;
-        let ordering_lane_key = task
-            .execution_lane_key()
-            .unwrap_or_else(|| format!("task:{}", task.id));
+        let ordering_lane_key = if trigger == RunTriggerSource::Dependency {
+            // The parent is durably waiting and may own the project lane. A prerequisite
+            // uses its own task lane, while repeated runs of that prerequisite remain serial.
+            format!("task:{}", task.id)
+        } else {
+            task.execution_lane_key()
+                .unwrap_or_else(|| format!("task:{}", task.id))
+        };
         let agent_run_id = format!("task_runner_agent_{run_id}");
         let cloud_run = chatos_cloud_agent_runtime::create_cloud_agent_run(
             &self.cloud_agent_store,
@@ -387,7 +402,10 @@ impl RunService {
 fn contact_async_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
     matches!(
         trigger,
-        RunTriggerSource::Scheduler | RunTriggerSource::Retry | RunTriggerSource::AutomaticRetry
+        RunTriggerSource::Scheduler
+            | RunTriggerSource::Retry
+            | RunTriggerSource::AutomaticRetry
+            | RunTriggerSource::Dependency
     )
 }
 

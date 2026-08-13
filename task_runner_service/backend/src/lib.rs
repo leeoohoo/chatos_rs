@@ -16,7 +16,6 @@ pub mod notepad_store;
 pub mod platform_queue;
 pub mod pressure;
 pub mod remote_server_runtime;
-mod run_dispatch_queue;
 mod run_event_queue;
 mod run_event_retention;
 mod run_post_process_queue;
@@ -26,7 +25,6 @@ pub mod state;
 pub mod store;
 pub mod terminal_store;
 mod trace_context;
-pub mod worker;
 mod worker_control_queue;
 
 pub use api::{build_internal_router, build_public_router};
@@ -35,7 +33,6 @@ pub use ask_user_prompt_retention::{
 };
 pub use cloud_agent_queue::{spawn_cloud_agent_consumer, spawn_cloud_agent_outbox_reconciler};
 pub use config::{load_task_runner_dotenv, AppConfig, TaskRunnerRole};
-pub use run_dispatch_queue::spawn_run_dispatch_outbox_reconciler;
 pub use run_event_queue::spawn_run_event_consumer;
 pub use run_event_retention::{spawn_run_event_retention, RunEventRetentionPolicy};
 pub use run_post_process_queue::{

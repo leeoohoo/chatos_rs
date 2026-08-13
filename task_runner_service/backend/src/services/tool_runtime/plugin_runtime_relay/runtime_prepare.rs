@@ -44,6 +44,25 @@ impl RunService {
         prepared.sort_prompt_items();
         Ok(prepared)
     }
+
+    pub(in crate::services) fn restore_plugin_runtime(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+        snapshots: Vec<super::PreparedPluginSessionSnapshot>,
+    ) -> Result<PreparedPluginRuntime, String> {
+        if snapshots.is_empty() {
+            return Ok(PreparedPluginRuntime::default());
+        }
+        let relay = PluginRelayClient::from_task(self, task, run)?;
+        Ok(PreparedPluginRuntime {
+            sessions: snapshots
+                .into_iter()
+                .map(|snapshot| super::PreparedPluginSession::restore(relay.clone(), snapshot))
+                .collect(),
+            ..PreparedPluginRuntime::default()
+        })
+    }
 }
 
 async fn ensure_local_plugin_snapshots_match_relay(

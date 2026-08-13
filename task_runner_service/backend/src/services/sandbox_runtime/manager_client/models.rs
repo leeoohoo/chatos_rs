@@ -45,12 +45,6 @@ pub(crate) struct StartSandboxEnvironmentRequest<'a> {
     pub(crate) services: &'a [super::super::SandboxEnvironmentServicePlan],
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct RenewSandboxEnvironmentLeaseRequest<'a> {
-    pub(crate) lease_id: &'a str,
-    pub(crate) ttl_seconds: u64,
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateSandboxLeaseResponse {
     pub(crate) lease_id: String,

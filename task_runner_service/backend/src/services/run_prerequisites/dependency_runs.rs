@@ -4,5 +4,6 @@
 use super::*;
 
 mod context;
+#[path = "dependency_runs/waiting.rs"]
+mod lookup;
 mod queueing;
-mod waiting;

@@ -430,6 +430,7 @@ pub enum CloudAgentConsumeDisposition {
 pub struct CloudAgentSingleStepOutput {
     pub outcome: AiSingleStepOutcome,
     pub next_input: Option<Value>,
+    pub terminal_outcome_overlay: Option<Value>,
     pub mcp_runtime_session_ref: Option<String>,
     pub mcp_command_queue: Option<String>,
     pub retry_input_items: Option<Vec<Value>>,
@@ -440,6 +441,7 @@ impl CloudAgentSingleStepOutput {
         Self {
             outcome,
             next_input: None,
+            terminal_outcome_overlay: None,
             mcp_runtime_session_ref: None,
             mcp_command_queue: None,
             retry_input_items: None,
@@ -463,6 +465,11 @@ impl CloudAgentSingleStepOutput {
 
     pub fn with_next_input(mut self, input: Value) -> Self {
         self.next_input = Some(input);
+        self
+    }
+
+    pub fn with_terminal_outcome_overlay(mut self, overlay: Option<Value>) -> Self {
+        self.terminal_outcome_overlay = overlay;
         self
     }
 }
@@ -648,6 +655,21 @@ where
         if let Some(next_input) = output.next_input {
             transition.next_input = next_input;
         }
+        if transition.next_status.is_terminal() {
+            if let Some(overlay) = output.terminal_outcome_overlay {
+                transition.terminal_outcome = Some(merge_terminal_outcome_overlay(
+                    transition.terminal_outcome.take(),
+                    overlay,
+                ));
+                if let Some(terminal_outcome) = transition.terminal_outcome.clone() {
+                    for intent in &mut transition.outbox {
+                        if intent.topic == "owner_lifecycle_terminal" {
+                            intent.payload["terminal_outcome"] = terminal_outcome.clone();
+                        }
+                    }
+                }
+            }
+        }
         if let Some(session_ref) = output.mcp_runtime_session_ref {
             transition.mcp_runtime_session_ref = Some(session_ref);
         }
@@ -695,6 +717,16 @@ where
             store.release_short_claim(&claim).await?;
             Err(error)
         }
+    }
+}
+
+fn merge_terminal_outcome_overlay(base: Option<Value>, overlay: Value) -> Value {
+    match (base, overlay) {
+        (Some(Value::Object(mut base)), Value::Object(overlay)) => {
+            base.extend(overlay);
+            Value::Object(base)
+        }
+        (_, overlay) => overlay,
     }
 }
 
