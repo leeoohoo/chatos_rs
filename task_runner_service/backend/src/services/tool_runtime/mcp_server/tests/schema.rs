@@ -98,8 +98,6 @@ fn ai_task_input_cannot_supply_mcp_configuration() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: Some(TaskMcpConfig {
@@ -129,7 +127,12 @@ fn update_task_schema_hides_execution_status() {
 #[test]
 fn ai_task_update_rejects_program_managed_runtime_configuration() {
     let plugin_config = chatos_plugin_management_sdk::TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
+        selected_plugins: vec![chatos_plugin_management_sdk::SelectedPluginRef {
+            plugin_id: "plugin-1".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
         ..Default::default()
     };
 
@@ -210,8 +213,6 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
             String::new(),
             "external-mcp-1".to_string(),
         ]),
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -247,8 +248,6 @@ fn read_only_code_task_cannot_be_misclassified_as_requiring_execution() {
         schedule: None,
         enabled_builtin_kinds: Some(vec!["CodeMaintainerRead".to_string()]),
         external_mcp_config_ids: None,
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -277,8 +276,6 @@ fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        plugin_device_id: Some(" device-1 ".to_string()),
-        plugin_workspace_id: Some(" workspace-1 ".to_string()),
         selected_plugins: Some(vec![
             chatos_plugin_management_sdk::SelectedPluginRef {
                 plugin_id: " plugin-browser ".to_string(),
@@ -317,8 +314,6 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -327,8 +322,6 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
     .expect("model request");
     let context = McpRequestContext {
         plugin_config_override: Some(chatos_plugin_management_sdk::TaskPluginConfig {
-            device_id: Some("user-device".to_string()),
-            workspace_id: Some("user-workspace".to_string()),
             selected_plugins: vec![chatos_plugin_management_sdk::SelectedPluginRef {
                 plugin_id: "user-plugin".to_string(),
                 selected_skill_ids: Vec::new(),
@@ -345,15 +338,6 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
     };
 
     context.enforce_plugin_config(&mut request);
-
-    assert_eq!(
-        request.plugin_config.device_id.as_deref(),
-        Some("user-device")
-    );
-    assert_eq!(
-        request.plugin_config.workspace_id.as_deref(),
-        Some("user-workspace")
-    );
     assert_eq!(request.plugin_config.selected_plugins.len(), 1);
     assert_eq!(
         request.plugin_config.selected_plugins[0].plugin_id,

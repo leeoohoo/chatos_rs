@@ -12,18 +12,13 @@ import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
   getMessageTaskRunnerGraph,
   getMessageTaskRunnerGraphRun,
-  getMessageTaskRunnerRunOutputChanges,
-  getMessageTaskRunnerRunOutputDiff,
   getMessageTaskRunnerTask,
   retryMessageTaskRunnerRun,
 } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
-  MessageTaskRunnerFileChange,
   MessageTaskRunnerGraphResponse,
   MessageTaskRunnerRunDetailResponse,
-  MessageTaskRunnerRunOutputChangesResponse,
-  MessageTaskRunnerRunOutputDiffResponse,
   MessageTaskRunnerTask,
 } from '../../lib/api/client/types';
 import { readString } from './utils';
@@ -130,15 +125,8 @@ export function useMessageTaskGraph({
   const [processTask, setProcessTask] = useState<MessageTaskRunnerTask | null>(null);
   const [processRunDetail, setProcessRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
   const [runDetail, setRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
-  const [changesTask, setChangesTask] = useState<MessageTaskRunnerTask | null>(null);
-  const [changesSource, setChangesSource] = useState<TaskSourceLookup | null>(null);
-  const [outputChanges, setOutputChanges] = useState<MessageTaskRunnerRunOutputChangesResponse | null>(null);
-  const [outputDiff, setOutputDiff] = useState<MessageTaskRunnerRunOutputDiffResponse | null>(null);
-  const [selectedChangePath, setSelectedChangePath] = useState<string | null>(null);
   const [loadingProcessTaskId, setLoadingProcessTaskId] = useState<string | null>(null);
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
-  const [loadingChangesRunId, setLoadingChangesRunId] = useState<string | null>(null);
-  const [loadingDiffPath, setLoadingDiffPath] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const graphRequestSequenceRef = useRef(0);
@@ -166,15 +154,7 @@ export function useMessageTaskGraph({
     overlayRequestSequenceRef.current === requestSequence
   ), []);
 
-  const clearChangesOverlay = useCallback(() => {
-    setChangesTask(null);
-    setChangesSource(null);
-    setOutputChanges(null);
-    setOutputDiff(null);
-    setSelectedChangePath(null);
-  }, []);
-
-  const clearSiblingOverlays = useCallback((active: 'detail' | 'process' | 'run' | 'changes') => {
+  const clearSiblingOverlays = useCallback((active: 'detail' | 'process' | 'run') => {
     if (active !== 'detail') {
       setDetailTask(null);
       setRetryError(null);
@@ -188,12 +168,7 @@ export function useMessageTaskGraph({
       setRunDetail(null);
       setLoadingRunId(null);
     }
-    if (active !== 'changes') {
-      clearChangesOverlay();
-      setLoadingChangesRunId(null);
-      setLoadingDiffPath(null);
-    }
-  }, [clearChangesOverlay]);
+  }, []);
 
   const reloadGraph = useCallback(async (options: ReloadMessageTaskGraphOptions = {}) => {
     const requestIdentity = graphRequestIdentity;
@@ -456,116 +431,6 @@ export function useMessageTaskGraph({
     }
   }, [apiClient, graph, lookup, messageId, reloadGraph, retryingTaskId]);
 
-  const loadChangeDiff = useCallback(async (
-    task: MessageTaskRunnerTask,
-    source: TaskSourceLookup,
-    file: MessageTaskRunnerFileChange,
-    requestSequence = overlayRequestSequenceRef.current,
-  ) => {
-    const runId = readString(task.last_run_id);
-    const path = readString(file.path);
-    if (!runId || !path) {
-      return;
-    }
-    if (!isCurrentOverlayRequest(requestSequence)) {
-      return;
-    }
-    setSelectedChangePath(path);
-    setLoadingDiffPath(path);
-    setError(null);
-    try {
-      const diff = await getMessageTaskRunnerRunOutputDiff(
-        apiClient.getRequestFn(),
-        source.messageId,
-        runId,
-        path,
-        source.lookup,
-      );
-      if (!isCurrentOverlayRequest(requestSequence)) {
-        return;
-      }
-      setOutputDiff(diff);
-    } catch (err) {
-      if (!isCurrentOverlayRequest(requestSequence)) {
-        return;
-      }
-      setOutputDiff(null);
-      setError(err instanceof Error ? err.message : '读取文件 diff 失败');
-    } finally {
-      if (isCurrentOverlayRequest(requestSequence)) {
-        setLoadingDiffPath(null);
-      }
-    }
-  }, [apiClient, isCurrentOverlayRequest]);
-
-  const openChanges = useCallback(async (task: MessageTaskRunnerTask) => {
-    const runId = readString(task.last_run_id);
-    if (!runId) {
-      return;
-    }
-    const requestSequence = nextOverlayRequestSequence();
-    clearSiblingOverlays('changes');
-    clearChangesOverlay();
-    const source = buildTaskSourceLookup({
-      task,
-      graph,
-      fallbackMessageId: messageId,
-      fallbackLookup: lookup,
-    });
-    setChangesTask(task);
-    setChangesSource(source);
-    setLoadingChangesRunId(runId);
-    setLoadingDiffPath(null);
-    setError(null);
-    try {
-      const changes = await getMessageTaskRunnerRunOutputChanges(
-        apiClient.getRequestFn(),
-        source.messageId,
-        runId,
-        {
-          ...source.lookup,
-          limit: 200,
-          offset: 0,
-        },
-      );
-      if (!isCurrentOverlayRequest(requestSequence)) {
-        return;
-      }
-      setOutputChanges(changes);
-      const firstFile = Array.isArray(changes.files) ? changes.files[0] : null;
-      if (firstFile) {
-        await loadChangeDiff(task, source, firstFile, requestSequence);
-      }
-    } catch (err) {
-      if (!isCurrentOverlayRequest(requestSequence)) {
-        return;
-      }
-      setError(err instanceof Error ? err.message : '读取文件变更失败');
-    } finally {
-      if (isCurrentOverlayRequest(requestSequence)) {
-        setLoadingChangesRunId(null);
-      }
-    }
-  }, [
-    apiClient,
-    clearChangesOverlay,
-    clearSiblingOverlays,
-    graph,
-    isCurrentOverlayRequest,
-    loadChangeDiff,
-    lookup,
-    messageId,
-    nextOverlayRequestSequence,
-  ]);
-
-  const selectChangeFile = useCallback(async (file: MessageTaskRunnerFileChange) => {
-    if (!changesTask || !changesSource) {
-      return;
-    }
-    const requestSequence = nextOverlayRequestSequence();
-    await loadChangeDiff(changesTask, changesSource, file, requestSequence);
-  }, [changesSource, changesTask, loadChangeDiff, nextOverlayRequestSequence]);
-
   const loadMoreRunEvents = useCallback(async () => {
     if (!runDetail?.events_has_more) {
       return;
@@ -633,11 +498,6 @@ export function useMessageTaskGraph({
       setProcessTask(null);
       setProcessRunDetail(null);
       setRunDetail(null);
-      setChangesTask(null);
-      setChangesSource(null);
-      setOutputChanges(null);
-      setOutputDiff(null);
-      setSelectedChangePath(null);
       setRetryingTaskId(null);
       setRetryError(null);
       setError(null);
@@ -650,15 +510,12 @@ export function useMessageTaskGraph({
     setProcessTask(null);
     setProcessRunDetail(null);
     setRunDetail(null);
-    clearChangesOverlay();
     setLoadingProcessTaskId(null);
     setLoadingRunId(null);
-    setLoadingChangesRunId(null);
-    setLoadingDiffPath(null);
     setRetryingTaskId(null);
     setRetryError(null);
     setError(null);
-  }, [clearChangesOverlay, graphRequestIdentity, nextOverlayRequestSequence]);
+  }, [graphRequestIdentity, nextOverlayRequestSequence]);
 
   return {
     graph,
@@ -672,22 +529,14 @@ export function useMessageTaskGraph({
     processRunDetail,
     loadingProcessTaskId,
     runDetail,
-    changesTask,
-    outputChanges,
-    outputDiff,
-    selectedChangePath,
     loadingRunId,
-    loadingChangesRunId,
-    loadingDiffPath,
     retryingTaskId,
     retryError,
     reloadGraph,
     openDetail,
     openProcessLog,
     openRun,
-    openChanges,
     retryTask,
-    selectChangeFile,
     loadMoreRunEvents,
     closeDetail: () => {
       nextOverlayRequestSequence();
@@ -704,12 +553,6 @@ export function useMessageTaskGraph({
       nextOverlayRequestSequence();
       setRunDetail(null);
       setLoadingRunId(null);
-    },
-    closeChanges: () => {
-      nextOverlayRequestSequence();
-      clearChangesOverlay();
-      setLoadingChangesRunId(null);
-      setLoadingDiffPath(null);
     },
   };
 }

@@ -334,7 +334,7 @@ pub async fn run_bootstrapped_project_planning(input: BootstrappedProjectPlannin
                 .await;
             MessageManager::new()
                 .save_tool_results(lifecycle_session_id.as_str(), tool_results.as_slice())
-                .await;
+                .await?;
             let tool_result = tool_results
                 .into_iter()
                 .next()

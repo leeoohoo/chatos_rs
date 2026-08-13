@@ -83,6 +83,7 @@ impl McpManagementGatewayBuilder {
             exposed_tool_count: session.exposed_tool_count,
             effective_mcp_ids: session.effective_mcp_ids,
             provider_skills_prompt: session.provider_skills_prompt,
+            plugin_instruction_items: session.plugin_instruction_items,
             mcp_command_queue: session.mcp_command_queue,
             runtime_token: session.runtime_token,
             runtime_session,
@@ -113,6 +114,7 @@ impl McpManagementGatewayBuilder {
             exposed_tool_count: session.tools.len(),
             effective_mcp_ids: Vec::new(),
             provider_skills_prompt: None,
+            plugin_instruction_items: Vec::new(),
             unavailable_required_mcps: Vec::new(),
         };
         let server = build_gateway_server(
@@ -129,6 +131,7 @@ impl McpManagementGatewayBuilder {
             exposed_tool_count: response.exposed_tool_count,
             effective_mcp_ids: response.effective_mcp_ids,
             provider_skills_prompt: response.provider_skills_prompt,
+            plugin_instruction_items: response.plugin_instruction_items,
             mcp_command_queue: response.mcp_command_queue,
             runtime_token: response.runtime_token,
             runtime_session,
@@ -144,6 +147,7 @@ pub struct ResolvedMcpGateway {
     pub exposed_tool_count: usize,
     pub effective_mcp_ids: Vec<String>,
     pub provider_skills_prompt: Option<String>,
+    pub plugin_instruction_items: Vec<serde_json::Value>,
     pub mcp_command_queue: String,
     pub runtime_token: String,
     pub runtime_session: McpManagementRuntimeSessionHandle,
@@ -202,6 +206,7 @@ mod tests {
             exposed_tool_count: 1,
             effective_mcp_ids: Vec::new(),
             provider_skills_prompt: None,
+            plugin_instruction_items: Vec::new(),
             unavailable_required_mcps: Vec::new(),
         }
     }

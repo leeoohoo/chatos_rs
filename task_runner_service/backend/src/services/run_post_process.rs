@@ -223,12 +223,5 @@ impl RunService {
                 "failed to enqueue Run post-processing; Outbox reconciliation will retry"
             );
         }
-        if let Err(err) = self.enqueue_terminal_cleanup_if_needed(run).await {
-            warn!(
-                run_id = run.id.as_str(),
-                error = err.as_str(),
-                "failed to enqueue terminal cleanup; Outbox reconciliation will retry"
-            );
-        }
     }
 }

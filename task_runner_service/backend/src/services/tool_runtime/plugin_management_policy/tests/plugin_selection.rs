@@ -20,16 +20,11 @@ fn local_runtime_capabilities() -> ResolvedAgentCapabilities {
 fn local_runtime_policy(
     capabilities: ResolvedAgentCapabilities,
 ) -> Result<TaskRunnerCapabilityPolicy, String> {
-    TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, true).map(|policy| {
-        policy.with_project_runtime_target(
-            Some("device-1".to_string()),
-            Some("project-workspace".to_string()),
-        )
-    })
+    TaskRunnerCapabilityPolicy::new(capabilities)
 }
 
 #[test]
-fn plugin_snapshot_uses_project_target_and_ignores_legacy_task_target() {
+fn plugin_selection_omits_plugin_agent_profiles() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];
     capabilities.mcps.push(resolved_mcp(
@@ -42,8 +37,6 @@ fn plugin_snapshot_uses_project_target_and_ignores_legacy_task_target() {
     let policy = local_runtime_policy(capabilities).expect("Plugin policy");
     let mut task = task();
     task.plugin_config = TaskPluginConfig {
-        device_id: Some("legacy-device".to_string()),
-        workspace_id: Some("legacy-workspace".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -56,33 +49,9 @@ fn plugin_snapshot_uses_project_target_and_ignores_legacy_task_target() {
     policy
         .apply_to_task(&mut task)
         .expect("apply Plugin policy");
-    let snapshots = policy.plugin_snapshots(&task).expect("Plugin snapshots");
-
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].plugin_id, "plugin-browser");
-    assert_eq!(snapshots[0].release_id, "release-browser-1");
-    assert_eq!(snapshots[0].device_id.as_deref(), Some("device-1"));
-    assert_eq!(
-        snapshots[0].workspace_id.as_deref(),
-        Some("project-workspace")
-    );
-    assert!(task.plugin_config.device_id.is_none());
-    assert!(task.plugin_config.workspace_id.is_none());
     assert!(task.plugin_config.selected_plugins[0]
         .selected_agent_ids
         .is_empty());
-    assert_eq!(snapshots[0].artifact_sha256, "a".repeat(64));
-    assert_eq!(snapshots[0].component_snapshots.len(), 1);
-    assert_eq!(snapshots[0].component_snapshots[0].component_key, "browser");
-    assert_eq!(
-        snapshots[0].component_snapshots[0].content_sha256,
-        "c".repeat(64)
-    );
-    assert_eq!(snapshots[0].permission_snapshot, vec!["browser.control"]);
-    assert_eq!(
-        snapshots[0].auth_connection_ids,
-        vec!["oauth-browser-account"]
-    );
     assert!(task
         .mcp_config
         .enabled_builtin_kinds
@@ -91,96 +60,12 @@ fn plugin_snapshot_uses_project_target_and_ignores_legacy_task_target() {
 }
 
 #[test]
-fn plugin_ui_is_pinned_as_a_signed_run_component_without_executable_operations() {
-    let mut capabilities = local_runtime_capabilities();
-    capabilities.plugins = vec![resolved_ui_plugin()];
-    capabilities.mcps.push(resolved_mcp(
-        "browser-tools",
-        BUILTIN_RUNTIME_KIND,
-        Some("BrowserTools"),
-        false,
-        true,
-    ));
-    let policy = local_runtime_policy(capabilities).expect("Plugin UI policy");
-    let mut task = task();
-    task.plugin_config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
-        workspace_id: Some("workspace-1".to_string()),
-        selected_plugins: vec![SelectedPluginRef {
-            plugin_id: "plugin-browser".to_string(),
-            selected_skill_ids: Vec::new(),
-            selected_command_ids: Vec::new(),
-            selected_agent_ids: Vec::new(),
-        }],
-        command_invocations: Vec::new(),
-    };
-
-    policy
-        .apply_to_task(&mut task)
-        .expect("apply Plugin UI policy");
-    let snapshots = policy.plugin_snapshots(&task).expect("Plugin UI snapshots");
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].component_snapshots.len(), 1);
-    let component = &snapshots[0].component_snapshots[0];
-    assert_eq!(component.kind, PluginComponentKind::UiContribution);
-    assert_eq!(component.component_key, "security-workbench");
-    assert_eq!(component.content_sha256, "c".repeat(64));
-    assert_eq!(
-        component.runtime.get("runtime_kind"),
-        Some(&json!("sandboxed_ui"))
-    );
-    assert_eq!(
-        component.runtime.get("entrypoint"),
-        Some(&json!("./ui/index.html"))
-    );
-    assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("assets")),
-        Some(&json!(["./ui/app.js", "./ui/styles.css"]))
-    );
-    assert_eq!(snapshots[0].permission_snapshot, vec!["artifact.read"]);
-}
-
-#[test]
-fn local_plugin_selection_without_project_target_fails_closed() {
-    let mut capabilities = local_runtime_capabilities();
-    capabilities.plugins = vec![resolved_plugin(false)];
-    capabilities.mcps.push(resolved_mcp(
-        "browser-tools",
-        BUILTIN_RUNTIME_KIND,
-        Some("BrowserTools"),
-        false,
-        true,
-    ));
-    let policy = TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, true)
-        .expect("Plugin policy without project target");
-    let config = TaskPluginConfig {
-        selected_plugins: vec![SelectedPluginRef {
-            plugin_id: "plugin-browser".to_string(),
-            selected_skill_ids: Vec::new(),
-            selected_command_ids: Vec::new(),
-            selected_agent_ids: Vec::new(),
-        }],
-        ..TaskPluginConfig::default()
-    };
-
-    let error = policy
-        .validate_plugin_config(&config)
-        .expect_err("device-less Plugin selection must fail closed");
-    assert!(error.contains("device_id"));
-}
-
-#[test]
-fn selected_command_enters_the_immutable_run_snapshot() {
+fn selected_command_remains_in_task_config_for_mcp_session() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_command_plugin(false)];
     let policy = local_runtime_policy(capabilities).expect("Command Plugin policy");
     let mut task = task();
     task.plugin_config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
-        workspace_id: Some("workspace-1".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -197,60 +82,22 @@ fn selected_command_enters_the_immutable_run_snapshot() {
     policy
         .apply_to_task(&mut task)
         .expect("apply Command Plugin policy");
-    let snapshots = policy
-        .plugin_snapshots(&task)
-        .expect("Command Plugin snapshots");
-
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].component_snapshots.len(), 1);
-    let component = &snapshots[0].component_snapshots[0];
-    assert_eq!(component.component_key, "review");
-    assert_eq!(component.kind, PluginComponentKind::Command);
-    assert_eq!(component.content_sha256, "d".repeat(64));
+    assert_eq!(task.plugin_config.selected_plugins.len(), 1);
     assert_eq!(
-        component.runtime.get("entrypoint"),
-        Some(&json!("./commands/review.md"))
+        task.plugin_config.selected_plugins[0].plugin_id,
+        "plugin-browser"
     );
     assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("description")),
-        Some(&json!("Review the current change"))
+        task.plugin_config.selected_plugins[0].selected_command_ids,
+        vec!["review"]
     );
+    assert_eq!(task.plugin_config.command_invocations.len(), 1);
     assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("argument_hint")),
-        Some(&json!("[path]"))
+        task.plugin_config.command_invocations[0]
+            .arguments
+            .as_deref(),
+        Some("src/lib.rs")
     );
-    assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("requires_confirmation")),
-        Some(&json!(false))
-    );
-    assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("target_agent")),
-        Some(&json!(RUN_AGENT_KEY))
-    );
-    assert_eq!(
-        component
-            .runtime
-            .get("metadata")
-            .and_then(|metadata| metadata.get("allowed_tools")),
-        Some(&json!(["browser_tools_browser_snapshot"]))
-    );
-    assert_eq!(
-        component.runtime.get("arguments"),
-        Some(&json!("src/lib.rs"))
-    );
-    assert_eq!(snapshots[0].permission_snapshot, vec!["workspace.read"]);
 }
 
 #[test]
@@ -261,8 +108,6 @@ fn plugin_agent_profiles_are_not_task_capabilities() {
     assert!(policy.selectable_plugin_views().is_empty());
 
     let config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
-        workspace_id: Some("workspace-1".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -275,38 +120,6 @@ fn plugin_agent_profiles_are_not_task_capabilities() {
         .validate_plugin_config(&config)
         .expect_err("task-level Plugin Agent selection must fail")
         .contains("not supported"));
-}
-
-#[test]
-fn hook_set_is_automatically_bound_to_the_immutable_run_snapshot() {
-    let mut capabilities = local_runtime_capabilities();
-    capabilities.plugins = vec![resolved_hook_plugin()];
-    let policy = local_runtime_policy(capabilities).expect("Hook Plugin policy");
-    let mut task = task();
-    task.plugin_config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
-        workspace_id: Some("workspace-1".to_string()),
-        selected_plugins: vec![SelectedPluginRef {
-            plugin_id: "plugin-browser".to_string(),
-            selected_skill_ids: Vec::new(),
-            selected_command_ids: Vec::new(),
-            selected_agent_ids: Vec::new(),
-        }],
-        command_invocations: Vec::new(),
-    };
-
-    policy.apply_to_task(&mut task).expect("apply Hook policy");
-    let snapshots = policy.plugin_snapshots(&task).expect("Hook snapshots");
-    assert_eq!(snapshots[0].component_snapshots.len(), 1);
-    let component = &snapshots[0].component_snapshots[0];
-    assert_eq!(component.kind, PluginComponentKind::HookSet);
-    assert_eq!(component.component_key, "lifecycle-hooks");
-    assert_eq!(component.content_sha256, "f".repeat(64));
-    assert_eq!(
-        component.runtime.get("entrypoint"),
-        Some(&json!("./hooks.json"))
-    );
-    assert_eq!(snapshots[0].permission_snapshot, vec!["process.spawn"]);
 }
 
 #[test]
@@ -330,7 +143,6 @@ fn a_task_may_not_select_a_plugin_agent() {
     capabilities.plugins = vec![resolved_agent_plugin(RUN_AGENT_KEY)];
     let policy = local_runtime_policy(capabilities).expect("Agent Plugin policy");
     let config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -351,7 +163,6 @@ fn command_requiring_confirmation_is_preserved_for_local_device_approval() {
     capabilities.plugins = vec![resolved_command_plugin(true)];
     let policy = local_runtime_policy(capabilities).expect("Command Plugin policy");
     let config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -372,7 +183,6 @@ fn command_invocation_arguments_must_reference_one_exact_selected_command() {
     capabilities.plugins = vec![resolved_command_plugin(false)];
     let policy = local_runtime_policy(capabilities).expect("Command Plugin policy");
     let mut config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -424,7 +234,6 @@ fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
     capabilities.plugins = vec![command_plugin];
     let policy = local_runtime_policy(capabilities).expect("Command Plugin policy");
     let config = TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
         selected_plugins: vec![SelectedPluginRef {
             plugin_id: "plugin-browser".to_string(),
             selected_skill_ids: Vec::new(),
@@ -456,7 +265,6 @@ fn required_plugin_is_injected_into_effective_task_config() {
     ));
     let policy = local_runtime_policy(capabilities).expect("required Plugin policy");
     let mut task = task();
-    task.plugin_config.device_id = Some("device-1".to_string());
 
     policy
         .apply_to_task(&mut task)
@@ -488,15 +296,11 @@ fn cloud_runtime_does_not_inject_optional_plugins_without_task_selection() {
         }
     }
     capabilities.plugins = vec![plugin];
-    let policy = TaskRunnerCapabilityPolicy::new_for_runtime(capabilities, false)
-        .expect("cloud Plugin policy");
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("cloud Plugin policy");
     let mut task = task();
 
     policy
         .apply_to_task(&mut task)
         .expect("apply cloud Plugin policy");
-    let snapshots = policy.plugin_snapshots(&task).expect("Plugin snapshots");
-
     assert!(task.plugin_config.selected_plugins.is_empty());
-    assert!(snapshots.is_empty());
 }

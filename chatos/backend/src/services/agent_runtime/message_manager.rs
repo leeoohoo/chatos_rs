@@ -178,8 +178,12 @@ impl MessageManager {
             .await
     }
 
-    pub async fn save_tool_results(&self, session_id: &str, results: &[ToolResult]) {
-        self.core.save_tool_results(session_id, results).await;
+    pub async fn save_tool_results(
+        &self,
+        session_id: &str,
+        results: &[ToolResult],
+    ) -> Result<(), String> {
+        self.core.save_tool_results(session_id, results).await
     }
 
     pub async fn get_session_messages(&self, session_id: &str, limit: Option<i64>) -> Vec<Message> {

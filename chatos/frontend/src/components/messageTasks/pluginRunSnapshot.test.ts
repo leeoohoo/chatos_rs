@@ -9,8 +9,6 @@ describe('pluginRunSnapshotSummary', () => {
     const secret = 'do-not-render-command-arguments';
     const summary = pluginRunSnapshotSummary({
       plugin_config: {
-        device_id: 'device-1',
-        workspace_id: 'workspace-1',
         selected_plugins: [{
           plugin_id: 'plugin-review',
           selected_skill_ids: ['review-skill'],
@@ -25,28 +23,14 @@ describe('pluginRunSnapshotSummary', () => {
           arguments_sha256: 'a'.repeat(64),
         }],
       },
-      plugin_snapshots: [{
-        plugin_id: 'plugin-review',
-        release_id: 'release-1',
-        version: '1.2.3',
-        component_snapshots: [
-          { component_key: 'review', runtime: { arguments: secret } },
-          { component_key: 'reviewer' },
-        ],
-      }],
     });
 
     expect(summary).toMatchObject({
-      deviceId: 'device-1',
-      workspaceId: 'workspace-1',
       plugins: [{
         pluginId: 'plugin-review',
-        releaseId: 'release-1',
-        version: '1.2.3',
         selectedSkillIds: ['review-skill'],
         selectedCommandIds: ['review'],
         selectedAgentIds: ['reviewer'],
-        componentKeys: ['review', 'reviewer'],
       }],
       commands: [{
         pluginId: 'plugin-review',
@@ -62,7 +46,6 @@ describe('pluginRunSnapshotSummary', () => {
     expect(pluginRunSnapshotSummary({ plugin_config: {} })).toBeNull();
     expect(pluginRunSnapshotSummary({
       plugin_config: {
-        device_id: 'device-1',
         selected_plugins: [{ plugin_id: 'plugin-a' }],
         command_invocations: [{
           plugin_id: 'plugin-b',

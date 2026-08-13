@@ -92,7 +92,11 @@ impl IterativeContextRefresh {
         {
             items.extend(
                 composer
-                    .compose_input_items_with_budget(scope, self.tool_result_model_budget_limits)
+                    .compose_input_items_excluding_turn(
+                        scope,
+                        None,
+                        self.tool_result_model_budget_limits,
+                    )
                     .await?,
             );
         }

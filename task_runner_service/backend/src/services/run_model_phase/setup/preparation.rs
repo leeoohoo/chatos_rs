@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::services::TaskRunnerCapabilityPolicy;
-use chatos_plugin_management_sdk::SystemAgentKey;
 
 mod mcp_inputs;
 mod mcp_management_gateway;
@@ -21,60 +20,10 @@ pub(super) async fn prepare_model_execution(
     prerequisite_context: &[PrerequisiteTaskContext],
     capability_policy: Option<&TaskRunnerCapabilityPolicy>,
     mcp_runtime_session_ref: Option<&str>,
-    plugin_session_snapshots: Option<
-        Vec<crate::services::plugin_runtime_relay::PreparedPluginSessionSnapshot>,
-    >,
 ) -> Result<PreparedModelExecution, String> {
-    let command_constraints =
-        crate::services::plugin_runtime_relay::plugin_command_execution_constraints(run)?;
     let task_agent_key = service.resolve_task_runner_agent_key_for_task(task).await?;
-    validate_command_target_agent(task_agent_key, &command_constraints)?;
-    if !command_constraints.tool_allowlists.is_empty() && !task.mcp_config.enabled {
-        return Err(
-            "Plugin Command allowed tools require the task MCP runtime to be enabled".to_string(),
-        );
-    }
     service.ensure_run_thread(task, run).await?;
-    crate::services::model_runtime_resolver::ensure_cloud_task_project_execution(
-        &service.config,
-        task,
-    )
-    .await?;
-    let authoritative_policy = capability_policy.is_some();
-    let sandbox_required = service
-        .should_route_task_to_sandbox(task, authoritative_policy)
-        .await?;
-    let harness_run_context = if sandbox_required {
-        service
-            .prepare_harness_run_for_sandbox(task, run, effective_workspace_dir)
-            .await?
-    } else {
-        None
-    };
-    let effective_workspace_dir = harness_run_context
-        .as_ref()
-        .map(|context| context.effective_workspace_dir.as_str())
-        .unwrap_or(effective_workspace_dir)
-        .to_string();
-    let preserve_platform_git = harness_run_context.is_some();
-    let sandbox_context = service
-        .prepare_sandbox_if_needed(
-            task,
-            run,
-            effective_workspace_dir.as_str(),
-            preserve_platform_git,
-            authoritative_policy,
-        )
-        .await?;
-    if let Some(context) = sandbox_context.as_ref() {
-        run.bind_current_attempt_environment(&context.sandbox_id, &context.lease_id);
-        run.updated_at = now_rfc3339();
-        *run = service
-            .store
-            .save_run(run.clone())
-            .await
-            .map_err(|err| format!("保存 Run Attempt 沙箱归属失败: {err}"))?;
-    }
+    let effective_workspace_dir = effective_workspace_dir.to_string();
     let prompt = build_task_prompt(
         task,
         input.prompt_override.as_deref(),
@@ -98,13 +47,7 @@ pub(super) async fn prepare_model_execution(
             resolved_model_config.provider.as_str(),
         )
         .await?;
-    let metadata = build_execution_metadata(
-        task,
-        run,
-        model_config,
-        &agent_prompt,
-        sandbox_context.as_ref(),
-    );
+    let metadata = build_execution_metadata(task, run, model_config, &agent_prompt);
     let task_process_logging_enabled = match capability_policy {
         Some(policy) => {
             task_process_logging_enabled(&task.mcp_config) && policy.task_process_log_mcp_enabled()
@@ -119,36 +62,22 @@ pub(super) async fn prepare_model_execution(
         .effective_prompt_cache_policy()
         .await
         .map_err(|err| format!("加载模型缓存配置失败: {err}"))?;
-    let runtime_config =
-        build_runtime_config(service, task, run, command_constraints.max_iterations).await?;
+    let runtime_config = build_runtime_config(service, task, run, None).await?;
 
-    let mut runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
-    if !command_constraints.tool_allowlists.is_empty() {
-        runtime_config.builtin_prompt_mode = chatos_ai_runtime::TaskBuiltinMcpPromptMode::Effective;
-    }
-
-    let prepared_plugin_runtime = if let Some(snapshots) = plugin_session_snapshots {
-        service.restore_plugin_runtime(task, run, snapshots)?
-    } else {
-        service
-            .prepare_plugin_runtime(task, run, effective_workspace_dir.as_str())
-            .await?
-    };
+    let runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
     let mcp_management_gateway = resolve_mcp_management_gateway(
         task,
         run,
         task_agent_key,
-        sandbox_context.as_ref(),
         tool_result_model_budget_limits.per_result_max_chars,
         mcp_runtime_session_ref,
     )
     .await?;
     let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
-    let plugin_tool_lifecycle_hook =
-        prepared_plugin_runtime.tool_lifecycle_hook(task_agent_key.as_str());
+    let gateway_plugin_instruction_items = mcp_management_gateway.plugin_instruction_items.clone();
     let mut prefixed_input_items =
         mcp_provider_skills_prefixed_input_items(gateway_provider_skills_prompt);
-    prefixed_input_items.extend(prepared_plugin_runtime.prompt_items.clone());
+    prefixed_input_items.extend(gateway_plugin_instruction_items);
     let mut run_spec = build_run_spec(
         &agent,
         task,
@@ -163,25 +92,14 @@ pub(super) async fn prepare_model_execution(
         prefixed_input_items,
         prompt_cache_policy,
     );
-    if sandbox_context.is_some() {
-        run_spec
-            .current_input_items
-            .insert(0, sandbox_run_fact_input_item(task.mcp_config.locale()));
-    }
     let memory_scope = build_memory_scope(service, task, run);
     run_spec = run_spec.with_memory_scope(Some(memory_scope));
     persist_context_snapshot(service, run, run_spec.memory_scope.as_ref()).await;
     let (mcp_management_server, mcp_management_runtime_session, mcp_command_queue) =
         mcp_management_gateway.into_parts();
-    let mut mcp_builder = McpExecutorBuilder::new()
+    let mcp_builder = McpExecutorBuilder::new()
         .with_http_server(mcp_management_server)
         .with_tool_result_max_chars(tool_result_model_budget_limits.per_result_max_chars);
-    for allowed_tools in command_constraints.tool_allowlists {
-        mcp_builder = mcp_builder.with_allowed_tool_names(allowed_tools);
-    }
-    if let Some(hook) = plugin_tool_lifecycle_hook {
-        mcp_builder = mcp_builder.with_tool_lifecycle_hook(hook);
-    }
 
     Ok(PreparedModelExecution {
         agent,
@@ -192,36 +110,6 @@ pub(super) async fn prepare_model_execution(
         mcp_command_queue,
         tool_result_model_budget_limits,
         effective_workspace_dir,
-        plugin_sessions: prepared_plugin_runtime.sessions,
-    })
-}
-
-fn validate_command_target_agent(
-    task_agent_key: SystemAgentKey,
-    constraints: &crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints,
-) -> Result<(), String> {
-    if let Some(target_agent) = constraints.target_agent.as_deref() {
-        if target_agent != task_agent_key.as_str() {
-            return Err(format!(
-                "Plugin Command target Agent {target_agent} is incompatible with the current task Agent {}",
-                task_agent_key.as_str()
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn sandbox_run_fact_input_item(locale: BuiltinMcpPromptLocale) -> Value {
-    let content = if locale.is_english() {
-        "[Current project workspace]\nThe project file and terminal tools exposed in this run all operate on the same current project workspace. Use project-root-relative paths and use the tools directly."
-            .to_string()
-    } else {
-        "[当前项目工作区]\n本轮提供的项目文件与项目终端工具都作用于同一个当前项目工作区。路径使用项目根目录相对路径，直接使用工具即可。"
-            .to_string()
-    };
-    json!({
-        "role": "system",
-        "content": content,
     })
 }
 
@@ -230,9 +118,8 @@ fn build_execution_metadata(
     run: &TaskRunRecord,
     model_config: &ModelConfigRecord,
     agent_prompt: &chatos_plugin_management_sdk::ResolvedAgentPrompt,
-    sandbox_context: Option<&crate::services::sandbox_runtime::SandboxRuntimeContext>,
 ) -> serde_json::Value {
-    let mut metadata = json!({
+    json!({
         "task_id": task.id,
         "run_id": run.id,
         "model_config_id": model_config.id,
@@ -241,14 +128,7 @@ fn build_execution_metadata(
         "agent_prompt_vendor": agent_prompt.vendor.as_str(),
         "agent_prompt_revision": agent_prompt.revision,
         "agent_prompt_checksum": agent_prompt.checksum,
-    });
-    if let Some(context) = sandbox_context {
-        if let Some(object) = metadata.as_object_mut() {
-            object.insert("sandbox_enabled".to_string(), json!(true));
-            object.insert("sandbox".to_string(), context.to_metadata());
-        }
-    }
-    metadata
+    })
 }
 
 fn build_run_spec(
@@ -508,51 +388,10 @@ mod tests {
     }
 
     #[test]
-    fn command_target_agent_must_match_the_existing_task_agent() {
-        let plan_constraints =
-            crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
-                target_agent: Some(SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string()),
-                tool_allowlists: Vec::new(),
-                ..Default::default()
-            };
-        validate_command_target_agent(SystemAgentKey::TaskRunnerPlanPhase, &plan_constraints)
-            .expect("matching target Agent");
-
-        let run_constraints =
-            crate::services::plugin_runtime_relay::PluginCommandExecutionConstraints {
-                target_agent: Some(SystemAgentKey::TaskRunnerRunPhase.as_str().to_string()),
-                tool_allowlists: Vec::new(),
-                ..Default::default()
-            };
-        assert!(validate_command_target_agent(
-            SystemAgentKey::TaskRunnerPlanPhase,
-            &run_constraints
-        )
-        .expect_err("Command must not upgrade the task Agent")
-        .contains("incompatible"));
-    }
-
-    #[test]
     fn plugin_agent_iteration_limit_can_only_narrow_the_runtime() {
         assert_eq!(bounded_plugin_max_iterations(600, Some(12)), 12);
         assert_eq!(bounded_plugin_max_iterations(8, Some(12)), 8);
         assert_eq!(bounded_plugin_max_iterations(600, None), 600);
-    }
-
-    #[test]
-    fn sandbox_run_fact_only_describes_the_program_bound_workspace() {
-        let item = sandbox_run_fact_input_item(BuiltinMcpPromptLocale::ZhCn);
-        let content = item["content"].as_str().expect("system content");
-
-        assert_eq!(item["role"].as_str(), Some("system"));
-        assert!(content.contains("都作用于同一个当前项目工作区"));
-        assert!(content.contains("项目根目录相对路径"));
-        assert!(!content.contains("pending"));
-        assert!(!content.contains("初始化"));
-        assert!(!content.contains("Provider"));
-        assert!(!content.contains("租约"));
-        assert!(!content.contains("/workspace"));
-        assert!(!content.contains("pairing"));
     }
 
     #[test]
@@ -633,25 +472,12 @@ mod tests {
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1_000,
             default_tool_results_model_total_max_chars: 1_000,
-            default_execution_environment_mode: "local".to_string(),
-            default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_client_id: None,
-            sandbox_manager_client_key: None,
-            default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
-            local_connector_internal_api_secret: None,
-            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-            local_connector_http_client: reqwest::Client::new(),
-            local_connector_service_request_timeout: Duration::from_millis(5_000),
-            plugin_relay_request_timeout: Duration::from_millis(60_000),
-            plugin_hook_relay_timeout: Duration::from_millis(330_000),
-            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -737,7 +563,6 @@ mod tests {
             started_at: None,
             finished_at: None,
             input_snapshot: json!({}),
-            plugin_snapshots: Vec::new(),
             context_snapshot: None,
             result_summary: None,
             error_message: None,
@@ -755,11 +580,6 @@ mod tests {
             post_process_last_error: None,
             memory_summary_processed: false,
             chatos_followup_processed: false,
-            terminal_cleanup_event_pending: false,
-            terminal_cleanup_event_enqueued: false,
-            terminal_cleanup_completed: false,
-            terminal_cleanup_attempt_count: 0,
-            terminal_cleanup_last_error: None,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,

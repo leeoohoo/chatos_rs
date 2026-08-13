@@ -190,6 +190,7 @@ const ToolResultCard: React.FC<{
         )}
         >
           {item.error ? '执行结果返回失败' : '已收到执行结果'}
+          {(item.repeatCount || 1) > 1 ? `（重复 ${item.repeatCount} 次）` : ''}
         </span>
         <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
           {formatTime(item.createdAt)}
@@ -222,6 +223,7 @@ const ModelCard: React.FC<{
       <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
         <Bot className="h-3 w-3" />
         {item.label}
+        {(item.repeatCount || 1) > 1 ? `（重复 ${item.repeatCount} 次）` : ''}
       </span>
       <span className="text-muted-foreground">{formatTime(item.createdAt)}</span>
     </div>

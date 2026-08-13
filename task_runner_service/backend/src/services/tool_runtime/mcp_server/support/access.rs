@@ -218,8 +218,6 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
                 "plugin_snapshots",
                 "skill_snapshots",
                 "effective_workspace_dir",
-                "execution_environment_mode",
-                "sandbox_enabled",
                 "task_tool_state",
                 "worker_id",
                 "claim_token",

@@ -20,11 +20,3 @@ pub use sandbox_local_connector::*;
 pub use shared::*;
 pub use task_runner::*;
 pub use user_service::*;
-
-pub fn default_task_runner_execution_environment_mode() -> &'static str {
-    if cfg!(target_os = "linux") {
-        "cloud"
-    } else {
-        "local"
-    }
-}

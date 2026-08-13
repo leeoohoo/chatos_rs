@@ -8,7 +8,6 @@ import {
 } from 'antd';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
-import type { RemoteOperationStats } from '../shared/remoteOperationUtils';
 import type {
   TaskRunEventRecord,
   TaskRunRecord,
@@ -18,7 +17,6 @@ import type {
 } from '../../types';
 import { JsonBlock } from './payloadView';
 import type {
-  RemoteOperationView,
   ToolCallView,
   ToolResultView,
 } from './runEventUtils';
@@ -27,7 +25,6 @@ import { RunEventsTimeline } from './RunEventsTimeline';
 import { RunAttemptsTimeline } from './RunAttemptsTimeline';
 import { RunModelRequestsSection } from './RunModelRequestsSection';
 import { RunPromptsSection } from './RunPromptsSection';
-import { RunRemoteOperationsSection } from './RunRemoteOperationsSection';
 import {
   RunToolCallsSection,
   RunToolResultsSection,
@@ -56,8 +53,6 @@ type RunDetailDrawerProps = {
   toolResults: ToolResultView[];
   modelRequests: TaskRunEventRecord[];
   streamStats: RunStreamStats;
-  remoteOperations: RemoteOperationView[];
-  remoteOperationStats: RemoteOperationStats;
   promptsPage?: RunPromptsPage;
   promptsLoading: boolean;
   promptPage: number;
@@ -71,8 +66,6 @@ type RunDetailDrawerProps = {
   onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
-  onManageServers: () => void;
-  onOpenServer: (serverId: string) => void;
   onOpenPrompt: (promptId: string, runId: string) => void;
   onPromptPageChange: (page: number, pageSize: number) => void;
 };
@@ -88,8 +81,6 @@ export function RunDetailDrawer({
   toolResults,
   modelRequests,
   streamStats,
-  remoteOperations,
-  remoteOperationStats,
   promptsPage,
   promptsLoading,
   promptPage,
@@ -103,8 +94,6 @@ export function RunDetailDrawer({
   onOpenModel,
   onCancel,
   onRetry,
-  onManageServers,
-  onOpenServer,
   onOpenPrompt,
   onPromptPageChange,
 }: RunDetailDrawerProps) {
@@ -138,26 +127,11 @@ export function RunDetailDrawer({
 
           <RunAttemptsTimeline t={t} attempts={run.attempts || []} />
 
-          <RunRemoteOperationsSection
-            t={t}
-            operations={remoteOperations}
-            stats={remoteOperationStats}
-            onManageServers={onManageServers}
-            onOpenServer={onOpenServer}
-          />
-
           <RunToolCallsSection t={t} toolCalls={toolCalls} />
           <RunToolResultsSection t={t} toolResults={toolResults} />
           <RunModelRequestsSection t={t} modelRequests={modelRequests} />
 
           <JsonBlock title={t('runs.snapshot.input')} value={run.input_snapshot} t={t} />
-          <JsonBlock
-            title={t('runs.snapshot.plugins')}
-            value={run.plugin_snapshots}
-            collapsible
-            defaultOpen={false}
-            t={t}
-          />
           <JsonBlock
             title={t('runs.snapshot.context')}
             value={run.context_snapshot}

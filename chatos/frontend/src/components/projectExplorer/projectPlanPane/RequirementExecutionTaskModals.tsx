@@ -3,7 +3,6 @@
 
 import React from 'react';
 
-import { MessageTaskChangesModal } from '../../messageTasks/MessageTaskChangesModal';
 import {
   MessageTaskDetailModal,
   MessageTaskProcessLogModal,
@@ -16,27 +15,18 @@ export const RequirementExecutionTaskModals: React.FC<{
 }> = ({ taskGraph }) => {
   const {
     allTasks,
-    changesTask,
-    closeChanges,
     closeDetail,
     closeProcessLog,
     closeRun,
     detailTask,
-    error: graphError,
     loadMoreRunEvents,
-    loadingChangesRunId,
-    loadingDiffPath,
     loadingRunId,
-    outputChanges,
-    outputDiff,
     processRunDetail,
     processTask,
     retryError,
     retryTask,
     retryingTaskId,
     runDetail,
-    selectChangeFile,
-    selectedChangePath,
   } = taskGraph;
 
   return (
@@ -59,19 +49,6 @@ export const RequirementExecutionTaskModals: React.FC<{
         loadingMoreEvents={Boolean(runDetail && loadingRunId === runDetail.run?.id)}
         onLoadMoreEvents={loadMoreRunEvents}
         onClose={closeRun}
-      />
-      <MessageTaskChangesModal
-        task={changesTask}
-        changes={outputChanges}
-        diff={outputDiff}
-        selectedPath={selectedChangePath}
-        loadingChanges={Boolean(
-          changesTask?.last_run_id && loadingChangesRunId === changesTask.last_run_id
-        )}
-        loadingDiff={Boolean(selectedChangePath && loadingDiffPath === selectedChangePath)}
-        error={graphError}
-        onSelectFile={selectChangeFile}
-        onClose={closeChanges}
       />
     </>
   );

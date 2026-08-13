@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -11,14 +10,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::traits::{
-    MemoryRecordWriter, SaveAssistantRecordInput, SaveRecordInput, SaveToolRecordInput,
-};
+use crate::traits::{MemoryRecordWriter, SaveRecordInput, SaveToolRecordInput};
 
-use super::log_summary::{
-    summarize_assistant_record_input, summarize_record_batch, summarize_save_record_input,
-    summarize_tool_record_input, summarize_tool_record_inputs,
-};
+use super::log_summary::summarize_record_batch;
 use super::normalized;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,11 +65,6 @@ pub struct MemoryEngineRecordWriter {
     source_id: Option<String>,
 }
 
-#[derive(Clone)]
-pub struct BestEffortMemoryRecordWriter {
-    inner: Arc<dyn MemoryRecordWriter>,
-}
-
 impl MemoryEngineRecordWriter {
     pub fn new_direct(
         base_url: impl Into<String>,
@@ -101,21 +90,6 @@ impl MemoryEngineRecordWriter {
 
     pub fn source_id(&self) -> Option<&str> {
         self.source_id.as_deref()
-    }
-}
-
-impl BestEffortMemoryRecordWriter {
-    pub fn new<T>(inner: T) -> Self
-    where
-        T: MemoryRecordWriter + 'static,
-    {
-        Self {
-            inner: Arc::new(inner),
-        }
-    }
-
-    pub fn from_arc(inner: Arc<dyn MemoryRecordWriter>) -> Self {
-        Self { inner }
     }
 }
 
@@ -251,78 +225,6 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             response?;
         }
 
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl MemoryRecordWriter for BestEffortMemoryRecordWriter {
-    async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
-        let summary = summarize_save_record_input(&input);
-        if let Err(err) = self.inner.save_record(input).await {
-            warn!(
-                role = summary.role.as_str(),
-                conversation_id = summary.conversation_id.as_str(),
-                conversation_turn_id = summary.conversation_turn_id.as_str(),
-                message_id = summary.message_id.as_str(),
-                tool_call_id = summary.tool_call_id.as_str(),
-                content_bytes = summary.content_bytes,
-                error = err.as_str(),
-                "best-effort memory record sync failed"
-            );
-        }
-        Ok(())
-    }
-
-    async fn save_assistant_record(&self, input: SaveAssistantRecordInput) -> Result<(), String> {
-        let summary = summarize_assistant_record_input(&input);
-        if let Err(err) = self.inner.save_assistant_record(input).await {
-            warn!(
-                conversation_id = summary.conversation_id.as_str(),
-                conversation_turn_id = summary.conversation_turn_id.as_str(),
-                message_id = summary.message_id.as_str(),
-                response_id = summary.response_id.as_str(),
-                response_status = summary.response_status.as_str(),
-                content_bytes = summary.content_bytes,
-                error = err.as_str(),
-                "best-effort memory assistant record sync failed"
-            );
-        }
-        Ok(())
-    }
-
-    async fn save_tool_record(&self, input: SaveToolRecordInput) -> Result<(), String> {
-        let summary = summarize_tool_record_input(&input);
-        if let Err(err) = self.inner.save_tool_record(input).await {
-            warn!(
-                conversation_id = summary.conversation_id.as_str(),
-                conversation_turn_id = summary.conversation_turn_id.as_str(),
-                message_id = summary.message_id.as_str(),
-                tool_call_id = summary.tool_call_id.as_str(),
-                tool_name = summary.tool_name.as_str(),
-                content_bytes = summary.content_bytes,
-                error = err.as_str(),
-                "best-effort memory tool record sync failed"
-            );
-        }
-        Ok(())
-    }
-
-    async fn save_tool_records(&self, inputs: Vec<SaveToolRecordInput>) -> Result<(), String> {
-        let summary = summarize_tool_record_inputs(inputs.as_slice());
-        if let Err(err) = self.inner.save_tool_records(inputs).await {
-            warn!(
-                record_count = summary.record_count,
-                conversation_ids = summary.conversation_ids.as_str(),
-                conversation_turn_ids = summary.conversation_turn_ids.as_str(),
-                tool_names = summary.tool_names.as_str(),
-                tool_call_ids = summary.tool_call_ids.as_str(),
-                content_bytes = summary.content_bytes,
-                max_content_bytes = summary.max_content_bytes,
-                error = err.as_str(),
-                "best-effort memory tool records sync failed"
-            );
-        }
         Ok(())
     }
 }

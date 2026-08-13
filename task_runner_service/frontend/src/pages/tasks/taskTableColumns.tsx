@@ -20,13 +20,7 @@ import {
   taskOwnerLabel,
   taskProfileColorMap,
   taskProfileLabel,
-  type TaskRemoteOperationStats,
-  type TaskRemoteOperationView,
 } from './taskPageUtils';
-
-export type TaskRowRemoteActivity = TaskRemoteOperationStats & {
-  latest: TaskRemoteOperationView | null;
-};
 
 type BuildTaskTableColumnsParams = {
   t: TranslateFn;
@@ -35,7 +29,6 @@ type BuildTaskTableColumnsParams = {
   projectNameMap: Map<string, string>;
   pendingPromptCountByTaskId: Map<string, number>;
   scheduleModeLabels: Record<TaskScheduleMode, string>;
-  taskRowRemoteActivityByTaskId: Map<string, TaskRowRemoteActivity>;
   onOpenDetail: (task: TaskRecord) => void;
   onOpenEdit: (task: TaskRecord) => void;
   onOpenMemory: (task: TaskRecord) => void;
@@ -51,7 +44,6 @@ export function buildTaskTableColumns({
   projectNameMap,
   pendingPromptCountByTaskId,
   scheduleModeLabels,
-  taskRowRemoteActivityByTaskId,
   onOpenDetail,
   onOpenEdit,
   onOpenMemory,
@@ -67,7 +59,6 @@ export function buildTaskTableColumns({
       dataIndex: 'title',
       width: 320,
       render: (_, record) => {
-        const remoteActivity = taskRowRemoteActivityByTaskId.get(record.id);
         return (
           <Space direction="vertical" size={6} className="task-task-cell">
             <Space direction="vertical" size={2}>
@@ -112,25 +103,6 @@ export function buildTaskTableColumns({
                     })}
                   </Tag>
                 ) : null}
-              </Space>
-            ) : null}
-            {remoteActivity ? (
-              <Space direction="vertical" size={4} className="task-remote-cell">
-                <Space size={[4, 4]} wrap>
-                  <Tag color={remoteActivity.failedCount > 0 ? 'error' : 'success'}>
-                    {t('tasks.remoteOperations', { count: remoteActivity.total })}
-                  </Tag>
-                  <Tag>{t('tasks.remoteServers', { count: remoteActivity.serverCount })}</Tag>
-                  {remoteActivity.latest?.connectionName ? (
-                    <Tag color="blue">{remoteActivity.latest.connectionName}</Tag>
-                  ) : null}
-                </Space>
-                <Typography.Text type="secondary" className="task-cell-meta">
-                  {remoteActivity.latest?.command ||
-                    remoteActivity.latest?.path ||
-                    remoteActivity.latest?.summary ||
-                    t('tasks.remoteActivityFallback')}
-                </Typography.Text>
               </Space>
             ) : null}
           </Space>

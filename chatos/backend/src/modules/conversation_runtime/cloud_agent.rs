@@ -352,7 +352,7 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
             .with_instructions(compose_agent_instructions(&runtime_context, &model_runtime))
             .with_max_output_tokens(input.max_tokens)
             .with_prompt_cache_key(Some(input.session_id.clone()))
-            .with_previous_response_id(run.previous_response_id.clone())
+            .with_previous_response_id(None)
             .with_request_cwd(None)
             .with_prompt_cache_retention(true);
         apply_retry_overrides(&mut shared_model_config, trigger);
@@ -619,6 +619,7 @@ fn reconstructed_runtime_context(
         agent_system_prompt: input.agent_system_prompt.clone(),
         contact_system_prompt: input.contact_system_prompt.clone(),
         builtin_mcp_system_prompt: input.builtin_mcp_system_prompt.clone(),
+        plugin_instruction_items: Vec::new(),
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
         plugin_command_invocations_for_snapshot: input
             .plugin_command_invocations_for_snapshot

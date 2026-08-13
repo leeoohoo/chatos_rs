@@ -274,6 +274,10 @@ pub struct CreateRuntimeSessionRequest {
     pub expected_project_task_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_mcp_ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_plugins: Vec<chatos_plugin_management_sdk::SelectedPluginRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_command_invocations: Vec<chatos_plugin_management_sdk::PluginCommandInvocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
     pub requested_device_id: Option<String>,
@@ -298,6 +302,8 @@ pub struct RuntimeSessionResponse {
     pub effective_mcp_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_skills_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_instruction_items: Vec<serde_json::Value>,
     #[serde(default)]
     pub unavailable_required_mcps: Vec<String>,
 }
@@ -458,8 +464,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_runtime_session_response_defaults_management_prompt_metadata() {
-        let response: RuntimeSessionResponse = serde_json::from_value(serde_json::json!({
+    fn runtime_session_response_requires_event_queue_and_defaults_optional_prompt_metadata() {
+        let incomplete = serde_json::json!({
             "session_id": "session-1",
             "policy_revision": "policy-1",
             "route_revision": "route-1",
@@ -467,9 +473,14 @@ mod tests {
             "mcp_server_url": "http://mcp-management/mcp",
             "runtime_token": "token",
             "configured_mcp_count": 1
-        }))
-        .expect("legacy response");
+        });
+        assert!(serde_json::from_value::<RuntimeSessionResponse>(incomplete.clone()).is_err());
+        let mut complete = incomplete;
+        complete["mcp_command_queue"] = serde_json::json!("mcp.commands");
+        let response: RuntimeSessionResponse =
+            serde_json::from_value(complete).expect("current runtime session response");
         assert!(response.effective_mcp_ids.is_empty());
         assert!(response.provider_skills_prompt.is_none());
+        assert!(response.plugin_instruction_items.is_empty());
     }
 }

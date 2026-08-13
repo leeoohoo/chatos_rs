@@ -160,15 +160,8 @@ use crate::catalog::{
     TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY, TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY, TASK_RUNNER_DATABASE_URL_CONFIG_KEY,
     TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY, TASK_RUNNER_HOST_CONFIG_KEY,
-    TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY, TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY,
-    TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_PORT_CONFIG_KEY,
+    TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY, TASK_RUNNER_PORT_CONFIG_KEY,
     TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
     TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
     TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
@@ -180,14 +173,11 @@ use crate::catalog::{
     TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY, TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY,
     TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
     TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
-    TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY,
-    TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY, TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY,
+    TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY, TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY,
     TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY,
     TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
     TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY, TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
@@ -313,61 +303,19 @@ fn task_runner_iteration_keeps_explicit_service_limit() {
 }
 
 #[test]
-fn task_runner_execution_environment_mode_is_backfilled_when_missing() {
-    let mut values = BTreeMap::new();
-
-    assert!(ensure_task_runner_execution_environment_mode_value(
-        &mut values,
-        json!("cloud")
-    ));
-    assert_eq!(
-        values.get(TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY),
-        Some(&json!("cloud"))
-    );
-}
-
-#[test]
-fn task_runner_execution_environment_mode_keeps_explicit_service_value() {
-    let mut values = BTreeMap::from([(
-        TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY.to_string(),
-        json!("local"),
-    )]);
-
-    assert!(!ensure_task_runner_execution_environment_mode_value(
-        &mut values,
-        json!("cloud")
-    ));
-    assert_eq!(
-        values.get(TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY),
-        Some(&json!("local"))
-    );
-}
-
-#[test]
-fn task_runner_queue_mode_migration_replaces_legacy_inline_values() {
+fn task_runner_queue_mode_migration_replaces_inline_values() {
     let definitions = builtin_definitions();
     let defaults = task_runner_service_default_values(&definitions);
-    let mut values = BTreeMap::from([
-        (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY.to_string(),
-            json!("inline"),
-        ),
-        (
-            TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string(),
-            json!("inline"),
-        ),
-    ]);
+    let mut values = BTreeMap::from([(
+        TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string(),
+        json!("inline"),
+    )]);
 
     let changed_keys = ensure_task_runner_runtime_values(&mut values, &defaults);
 
-    assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string()));
     assert!(
         changed_keys.contains(&TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY.to_string())
-    );
-    assert_eq!(
-        values.get(TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY),
-        Some(&json!("rabbitmq"))
     );
     assert_eq!(
         values.get(TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY),
@@ -382,20 +330,16 @@ fn task_runner_queue_mode_migration_replaces_legacy_inline_values() {
 #[test]
 fn task_runner_queue_mode_draft_migration_only_changes_explicit_inline_values() {
     let mut values = BTreeMap::from([(
-        TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY.to_string(),
+        TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string(),
         json!("inline"),
     )]);
 
     assert!(migrate_task_runner_queue_mode_draft(
         &mut values,
-        TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY
-    ));
-    assert!(!migrate_task_runner_queue_mode_draft(
-        &mut values,
         TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY
     ));
     assert_eq!(
-        values.get(TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY),
+        values.get(TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY),
         Some(&json!("rabbitmq"))
     );
 }
@@ -533,11 +477,6 @@ fn local_connector_internal_urls_are_forced_to_mtls_defaults() {
                 as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
         ),
         (
-            TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            task_runner_service_default_values(&definitions),
-            ensure_task_runner_runtime_values,
-        ),
-        (
             PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
             project_service_runtime_default_values(&definitions),
             ensure_project_service_runtime_values,
@@ -602,15 +541,10 @@ fn sandbox_manager_internal_urls_are_forced_to_https_and_explicit_drafts_migrate
     let definitions = builtin_definitions();
     let cases = [
         (
-            TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
-            task_runner_service_default_values(&definitions),
-            ensure_task_runner_runtime_values
-                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
             PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
             project_service_runtime_default_values(&definitions),
-            ensure_project_service_runtime_values,
+            ensure_project_service_runtime_values
+                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
         ),
         (
             MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -649,10 +583,6 @@ fn sandbox_manager_internal_urls_are_forced_to_https_and_explicit_drafts_migrate
 fn sandbox_manager_mtls_publish_validation_rejects_http_and_port_collisions() {
     let mut values = BTreeMap::from([
         (
-            TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://sandbox-manager-backend:8095"),
-        ),
-        (
             PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
             json!("https://sandbox-manager-backend:8097"),
         ),
@@ -670,19 +600,11 @@ fn sandbox_manager_mtls_publish_validation_rejects_http_and_port_collisions() {
 
     validate_sandbox_manager_mtls_invariants(&values, &mut errors);
 
-    assert_eq!(errors.len(), 2);
-    assert!(errors.iter().any(|error| {
-        error.contains(TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY)
-            && error.contains("must use https://")
-    }));
+    assert_eq!(errors.len(), 1);
     assert!(errors
         .iter()
         .any(|error| error.contains("internal_mtls_port must differ")));
 
-    values.insert(
-        TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
-        json!("https://sandbox-manager-backend:8097"),
-    );
     values.insert(
         SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
         json!(8097),
@@ -763,11 +685,8 @@ fn task_runner_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY.to_string()));
     assert!(
         changed_keys.contains(&TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY.to_string())
     );
@@ -797,10 +716,6 @@ fn task_runner_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string()));
     assert!(
         changed_keys.contains(&TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string())
@@ -822,10 +737,6 @@ fn task_runner_snapshot_exposes_queue_environment_aliases() {
     let definitions = builtin_definitions();
     let values = BTreeMap::from([
         (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY.to_string(),
-            json!("rabbitmq"),
-        ),
-        (
             TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string(),
             json!("rabbitmq"),
         ),
@@ -846,10 +757,6 @@ fn task_runner_snapshot_exposes_queue_environment_aliases() {
             json!(3_000),
         ),
         (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY.to_string(),
-            json!("task_runner.run.dispatch"),
-        ),
-        (
             TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY.to_string(),
             json!("task_runner.callback.delivery"),
         ),
@@ -862,10 +769,6 @@ fn task_runner_snapshot_exposes_queue_environment_aliases() {
     let snapshot = build_snapshot("local", "task-runner", 1, &definitions, &values)
         .expect("Task Runner snapshot");
 
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_DISPATCH_MODE"),
-        Some(&"rabbitmq".to_string())
-    );
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_CALLBACK_DELIVERY_MODE"),
         Some(&"rabbitmq".to_string())
@@ -922,14 +825,6 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         ),
         (TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY.to_string(), json!(".")),
         (
-            TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39230"),
-        ),
-        (
-            TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(7_000),
-        ),
-        (
             TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
             json!("http://127.0.0.1:39190"),
         ),
@@ -964,22 +859,6 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         (
             TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY.to_string(),
             json!(true),
-        ),
-        (
-            TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:8095"),
-        ),
-        (
-            TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(60_000),
-        ),
-        (
-            TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(330_000),
-        ),
-        (
-            TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(10_000),
         ),
         (
             TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
@@ -1039,18 +918,6 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         Some(&".".to_string())
     );
     assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
-        Some(&"http://127.0.0.1:39230".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS"),
-        Some(&"7000".to_string())
-    );
-    assert_eq!(
         snapshot.env.get("TASK_RUNNER_USER_SERVICE_BASE_URL"),
         Some(&"http://127.0.0.1:39190".to_string())
     );
@@ -1083,24 +950,6 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         Some(&"true".to_string())
     );
     assert_eq!(
-        snapshot.env.get("TASK_RUNNER_SANDBOX_MANAGER_BASE_URL"),
-        Some(&"http://127.0.0.1:8095".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS"),
-        Some(&"60000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS"),
-        Some(&"330000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS"),
-        Some(&"10000".to_string())
-    );
-    assert_eq!(
         snapshot.env.get("TASK_RUNNER_CHATOS_CALLBACK_URL"),
         Some(&"http://127.0.0.1:3997/api/task-runs/callback".to_string())
     );
@@ -1118,23 +967,11 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
     );
     assert_eq!(snapshot.env.get("TASK_RUNNER_WORKER_POLL_MS"), None);
     assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_DISPATCH_RETRY_QUEUE"),
-        Some(&"task_runner.run.dispatch.retry".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_DISPATCH_RETRY_DELAY_MS"),
-        Some(&"1000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_RUN_DISPATCH_OUTBOX_RECONCILE_MS"),
+        snapshot.env.get("TASK_RUNNER_EVENT_OUTBOX_RECONCILE_MS"),
         Some(&"5000".to_string())
     );
     assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE"),
+        snapshot.env.get("TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE"),
         Some(&"100".to_string())
     );
     assert_eq!(
@@ -1260,6 +1097,8 @@ fn mcp_management_async_dispatch_backfill_adds_all_service_defaults() {
     assert!(
         changed_keys.contains(&MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string())
     );
+    assert!(changed_keys
+        .contains(&MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string()));
     assert!(
         changed_keys.contains(&MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES_CONFIG_KEY.to_string())
     );
@@ -1383,6 +1222,10 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         (
             MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(5_000),
+        ),
+        (
+            MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
+            json!(3 * 60 * 1_000),
         ),
         (
             MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -1573,6 +1416,12 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
             .env
             .get("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS"),
         Some(&"5000".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS"),
+        Some(&"180000".to_string())
     );
     assert_eq!(
         snapshot
@@ -3154,7 +3003,7 @@ fn internal_request_security_backfill_adds_all_service_defaults() {
 
     let changed_keys = ensure_internal_request_security_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 65);
+    assert_eq!(defaults.len(), 61);
     for key in defaults.keys() {
         assert!(
             values.contains_key(key),
@@ -3164,8 +3013,6 @@ fn internal_request_security_backfill_adds_all_service_defaults() {
     assert!(
         changed_keys.contains(&LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY.to_string())
     );
-    assert!(changed_keys
-        .contains(&LOCAL_CONNECTOR_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY.to_string()));
     assert!(changed_keys
@@ -3298,10 +3145,6 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
             json!("change_me_chatos_local_connector_secret"),
         ),
         (
-            LOCAL_CONNECTOR_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_task_runner_local_connector_secret"),
-        ),
-        (
             LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
             json!("change_me_project_service_local_connector_secret"),
         ),
@@ -3366,10 +3209,6 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
             json!("change_me_user_service_memory_engine_secret"),
         ),
         (
-            SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_task_runner_sandbox_manager_secret"),
-        ),
-        (
             SANDBOX_MANAGER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
             json!("change_me_project_service_sandbox_manager_secret"),
         ),
@@ -3408,14 +3247,6 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
         (
             TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
             json!("chatos-memory-engine-dev-operator-token"),
-        ),
-        (
-            TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_task_runner_local_connector_secret"),
-        ),
-        (
-            TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_task_runner_sandbox_manager_secret"),
         ),
         (
             TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY.to_string(),
@@ -3615,12 +3446,6 @@ fn internal_request_security_snapshot_exposes_environment_aliases() {
             .env
             .get("PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"),
         Some(&"change_me_project_service_task_runner_secret".to_string())
-    );
-    assert_eq!(
-        task_runner_snapshot
-            .env
-            .get("TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET"),
-        Some(&"change_me_task_runner_sandbox_manager_secret".to_string())
     );
 
     let chatos_snapshot = build_snapshot("local", "chatos-backend", 1, &definitions, &values)

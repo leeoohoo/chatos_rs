@@ -10,14 +10,10 @@ use chatos_agent::{
     is_task_runner_phase_agent,
 };
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
-use chatos_service_runtime::http_body::read_response_bytes_limited;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
-
-use crate::trace_context::InternalTraceContextExt;
 
 use super::internal_auth::{
     require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
@@ -27,7 +23,6 @@ use super::internal_auth::{
 mod headers;
 use headers::*;
 
-const PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES: usize = 1024 * 1024;
 const PLUGIN_SELECTION_HEADER_LIMIT_BYTES: usize = 16 * 1024;
 const PLUGIN_SELECTION_MAX_ITEMS: usize = 50;
 const PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES: usize = 256 * 1024;
@@ -36,26 +31,6 @@ const PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES: usize =
 const PLUGIN_COMMAND_INVOCATION_MAX_ITEMS: usize = 64;
 const PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES: usize = 16 * 1024;
 const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub(super) struct PluginConnectorDeviceView {
-    id: String,
-    display_name: String,
-    client_version: Option<String>,
-    os: Option<String>,
-    status: String,
-    last_seen_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub(super) struct PluginConnectorWorkspaceView {
-    id: String,
-    device_id: String,
-    display_name: String,
-    local_path_alias: String,
-    capabilities: Vec<String>,
-    status: String,
-}
 
 pub(super) async fn list_mcp_catalog(
     State(state): State<AppState>,
@@ -109,83 +84,6 @@ pub(super) async fn list_task_capability_catalog(
         })).collect::<Vec<_>>(),
         "selectable_plugins": policy.selectable_plugin_views(),
     })))
-}
-
-pub(super) async fn list_plugin_connectors(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
-    let access_token = crate::auth::get_current_access_token()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::unauthorized("current user access token is unavailable"))?;
-    let base_url =
-        crate::services::plugin_relay_base_url(&state.config).map_err(ApiError::bad_gateway)?;
-    let client = &state.config.local_connector_http_client;
-    let devices_url = format!("{base_url}/api/local-connectors/devices");
-    let workspaces_url = format!("{base_url}/api/local-connectors/workspaces");
-    let (devices, workspaces) = tokio::try_join!(
-        fetch_plugin_connector_json::<Vec<PluginConnectorDeviceView>>(
-            &client,
-            devices_url.as_str(),
-            access_token.as_str(),
-        ),
-        fetch_plugin_connector_json::<Vec<PluginConnectorWorkspaceView>>(
-            &client,
-            workspaces_url.as_str(),
-            access_token.as_str(),
-        )
-    )?;
-    Ok(Json(json!({
-        "devices": devices,
-        "workspaces": workspaces,
-    })))
-}
-
-async fn fetch_plugin_connector_json<T>(
-    client: &reqwest::Client,
-    url: &str,
-    access_token: &str,
-) -> Result<T, ApiError>
-where
-    T: DeserializeOwned,
-{
-    let response = client
-        .get(url)
-        .bearer_auth(access_token)
-        .with_internal_trace_context()
-        .send()
-        .await
-        .map_err(|error| ApiError {
-            status: upstream_gateway_status(&error),
-            message: format!("Local Connector discovery request failed: {error}"),
-        })?;
-    let status = response.status();
-    let bytes = read_response_bytes_limited(response, PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES)
-        .await
-        .map_err(|error| {
-            ApiError::bad_gateway(format!(
-                "read Local Connector discovery response failed: {error}"
-            ))
-        })?;
-    if !status.is_success() {
-        let message = serde_json::from_slice::<Value>(bytes.as_slice())
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| "Local Connector discovery was rejected".to_string());
-        return Err(ApiError::bad_gateway(format!(
-            "Local Connector discovery failed with {status}: {message}"
-        )));
-    }
-    serde_json::from_slice(bytes.as_slice()).map_err(|error| {
-        ApiError::bad_gateway(format!(
-            "decode Local Connector discovery response failed: {error}"
-        ))
-    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -536,7 +434,6 @@ async fn dispatch_bound_task_runner_tool(
         source_user_message_id: binding.source_user_message_id.clone(),
         default_model_config_id: binding.default_model_config_id.clone(),
         workspace_dir: None,
-        remote_server_config: None,
         tool_profile: Some(tool_profile.to_string()),
         task_profile: binding.task_profile.clone(),
         builtin_prompt_locale: None,

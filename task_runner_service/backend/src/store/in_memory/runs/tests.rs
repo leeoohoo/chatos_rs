@@ -23,7 +23,6 @@ fn queued_run() -> TaskRunRecord {
         started_at: None,
         finished_at: None,
         input_snapshot: serde_json::json!({}),
-        plugin_snapshots: Vec::new(),
         context_snapshot: None,
         result_summary: None,
         error_message: None,
@@ -41,11 +40,6 @@ fn queued_run() -> TaskRunRecord {
         post_process_last_error: None,
         memory_summary_processed: false,
         chatos_followup_processed: false,
-        terminal_cleanup_event_pending: false,
-        terminal_cleanup_event_enqueued: false,
-        terminal_cleanup_completed: false,
-        terminal_cleanup_attempt_count: 0,
-        terminal_cleanup_last_error: None,
         summary_job_run_id: None,
         worker_id: None,
         claim_token: None,
@@ -78,7 +72,6 @@ fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
     succeeded.status = TaskRunStatus::Succeeded;
     succeeded.dispatch_event_pending = false;
     succeeded.post_process_event_pending = true;
-    succeeded.terminal_cleanup_event_pending = true;
     store.save_run(succeeded).expect("save succeeded run");
 
     let stats = store.run_execution_stats();
@@ -91,7 +84,6 @@ fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
     assert_eq!(stats.dispatch_outbox_pending, 1);
     assert_eq!(stats.cancellation_outbox_pending, 1);
     assert_eq!(stats.post_process_outbox_pending, 1);
-    assert_eq!(stats.terminal_cleanup_outbox_pending, 1);
 }
 
 #[test]
@@ -188,28 +180,6 @@ fn every_terminal_status_requests_run_lifecycle_post_process() {
         assert!(saved.post_process_event_pending);
         assert_eq!(store.list_pending_run_post_processes(10).len(), 1);
     }
-}
-
-#[test]
-fn terminal_cleanup_failure_returns_event_to_outbox_until_completed() {
-    let store = test_store();
-    let mut run = queued_run();
-    run.status = TaskRunStatus::Failed;
-    run.worker_id = Some("worker-1".to_string());
-    run.terminal_cleanup_event_pending = true;
-    store.save_run(run).expect("save terminal cleanup request");
-
-    assert_eq!(store.list_pending_terminal_cleanups(10).len(), 1);
-    assert!(store.acknowledge_terminal_cleanup_event("run-1"));
-    assert!(store.list_pending_terminal_cleanups(10).is_empty());
-    assert!(store.retry_terminal_cleanup("run-1", "temporary failure"));
-    assert_eq!(store.list_pending_terminal_cleanups(10).len(), 1);
-    assert!(store.mark_terminal_cleanup_completed("run-1"));
-    assert!(store.list_pending_terminal_cleanups(10).is_empty());
-    let run = store.get_run("run-1").expect("stored run");
-    assert!(run.terminal_cleanup_completed);
-    assert_eq!(run.terminal_cleanup_attempt_count, 1);
-    assert!(run.terminal_cleanup_last_error.is_none());
 }
 
 #[test]

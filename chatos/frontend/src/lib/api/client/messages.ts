@@ -5,8 +5,6 @@ import type {
   MessageTaskRunnerGraphResponse,
   MessageCreatePayload,
   MessageTaskRunnerRunDetailResponse,
-  MessageTaskRunnerRunOutputChangesResponse,
-  MessageTaskRunnerRunOutputDiffResponse,
   MessageTaskRunnerRetryRunResponse,
   MessageTaskRunnerTask,
   MessageTaskRunnerTasksResponse,
@@ -28,9 +26,6 @@ export interface MessageTaskRunnerLookupOptions {
   eventLimit?: number | null;
   eventOffset?: number | null;
   includeEvents?: boolean | null;
-  limit?: number | null;
-  offset?: number | null;
-  path?: string | null;
 }
 
 const messageTaskRunnerLookupQuery = (
@@ -42,9 +37,6 @@ const messageTaskRunnerLookupQuery = (
   event_limit: typeof options?.eventLimit === 'number' ? options.eventLimit : undefined,
   event_offset: typeof options?.eventOffset === 'number' ? options.eventOffset : undefined,
   include_events: typeof options?.includeEvents === 'boolean' ? options.includeEvents : undefined,
-  limit: typeof options?.limit === 'number' ? options.limit : undefined,
-  offset: typeof options?.offset === 'number' ? options.offset : undefined,
-  path: options?.path || undefined,
 });
 
 export const createMessage = (
@@ -209,28 +201,5 @@ export const getMessageTaskRunnerGraphRun = (
 ): Promise<MessageTaskRunnerRunDetailResponse> => {
   return request<MessageTaskRunnerRunDetailResponse>(
     `/messages/${encodeURIComponent(messageId)}/task-runner/graph/runs/${encodeURIComponent(runId)}${messageTaskRunnerLookupQuery(options)}`,
-  );
-};
-
-export const getMessageTaskRunnerRunOutputChanges = (
-  request: ApiRequestFn,
-  messageId: string,
-  runId: string,
-  options?: MessageTaskRunnerLookupOptions,
-): Promise<MessageTaskRunnerRunOutputChangesResponse> => {
-  return request<MessageTaskRunnerRunOutputChangesResponse>(
-    `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/output/changes${messageTaskRunnerLookupQuery(options)}`,
-  );
-};
-
-export const getMessageTaskRunnerRunOutputDiff = (
-  request: ApiRequestFn,
-  messageId: string,
-  runId: string,
-  path: string,
-  options?: MessageTaskRunnerLookupOptions,
-): Promise<MessageTaskRunnerRunOutputDiffResponse> => {
-  return request<MessageTaskRunnerRunOutputDiffResponse>(
-    `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/output/diff${messageTaskRunnerLookupQuery({ ...options, path })}`,
   );
 };

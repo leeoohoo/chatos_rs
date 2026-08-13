@@ -27,36 +27,12 @@ pub(in crate::api) async fn system_config_handler(
         .effective_tool_result_model_budget_limits()
         .await
         .map_err(ApiError::bad_request)?;
-    let execution_environment_mode = state
-        .task_service
-        .effective_execution_environment_mode()
-        .await
-        .map_err(ApiError::bad_request)?;
-    let sandbox_enabled = state
-        .task_service
-        .effective_sandbox_enabled()
-        .await
-        .map_err(ApiError::bad_request)?;
-    let sandbox_manager_base_url = state
-        .task_service
-        .effective_sandbox_manager_base_url()
-        .await
-        .map_err(ApiError::bad_request)?;
-    let sandbox_lease_ttl_seconds = state
-        .task_service
-        .effective_sandbox_lease_ttl_seconds()
-        .await
-        .map_err(ApiError::bad_request)?;
     Ok(Json(system_config(
         &state.config,
         &state.task_queue_topology,
         execution_timeout_ms,
         task_runner_runtime_settings,
         tool_result_model_budget_limits,
-        execution_environment_mode,
-        sandbox_enabled,
-        sandbox_manager_base_url,
-        sandbox_lease_ttl_seconds,
     )))
 }
 

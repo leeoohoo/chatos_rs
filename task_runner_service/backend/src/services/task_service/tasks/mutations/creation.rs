@@ -4,7 +4,6 @@
 use super::*;
 use crate::models::normalize_task_profile;
 use crate::services::status_display::TaskScheduleModeExt;
-use crate::services::task_service::validation::reject_task_level_plugin_runtime_target;
 
 impl TaskService {
     pub async fn create_task(
@@ -58,7 +57,6 @@ impl TaskService {
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
         let plugin_config = input.plugin_config;
-        reject_task_level_plugin_runtime_target(&plugin_config)?;
         let requested_mcp_config = input.mcp_config.unwrap_or_default();
         let mut mcp_config = TaskMcpConfig::default();
         if let Some(requires_execution) = requested_mcp_config.requires_execution {
@@ -86,32 +84,8 @@ impl TaskService {
                 mcp_config.workspace_dir.as_deref(),
             )?;
         }
-        let mut passthrough_remote_server_to_save = None;
-        let passthrough_remote_server_id = if let Some(remote_server_config) =
-            source_context.remote_server_config.clone()
-        {
-            let remote_server = build_remote_server_record(
-                remote_server_config,
-                creator,
-                Some(id.clone()),
-                now.clone(),
-            )?;
-            if let Some(existing) = find_reusable_remote_server(&self.store, &remote_server).await?
-            {
-                Some(existing.id)
-            } else {
-                let remote_server_id = remote_server.id.clone();
-                passthrough_remote_server_to_save = Some(remote_server);
-                Some(remote_server_id)
-            }
-        } else {
-            None
-        };
-        if let Some(remote_server_id) = passthrough_remote_server_id.as_ref() {
-            mcp_config.default_remote_server_id = Some(remote_server_id.clone());
-        }
-        let capability_policy_resolved = if passthrough_remote_server_id.is_none() {
-            self.validate_task_mcp_config_for_agent(
+        let capability_policy_resolved = self
+            .validate_task_mcp_config_for_agent(
                 &mcp_config,
                 &plugin_config,
                 project_id.as_str(),
@@ -121,23 +95,7 @@ impl TaskService {
                 task_profile.as_str(),
                 schedule.mode.mode_key(),
             )
-            .await?
-        } else {
-            let resolved = self
-                .validate_task_capability_selection_for_agent(
-                    &mcp_config,
-                    &plugin_config,
-                    project_id.as_str(),
-                    creator,
-                    task_owner_user_id.as_deref(),
-                    agent_key,
-                    task_profile.as_str(),
-                    schedule.mode.mode_key(),
-                )
-                .await?;
-            self.validate_task_ephemeral_http_servers(&mcp_config)?;
-            resolved
-        };
+            .await?;
         if !capability_policy_resolved
             && (!mcp_config.enabled_builtin_kinds.is_empty()
                 || !mcp_config.external_mcp_config_ids.is_empty()
@@ -217,9 +175,6 @@ impl TaskService {
             "task runner created task with MCP, Skill, and Plugin selection"
         );
         self.ensure_task_thread(&task).await?;
-        if let Some(remote_server) = passthrough_remote_server_to_save {
-            self.store.save_remote_server(remote_server).await?;
-        }
         let saved = self.store.save_task(task).await?;
         self.store
             .set_task_prerequisites(&id, prerequisite_task_ids)
@@ -233,7 +188,7 @@ impl TaskService {
 mod tests {
     use super::*;
     use crate::config::{AppConfig, StoreMode};
-    use crate::models::{CreateRemoteServerRequest, UserRole};
+    use crate::models::UserRole;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -264,25 +219,12 @@ mod tests {
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1000,
             default_tool_results_model_total_max_chars: 2000,
-            default_execution_environment_mode: "local".to_string(),
-            default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_client_id: None,
-            sandbox_manager_client_key: None,
-            default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
-            local_connector_internal_api_secret: None,
-            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-            local_connector_http_client: reqwest::Client::new(),
-            local_connector_service_request_timeout: Duration::from_millis(5_000),
-            plugin_relay_request_timeout: Duration::from_millis(60_000),
-            plugin_hook_relay_timeout: Duration::from_millis(330_000),
-            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -336,15 +278,6 @@ mod tests {
                 cloud_import_source: None,
                 import_status: None,
                 source_git_url: None,
-                harness_space_identifier: None,
-                harness_repo_identifier: None,
-                harness_repo_path: None,
-                harness_git_url: None,
-                harness_git_ssh_url: None,
-                harness_default_branch: None,
-                harness_provision_status: None,
-                harness_provision_error: None,
-                harness_provisioned_at: None,
                 description: None,
                 status,
                 created_at: now.clone(),
@@ -373,24 +306,6 @@ mod tests {
             plugin_config: Default::default(),
             mcp_config: None,
             prerequisite_task_ids: None,
-        }
-    }
-
-    fn remote_server_request(name: &str) -> CreateRemoteServerRequest {
-        CreateRemoteServerRequest {
-            name: name.to_string(),
-            host: "8.155.171.124".to_string(),
-            port: Some(22),
-            username: "root".to_string(),
-            auth_type: "password".to_string(),
-            password: Some("secret".to_string()),
-            private_key_path: None,
-            certificate_path: None,
-            default_remote_path: None,
-            host_key_policy: Some("accept_new".to_string()),
-            local_connector_device_id: Some("device-1".to_string()),
-            local_connector_workspace_id: Some("workspace-1".to_string()),
-            enabled: Some(true),
         }
     }
 
@@ -453,20 +368,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_task_rejects_task_level_plugin_runtime_target() {
-        let service = test_service().await;
-        let mut request = create_task_request("invalid runtime target");
-        request.plugin_config.device_id = Some("device-1".to_string());
-
-        let error = service
-            .create_task(request, None, None)
-            .await
-            .expect_err("task-level device must be rejected");
-
-        assert!(error.contains("project properties"));
-    }
-
-    #[tokio::test]
     async fn create_task_rejects_missing_project() {
         let service = test_service().await;
         let creator = agent_user("owner-a");
@@ -476,54 +377,6 @@ mod tests {
             .expect_err("missing project should be rejected");
 
         assert!(err.contains("项目不存在"));
-    }
-
-    #[tokio::test]
-    async fn create_task_reuses_matching_passthrough_remote_server() {
-        let service = test_service().await;
-        let creator = agent_user("owner-a");
-
-        let first = service
-            .create_task(
-                create_task_request("remote task one"),
-                Some(&creator),
-                Some(TaskSourceContext {
-                    remote_server_config: Some(remote_server_request("task runner remote")),
-                    ..TaskSourceContext::default()
-                }),
-            )
-            .await
-            .expect("create first remote task");
-        let first_server_id = first
-            .mcp_config
-            .default_remote_server_id
-            .clone()
-            .expect("first remote server id");
-
-        let second = service
-            .create_task(
-                create_task_request("remote task two"),
-                Some(&creator),
-                Some(TaskSourceContext {
-                    remote_server_config: Some(remote_server_request("different display name")),
-                    ..TaskSourceContext::default()
-                }),
-            )
-            .await
-            .expect("create second remote task");
-
-        assert_eq!(
-            second.mcp_config.default_remote_server_id.as_deref(),
-            Some(first_server_id.as_str())
-        );
-        let servers = service
-            .store
-            .list_remote_servers()
-            .await
-            .expect("list remote servers");
-        assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].id, first_server_id);
-        assert_eq!(servers[0].task_id.as_deref(), Some(first.id.as_str()));
     }
 
     #[tokio::test]

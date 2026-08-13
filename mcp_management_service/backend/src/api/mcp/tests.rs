@@ -414,6 +414,53 @@ async fn tool_batch_executes_one_run_in_model_order() {
 }
 
 #[tokio::test]
+async fn missing_invocation_becomes_a_structured_batch_error() {
+    let state = AppState::new(crate::config::AppConfig::test())
+        .await
+        .unwrap();
+    let snapshot = snapshot();
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "missing-invocation".to_string(),
+            tool_call_id: "missing-call".to_string(),
+            call_index: 0,
+            name: "demo_search".to_string(),
+            arguments: json!({}),
+            preflight_error: None,
+        }],
+    );
+    let batch = register_tool_call_command(&state, &command)
+        .await
+        .unwrap()
+        .record;
+    assert!(state
+        .runtime_invocations
+        .discard_queued_registration("missing-invocation", snapshot.session_id.as_str())
+        .await
+        .unwrap());
+
+    let batch = execute_tool_batch_invocation(&state, batch.batch_id.as_str(), 0)
+        .await
+        .expect("missing invocation must be terminalized");
+
+    assert_eq!(batch.status, RuntimeToolBatchStatus::Completed);
+    let item = batch.items[0].as_ref().expect("structured failed item");
+    assert_eq!(item.status, McpToolCallResultStatus::Failed);
+    assert!(item
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("was not executed")));
+    assert!(state
+        .runtime_execution_scopes
+        .queued_invocation_ids()
+        .await
+        .is_empty());
+}
+
+#[tokio::test]
 async fn unknown_tool_fails_only_its_item_and_valid_call_still_executes() {
     async fn provider(Json(request): Json<Value>) -> Json<Value> {
         Json(json!({

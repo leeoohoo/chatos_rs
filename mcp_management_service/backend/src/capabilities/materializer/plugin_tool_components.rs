@@ -90,6 +90,7 @@ pub(super) fn materialize_plugin_tool_components(
             auth_connection_ids: normalized_unique(plugin.auth_connection_ids.iter()),
             required,
             allow_writes,
+            command_arguments: None,
         };
         if bindings.insert(resource_id.clone(), binding).is_some() {
             return Err(format!(
@@ -121,19 +122,13 @@ pub(super) fn materialize_plugin_tool_components(
 
 fn plugin_component_is_tool(component: &PluginComponentDescriptor, agent_key: &str) -> bool {
     match component.kind {
-        PluginComponentKind::SkillCollection => component.runtime_kind == "native_adapter",
+        PluginComponentKind::SkillCollection => true,
         PluginComponentKind::Command => component
             .metadata
             .get("target_agent")
             .and_then(serde_json::Value::as_str)
             .is_none_or(|target| target == agent_key),
-        PluginComponentKind::Agent => {
-            component
-                .metadata
-                .get("base_agent")
-                .and_then(serde_json::Value::as_str)
-                == Some(agent_key)
-        }
+        PluginComponentKind::Agent => false,
         _ => false,
     }
 }
@@ -291,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn command_and_agent_components_are_scoped_to_the_current_agent() {
+    fn commands_are_scoped_to_the_current_agent_and_agent_profiles_are_not_tools() {
         let command = resolved_plugin_with_manifest(
             r#"{
                 "name": "review-command",
@@ -353,16 +348,6 @@ mod tests {
             false,
         );
         let agent_result = materialize_mcp_candidates(&capabilities_with_plugin(agent)).unwrap();
-        assert_eq!(agent_result.plugin_tool_component_bindings.len(), 1);
-        assert_eq!(
-            agent_result
-                .plugin_tool_component_bindings
-                .values()
-                .next()
-                .unwrap()
-                .component
-                .kind,
-            PluginComponentKind::Agent
-        );
+        assert!(agent_result.plugin_tool_component_bindings.is_empty());
     }
 }

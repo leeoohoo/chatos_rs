@@ -169,25 +169,12 @@ fn test_config() -> AppConfig {
         default_task_execution_max_iterations: 1,
         default_tool_result_model_max_chars: 1000,
         default_tool_results_model_total_max_chars: 2000,
-        default_execution_environment_mode: "local".to_string(),
-        default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-        sandbox_manager_http_client: reqwest::Client::new(),
-        sandbox_manager_client_id: None,
-        sandbox_manager_client_key: None,
-        default_sandbox_lease_ttl_seconds: 7_200,
         chatos_callback_url: String::new(),
         chatos_callback_http_client: reqwest::Client::new(),
         internal_api_secret: None,
         chatos_internal_api_secret: None,
         mcp_management_internal_api_secret: None,
         user_service_internal_api_secret: None,
-        local_connector_internal_api_secret: None,
-        local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-        local_connector_http_client: reqwest::Client::new(),
-        local_connector_service_request_timeout: Duration::from_millis(5_000),
-        plugin_relay_request_timeout: Duration::from_millis(60_000),
-        plugin_hook_relay_timeout: Duration::from_millis(330_000),
-        plugin_connector_discovery_timeout: Duration::from_millis(10_000),
         callback_timeout: Duration::from_millis(1000),
         admin_username: "admin".to_string(),
         admin_password: "admin".to_string(),
@@ -294,7 +281,6 @@ fn run_record(task: &TaskRecord) -> TaskRunRecord {
         started_at: Some(now.clone()),
         finished_at: None,
         input_snapshot: json!({}),
-        plugin_snapshots: Vec::new(),
         context_snapshot: None,
         result_summary: None,
         error_message: None,
@@ -312,11 +298,6 @@ fn run_record(task: &TaskRecord) -> TaskRunRecord {
         post_process_last_error: None,
         memory_summary_processed: false,
         chatos_followup_processed: false,
-        terminal_cleanup_event_pending: false,
-        terminal_cleanup_event_enqueued: false,
-        terminal_cleanup_completed: false,
-        terminal_cleanup_attempt_count: 0,
-        terminal_cleanup_last_error: None,
         summary_job_run_id: None,
         worker_id: None,
         claim_token: None,
@@ -360,7 +341,7 @@ async fn completed_run_persists_success_when_report_completed() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -406,7 +387,7 @@ async fn completed_runtime_without_structured_outcome_fails_closed() {
     };
 
     run_service
-        .finalize_model_phase(&task, &mut run, report, ".", None, None)
+        .finalize_model_phase(&task, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -467,7 +448,7 @@ async fn structured_blocked_outcome_persists_blocked_terminal_state() {
     };
 
     run_service
-        .finalize_model_phase(&task, &mut run, report, ".", None, None)
+        .finalize_model_phase(&task, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -487,71 +468,6 @@ async fn structured_blocked_outcome_persists_blocked_terminal_state() {
         .expect("get task")
         .expect("task");
     assert_eq!(saved_task.status, TaskStatus::Blocked);
-}
-
-#[tokio::test]
-async fn harness_promotion_failure_fails_completed_model_run() {
-    let (task_service, run_service) = test_services().await;
-    let task = create_task(&task_service, "harness failure", TaskStatus::Ready).await;
-    let mut run = run_record(&task);
-    run_service
-        .store
-        .save_run(run.clone())
-        .await
-        .expect("save run");
-    let report = TaskRunReport {
-        task_id: task.id.clone(),
-        run_id: run.id.clone(),
-        model_config_id: Some(run.model_config_id.clone()),
-        status: AiTurnStatus::Completed,
-        execution_outcome: Some(TaskExecutionOutcome::succeeded(
-            "model completed",
-            vec!["model phase completed".to_string()],
-        )),
-        content: Some("model completed".to_string()),
-        reasoning: None,
-        error: None,
-        tool_calls: None,
-        finish_reason: Some("stop".to_string()),
-        usage: None,
-        response_id: None,
-        completed_at: now_rfc3339(),
-    };
-    let harness_output = HarnessRunOutputReport {
-        enabled: true,
-        project_id: "project-1".to_string(),
-        repo_path: "owner/repo".to_string(),
-        git_url: "https://example.invalid/repo.git".to_string(),
-        base_branch: "main".to_string(),
-        run_branch: "chatos/runs/run-1".to_string(),
-        base_commit: "base".to_string(),
-        result_commit: None,
-        promoted_commit: None,
-        status: "failed".to_string(),
-        message: Some("concurrent base update".to_string()),
-    };
-
-    run_service
-        .finalize_model_phase(&task, &mut run, report, ".", None, Some(harness_output))
-        .await;
-
-    let saved_run = run_service
-        .store
-        .get_run(run.id.as_str())
-        .await
-        .expect("get run")
-        .expect("run");
-    assert_eq!(saved_run.status, TaskRunStatus::Failed);
-    assert!(saved_run
-        .error_message
-        .as_deref()
-        .is_some_and(|error| error.contains("concurrent base update")));
-    let saved_task = task_service
-        .get_task(task.id.as_str())
-        .await
-        .expect("get task")
-        .expect("task");
-    assert_eq!(saved_task.status, TaskStatus::Failed);
 }
 
 #[tokio::test]
@@ -607,7 +523,7 @@ async fn completed_report_ignores_legacy_terminal_checklist_blocker() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -688,7 +604,7 @@ async fn completed_report_ignores_legacy_required_open_checklist() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_child = task_service
@@ -769,7 +685,7 @@ async fn successful_run_preserves_legacy_optional_open_checklist() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_child = task_service
@@ -825,7 +741,7 @@ async fn aborted_report_does_not_downgrade_already_succeeded_task() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -861,39 +777,26 @@ fn execution_outcome_reference_validation_accepts_real_workspace_evidence() {
     outcome.referenced_paths = vec!["apps/api".to_string(), "apps/api/package.json".to_string()];
     outcome.referenced_endpoints = vec!["http://127.0.0.1:4000/health".to_string()];
 
-    validate_task_execution_outcome_references(
-        &mut outcome,
-        workspace.to_string_lossy().as_ref(),
-        true,
-    )
-    .expect("valid references");
+    validate_task_execution_outcome_references(&mut outcome).expect("valid references");
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }
 
 #[test]
-fn execution_outcome_reference_validation_rejects_missing_or_escaping_paths() {
+fn execution_outcome_reference_validation_defers_existence_to_provider_but_rejects_escaping_paths()
+{
     let workspace = temporary_reference_workspace("invalid-path");
     let mut outcome = TaskExecutionOutcome::succeeded(
         "implementation verified",
         vec!["cargo test passed".to_string()],
     );
     outcome.referenced_paths = vec!["missing.txt".to_string()];
-    let missing = validate_task_execution_outcome_references(
-        &mut outcome,
-        workspace.to_string_lossy().as_ref(),
-        true,
-    )
-    .expect_err("missing path must fail");
-    assert!(missing.contains("does not exist"));
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("MCP provider owns path existence validation");
 
     outcome.referenced_paths = vec!["../outside.txt".to_string()];
-    let escaping = validate_task_execution_outcome_references(
-        &mut outcome,
-        workspace.to_string_lossy().as_ref(),
-        false,
-    )
-    .expect_err("planning references must not escape the workspace");
+    let escaping = validate_task_execution_outcome_references(&mut outcome)
+        .expect_err("planning references must not escape the workspace");
     assert!(escaping.contains("must stay inside the workspace"));
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
@@ -908,19 +811,15 @@ fn execution_outcome_reference_validation_rejects_endpoint_credentials() {
     );
     outcome.referenced_endpoints = vec!["https://admin:secret@example.com/health".to_string()];
 
-    let error = validate_task_execution_outcome_references(
-        &mut outcome,
-        workspace.to_string_lossy().as_ref(),
-        false,
-    )
-    .expect_err("endpoint credentials must fail");
+    let error = validate_task_execution_outcome_references(&mut outcome)
+        .expect_err("endpoint credentials must fail");
     assert!(error.contains("must not contain credentials"));
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }
 
 #[test]
-fn execution_outcome_reference_validation_corrects_unique_single_character_typo() {
+fn execution_outcome_reference_validation_preserves_provider_verified_path() {
     let workspace = temporary_reference_workspace("single-character-typo");
     let migrations = workspace.join("src/server/database/migrations");
     std::fs::create_dir_all(&migrations).expect("create migrations directory");
@@ -931,22 +830,18 @@ fn execution_outcome_reference_validation_corrects_unique_single_character_typo(
     );
     outcome.referenced_paths = vec!["src/server/database/migrations/000_baseline.sql".to_string()];
 
-    validate_task_execution_outcome_references(
-        &mut outcome,
-        workspace.to_string_lossy().as_ref(),
-        true,
-    )
-    .expect("unique one-character typo should be corrected");
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("Task Runner must not rewrite MCP provider paths");
     assert_eq!(
         outcome.referenced_paths,
-        vec!["src/server/database/migrations/0000_baseline.sql"]
+        vec!["src/server/database/migrations/000_baseline.sql"]
     );
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }
 
 #[test]
-fn execution_outcome_reference_validation_corrects_unique_directory_typo() {
+fn execution_outcome_reference_validation_does_not_rewrite_provider_directories() {
     let workspace = temporary_reference_workspace("single-character-directory-typo");
     let seeds = workspace.join("db/seeds");
     std::fs::create_dir_all(&seeds).expect("create seeds directory");
@@ -955,19 +850,15 @@ fn execution_outcome_reference_validation_corrects_unique_directory_typo() {
         TaskExecutionOutcome::succeeded("seed verified", vec!["seed command passed".to_string()]);
     outcome.referenced_paths = vec!["db/seds/tasks.sql".to_string()];
 
-    validate_task_execution_outcome_references(
-        &mut outcome,
-        workspace.to_string_lossy().as_ref(),
-        true,
-    )
-    .expect("unique one-character directory typo should be corrected");
-    assert_eq!(outcome.referenced_paths, vec!["db/seeds/tasks.sql"]);
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("Task Runner must not inspect provider directories");
+    assert_eq!(outcome.referenced_paths, vec!["db/seds/tasks.sql"]);
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }
 
 #[test]
-fn execution_outcome_reference_validation_rejects_ambiguous_directory_typo() {
+fn execution_outcome_reference_validation_does_not_inspect_ambiguous_provider_directories() {
     let workspace = temporary_reference_workspace("ambiguous-directory-typo");
     std::fs::create_dir_all(workspace.join("db/seeds")).expect("create seeds directory");
     std::fs::create_dir_all(workspace.join("db/sods")).expect("create sods directory");
@@ -975,13 +866,8 @@ fn execution_outcome_reference_validation_rejects_ambiguous_directory_typo() {
         TaskExecutionOutcome::succeeded("seed verified", vec!["seed command passed".to_string()]);
     outcome.referenced_paths = vec!["db/seds/tasks.sql".to_string()];
 
-    let error = validate_task_execution_outcome_references(
-        &mut outcome,
-        workspace.to_string_lossy().as_ref(),
-        true,
-    )
-    .expect_err("ambiguous correction must fail closed");
-    assert!(error.contains("more than one one-character correction exists"));
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("MCP provider owns path existence validation");
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }

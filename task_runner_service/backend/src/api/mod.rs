@@ -23,22 +23,21 @@ use crate::models::{
     BatchTaskOperationItem, BatchTaskOperationResponse, BatchTaskRunRequest,
     BatchTaskStatusUpdateRequest, CancelAskUserPromptRequest, CancelTaskRequest,
     CancelTaskResponse, ChatosProjectImportRequest, CreateModelConfigRequest,
-    CreateRemoteServerRequest, CreateTaskProjectRequest, CreateTaskRequest, CreateUserRequest,
-    CurrentUserResponse, HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry,
-    McpPromptPreviewRequest, McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse,
-    ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse,
-    PreviewModelCatalogRequest, PromptListFilters, RecordTaskProcessRequest, RemoteServerRecord,
-    RemoteServerTestResponse, RunListFilters, RunOutputChangesResponse, RunOutputDiffResponse,
-    RunSummaryRecord, SetTaskPrerequisitesRequest, SseTicketResponse, StartTaskRunRequest,
+    CreateTaskProjectRequest, CreateTaskRequest, CreateUserRequest, CurrentUserResponse,
+    HealthResponse, LoginRequest, LoginResponse, McpCatalogEntry, McpPromptPreviewRequest,
+    McpPromptPreviewResponse, McpServerInfo, ModelCatalogResponse, ModelConfigRecord,
+    ModelConfigTestResponse, ModelConfigUsageRecord, PaginatedResponse, PreviewModelCatalogRequest,
+    PromptListFilters, RecordTaskProcessRequest, RunListFilters, RunSummaryRecord,
+    SetTaskPrerequisitesRequest, SseTicketResponse, StartTaskRunRequest,
     SubmitAskUserPromptRequest, SystemConfigResponse, TaskDependencyGraph, TaskIndexResponse,
     TaskListFilters, TaskMcpResolutionResponse, TaskMemoryContextOptions,
     TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
     TaskMemorySummaryResponse, TaskProjectRecord, TaskProjectStatus, TaskRecord,
     TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
     TaskScheduleMode, TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
-    TestModelConfigRequest, TestRemoteServerRequest, UpdateModelConfigRequest,
-    UpdateRemoteServerRequest, UpdateRuntimeSettingsRequest, UpdateTaskProjectRequest,
-    UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord, PUBLIC_PROJECT_ID,
+    TestModelConfigRequest, UpdateModelConfigRequest, UpdateRuntimeSettingsRequest,
+    UpdateTaskProjectRequest, UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord,
+    PUBLIC_PROJECT_ID,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
@@ -51,7 +50,6 @@ mod mcp;
 mod models;
 mod projects;
 mod prompts;
-mod remote_servers;
 mod router;
 mod runs;
 mod tasks;

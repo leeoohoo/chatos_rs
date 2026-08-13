@@ -515,22 +515,6 @@ pub fn spawn_run_post_process_outbox_reconciler(
                     "task runner failed to reconcile pending Run post-process events"
                 ),
             }
-            match run_service
-                .publish_pending_terminal_cleanup_events(
-                    topology.run_post_process_outbox_batch_size,
-                )
-                .await
-            {
-                Ok(count) if count > 0 => info!(
-                    published_count = count,
-                    "task runner reconciled pending terminal cleanup events"
-                ),
-                Ok(_) => {}
-                Err(err) => warn!(
-                    error = err.as_str(),
-                    "task runner failed to reconcile pending terminal cleanup events"
-                ),
-            }
         }
     })
 }

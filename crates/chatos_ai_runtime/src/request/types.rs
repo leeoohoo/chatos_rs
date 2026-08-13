@@ -16,6 +16,14 @@ pub struct AiResponse {
     pub provider_error: Option<Value>,
     pub usage: Option<Value>,
     pub response_id: Option<String>,
+    /// Exact `response.output` items returned by the Responses API.
+    ///
+    /// Cloud event-driven callers persist these items verbatim and append
+    /// tool outputs before the next request, as required by the official
+    /// stateless Responses function-calling protocol. Chat Completions leaves
+    /// this empty.
+    #[serde(default)]
+    pub response_output_items: Vec<Value>,
 }
 
 #[derive(Clone, Default)]

@@ -483,7 +483,7 @@ fn should_skip_workspace_path(root: &Path, path: &Path) -> bool {
                 || matches!(
                     name,
                     ".git"
-                        | ".task-runner"
+                        | ".runtime-cache"
                         | "node_modules"
                         | ".pnpm-store"
                         | ".yarn"
@@ -540,7 +540,7 @@ mod tests {
             project_id: "project-1".to_string(),
             run_id: "run-1".to_string(),
             workspace_root: "/tmp/workspace".to_string(),
-            run_workspace: "/tmp/workspace/.chatos/task-runner/runs/run-1".to_string(),
+            run_workspace: "/tmp/workspace/.chatos/runtime/runs/run-1".to_string(),
             backend: "mock".to_string(),
             backend_id: Some("backend-1".to_string()),
             image_id: None,

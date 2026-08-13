@@ -105,36 +105,23 @@ vi.mock('../../messageTasks/useMessageTaskGraph', () => ({
     detailTask: null,
     processTask: null,
     runDetail: null,
-    changesTask: null,
-    outputChanges: [],
-    outputDiff: null,
-    selectedChangePath: null,
     loadingProcessTaskId: null,
     loadingRunId: null,
-    loadingChangesRunId: null,
-    loadingDiffPath: null,
     retryingTaskId: null,
     reloadGraph: mocks.reloadGraph,
     openDetail: vi.fn(),
     openProcessLog: vi.fn(),
     openRun: vi.fn(),
-    openChanges: vi.fn(),
     retryTask: mocks.retryTask,
-    selectChangeFile: vi.fn(),
     loadMoreRunEvents: vi.fn(),
     closeDetail: vi.fn(),
     closeProcessLog: vi.fn(),
     closeRun: vi.fn(),
-    closeChanges: vi.fn(),
   }),
 }));
 
 vi.mock('../../messageTasks/MessageTaskGraphPanel', () => ({
   MessageTaskGraphPanel: () => <div>task graph</div>,
-}));
-
-vi.mock('../../messageTasks/MessageTaskChangesModal', () => ({
-  MessageTaskChangesModal: () => null,
 }));
 
 vi.mock('../../messageTasks/MessageTaskDetailModal', () => ({

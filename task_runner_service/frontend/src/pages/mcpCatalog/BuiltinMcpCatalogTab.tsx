@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
 import {
-  Button,
   Collapse,
-  Descriptions,
   Empty,
   List,
   Space,
-  Statistic,
   Table,
   Tag,
   Typography,
@@ -21,34 +16,13 @@ import type { ColumnsType } from 'antd/es/table';
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
 import type { McpCatalogEntry } from '../../types';
-import { MCP_CARD_STYLE } from './mcpCatalogPageUtils';
 
 export function BuiltinMcpCatalogTab() {
   const { t } = useI18n();
-  const navigate = useNavigate();
   const catalogQuery = useQuery({
     queryKey: ['mcp-catalog'],
     queryFn: api.listMcpCatalog,
   });
-  const remoteServersQuery = useQuery({
-    queryKey: ['remote-servers'],
-    queryFn: api.listRemoteServers,
-  });
-  const remoteControllerEntry = useMemo(
-    () =>
-      (catalogQuery.data || []).find((entry) => entry.kind === 'RemoteConnectionController') ||
-      null,
-    [catalogQuery.data],
-  );
-  const remoteServerSummary = useMemo(() => {
-    const items = remoteServersQuery.data || [];
-    return {
-      total: items.length,
-      enabled: items.filter((item) => item.enabled).length,
-      testedSuccess: items.filter((item) => item.last_test_status === 'success').length,
-      strict: items.filter((item) => item.host_key_policy === 'strict').length,
-    };
-  }, [remoteServersQuery.data]);
 
   const columns: ColumnsType<McpCatalogEntry> = [
     {
@@ -120,53 +94,6 @@ export function BuiltinMcpCatalogTab() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Space direction="vertical" size="middle" style={MCP_CARD_STYLE}>
-        <Space style={{ justifyContent: 'space-between', width: '100%' }} align="start">
-          <Space direction="vertical" size={0}>
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              RemoteConnectionController
-            </Typography.Title>
-            <Typography.Text type="secondary">
-              {t('mcpCatalog.remoteSubtitle')}
-            </Typography.Text>
-          </Space>
-          <Space>
-            <Button onClick={() => remoteServersQuery.refetch()}>
-              {t('mcpCatalog.refreshServers')}
-            </Button>
-            <Button type="primary" onClick={() => navigate('/servers')}>
-              {t('mcpCatalog.manageServers')}
-            </Button>
-          </Space>
-        </Space>
-
-        <Space size="large" wrap>
-          <Statistic title={t('mcpCatalog.serverTotal')} value={remoteServerSummary.total} />
-          <Statistic title={t('mcpCatalog.serverEnabled')} value={remoteServerSummary.enabled} />
-          <Statistic title={t('mcpCatalog.testSuccess')} value={remoteServerSummary.testedSuccess} />
-          <Statistic title={t('mcpCatalog.strictCheck')} value={remoteServerSummary.strict} />
-        </Space>
-
-        <Descriptions bordered column={1} size="small">
-          <Descriptions.Item label={t('mcpCatalog.builtinStatus')}>
-            {remoteControllerEntry ? (
-              <Tag color={remoteControllerEntry.implemented ? 'success' : 'warning'}>
-                {remoteControllerEntry.implemented ? 'implemented' : 'planned'}
-              </Tag>
-            ) : (
-              '-'
-            )}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('mcpCatalog.availableToolCount')}>
-            {remoteControllerEntry?.available_tool_names.length ?? 0}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('common.description')}>
-            {remoteControllerEntry?.message ||
-              t('mcpCatalog.remoteDescriptionFallback')}
-          </Descriptions.Item>
-        </Descriptions>
-      </Space>
-
       <Table<McpCatalogEntry>
         rowKey="kind"
         loading={catalogQuery.isLoading}

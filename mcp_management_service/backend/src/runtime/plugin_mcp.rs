@@ -72,6 +72,8 @@ pub struct PluginToolComponentRuntimeBinding {
     pub auth_connection_ids: Vec<String>,
     pub required: bool,
     pub allow_writes: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,6 +86,10 @@ pub struct PluginLocalToolComponentBinding {
     pub operation: String,
     pub session_sha256: String,
     pub tools: Vec<Value>,
+    #[serde(default)]
+    pub instruction_items: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub static_result: Option<Value>,
     pub expires_at_unix: i64,
 }
 

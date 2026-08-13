@@ -199,6 +199,7 @@ async fn project_management_call_uses_frozen_snapshot_identity_and_original_tool
         reqwest::Client::new(),
         base_url,
         Some(SECRET.to_string()),
+        std::time::Duration::from_secs(180),
         1024 * 1024,
     )
     .unwrap();
@@ -258,6 +259,7 @@ fn harness_route_uses_the_project_scoped_harness_endpoint() {
         reqwest::Client::new(),
         "http://127.0.0.1:39210",
         Some("a-long-project-service-secret".to_string()),
+        std::time::Duration::from_secs(180),
         1024 * 1024,
     )
     .unwrap();
@@ -283,6 +285,7 @@ fn project_environment_route_uses_the_run_bound_internal_endpoint() {
         reqwest::Client::new(),
         "http://127.0.0.1:39210",
         Some("a-long-project-service-secret".to_string()),
+        std::time::Duration::from_secs(180),
         1024 * 1024,
     )
     .unwrap();

@@ -3,10 +3,6 @@
 
 use super::*;
 use crate::auth::CurrentUser;
-use crate::models::{
-    normalize_execution_environment_mode, normalize_project_id, PUBLIC_PROJECT_ID,
-};
-use crate::services::project_management_api_client;
 use chatos_agent::AgentIdentity;
 
 impl RunService {
@@ -176,27 +172,10 @@ impl RunService {
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
-        let configured_execution_environment_mode =
-            self.effective_execution_environment_mode().await?;
-        let execution_environment_mode = self
-            .execution_environment_mode_for_task(
-                &runtime_task,
-                configured_execution_environment_mode.as_str(),
-            )
-            .await;
-        let sandbox_enabled = self
-            .should_route_task_to_sandbox(&runtime_task, capability_policy.is_some())
-            .await?;
-
         let run_id = Uuid::new_v4().to_string();
         let skill_snapshots = capability_policy
             .as_ref()
             .map(|policy| policy.skill_snapshots(&runtime_task))
-            .transpose()?
-            .unwrap_or_default();
-        let plugin_snapshots = capability_policy
-            .as_ref()
-            .map(|policy| policy.plugin_snapshots(&runtime_task))
             .transpose()?
             .unwrap_or_default();
         let input_snapshot = json!({
@@ -212,10 +191,7 @@ impl RunService {
             "plugin_config": runtime_task.plugin_config,
             "mcp_config": runtime_task.mcp_config,
             "skill_snapshots": skill_snapshots,
-            "plugin_snapshots": plugin_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
-            "execution_environment_mode": execution_environment_mode,
-            "sandbox_enabled": sandbox_enabled,
             "retry_of_run_id": retry_of_run_id,
             "started_as_prerequisite": trigger == RunTriggerSource::Dependency,
         });
@@ -283,7 +259,6 @@ impl RunService {
             model_config_id.clone(),
             task.memory_thread_id.clone(),
             input_snapshot,
-            plugin_snapshots,
             now,
         );
         run.agent_run_id = Some(agent_run_id);
@@ -353,38 +328,6 @@ impl RunService {
         Ok(run)
     }
 
-    async fn execution_environment_mode_for_task(
-        &self,
-        task: &TaskRecord,
-        configured_mode: &str,
-    ) -> String {
-        let fallback = normalize_execution_environment_mode(Some(configured_mode));
-        let project_id = normalize_project_id(Some(task.project_id.clone()));
-        if project_id == PUBLIC_PROJECT_ID
-            || !project_management_api_client::project_service_enabled(&self.config)
-        {
-            return fallback;
-        }
-
-        match project_management_api_client::sync_get_project(&self.config, project_id.as_str())
-            .await
-        {
-            Ok(Some(project)) => execution_environment_mode_for_project_source(
-                project.source_type.as_deref(),
-                fallback.as_str(),
-            ),
-            Ok(None) => fallback,
-            Err(error) => {
-                warn!(
-                    project_id = project_id.as_str(),
-                    error = error.as_str(),
-                    "failed to resolve project execution environment mode; using configured fallback"
-                );
-                fallback
-            }
-        }
-    }
-
     async fn prepare_retry_task_session(
         &self,
         _task_id: &str,
@@ -413,26 +356,10 @@ fn cancelled_task_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
     matches!(trigger, RunTriggerSource::Retry)
 }
 
-fn execution_environment_mode_for_project_source(
-    source_type: Option<&str>,
-    configured_mode: &str,
-) -> String {
-    match source_type
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("cloud") => "cloud".to_string(),
-        Some("local" | "local_connector") => "local".to_string(),
-        _ => normalize_execution_environment_mode(Some(configured_mode)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        cancelled_task_trigger_is_allowed, contact_async_trigger_is_allowed,
-        execution_environment_mode_for_project_source, RunTriggerSource,
+        cancelled_task_trigger_is_allowed, contact_async_trigger_is_allowed, RunTriggerSource,
     };
 
     #[test]
@@ -457,29 +384,5 @@ mod tests {
         assert!(!cancelled_task_trigger_is_allowed(
             RunTriggerSource::Scheduler
         ));
-    }
-
-    #[test]
-    fn cloud_project_overrides_a_local_host_default_for_run_observability() {
-        assert_eq!(
-            execution_environment_mode_for_project_source(Some("cloud"), "local"),
-            "cloud"
-        );
-    }
-
-    #[test]
-    fn local_connector_project_remains_local_even_with_a_cloud_default() {
-        assert_eq!(
-            execution_environment_mode_for_project_source(Some("local_connector"), "cloud"),
-            "local"
-        );
-    }
-
-    #[test]
-    fn unknown_project_source_uses_the_configured_mode() {
-        assert_eq!(
-            execution_environment_mode_for_project_source(Some("legacy"), "cloud"),
-            "cloud"
-        );
     }
 }

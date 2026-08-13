@@ -112,14 +112,6 @@ impl RunService {
         self.retry_run_with_user(run_id, None, None, None).await
     }
 
-    pub(crate) async fn retry_run_automatically(
-        &self,
-        run_id: &str,
-    ) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_from_source(run_id, None, None, None, true)
-            .await
-    }
-
     pub async fn retry_run_with_instruction(
         &self,
         run_id: &str,

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-#[cfg(feature = "local-agent-loop")]
 use chatos_mcp_runtime::ToolResult;
 
-#[cfg(feature = "local-agent-loop")]
 pub(super) fn should_persist_tool_result(_result: &ToolResult) -> bool {
     // An empty successful result is still a completed tool invocation. Dropping it
     // makes the persisted process timeline look permanently pending because the

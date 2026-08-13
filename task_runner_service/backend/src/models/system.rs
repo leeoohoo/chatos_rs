@@ -51,7 +51,6 @@ pub struct TaskRunnerRuntimeStatsSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRunnerQueueStatsSnapshot {
     pub rabbitmq_enabled: bool,
-    pub run_dispatch_mode: String,
     pub callback_delivery_mode: String,
     pub run_events_publish_mode: String,
     pub rabbitmq_exchange: String,
@@ -59,11 +58,8 @@ pub struct TaskRunnerQueueStatsSnapshot {
     pub rabbitmq_queues: RabbitMqQueueRuntimeStats,
     pub worker_consumers_expected: bool,
     pub callback_consumer_expected: bool,
-    pub run_dispatch_queue: String,
-    pub run_dispatch_retry_queue: String,
-    pub run_dispatch_retry_delay_ms: u64,
-    pub run_dispatch_outbox_reconcile_ms: u64,
-    pub run_dispatch_outbox_batch_size: usize,
+    pub event_outbox_reconcile_ms: u64,
+    pub event_outbox_batch_size: usize,
     pub worker_control_queue_prefix: String,
     pub run_post_process_queue: String,
     pub run_post_process_retry_queue: String,
@@ -92,7 +88,6 @@ pub struct TaskRunnerRunStatsSnapshot {
     pub dispatch_outbox_pending: usize,
     pub cancellation_outbox_pending: usize,
     pub post_process_outbox_pending: usize,
-    pub terminal_cleanup_outbox_pending: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -111,7 +106,6 @@ pub struct RunExecutionStats {
     pub dispatch_outbox_pending: usize,
     pub cancellation_outbox_pending: usize,
     pub post_process_outbox_pending: usize,
-    pub terminal_cleanup_outbox_pending: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -154,24 +148,12 @@ pub struct SystemConfigResponse {
     pub tool_result_model_max_chars: usize,
     pub default_tool_results_model_total_max_chars: usize,
     pub tool_results_model_total_max_chars: usize,
-    pub default_execution_environment_mode: String,
-    pub execution_environment_mode: String,
-    pub sandbox_enabled: bool,
-    pub default_sandbox_manager_base_url: String,
-    pub sandbox_manager_base_url: String,
-    pub sandbox_manager_auth_configured: bool,
-    pub default_sandbox_lease_ttl_seconds: u64,
-    pub sandbox_lease_ttl_seconds: u64,
     pub task_queue_rabbitmq_enabled: bool,
-    pub task_queue_run_dispatch_mode: String,
     pub task_queue_callback_delivery_mode: String,
     pub task_queue_run_events_publish_mode: String,
     pub task_queue_rabbitmq_exchange: String,
-    pub task_queue_run_dispatch_queue: String,
-    pub task_queue_run_dispatch_retry_queue: String,
-    pub task_queue_run_dispatch_retry_delay_ms: u64,
-    pub task_queue_run_dispatch_outbox_reconcile_ms: u64,
-    pub task_queue_run_dispatch_outbox_batch_size: usize,
+    pub task_queue_event_outbox_reconcile_ms: u64,
+    pub task_queue_event_outbox_batch_size: usize,
     pub task_queue_worker_control_queue_prefix: String,
     pub task_queue_callback_delivery_queue: String,
     pub task_queue_run_events_routing_key: String,

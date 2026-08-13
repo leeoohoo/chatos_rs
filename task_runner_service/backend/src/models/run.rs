@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
-use chatos_plugin_management_sdk::RunPluginSnapshot;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -43,10 +42,6 @@ pub struct TaskRunAttemptRecord {
     pub finished_at: Option<String>,
     #[serde(default)]
     pub recovery_reason: Option<String>,
-    #[serde(default)]
-    pub sandbox_id: Option<String>,
-    #[serde(default)]
-    pub lease_id: Option<String>,
     #[serde(default)]
     pub model_response_id: Option<String>,
 }
@@ -103,8 +98,6 @@ pub struct TaskRunRecord {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
-    #[serde(default)]
-    pub plugin_snapshots: Vec<RunPluginSnapshot>,
     pub context_snapshot: Option<Value>,
     pub result_summary: Option<String>,
     pub error_message: Option<String>,
@@ -133,16 +126,6 @@ pub struct TaskRunRecord {
     pub memory_summary_processed: bool,
     #[serde(default)]
     pub chatos_followup_processed: bool,
-    #[serde(default)]
-    pub terminal_cleanup_event_pending: bool,
-    #[serde(default)]
-    pub terminal_cleanup_event_enqueued: bool,
-    #[serde(default)]
-    pub terminal_cleanup_completed: bool,
-    #[serde(default)]
-    pub terminal_cleanup_attempt_count: u32,
-    #[serde(default)]
-    pub terminal_cleanup_last_error: Option<String>,
     pub summary_job_run_id: Option<String>,
     #[serde(default)]
     pub worker_id: Option<String>,
@@ -167,7 +150,6 @@ impl TaskRunRecord {
         model_config_id: String,
         task_memory_thread_id: String,
         input_snapshot: Value,
-        plugin_snapshots: Vec<RunPluginSnapshot>,
         now: String,
     ) -> Self {
         let memory_thread_id =
@@ -185,7 +167,6 @@ impl TaskRunRecord {
             started_at: None,
             finished_at: None,
             input_snapshot,
-            plugin_snapshots,
             context_snapshot: None,
             result_summary: None,
             error_message: None,
@@ -203,11 +184,6 @@ impl TaskRunRecord {
             post_process_last_error: None,
             memory_summary_processed: false,
             chatos_followup_processed: false,
-            terminal_cleanup_event_pending: false,
-            terminal_cleanup_event_enqueued: false,
-            terminal_cleanup_completed: false,
-            terminal_cleanup_attempt_count: 0,
-            terminal_cleanup_last_error: None,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,
@@ -243,22 +219,8 @@ impl TaskRunRecord {
             started_at: started_at.to_string(),
             finished_at: None,
             recovery_reason: (self.attempt > 1).then(|| "worker_claim_expired".to_string()),
-            sandbox_id: None,
-            lease_id: None,
             model_response_id: None,
         });
-    }
-
-    pub fn bind_current_attempt_environment(&mut self, sandbox_id: &str, lease_id: &str) {
-        if let Some(attempt) = self
-            .attempts
-            .iter_mut()
-            .rev()
-            .find(|attempt| attempt.status == TaskRunAttemptStatus::Running)
-        {
-            attempt.sandbox_id = Some(sandbox_id.to_string());
-            attempt.lease_id = Some(lease_id.to_string());
-        }
     }
 
     pub fn bind_current_attempt_model_response(&mut self, response_id: Option<&str>) {
@@ -325,26 +287,22 @@ mod tests {
     }
 
     #[test]
-    fn run_attempt_records_environment_response_and_terminal_state() {
+    fn run_attempt_records_model_response_and_terminal_state() {
         let mut run = TaskRunRecord::queued(
             "run-1".to_string(),
             "task-1".to_string(),
             "model-1".to_string(),
             "thread-1".to_string(),
             json!({}),
-            Vec::new(),
             "2026-08-07T00:00:00Z".to_string(),
         );
         run.attempt = 1;
         run.begin_attempt("claim-1", "2026-08-07T00:01:00Z");
-        run.bind_current_attempt_environment("sandbox-1", "lease-1");
         run.bind_current_attempt_model_response(Some("response-1"));
         run.finish_current_attempt(TaskRunAttemptStatus::Succeeded, "2026-08-07T00:02:00Z");
 
         assert_eq!(run.attempts.len(), 1);
         let attempt = &run.attempts[0];
-        assert_eq!(attempt.sandbox_id.as_deref(), Some("sandbox-1"));
-        assert_eq!(attempt.lease_id.as_deref(), Some("lease-1"));
         assert_eq!(attempt.model_response_id.as_deref(), Some("response-1"));
         assert_eq!(attempt.status, TaskRunAttemptStatus::Succeeded);
         assert_eq!(attempt.finished_at.as_deref(), Some("2026-08-07T00:02:00Z"));
@@ -504,96 +462,4 @@ pub struct SubmitAskUserPromptRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CancelAskUserPromptRequest {
     pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct RunOutputFileChangeCounts {
-    #[serde(default)]
-    pub added: usize,
-    #[serde(default)]
-    pub modified: usize,
-    #[serde(default)]
-    pub deleted: usize,
-    #[serde(default)]
-    pub binary: usize,
-    #[serde(default)]
-    pub diff_available: usize,
-    #[serde(default)]
-    pub total: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputFileChange {
-    pub path: String,
-    pub status: String,
-    #[serde(default)]
-    pub old_size: Option<u64>,
-    #[serde(default)]
-    pub new_size: Option<u64>,
-    #[serde(default)]
-    pub old_sha256: Option<String>,
-    #[serde(default)]
-    pub new_sha256: Option<String>,
-    #[serde(default)]
-    pub added_lines: usize,
-    #[serde(default)]
-    pub deleted_lines: usize,
-    #[serde(default)]
-    pub binary: bool,
-    #[serde(default)]
-    pub diff_available: bool,
-    #[serde(default)]
-    pub diff_truncated: bool,
-    #[serde(default)]
-    pub diff_ref: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputChangeManifest {
-    pub schema_version: u32,
-    pub run_id: String,
-    pub sandbox_id: String,
-    pub lease_id: String,
-    pub generated_at: String,
-    #[serde(default)]
-    pub output_workspace: Option<String>,
-    #[serde(default)]
-    pub manifest_path: Option<String>,
-    #[serde(default)]
-    pub counts: RunOutputFileChangeCounts,
-    #[serde(default)]
-    pub files: Vec<RunOutputFileChange>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputChangesResponse {
-    pub run_id: String,
-    #[serde(default)]
-    pub base_commit: Option<String>,
-    #[serde(default)]
-    pub result_commit: Option<String>,
-    pub comparison_scope: String,
-    pub counts: RunOutputFileChangeCounts,
-    pub files: Vec<RunOutputFileChange>,
-    pub total: usize,
-    pub limit: usize,
-    pub offset: usize,
-    pub has_more: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputDiffResponse {
-    pub run_id: String,
-    pub path: String,
-    pub status: String,
-    #[serde(default)]
-    pub patch: Option<String>,
-    #[serde(default)]
-    pub binary: bool,
-    #[serde(default)]
-    pub diff_available: bool,
-    #[serde(default)]
-    pub diff_truncated: bool,
-    #[serde(default)]
-    pub message: Option<String>,
 }

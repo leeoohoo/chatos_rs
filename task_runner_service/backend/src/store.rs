@@ -22,7 +22,7 @@ use crate::models::{
     now_rfc3339, AskUserPromptPruneResult, AskUserPromptRecord, AskUserPromptStatus,
     AskUserPromptTaskCountRecord, ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus,
     ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
-    RemoteServerRecord, RunEventPruneResult, RunExecutionStats, RunListFilters, RunSummaryRecord,
+    RunEventPruneResult, RunExecutionStats, RunListFilters, RunSummaryRecord,
     RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
     TaskRunAttemptRecord, TaskRunAttemptStatus, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
@@ -121,23 +121,6 @@ fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
     } else {
         run.post_process_event_pending |= current.post_process_event_pending;
     }
-
-    run.terminal_cleanup_completed |= current.terminal_cleanup_completed;
-    run.terminal_cleanup_event_enqueued |= current.terminal_cleanup_event_enqueued;
-    run.terminal_cleanup_attempt_count = run
-        .terminal_cleanup_attempt_count
-        .max(current.terminal_cleanup_attempt_count);
-    if run.terminal_cleanup_last_error.is_none() {
-        run.terminal_cleanup_last_error = current.terminal_cleanup_last_error.clone();
-    }
-    if run.terminal_cleanup_completed {
-        run.terminal_cleanup_event_pending = false;
-        run.terminal_cleanup_event_enqueued = false;
-    } else if run.terminal_cleanup_event_enqueued {
-        run.terminal_cleanup_event_pending = false;
-    } else {
-        run.terminal_cleanup_event_pending |= current.terminal_cleanup_event_pending;
-    }
 }
 
 fn run_attempt_status_for_run_status(status: TaskRunStatus) -> Option<TaskRunAttemptStatus> {
@@ -168,12 +151,6 @@ fn merge_run_attempts(
         }
         if incoming.recovery_reason.is_none() {
             incoming.recovery_reason = current.recovery_reason.clone();
-        }
-        if incoming.sandbox_id.is_none() {
-            incoming.sandbox_id = current.sandbox_id.clone();
-        }
-        if incoming.lease_id.is_none() {
-            incoming.lease_id = current.lease_id.clone();
         }
         if incoming.model_response_id.is_none() {
             incoming.model_response_id = current.model_response_id.clone();
@@ -224,7 +201,6 @@ struct StoreData {
     task_projects: BTreeMap<String, TaskProjectRecord>,
     model_configs: BTreeMap<String, ModelConfigRecord>,
     runtime_settings: Option<RuntimeSettingsRecord>,
-    remote_servers: BTreeMap<String, RemoteServerRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
     run_terminal_subscriptions: BTreeMap<String, RunTerminalSubscriptionRecord>,
@@ -278,7 +254,6 @@ pub(crate) struct MongoStore {
     task_projects: Collection<TaskProjectRecord>,
     model_configs: Collection<ModelConfigRecord>,
     runtime_settings: Collection<RuntimeSettingsRecord>,
-    remote_servers: Collection<RemoteServerRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
     run_terminal_subscriptions: Collection<RunTerminalSubscriptionRecord>,

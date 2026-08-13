@@ -178,7 +178,7 @@ for path in task_runner_model_files:
     )
 require(
     "task_runner_service/backend/src/services/run_model_phase/setup/preparation.rs",
-    "McpExecutorBuilder::new().with_http_server(mcp_management_server)",
+    ".with_http_server(mcp_management_server)",
     "single-server MCP Management executor assembly",
 )
 
@@ -197,8 +197,13 @@ require(
 )
 require(
     project_environment_analysis,
-    "gateway.close(project.id.as_str(), run_context.run_id).await;",
-    "Runtime Session cleanup",
+    "client.close_runtime_session(session_ref).await",
+    "terminal Runtime Session cleanup",
+)
+require(
+    project_environment_analysis,
+    "gateway.close().await",
+    "failed-start Runtime Session cleanup",
 )
 forbid(
     project_environment_analysis,
@@ -296,10 +301,6 @@ require(
 for config_path, env_key in [
     ("chatos/backend/src/config.rs", "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
     (
-        "task_runner_service/backend/src/config/env_support.rs",
-        "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-    ),
-    (
         "project_management_service/backend/src/config.rs",
         "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
     ),
@@ -328,7 +329,6 @@ require(
 compose = read("docker/compose.yml")
 for env_key in [
     "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-    "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
     "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
     "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
 ]:

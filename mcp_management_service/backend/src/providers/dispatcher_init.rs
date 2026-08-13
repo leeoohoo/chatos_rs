@@ -16,6 +16,7 @@ impl ProviderDispatcher {
         project_service_http: reqwest::Client,
         project_service_base_url: impl Into<String>,
         project_service_internal_secret: Option<String>,
+        project_service_tool_timeout: Duration,
         task_runner: TaskRunnerProviderConfig,
         chatos: ChatosProviderConfig,
         local_connector_http: reqwest::Client,
@@ -83,6 +84,7 @@ impl ProviderDispatcher {
                 project_service_http,
                 project_service_base_url,
                 project_service_internal_secret,
+                project_service_tool_timeout,
                 runtime.response_limit_bytes,
             )?,
             task_runner: TaskRunnerProvider::new(

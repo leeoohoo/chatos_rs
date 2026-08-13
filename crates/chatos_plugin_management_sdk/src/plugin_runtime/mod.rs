@@ -748,10 +748,6 @@ pub struct PluginAgentSelection {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskPluginConfig {
     #[serde(default)]
-    pub device_id: Option<String>,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    #[serde(default)]
     pub selected_plugins: Vec<SelectedPluginRef>,
     #[serde(default)]
     pub command_invocations: Vec<PluginCommandInvocation>,

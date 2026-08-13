@@ -110,11 +110,8 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
 
     for key in [
         TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
-        TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
         TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
         TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
-        TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
-        TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
         TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
         TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
         TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
@@ -130,17 +127,6 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
             "{key} must be managed from configuration-center values, not env aliases"
         );
     }
-
-    let environment_mode = definitions
-        .iter()
-        .find(|definition| definition.key == TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY)
-        .expect("task runner execution environment mode definition");
-    assert_eq!(environment_mode.value_type, "enum");
-    assert_eq!(
-        environment_mode.default_value,
-        json!(default_task_runner_execution_environment_mode())
-    );
-    assert_eq!(environment_mode.enum_options, vec!["local", "cloud"]);
 
     let audit_level = definitions
         .iter()
@@ -314,18 +300,6 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "string",
         ),
         (
-            TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-            "string",
-        ),
-        (
-            TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
             TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_USER_SERVICE_BASE_URL",
@@ -378,30 +352,6 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "task-runner",
             "TASK_RUNNER_AUTO_MEMORY_SUMMARY",
             "boolean",
-        ),
-        (
-            TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_SANDBOX_MANAGER_BASE_URL",
-            "string",
-        ),
-        (
-            TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
-            TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
-            TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS",
-            "duration_ms",
         ),
         (
             TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
@@ -1042,16 +992,11 @@ fn catalog_exposes_plugin_management_pressure_controls_without_env_aliases() {
 #[test]
 fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
     let definitions = builtin_definitions();
-    for key in [
-        TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
-        TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
-    ] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing definition for {key}"));
-        assert_eq!(definition.default_value, json!("rabbitmq"));
-    }
+    let callback_mode = definitions
+        .iter()
+        .find(|definition| definition.key == TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY)
+        .expect("missing callback delivery mode definition");
+    assert_eq!(callback_mode.default_value, json!("rabbitmq"));
     let run_events_mode = definitions
         .iter()
         .find(|definition| definition.key == TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY)
@@ -1059,10 +1004,6 @@ fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
     assert_eq!(run_events_mode.default_value, json!("rabbitmq"));
     assert_eq!(run_events_mode.enum_options, vec!["rabbitmq".to_string()]);
     for (key, env_alias) in [
-        (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
-            "TASK_RUNNER_RUN_DISPATCH_MODE",
-        ),
         (
             TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
             "TASK_RUNNER_CALLBACK_DELIVERY_MODE",
@@ -1080,24 +1021,12 @@ fn catalog_exposes_task_runner_queue_controls_via_managed_env_projection() {
             "TASK_RUNNER_RABBITMQ_RECONNECT_MS",
         ),
         (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY,
-            "TASK_RUNNER_RUN_DISPATCH_QUEUE",
+            TASK_RUNNER_QUEUE_EVENT_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+            "TASK_RUNNER_EVENT_OUTBOX_RECONCILE_MS",
         ),
         (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_QUEUE_CONFIG_KEY,
-            "TASK_RUNNER_RUN_DISPATCH_RETRY_QUEUE",
-        ),
-        (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_DELAY_MS_CONFIG_KEY,
-            "TASK_RUNNER_RUN_DISPATCH_RETRY_DELAY_MS",
-        ),
-        (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_RECONCILE_MS_CONFIG_KEY,
-            "TASK_RUNNER_RUN_DISPATCH_OUTBOX_RECONCILE_MS",
-        ),
-        (
-            TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_BATCH_SIZE_CONFIG_KEY,
-            "TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE",
+            TASK_RUNNER_QUEUE_EVENT_OUTBOX_BATCH_SIZE_CONFIG_KEY,
+            "TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE",
         ),
         (
             TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_CONFIG_KEY,
@@ -1279,11 +1208,6 @@ fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only()
             LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
             "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
             json!("change_me_chatos_local_connector_secret"),
-        ),
-        (
-            LOCAL_CONNECTOR_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-            json!("change_me_task_runner_local_connector_secret"),
         ),
         (
             LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -1686,6 +1610,11 @@ fn catalog_exposes_mcp_management_runtime_routes_via_env_projection() {
             "duration_ms",
         ),
         (
+            MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS_CONFIG_KEY,
+            "MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS",
+            "duration_ms",
+        ),
+        (
             MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY,
             "MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS",
             "duration_ms",
@@ -2005,12 +1934,6 @@ fn catalog_exposes_managed_internal_caller_secrets_for_core_services() {
             json!("change_me_configuration_center_memory_engine_secret"),
         ),
         (
-            SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-            "sandbox-manager",
-            "TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-            json!("change_me_task_runner_sandbox_manager_secret"),
-        ),
-        (
             SANDBOX_MANAGER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
             "sandbox-manager",
             "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
@@ -2117,18 +2040,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "task-runner",
             "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
             json!("change_me_task_runner_memory_engine_secret"),
-        ),
-        (
-            TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-            json!("change_me_task_runner_local_connector_secret"),
-        ),
-        (
-            TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-            json!("change_me_task_runner_sandbox_manager_secret"),
         ),
         (
             TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY,

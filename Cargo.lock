@@ -1012,12 +1012,14 @@ version = "0.1.0"
 dependencies = [
  "chatos_mcp_management_sdk",
  "chatos_mcp_runtime",
+ "serde_json",
 ]
 
 [[package]]
 name = "chatos_mcp_management_sdk"
 version = "0.1.0"
 dependencies = [
+ "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "reqwest",
  "serde",
@@ -5851,10 +5853,8 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
- "chatos_plugin_package",
  "chatos_project_execution",
  "chatos_queue_observability",
- "chatos_sandbox_contract",
  "chatos_service_runtime",
  "chatos_terminal_runtime",
  "chrono",

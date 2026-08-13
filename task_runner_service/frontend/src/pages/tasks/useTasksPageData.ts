@@ -2,15 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { useMemo } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../../api/client';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  RemoteServerRecord,
   TaskProjectRecord,
   TaskRecord,
-  TaskRunEventRecord,
   TaskRunStatus,
   TaskScheduleMode,
   TaskStatus,
@@ -20,14 +18,11 @@ import type {
   TaskMemorySummaryFilter,
 } from './TaskMemoryDrawer';
 import {
-  collectTaskRemoteOperations,
   scheduleModeLabelKeys,
   statusFilterValues,
-  summarizeTaskRemoteOperations,
   taskModelOptionLabel,
   taskRunReportContent,
 } from './taskPageUtils';
-import type { TaskRowRemoteActivity } from './taskTableColumns';
 
 type UseTasksPageDataParams = {
   t: TranslateFn;
@@ -171,12 +166,6 @@ export function useTasksPageData({
     enabled: Boolean(detailLastRunId),
     refetchInterval: (query) => activeRefreshInterval(isActiveRunStatus(query.state.data?.status)),
   });
-  const detailLastRunEventsQuery = useQuery({
-    queryKey: ['task-detail-last-run-events', detailLastRunId],
-    queryFn: () => api.getRunEvents(detailLastRunId!),
-    enabled: Boolean(detailLastRunId),
-    refetchInterval: activeRefreshInterval(isActiveRunStatus(detailLastRunQuery.data?.status)),
-  });
   const taskFollowUpQuery = useQuery({
     queryKey: ['task-follow-ups', detailTaskId],
     queryFn: () =>
@@ -213,10 +202,6 @@ export function useTasksPageData({
   const projectsQuery = useQuery({
     queryKey: ['task-projects', 'active'],
     queryFn: () => api.listProjects('active'),
-  });
-  const remoteServersQuery = useQuery({
-    queryKey: ['remote-servers'],
-    queryFn: api.listRemoteServers,
   });
   const pendingPromptTaskCountsQuery = useQuery({
     queryKey: ['prompt-task-counts', 'pending'],
@@ -262,36 +247,6 @@ export function useTasksPageData({
     queryFn: () => api.getTaskMcpResolution(detailTaskId!),
     enabled: Boolean(detailTaskId),
   });
-  const visibleTaskLastRunIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (tasksQuery.data?.items || [])
-            .map((task) => task.last_run_id)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ),
-    [tasksQuery.data?.items],
-  );
-  const activeVisibleTaskLastRunIds = useMemo(
-    () =>
-      new Set(
-        (tasksQuery.data?.items || [])
-          .filter((task) => isActiveTaskStatus(task.status))
-          .map((task) => task.last_run_id)
-          .filter((value): value is string => Boolean(value)),
-      ),
-    [tasksQuery.data?.items],
-  );
-  const taskListLastRunEventQueries = useQueries({
-    queries: visibleTaskLastRunIds.map((runId) => ({
-      queryKey: ['task-list-last-run-events', runId],
-      queryFn: () => api.getRunEvents(runId),
-      enabled: Boolean(runId),
-      refetchInterval: activeRefreshInterval(activeVisibleTaskLastRunIds.has(runId)),
-    })),
-  });
-
   const modelOptions = useMemo(
     () =>
       (modelsQuery.data || [])
@@ -371,13 +326,6 @@ export function useTasksPageData({
       })),
     [taskIndexQuery.data?.tags],
   );
-  const remoteServerMap = useMemo(() => {
-    const map = new Map<string, RemoteServerRecord>();
-    (remoteServersQuery.data || []).forEach((server) => {
-      map.set(server.id, server);
-    });
-    return map;
-  }, [remoteServersQuery.data]);
   const selectedTask = useMemo(
     () => selectedTaskQuery.data || detailTaskPreview,
     [detailTaskPreview, selectedTaskQuery.data],
@@ -386,47 +334,6 @@ export function useTasksPageData({
     () => taskRunReportContent(detailLastRunQuery.data) || selectedTask?.result_summary || null,
     [detailLastRunQuery.data, selectedTask?.result_summary],
   );
-  const detailRemoteOperations = useMemo(
-    () => collectTaskRemoteOperations(detailLastRunEventsQuery.data || [], remoteServerMap),
-    [detailLastRunEventsQuery.data, remoteServerMap],
-  );
-  const detailRemoteOperationStats = useMemo(
-    () => summarizeTaskRemoteOperations(detailRemoteOperations),
-    [detailRemoteOperations],
-  );
-  const latestRemoteOperation = detailRemoteOperations.length
-    ? detailRemoteOperations[detailRemoteOperations.length - 1]
-    : null;
-  const recentRemoteOperations = useMemo(
-    () => [...detailRemoteOperations].slice(-3).reverse(),
-    [detailRemoteOperations],
-  );
-  const taskRowRemoteActivityByTaskId = useMemo(() => {
-    const runEventsByRunId = new Map<string, TaskRunEventRecord[]>();
-    visibleTaskLastRunIds.forEach((runId, index) => {
-      const query = taskListLastRunEventQueries[index];
-      if (query?.data) {
-        runEventsByRunId.set(runId, query.data);
-      }
-    });
-
-    const taskActivityMap = new Map<string, TaskRowRemoteActivity>();
-    (tasksQuery.data?.items || []).forEach((task) => {
-      if (!task.last_run_id) {
-        return;
-      }
-      const events = runEventsByRunId.get(task.last_run_id) || [];
-      const operations = collectTaskRemoteOperations(events, remoteServerMap);
-      if (!operations.length) {
-        return;
-      }
-      taskActivityMap.set(task.id, {
-        ...summarizeTaskRemoteOperations(operations),
-        latest: operations[operations.length - 1] || null,
-      });
-    });
-    return taskActivityMap;
-  }, [remoteServerMap, taskListLastRunEventQueries, tasksQuery.data?.items, visibleTaskLastRunIds]);
   const pendingPromptCountByTaskId = useMemo(() => {
     const map = new Map<string, number>();
     (pendingPromptTaskCountsQuery.data || []).forEach((item) => {
@@ -449,13 +356,11 @@ export function useTasksPageData({
     taskRecentRunsQuery,
     detailLastRunId,
     detailLastRunQuery,
-    detailLastRunEventsQuery,
     taskFollowUpQuery,
     taskRunDerivedQuery,
     taskPromptsQuery,
     modelsQuery,
     projectsQuery,
-    remoteServersQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,
@@ -471,14 +376,8 @@ export function useTasksPageData({
     taskSummaryMap,
     prerequisiteTaskOptions,
     tagOptions,
-    remoteServerMap,
     selectedTask,
     detailResultSummary,
-    detailRemoteOperations,
-    detailRemoteOperationStats,
-    latestRemoteOperation,
-    recentRemoteOperations,
-    taskRowRemoteActivityByTaskId,
     pendingPromptCountByTaskId,
     batchRunTasks,
   };

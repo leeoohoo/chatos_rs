@@ -4,16 +4,12 @@
 use std::time::Duration;
 
 use chatos_mcp_gateway::McpManagementGatewayBuilder;
-use chatos_mcp_management_sdk::{
-    CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle, SandboxExecutionTarget,
-};
+use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, McpHttpServer};
 use chatos_plugin_management_sdk::{SystemAgentKey, SystemMcpKey};
 use tracing::info;
 
 use crate::models::{TaskMcpConfig, TaskRecord, TaskRunRecord};
-
-use crate::services::sandbox_runtime::SandboxRuntimeContext;
 
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
@@ -24,15 +20,11 @@ pub(super) async fn resolve_mcp_management_gateway(
     task: &TaskRecord,
     run: &TaskRunRecord,
     agent_key: SystemAgentKey,
-    sandbox_context: Option<&SandboxRuntimeContext>,
     tool_result_max_chars: usize,
     existing_session_ref: Option<&str>,
 ) -> Result<ResolvedMcpManagementGateway, String> {
     let owner_user_id = normalized_task_owner_user_id(task)
         .ok_or_else(|| "task owner user id is required for MCP Management".to_string())?;
-    let sandbox_provider = sandbox_context
-        .map(SandboxRuntimeContext::provider_kind)
-        .transpose()?;
     let request = CreateRuntimeSessionRequest {
         tenant_id: task.tenant_id.trim().to_string(),
         owner_user_id,
@@ -50,21 +42,16 @@ pub(super) async fn resolve_mcp_management_gateway(
         tool_result_max_chars: Some(tool_result_max_chars.max(1)),
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: Some(requested_mcp_resource_ids(&task.mcp_config)),
+        selected_plugins: task.plugin_config.selected_plugins.clone(),
+        plugin_command_invocations: task.plugin_config.command_invocations.clone(),
         locale: Some(if task.mcp_config.locale().is_english() {
             "en-US".to_string()
         } else {
             "zh-CN".to_string()
         }),
         requested_device_id: None,
-        requested_sandbox_provider: sandbox_provider,
-        sandbox_target: sandbox_context.map(|context| SandboxExecutionTarget {
-            provider: sandbox_provider.expect("sandbox context provider was resolved"),
-            pairing_id: context.local_connector_pairing_id.clone(),
-            sandbox_id: context.sandbox_id.clone(),
-            lease_id: context.lease_id.clone(),
-            is_environment: context.is_environment,
-            service_id: context.service_id.clone(),
-        }),
+        requested_sandbox_provider: None,
+        sandbox_target: None,
     };
     let timeout = Duration::from_millis(
         std::env::var("TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")
@@ -119,6 +106,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     Ok(ResolvedMcpManagementGateway {
         server: resolved.server,
         provider_skills_prompt: resolved.provider_skills_prompt,
+        plugin_instruction_items: resolved.plugin_instruction_items,
         mcp_command_queue: resolved.mcp_command_queue,
         runtime_session: resolved.runtime_session,
     })
@@ -127,6 +115,7 @@ pub(super) async fn resolve_mcp_management_gateway(
 pub(super) struct ResolvedMcpManagementGateway {
     server: McpHttpServer,
     pub(super) provider_skills_prompt: Option<String>,
+    pub(super) plugin_instruction_items: Vec<serde_json::Value>,
     mcp_command_queue: String,
     runtime_session: McpManagementRuntimeSessionHandle,
 }
@@ -168,6 +157,10 @@ fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
                 }),
         )
         .collect::<Vec<_>>();
+    if config.enabled {
+        resource_ids
+            .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID.to_string());
+    }
     resource_ids.sort();
     resource_ids.dedup();
     resource_ids
@@ -198,6 +191,7 @@ mod tests {
                 "builtin_browser_tools".to_string(),
                 "builtin_code_maintainer_read".to_string(),
                 "external-mcp-1".to_string(),
+                "system_mcp_task_process_log".to_string(),
             ]
         );
     }
@@ -214,7 +208,19 @@ mod tests {
             vec![
                 "builtin_code_maintainer_read".to_string(),
                 "builtin_code_maintainer_write".to_string(),
+                "system_mcp_task_process_log".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn enabled_task_mcp_scope_always_contains_run_process_log() {
+        let config = TaskMcpConfig {
+            enabled: true,
+            ..TaskMcpConfig::default()
+        };
+
+        assert!(requested_mcp_resource_ids(&config)
+            .contains(&"system_mcp_task_process_log".to_string()));
     }
 }

@@ -76,6 +76,7 @@ impl AppState {
             config.project_service_http_client.clone(),
             config.project_service_base_url.clone(),
             config.project_service_internal_api_secret.clone(),
+            config.project_service_tool_timeout,
             TaskRunnerProviderConfig {
                 http: task_runner_http_client(&config)?,
                 base_url: config.task_runner_service_base_url.clone(),

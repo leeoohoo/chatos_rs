@@ -73,14 +73,6 @@ pub fn router() -> Router<AppState> {
             get(get_chatos_message_run_event),
         )
         .route(
-            "/internal/chatos/message-runs/{run_id}/output/changes",
-            get(get_chatos_message_run_output_changes),
-        )
-        .route(
-            "/internal/chatos/message-runs/{run_id}/output/diff",
-            get(get_chatos_message_run_output_diff),
-        )
-        .route(
             "/internal/chatos/message-graph/runs/{run_id}",
             get(get_chatos_message_graph_run),
         )
@@ -350,21 +342,6 @@ struct ChatosMessageRunQuery {
     source: ChatosMessageTaskQuery,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatosMessageRunOutputChangesQuery {
-    #[serde(flatten)]
-    source: ChatosMessageTaskQuery,
-    limit: Option<usize>,
-    offset: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatosMessageRunOutputDiffQuery {
-    #[serde(flatten)]
-    source: ChatosMessageTaskQuery,
-    path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -798,58 +775,6 @@ async fn get_chatos_message_run_event(
         &state,
         ChatosMessageTaskRunEvent::from(trim_event_for_chatos_detail(event, tool_text_limit_chars)),
     )?))
-}
-
-async fn get_chatos_message_run_output_changes(
-    Path(run_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ChatosMessageRunOutputChangesQuery>,
-) -> Result<Json<Value>, InternalApiError> {
-    require_chatos_internal_auth(&state, &headers)?;
-    let (source_session_id, source_user_message_id, source_turn_id) =
-        validate_chatos_message_query(&query.source)?;
-    let run = require_chatos_message_run(
-        &state,
-        run_id.trim(),
-        source_session_id,
-        source_user_message_id,
-        source_turn_id,
-    )
-    .await?;
-    let response = state
-        .run_service
-        .get_run_output_changes(run.id.as_str(), query.limit, query.offset)
-        .await
-        .map_err(InternalApiError::internal)?
-        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    Ok(Json(redact_workspace_paths_internal(&state, response)?))
-}
-
-async fn get_chatos_message_run_output_diff(
-    Path(run_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ChatosMessageRunOutputDiffQuery>,
-) -> Result<Json<Value>, InternalApiError> {
-    require_chatos_internal_auth(&state, &headers)?;
-    let (source_session_id, source_user_message_id, source_turn_id) =
-        validate_chatos_message_query(&query.source)?;
-    let run = require_chatos_message_run(
-        &state,
-        run_id.trim(),
-        source_session_id,
-        source_user_message_id,
-        source_turn_id,
-    )
-    .await?;
-    let response = state
-        .run_service
-        .get_run_output_diff(run.id.as_str(), query.path.as_str())
-        .await
-        .map_err(InternalApiError::bad_request)?
-        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    Ok(Json(redact_workspace_paths_internal(&state, response)?))
 }
 
 async fn require_chatos_message_run(

@@ -4,7 +4,10 @@
 services:
   prometheus:
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # On macOS, VPN/TUN software can route Docker Desktop's host-gateway
+      # address away from the host. The local-dev launcher resolves bridge100
+      # and exports CHATOS_LOCAL_DEV_HOST_ADDRESS so host scrapes remain local.
+      - "host.docker.internal:${CHATOS_LOCAL_DEV_HOST_ADDRESS:-host-gateway}"
     volumes:
       - ./prometheus/prometheus.local-dev.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
@@ -12,7 +15,7 @@ services:
 
   apisix-gateway:
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:${CHATOS_LOCAL_DEV_HOST_ADDRESS:-host-gateway}"
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
       - ${CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH:-../.chatos-local-dev/apisix.yaml}:/usr/local/apisix/conf/apisix.yaml:ro

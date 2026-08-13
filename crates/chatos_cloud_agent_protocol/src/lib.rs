@@ -137,6 +137,11 @@ pub struct CloudAgentRunRecord {
     pub pending_tool_calls: Vec<Value>,
     #[serde(default)]
     pub pending_tool_results: Vec<Value>,
+    /// Durable stateless Responses input for the current Agent run.
+    /// Items are append-only in official API order: original turn input,
+    /// complete response.output items, then function_call_output items.
+    #[serde(default)]
+    pub response_input_items: Vec<Value>,
     pub current_input_items_ref: String,
     #[serde(default)]
     pub usage_accumulator: Value,
@@ -417,6 +422,7 @@ mod tests {
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
+            response_input_items: Vec::new(),
             current_input_items_ref: "input-1".to_string(),
             usage_accumulator: Value::Null,
             max_iterations: 100,
@@ -459,6 +465,7 @@ mod tests {
             pending_batch_id: None,
             pending_tool_calls: vec![Value::String("call".to_string())],
             pending_tool_results: Vec::new(),
+            response_input_items: Vec::new(),
             current_input_items_ref: "input-1".to_string(),
             usage_accumulator: Value::Null,
             max_iterations: 100,

@@ -58,10 +58,7 @@ pub(in crate::providers::plugin_components) fn validate_cloud_component_policy(
             }
             Ok(())
         }
-        PluginComponentKind::Agent => Ok(()),
-        PluginComponentKind::SkillCollection => Err(ProviderCallError::provider_unavailable(
-            "cloud Plugin Skills do not publish executable tools without a cloud adapter",
-        )),
+        PluginComponentKind::Agent | PluginComponentKind::SkillCollection => Ok(()),
         _ => Err(ProviderCallError::provider_unavailable(
             "Plugin component kind is not an Agent tool",
         )),

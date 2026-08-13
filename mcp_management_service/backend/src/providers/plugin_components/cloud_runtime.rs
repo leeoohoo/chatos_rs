@@ -36,6 +36,7 @@ impl PluginComponentProvider {
             })?;
         validate_cloud_component_bundle(immutable, &bundle)?;
         let tools = match immutable.component.kind {
+            PluginComponentKind::SkillCollection => vec![skill_tool_definition(immutable)],
             PluginComponentKind::Command => vec![command_tool_definition(immutable)],
             PluginComponentKind::Agent => vec![agent_tool_definition(immutable)],
             _ => unreachable!("validated cloud Plugin component kind"),
@@ -72,9 +73,22 @@ impl PluginComponentProvider {
             });
         }
         let result = match binding.runtime.component.kind {
+            PluginComponentKind::SkillCollection => {
+                ensure_expected_tool(original_tool_name, "apply")?;
+                validate_empty_arguments(&arguments, "Plugin Skill apply")?;
+                plugin_skill_result_from_bundle(&binding.runtime, &binding.bundle)
+            }
             PluginComponentKind::Command => {
                 ensure_expected_tool(original_tool_name, COMMAND_TOOL_NAME)?;
                 let arguments = parse_command_arguments(arguments)?;
+                if arguments != binding.runtime.command_arguments {
+                    return Err(ProviderCallError {
+                        code: chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED,
+                        message:
+                            "Plugin Command arguments do not match the Runtime Session selection"
+                                .to_string(),
+                    });
+                }
                 plugin_command_result_from_bundle(
                     &binding.runtime,
                     &binding.bundle,

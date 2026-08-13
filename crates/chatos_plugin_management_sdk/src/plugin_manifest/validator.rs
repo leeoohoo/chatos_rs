@@ -218,9 +218,7 @@ pub fn validate_plugin_manifest(
         if let Some(target_agent) = command.target_agent.as_deref() {
             if ![
                 SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-                SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
                 SystemAgentKey::TaskRunnerRunPhase.as_str(),
-                SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
             ]
             .contains(&target_agent)
             {
@@ -287,9 +285,7 @@ pub fn validate_plugin_manifest(
         }
         if ![
             SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-            SystemAgentKey::TaskRunnerLocalPlanPhase.as_str(),
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
-            SystemAgentKey::TaskRunnerLocalRunPhase.as_str(),
         ]
         .contains(&agent.base_agent.as_str())
         {

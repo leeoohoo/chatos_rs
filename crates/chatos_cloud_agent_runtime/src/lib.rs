@@ -107,6 +107,8 @@ pub struct CloudAgentAtomicTransition {
     pub pending_tool_calls: Vec<Value>,
     #[serde(default)]
     pub pending_tool_results: Vec<Value>,
+    #[serde(default)]
+    pub response_input_items: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_outcome: Option<Value>,
     #[serde(default)]
@@ -251,6 +253,7 @@ pub async fn create_cloud_agent_run(
         pending_batch_id: None,
         pending_tool_calls: Vec::new(),
         pending_tool_results: Vec::new(),
+        response_input_items: Vec::new(),
         current_input_items_ref: new_run.current_input_items_ref,
         usage_accumulator: Value::Null,
         max_iterations: new_run.max_iterations,
@@ -327,53 +330,52 @@ pub fn cloud_agent_trigger_input_items(
 ) -> Result<Vec<Value>, String> {
     match trigger {
         CloudAgentModelTrigger::RunStarted { .. } => Ok(initial_input_items),
-        CloudAgentModelTrigger::Continuation { payload, .. }
-        | CloudAgentModelTrigger::Retry { payload, .. } => Ok(payload
-            .get("input_items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or(initial_input_items)),
-        CloudAgentModelTrigger::ToolResults { items, .. } => {
-            cloud_agent_mcp_result_input_items(run.pending_tool_calls.as_slice(), items.as_slice())
+        CloudAgentModelTrigger::Continuation { .. } | CloudAgentModelTrigger::Retry { .. } => {
+            Ok(if run.response_input_items.is_empty() {
+                initial_input_items
+            } else {
+                run.response_input_items.clone()
+            })
         }
+        CloudAgentModelTrigger::ToolResults { items, .. } => cloud_agent_mcp_result_input_items(
+            run.response_input_items.as_slice(),
+            run.pending_tool_calls.as_slice(),
+            items.as_slice(),
+        ),
     }
 }
 
 pub fn cloud_agent_mcp_result_input_items(
+    response_input_items: &[Value],
     calls: &[Value],
     results: &[Value],
 ) -> Result<Vec<Value>, String> {
     if calls.len() != results.len() {
         return Err("MCP aggregate result count does not match pending tool calls".to_string());
     }
-    calls
-        .iter()
-        .zip(results)
-        .enumerate()
-        .map(|(index, (call, result))| {
-            let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
-                .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
-            let output = if result.get("status").and_then(Value::as_str) == Some("completed") {
-                result
-                    .get("result")
-                    .cloned()
-                    .unwrap_or(Value::Null)
-                    .to_string()
-            } else {
-                result
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("MCP tool call failed")
-                    .to_string()
-            };
-            Ok(
-                chatos_ai_runtime::tool_call::build_function_call_output_item(
-                    call_id,
-                    output.as_str(),
-                ),
-            )
-        })
-        .collect()
+    let mut items = Vec::with_capacity(response_input_items.len().saturating_add(calls.len()));
+    items.extend_from_slice(response_input_items);
+    for (index, (call, result)) in calls.iter().zip(results).enumerate() {
+        let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
+            .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
+        let output = if result.get("status").and_then(Value::as_str) == Some("completed") {
+            result
+                .get("result")
+                .cloned()
+                .unwrap_or(Value::Null)
+                .to_string()
+        } else {
+            result
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("MCP tool call failed")
+                .to_string()
+        };
+        items.push(
+            chatos_ai_runtime::tool_call::build_function_call_output_item(call_id, output.as_str()),
+        );
+    }
+    Ok(items)
 }
 
 pub fn cloud_agent_mcp_result_callback_payload(
@@ -641,7 +643,18 @@ where
         CloudAgentClaimResult::Terminal => return Ok(CloudAgentConsumeDisposition::Terminal),
     }
     let result = async {
-        let execution = executor.execute_single_step(&run, &input.trigger).await?;
+        // An owner/profile error means this durable model step could not be
+        // prepared or executed. Model-provider retries are represented by the
+        // explicit `AiSingleStepOutcome::Retry` variant; blindly returning the
+        // owner error to the MQ consumer would release the claim and replay the
+        // same delivery forever. Persist it as a terminal failure instead so
+        // the run is finalized exactly once and the user can start a fresh run.
+        let execution = match executor.execute_single_step(&run, &input.trigger).await {
+            Ok(execution) => execution,
+            Err(error) => CloudAgentSingleStepExecution::Apply(CloudAgentSingleStepOutput::new(
+                AiSingleStepOutcome::Failed { error },
+            )),
+        };
         let CloudAgentSingleStepExecution::Apply(output) = execution else {
             return Ok(None);
         };
@@ -654,6 +667,11 @@ where
         )?;
         if let Some(next_input) = output.next_input {
             transition.next_input = next_input;
+        }
+        if transition.next_status == CloudAgentRunStatus::RetryScheduled {
+            if let Some(input_items) = output.retry_input_items.as_ref() {
+                transition.response_input_items = input_items.clone();
+            }
         }
         if transition.next_status.is_terminal() {
             if let Some(overlay) = output.terminal_outcome_overlay {
@@ -730,6 +748,41 @@ fn merge_terminal_outcome_overlay(base: Option<Value>, overlay: Value) -> Value 
     }
 }
 
+fn append_response_output_items(
+    request_input_items: &[Value],
+    response_output_items: &[Value],
+    fallback_tool_calls: Option<&Value>,
+) -> Vec<Value> {
+    let mut items = request_input_items.to_vec();
+    if response_output_items.is_empty() {
+        if let Some(calls) = fallback_tool_calls.and_then(Value::as_array) {
+            items.extend(calls.iter().filter_map(|call| {
+                let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)?;
+                let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)?;
+                let arguments = chatos_ai_runtime::tool_call::tool_call_arguments_text(call);
+                Some(chatos_ai_runtime::tool_call::build_function_call_item(
+                    call_id,
+                    name,
+                    arguments.as_str(),
+                ))
+            }));
+        }
+    } else {
+        items.extend_from_slice(response_output_items);
+    }
+    items
+}
+
+fn append_continuation_items(
+    request_input_items: &[Value],
+    response_output_items: &[Value],
+    continuation_items: &[Value],
+) -> Vec<Value> {
+    let mut items = append_response_output_items(request_input_items, response_output_items, None);
+    items.extend_from_slice(continuation_items);
+    items
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CloudAgentModelTrigger {
@@ -785,7 +838,7 @@ pub fn reduce_single_step(
                 next_step_seq,
                 next_iteration,
                 next_retry_count: 0,
-                previous_response_id: response.response_id.clone(),
+                previous_response_id: None,
                 continuation_mode: Some("mcp_tool_results".to_string()),
                 current_input_items_ref: format!(
                     "cloud_agent:{}:{}:{}:tool_results",
@@ -795,6 +848,11 @@ pub fn reduce_single_step(
                 pending_batch_id: Some(batch_id.clone()),
                 pending_tool_calls: tool_calls.as_array().cloned().unwrap_or_default(),
                 pending_tool_results: Vec::new(),
+                response_input_items: append_response_output_items(
+                    response.request_input_items.as_slice(),
+                    response.response_output_items.as_slice(),
+                    Some(&tool_calls),
+                ),
                 terminal_outcome: None,
                 outbox: vec![outbox_intent(
                     &claim.ordering,
@@ -823,7 +881,7 @@ pub fn reduce_single_step(
             next_step_seq,
             next_iteration,
             next_retry_count: 0,
-            previous_response_id: response.response_id.clone(),
+            previous_response_id: None,
             continuation_mode: Some(reason.clone()),
             current_input_items_ref: format!(
                 "cloud_agent:{}:{}:{}:continuation",
@@ -833,6 +891,11 @@ pub fn reduce_single_step(
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
+            response_input_items: append_continuation_items(
+                response.request_input_items.as_slice(),
+                response.response_output_items.as_slice(),
+                input_items.as_slice(),
+            ),
             terminal_outcome: None,
             outbox: vec![outbox_intent(
                 &claim.ordering,
@@ -870,6 +933,7 @@ pub fn reduce_single_step(
             pending_batch_id: run.pending_batch_id.clone(),
             pending_tool_calls: run.pending_tool_calls.clone(),
             pending_tool_results: run.pending_tool_results.clone(),
+            response_input_items: run.response_input_items.clone(),
             terminal_outcome: None,
             outbox: vec![outbox_intent(
                 &claim.ordering,
@@ -895,13 +959,18 @@ pub fn reduce_single_step(
             next_step_seq,
             next_iteration,
             next_retry_count: 0,
-            previous_response_id: result.response_id.clone(),
+            previous_response_id: None,
             continuation_mode: None,
             current_input_items_ref: run.current_input_items_ref.clone(),
             mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
+            response_input_items: append_response_output_items(
+                result.request_input_items.as_slice(),
+                result.response_output_items.as_slice(),
+                result.tool_calls.as_ref(),
+            ),
             terminal_outcome: Some(serde_json::json!({
                 "content": result.content,
                 "reasoning": result.reasoning,
@@ -1057,6 +1126,7 @@ fn terminal_transition(
         pending_batch_id: None,
         pending_tool_calls: Vec::new(),
         pending_tool_results: Vec::new(),
+        response_input_items: Vec::new(),
         terminal_outcome: Some(terminal_outcome),
         outbox: vec![terminal_event],
     }
@@ -1151,6 +1221,7 @@ mod tests {
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
+            response_input_items: Vec::new(),
             current_input_items_ref: "input-1".to_string(),
             usage_accumulator: Value::Null,
             max_iterations: 100,
@@ -1190,6 +1261,8 @@ mod tests {
                     finish_reason: Some("tool_calls".to_string()),
                     usage: None,
                     response_id: Some("response-1".to_string()),
+                    response_output_items: Vec::new(),
+                    request_input_items: Vec::new(),
                 },
                 tool_calls: serde_json::json!([{"id": "call-1"}]),
             },
@@ -1204,6 +1277,116 @@ mod tests {
             transition.pending_batch_id.as_deref(),
             Some("mcp_batch_run-1_1_2")
         );
+    }
+
+    #[test]
+    fn mcp_results_resume_with_ordered_call_and_output_pairs() {
+        let calls = serde_json::json!([
+            {
+                "id": "call-1",
+                "function": {"name": "CodeMaintainer", "arguments": "{\"path\":\"README.md\"}"}
+            },
+            {
+                "id": "call-2",
+                "function": {"name": "Terminal", "arguments": "{\"command\":\"python -m unittest\"}"}
+            }
+        ]);
+        let results = serde_json::json!([
+            {"status": "completed", "result": {"written": true}},
+            {"status": "failed", "error": "tests failed"}
+        ]);
+
+        let response_output = serde_json::json!([
+            {"type":"reasoning","id":"rs-1","summary":[{"type":"summary_text","text":"inspect"}]},
+            {"type":"function_call","id":"fc-1","call_id":"call-1","name":"CodeMaintainer","arguments":"{\"path\":\"README.md\"}"},
+            {"type":"function_call","id":"fc-2","call_id":"call-2","name":"Terminal","arguments":"{\"command\":\"python -m unittest\"}"}
+        ]);
+        let items = cloud_agent_mcp_result_input_items(
+            response_output.as_array().unwrap(),
+            calls.as_array().unwrap(),
+            results.as_array().unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[..3], response_output.as_array().unwrap()[..]);
+        assert_eq!(items[3]["type"], "function_call_output");
+        assert_eq!(items[3]["call_id"], "call-1");
+        assert_eq!(items[3]["output"], "{\"written\":true}");
+        assert_eq!(items[4]["type"], "function_call_output");
+        assert_eq!(items[4]["call_id"], "call-2");
+        assert_eq!(items[4]["output"], "tests failed");
+    }
+
+    #[test]
+    fn a_single_mcp_result_uses_the_same_call_and_output_pair() {
+        let calls = serde_json::json!([
+            {"id": "call-1", "function": {"name": "TaskProcessLog", "arguments": "{}"}}
+        ]);
+        let results = serde_json::json!([
+            {"status": "completed", "result": "recorded"}
+        ]);
+
+        let response_output = serde_json::json!([
+            {"type":"function_call","id":"fc-1","call_id":"call-1","name":"TaskProcessLog","arguments":"{}"}
+        ]);
+        let items = cloud_agent_mcp_result_input_items(
+            response_output.as_array().unwrap(),
+            calls.as_array().unwrap(),
+            results.as_array().unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "function_call");
+        assert_eq!(items[0]["call_id"], "call-1");
+        assert_eq!(items[1]["type"], "function_call_output");
+        assert_eq!(items[1]["call_id"], "call-1");
+    }
+
+    #[test]
+    fn multiple_tool_batches_append_without_rewriting_the_previous_prefix() {
+        let first_history = serde_json::json!([
+            {"role":"user","content":"implement"},
+            {"type":"reasoning","id":"rs-1","summary":[]},
+            {"type":"function_call","id":"fc-1","call_id":"call-1","name":"read","arguments":"{}"}
+        ]);
+        let first_calls = serde_json::json!([
+            {"id":"call-1","function":{"name":"read","arguments":"{}"}}
+        ]);
+        let first_results = serde_json::json!([
+            {"status":"completed","result":"contents"}
+        ]);
+        let batch_one = cloud_agent_mcp_result_input_items(
+            first_history.as_array().unwrap(),
+            first_calls.as_array().unwrap(),
+            first_results.as_array().unwrap(),
+        )
+        .unwrap();
+        let second_output = serde_json::json!([
+            {"type":"reasoning","id":"rs-2","summary":[]},
+            {"type":"function_call","id":"fc-2","call_id":"call-2","name":"write","arguments":"{}"}
+        ]);
+        let second_history = append_response_output_items(
+            batch_one.as_slice(),
+            second_output.as_array().unwrap(),
+            None,
+        );
+        let second_calls = serde_json::json!([
+            {"id":"call-2","function":{"name":"write","arguments":"{}"}}
+        ]);
+        let second_results = serde_json::json!([
+            {"status":"completed","result":{"written":true}}
+        ]);
+        let batch_two = cloud_agent_mcp_result_input_items(
+            second_history.as_slice(),
+            second_calls.as_array().unwrap(),
+            second_results.as_array().unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(&batch_two[..batch_one.len()], batch_one.as_slice());
+        assert_eq!(batch_two.last().unwrap()["call_id"], "call-2");
     }
 
     #[test]
@@ -1288,6 +1471,8 @@ mod tests {
                 finish_reason: Some("tool_calls".to_string()),
                 usage: None,
                 response_id: Some("response-1".to_string()),
+                response_output_items: Vec::new(),
+                request_input_items: Vec::new(),
             },
             tool_calls: Value::Array(
                 (0..call_count)
@@ -1362,6 +1547,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn owner_step_error_is_committed_as_terminal_failure() {
+        #[derive(Clone)]
+        struct FailingExecutor;
+
+        #[async_trait]
+        impl CloudAgentSingleStepExecutor for FailingExecutor {
+            async fn execute_single_step(
+                &self,
+                _run: &CloudAgentRunRecord,
+                _trigger: &CloudAgentModelTrigger,
+            ) -> Result<CloudAgentSingleStepExecution, String> {
+                Err("required MCPs cannot be materialized".to_string())
+            }
+        }
+
+        let store = inserted_ready_run().await;
+        assert_eq!(
+            consume_cloud_agent_single_step(&store, &FailingExecutor, consume_input())
+                .await
+                .unwrap(),
+            CloudAgentConsumeDisposition::Committed
+        );
+
+        let persisted = store.load_run("run-1").await.unwrap().unwrap();
+        assert_eq!(persisted.status, CloudAgentRunStatus::Failed);
+        assert_eq!(persisted.phase, CloudAgentRunPhase::Terminal);
+        assert_eq!(
+            persisted
+                .terminal_outcome
+                .as_ref()
+                .and_then(|value| value.get("error"))
+                .and_then(Value::as_str),
+            Some("required MCPs cannot be materialized")
+        );
+        let outbox = store.list_ready_outbox(10).await.unwrap();
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0].topic, "owner_lifecycle_terminal");
+    }
+
+    #[tokio::test]
     async fn shared_run_factory_allocates_the_lane_and_start_event_atomically() {
         let store = CloudAgentStateStore::memory();
         let record = create_cloud_agent_run(
@@ -1412,6 +1637,8 @@ mod tests {
                 finish_reason: Some("stop".to_string()),
                 usage: None,
                 response_id: Some("response-final".to_string()),
+                response_output_items: Vec::new(),
+                request_input_items: Vec::new(),
             }),
             seen_triggers: Arc::new(Mutex::new(Vec::new())),
         };
@@ -1467,6 +1694,8 @@ mod tests {
                     finish_reason: Some("stop".to_string()),
                     usage: None,
                     response_id: Some("response-final".to_string()),
+                    response_output_items: Vec::new(),
+                    request_input_items: Vec::new(),
                 })),
             ))
         }

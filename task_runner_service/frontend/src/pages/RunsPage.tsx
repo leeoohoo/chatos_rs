@@ -90,8 +90,6 @@ export function RunsPage() {
     taskOptions,
     modelOptions,
     modelNameMap,
-    selectedRemoteOperations,
-    selectedRemoteOperationStats,
   } = useRunsPageData({
     t,
     taskFilterId,
@@ -351,8 +349,6 @@ export function RunsPage() {
         toolResults={selectedToolResults}
         modelRequests={selectedModelRequests}
         streamStats={selectedStreamStats}
-        remoteOperations={selectedRemoteOperations}
-        remoteOperationStats={selectedRemoteOperationStats}
         promptsPage={runPromptsQuery.data}
         promptsLoading={runPromptsQuery.isLoading}
         promptPage={runPromptPage}
@@ -371,10 +367,6 @@ export function RunsPage() {
         onOpenModel={(modelId) => navigate(`/models?model_id=${encodeURIComponent(modelId)}`)}
         onCancel={(runId) => cancelRunMutation.mutate(runId)}
         onRetry={(runId) => retryRunMutation.mutate(runId)}
-        onManageServers={() => navigate('/servers')}
-        onOpenServer={(serverId) =>
-          navigate(`/servers?server_id=${encodeURIComponent(serverId)}`)
-        }
         onOpenPrompt={(promptId, runId) =>
           navigate(
             `/prompts?prompt_id=${encodeURIComponent(promptId)}&run_id=${encodeURIComponent(runId)}`,

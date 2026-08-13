@@ -54,6 +54,7 @@ pub struct FinalizedStreamState {
     pub provider_error: Option<Value>,
     pub usage: Option<Value>,
     pub response_id: Option<String>,
+    pub response_output_items: Vec<Value>,
 }
 
 pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> StreamPayload {
@@ -348,6 +349,11 @@ pub fn finalize_responses_stream_state(state: &mut StreamState) -> FinalizedStre
         provider_error: state.provider_error.clone(),
         usage: state.usage.clone(),
         response_id: state.response_id.clone(),
+        response_output_items: response_val
+            .get("output")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 
@@ -360,5 +366,6 @@ pub fn finalize_chat_completions_stream_state(state: &mut StreamState) -> Finali
         provider_error: state.provider_error.clone(),
         usage: state.usage.clone(),
         response_id: state.response_id.clone(),
+        response_output_items: Vec::new(),
     }
 }

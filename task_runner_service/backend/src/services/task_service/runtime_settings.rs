@@ -54,28 +54,4 @@ impl TaskService {
         }
         Ok(ToolResultModelBudgetLimits::new(per_result, total))
     }
-
-    pub async fn effective_execution_environment_mode(&self) -> Result<String, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_execution_environment_mode(&snapshot)
-    }
-
-    pub async fn effective_sandbox_enabled(&self) -> Result<bool, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_bool(&snapshot, TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY)
-    }
-
-    pub async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_http_base_url(&snapshot, TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY)
-    }
-
-    pub async fn effective_sandbox_lease_ttl_seconds(&self) -> Result<u64, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_u64(
-            &snapshot,
-            TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY,
-            1,
-        )
-    }
 }

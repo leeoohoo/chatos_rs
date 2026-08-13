@@ -123,21 +123,8 @@ mod plugin_projection_tests {
                         "command_id": "review",
                         "arguments": command_arguments
                     }]
-                },
-                "plugin_snapshots": [{
-                    "plugin_id": "plugin-review",
-                    "release_id": "release-1",
-                    "component_snapshots": [{
-                        "component_key": "review",
-                        "kind": "command",
-                        "runtime": {
-                            "runtime_kind": "markdown_command",
-                            "arguments": command_arguments
-                        }
-                    }]
-                }]
+                }
             }),
-            Vec::new(),
             "2026-07-27T00:00:00Z".to_string(),
         );
 
@@ -153,12 +140,6 @@ mod plugin_projection_tests {
         assert_eq!(
             projected
                 .pointer("/plugin_config/command_invocations/0/arguments_sha256")
-                .and_then(Value::as_str),
-            Some(expected_sha256.as_str())
-        );
-        assert_eq!(
-            projected
-                .pointer("/plugin_snapshots/0/component_snapshots/0/runtime/arguments_sha256")
                 .and_then(Value::as_str),
             Some(expected_sha256.as_str())
         );
@@ -184,21 +165,8 @@ mod plugin_projection_tests {
                         "command_id": "review",
                         "arguments": "private-command-arguments"
                     }]
-                },
-                "plugin_snapshots": [{
-                    "plugin_id": "plugin-review",
-                    "release_id": "release-1",
-                    "version": "1.2.3",
-                    "device_id": "must-not-be-copied-to-summary",
-                    "component_snapshots": [{
-                        "component_key": "review",
-                        "kind": "command",
-                        "content_sha256": "a".repeat(64),
-                        "runtime": {"arguments": "private-command-arguments"}
-                    }]
-                }]
+                }
             }),
-            Vec::new(),
             "2026-07-27T00:00:00Z".to_string(),
         );
 
@@ -215,14 +183,7 @@ mod plugin_projection_tests {
                 .and_then(Value::as_str),
             Some("plugin-review")
         );
-        assert_eq!(
-            projected
-                .pointer("/plugin_snapshots/0/component_snapshots/0/component_key")
-                .and_then(Value::as_str),
-            Some("review")
-        );
         assert!(!serialized.contains("private-command-arguments"));
-        assert!(!serialized.contains("must-not-be-copied-to-summary"));
     }
 
     #[test]

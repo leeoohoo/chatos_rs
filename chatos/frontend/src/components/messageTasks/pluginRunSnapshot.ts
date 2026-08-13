@@ -12,17 +12,12 @@ export interface PluginRunCommandAudit {
 
 export interface PluginRunPluginSummary {
   pluginId: string;
-  releaseId: string | null;
-  version: string | null;
   selectedSkillIds: string[];
   selectedCommandIds: string[];
   selectedAgentIds: string[];
-  componentKeys: string[];
 }
 
 export interface PluginRunSnapshotSummary {
-  deviceId: string;
-  workspaceId: string | null;
   plugins: PluginRunPluginSummary[];
   commands: PluginRunCommandAudit[];
 }
@@ -66,23 +61,11 @@ export const pluginRunSnapshotSummary = (
 ): PluginRunSnapshotSummary | null => {
   const snapshot = record(inputSnapshot);
   const config = record(snapshot?.plugin_config);
-  const deviceId = boundedText(config?.device_id);
   const selected = Array.isArray(config?.selected_plugins)
     ? config.selected_plugins.slice(0, 50)
     : [];
-  if (!deviceId || selected.length === 0) {
+  if (selected.length === 0) {
     return null;
-  }
-
-  const immutableByPlugin = new Map<string, UnknownRecord>();
-  if (Array.isArray(snapshot?.plugin_snapshots)) {
-    for (const value of snapshot.plugin_snapshots.slice(0, 50)) {
-      const plugin = record(value);
-      const pluginId = boundedText(plugin?.plugin_id);
-      if (pluginId && !immutableByPlugin.has(pluginId)) {
-        immutableByPlugin.set(pluginId, plugin as UnknownRecord);
-      }
-    }
   }
 
   const seenPlugins = new Set<string>();
@@ -93,18 +76,11 @@ export const pluginRunSnapshotSummary = (
       return [];
     }
     seenPlugins.add(pluginId);
-    const immutable = immutableByPlugin.get(pluginId);
-    const componentKeys = Array.isArray(immutable?.component_snapshots)
-      ? uniqueTextItems(immutable.component_snapshots.map((component) => record(component)?.component_key))
-      : [];
     return [{
       pluginId,
-      releaseId: boundedText(immutable?.release_id),
-      version: boundedText(immutable?.version),
       selectedSkillIds: uniqueTextItems(plugin?.selected_skill_ids),
       selectedCommandIds: uniqueTextItems(plugin?.selected_command_ids),
       selectedAgentIds: uniqueTextItems(plugin?.selected_agent_ids),
-      componentKeys,
     }];
   });
   if (plugins.length === 0) {
@@ -137,8 +113,6 @@ export const pluginRunSnapshotSummary = (
   }
 
   return {
-    deviceId,
-    workspaceId: boundedText(config?.workspace_id),
     plugins,
     commands,
   };

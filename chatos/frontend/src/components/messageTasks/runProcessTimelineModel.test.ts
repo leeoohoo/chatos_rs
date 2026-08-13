@@ -191,4 +191,47 @@ describe('buildRunProcessTimelineItems', () => {
 
     expect(items).toEqual([]);
   });
+
+  it('keeps task lifecycle failures visible', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'queued', undefined, 'task run queued'),
+      event('2', 'running', undefined, '任务开始执行'),
+      event('3', 'dispatch_failed', { project_id: 'project-1' }, '任务派发失败'),
+    ]);
+
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({ type: 'model', label: '任务入队' });
+    expect(items[1]).toMatchObject({ type: 'model', label: '任务开始执行' });
+    expect(items[2]).toMatchObject({
+      type: 'tool_result',
+      status: 'error',
+      error: '任务派发失败',
+    });
+  });
+
+  it('collapses identical repeated lifecycle failures without merging different errors', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'running', { worker: 'worker-1' }, '任务开始执行'),
+      event('2', 'dispatch_failed', { status: 'unavailable' }, '任务派发失败'),
+      event('3', 'running', { worker: 'worker-1' }, '任务开始执行'),
+      event('4', 'dispatch_failed', { status: 'unavailable' }, '任务派发失败'),
+      event('5', 'dispatch_failed', { status: 'rejected' }, '任务派发被拒绝'),
+    ]);
+
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({
+      type: 'model',
+      label: '任务开始执行',
+      repeatCount: 2,
+    });
+    expect(items[1]).toMatchObject({
+      type: 'tool_result',
+      error: '任务派发失败',
+      repeatCount: 2,
+    });
+    expect(items[2]).toMatchObject({
+      type: 'tool_result',
+      error: '任务派发被拒绝',
+    });
+  });
 });

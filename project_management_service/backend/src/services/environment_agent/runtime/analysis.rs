@@ -100,7 +100,7 @@ impl CloudAgentProfile for ProjectEnvironmentSingleStepExecutor {
             run_input.model_config.clone(),
             run_input.agent_prompt.content.as_str(),
         );
-        model_config.previous_response_id = cloud_run.previous_response_id.clone();
+        model_config.previous_response_id = None;
         let current_input_items = cloud_agent_trigger_input_items(
             cloud_run,
             trigger,

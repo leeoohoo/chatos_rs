@@ -24,6 +24,7 @@ const MAX_COMMIT_ACTIONS: usize = 500;
 pub(super) struct HarnessApiAccessResponse {
     pub(super) base_url: String,
     pub(super) access_token: String,
+    pub(super) harness_uid: String,
     #[serde(default)]
     pub(super) space_identifier: String,
 }

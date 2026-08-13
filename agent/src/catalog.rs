@@ -126,31 +126,11 @@ pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor:
     AgentExecutionLocation::CloudEventDriven,
 );
 
-pub static TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::TaskRunnerLocalPlanPhase,
-    "Local Task Runner Planning Agent",
-    "task-runner",
-    "Runs non-mutating Task Runner planning tasks for Local Connector projects with an independently configurable local execution identity.",
-    true,
-    AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
-);
-
 pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerRunPhase,
     "Cloud Task Runner Execution Agent",
     "task-runner",
     "Executes implementation, testing, repair, deployment, and other mutating Task Runner work in the cloud execution plane.",
-    true,
-    AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
-);
-
-pub static TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::TaskRunnerLocalRunPhase,
-    "Local Task Runner Execution Agent",
-    "task-runner",
-    "Executes implementation, testing, repair, deployment, and other mutating Task Runner work for Local Connector projects with a separate local configuration surface.",
     true,
     AgentToolPlane::Managed,
     AgentExecutionLocation::CloudEventDriven,
@@ -237,15 +217,13 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     AgentExecutionLocation::CloudEventDriven,
 );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 16] = [
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 14] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
     &CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR,
     &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
-    &TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
-    &TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
     &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
     &PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
@@ -304,25 +282,16 @@ pub const fn is_project_requirement_execution_planner_agent(key: SystemAgentKey)
 pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
     matches!(
         key,
-        SystemAgentKey::TaskRunnerPlanPhase
-            | SystemAgentKey::TaskRunnerLocalPlanPhase
-            | SystemAgentKey::TaskRunnerRunPhase
-            | SystemAgentKey::TaskRunnerLocalRunPhase
+        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
     )
 }
 
 pub const fn is_task_runner_planning_agent(key: SystemAgentKey) -> bool {
-    matches!(
-        key,
-        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerLocalPlanPhase
-    )
+    matches!(key, SystemAgentKey::TaskRunnerPlanPhase)
 }
 
 pub const fn is_task_runner_execution_agent(key: SystemAgentKey) -> bool {
-    matches!(
-        key,
-        SystemAgentKey::TaskRunnerRunPhase | SystemAgentKey::TaskRunnerLocalRunPhase
-    )
+    matches!(key, SystemAgentKey::TaskRunnerRunPhase)
 }
 
 pub const fn uses_chatos_notepad_callback(key: SystemAgentKey) -> bool {
@@ -359,9 +328,7 @@ pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
             &PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR
         }
         SystemAgentKey::TaskRunnerPlanPhase => &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
-        SystemAgentKey::TaskRunnerLocalPlanPhase => &TASK_RUNNER_LOCAL_PLAN_AGENT_DESCRIPTOR,
         SystemAgentKey::TaskRunnerRunPhase => &TASK_RUNNER_AGENT_DESCRIPTOR,
-        SystemAgentKey::TaskRunnerLocalRunPhase => &TASK_RUNNER_LOCAL_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectManagementAgent => &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectManagementLocalAgent => &PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR,
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
@@ -395,7 +362,7 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 16);
+        assert_eq!(keys.len(), 14);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
@@ -405,9 +372,7 @@ mod tests {
                 "project_requirement_execution_planner_agent",
                 "project_requirement_execution_local_planner_agent",
                 "task_runner_plan_phase",
-                "task_runner_local_plan_phase",
                 "task_runner_run_phase",
-                "task_runner_local_run_phase",
                 "project_management_agent",
                 "project_management_local_agent",
                 "local_connector_command_approval_agent",
@@ -467,26 +432,14 @@ mod tests {
         assert!(is_task_runner_phase_agent(
             SystemAgentKey::TaskRunnerPlanPhase
         ));
-        assert!(is_task_runner_phase_agent(
-            SystemAgentKey::TaskRunnerLocalPlanPhase
-        ));
         assert!(is_task_runner_planning_agent(
             SystemAgentKey::TaskRunnerPlanPhase
         ));
-        assert!(is_task_runner_planning_agent(
-            SystemAgentKey::TaskRunnerLocalPlanPhase
-        ));
         assert!(is_task_runner_execution_agent(
             SystemAgentKey::TaskRunnerRunPhase
         ));
-        assert!(is_task_runner_execution_agent(
-            SystemAgentKey::TaskRunnerLocalRunPhase
-        ));
         assert!(uses_chatos_notepad_callback(
             SystemAgentKey::TaskRunnerRunPhase
-        ));
-        assert!(uses_chatos_notepad_callback(
-            SystemAgentKey::TaskRunnerLocalRunPhase
         ));
         assert!(uses_chatos_browser_callback(
             SystemAgentKey::ChatosConversationAgent

@@ -260,11 +260,6 @@ async fn resolve_downstream_services(config: &mut AppConfig) {
         config.user_service_base_url.as_str(),
     )
     .await;
-    config.default_sandbox_manager_base_url = chatos_service_runtime::resolve_service_base_url(
-        "sandbox-manager",
-        config.default_sandbox_manager_base_url.as_str(),
-    )
-    .await;
     if let Some(base_url) = config.project_service_base_url.clone() {
         config.project_service_base_url = Some(
             chatos_service_runtime::resolve_service_base_url("project-service", base_url.as_str())

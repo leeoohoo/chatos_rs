@@ -4,20 +4,14 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_ENV: &str = "TASK_RUNNER_RUN_DISPATCH_MODE";
 pub const TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_ENV: &str = "TASK_RUNNER_CALLBACK_DELIVERY_MODE";
 pub const TASK_RUNNER_QUEUE_RABBITMQ_URL_ENV: &str = "TASK_RUNNER_RABBITMQ_URL";
 pub const TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_ENV: &str = "TASK_RUNNER_RABBITMQ_EXCHANGE";
 pub const TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_ENV: &str = "TASK_RUNNER_RABBITMQ_RECONNECT_MS";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_ENV: &str = "TASK_RUNNER_RUN_DISPATCH_QUEUE";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_QUEUE_ENV: &str =
-    "TASK_RUNNER_RUN_DISPATCH_RETRY_QUEUE";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_DELAY_MS_ENV: &str =
-    "TASK_RUNNER_RUN_DISPATCH_RETRY_DELAY_MS";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_RECONCILE_MS_ENV: &str =
-    "TASK_RUNNER_RUN_DISPATCH_OUTBOX_RECONCILE_MS";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_BATCH_SIZE_ENV: &str =
-    "TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE";
+pub const TASK_RUNNER_QUEUE_EVENT_OUTBOX_RECONCILE_MS_ENV: &str =
+    "TASK_RUNNER_EVENT_OUTBOX_RECONCILE_MS";
+pub const TASK_RUNNER_QUEUE_EVENT_OUTBOX_BATCH_SIZE_ENV: &str =
+    "TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE";
 pub const TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_ENV: &str =
     "TASK_RUNNER_WORKER_CONTROL_QUEUE_PREFIX";
 pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_QUEUE_ENV: &str = "TASK_RUNNER_RUN_POST_PROCESS_QUEUE";
@@ -68,17 +62,13 @@ impl TaskQueueMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskQueueTopology {
-    pub run_dispatch_mode: TaskQueueMode,
     pub callback_delivery_mode: TaskQueueMode,
     pub run_events_publish_mode: TaskQueueMode,
     pub rabbitmq_url: Option<String>,
     pub rabbitmq_exchange: String,
     pub rabbitmq_reconnect_delay: Duration,
-    pub run_dispatch_queue: String,
-    pub run_dispatch_retry_queue: String,
-    pub run_dispatch_retry_delay: Duration,
-    pub run_dispatch_outbox_reconcile_interval: Duration,
-    pub run_dispatch_outbox_batch_size: usize,
+    pub event_outbox_reconcile_interval: Duration,
+    pub event_outbox_batch_size: usize,
     pub worker_control_queue_prefix: String,
     pub run_post_process_queue: String,
     pub run_post_process_retry_queue: String,
@@ -95,17 +85,13 @@ pub struct TaskQueueTopology {
 impl TaskQueueTopology {
     pub fn inline_defaults() -> Self {
         Self {
-            run_dispatch_mode: TaskQueueMode::Inline,
             callback_delivery_mode: TaskQueueMode::Inline,
             run_events_publish_mode: TaskQueueMode::Inline,
             rabbitmq_url: None,
             rabbitmq_exchange: "task_runner".to_string(),
             rabbitmq_reconnect_delay: Duration::from_secs(3),
-            run_dispatch_queue: "task_runner.run.dispatch".to_string(),
-            run_dispatch_retry_queue: "task_runner.run.dispatch.retry".to_string(),
-            run_dispatch_retry_delay: Duration::from_secs(1),
-            run_dispatch_outbox_reconcile_interval: Duration::from_secs(5),
-            run_dispatch_outbox_batch_size: 100,
+            event_outbox_reconcile_interval: Duration::from_secs(5),
+            event_outbox_batch_size: 100,
             worker_control_queue_prefix: "task_runner.worker.control".to_string(),
             run_post_process_queue: "task_runner.run.post_process".to_string(),
             run_post_process_retry_queue: "task_runner.run.post_process.retry".to_string(),
@@ -121,12 +107,6 @@ impl TaskQueueTopology {
     }
 
     pub fn from_managed_env() -> Result<Self, String> {
-        let run_dispatch_mode = read_required_text(TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_ENV)?;
-        if run_dispatch_mode != "rabbitmq" {
-            return Err(format!(
-                "{TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_ENV} only supports rabbitmq"
-            ));
-        }
         let callback_delivery_mode = TaskQueueMode::parse(
             read_required_text(TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_ENV)?.as_str(),
         )?;
@@ -138,7 +118,6 @@ impl TaskQueueTopology {
             ));
         }
         let topology = Self {
-            run_dispatch_mode: TaskQueueMode::RabbitMq,
             callback_delivery_mode,
             run_events_publish_mode: TaskQueueMode::RabbitMq,
             rabbitmq_url: Some(read_required_text(TASK_RUNNER_QUEUE_RABBITMQ_URL_ENV)?),
@@ -146,20 +125,13 @@ impl TaskQueueTopology {
             rabbitmq_reconnect_delay: Duration::from_millis(read_required_u64(
                 TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_ENV,
             )?),
-            run_dispatch_queue: read_required_text(TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_ENV)?,
-            run_dispatch_retry_queue: read_required_text(
-                TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_QUEUE_ENV,
-            )?,
-            run_dispatch_retry_delay: Duration::from_millis(read_required_u64(
-                TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_DELAY_MS_ENV,
+            event_outbox_reconcile_interval: Duration::from_millis(read_required_u64(
+                TASK_RUNNER_QUEUE_EVENT_OUTBOX_RECONCILE_MS_ENV,
             )?),
-            run_dispatch_outbox_reconcile_interval: Duration::from_millis(read_required_u64(
-                TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_RECONCILE_MS_ENV,
-            )?),
-            run_dispatch_outbox_batch_size: usize::try_from(read_required_u64(
-                TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_BATCH_SIZE_ENV,
+            event_outbox_batch_size: usize::try_from(read_required_u64(
+                TASK_RUNNER_QUEUE_EVENT_OUTBOX_BATCH_SIZE_ENV,
             )?)
-            .map_err(|_| "TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE is too large".to_string())?,
+            .map_err(|_| "TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE is too large".to_string())?,
             worker_control_queue_prefix: read_required_text(
                 TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_ENV,
             )?,
@@ -203,8 +175,7 @@ impl TaskQueueTopology {
     }
 
     pub fn uses_rabbitmq(&self) -> bool {
-        self.run_dispatch_mode == TaskQueueMode::RabbitMq
-            || self.callback_delivery_mode == TaskQueueMode::RabbitMq
+        self.callback_delivery_mode == TaskQueueMode::RabbitMq
             || self.run_events_publish_mode == TaskQueueMode::RabbitMq
     }
 
@@ -223,14 +194,6 @@ impl TaskQueueTopology {
             (
                 "TASK_RUNNER_RABBITMQ_EXCHANGE",
                 self.rabbitmq_exchange.as_str(),
-            ),
-            (
-                "TASK_RUNNER_RUN_DISPATCH_QUEUE",
-                self.run_dispatch_queue.as_str(),
-            ),
-            (
-                "TASK_RUNNER_RUN_DISPATCH_RETRY_QUEUE",
-                self.run_dispatch_retry_queue.as_str(),
             ),
             (
                 "TASK_RUNNER_CALLBACK_DELIVERY_QUEUE",
@@ -265,11 +228,6 @@ impl TaskQueueTopology {
                 return Err(format!("{label} cannot be empty"));
             }
         }
-        if self.run_dispatch_retry_delay.is_zero() {
-            return Err(
-                "TASK_RUNNER_RUN_DISPATCH_RETRY_DELAY_MS must be greater than zero".to_string(),
-            );
-        }
         if !(Duration::from_millis(100)..=Duration::from_secs(60))
             .contains(&self.rabbitmq_reconnect_delay)
         {
@@ -277,15 +235,14 @@ impl TaskQueueTopology {
                 "TASK_RUNNER_RABBITMQ_RECONNECT_MS must be between 100 and 60000".to_string(),
             );
         }
-        if self.run_dispatch_outbox_reconcile_interval.is_zero() {
+        if self.event_outbox_reconcile_interval.is_zero() {
             return Err(
-                "TASK_RUNNER_RUN_DISPATCH_OUTBOX_RECONCILE_MS must be greater than zero"
-                    .to_string(),
+                "TASK_RUNNER_EVENT_OUTBOX_RECONCILE_MS must be greater than zero".to_string(),
             );
         }
-        if self.run_dispatch_outbox_batch_size == 0 {
+        if self.event_outbox_batch_size == 0 {
             return Err(
-                "TASK_RUNNER_RUN_DISPATCH_OUTBOX_BATCH_SIZE must be greater than zero".to_string(),
+                "TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE must be greater than zero".to_string(),
             );
         }
         if self.run_post_process_retry_delay.is_zero() {
@@ -370,17 +327,13 @@ mod tests {
     #[test]
     fn defaults_to_inline_without_rabbitmq() {
         let topology = TaskQueueTopology {
-            run_dispatch_mode: TaskQueueMode::Inline,
             callback_delivery_mode: TaskQueueMode::Inline,
             run_events_publish_mode: TaskQueueMode::Inline,
             rabbitmq_url: None,
             rabbitmq_exchange: "task_runner".to_string(),
             rabbitmq_reconnect_delay: Duration::from_secs(3),
-            run_dispatch_queue: "task_runner.run.dispatch".to_string(),
-            run_dispatch_retry_queue: "task_runner.run.dispatch.retry".to_string(),
-            run_dispatch_retry_delay: Duration::from_secs(1),
-            run_dispatch_outbox_reconcile_interval: Duration::from_secs(5),
-            run_dispatch_outbox_batch_size: 100,
+            event_outbox_reconcile_interval: Duration::from_secs(5),
+            event_outbox_batch_size: 100,
             worker_control_queue_prefix: "task_runner.worker.control".to_string(),
             run_post_process_queue: "task_runner.run.post_process".to_string(),
             run_post_process_retry_queue: "task_runner.run.post_process.retry".to_string(),
@@ -399,17 +352,13 @@ mod tests {
     #[test]
     fn rabbitmq_mode_requires_url() {
         let topology = TaskQueueTopology {
-            run_dispatch_mode: TaskQueueMode::RabbitMq,
-            callback_delivery_mode: TaskQueueMode::Inline,
+            callback_delivery_mode: TaskQueueMode::RabbitMq,
             run_events_publish_mode: TaskQueueMode::Inline,
             rabbitmq_url: None,
             rabbitmq_exchange: "task_runner".to_string(),
             rabbitmq_reconnect_delay: Duration::from_secs(3),
-            run_dispatch_queue: "task_runner.run.dispatch".to_string(),
-            run_dispatch_retry_queue: "task_runner.run.dispatch.retry".to_string(),
-            run_dispatch_retry_delay: Duration::from_secs(1),
-            run_dispatch_outbox_reconcile_interval: Duration::from_secs(5),
-            run_dispatch_outbox_batch_size: 100,
+            event_outbox_reconcile_interval: Duration::from_secs(5),
+            event_outbox_batch_size: 100,
             worker_control_queue_prefix: "task_runner.worker.control".to_string(),
             run_post_process_queue: "task_runner.run.post_process".to_string(),
             run_post_process_retry_queue: "task_runner.run.post_process.retry".to_string(),

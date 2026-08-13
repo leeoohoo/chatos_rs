@@ -496,19 +496,51 @@ pub(crate) async fn execute_tool_batch_invocation(
             .record_terminal_item(batch_id, call_index, item)
             .await;
     }
-    let snapshot = state
-        .runtime_sessions
-        .get(batch.session_id.as_str())
-        .await?
-        .ok_or_else(|| "runtime session was not found or has expired".to_string())?;
     let record = state
         .runtime_invocations
         .get_for_caller(
             call.invocation_id.as_str(),
-            snapshot.caller_service.as_str(),
+            batch.command.owner_service.as_str(),
         )
-        .await?
-        .ok_or_else(|| "Runtime Tool Batch invocation record is missing".to_string())?;
+        .await?;
+    let Some(record) = record else {
+        // A ready event can outlive its invocation because of session cleanup,
+        // TTL expiry, or replayed request ids. This is terminal data
+        // inconsistency, not a transient delivery failure: return a structured
+        // tool error to the model and advance the FIFO instead of hot-looping
+        // the RabbitMQ delivery forever.
+        if let Some(snapshot) = state
+            .runtime_sessions
+            .get(batch.session_id.as_str())
+            .await?
+        {
+            if let Some(run_id) = snapshot.run_id.as_deref() {
+                state
+                    .runtime_execution_scopes
+                    .release_invocation_turn(
+                        snapshot.owner_user_id.as_str(),
+                        snapshot.project_id.as_str(),
+                        run_id,
+                        snapshot.project_context.workspace_provider,
+                        call.invocation_id.as_str(),
+                    )
+                    .await?;
+            }
+        }
+        return state
+            .runtime_tool_batches
+            .record_terminal_item(
+                batch_id,
+                call_index,
+                failed_command_item(
+                    call,
+                    MCP_ERROR_INTERNAL,
+                    "MCP invocation record is unavailable; the tool call was not executed"
+                        .to_string(),
+                ),
+            )
+            .await;
+    };
     if is_terminal_invocation_status(record.status) {
         return state
             .runtime_tool_batches
@@ -518,6 +550,27 @@ pub(crate) async fn execute_tool_batch_invocation(
     if record.status == RuntimeInvocationStatus::WaitingForUser {
         return Ok(batch);
     }
+    let snapshot = match state
+        .runtime_sessions
+        .get(batch.session_id.as_str())
+        .await?
+    {
+        Some(snapshot) => snapshot,
+        None => {
+            return state
+                .runtime_tool_batches
+                .record_terminal_item(
+                    batch_id,
+                    call_index,
+                    failed_command_item(
+                        call,
+                        MCP_ERROR_INTERNAL,
+                        "MCP runtime session expired before the tool call started".to_string(),
+                    ),
+                )
+                .await;
+        }
+    };
     let tool = snapshot
         .tools
         .iter()

@@ -155,6 +155,7 @@ export type TimelineItem =
     createdAt: Date;
     id: string;
     label: string;
+    repeatCount?: number;
     type: 'model';
   }
   | {
@@ -162,6 +163,7 @@ export type TimelineItem =
     error: string;
     hasResult: boolean;
     id: string;
+    repeatCount?: number;
     result: unknown;
     resultMessage?: Message;
     status: TimelineStatus;
@@ -174,6 +176,7 @@ export type TimelineItem =
     error: string;
     hasResult: boolean;
     id: string;
+    repeatCount?: number;
     result: unknown;
     status: TimelineStatus;
     type: 'tool_result';

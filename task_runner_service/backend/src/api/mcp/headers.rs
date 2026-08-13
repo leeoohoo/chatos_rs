@@ -197,8 +197,6 @@ pub(super) fn mcp_request_context_from_headers(
         workspace_dir: header_text(headers, "x-task-runner-workspace-dir")
             .or_else(|| header_text(headers, "x-chatos-workspace-dir"))
             .or_else(|| header_text(headers, "x-chatos-workspace-root")),
-        remote_server_config: header_text(headers, "x-task-runner-remote-server-config")
-            .or_else(|| header_text(headers, "x-task-runner-remote-server-json")),
         tool_profile: header_text(headers, "x-task-runner-tool-profile"),
         task_profile: header_text(headers, "x-task-runner-task-profile"),
         builtin_prompt_locale: header_text(headers, "x-task-runner-builtin-prompt-locale")
@@ -222,16 +220,10 @@ pub(super) enum HeaderSelectedPlugin {
 pub(super) fn plugin_config_override_from_headers(
     headers: &HeaderMap,
 ) -> Result<Option<chatos_plugin_management_sdk::TaskPluginConfig>, String> {
-    let device_id = header_text(headers, "x-task-runner-plugin-device-id");
-    let workspace_id = header_text(headers, "x-task-runner-plugin-workspace-id");
     let selected_plugins_header = header_text(headers, "x-task-runner-selected-plugins");
     let command_invocations_header =
         header_text(headers, "x-task-runner-plugin-command-invocations");
-    if device_id.is_none()
-        && workspace_id.is_none()
-        && selected_plugins_header.is_none()
-        && command_invocations_header.is_none()
-    {
+    if selected_plugins_header.is_none() && command_invocations_header.is_none() {
         return Ok(None);
     }
 
@@ -259,8 +251,6 @@ pub(super) fn plugin_config_override_from_headers(
     };
 
     Ok(Some(chatos_plugin_management_sdk::TaskPluginConfig {
-        device_id,
-        workspace_id,
         selected_plugins,
         command_invocations,
     }))

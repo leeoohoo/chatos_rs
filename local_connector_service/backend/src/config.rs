@@ -131,7 +131,6 @@ impl AppConfig {
 
         for caller in [
             "chatos-backend",
-            "task-runner",
             "project-service",
             "mcp-management-service",
         ] {
@@ -225,10 +224,6 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "chatos-backend",
             "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        ),
-        (
-            "task-runner",
-            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         ),
         (
             "project-service",

@@ -288,6 +288,44 @@ async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
 }
 
 #[tokio::test]
+async fn single_step_injects_runtime_tools_into_the_model_request() {
+    let (base_url, requests, _headers, server) = start_lifecycle_mock_provider(vec![json!({
+        "id": "response-final",
+        "status": "completed",
+        "output_text": "done"
+    })])
+    .await;
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "use the available tools"}]),
+    )
+    .with_responses_support(true);
+
+    AiRuntime::new(Some(Arc::new(PagingToolExecutor)))
+        .execute_once(AiSingleStepRequest::new(
+            request,
+            AiRuntimeOptions::for_conversation("single-step-tools"),
+        ))
+        .await
+        .expect("single step");
+    server.abort();
+
+    let requests = requests.lock().await;
+    let tools = requests[0]
+        .get("tools")
+        .and_then(Value::as_array)
+        .expect("runtime tools");
+    assert_eq!(tools.len(), 1);
+    assert_eq!(
+        tools[0].get("name").and_then(Value::as_str),
+        Some("list_page")
+    );
+}
+
+#[tokio::test]
 async fn tool_records_use_the_runtime_supplied_deterministic_prefix() {
     let (base_url, _requests, _headers, server) = start_lifecycle_mock_provider(vec![
         json!({
@@ -991,6 +1029,8 @@ fn turn_report_wraps_success_and_failure() {
         finish_reason: Some("stop".to_string()),
         usage: None,
         response_id: Some("resp_1".to_string()),
+        response_output_items: Vec::new(),
+        request_input_items: Vec::new(),
     }
     .into_report();
 

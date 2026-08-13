@@ -43,6 +43,7 @@ struct CloudAgentOutboxDocument {
     #[serde(rename = "_id")]
     event_id: String,
     intent: CloudAgentOutboxIntent,
+    available_at: DateTime,
     status: String,
     publish_attempts: u32,
     created_at: DateTime,
@@ -103,11 +104,11 @@ impl MongoCloudAgentRunStore {
                 IndexModel::builder()
                     .keys(doc! {
                         "status": 1_i32,
-                        "intent.available_at": 1_i32,
+                        "available_at": 1_i32,
                     })
                     .options(
                         IndexOptions::builder()
-                            .name("cloud_agent_outbox_ready".to_string())
+                            .name("cloud_agent_outbox_available_at_ready".to_string())
                             .build(),
                     )
                     .build(),
@@ -210,6 +211,9 @@ impl MongoCloudAgentRunStore {
                         CloudAgentOutboxDocument {
                             event_id: intent.event_id.clone(),
                             intent: intent.clone(),
+                            available_at: DateTime::from_millis(
+                                intent.available_at.timestamp_millis(),
+                            ),
                             status: "pending".to_string(),
                             publish_attempts: 0,
                             created_at: DateTime::now(),
@@ -284,7 +288,7 @@ impl MongoCloudAgentRunStore {
             .find(
                 doc! {
                     "status": "pending",
-                    "intent.available_at": { "$lte": DateTime::now() },
+                    "available_at": { "$lte": DateTime::now() },
                 },
                 mongodb::options::FindOptions::builder()
                     .sort(doc! { "intent.available_at": 1_i32, "_id": 1_i32 })
@@ -345,6 +349,7 @@ impl CloudAgentRunStore for MongoCloudAgentRunStore {
             return Ok(CloudAgentClaimResult::OutOfOrder);
         }
         let now = DateTime::now();
+        let record_updated_at = chrono::Utc::now().to_rfc3339();
         let claim_until = DateTime::from_millis(claim.claim_until.timestamp_millis());
         let updated = self
             .runs
@@ -369,7 +374,7 @@ impl CloudAgentRunStore for MongoCloudAgentRunStore {
                     "$set": {
                         "claim_token": claim.claim_token.as_str(),
                         "claim_until": claim_until,
-                        "record.updated_at": now,
+                        "record.updated_at": record_updated_at,
                     }
                 },
                 FindOneAndUpdateOptions::builder()
@@ -443,7 +448,7 @@ impl CloudAgentRunStore for MongoCloudAgentRunStore {
                     "$set": {
                         "claim_token": bson::Bson::Null,
                         "claim_until": bson::Bson::Null,
-                        "record.updated_at": DateTime::now(),
+                        "record.updated_at": chrono::Utc::now().to_rfc3339(),
                     }
                 },
                 None,
@@ -492,8 +497,9 @@ impl MongoCloudAgentRunStore {
                         "record.pending_batch_id": bson::to_bson(&transition.pending_batch_id).map_err(|error| error.to_string())?,
                         "record.pending_tool_calls": bson::to_bson(&transition.pending_tool_calls).map_err(|error| error.to_string())?,
                         "record.pending_tool_results": bson::to_bson(&transition.pending_tool_results).map_err(|error| error.to_string())?,
+                        "record.response_input_items": bson::to_bson(&transition.response_input_items).map_err(|error| error.to_string())?,
                         "record.terminal_outcome": bson::to_bson(&transition.terminal_outcome).map_err(|error| error.to_string())?,
-                        "record.updated_at": DateTime::now(),
+                        "record.updated_at": chrono::Utc::now().to_rfc3339(),
                         "claim_token": bson::Bson::Null,
                         "claim_until": bson::Bson::Null,
                     },
@@ -514,6 +520,7 @@ impl MongoCloudAgentRunStore {
                     doc! {
                         "$setOnInsert": {
                             "intent": bson::to_bson(intent).map_err(|error| error.to_string())?,
+                            "available_at": DateTime::from_millis(intent.available_at.timestamp_millis()),
                             "status": "pending",
                             "publish_attempts": 0_i32,
                             "created_at": DateTime::now(),
@@ -583,5 +590,40 @@ mod tests {
             bson::to_bson(&CloudAgentRunPhase::ToolBatch).unwrap(),
             bson::Bson::String("tool_batch".to_string())
         );
+    }
+
+    #[test]
+    fn outbox_available_at_is_stored_as_mongodb_datetime() {
+        let available_at = chrono::Utc::now();
+        let document = CloudAgentOutboxDocument {
+            event_id: "event-1".to_string(),
+            intent: CloudAgentOutboxIntent {
+                event_id: "event-1".to_string(),
+                topic: "run_started".to_string(),
+                routing_key: "cloud_agent.test.runtime".to_string(),
+                ordering: chatos_cloud_agent_protocol::CloudAgentOrdering {
+                    ordering_lane_key: "lane-1".to_string(),
+                    lane_seq: 1,
+                    agent_run_id: "run-1".to_string(),
+                    generation: 1,
+                    step_seq: 1,
+                },
+                causation_id: "cause-1".to_string(),
+                correlation_id: "correlation-1".to_string(),
+                available_at,
+                payload: serde_json::json!({}),
+            },
+            available_at: DateTime::from_millis(available_at.timestamp_millis()),
+            status: "pending".to_string(),
+            publish_attempts: 0,
+            created_at: DateTime::now(),
+            updated_at: DateTime::now(),
+        };
+
+        let serialized = bson::to_document(&document).unwrap();
+        assert!(matches!(
+            serialized.get("available_at"),
+            Some(bson::Bson::DateTime(_))
+        ));
     }
 }

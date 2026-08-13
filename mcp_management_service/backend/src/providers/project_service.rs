@@ -59,6 +59,7 @@ pub(super) struct ProjectServiceProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: std::time::Duration,
     response_limit_bytes: usize,
 }
 

@@ -195,20 +195,24 @@ impl MessageManagerCore {
         self.persist_message(message).await
     }
 
-    pub(crate) async fn save_tool_results(&self, session_id: &str, results: &[ToolResult]) {
+    pub(crate) async fn save_tool_results(
+        &self,
+        session_id: &str,
+        results: &[ToolResult],
+    ) -> Result<(), String> {
         for result in results {
             let metadata = build_tool_result_metadata(result);
-            let _ = self
-                .save_tool_message(
-                    session_id,
-                    &result.content,
-                    &result.tool_call_id,
-                    None,
-                    None,
-                    Some(metadata),
-                )
-                .await;
+            self.save_tool_message(
+                session_id,
+                &result.content,
+                &result.tool_call_id,
+                None,
+                None,
+                Some(metadata),
+            )
+            .await?;
         }
+        Ok(())
     }
 
     async fn persist_message(&self, message: Message) -> Result<Message, String> {

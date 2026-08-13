@@ -24,29 +24,7 @@ export interface TaskRunAttemptRecord {
   started_at: string;
   finished_at?: string | null;
   recovery_reason?: string | null;
-  sandbox_id?: string | null;
-  lease_id?: string | null;
   model_response_id?: string | null;
-}
-
-export interface RunPluginComponentSnapshot {
-  component_key: string;
-  kind: string;
-  execution_host: 'cloud' | 'local' | 'portable';
-  content_sha256: string;
-  runtime: Record<string, unknown>;
-}
-
-export interface RunPluginSnapshot {
-  plugin_id: string;
-  release_id: string;
-  version: string;
-  artifact_sha256: string;
-  device_id?: string | null;
-  workspace_id?: string | null;
-  component_snapshots: RunPluginComponentSnapshot[];
-  permission_snapshot: string[];
-  auth_connection_ids: string[];
 }
 
 export interface TaskRunRecord {
@@ -58,7 +36,6 @@ export interface TaskRunRecord {
   started_at?: string | null;
   finished_at?: string | null;
   input_snapshot: unknown;
-  plugin_snapshots: RunPluginSnapshot[];
   context_snapshot?: unknown;
   result_summary?: string | null;
   error_message?: string | null;

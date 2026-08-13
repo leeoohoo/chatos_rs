@@ -84,9 +84,9 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             capabilities: &["发起 UI 提问", "等待用户提交", "读取用户选择"],
         },
         BuiltinMcpKind::RemoteConnectionController => McpBuiltinKindGuide {
-            description: "远程服务器控制工具，适合需要连接 Task Runner 服务器清单中的远程机器并执行命令或读写文件的任务。",
-            use_cases: &["操作远程服务器", "读取远程日志", "执行远程命令", "排查部署环境"],
-            capabilities: &["列出远程连接", "执行远程命令", "读写远程文件", "查看远程状态"],
+            description: "远程连接能力必须由 MCP Management 的项目上下文路由，Task Runner 不提供该能力。",
+            use_cases: &[],
+            capabilities: &[],
         },
         BuiltinMcpKind::WebTools => McpBuiltinKindGuide {
             description: "网页检索和内容提取工具，适合需要查找外部资料、阅读网页或获取最新公开信息的任务。",
@@ -119,6 +119,7 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
 pub fn mcp_builtin_kind_values() -> Vec<String> {
     configurable_builtin_kinds()
         .into_iter()
+        .filter(|kind| *kind != BuiltinMcpKind::RemoteConnectionController)
         .map(|kind| kind.kind_name().to_string())
         .collect()
 }
@@ -169,7 +170,6 @@ pub struct McpPromptPreviewRequest {
     pub builtin_prompt_locale: Option<String>,
     pub enabled_builtin_kinds: Option<Vec<String>>,
     pub workspace_dir: Option<String>,
-    pub default_remote_server_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

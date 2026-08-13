@@ -8,6 +8,10 @@ use chatos_mcp::code_maintainer::{classify_file_modification_error, FileModifica
 use chatos_mcp_service::{HostCapabilityPolicy, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER};
 use reqwest::Method;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
 
 use super::internal_auth::{
     record_project_internal_resource_access, require_project_internal_request,
@@ -42,11 +46,16 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 const TASK_RUNNER_PROJECT_ID_HEADER: &str = "x-task-runner-project-id";
 const MCP_MANAGEMENT_RUN_ID_HEADER: &str = "x-mcp-management-run-id";
 const DEFAULT_MAX_WRITE_BYTES: i64 = 5 * 1024 * 1024;
+const COMMAND_TIMEOUT_SECONDS: u64 = 180;
+
+static COMMAND_WORKSPACES: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
 
 #[derive(Debug)]
 struct HarnessMcpContext {
     project_id: String,
     repo_path: String,
+    git_url: String,
+    default_branch: String,
     access: HarnessApiAccessResponse,
     client: reqwest::Client,
     enabled_tools: HostCapabilityPolicy,
@@ -222,8 +231,8 @@ async fn build_harness_mcp_context(
     enabled_tools: HostCapabilityPolicy,
     run_id: Option<String>,
 ) -> Result<HarnessMcpContext, String> {
-    if !enabled_tools.code_read && !enabled_tools.code_write {
-        return Err("CodeMaintainer has no enabled project workspace capabilities".to_string());
+    if !enabled_tools.code_read && !enabled_tools.code_write && !enabled_tools.terminal {
+        return Err("project workspace has no enabled capabilities".to_string());
     }
     let project = state
         .store
@@ -239,6 +248,20 @@ async fn build_harness_mcp_context(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "project source workspace is not available".to_string())?
         .to_string();
+    let git_url = project
+        .harness_git_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "project source git URL is not available".to_string())?
+        .to_string();
+    let default_branch = project
+        .harness_default_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main")
+        .to_string();
     let owner_user_id = project_owner_user_id(&project)?;
     let access = fetch_harness_api_access(&state, owner_user_id.as_str()).await?;
     ensure_harness_space_matches(&project, &access)?;
@@ -250,6 +273,8 @@ async fn build_harness_mcp_context(
     Ok(HarnessMcpContext {
         project_id,
         repo_path,
+        git_url,
+        default_branch,
         access,
         client,
         enabled_tools,
@@ -401,6 +426,10 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
             ensure_write_allowed(ctx)?;
             tool_abort_edit_session(ctx, &arguments).await
         }
+        "execute_command" => {
+            ensure_terminal_allowed(ctx)?;
+            tool_execute_command(ctx, &arguments).await
+        }
         other => Err(format!("Tool not found: {other}")),
     };
     if matches!(
@@ -410,6 +439,158 @@ async fn call_harness_tool(ctx: &HarnessMcpContext, params: Value) -> Result<Val
         record_file_modification_outcome(ctx, name, &invocation);
     }
     invocation
+}
+
+async fn tool_execute_command(ctx: &HarnessMcpContext, args: &Value) -> Result<Value, String> {
+    let command = required_string(args, "command")?.trim();
+    if command.is_empty() {
+        return Err("command is required".to_string());
+    }
+    if args
+        .get("background")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(
+            "background commands are not supported by the Harness command provider".to_string(),
+        );
+    }
+    let workspace = command_workspace(ctx).await?;
+    refresh_command_workspace(ctx, workspace.as_path()).await?;
+    let relative_path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != ".")
+        .unwrap_or("");
+    let target = if relative_path.is_empty() {
+        workspace.clone()
+    } else {
+        workspace.join(relative_path)
+    };
+    let canonical_workspace = std::fs::canonicalize(workspace.as_path())
+        .map_err(|error| format!("resolve command workspace failed: {error}"))?;
+    let canonical_target = std::fs::canonicalize(target.as_path())
+        .map_err(|error| format!("command path is not available: {error}"))?;
+    if !canonical_target.starts_with(canonical_workspace.as_path()) {
+        return Err("command path escapes the project workspace".to_string());
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(COMMAND_TIMEOUT_SECONDS),
+        tokio::process::Command::new("/bin/sh")
+            .args(["-lc", command])
+            .current_dir(canonical_target.as_path())
+            .output(),
+    )
+    .await
+    .map_err(|_| format!("command timed out after {COMMAND_TIMEOUT_SECONDS} seconds"))?
+    .map_err(|error| format!("start command failed: {error}"))?;
+    let stdout = String::from_utf8_lossy(output.stdout.as_slice());
+    let stderr = String::from_utf8_lossy(output.stderr.as_slice());
+    let combined = match (stdout.trim().is_empty(), stderr.trim().is_empty()) {
+        (false, false) => format!("{stdout}\n{stderr}"),
+        (false, true) => stdout.to_string(),
+        (true, false) => stderr.to_string(),
+        (true, true) => String::new(),
+    };
+    Ok(tool_structured_result(
+        json!({
+            "project_root": "/workspace",
+            "path": if relative_path.is_empty() { "/workspace".to_string() } else { format!("/workspace/{relative_path}") },
+            "command": command,
+            "background": false,
+            "busy": false,
+            "output": combined,
+            "exit_code": output.status.code(),
+            "success": output.status.success(),
+            "finished_by": "exit",
+        }),
+        "command completed",
+    ))
+}
+
+async fn command_workspace(ctx: &HarnessMcpContext) -> Result<PathBuf, String> {
+    let key = ctx
+        .run_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(ctx.project_id.as_str())
+        .to_string();
+    let workspaces = COMMAND_WORKSPACES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = workspaces.lock().await;
+    if let Some(path) = guard.get(key.as_str()).filter(|path| path.is_dir()) {
+        return Ok(path.clone());
+    }
+    let root =
+        std::env::temp_dir().join(format!("chatos-project-command-{}", uuid::Uuid::new_v4()));
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(root.as_path())
+        .map_err(|error| format!("create command workspace failed: {error}"))?;
+    let mut git_url = reqwest::Url::parse(ctx.git_url.as_str())
+        .map_err(|error| format!("invalid project git URL: {error}"))?;
+    git_url
+        .set_username(ctx.access.harness_uid.trim())
+        .map_err(|_| "invalid Harness username".to_string())?;
+    git_url
+        .set_password(Some(ctx.access.access_token.trim()))
+        .map_err(|_| "invalid Harness access token".to_string())?;
+    let output = tokio::process::Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            ctx.default_branch.as_str(),
+            git_url.as_str(),
+        ])
+        .arg(workspace.as_os_str())
+        .output()
+        .await
+        .map_err(|error| format!("start project workspace clone failed: {error}"))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(output.stderr.as_slice())
+            .replace(ctx.access.access_token.as_str(), "***");
+        let _ = std::fs::remove_dir_all(root.as_path());
+        return Err(format!(
+            "prepare project command workspace failed: {}",
+            error.trim()
+        ));
+    }
+    guard.insert(key, workspace.clone());
+    Ok(workspace)
+}
+
+async fn refresh_command_workspace(
+    ctx: &HarnessMcpContext,
+    workspace: &std::path::Path,
+) -> Result<(), String> {
+    for args in [
+        vec![
+            "fetch",
+            "--depth",
+            "1",
+            "origin",
+            ctx.default_branch.as_str(),
+        ],
+        vec!["reset", "--hard", "FETCH_HEAD"],
+    ] {
+        let output = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(workspace)
+            .output()
+            .await
+            .map_err(|error| format!("refresh command workspace failed: {error}"))?;
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(output.stderr.as_slice())
+                .replace(ctx.access.access_token.as_str(), "***");
+            return Err(format!(
+                "refresh command workspace failed: {}",
+                error.trim()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn record_file_modification_outcome(
@@ -483,6 +664,14 @@ fn ensure_write_allowed(ctx: &HarnessMcpContext) -> Result<(), String> {
         Ok(())
     } else {
         Err("CodeMaintainer write capability is not enabled for this task".to_string())
+    }
+}
+
+fn ensure_terminal_allowed(ctx: &HarnessMcpContext) -> Result<(), String> {
+    if ctx.enabled_tools.terminal {
+        Ok(())
+    } else {
+        Err("TerminalController capability is not enabled for this task".to_string())
     }
 }
 

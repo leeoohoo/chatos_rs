@@ -75,13 +75,11 @@ describe('MessageTaskGraphPanel zoom controls', () => {
         loading={false}
         error={null}
         loadingRunId={null}
-        loadingChangesRunId={null}
         panelWidth={1_200}
         loadingProcessTaskId={null}
         onOpenDetail={vi.fn()}
         onOpenProcessLog={vi.fn()}
         onOpenRun={vi.fn()}
-        onOpenChanges={vi.fn()}
       />,
     );
 
@@ -109,13 +107,11 @@ describe('MessageTaskGraphPanel zoom controls', () => {
         loading={false}
         error={null}
         loadingRunId={null}
-        loadingChangesRunId={null}
         panelWidth={1_200}
         loadingProcessTaskId={null}
         onOpenDetail={vi.fn()}
         onOpenProcessLog={vi.fn()}
         onOpenRun={vi.fn()}
-        onOpenChanges={vi.fn()}
       />,
     );
 
@@ -145,13 +141,11 @@ describe('MessageTaskGraphPanel zoom controls', () => {
         loading={false}
         error={null}
         loadingRunId={null}
-        loadingChangesRunId={null}
         panelWidth={1_200}
         loadingProcessTaskId={null}
         onOpenDetail={onOpenDetail}
         onOpenProcessLog={vi.fn()}
         onOpenRun={vi.fn()}
-        onOpenChanges={vi.fn()}
       />,
     );
 
@@ -201,13 +195,11 @@ describe('MessageTaskGraphPanel zoom controls', () => {
         loading={false}
         error={null}
         loadingRunId={null}
-        loadingChangesRunId={null}
         panelWidth={1_200}
         loadingProcessTaskId={null}
         onOpenDetail={onOpenDetail}
         onOpenProcessLog={vi.fn()}
         onOpenRun={vi.fn()}
-        onOpenChanges={vi.fn()}
       />,
     );
 

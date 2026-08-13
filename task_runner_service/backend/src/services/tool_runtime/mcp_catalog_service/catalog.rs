@@ -29,6 +29,7 @@ impl McpCatalogService {
             .collect::<Vec<_>>();
         Ok(configurable_builtin_kinds()
             .into_iter()
+            .filter(|kind| *kind != chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController)
             .map(|kind| {
                 let server = kind.server_with_options(&server_options);
                 let guide = mcp_builtin_kind_guide(kind);
@@ -80,9 +81,6 @@ impl McpCatalogService {
                             available_tool_names,
                             unavailable_tools,
                             message: match kind {
-                                chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
-                                    Some("服务器列表来自 Task Runner 的“服务器”页面".to_string())
-                                }
                                 chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
                                     Some("规划任务运行时会自动启用；普通任务不可选择。".to_string())
                                 }

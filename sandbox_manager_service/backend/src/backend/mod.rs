@@ -310,7 +310,7 @@ mod tests {
     fn effective_permissions_are_serialized_for_the_sandbox_agent() {
         let mut permissions = legacy_policy_permission_snapshot(
             &EffectiveSandboxPolicy::default(),
-            vec!["/host/task-runner/run/workspace".to_string()],
+            vec!["/host/runtime/workspace".to_string()],
         );
         permissions.network = NetworkPermissionPolicy::Unrestricted;
 

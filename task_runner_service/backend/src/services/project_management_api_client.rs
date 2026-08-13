@@ -3,7 +3,6 @@
 
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::auth;
 use crate::config::AppConfig;
@@ -22,7 +21,6 @@ const PROJECT_SERVICE_TOKEN_AUDIENCE: &str = "project-service";
 pub(in crate::services) const PROJECT_READ_SCOPE: &str = "project.read";
 pub(in crate::services) const PROJECT_SYNC_SCOPE: &str = "project.sync";
 pub(in crate::services) const PROJECT_MCP_SCOPE: &str = "project.mcp";
-pub(in crate::services) const PROJECT_HARNESS_SCOPE: &str = "project.harness";
 
 #[derive(Debug, Clone, Deserialize)]
 struct ProjectServiceProjectRecord {
@@ -44,112 +42,11 @@ struct ProjectServiceProjectRecord {
     #[serde(default)]
     source_git_url: Option<String>,
     #[serde(default)]
-    harness_space_identifier: Option<String>,
-    #[serde(default)]
-    harness_repo_identifier: Option<String>,
-    #[serde(default)]
-    harness_repo_path: Option<String>,
-    #[serde(default)]
-    harness_git_url: Option<String>,
-    #[serde(default)]
-    harness_git_ssh_url: Option<String>,
-    #[serde(default)]
-    harness_default_branch: Option<String>,
-    #[serde(default)]
-    harness_provision_status: Option<String>,
-    #[serde(default)]
-    harness_provision_error: Option<String>,
-    #[serde(default)]
-    harness_provisioned_at: Option<String>,
-    #[serde(default)]
     description: Option<String>,
     status: TaskProjectStatus,
     created_at: String,
     updated_at: String,
     archived_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProjectHarnessGitAccess {
-    pub project_id: String,
-    pub repo_path: String,
-    pub git_url: String,
-    pub default_branch: String,
-    pub space_identifier: String,
-    pub access_username: String,
-    pub access_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProjectRuntimeEnvironmentResponse {
-    environment: ProjectRuntimeEnvironmentSettings,
-    #[serde(default)]
-    images: Vec<ProjectRuntimeEnvironmentImage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentSettings {
-    pub(crate) sandbox_enabled: bool,
-    #[serde(default)]
-    pub(crate) status: String,
-    #[serde(default)]
-    pub(crate) not_runnable_reason: Option<String>,
-    #[serde(default, alias = "primary_service_id")]
-    pub(crate) execution_service_id: Option<String>,
-    #[serde(default)]
-    pub(crate) env_vars: Value,
-    #[serde(default)]
-    pub(crate) generated_config_files: Vec<ProjectRuntimeEnvironmentConfigFile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentConfigFile {
-    pub(crate) path: String,
-    pub(crate) content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentImage {
-    #[serde(default)]
-    pub(crate) environment_key: String,
-    #[serde(default)]
-    pub(crate) service_id: String,
-    #[serde(default)]
-    pub(crate) display_name: String,
-    #[serde(default)]
-    pub(crate) service_role: String,
-    #[serde(default)]
-    pub(crate) mcp_policy: ProjectRuntimeEnvironmentMcpPolicy,
-    #[serde(default)]
-    pub(crate) image_id: Option<String>,
-    #[serde(default)]
-    pub(crate) image_ref: Option<String>,
-    #[serde(default)]
-    pub(crate) image_provider: String,
-    #[serde(default)]
-    pub(crate) status: String,
-    #[serde(default)]
-    pub(crate) dockerfile: Option<String>,
-    #[serde(default)]
-    pub(crate) env_vars: Value,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentMcpPolicy {
-    #[serde(default)]
-    pub(crate) managed_by: String,
-    #[serde(default)]
-    pub(crate) attachment: String,
-    #[serde(default)]
-    pub(crate) filesystem: bool,
-    #[serde(default)]
-    pub(crate) terminal: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct ProjectSandboxRuntimeSettings {
-    pub(crate) environment: ProjectRuntimeEnvironmentSettings,
-    pub(crate) images: Vec<ProjectRuntimeEnvironmentImage>,
 }
 
 pub async fn get_project_from_project_service(
@@ -305,58 +202,6 @@ pub async fn sync_get_project(
     get_project_with_sync_secret(&client, base_url, sync_secret, project_id)
         .await
         .map(|project| project.map(Into::into))
-}
-
-pub async fn get_project_harness_git_access(
-    config: &AppConfig,
-    project_id: &str,
-) -> Result<ProjectHarnessGitAccess, String> {
-    let base_url = required_project_service_internal_base_url(config)?;
-    let sync_secret = required_sync_secret(config)?;
-    let endpoint = format!(
-        "{}/api/chatos-sync/projects/{}/harness/git-access",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    send_json(signed_project_service_request(
-        config.project_service_internal_http_client.get(endpoint),
-        sync_secret,
-        PROJECT_HARNESS_SCOPE,
-    )?)
-    .await
-}
-
-pub async fn get_project_sandbox_enabled(
-    config: &AppConfig,
-    project_id: &str,
-) -> Result<bool, String> {
-    Ok(get_project_sandbox_runtime_settings(config, project_id)
-        .await?
-        .environment
-        .sandbox_enabled)
-}
-
-pub(crate) async fn get_project_sandbox_runtime_settings(
-    config: &AppConfig,
-    project_id: &str,
-) -> Result<ProjectSandboxRuntimeSettings, String> {
-    let base_url = required_project_service_internal_base_url(config)?;
-    let sync_secret = required_sync_secret(config)?;
-    let endpoint = format!(
-        "{}/api/chatos-sync/projects/{}/runtime-environment",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    let response = send_json::<ProjectRuntimeEnvironmentResponse>(signed_project_service_request(
-        config.project_service_internal_http_client.get(endpoint),
-        sync_secret,
-        PROJECT_READ_SCOPE,
-    )?)
-    .await?;
-    Ok(ProjectSandboxRuntimeSettings {
-        environment: response.environment,
-        images: response.images,
-    })
 }
 
 #[derive(Debug, Serialize)]
@@ -644,15 +489,6 @@ impl From<ProjectServiceProjectRecord> for TaskProjectRecord {
             cloud_import_source: value.cloud_import_source,
             import_status: value.import_status,
             source_git_url: value.source_git_url,
-            harness_space_identifier: value.harness_space_identifier,
-            harness_repo_identifier: value.harness_repo_identifier,
-            harness_repo_path: value.harness_repo_path,
-            harness_git_url: value.harness_git_url,
-            harness_git_ssh_url: value.harness_git_ssh_url,
-            harness_default_branch: value.harness_default_branch,
-            harness_provision_status: value.harness_provision_status,
-            harness_provision_error: value.harness_provision_error,
-            harness_provisioned_at: value.harness_provisioned_at,
             description: value.description,
             status: value.status,
             created_at: value.created_at,
@@ -674,7 +510,7 @@ mod tests {
         insert_project_service_mcp_signing_headers(
             &mut headers,
             "task-runner-internal-secret",
-            PROJECT_HARNESS_SCOPE,
+            PROJECT_MCP_SCOPE,
         )
         .expect("deferred project service signing headers");
 
@@ -683,7 +519,7 @@ mod tests {
             headers
                 .get("x-project-service-internal-scope")
                 .map(String::as_str),
-            Some(PROJECT_HARNESS_SCOPE)
+            Some(PROJECT_MCP_SCOPE)
         );
 
         assert_eq!(

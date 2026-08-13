@@ -12,6 +12,7 @@ const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
 const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 const NATIVE_SKILL_TOOL_CALL_OPERATION: &str = "native_skill_tool_call";
+const LOCAL_SKILL_APPLY_OPERATION: &str = "local_skill_apply";
 const COMMAND_INVOKE_OPERATION: &str = "command_invoke";
 const AGENT_APPLY_OPERATION: &str = "agent_apply";
 const COMMAND_TOOL_NAME: &str = "invoke";
@@ -40,6 +41,8 @@ struct PluginPrepareResponse {
     version: String,
     artifact_sha256: String,
     component_key: String,
+    #[serde(default)]
+    skills: Vec<Value>,
     #[serde(default)]
     native_skill: Option<Value>,
     #[serde(default)]

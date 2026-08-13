@@ -6,7 +6,7 @@ use std::time::Duration;
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_gateway::McpManagementGatewayBuilder;
 use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
-use chatos_plugin_management_sdk::SystemMcpKey;
+use chatos_plugin_management_sdk::{PluginCommandInvocation, SelectedPluginRef, SystemMcpKey};
 use tracing::{info, warn};
 
 use crate::services::mcp_loader::McpHttpServer;
@@ -27,6 +27,8 @@ pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) contact_agent_id: Option<&'a str>,
     pub(super) default_model_config_id: Option<&'a str>,
     pub(super) expected_project_task_ids: &'a [String],
+    pub(super) selected_plugins: Vec<SelectedPluginRef>,
+    pub(super) plugin_command_invocations: Vec<PluginCommandInvocation>,
     pub(super) locale: Option<&'a str>,
 }
 
@@ -34,6 +36,7 @@ pub(super) struct McpManagementGateway {
     server: McpHttpServer,
     effective_mcp_ids: Vec<String>,
     provider_skills_prompt: Option<String>,
+    plugin_instruction_items: Vec<serde_json::Value>,
     mcp_command_queue: String,
     runtime_session: McpManagementRuntimeSessionHandle,
 }
@@ -45,6 +48,7 @@ impl McpManagementGateway {
         McpHttpServer,
         Vec<String>,
         Option<String>,
+        Vec<serde_json::Value>,
         String,
         McpManagementRuntimeSessionHandle,
     ) {
@@ -52,6 +56,7 @@ impl McpManagementGateway {
             self.server,
             self.effective_mcp_ids,
             self.provider_skills_prompt,
+            self.plugin_instruction_items,
             self.mcp_command_queue,
             self.runtime_session,
         )
@@ -89,6 +94,8 @@ pub(super) async fn resolve_mcp_management_gateway(
         tool_result_max_chars: None,
         expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
         requested_mcp_ids: None,
+        selected_plugins: request.selected_plugins,
+        plugin_command_invocations: request.plugin_command_invocations,
         locale: normalized(request.locale),
         requested_device_id: None,
         requested_sandbox_provider: None,
@@ -132,6 +139,8 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
+        selected_plugins: Vec::new(),
+        plugin_command_invocations: Vec::new(),
         locale: None,
         requested_device_id: None,
         requested_sandbox_provider: None,
@@ -212,6 +221,7 @@ async fn build_resolved_gateway(
         server,
         effective_mcp_ids: resolved.effective_mcp_ids,
         provider_skills_prompt: resolved.provider_skills_prompt,
+        plugin_instruction_items: resolved.plugin_instruction_items,
         mcp_command_queue,
         runtime_session,
     })

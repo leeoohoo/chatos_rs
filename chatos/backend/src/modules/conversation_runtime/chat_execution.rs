@@ -203,14 +203,7 @@ pub async fn prepare_mcp_execution(
         unavailable_tools.as_slice(),
         runtime_context.internal_context_locale,
     );
-    let mut prefixed_input_items = Vec::new();
-    push_optional_system_prompt(
-        &mut prefixed_input_items,
-        runtime_context.contact_system_prompt.as_deref(),
-    );
-    if let Some(workspace_prompt) = build_workspace_global_prompt(runtime_context) {
-        prefixed_input_items.push(system_input_item(workspace_prompt.as_str()));
-    }
+    let prefixed_input_items = runtime_prefixed_input_items(runtime_context);
     let tool_metadata = executor.tool_metadata().clone();
 
     Ok(PreparedMcpExecution {
@@ -219,6 +212,20 @@ pub async fn prepare_mcp_execution(
         prefixed_input_items,
         tool_metadata,
     })
+}
+
+fn runtime_prefixed_input_items(
+    runtime_context: &ResolvedConversationRuntimeContext,
+) -> Vec<Value> {
+    let mut prefixed_input_items = runtime_context.plugin_instruction_items.clone();
+    push_optional_system_prompt(
+        &mut prefixed_input_items,
+        runtime_context.contact_system_prompt.as_deref(),
+    );
+    if let Some(workspace_prompt) = build_workspace_global_prompt(runtime_context) {
+        prefixed_input_items.push(system_input_item(workspace_prompt.as_str()));
+    }
+    prefixed_input_items
 }
 
 pub fn effective_codex_gateway_mcp_passthrough(

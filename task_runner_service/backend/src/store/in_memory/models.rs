@@ -62,31 +62,6 @@ impl InMemoryStore {
         project
     }
 
-    pub(in crate::store) fn list_remote_servers(&self) -> Vec<RemoteServerRecord> {
-        let data = self.inner.read();
-        let mut items = data.remote_servers.values().cloned().collect::<Vec<_>>();
-        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        items
-    }
-
-    pub(in crate::store) fn get_remote_server(&self, id: &str) -> Option<RemoteServerRecord> {
-        self.inner.read().remote_servers.get(id).cloned()
-    }
-
-    pub(in crate::store) fn save_remote_server(
-        &self,
-        server: RemoteServerRecord,
-    ) -> RemoteServerRecord {
-        let mut data = self.inner.write();
-        data.remote_servers
-            .insert(server.id.clone(), server.clone());
-        server
-    }
-
-    pub(in crate::store) fn delete_remote_server(&self, id: &str) -> bool {
-        self.inner.write().remote_servers.remove(id).is_some()
-    }
-
     pub(in crate::store) fn list_model_config_usage(&self) -> Vec<ModelConfigUsageRecord> {
         let data = self.inner.read();
         let mut usage = BTreeMap::<String, ModelConfigUsageRecord>::new();

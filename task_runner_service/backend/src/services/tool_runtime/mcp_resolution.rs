@@ -99,22 +99,6 @@ pub(super) fn resolve_task_mcp(
     resolve_task_mcp_with_requirements(task, active_host_backends, caller_requirements.as_slice())
 }
 
-pub(super) fn resolve_task_mcp_authoritative(
-    task: &TaskRecord,
-    active_host_backends: &[BuiltinHostBackend],
-) -> TaskMcpResolution {
-    let effective_kinds = selected_builtin_kinds_from_config(&task.mcp_config);
-    let hosted_builtin_routes = hosted_builtin_routes(&effective_kinds, active_host_backends);
-    let server_local_builtin_kinds =
-        server_local_builtin_kinds(effective_kinds.clone(), active_host_backends);
-    TaskMcpResolution {
-        requested_builtin_kinds: effective_kinds,
-        required_builtin_kinds: Vec::new(),
-        hosted_builtin_routes,
-        server_local_builtin_kinds,
-    }
-}
-
 pub(super) fn resolve_task_mcp_with_requirements(
     task: &TaskRecord,
     active_host_backends: &[BuiltinHostBackend],

@@ -264,6 +264,7 @@ mod tests {
             })),
             usage: None,
             response_id: Some("resp_1".to_string()),
+            response_output_items: Vec::new(),
         };
 
         let error = failed_ai_response_error(&response).expect("failed response error");
@@ -284,6 +285,7 @@ mod tests {
             provider_error: None,
             usage: None,
             response_id: None,
+            response_output_items: Vec::new(),
         };
 
         assert_eq!(

@@ -56,10 +56,6 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
     #[serde(default)]
-    pub(in crate::mcp_server) plugin_device_id: Option<String>,
-    #[serde(default)]
-    pub(in crate::mcp_server) plugin_workspace_id: Option<String>,
-    #[serde(default)]
     pub(in crate::mcp_server) selected_plugins: Option<Vec<SelectedPluginRef>>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Option<Vec<String>>,
@@ -69,11 +65,7 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
 
 impl CreateTaskArgs {
     pub(in crate::mcp_server) fn into_request(self) -> Result<CreateTaskRequest, String> {
-        if self.plugin_device_id.is_some()
-            || self.plugin_workspace_id.is_some()
-            || self.selected_plugins.is_some()
-            || self.mcp_config.is_some()
-        {
+        if self.selected_plugins.is_some() || self.mcp_config.is_some() {
             return Err(
                 "Plugin selection and runtime routing are controlled by the program through Agent bindings and project context and cannot be selected by AI"
                     .to_string(),

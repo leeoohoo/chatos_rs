@@ -514,6 +514,7 @@ mod tests {
             auth_connection_ids: Vec::new(),
             required: true,
             allow_writes: false,
+            command_arguments: None,
         }
     }
 

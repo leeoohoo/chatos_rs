@@ -1,6 +1,4 @@
 pub const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
-pub const TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY: &str =
-    "task_runner.execution.environment_mode";
 pub const TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY: &str =
     "task_runner.supply_chain.baseline_revision";
 pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY: &str =
@@ -9,8 +7,6 @@ pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
     "task_runner.supply_chain.node_audit_level";
 pub const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
     "task_runner.supply_chain.install_script_allowlist";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY: &str =
-    "task_runner.queue.run_dispatch_mode";
 pub const TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY: &str =
     "task_runner.queue.callback_delivery_mode";
 pub const TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY: &str = "task_runner.queue.rabbitmq_url";
@@ -18,16 +14,10 @@ pub const TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
     "task_runner.queue.rabbitmq_exchange";
 pub const TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY: &str =
     "task_runner.queue.rabbitmq_reconnect_ms";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_QUEUE_CONFIG_KEY: &str =
-    "task_runner.queue.run_dispatch_queue";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_QUEUE_CONFIG_KEY: &str =
-    "task_runner.queue.run_dispatch_retry_queue";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_RETRY_DELAY_MS_CONFIG_KEY: &str =
-    "task_runner.queue.run_dispatch_retry_delay_ms";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
-    "task_runner.queue.run_dispatch_outbox_reconcile_ms";
-pub const TASK_RUNNER_QUEUE_RUN_DISPATCH_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
-    "task_runner.queue.run_dispatch_outbox_batch_size";
+pub const TASK_RUNNER_QUEUE_EVENT_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "task_runner.queue.event_outbox_reconcile_ms";
+pub const TASK_RUNNER_QUEUE_EVENT_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "task_runner.queue.event_outbox_batch_size";
 pub const TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_CONFIG_KEY: &str =
     "task_runner.queue.worker_control_queue_prefix";
 pub const TASK_RUNNER_QUEUE_RUN_POST_PROCESS_QUEUE_CONFIG_KEY: &str =
@@ -62,10 +52,6 @@ pub const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_result_max_chars";
 pub const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_results_total_max_chars";
-pub const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
-    "task_runner.cache.plugin_cloud_bundle_max_entries";
-pub const TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY: &str =
-    "task_runner.cache.plugin_cloud_bundle_max_bytes";
 pub const TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.memory_engine_request_timeout_ms";
 pub const TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY: &str = "task_runner.scheduler.poll_interval_ms";
@@ -102,16 +88,10 @@ pub const TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.project_service_request_timeout_ms";
 pub const TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
     "task_runner.downstream.memory_engine_base_url";
-pub const TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY: &str =
-    "task_runner.downstream.sandbox_manager_base_url";
 pub const TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.downstream.project_service_internal_api_secret";
 pub const TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.downstream.memory_engine_internal_api_secret";
-pub const TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "task_runner.downstream.local_connector_internal_api_secret";
-pub const TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "task_runner.downstream.sandbox_manager_internal_api_secret";
 pub const TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY: &str =
     "task_runner.security.project_service_internal_api_secret";
 pub const TASK_RUNNER_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
@@ -122,16 +102,6 @@ pub const TASK_RUNNER_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.security.user_service_internal_api_secret";
 pub const TASK_RUNNER_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.downstream.plugin_management_internal_api_secret";
-pub const TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "task_runner.downstream.local_connector_service_base_url";
-pub const TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "task_runner.downstream.local_connector_service_request_timeout_ms";
-pub const TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS_CONFIG_KEY: &str =
-    "task_runner.downstream.plugin_relay_timeout_ms";
-pub const TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS_CONFIG_KEY: &str =
-    "task_runner.downstream.plugin_hook_relay_timeout_ms";
-pub const TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS_CONFIG_KEY: &str =
-    "task_runner.downstream.plugin_connector_discovery_timeout_ms";
 pub const TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY: &str =
     "task_runner.downstream.chatos_callback_url";
 pub const TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY: &str =

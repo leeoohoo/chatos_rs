@@ -116,38 +116,6 @@ export function SettingsOverviewTab({
           <Descriptions.Item label={t('settings.currentToolResultsBudget')}>
             {config.tool_results_model_total_max_chars}
           </Descriptions.Item>
-          <Descriptions.Item label={t('settings.executionEnvironmentMode')}>
-            <Space wrap>
-              <Tag color={config.execution_environment_mode === 'cloud' ? 'purple' : 'blue'}>
-                {config.execution_environment_mode === 'cloud'
-                  ? t('settings.executionMode.cloud')
-                  : t('settings.executionMode.local')}
-              </Tag>
-              <Typography.Text type="secondary">
-                {t('settings.executionEnvironmentAutoNote')}
-              </Typography.Text>
-            </Space>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.sandboxEnabled')}>
-            <Tag color={config.sandbox_enabled ? 'green' : 'default'}>
-              {config.sandbox_enabled
-                ? t('settings.sandboxSwitchOn')
-                : t('settings.sandboxSwitchOff')}
-            </Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.sandboxManagerBaseUrl')}>
-            {config.sandbox_manager_base_url || '-'}
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.sandboxManagerAuth')}>
-            <Tag color={config.sandbox_manager_auth_configured ? 'green' : 'red'}>
-              {config.sandbox_manager_auth_configured
-                ? t('settings.sandboxManagerAuthConfigured')
-                : t('settings.sandboxManagerAuthMissing')}
-            </Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('settings.sandboxLeaseTtl')}>
-            {config.sandbox_lease_ttl_seconds} s
-          </Descriptions.Item>
         </Descriptions>
       ) : null}
 

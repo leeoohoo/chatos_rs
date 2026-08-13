@@ -36,6 +36,7 @@ impl ProjectServiceProvider {
         let mut request = self
             .http
             .post(url)
+            .timeout(self.request_timeout)
             .header("x-project-service-caller", CALLER_SERVICE)
             .header("x-project-service-internal-token", token)
             .header(

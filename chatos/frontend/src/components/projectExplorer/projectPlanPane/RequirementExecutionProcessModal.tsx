@@ -100,9 +100,9 @@ export const RequirementExecutionProcessModal: React.FC<{
   });
   const {
     graph, allTasks, loading, error: graphError,
-    loadingProcessTaskId, loadingRunId, loadingChangesRunId,
+    loadingProcessTaskId, loadingRunId,
     retryingTaskId, reloadGraph,
-    openDetail, openProcessLog, openRun, openChanges, retryTask,
+    openDetail, openProcessLog, openRun, retryTask,
   } = taskGraph;
 
   const confirmationState = useMemo(
@@ -724,13 +724,11 @@ export const RequirementExecutionProcessModal: React.FC<{
                 loading,
                 error: graphError,
                 loadingRunId,
-                loadingChangesRunId,
                 panelWidth,
                 loadingProcessTaskId,
                 onOpenDetail: openDetail,
                 onOpenProcessLog: openProcessLog,
                 onOpenRun: openRun,
-                onOpenChanges: openChanges,
               }}
               runRecordCount={allTasks.filter(
                 (task) => Boolean(readString(task.last_run_id)),

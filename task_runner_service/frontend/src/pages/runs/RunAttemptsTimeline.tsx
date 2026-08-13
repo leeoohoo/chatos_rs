@@ -61,16 +61,6 @@ export function RunAttemptsTimeline({
                     {t(`runs.attempts.reason.${attempt.recovery_reason}`)}
                   </Typography.Text>
                 ) : null}
-                {attempt.sandbox_id ? (
-                  <Typography.Text>
-                    {t('runs.attempts.sandbox')}: {attempt.sandbox_id}
-                  </Typography.Text>
-                ) : null}
-                {attempt.lease_id ? (
-                  <Typography.Text>
-                    {t('runs.attempts.lease')}: {attempt.lease_id}
-                  </Typography.Text>
-                ) : null}
                 {attempt.model_response_id ? (
                   <Typography.Text>
                     {t('runs.attempts.modelResponse')}: {attempt.model_response_id}

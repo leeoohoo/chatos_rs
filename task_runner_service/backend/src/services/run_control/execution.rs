@@ -5,12 +5,6 @@ use std::sync::Arc;
 
 use super::*;
 use crate::models::TaskMcpConfig;
-use crate::services::plugin_runtime_relay::{
-    cancel_prepared_plugin_sessions, dispatch_prepared_plugin_hooks,
-};
-use crate::services::run_model_phase::{
-    is_sandbox_infrastructure_failure, plugin_hook_terminal_state,
-};
 use crate::services::stream_events::flush_pending_stream_event;
 use chatos_ai_runtime::TaskRunReport;
 use chatos_cloud_agent_protocol::CloudAgentRunStatus;
@@ -19,7 +13,6 @@ use chatos_cloud_agent_runtime::{
     CloudAgentModelTrigger, CloudAgentProfile, CloudAgentRunStore, CloudAgentSingleStepExecution,
     CloudAgentSingleStepOutput,
 };
-use sha2::{Digest, Sha256};
 
 impl RunService {
     pub(crate) async fn finalize_cloud_agent_terminal(
@@ -66,6 +59,7 @@ impl RunService {
             .unwrap_or_default();
         let visible_response = outcome
             .get("visible_response")
+            .filter(|value| !value.is_null())
             .cloned()
             .map(serde_json::from_value::<chatos_ai_runtime::AiResponse>)
             .transpose()
@@ -142,6 +136,7 @@ impl RunService {
         );
         report.execution_outcome = outcome
             .get("task_execution_outcome")
+            .filter(|value| !value.is_null())
             .cloned()
             .map(serde_json::from_value)
             .transpose()
@@ -150,6 +145,7 @@ impl RunService {
         let supply_chain_evidence = outcome
             .get("supply_chain")
             .or_else(|| cloud_run.input.get("supply_chain"))
+            .filter(|value| !value.is_null())
             .cloned()
             .map(
                 serde_json::from_value::<
@@ -184,115 +180,9 @@ impl RunService {
             .and_then(Value::as_str)
             .unwrap_or(self.config.default_workspace_dir.as_str())
             .to_string();
-        let plugin_sessions = cloud_run
-            .input
-            .get("plugin_sessions")
-            .cloned()
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|error| format!("decode terminal Plugin sessions failed: {error}"))?
-            .map(|snapshots| self.restore_plugin_runtime(&task, &run, snapshots))
-            .transpose()?
-            .map(|runtime| runtime.sessions)
-            .unwrap_or_default();
-        let (hook_event, hook_terminal_outcome) = plugin_hook_terminal_state(&report);
-        let hook_outcome = dispatch_prepared_plugin_hooks(
-            plugin_sessions.as_slice(),
-            hook_event,
-            &chatos_plugin_management_sdk::PluginHookEventContext {
-                agent_key: run
-                    .input_snapshot
-                    .get("agent_key")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                outcome: Some(hook_terminal_outcome),
-                summary_sha256: Some(hex::encode(Sha256::digest(
-                    report
-                        .error
-                        .as_deref()
-                        .or(report.content.as_deref())
-                        .unwrap_or_default()
-                        .as_bytes(),
-                ))),
-                ..chatos_plugin_management_sdk::PluginHookEventContext::default()
-            },
-        )
-        .await;
-        if hook_outcome.blocking_failure {
-            let message = if hook_outcome.errors.is_empty() {
-                format!(
-                    "Plugin Hook {} failed with fail_run policy",
-                    hook_event.as_str()
-                )
-            } else {
-                format!(
-                    "Plugin Hook {} dispatch failed: {}",
-                    hook_event.as_str(),
-                    hook_outcome.errors.join("; ")
-                )
-            };
-            self.store.append_run_event_sync(TaskRunEventRecord::new(
-                run.id.clone(),
-                "plugin_hook_blocked",
-                Some(message.clone()),
-                Some(json!({"event": hook_event, "blocking_failure": true})),
-            ));
-            report.status = chatos_ai_runtime::AiTurnStatus::Failed;
-            report.error = Some(match report.error.take() {
-                Some(error) => format!("{error}; {message}"),
-                None => message,
-            });
-        }
-        cancel_prepared_plugin_sessions(plugin_sessions.as_slice()).await;
-        let sandbox_infrastructure_failure = report
-            .error
-            .as_deref()
-            .is_some_and(is_sandbox_infrastructure_failure);
-        let sandbox_context =
-            crate::services::sandbox_runtime::SandboxRuntimeContext::from_run(&run)?;
-        let sandbox_output = if let Some(context) = sandbox_context.as_ref() {
-            self.release_sandbox(&run, context).await
-        } else {
-            None
-        };
-        let harness_run_context =
-            crate::services::harness_run_git::HarnessRunContext::from_run(&run)?;
-        let harness_output = if let Some(context) = harness_run_context.as_ref() {
-            Some(
-                self.commit_harness_run_output(
-                    &run,
-                    context,
-                    sandbox_output
-                        .as_ref()
-                        .and_then(|output| output.output_workspace.as_deref()),
-                )
-                .await,
-            )
-        } else {
-            None
-        };
-        let harness_merge_conflict = harness_output
-            .as_ref()
-            .is_some_and(|output| output.status == "merge_conflict");
-        self.finalize_model_phase(
-            &task,
-            &mut run,
-            report,
-            effective_workspace_dir.as_str(),
-            sandbox_output,
-            harness_output,
-        )
-        .await;
-        if let Some(context) = harness_run_context.as_ref() {
-            self.cleanup_harness_run_workspace(context);
-        }
+        self.finalize_model_phase(&task, &mut run, report, effective_workspace_dir.as_str())
+            .await;
         self.unregister_runtime_abort_token(run.id.as_str());
-        if harness_merge_conflict {
-            self.retry_after_harness_merge_conflict(&task, &run).await;
-        } else if sandbox_infrastructure_failure {
-            self.retry_after_sandbox_infrastructure_failure(&task, &run)
-                .await;
-        }
         if let Some(session_ref) = cloud_run.mcp_runtime_session_ref {
             let config =
                 chatos_mcp_management_sdk::McpManagementClientConfig::from_env("task-runner")
@@ -346,12 +236,6 @@ impl TaskRunnerSingleStepExecutable {
         let lifecycle_state = Arc::clone(&self.prepared.lifecycle_state);
         let progress = Arc::clone(&self.prepared.progress);
         let pending_stream_event = Arc::clone(&self.prepared.pending_stream_event);
-        let plugin_sessions = self
-            .prepared
-            .plugin_sessions
-            .iter()
-            .map(|session| session.snapshot())
-            .collect::<Vec<_>>();
         let supply_chain_evidence = Arc::clone(&self.prepared.supply_chain_evidence);
         let outcome = self
             .prepared
@@ -386,7 +270,6 @@ impl TaskRunnerSingleStepExecutable {
                 "lifecycle": lifecycle,
                 "supply_chain": supply_chain,
                 "progress": progress,
-                "plugin_sessions": plugin_sessions,
             }),
             terminal_overlay,
         ))
@@ -432,10 +315,6 @@ impl TaskRunnerSingleStepResolver {
             })?;
         capability_policy.apply_to_task(&mut task)?;
         ensure_queued_mcp_scope_unchanged(&task, &run)?;
-        let current_plugin_snapshots = capability_policy.plugin_snapshots(&task)?;
-        if current_plugin_snapshots != run.plugin_snapshots {
-            return Err("Plugin snapshot changed after this run was queued".to_string());
-        }
         let input = StartTaskRunRequest {
             model_config_id: Some(run.model_config_id.clone()),
             prompt_override: run
@@ -492,15 +371,6 @@ impl TaskRunnerSingleStepResolver {
                 &prerequisite_context,
                 Some(&capability_policy),
                 cloud_run.mcp_runtime_session_ref.as_deref(),
-                cloud_run
-                    .input
-                    .get("plugin_sessions")
-                    .map(|value| {
-                        serde_json::from_value(value.clone()).map_err(|error| {
-                            format!("decode persisted Plugin sessions failed: {error}")
-                        })
-                    })
-                    .transpose()?,
             )
             .await?;
         let prepared = self
@@ -509,6 +379,12 @@ impl TaskRunnerSingleStepResolver {
             .await?
             .prepare_for_trigger(cloud_run, trigger)?;
         if let CloudAgentModelTrigger::ToolResults { items, .. } = trigger {
+            prepared
+                .persist_external_tool_results(
+                    cloud_run.pending_tool_calls.as_slice(),
+                    items.as_slice(),
+                )
+                .await?;
             let callbacks = &prepared.runtime_options.callbacks;
             if let Some(on_start) = callbacks.on_tools_start.as_ref() {
                 on_start(Value::Array(cloud_run.pending_tool_calls.clone()));
@@ -627,6 +503,10 @@ fn frozen_mcp_resource_scope(config: &TaskMcpConfig) -> Vec<String> {
                 }),
         )
         .collect::<Vec<_>>();
+    if config.enabled {
+        resource_ids
+            .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID.to_string());
+    }
     resource_ids.sort();
     resource_ids.dedup();
     resource_ids
@@ -650,6 +530,7 @@ mod mcp_scope_freeze_tests {
                 "builtin_code_maintainer_read".to_string(),
                 "builtin_code_maintainer_write".to_string(),
                 "postgres-mcp".to_string(),
+                "system_mcp_task_process_log".to_string(),
             ]
         );
     }

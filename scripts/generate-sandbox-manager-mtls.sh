@@ -14,7 +14,7 @@ command -v openssl >/dev/null 2>&1 || {
   exit 1
 }
 
-CALLERS=(task-runner project-service mcp-management-service)
+CALLERS=(project-service mcp-management-service)
 
 material_is_current() {
   [[ -f "$OUTPUT_DIR/ca.crt" && -f "$OUTPUT_DIR/server.crt" && -f "$OUTPUT_DIR/server.key" ]] || return 1

@@ -133,6 +133,8 @@ fn runtime_session_request(
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
+        selected_plugins: Vec::new(),
+        plugin_command_invocations: Vec::new(),
         locale: Some("zh-CN".to_string()),
         requested_device_id: None,
         requested_sandbox_provider: None,

@@ -24,9 +24,9 @@ mod types;
 mod tests;
 
 pub use message_tasks::{
-    get_message_graph_run, get_message_run, get_message_run_event, get_message_run_output_changes,
-    get_message_run_output_diff, get_message_task, get_message_task_graph, list_message_tasks,
-    list_session_active_message_tasks, retry_message_run,
+    get_message_graph_run, get_message_run, get_message_run_event, get_message_task,
+    get_message_task_graph, list_message_tasks, list_session_active_message_tasks,
+    retry_message_run,
 };
 pub use types::{
     CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, SubmitTaskRunnerPromptRequest,

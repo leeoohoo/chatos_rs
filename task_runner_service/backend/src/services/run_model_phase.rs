@@ -13,19 +13,16 @@ use chatos_ai_runtime::{
     TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig, ToolResultModelBudgetLimits,
     DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
-use chatos_cloud_agent_runtime::cloud_agent_mcp_result_input_items;
+use chatos_cloud_agent_runtime::cloud_agent_trigger_input_items;
 use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
-use chatos_mcp_runtime::{BuiltinMcpPromptLocale, McpExecutorBuilder};
+use chatos_mcp_runtime::McpExecutorBuilder;
 use memory_engine_sdk::ComposeContextPolicy;
 use serde_json::{json, Value};
 use tracing::warn;
 
-use super::harness_run_git::HarnessRunOutputReport;
-use super::plugin_runtime_relay::PreparedPluginSession;
 use super::prerequisite_context::{
     attach_prerequisite_context_to_run, build_task_prompt, PrerequisiteTaskContext,
 };
-use super::sandbox_runtime::SandboxOutputReport;
 use super::stream_events::{
     append_pending_stream_event, flush_pending_stream_event, PendingRunStreamEvent,
 };
@@ -44,9 +41,6 @@ mod completion;
 mod setup;
 pub(super) mod supply_chain;
 
-const HARNESS_MERGE_CONFLICT_MAX_RUNS: usize = 3;
-const SANDBOX_INFRASTRUCTURE_MAX_RETRIES: usize = 3;
-
 pub(in crate::services) struct PreparedModelExecution {
     agent: TaskRunnerAgent,
     run_spec: TaskRunSpec,
@@ -56,7 +50,6 @@ pub(in crate::services) struct PreparedModelExecution {
     mcp_command_queue: String,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
     effective_workspace_dir: String,
-    plugin_sessions: Vec<PreparedPluginSession>,
 }
 
 pub(in crate::services) struct PreparedSingleModelStep {
@@ -69,7 +62,6 @@ pub(in crate::services) struct PreparedSingleModelStep {
     pub(crate) lifecycle_state: Arc<parking_lot::Mutex<TaskRunnerLifecycleState>>,
     pub(crate) progress: Arc<chatos_ai_runtime::TaskExecutionProgressState>,
     pub(crate) pending_stream_event: Arc<parking_lot::Mutex<PendingRunStreamEvent>>,
-    pub(crate) plugin_sessions: Vec<PreparedPluginSession>,
     pub(crate) supply_chain_evidence:
         Arc<parking_lot::Mutex<super::run_model_phase::supply_chain::SupplyChainEvidenceState>>,
 }
@@ -85,34 +77,80 @@ impl PreparedSingleModelStep {
         trigger: &chatos_cloud_agent_runtime::CloudAgentModelTrigger,
     ) -> Result<Self, String> {
         self.restore_durable_state(&cloud_run.input)?;
-        self.run_spec.model_config.previous_response_id = cloud_run.previous_response_id.clone();
-        match trigger {
-            chatos_cloud_agent_runtime::CloudAgentModelTrigger::RunStarted { .. } => {}
-            chatos_cloud_agent_runtime::CloudAgentModelTrigger::Continuation {
-                payload, ..
-            } => {
-                self.run_spec.user_record = None;
-                self.run_spec.current_input_items = payload
-                    .get("input_items")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-            }
-            chatos_cloud_agent_runtime::CloudAgentModelTrigger::ToolResults { items, .. } => {
-                self.run_spec.user_record = None;
-                self.run_spec.current_input_items = cloud_agent_mcp_result_input_items(
-                    cloud_run.pending_tool_calls.as_slice(),
-                    items.as_slice(),
-                )?;
-            }
-            chatos_cloud_agent_runtime::CloudAgentModelTrigger::Retry { payload, .. } => {
-                self.run_spec.user_record = None;
-                if let Some(items) = payload.get("input_items").and_then(Value::as_array) {
-                    self.run_spec.current_input_items = items.clone();
-                }
-            }
+        // Cloud orchestration follows the official stateless Responses
+        // protocol. The durable accumulated input is authoritative.
+        self.run_spec.model_config.previous_response_id = None;
+        let initial_input_items = self.run_spec.current_input_items.clone();
+        self.run_spec.current_input_items =
+            cloud_agent_trigger_input_items(cloud_run, trigger, initial_input_items)?;
+        if !matches!(
+            trigger,
+            chatos_cloud_agent_runtime::CloudAgentModelTrigger::RunStarted { .. }
+        ) {
+            self.run_spec.user_record = None;
         }
         Ok(self)
+    }
+
+    pub(crate) async fn persist_external_tool_results(
+        &self,
+        calls: &[Value],
+        results: &[Value],
+    ) -> Result<(), String> {
+        if calls.len() != results.len() {
+            return Err("MCP aggregate result count does not match pending tool calls".to_string());
+        }
+        let tool_results = calls
+            .iter()
+            .zip(results)
+            .enumerate()
+            .map(|(index, (call, result))| {
+                let tool_call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
+                    .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
+                let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)
+                    .ok_or_else(|| format!("pending tool call {index} has no name"))?;
+                let success = result.get("status").and_then(Value::as_str) == Some("completed");
+                let structured_result = result.get("result").cloned();
+                let content = if success {
+                    structured_result.clone().unwrap_or(Value::Null).to_string()
+                } else {
+                    result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("MCP tool call failed")
+                        .to_string()
+                };
+                Ok(chatos_mcp_runtime::ToolResult {
+                    tool_call_id: tool_call_id.to_string(),
+                    name: name.to_string(),
+                    success,
+                    is_error: !success,
+                    is_stream: false,
+                    conversation_turn_id: Some(self.run_spec.run_id.clone()),
+                    content,
+                    result: structured_result,
+                    fatal_error: false,
+                    transient_model_input: None,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let batch_identity = calls
+            .first()
+            .and_then(chatos_ai_runtime::tool_call::extract_tool_call_id)
+            .unwrap_or("empty");
+        let mut options = self.runtime_options.clone();
+        options.record_options =
+            options
+                .record_options
+                .clone()
+                .with_tool_message_id_prefix(format!(
+                    "task-run:{}:mcp-batch:{batch_identity}",
+                    self.run_spec.run_id
+                ));
+        self.runtime
+            .runner()
+            .persist_external_tool_results(&options, tool_results.as_slice())
+            .await
     }
 
     fn restore_durable_state(&self, input: &Value) -> Result<(), String> {
@@ -153,315 +191,18 @@ impl PreparedSingleModelStep {
     }
 }
 
-impl RunService {
-    pub(in crate::services) async fn retry_after_sandbox_infrastructure_failure(
-        &self,
-        task: &TaskRecord,
-        run: &TaskRunRecord,
-    ) {
-        let failed_run_count = match self.store.list_runs(Some(task.id.as_str())).await {
-            Ok(runs) => runs
-                .iter()
-                .filter(|run| {
-                    run.error_message
-                        .as_deref()
-                        .is_some_and(is_sandbox_infrastructure_failure)
-                })
-                .count(),
-            Err(error) => {
-                warn!(
-                    task_id = task.id.as_str(),
-                    run_id = run.id.as_str(),
-                    error = error.as_str(),
-                    "failed to count sandbox infrastructure retries"
-                );
-                return;
-            }
-        };
-        if failed_run_count > SANDBOX_INFRASTRUCTURE_MAX_RETRIES {
-            let _ = self
-                .store
-                .append_run_event(TaskRunEventRecord::new(
-                    run.id.clone(),
-                    "sandbox_infrastructure_retry_exhausted",
-                    Some(format!(
-                        "沙箱基础设施连续失败 {failed_run_count} 次，停止自动重新执行"
-                    )),
-                    Some(json!({
-                        "failed_run_count": failed_run_count,
-                        "max_retries": SANDBOX_INFRASTRUCTURE_MAX_RETRIES,
-                    })),
-                ))
-                .await;
-            return;
-        }
-
-        match self.retry_run_automatically(run.id.as_str()).await {
-            Ok(Some(retry_run)) => {
-                let _ = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "sandbox_infrastructure_retry_queued",
-                        Some("检测到沙箱租约失效，已由程序申请新环境并重新执行原任务".to_string()),
-                        Some(json!({
-                            "retry_run_id": retry_run.id,
-                            "failed_run_count": failed_run_count,
-                            "max_retries": SANDBOX_INFRASTRUCTURE_MAX_RETRIES,
-                        })),
-                    ))
-                    .await;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                warn!(
-                    task_id = task.id.as_str(),
-                    run_id = run.id.as_str(),
-                    error = error.as_str(),
-                    "failed to queue automatic sandbox infrastructure retry"
-                );
-                let _ = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "sandbox_infrastructure_retry_failed",
-                        Some(format!("沙箱失效后自动重新执行原任务失败: {error}")),
-                        None,
-                    ))
-                    .await;
-            }
-        }
-    }
-
-    pub(in crate::services) async fn retry_after_harness_merge_conflict(
-        &self,
-        task: &TaskRecord,
-        run: &TaskRunRecord,
-    ) {
-        let conflict_run_count = match self.store.list_runs(Some(task.id.as_str())).await {
-            Ok(runs) => runs
-                .iter()
-                .filter(|run| run_has_harness_merge_conflict(run))
-                .count(),
-            Err(error) => {
-                warn!(
-                    task_id = task.id.as_str(),
-                    run_id = run.id.as_str(),
-                    error = error.as_str(),
-                    "failed to count Harness merge-conflict retries"
-                );
-                return;
-            }
-        };
-        if conflict_run_count >= HARNESS_MERGE_CONFLICT_MAX_RUNS {
-            let _ = self
-                .store
-                .append_run_event(TaskRunEventRecord::new(
-                    run.id.clone(),
-                    "harness_merge_conflict_retry_exhausted",
-                    Some(format!(
-                        "Harness 并发合并连续冲突 {conflict_run_count} 次，停止自动重试"
-                    )),
-                    Some(json!({
-                        "conflict_run_count": conflict_run_count,
-                        "max_conflict_runs": HARNESS_MERGE_CONFLICT_MAX_RUNS,
-                    })),
-                ))
-                .await;
-            return;
-        }
-
-        match self.retry_run_automatically(run.id.as_str()).await {
-            Ok(Some(retry_run)) => {
-                let _ = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "harness_merge_conflict_retry_queued",
-                        Some(
-                            "检测到并发合并冲突，已由程序基于最新 Harness 基线重新执行原任务"
-                                .to_string(),
-                        ),
-                        Some(json!({
-                            "retry_run_id": retry_run.id,
-                            "conflict_run_count": conflict_run_count,
-                            "max_conflict_runs": HARNESS_MERGE_CONFLICT_MAX_RUNS,
-                        })),
-                    ))
-                    .await;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                warn!(
-                    task_id = task.id.as_str(),
-                    run_id = run.id.as_str(),
-                    error = error.as_str(),
-                    "failed to queue automatic Harness merge-conflict retry"
-                );
-                let _ = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "harness_merge_conflict_retry_failed",
-                        Some(format!("自动重新执行原任务失败: {error}")),
-                        None,
-                    ))
-                    .await;
-            }
-        }
-    }
-}
-
-fn run_has_harness_merge_conflict(run: &TaskRunRecord) -> bool {
-    run.report
-        .as_ref()
-        .and_then(|report| report.pointer("/output/harness/status"))
-        .and_then(Value::as_str)
-        .is_some_and(|status| status == "merge_conflict")
-}
-
-pub(in crate::services) fn plugin_hook_terminal_state(
-    report: &TaskRunReport,
-) -> (
-    chatos_plugin_management_sdk::PluginHookEvent,
-    chatos_plugin_management_sdk::PluginHookOutcome,
-) {
-    use chatos_ai_runtime::{AiTurnStatus, TaskExecutionOutcomeStatus};
-    use chatos_plugin_management_sdk::{PluginHookEvent, PluginHookOutcome};
-
-    match report.status {
-        AiTurnStatus::Failed => (PluginHookEvent::RunFailed, PluginHookOutcome::Failed),
-        AiTurnStatus::Aborted => (PluginHookEvent::RunFailed, PluginHookOutcome::Cancelled),
-        AiTurnStatus::Completed => match report
-            .execution_outcome
-            .as_ref()
-            .map(|outcome| outcome.status)
-        {
-            Some(TaskExecutionOutcomeStatus::Succeeded) => {
-                (PluginHookEvent::RunCompleted, PluginHookOutcome::Succeeded)
-            }
-            Some(TaskExecutionOutcomeStatus::Cancelled) => {
-                (PluginHookEvent::RunFailed, PluginHookOutcome::Cancelled)
-            }
-            Some(TaskExecutionOutcomeStatus::Blocked | TaskExecutionOutcomeStatus::Failed)
-            | None => (PluginHookEvent::RunFailed, PluginHookOutcome::Failed),
-        },
-    }
-}
-
-pub(in crate::services) fn is_sandbox_infrastructure_failure(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-    (normalized.contains("sandbox manager lease is not runnable")
-        && (normalized.contains("destroyed") || normalized.contains("expired")))
-        || normalized.contains("sandbox infrastructure unavailable; the run must reacquire")
-}
-
 #[cfg(test)]
-mod harness_merge_retry_tests {
-    use super::{
-        is_sandbox_infrastructure_failure, plugin_hook_terminal_state,
-        run_has_harness_merge_conflict,
-    };
-    use crate::models::TaskRunRecord;
-    use chatos_ai_runtime::{
-        AiTurnStatus, TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskRunReport,
-    };
-    use chatos_plugin_management_sdk::{PluginHookEvent, PluginHookOutcome};
-    use serde_json::json;
-
+mod cloud_trigger_tests {
     #[test]
-    fn detects_only_structured_harness_merge_conflicts() {
-        let now = crate::models::now_rfc3339();
-        let mut run = TaskRunRecord::queued(
-            "run-1".to_string(),
-            "task-1".to_string(),
-            "model-1".to_string(),
-            "memory-1".to_string(),
-            json!({}),
-            Vec::new(),
-            now,
-        );
-        run.report = Some(json!({
-            "output": {
-                "harness": {
-                    "status": "merge_conflict"
-                }
-            }
-        }));
-        assert!(run_has_harness_merge_conflict(&run));
-
-        run.report = Some(json!({
-            "output": {
-                "harness": {
-                    "status": "failed",
-                    "message": "merge conflict text is not a structured retry signal"
-                }
-            }
-        }));
-        assert!(!run_has_harness_merge_conflict(&run));
-    }
-
-    #[test]
-    fn detects_destroyed_or_expired_sandbox_infrastructure() {
-        assert!(is_sandbox_infrastructure_failure(
-            "Sandbox Manager lease is not runnable: destroyed"
-        ));
-        assert!(is_sandbox_infrastructure_failure(
-            "sandbox infrastructure unavailable; the run must reacquire its sandbox"
-        ));
-        assert!(!is_sandbox_infrastructure_failure(
-            "No such file or directory"
-        ));
-    }
-
-    #[test]
-    fn plugin_terminal_hook_uses_business_outcome_instead_of_protocol_completion() {
-        let mut report = completed_task_report();
-        report.execution_outcome = Some(TaskExecutionOutcome::succeeded(
-            "verified",
-            vec!["tests passed".to_string()],
-        ));
-        assert_eq!(
-            plugin_hook_terminal_state(&report),
-            (PluginHookEvent::RunCompleted, PluginHookOutcome::Succeeded)
-        );
-
-        report.execution_outcome = Some(TaskExecutionOutcome {
-            status: TaskExecutionOutcomeStatus::Blocked,
-            summary: "blocked".to_string(),
-            blocking_reason: Some("database unavailable".to_string()),
-            unmet_acceptance_criteria: vec!["integration test passes".to_string()],
-            verification_evidence: vec!["connection refused".to_string()],
-            referenced_paths: Vec::new(),
-            referenced_endpoints: Vec::new(),
-        });
-        assert_eq!(
-            plugin_hook_terminal_state(&report),
-            (PluginHookEvent::RunFailed, PluginHookOutcome::Failed)
-        );
-
-        report.execution_outcome = None;
-        assert_eq!(
-            plugin_hook_terminal_state(&report),
-            (PluginHookEvent::RunFailed, PluginHookOutcome::Failed)
-        );
-    }
-
-    fn completed_task_report() -> TaskRunReport {
-        TaskRunReport {
-            task_id: "task-1".to_string(),
-            run_id: "run-1".to_string(),
-            model_config_id: Some("model-1".to_string()),
-            status: AiTurnStatus::Completed,
-            execution_outcome: None,
-            content: Some("done".to_string()),
-            reasoning: None,
-            error: None,
-            tool_calls: None,
-            finish_reason: Some("stop".to_string()),
-            usage: None,
-            response_id: None,
-            completed_at: crate::models::now_rfc3339(),
-        }
+    fn cloud_event_driven_model_config_is_stateless() {
+        let mut config = chatos_ai_runtime::ModelRuntimeConfig::openai_compatible(
+            "https://api.openai.com/v1",
+            "secret",
+            "gpt-test",
+            "openai",
+        )
+        .with_previous_response_id(Some("resp-2".to_string()));
+        config.previous_response_id = None;
+        assert_eq!(config.previous_response_id, None);
     }
 }

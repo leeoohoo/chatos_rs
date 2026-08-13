@@ -41,8 +41,6 @@ mod chatos_async_dispatch;
 mod chatos_callbacks;
 mod chatos_message_tasks;
 mod filter_sanitize;
-mod harness_run_diff;
-mod harness_run_git;
 mod managed_config;
 #[path = "services/tool_runtime/mcp_catalog_service.rs"]
 mod mcp_catalog_service;
@@ -53,19 +51,13 @@ mod model_catalog;
 mod model_config_service;
 mod model_runtime_resolver;
 pub(crate) mod path_redaction;
-mod plugin_cloud_runtime;
 #[path = "services/tool_runtime/plugin_management_policy.rs"]
 mod plugin_management_policy;
 mod plugin_management_prompts;
-#[path = "services/tool_runtime/plugin_runtime_relay.rs"]
-mod plugin_runtime_relay;
-pub(crate) use plugin_runtime_relay::plugin_relay_base_url;
 mod prerequisite_context;
 mod process_log_text;
 pub(crate) mod project_management_api_client;
 mod project_service;
-mod remote_server_service;
-mod remote_servers;
 mod run_control;
 pub(crate) use run_control::cloud_agent_profile;
 mod run_execution_support;
@@ -74,7 +66,6 @@ mod run_post_process;
 mod run_prerequisites;
 mod run_recovery;
 mod run_service;
-mod sandbox_runtime;
 mod schedule_helpers;
 mod status_display;
 mod stream_events;
@@ -85,11 +76,9 @@ mod task_process_log;
 mod task_service;
 mod task_tenant_scope;
 mod task_threads;
-mod terminal_lifecycle;
 mod tooling_state;
 #[path = "services/tool_runtime/workspace_mcp.rs"]
 mod workspace_mcp;
-mod workspace_snapshot;
 
 use self::batch_ops::{
     normalize_batch_task_ids, normalize_prerequisite_task_ids, normalize_tags, sanitize_id_list,
@@ -107,14 +96,9 @@ pub use self::chatos_message_tasks::{
 pub(crate) use self::filter_sanitize::sanitize_prompt_list_filters;
 use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filters};
 use self::managed_config::{
-    load_managed_config_snapshot, require_managed_bool, require_managed_execution_environment_mode,
-    require_managed_http_base_url, require_managed_string, require_managed_string_map,
+    load_managed_config_snapshot, require_managed_string, require_managed_string_map,
     require_managed_string_set, require_managed_u64, require_managed_usize,
     TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_BYTES_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_CLOUD_BUNDLE_CACHE_MAX_ENTRIES_CONFIG_KEY,
-    TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY, TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY,
-    TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
@@ -124,7 +108,6 @@ use self::managed_config::{
 };
 pub(crate) use self::plugin_management_policy::TaskRunnerCapabilityPolicy;
 use self::process_log_text::apply_task_process_log_update;
-use self::remote_servers::{build_remote_server_record, find_reusable_remote_server};
 use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
 use self::task_tenant_scope::{
@@ -166,12 +149,6 @@ pub struct ModelConfigService {
 }
 
 #[derive(Clone)]
-pub struct RemoteServerService {
-    config: AppConfig,
-    store: AppStore,
-}
-
-#[derive(Clone)]
 pub struct TaskProjectService {
     config: Option<AppConfig>,
     store: AppStore,
@@ -190,8 +167,6 @@ pub struct RunService {
     callback_delivery_locks: Arc<KeyedAsyncLockRegistry>,
     runtime_abort_tokens:
         Arc<parking_lot::Mutex<HashMap<String, tokio_util::sync::CancellationToken>>>,
-    plugin_cloud_bundle_cache:
-        Arc<parking_lot::Mutex<plugin_cloud_runtime::PluginCloudBundleCache>>,
 }
 
 #[derive(Default)]
@@ -279,10 +254,6 @@ pub fn system_config(
     execution_timeout_ms: u64,
     task_runner_runtime_settings: chatos_agent::TaskRunnerRuntimeSettings,
     tool_result_model_budget_limits: ToolResultModelBudgetLimits,
-    execution_environment_mode: String,
-    sandbox_enabled: bool,
-    sandbox_manager_base_url: String,
-    sandbox_lease_ttl_seconds: u64,
 ) -> SystemConfigResponse {
     SystemConfigResponse {
         host: config.host.to_string(),
@@ -315,17 +286,7 @@ pub fn system_config(
         default_tool_results_model_total_max_chars: config
             .default_tool_results_model_total_max_chars,
         tool_results_model_total_max_chars: tool_result_model_budget_limits.total_max_chars,
-        default_execution_environment_mode: config.default_execution_environment_mode.clone(),
-        execution_environment_mode,
-        sandbox_enabled,
-        default_sandbox_manager_base_url: config.default_sandbox_manager_base_url.clone(),
-        sandbox_manager_base_url,
-        sandbox_manager_auth_configured: config.sandbox_manager_client_id.is_some()
-            && config.sandbox_manager_client_key.is_some(),
-        default_sandbox_lease_ttl_seconds: config.default_sandbox_lease_ttl_seconds,
-        sandbox_lease_ttl_seconds,
         task_queue_rabbitmq_enabled: task_queue_topology.uses_rabbitmq(),
-        task_queue_run_dispatch_mode: task_queue_topology.run_dispatch_mode.as_str().to_string(),
         task_queue_callback_delivery_mode: task_queue_topology
             .callback_delivery_mode
             .as_str()
@@ -335,16 +296,10 @@ pub fn system_config(
             .as_str()
             .to_string(),
         task_queue_rabbitmq_exchange: task_queue_topology.rabbitmq_exchange.clone(),
-        task_queue_run_dispatch_queue: task_queue_topology.run_dispatch_queue.clone(),
-        task_queue_run_dispatch_retry_queue: task_queue_topology.run_dispatch_retry_queue.clone(),
-        task_queue_run_dispatch_retry_delay_ms: task_queue_topology
-            .run_dispatch_retry_delay
+        task_queue_event_outbox_reconcile_ms: task_queue_topology
+            .event_outbox_reconcile_interval
             .as_millis() as u64,
-        task_queue_run_dispatch_outbox_reconcile_ms: task_queue_topology
-            .run_dispatch_outbox_reconcile_interval
-            .as_millis() as u64,
-        task_queue_run_dispatch_outbox_batch_size: task_queue_topology
-            .run_dispatch_outbox_batch_size,
+        task_queue_event_outbox_batch_size: task_queue_topology.event_outbox_batch_size,
         task_queue_worker_control_queue_prefix: task_queue_topology
             .worker_control_queue_prefix
             .clone(),

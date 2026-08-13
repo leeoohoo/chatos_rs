@@ -88,41 +88,6 @@ impl MongoStore {
         Ok(project)
     }
 
-    pub(in crate::store) async fn list_remote_servers(
-        &self,
-    ) -> Result<Vec<RemoteServerRecord>, String> {
-        self.load_collection_items_with_query(
-            &self.remote_servers,
-            doc! {},
-            Some(mongo_find_options(
-                doc! { "updated_at": -1, "id": -1 },
-                None,
-                None,
-            )),
-        )
-        .await
-    }
-
-    pub(in crate::store) async fn get_remote_server(
-        &self,
-        id: &str,
-    ) -> Result<Option<RemoteServerRecord>, String> {
-        self.find_by_id(&self.remote_servers, id).await
-    }
-
-    pub(in crate::store) async fn save_remote_server(
-        &self,
-        server: RemoteServerRecord,
-    ) -> Result<RemoteServerRecord, String> {
-        self.upsert_by_id(&self.remote_servers, &server.id, &server)
-            .await?;
-        Ok(server)
-    }
-
-    pub(in crate::store) async fn delete_remote_server(&self, id: &str) -> Result<bool, String> {
-        self.delete_by_id(&self.remote_servers, id).await
-    }
-
     pub(in crate::store) async fn list_model_config_usage(
         &self,
     ) -> Result<Vec<ModelConfigUsageRecord>, String> {

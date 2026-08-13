@@ -4,18 +4,10 @@
 import { Space, Typography } from 'antd';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
-import type { RemoteServerRecord, TaskRunEventRecord } from '../../types';
-import {
-  isRemoteToolName,
-  payloadAsOptionalBoolean,
-  payloadAsOptionalNumber,
-  payloadAsOptionalString,
-  payloadAsRecord,
-  summarizeRemoteOperationStats,
-} from '../shared/remoteOperationUtils';
+import type { TaskRunEventRecord } from '../../types';
+import { payloadAsOptionalNumber, payloadAsOptionalString, payloadAsRecord } from './payloadUtils';
 import { CollapsiblePayload } from './payloadView';
 
-export { formatRemoteEndpoint } from '../shared/remoteOperationUtils';
 
 export type ToolCallView = {
   invocationId: string;
@@ -31,29 +23,6 @@ export type ToolResultView = {
   success: boolean;
   content: string;
   result?: unknown;
-};
-
-export type RemoteOperationView = {
-  toolCallId: string;
-  name: string;
-  success: boolean;
-  connectionId?: string;
-  connectionName?: string;
-  username?: string;
-  host?: string;
-  port?: number;
-  command?: string;
-  path?: string;
-  remoteHost?: string;
-  output?: string;
-  outputTruncated?: boolean;
-  entryCount?: number;
-  sourceSizeBytes?: number;
-  outputChars?: number;
-  maxBytes?: number;
-  content?: string;
-  result?: unknown;
-  summary?: string;
 };
 
 export function collectToolCalls(
@@ -93,73 +62,6 @@ export function collectToolResults(events: TaskRunEventRecord[]): ToolResultView
     }
   });
   return Array.from(byInvocation.values()).map(({ isStream: _isStream, ...result }) => result);
-}
-
-export function collectRemoteToolOperations(
-  toolCalls: ToolCallView[],
-  toolResults: ToolResultView[],
-  remoteServerMap: Map<string, RemoteServerRecord>,
-): RemoteOperationView[] {
-  const toolCallMap = new Map<string, ToolCallView>();
-  toolCalls.forEach((toolCall) => {
-    toolCallMap.set(`${toolCall.callId}::${toolCall.name}`, toolCall);
-  });
-
-  return toolResults
-    .filter((result) => isRemoteToolName(result.name))
-    .map((result) => {
-      const toolCall = toolCallMap.get(`${result.toolCallId}::${result.name}`);
-      const toolCallArgs = payloadAsRecord(toolCall?.arguments);
-      const structured = payloadAsRecord(result.result);
-      const nestedResult = payloadAsRecord(structured?.result);
-      const connectionId =
-        payloadAsOptionalString(structured?.connection_id) ||
-        payloadAsOptionalString(toolCallArgs?.connection_id);
-      const remoteServer = connectionId ? remoteServerMap.get(connectionId) : undefined;
-      const name = payloadAsOptionalString(structured?.name) || remoteServer?.name || result.name;
-      const username = payloadAsOptionalString(structured?.username) || remoteServer?.username;
-      const host = payloadAsOptionalString(structured?.host) || remoteServer?.host;
-      const port = payloadAsOptionalNumber(structured?.port) || remoteServer?.port;
-      const command =
-        payloadAsOptionalString(structured?.command) ||
-        payloadAsOptionalString(toolCallArgs?.command);
-      const path =
-        payloadAsOptionalString(structured?.path) || payloadAsOptionalString(toolCallArgs?.path);
-      const remoteHost = payloadAsOptionalString(nestedResult?.remote_host);
-      const output = payloadAsOptionalString(structured?.output);
-      const outputTruncated = payloadAsOptionalBoolean(structured?.output_truncated);
-      const entryCount = payloadAsOptionalNumber(structured?.count);
-      const sourceSizeBytes = payloadAsOptionalNumber(structured?.source_size_bytes);
-      const outputChars = payloadAsOptionalNumber(structured?.output_chars);
-      const maxBytes = payloadAsOptionalNumber(structured?.max_bytes);
-
-      return {
-        toolCallId: result.toolCallId,
-        name: result.name,
-        success: result.success,
-        connectionId,
-        connectionName: name,
-        username,
-        host,
-        port,
-        command,
-        path,
-        remoteHost,
-        output,
-        outputTruncated,
-        entryCount,
-        sourceSizeBytes,
-        outputChars,
-        maxBytes,
-        content: result.content,
-        result: result.result,
-        summary: summarizeRemoteOperation(result.name, command, path, outputChars, entryCount),
-      };
-    });
-}
-
-export function summarizeRemoteOperations(items: RemoteOperationView[]) {
-  return summarizeRemoteOperationStats(items);
 }
 
 export function summarizeStreamEvents(events: TaskRunEventRecord[]) {
@@ -257,22 +159,6 @@ export function RunEventPayload({
   return <CollapsiblePayload value={event.payload} t={t} />;
 }
 
-export function formatRemoteVolume(operation: RemoteOperationView): string {
-  if (operation.entryCount !== undefined) {
-    return `${operation.entryCount} entries`;
-  }
-  if (operation.sourceSizeBytes !== undefined) {
-    return `${operation.sourceSizeBytes} bytes`;
-  }
-  if (operation.outputChars !== undefined) {
-    return `${operation.outputChars} chars`;
-  }
-  if (operation.maxBytes !== undefined) {
-    return `limit ${operation.maxBytes} bytes`;
-  }
-  return '-';
-}
-
 function dedupeToolCalls(items: ToolCallView[]): ToolCallView[] {
   const seen = new Set<string>();
   return items.filter((item) => {
@@ -312,28 +198,6 @@ function extractToolCallArray(value: unknown): ToolCallView[] {
         payloadAsRecord(toolCall.function)?.arguments,
     }))
     .filter((item) => item.name);
-}
-
-function summarizeRemoteOperation(
-  name: string,
-  command?: string,
-  path?: string,
-  outputChars?: number,
-  entryCount?: number,
-): string | undefined {
-  if (name === 'run_command' && command) {
-    return command;
-  }
-  if ((name === 'list_directory' || name === 'read_file') && path) {
-    return path;
-  }
-  if (name === 'list_connections') {
-    return entryCount === undefined ? undefined : `${entryCount} connections`;
-  }
-  if (name === 'run_command' && outputChars !== undefined) {
-    return `${outputChars} chars`;
-  }
-  return undefined;
 }
 
 function parseJsonLike(value: string | undefined): unknown {

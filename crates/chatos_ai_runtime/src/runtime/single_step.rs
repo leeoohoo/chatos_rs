@@ -97,7 +97,7 @@ pub(super) async fn execute_once(
     }
 
     let AiSingleStepRequest {
-        model_request,
+        mut model_request,
         runtime_options,
         iteration,
         reason,
@@ -105,9 +105,16 @@ pub(super) async fn execute_once(
         force_non_stream,
         force_identity_encoding,
     } = request;
+    if let Some(executor) = &runtime.tool_executor {
+        let tools = executor.available_tools();
+        if !tools.is_empty() {
+            model_request.tools = tools;
+        }
+    }
     let (iteration_request, lifecycle_before) =
         prepare_iteration_request(&model_request, &runtime_options, iteration, reason.as_str())
             .await?;
+    let request_input_items = crate::turn::input_value_to_items(iteration_request.input.clone());
     let response = dispatch_model_request(
         &runtime.request_handler,
         &iteration_request,
@@ -152,15 +159,19 @@ pub(super) async fn execute_once(
                 None,
             )
             .await?;
+        let mut response = runtime_result_from_response(response);
+        response.request_input_items = request_input_items;
         return Ok(AiSingleStepOutcome::ToolCommand {
-            response: runtime_result_from_response(response),
+            response,
             tool_calls,
         });
     }
 
     if response.content.trim().is_empty() {
+        let mut response = runtime_result_from_response(response);
+        response.request_input_items = request_input_items;
         return Ok(AiSingleStepOutcome::Continue {
-            response: runtime_result_from_response(response),
+            response,
             input_items: vec![super::input_items::empty_final_response_followup_item()],
             reason: "empty_final_response_followup".to_string(),
         });
@@ -183,11 +194,13 @@ pub(super) async fn execute_once(
                 input_items,
                 reason,
             } => {
+                let mut response = runtime_result_from_response(response);
+                response.request_input_items = request_input_items;
                 return Ok(AiSingleStepOutcome::Continue {
-                    response: runtime_result_from_response(response),
+                    response,
                     input_items,
                     reason: normalized_reason(reason, "lifecycle_followup"),
-                })
+                });
             }
         }
     }
@@ -212,9 +225,9 @@ pub(super) async fn execute_once(
             lifecycle_metadata,
         )
         .await?;
-    Ok(AiSingleStepOutcome::Final(runtime_result_from_response(
-        response,
-    )))
+    let mut result = runtime_result_from_response(response);
+    result.request_input_items = request_input_items;
+    Ok(AiSingleStepOutcome::Final(result))
 }
 
 fn retry_or_fail(

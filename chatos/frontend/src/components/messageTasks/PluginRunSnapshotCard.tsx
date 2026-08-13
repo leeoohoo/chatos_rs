@@ -4,10 +4,6 @@
 import type { FC } from 'react';
 import { pluginRunSnapshotSummary } from './pluginRunSnapshot';
 
-const shortIdentity = (value: string): string => (
-  value.length > 28 ? `${value.slice(0, 14)}…${value.slice(-8)}` : value
-);
-
 const joinedOrDash = (values: string[]): string => (
   values.length > 0 ? values.join('、') : '-'
 );
@@ -22,14 +18,10 @@ export const PluginRunSnapshotCard: FC<{ inputSnapshot: unknown }> = ({ inputSna
     <div className="rounded-lg border border-border bg-card p-4 text-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="font-medium text-foreground">外挂程式运行快照</div>
+          <div className="font-medium text-foreground">插件选择</div>
           <div className="mt-1 text-xs text-muted-foreground">
-            展示任务创建时固定的选择与不可变 Release；Command 参数仅显示 SHA-256 审计，不显示原文。
+            展示任务创建时固定的插件选择；实际 Release、组件和执行位置由 MCP Runtime Session 解析。Command 参数仅显示 SHA-256 审计，不显示原文。
           </div>
-        </div>
-        <div className="text-right text-xs text-muted-foreground">
-          <div>设备：{shortIdentity(summary.deviceId)}</div>
-          <div>工作区：{summary.workspaceId ? shortIdentity(summary.workspaceId) : '-'}</div>
         </div>
       </div>
 
@@ -37,12 +29,7 @@ export const PluginRunSnapshotCard: FC<{ inputSnapshot: unknown }> = ({ inputSna
         {summary.plugins.map((plugin) => (
           <div key={plugin.pluginId} className="rounded-md border border-border/70 bg-background p-3">
             <div className="font-medium text-foreground">{plugin.pluginId}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Release：{plugin.releaseId ? shortIdentity(plugin.releaseId) : '-'}
-              {plugin.version ? ` · v${plugin.version}` : ''}
-            </div>
             <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-              <div>组件：{joinedOrDash(plugin.componentKeys)}</div>
               <div>Skills：{joinedOrDash(plugin.selectedSkillIds)}</div>
               <div>Commands：{joinedOrDash(plugin.selectedCommandIds)}</div>
               <div>Agents：{joinedOrDash(plugin.selectedAgentIds)}</div>

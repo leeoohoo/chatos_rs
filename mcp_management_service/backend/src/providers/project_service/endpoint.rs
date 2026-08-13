@@ -44,7 +44,9 @@ impl ProjectServiceProvider {
             )),
             (
                 McpProviderKind::Harness,
-                SystemMcpKey::CodeMaintainerRead | SystemMcpKey::CodeMaintainerWrite,
+                SystemMcpKey::CodeMaintainerRead
+                | SystemMcpKey::CodeMaintainerWrite
+                | SystemMcpKey::TerminalController,
             ) => Ok((
                 format!(
                     "{}/api/chatos-sync/projects/{project_id}/harness/mcp",

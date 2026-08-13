@@ -9,9 +9,8 @@ use chatos_mcp_service::McpToolCallResult;
 use futures_util::StreamExt;
 use lapin::{
     options::{
-        BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
-        BasicQosOptions, ConfirmSelectOptions, ExchangeDeclareOptions, QueueBindOptions,
-        QueueDeclareOptions,
+        BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, BasicQosOptions,
+        ConfirmSelectOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions,
     },
     publisher_confirm::Confirmation,
     types::{AMQPValue, FieldTable},
@@ -320,13 +319,11 @@ where
                     error = error.as_str(),
                     "Cloud Agent delivery failed"
                 );
+                defer_delivery(&channel, topology, delivery.data.as_slice()).await?;
                 delivery
-                    .nack(BasicNackOptions {
-                        multiple: false,
-                        requeue: true,
-                    })
+                    .ack(BasicAckOptions::default())
                     .await
-                    .map_err(|nack_error| nack_error.to_string())?;
+                    .map_err(|ack_error| ack_error.to_string())?;
             }
         }
     }

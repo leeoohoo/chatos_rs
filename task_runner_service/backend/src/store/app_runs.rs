@@ -218,47 +218,6 @@ impl AppStore {
         }
     }
 
-    pub(crate) async fn list_pending_terminal_cleanups(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<TaskRunRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.list_pending_terminal_cleanups(limit)),
-            Self::Mongo(store) => store.list_pending_terminal_cleanups(limit).await,
-        }
-    }
-
-    pub(crate) async fn acknowledge_terminal_cleanup_event(
-        &self,
-        run_id: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.acknowledge_terminal_cleanup_event(run_id)),
-            Self::Mongo(store) => store.acknowledge_terminal_cleanup_event(run_id).await,
-        }
-    }
-
-    pub(crate) async fn retry_terminal_cleanup(
-        &self,
-        run_id: &str,
-        error: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.retry_terminal_cleanup(run_id, error)),
-            Self::Mongo(store) => store.retry_terminal_cleanup(run_id, error).await,
-        }
-    }
-
-    pub(crate) async fn mark_terminal_cleanup_completed(
-        &self,
-        run_id: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.mark_terminal_cleanup_completed(run_id)),
-            Self::Mongo(store) => store.mark_terminal_cleanup_completed(run_id).await,
-        }
-    }
-
     pub async fn list_pending_chatos_callback_runs(
         &self,
         now: &str,

@@ -28,7 +28,6 @@ export interface TaskMcpConfig {
   requires_execution: boolean;
   execution_service_id?: string | null;
   workspace_dir?: string | null;
-  default_remote_server_id?: string | null;
   external_mcp_config_ids: string[];
   selected_skill_ids: string[];
   skill_policy_revision?: string | null;
@@ -47,8 +46,6 @@ export interface TaskPluginCommandInvocation {
 }
 
 export interface TaskPluginConfig {
-  device_id?: string | null;
-  workspace_id?: string | null;
   selected_plugins: SelectedTaskPlugin[];
   command_invocations: TaskPluginCommandInvocation[];
 }
@@ -105,9 +102,7 @@ export interface TaskPluginConnectorsResponse {
 export interface TaskCapabilityCatalogResponse {
   agent_key:
     | 'task_runner_plan_phase'
-    | 'task_runner_local_plan_phase'
-    | 'task_runner_run_phase'
-    | 'task_runner_local_run_phase';
+    | 'task_runner_run_phase';
   policy_revision: string;
   selectable_plugins: SelectableTaskPlugin[];
 }
@@ -271,36 +266,6 @@ export interface TaskProjectRecord {
   created_at: string;
   updated_at: string;
   archived_at?: string | null;
-}
-
-export interface TaskProjectRuntimeEnvironmentMcpPolicy {
-  managed_by: string;
-  attachment: string;
-  filesystem: boolean;
-  terminal: boolean;
-}
-
-export interface TaskProjectRuntimeEnvironmentImage {
-  environment_key: string;
-  service_id: string;
-  display_name: string;
-  service_role: string;
-  mcp_policy: TaskProjectRuntimeEnvironmentMcpPolicy;
-  image_id?: string | null;
-  image_ref?: string | null;
-  image_provider: string;
-  status: string;
-  dockerfile?: string | null;
-  env_vars?: unknown;
-}
-
-export interface TaskProjectRuntimeEnvironmentResponse {
-  environment: {
-    sandbox_enabled: boolean;
-    status: string;
-    env_vars?: unknown;
-  };
-  images: TaskProjectRuntimeEnvironmentImage[];
 }
 
 export interface TaskStatsResponse {

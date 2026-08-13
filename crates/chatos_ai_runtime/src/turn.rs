@@ -56,6 +56,16 @@ impl ContextualTurnRunner {
         &self.runtime
     }
 
+    pub async fn persist_external_tool_results(
+        &self,
+        runtime_options: &AiRuntimeOptions,
+        tool_results: &[chatos_mcp_runtime::ToolResult],
+    ) -> Result<(), String> {
+        self.runtime
+            .persist_external_tool_results(runtime_options, tool_results)
+            .await
+    }
+
     pub fn with_context_overflow_recovery(
         mut self,
         context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
@@ -83,6 +93,7 @@ impl ContextualTurnRunner {
             prefixed_input_items.as_slice(),
             current_input_items.as_slice(),
             model_request.input.clone(),
+            runtime_options.conversation_turn_id.as_deref(),
         )
         .await?;
         let iterative_context_refresh = self.build_iterative_context_refresh(
@@ -127,6 +138,7 @@ impl ContextualTurnRunner {
             prefixed_input_items.as_slice(),
             current_input_items.as_slice(),
             model_request.input.clone(),
+            runtime_options.conversation_turn_id.as_deref(),
         )
         .await?;
         if let Some(user_record) = user_record {
@@ -347,21 +359,56 @@ pub async fn build_contextual_input(
     prefixed_input_items: &[Value],
     current_input_items: &[Value],
     fallback_input: Value,
+    excluded_memory_turn_id: Option<&str>,
 ) -> Result<Value, String> {
-    let mut items = Vec::new();
-    items.extend(prefixed_input_items.iter().cloned());
-
-    if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
-        items.extend(composer.compose_input_items(scope).await?);
-    }
-
-    if current_input_items.is_empty() {
-        items.extend(input_value_to_items(fallback_input));
+    let current_items = if current_input_items.is_empty() {
+        input_value_to_items(fallback_input)
     } else {
-        items.extend(current_input_items.iter().cloned());
+        current_input_items.to_vec()
+    };
+    let has_durable_response_history = current_items.iter().any(is_responses_output_or_result_item);
+    let memory_items = if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
+        composer
+            .compose_input_items_excluding_turn(scope, excluded_memory_turn_id, None)
+            .await?
+    } else {
+        Vec::new()
+    };
+
+    let mut items = if has_durable_response_history {
+        // The first request's exact input is now an immutable cacheable prefix.
+        // Memory Engine is still composed on every turn; only genuinely new
+        // items are appended so prior prompt-cache prefixes are never rewritten.
+        current_items
+    } else {
+        let mut initial = prefixed_input_items.to_vec();
+        initial.extend(memory_items.iter().cloned());
+        initial.extend(current_items);
+        initial
+    };
+    if has_durable_response_history {
+        for item in prefixed_input_items.iter().chain(memory_items.iter()) {
+            if !items.contains(item) {
+                items.push(item.clone());
+            }
+        }
     }
 
     Ok(Value::Array(items))
+}
+
+fn is_responses_output_or_result_item(item: &Value) -> bool {
+    matches!(
+        item.get("type").and_then(Value::as_str),
+        Some("reasoning")
+            | Some("reasoning_summary")
+            | Some("function_call")
+            | Some("function_call_output")
+            | Some("computer_call")
+            | Some("computer_call_output")
+            | Some("web_search_call")
+            | Some("file_search_call")
+    ) || (item.get("type").and_then(Value::as_str) == Some("message") && item.get("id").is_some())
 }
 
 pub fn input_value_to_items(input: Value) -> Vec<Value> {
@@ -386,10 +433,14 @@ pub fn message_item(role: &str, content: Value) -> Value {
 
 #[cfg(all(test, feature = "local-agent-loop"))]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
     use async_trait::async_trait;
+    use axum::extract::State;
+    use axum::routing::post;
+    use axum::{Json, Router};
     use serde_json::{json, Value};
 
     use super::{
@@ -423,6 +474,7 @@ mod tests {
             &[json!({"role":"system","content":"prefix"})],
             &[json!({"role":"user","content":"current"})],
             json!("fallback"),
+            None,
         )
         .await
         .expect("contextual input");
@@ -441,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_contextual_input_uses_fallback_when_current_is_empty() {
-        let input = build_contextual_input(None, None, &[], &[], json!("fallback"))
+        let input = build_contextual_input(None, None, &[], &[], json!("fallback"), None)
             .await
             .expect("contextual input");
 
@@ -451,6 +503,97 @@ mod tests {
             items[0].get("content").and_then(Value::as_str),
             Some("fallback")
         );
+    }
+
+    #[tokio::test]
+    async fn durable_responses_history_remains_an_immutable_cache_prefix() {
+        let original = json!({"role":"user","content":"implement inventory cli"});
+        let reasoning = json!({"type":"reasoning","id":"rs-1","summary":[]});
+        let call = json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"read_file","arguments":"{}"});
+        let output = json!({"type":"function_call_output","call_id":"call-1","output":"README"});
+        let durable = vec![
+            original.clone(),
+            reasoning.clone(),
+            call.clone(),
+            output.clone(),
+        ];
+
+        let input = build_contextual_input(
+            None,
+            None,
+            &[json!({"role":"system","content":"stable prompt"})],
+            durable.as_slice(),
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("contextual input");
+        let items = input.as_array().expect("items");
+
+        assert_eq!(&items[..durable.len()], durable.as_slice());
+        assert_eq!(items.last().unwrap()["content"], "stable prompt");
+    }
+
+    #[tokio::test]
+    async fn every_model_input_composition_fetches_latest_memory_engine_context() {
+        async fn compose(State(calls): State<Arc<AtomicUsize>>) -> Json<Value> {
+            let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            Json(json!({
+                "thread_id": "thread-1",
+                "blocks": [{"block_type": "memory", "text": format!("memory-{call}")}],
+                "recent_records": [],
+                "meta": {"summary_count": 1, "recent_record_count": 0}
+            }))
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind memory engine mock");
+        let address = listener.local_addr().expect("memory engine mock address");
+        let server_calls = Arc::clone(&calls);
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                Router::new()
+                    .route("/api/memory-engine/v1/context/compose", post(compose))
+                    .with_state(server_calls),
+            )
+            .await;
+        });
+        let composer = MemoryContextComposer::new_direct(
+            format!("http://{address}"),
+            Duration::from_secs(1),
+            "task_runner",
+        )
+        .expect("memory composer");
+        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+
+        let first = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[],
+            &[user_text_item("first")],
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("first model input");
+        let second = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[],
+            &[user_text_item("second")],
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("second model input");
+        server.abort();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(first.to_string().contains("memory-1"));
+        assert!(second.to_string().contains("memory-2"));
     }
 
     #[test]

@@ -63,7 +63,6 @@ impl RunService {
             lifecycle_state: runtime_execution.lifecycle_state,
             progress: runtime_execution.progress,
             pending_stream_event: runtime_execution.pending_stream_event,
-            plugin_sessions: prepared_execution.plugin_sessions,
             supply_chain_evidence: runtime_execution.supply_chain_evidence,
         })
     }
@@ -197,6 +196,8 @@ mod supply_chain_gate_tests {
                 finish_reason: Some("stop".to_string()),
                 usage: None,
                 response_id: None,
+                response_output_items: Vec::new(),
+                request_input_items: Vec::new(),
             }),
         );
         report.execution_outcome = Some(chatos_ai_runtime::TaskExecutionOutcome::succeeded(
@@ -321,5 +322,4 @@ fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool
                 chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
             )
             .server_name
-        && info.server_name != crate::services::sandbox_runtime::SANDBOX_MCP_SERVER_NAME
 }

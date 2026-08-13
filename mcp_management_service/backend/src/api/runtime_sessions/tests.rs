@@ -8,7 +8,7 @@ use chatos_mcp_management_sdk::{
 };
 use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
-    ResolvedMcp, ResourceMetadata, ResourceSecurity,
+    ResolvedMcp, ResourceMetadata, ResourceSecurity, SelectedPluginRef,
 };
 
 fn request() -> CreateRuntimeSessionRequest {
@@ -29,6 +29,8 @@ fn request() -> CreateRuntimeSessionRequest {
         tool_result_max_chars: Some(40_000),
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
+        selected_plugins: Vec::new(),
+        plugin_command_invocations: Vec::new(),
         locale: None,
         requested_device_id: Some("device-1".to_string()),
         requested_sandbox_provider: None,
@@ -272,18 +274,6 @@ fn local_only_agents_cannot_create_managed_runtime_sessions() {
 }
 
 #[test]
-fn local_named_task_runner_agents_are_cloud_managed_agents() {
-    assert_eq!(
-        parse_agent_key("task_runner_local_plan_phase").unwrap(),
-        SystemAgentKey::TaskRunnerLocalPlanPhase
-    );
-    assert_eq!(
-        parse_agent_key("task_runner_local_run_phase").unwrap(),
-        SystemAgentKey::TaskRunnerLocalRunPhase
-    );
-}
-
-#[test]
 fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     let route = system_route(SystemMcpKey::TaskProcessLog);
     let request = request();
@@ -499,6 +489,74 @@ fn required_route_without_registered_provider_adapter_is_blocked() {
         required_routes_without_provider_adapter(&required_resource_ids, &routes, |_| false),
         vec!["required-mcp"]
     );
+}
+
+#[test]
+fn selected_plugin_scope_rejects_empty_duplicate_unknown_and_agent_selection() {
+    let mut capabilities = capabilities_for_scope_test();
+    let empty = SelectedPluginRef {
+        plugin_id: " ".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: Vec::new(),
+        selected_agent_ids: Vec::new(),
+    };
+    assert!(apply_selected_plugin_scope(&mut capabilities, &[empty]).is_err());
+
+    let selected = SelectedPluginRef {
+        plugin_id: "missing-plugin".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: Vec::new(),
+        selected_agent_ids: Vec::new(),
+    };
+    assert!(apply_selected_plugin_scope(
+        &mut capabilities_for_scope_test(),
+        &[selected.clone(), selected.clone()],
+    )
+    .is_err());
+    assert!(apply_selected_plugin_scope(&mut capabilities_for_scope_test(), &[selected]).is_err());
+
+    let agent = SelectedPluginRef {
+        plugin_id: "missing-plugin".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: Vec::new(),
+        selected_agent_ids: vec!["reviewer".to_string()],
+    };
+    assert!(apply_selected_plugin_scope(&mut capabilities_for_scope_test(), &[agent]).is_err());
+}
+
+#[test]
+fn plugin_command_invocations_are_selected_unique_and_size_bounded() {
+    let selected = vec![SelectedPluginRef {
+        plugin_id: "plugin-review".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: vec!["review".to_string()],
+        selected_agent_ids: Vec::new(),
+    }];
+    let valid = chatos_plugin_management_sdk::PluginCommandInvocation {
+        plugin_id: " plugin-review ".to_string(),
+        command_id: " review ".to_string(),
+        arguments: Some(" src/lib.rs ".to_string()),
+    };
+    let normalized = validate_plugin_command_invocations(&selected, std::slice::from_ref(&valid))
+        .expect("selected command invocation");
+    assert_eq!(
+        normalized.get(&("plugin-review".to_string(), "review".to_string())),
+        Some(&Some("src/lib.rs".to_string()))
+    );
+    assert!(validate_plugin_command_invocations(&selected, &[valid.clone(), valid]).is_err());
+
+    let unknown = chatos_plugin_management_sdk::PluginCommandInvocation {
+        plugin_id: "plugin-review".to_string(),
+        command_id: "unknown".to_string(),
+        arguments: None,
+    };
+    assert!(validate_plugin_command_invocations(&selected, &[unknown]).is_err());
+    let oversized = chatos_plugin_management_sdk::PluginCommandInvocation {
+        plugin_id: "plugin-review".to_string(),
+        command_id: "review".to_string(),
+        arguments: Some("x".repeat(16 * 1024 + 1)),
+    };
+    assert!(validate_plugin_command_invocations(&selected, &[oversized]).is_err());
 }
 
 #[test]

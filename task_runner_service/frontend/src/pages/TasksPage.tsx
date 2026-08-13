@@ -81,7 +81,6 @@ export function TasksPage() {
     taskRecentRunsQuery,
     detailLastRunId,
     detailLastRunQuery,
-    detailLastRunEventsQuery,
     taskFollowUpQuery,
     taskRunDerivedQuery,
     taskPromptsQuery,
@@ -100,14 +99,8 @@ export function TasksPage() {
     taskSummaryMap,
     prerequisiteTaskOptions,
     tagOptions,
-    remoteServerMap,
     selectedTask,
     detailResultSummary,
-    detailRemoteOperations,
-    detailRemoteOperationStats,
-    latestRemoteOperation,
-    recentRemoteOperations,
-    taskRowRemoteActivityByTaskId,
     pendingPromptCountByTaskId,
     batchRunTasks,
   } = useTasksPageData({
@@ -177,7 +170,6 @@ export function TasksPage() {
     projectNameMap,
     pendingPromptCountByTaskId,
     scheduleModeLabels,
-    taskRowRemoteActivityByTaskId,
     onOpenDetail: openDetailDrawer,
     onOpenEdit: openEditDrawer,
     onOpenMemory: openMemoryDrawer,
@@ -429,14 +421,8 @@ export function TasksPage() {
         task={selectedTask}
         loading={selectedTaskQuery.isLoading}
         detailLastRunId={detailLastRunId}
-        detailLastRun={detailLastRunQuery.data}
         detailLastRunLoading={detailLastRunQuery.isLoading}
         detailResultSummary={detailResultSummary}
-        remoteOperations={detailRemoteOperations}
-        remoteOperationStats={detailRemoteOperationStats}
-        latestRemoteOperation={latestRemoteOperation}
-        recentRemoteOperations={recentRemoteOperations}
-        remoteOperationsLoading={detailLastRunEventsQuery.isLoading || detailLastRunQuery.isLoading}
         recentRuns={taskRecentRunsQuery.data}
         recentRunsLoading={taskRecentRunsQuery.isLoading}
         prompts={taskPromptsQuery.data}
@@ -450,7 +436,6 @@ export function TasksPage() {
         modelLabelMap={modelLabelMap}
         projectNameMap={projectNameMap}
         taskSummaryMap={taskSummaryMap}
-        remoteServerMap={remoteServerMap}
         taskStatusLabel={taskStatusLabel}
         onClose={closeDetailDrawer}
         onEditTask={openEditDrawer}
@@ -469,13 +454,6 @@ export function TasksPage() {
         onOpenModel={(modelId) =>
           navigate(`/models?model_id=${encodeURIComponent(modelId)}`)
         }
-        onOpenServers={(serverId) => {
-          if (serverId) {
-            navigate(`/servers?server_id=${encodeURIComponent(serverId)}`);
-            return;
-          }
-          navigate('/servers');
-        }}
         onOpenDetail={openDetailDrawer}
       />
 

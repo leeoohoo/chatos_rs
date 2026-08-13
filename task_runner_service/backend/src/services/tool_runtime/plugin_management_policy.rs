@@ -11,8 +11,8 @@ use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpBackend, SystemMcpDe
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
     PluginCommandInvocation, PluginManagementClient, ResolveAgentCapabilitiesRequest,
-    ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin, ResolvedSkill, RunPluginSnapshot,
-    SystemAgentKey, TaskPluginConfig,
+    ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin, ResolvedSkill, SystemAgentKey,
+    TaskPluginConfig,
 };
 use serde::Serialize;
 
@@ -30,10 +30,7 @@ pub(crate) mod selectable_views;
 #[path = "plugin_management_policy/task_config_application.rs"]
 mod task_config_application;
 
-use plugin_selection::{
-    plugin_selection_requires_local_execution, plugin_snapshot,
-    validate_plugin_component_selection, validate_supported_plugin,
-};
+use plugin_selection::{validate_plugin_component_selection, validate_supported_plugin};
 
 const MAX_PLUGIN_COMMAND_INVOCATIONS: usize = 64;
 const MAX_PLUGIN_COMMAND_ARGUMENT_BYTES: usize = 16 * 1024;
@@ -43,9 +40,6 @@ const BUILTIN_RUNTIME_KIND: &str = chatos_plugin_management_sdk::LEGACY_BUILTIN_
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRunnerCapabilityPolicy {
     capabilities: ResolvedAgentCapabilities,
-    portable_uses_local: bool,
-    runtime_device_id: Option<String>,
-    runtime_workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,15 +54,7 @@ pub(crate) struct TaskSkillSnapshotView {
 }
 
 impl TaskRunnerCapabilityPolicy {
-    #[cfg(test)]
     fn new(capabilities: ResolvedAgentCapabilities) -> Result<Self, String> {
-        Self::new_for_runtime(capabilities, false)
-    }
-
-    fn new_for_runtime(
-        capabilities: ResolvedAgentCapabilities,
-        portable_uses_local: bool,
-    ) -> Result<Self, String> {
         if !capabilities.agent_enabled {
             return Err(format!(
                 "Task Runner Agent is disabled by Plugin Management: {}",
@@ -82,33 +68,14 @@ impl TaskRunnerCapabilityPolicy {
             .ensure_required_skills_supported([])
             .map_err(|err| err.to_string())?;
         for plugin in capabilities.required_plugins() {
-            validate_supported_plugin(
-                plugin,
-                capabilities.agent_key.as_str(),
-                portable_uses_local,
-            )?;
+            validate_supported_plugin(plugin, capabilities.agent_key.as_str())?;
         }
         for item in capabilities.required_mcps() {
             if plugin_task_process_log_mcp(item) {
                 validate_task_process_log_mcp_runtime(item)?;
             }
         }
-        Ok(Self {
-            capabilities,
-            portable_uses_local,
-            runtime_device_id: None,
-            runtime_workspace_id: None,
-        })
-    }
-
-    fn with_project_runtime_target(
-        mut self,
-        device_id: Option<String>,
-        workspace_id: Option<String>,
-    ) -> Self {
-        self.runtime_device_id = device_id;
-        self.runtime_workspace_id = workspace_id;
-        self
+        Ok(Self { capabilities })
     }
 
     pub(crate) fn policy_revision(&self) -> &str {
@@ -202,12 +169,7 @@ impl TaskRunnerCapabilityPolicy {
         self.capabilities
             .selectable_plugins()
             .filter(|plugin| {
-                validate_supported_plugin(
-                    plugin,
-                    self.capabilities.agent_key.as_str(),
-                    self.portable_uses_local,
-                )
-                .is_ok()
+                validate_supported_plugin(plugin, self.capabilities.agent_key.as_str()).is_ok()
             })
             .collect()
     }
@@ -256,19 +218,7 @@ impl TaskRunnerCapabilityPolicy {
                 plugin,
                 selected,
                 self.capabilities.agent_key.as_str(),
-                self.portable_uses_local,
             )?;
-            if plugin_selection_requires_local_execution(
-                plugin,
-                selected,
-                self.capabilities.agent_key.as_str(),
-                self.portable_uses_local,
-            )? {
-                normalized_plugin_identifier(
-                    self.runtime_device_id.as_deref().unwrap_or_default(),
-                    "project device_id",
-                )?;
-            }
         }
         validate_command_invocations(config)?;
         Ok(())
@@ -323,50 +273,6 @@ impl TaskRunnerCapabilityPolicy {
             }
         }
         Ok(())
-    }
-
-    pub(crate) fn plugin_snapshots(
-        &self,
-        task: &TaskRecord,
-    ) -> Result<Vec<RunPluginSnapshot>, String> {
-        self.validate_plugin_config(&task.plugin_config)?;
-        let command_invocations = task
-            .plugin_config
-            .command_invocations
-            .iter()
-            .map(normalized_command_invocation)
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut snapshots = task
-            .plugin_config
-            .selected_plugins
-            .iter()
-            .map(|selected| {
-                let plugin = self
-                    .capabilities
-                    .plugins
-                    .iter()
-                    .find(|plugin| {
-                        plugin.catalog.id == selected.plugin_id
-                            && (plugin.available
-                                || plugin.status
-                                    == chatos_plugin_management_sdk::PluginAvailabilityStatus::PartiallyAvailable)
-                    })
-                    .ok_or_else(|| {
-                        format!("effective Plugin is unavailable: {}", selected.plugin_id)
-                    })?;
-                plugin_snapshot(
-                    plugin,
-                    selected,
-                    self.runtime_device_id.as_deref(),
-                    self.runtime_workspace_id.as_deref(),
-                    command_invocations.as_slice(),
-                    self.capabilities.agent_key.as_str(),
-                    self.portable_uses_local,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        snapshots.sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
-        Ok(snapshots)
     }
 
     pub(crate) fn effective_skills<'a>(
@@ -494,16 +400,6 @@ fn normalized_plugin_identifier(value: &str, field: &str) -> Result<String, Stri
         return Err(format!("{field} is required"));
     }
     Ok(value.to_string())
-}
-
-fn normalized_optional_plugin_text(
-    value: Option<&str>,
-    field: &str,
-) -> Result<Option<String>, String> {
-    match value {
-        Some(value) => Ok(Some(normalized_plugin_identifier(value, field)?)),
-        None => Ok(None),
-    }
 }
 
 fn validate_command_invocations(config: &TaskPluginConfig) -> Result<(), String> {

@@ -352,12 +352,19 @@ pub(super) async fn run_rabbitmq_invocation_consumer_loop(
                                 error = error.as_str(),
                                 "execute invocation-ready event failed"
                             );
-                            let _ = delivery
-                                .nack(BasicNackOptions {
-                                    multiple: false,
-                                    requeue: true,
-                                })
-                                .await;
+                            if invocation_ready_error_is_stale(error.as_str()) {
+                                // The durable batch already expired or was removed. Requeueing
+                                // cannot recreate it and only creates a hot loop that starves
+                                // current runs, so consume the stale notification.
+                                let _ = delivery.ack(BasicAckOptions::default()).await;
+                            } else {
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: true,
+                                    })
+                                    .await;
+                            }
                         }
                     }
                 }
@@ -365,6 +372,25 @@ pub(super) async fn run_rabbitmq_invocation_consumer_loop(
             Err(error) => warn!(error = error.as_str(), "MCP invocation consumer failed"),
         }
         tokio::time::sleep(topology.rabbitmq_reconnect_delay).await;
+    }
+}
+
+fn invocation_ready_error_is_stale(error: &str) -> bool {
+    error == "Runtime Tool Batch was not found"
+}
+
+#[cfg(test)]
+mod invocation_ready_tests {
+    use super::invocation_ready_error_is_stale;
+
+    #[test]
+    fn missing_batch_is_consumed_instead_of_requeued() {
+        assert!(invocation_ready_error_is_stale(
+            "Runtime Tool Batch was not found"
+        ));
+        assert!(!invocation_ready_error_is_stale(
+            "Runtime Tool Batch CAS conflict limit was exceeded"
+        ));
     }
 }
 

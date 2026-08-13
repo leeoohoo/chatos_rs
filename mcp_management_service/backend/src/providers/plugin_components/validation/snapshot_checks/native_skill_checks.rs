@@ -9,6 +9,59 @@ use crate::runtime::PluginToolComponentRuntimeBinding;
 
 use super::super::value_helpers::is_lower_sha256;
 
+pub(in crate::providers::plugin_components) fn validate_local_skill_snapshot(
+    immutable: &PluginToolComponentRuntimeBinding,
+    skill: &Value,
+) -> Result<(), ProviderCallError> {
+    for (field, expected) in [
+        ("plugin_id", immutable.plugin_id.as_str()),
+        ("release_id", immutable.release_id.as_str()),
+        ("version", immutable.version.as_str()),
+        ("artifact_sha256", immutable.artifact_sha256.as_str()),
+        ("component_key", immutable.component.component_key.as_str()),
+    ] {
+        if skill.get(field).and_then(Value::as_str) != Some(expected) {
+            return Err(ProviderCallError::invalid_response(format!(
+                "Plugin Skill response {field} does not match its immutable binding"
+            )));
+        }
+    }
+    let skill_key = skill
+        .get("skill_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ProviderCallError::invalid_response("Plugin Skill response is missing skill_key")
+        })?;
+    if skill_key != immutable.component.component_key {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin Skill response skill_key does not match its immutable component",
+        ));
+    }
+    let instructions = skill
+        .get("instructions")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ProviderCallError::invalid_response("Plugin Skill response is missing instructions")
+        })?;
+    let expected_instructions_sha256 = hex::encode(Sha256::digest(instructions.as_bytes()));
+    if skill.get("instructions_sha256").and_then(Value::as_str)
+        != Some(expected_instructions_sha256.as_str())
+        || !skill
+            .get("snapshot_sha256")
+            .and_then(Value::as_str)
+            .is_some_and(is_lower_sha256)
+    {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin Skill response hashes are invalid",
+        ));
+    }
+    Ok(())
+}
+
 pub(in crate::providers::plugin_components) fn validate_native_skill_snapshot(
     immutable: &PluginToolComponentRuntimeBinding,
     native_skill: &Value,

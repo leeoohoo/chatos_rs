@@ -30,6 +30,7 @@ fn ai_response(content: &str) -> AiResponse {
         provider_error: None,
         usage: None,
         response_id: Some("response-1".to_string()),
+        response_output_items: Vec::new(),
     }
 }
 
@@ -106,6 +107,7 @@ fn runtime_context(
         agent_system_prompt: Some("agent prompt".to_string()),
         contact_system_prompt: None,
         builtin_mcp_system_prompt: None,
+        plugin_instruction_items: Vec::new(),
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
         plugin_command_invocations_for_snapshot: Vec::new(),
         resolved_project_id: Some("project-1".to_string()),
@@ -200,6 +202,39 @@ fn project_context_prompt_contains_only_dynamic_project_facts() {
     assert!(!prompt.contains("cloud"));
     assert!(!prompt.contains("C:/project"));
     assert!(!prompt.contains("Task Runner 是你自己的内部异步执行通道"));
+}
+
+#[test]
+fn plugin_instruction_items_are_injected_once_before_other_runtime_context() {
+    let mut context = runtime_context(false);
+    context.plugin_instruction_items = vec![json!({
+        "type": "message",
+        "role": "system",
+        "content": [{"type": "input_text", "text": "signed plugin command"}],
+    })];
+    context.contact_system_prompt = Some("contact instructions".to_string());
+
+    let items = runtime_prefixed_input_items(&context);
+
+    assert_eq!(items.len(), 3);
+    assert_eq!(
+        items[0].pointer("/content/0/text").and_then(Value::as_str),
+        Some("signed plugin command")
+    );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| {
+                item.pointer("/content/0/text").and_then(Value::as_str)
+                    == Some("signed plugin command")
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        items[1].pointer("/content/0/text").and_then(Value::as_str),
+        Some("contact instructions")
+    );
 }
 
 #[test]

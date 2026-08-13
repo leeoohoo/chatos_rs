@@ -124,9 +124,6 @@ pub(super) fn trim_run_for_chatos_detail(
 
 fn truncate_run_input_snapshot_for_chatos(value: Value) -> Value {
     let plugin_config = value.get("plugin_config").cloned();
-    let plugin_snapshots = value
-        .get("plugin_snapshots")
-        .map(project_plugin_snapshot_summaries_for_chatos);
     let mut projected = truncate_json_value(value, RUN_SNAPSHOT_PREVIEW_LIMIT_BYTES);
     if projected.get("truncated").and_then(Value::as_bool) != Some(true) {
         return projected;
@@ -137,61 +134,7 @@ fn truncate_run_input_snapshot_for_chatos(value: Value) -> Value {
     if let Some(plugin_config) = plugin_config {
         root.insert("plugin_config".to_string(), plugin_config);
     }
-    if let Some(plugin_snapshots) = plugin_snapshots {
-        root.insert("plugin_snapshots".to_string(), plugin_snapshots);
-    }
     projected
-}
-
-fn project_plugin_snapshot_summaries_for_chatos(value: &Value) -> Value {
-    let Some(snapshots) = value.as_array() else {
-        return Value::Array(Vec::new());
-    };
-    Value::Array(
-        snapshots
-            .iter()
-            .take(50)
-            .filter_map(Value::as_object)
-            .map(|snapshot| {
-                let mut projected = serde_json::Map::new();
-                copy_bounded_string_fields(
-                    snapshot,
-                    &mut projected,
-                    &[
-                        ("plugin_id", 256),
-                        ("release_id", 256),
-                        ("version", 64),
-                        ("artifact_sha256", 64),
-                    ],
-                );
-                if let Some(components) = snapshot
-                    .get("component_snapshots")
-                    .and_then(Value::as_array)
-                {
-                    let components = components
-                        .iter()
-                        .take(128)
-                        .filter_map(Value::as_object)
-                        .map(|component| {
-                            let mut projected_component = serde_json::Map::new();
-                            copy_bounded_string_fields(
-                                component,
-                                &mut projected_component,
-                                &[("component_key", 256), ("content_sha256", 64)],
-                            );
-                            if let Some(kind) = component.get("kind").and_then(Value::as_str) {
-                                projected_component
-                                    .insert("kind".to_string(), Value::String(kind.to_string()));
-                            }
-                            Value::Object(projected_component)
-                        })
-                        .collect();
-                    projected.insert("component_snapshots".to_string(), Value::Array(components));
-                }
-                Value::Object(projected)
-            })
-            .collect(),
-    )
 }
 
 pub(super) fn trim_event_for_chatos_detail(
@@ -230,30 +173,6 @@ fn redact_plugin_command_arguments(snapshot: &mut Value) {
         for invocation in command_invocations {
             if let Some(invocation) = invocation.as_object_mut() {
                 replace_plugin_arguments_with_audit(invocation);
-            }
-        }
-    }
-    if let Some(plugin_snapshots) = root
-        .get_mut("plugin_snapshots")
-        .and_then(Value::as_array_mut)
-    {
-        for plugin in plugin_snapshots {
-            let Some(components) = plugin
-                .as_object_mut()
-                .and_then(|plugin| plugin.get_mut("component_snapshots"))
-                .and_then(Value::as_array_mut)
-            else {
-                continue;
-            };
-            for component in components {
-                let Some(runtime) = component
-                    .as_object_mut()
-                    .and_then(|component| component.get_mut("runtime"))
-                    .and_then(Value::as_object_mut)
-                else {
-                    continue;
-                };
-                replace_plugin_arguments_with_audit(runtime);
             }
         }
     }

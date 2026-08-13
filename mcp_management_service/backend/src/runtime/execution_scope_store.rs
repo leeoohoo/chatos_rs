@@ -813,8 +813,6 @@ impl RuntimeExecutionScopeStore {
                             "generation": 1_i64,
                             "session_refs": {},
                             "next_invocation_sequence": 0_i64,
-                            "invocation_queue": [],
-                            "running_invocation_id": mongodb::bson::Bson::Null,
                         },
                         "$set": {
                             "status": "terminal",

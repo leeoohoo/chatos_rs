@@ -47,7 +47,6 @@ pub struct TaskSourceContext {
     pub source_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
     pub workspace_dir: Option<String>,
-    pub remote_server_config: Option<CreateRemoteServerRequest>,
     pub builtin_prompt_locale: Option<String>,
 }
 
@@ -220,14 +219,6 @@ mod task_mcp_request_config_tests {
             "builtin_prompt_mode",
             "builtin_prompt_locale",
             "workspace_dir",
-            "sandbox_enabled",
-            "sandbox_manager_base_url",
-            "sandbox_mode",
-            "permission_profile_id",
-            "approval_policy",
-            "approval_reviewer",
-            "policy_revision",
-            "additional_writable_roots",
             "execution_service_id",
             "default_remote_server_id",
             "selected_skill_ids",

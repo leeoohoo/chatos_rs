@@ -22,7 +22,6 @@ pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
 pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
 
 const CHATOS_CALLER: &str = "chatos-backend";
-const TASK_RUNNER_CALLER: &str = "task-runner";
 const PROJECT_SERVICE_CALLER: &str = "project-service";
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 
@@ -150,21 +149,21 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
     match (method, parts.as_slice()) {
         (&Method::POST, ["api", "local-connectors", "relay", _, "mcp"]) => Some(InternalAccess {
             scope: MCP_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER],
+            allowed_callers: &[MCP_MANAGEMENT_CALLER],
         }),
         (
             &Method::POST,
             ["api", "local-connectors", "relay", _, "skills", "prepare" | "execute" | "cancel"],
         ) => Some(InternalAccess {
             scope: SKILL_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER],
+            allowed_callers: &[MCP_MANAGEMENT_CALLER],
         }),
         (
             &Method::POST,
             ["api", "local-connectors", "relay", _, "plugins", "prepare" | "execute" | "cancel"],
         ) => Some(InternalAccess {
             scope: PLUGIN_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER],
+            allowed_callers: &[MCP_MANAGEMENT_CALLER],
         }),
         (&Method::POST, ["api", "local-connectors", "relay", _, "plugins", "ui", "assets"]) => {
             Some(InternalAccess {
@@ -198,39 +197,27 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             ["api", "local-connectors", "relay", _, "remote-connections", "test" | "command" | "sftp"],
         ) => Some(InternalAccess {
             scope: REMOTE_CONNECTION_RELAY_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER],
+            allowed_callers: &[CHATOS_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
             scope: SANDBOX_ROUTING_READ_SCOPE,
-            allowed_callers: &[
-                TASK_RUNNER_CALLER,
-                PROJECT_SERVICE_CALLER,
-                MCP_MANAGEMENT_CALLER,
-            ],
+            allowed_callers: &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "system", "stats"]) => Some(InternalAccess {
             scope: SYSTEM_STATS_READ_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER, MCP_MANAGEMENT_CALLER, CHATOS_CALLER],
+            allowed_callers: &[MCP_MANAGEMENT_CALLER, CHATOS_CALLER],
         }),
         (
             &Method::POST,
             ["api", "local-connectors", "sandbox-facade", _, "api", "local", "sandbox", "images", "mcp"],
         ) => Some(InternalAccess {
             scope: SANDBOX_SERVICE_SCOPE,
-            allowed_callers: &[
-                TASK_RUNNER_CALLER,
-                PROJECT_SERVICE_CALLER,
-                MCP_MANAGEMENT_CALLER,
-            ],
+            allowed_callers: &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _]) => {
             Some(InternalAccess {
                 scope: SANDBOX_SERVICE_SCOPE,
-                allowed_callers: &[
-                    TASK_RUNNER_CALLER,
-                    PROJECT_SERVICE_CALLER,
-                    MCP_MANAGEMENT_CALLER,
-                ],
+                allowed_callers: &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
             })
         }
         (
@@ -242,7 +229,7 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
         }),
         (_, ["api", "local-connectors", "sandbox-facade", _, ..]) => Some(InternalAccess {
             scope: SANDBOX_SERVICE_SCOPE,
-            allowed_callers: &[TASK_RUNNER_CALLER, PROJECT_SERVICE_CALLER],
+            allowed_callers: &[PROJECT_SERVICE_CALLER],
         }),
         (
             &Method::POST,
@@ -251,7 +238,7 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
         | (&Method::GET, ["api", "local-connectors", "relay", _, "terminal", "ws"]) => {
             Some(InternalAccess {
                 scope: TERMINAL_RELAY_SCOPE,
-                allowed_callers: &[TASK_RUNNER_CALLER],
+                allowed_callers: &[MCP_MANAGEMENT_CALLER],
             })
         }
         _ => None,
@@ -302,153 +289,19 @@ mod tests {
 
     use super::*;
 
+    const MCP_SECRET: &str = "a-long-mcp-management-local-connector-secret";
+    const CHATOS_SECRET: &str = "a-long-chatos-local-connector-secret";
+    const REMOVED_TASK_RUNNER: &str = "task-runner";
+    const REMOVED_TASK_RUNNER_SECRET: &str = "a-long-task-runner-local-connector-secret";
+
     #[test]
-    fn signed_token_is_bound_to_caller_scope_and_path() {
+    fn mcp_management_tokens_are_bound_to_caller_scope_owner_and_path() {
         let mut config = test_config();
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
+        config
+            .internal_api_secrets
+            .insert(MCP_MANAGEMENT_CALLER.to_string(), MCP_SECRET.to_string());
         let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-task-runner-local-connector-secret",
-            TASK_RUNNER_CALLER,
-            TOKEN_AUDIENCE,
-            MCP_RELAY_SCOPE,
-            60,
-            "user-1",
-        )
-        .expect("issue token");
-        let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
-        let user = internal_service_user_from_request(
-            &config,
-            &headers,
-            &Method::POST,
-            "/api/local-connectors/relay/device-1/mcp",
-        )
-        .expect("matching request")
-        .expect("service user");
-        assert_eq!(user.user_id, "service:task-runner:user-1");
-        let (_user, identity) = internal_service_auth_from_request(
-            &config,
-            &headers,
-            &Method::POST,
-            "/api/local-connectors/relay/device-1/mcp",
-        )
-        .expect("matching signed request")
-        .expect("internal identity");
-        assert_eq!(identity.caller_service, TASK_RUNNER_CALLER);
-        assert_eq!(identity.scope, MCP_RELAY_SCOPE);
-        assert_eq!(identity.owner_user_id, "user-1");
-        uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("valid trace id");
-
-        assert!(internal_service_user_from_request(
-            &config,
-            &headers,
-            &Method::GET,
-            "/api/local-connectors/devices",
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn task_runner_remote_connection_token_is_scope_and_path_bound() {
-        let mut config = test_config();
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
-        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-task-runner-local-connector-secret",
-            TASK_RUNNER_CALLER,
-            TOKEN_AUDIENCE,
-            REMOTE_CONNECTION_RELAY_SCOPE,
-            60,
-            "user-1",
-        )
-        .expect("issue token");
-        let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
-
-        for path in [
-            "/api/local-connectors/relay/device-1/remote-connections/test",
-            "/api/local-connectors/relay/device-1/remote-connections/command",
-            "/api/local-connectors/relay/device-1/remote-connections/sftp",
-        ] {
-            let user = internal_service_user_from_request(&config, &headers, &Method::POST, path)
-                .expect("matching request")
-                .expect("service user");
-            assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
-        }
-    }
-
-    #[test]
-    fn legacy_internal_secret_is_rejected_without_a_signed_trace() {
-        let mut config = test_config();
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-local-connector-caller",
-            HeaderValue::from_static(TASK_RUNNER_CALLER),
-        );
-        headers.insert(
-            "x-local-connector-internal-secret",
-            HeaderValue::from_static("a-long-task-runner-local-connector-secret"),
-        );
-        headers.insert(
-            "x-local-connector-owner-user-id",
-            HeaderValue::from_static("user-1"),
-        );
-
-        let error = internal_service_auth_from_request(
-            &config,
-            &headers,
-            &Method::POST,
-            "/api/local-connectors/relay/device-1/mcp",
-        )
-        .expect_err("legacy secret must not create an internal identity");
-        assert_eq!(
-            error.message(),
-            "signed Local Connector internal API token is required"
-        );
-    }
-
-    #[test]
-    fn internal_credentials_cannot_access_management_routes() {
-        let mut config = test_config();
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
-        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-task-runner-local-connector-secret",
-            TASK_RUNNER_CALLER,
-            TOKEN_AUDIENCE,
-            MCP_RELAY_SCOPE,
-            60,
-            "user-1",
-        )
-        .expect("issue token");
-        let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
-        assert!(internal_service_user_from_request(
-            &config,
-            &headers,
-            &Method::GET,
-            "/api/local-connectors/devices",
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn mcp_management_tokens_are_limited_to_mcp_plugin_and_sandbox_tool_relays() {
-        let mut config = test_config();
-        config.internal_api_secrets.insert(
-            MCP_MANAGEMENT_CALLER.to_string(),
-            "a-long-mcp-management-local-connector-secret".to_string(),
-        );
-        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-mcp-management-local-connector-secret",
+            MCP_SECRET,
             MCP_MANAGEMENT_CALLER,
             TOKEN_AUDIENCE,
             MCP_RELAY_SCOPE,
@@ -466,36 +319,95 @@ mod tests {
         .expect("matching MCP relay request")
         .expect("service user");
         assert_eq!(user.user_id, "service:mcp-management-service:user-1");
-
-        let plugin_token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-mcp-management-local-connector-secret",
-            MCP_MANAGEMENT_CALLER,
-            TOKEN_AUDIENCE,
-            PLUGIN_RELAY_SCOPE,
-            60,
-            "user-1",
-        )
-        .expect("issue Plugin relay token");
-        let plugin_headers = signed_headers(MCP_MANAGEMENT_CALLER, plugin_token.as_str());
-        let plugin_user = internal_service_user_from_request(
+        let (_user, identity) = internal_service_auth_from_request(
             &config,
-            &plugin_headers,
-            &Method::POST,
-            "/api/local-connectors/relay/device-1/plugins/prepare",
-        )
-        .expect("matching Plugin relay request")
-        .expect("service user");
-        assert_eq!(plugin_user.owner_user_id.as_deref(), Some("user-1"));
-        assert!(internal_service_user_from_request(
-            &config,
-            &plugin_headers,
+            &headers,
             &Method::POST,
             "/api/local-connectors/relay/device-1/mcp",
         )
+        .expect("matching signed request")
+        .expect("internal identity");
+        assert_eq!(identity.caller_service, MCP_MANAGEMENT_CALLER);
+        assert_eq!(identity.scope, MCP_RELAY_SCOPE);
+        assert_eq!(identity.owner_user_id, "user-1");
+        uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("valid trace id");
+
+        assert!(internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::GET,
+            "/api/local-connectors/devices",
+        )
         .is_err());
+    }
+
+    #[test]
+    fn mcp_management_owns_mcp_skill_plugin_terminal_and_runtime_sandbox_relays() {
+        let mut config = test_config();
+        config
+            .internal_api_secrets
+            .insert(MCP_MANAGEMENT_CALLER.to_string(), MCP_SECRET.to_string());
+
+        for (scope, method, path) in [
+            (
+                MCP_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/mcp",
+            ),
+            (
+                SKILL_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/skills/execute",
+            ),
+            (
+                PLUGIN_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/plugins/prepare",
+            ),
+            (
+                TERMINAL_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/terminal/exec",
+            ),
+            (
+                SANDBOX_ROUTING_READ_SCOPE,
+                Method::GET,
+                "/api/local-connectors/sandbox-pairings",
+            ),
+            (
+                SANDBOX_SERVICE_SCOPE,
+                Method::POST,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/local/sandbox/images/mcp",
+            ),
+            (
+                SANDBOX_SERVICE_SCOPE,
+                Method::GET,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1",
+            ),
+            (
+                SANDBOX_SERVICE_SCOPE,
+                Method::POST,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1/mcp",
+            ),
+        ] {
+            let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+                MCP_SECRET,
+                MCP_MANAGEMENT_CALLER,
+                TOKEN_AUDIENCE,
+                scope,
+                60,
+                "user-1",
+            )
+            .expect("issue MCP Management token");
+            let headers = signed_headers(MCP_MANAGEMENT_CALLER, token.as_str());
+            let user = internal_service_user_from_request(&config, &headers, &method, path)
+                .expect("authorized MCP Management request")
+                .expect("service user");
+            assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
+        }
 
         let sandbox_token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-mcp-management-local-connector-secret",
+            MCP_SECRET,
             MCP_MANAGEMENT_CALLER,
             TOKEN_AUDIENCE,
             SANDBOX_SERVICE_SCOPE,
@@ -504,29 +416,6 @@ mod tests {
         )
         .expect("issue Sandbox service token");
         let sandbox_headers = signed_headers(MCP_MANAGEMENT_CALLER, sandbox_token.as_str());
-        let sandbox_user = internal_service_user_from_request(
-            &config,
-            &sandbox_headers,
-            &Method::POST,
-            "/api/local-connectors/sandbox-facade/pairing-1/api/local/sandbox/images/mcp",
-        )
-        .expect("matching Sandbox image facade request")
-        .expect("service user");
-        assert_eq!(sandbox_user.owner_user_id.as_deref(), Some("user-1"));
-        for (method, path) in [
-            (
-                Method::GET,
-                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1",
-            ),
-            (
-                Method::POST,
-                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1/mcp",
-            ),
-        ] {
-            internal_service_user_from_request(&config, &sandbox_headers, &method, path)
-                .expect("matching Local Sandbox runtime request")
-                .expect("service user");
-        }
         assert!(internal_service_user_from_request(
             &config,
             &sandbox_headers,
@@ -534,69 +423,91 @@ mod tests {
             "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
         )
         .is_err());
+    }
 
-        for (method, path) in [
+    #[test]
+    fn task_runner_is_rejected_from_every_internal_execution_surface() {
+        let mut config = test_config();
+        config.internal_api_secrets.insert(
+            REMOVED_TASK_RUNNER.to_string(),
+            REMOVED_TASK_RUNNER_SECRET.to_string(),
+        );
+        for (scope, method, path) in [
             (
+                MCP_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/mcp",
+            ),
+            (
+                SKILL_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/skills/prepare",
+            ),
+            (
+                PLUGIN_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/plugins/execute",
+            ),
+            (
+                REMOTE_CONNECTION_RELAY_SCOPE,
+                Method::POST,
+                "/api/local-connectors/relay/device-1/remote-connections/command",
+            ),
+            (
+                TERMINAL_RELAY_SCOPE,
                 Method::POST,
                 "/api/local-connectors/relay/device-1/terminal/exec",
             ),
             (
+                SANDBOX_ROUTING_READ_SCOPE,
+                Method::GET,
+                "/api/local-connectors/sandbox-pairings",
+            ),
+            (
+                SYSTEM_STATS_READ_SCOPE,
+                Method::GET,
+                "/api/local-connectors/system/stats",
+            ),
+            (
+                SANDBOX_SERVICE_SCOPE,
                 Method::POST,
-                "/api/local-connectors/relay/device-1/skills/execute",
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
+            ),
+            (
+                SANDBOX_SERVICE_SCOPE,
+                Method::POST,
+                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1/mcp",
             ),
         ] {
-            assert!(internal_service_user_from_request(&config, &headers, &method, path).is_err());
+            let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+                REMOVED_TASK_RUNNER_SECRET,
+                REMOVED_TASK_RUNNER,
+                TOKEN_AUDIENCE,
+                scope,
+                60,
+                "user-1",
+            )
+            .expect("issue removed Task Runner token");
+            let headers = signed_headers(REMOVED_TASK_RUNNER, token.as_str());
+            let error = internal_service_auth_from_request(&config, &headers, &method, path)
+                .expect_err(
+                    "Task Runner must not access Local Connector internal execution routes",
+                );
+            assert_eq!(
+                error.message(),
+                "caller service is not allowed for this Local Connector operation"
+            );
         }
-    }
-
-    #[test]
-    fn task_runner_plugin_relay_token_is_scope_and_path_bound() {
-        let mut config = test_config();
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
-        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-task-runner-local-connector-secret",
-            TASK_RUNNER_CALLER,
-            TOKEN_AUDIENCE,
-            PLUGIN_RELAY_SCOPE,
-            60,
-            "user-1",
-        )
-        .expect("issue Plugin relay token");
-        let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
-        let user = internal_service_user_from_request(
-            &config,
-            &headers,
-            &Method::POST,
-            "/api/local-connectors/relay/device-1/plugins/prepare",
-        )
-        .expect("matching Plugin request")
-        .expect("service user");
-        assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
-        assert!(internal_service_user_from_request(
-            &config,
-            &headers,
-            &Method::POST,
-            "/api/local-connectors/relay/device-1/skills/prepare",
-        )
-        .is_err());
     }
 
     #[test]
     fn chatos_plugin_ui_read_token_is_scope_caller_and_path_bound() {
         let mut config = test_config();
-        config.internal_api_secrets.insert(
-            CHATOS_CALLER.to_string(),
-            "a-long-chatos-local-connector-secret".to_string(),
-        );
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
+        config
+            .internal_api_secrets
+            .insert(CHATOS_CALLER.to_string(), CHATOS_SECRET.to_string());
         let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-chatos-local-connector-secret",
+            CHATOS_SECRET,
             CHATOS_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_UI_READ_SCOPE,
@@ -622,26 +533,8 @@ mod tests {
         )
         .is_err());
 
-        let task_runner_token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-task-runner-local-connector-secret",
-            TASK_RUNNER_CALLER,
-            TOKEN_AUDIENCE,
-            PLUGIN_UI_READ_SCOPE,
-            60,
-            "user-1",
-        )
-        .expect("issue wrong-caller Plugin UI token");
-        let task_runner_headers = signed_headers(TASK_RUNNER_CALLER, task_runner_token.as_str());
-        assert!(internal_service_user_from_request(
-            &config,
-            &task_runner_headers,
-            &Method::POST,
-            "/api/local-connectors/relay/device-1/plugins/ui/assets",
-        )
-        .is_err());
-
         let artifact_token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-chatos-local-connector-secret",
+            CHATOS_SECRET,
             CHATOS_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_ARTIFACT_READ_SCOPE,
@@ -674,7 +567,7 @@ mod tests {
         .is_err());
 
         let artifact_write_token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-chatos-local-connector-secret",
+            CHATOS_SECRET,
             CHATOS_CALLER,
             TOKEN_AUDIENCE,
             PLUGIN_ARTIFACT_WRITE_SCOPE,
@@ -718,35 +611,27 @@ mod tests {
     }
 
     #[test]
-    fn task_runner_can_read_sandbox_routing_and_use_facade_with_scoped_tokens() {
+    fn chatos_owns_remote_connection_relay() {
         let mut config = test_config();
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
-        for (scope, method, path) in [
-            (
-                SANDBOX_ROUTING_READ_SCOPE,
-                Method::GET,
-                "/api/local-connectors/sandbox-pairings",
-            ),
-            (
-                SANDBOX_SERVICE_SCOPE,
-                Method::POST,
-                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
-            ),
+        config
+            .internal_api_secrets
+            .insert(CHATOS_CALLER.to_string(), CHATOS_SECRET.to_string());
+        for path in [
+            "/api/local-connectors/relay/device-1/remote-connections/test",
+            "/api/local-connectors/relay/device-1/remote-connections/command",
+            "/api/local-connectors/relay/device-1/remote-connections/sftp",
         ] {
             let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-                "a-long-task-runner-local-connector-secret",
-                TASK_RUNNER_CALLER,
+                CHATOS_SECRET,
+                CHATOS_CALLER,
                 TOKEN_AUDIENCE,
-                scope,
+                REMOTE_CONNECTION_RELAY_SCOPE,
                 60,
                 "user-1",
             )
             .expect("issue token");
-            let headers = signed_headers(TASK_RUNNER_CALLER, token.as_str());
-            let user = internal_service_user_from_request(&config, &headers, &method, path)
+            let headers = signed_headers(CHATOS_CALLER, token.as_str());
+            let user = internal_service_user_from_request(&config, &headers, &Method::POST, path)
                 .expect("authorized request")
                 .expect("service user");
             assert_eq!(user.owner_user_id.as_deref(), Some("user-1"));
@@ -756,20 +641,19 @@ mod tests {
     #[test]
     fn mismatched_owner_header_is_rejected_even_with_valid_signed_token() {
         let mut config = test_config();
-        config.internal_api_secrets.insert(
-            TASK_RUNNER_CALLER.to_string(),
-            "a-long-task-runner-local-connector-secret".to_string(),
-        );
+        config
+            .internal_api_secrets
+            .insert(MCP_MANAGEMENT_CALLER.to_string(), MCP_SECRET.to_string());
         let token = chatos_service_runtime::issue_internal_service_token_for_owner(
-            "a-long-task-runner-local-connector-secret",
-            TASK_RUNNER_CALLER,
+            MCP_SECRET,
+            MCP_MANAGEMENT_CALLER,
             TOKEN_AUDIENCE,
             MCP_RELAY_SCOPE,
             60,
             "user-1",
         )
         .expect("issue owner-bound token");
-        let headers = signed_headers_for_owner(TASK_RUNNER_CALLER, token.as_str(), "user-2");
+        let headers = signed_headers_for_owner(MCP_MANAGEMENT_CALLER, token.as_str(), "user-2");
         let error = internal_service_auth_from_request(
             &config,
             &headers,

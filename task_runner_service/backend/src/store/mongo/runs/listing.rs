@@ -39,9 +39,6 @@ impl MongoStore {
                 "post_process_outbox_pending": count_when(doc! {
                     "$eq": ["$post_process_event_pending", true]
                 }),
-                "terminal_cleanup_outbox_pending": count_when(doc! {
-                    "$eq": ["$terminal_cleanup_event_pending", true]
-                }),
             }
         }];
         let Some(document) = self
@@ -209,13 +206,11 @@ mod tests {
             "dispatch_outbox_pending": 1,
             "cancellation_outbox_pending": 1,
             "post_process_outbox_pending": 1,
-            "terminal_cleanup_outbox_pending": 1,
         })
         .expect("decode Mongo aggregation counts");
 
         assert_eq!(stats.total, 3);
         assert_eq!(stats.active, 2);
         assert_eq!(stats.dispatch_outbox_pending, 1);
-        assert_eq!(stats.terminal_cleanup_outbox_pending, 1);
     }
 }

@@ -4,8 +4,8 @@
 use futures_util::StreamExt;
 use lapin::{
     options::{
-        BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
-        BasicQosOptions, ConfirmSelectOptions, QueueDeclareOptions,
+        BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, BasicQosOptions,
+        ConfirmSelectOptions, QueueDeclareOptions,
     },
     publisher_confirm::Confirmation,
     types::FieldTable,
@@ -26,7 +26,6 @@ const WORKER_CONTROL_CONSUMER_TAG: &str = "task-runner-worker-control";
 const RUN_CANCEL_REQUESTED_EVENT: &str = "run.cancel.requested";
 const RUN_TERMINAL_EVENT: &str = "run.terminal";
 const ASK_USER_RESOLVED_EVENT: &str = "ask_user.resolved";
-const TERMINAL_CLEANUP_REQUESTED_EVENT: &str = "terminal.cleanup.requested";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WorkerControlEvent {
@@ -38,12 +37,6 @@ struct WorkerControlEvent {
     parent_run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prompt_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    task_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    subject_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    workspace_dir: Option<String>,
     emitted_at: String,
 }
 
@@ -84,84 +77,6 @@ pub fn spawn_worker_control_consumer(
                     while let Some(delivery) = consumer.next().await {
                         match delivery {
                             Ok(delivery) => {
-                                if let Ok(event) =
-                                    serde_json::from_slice::<WorkerControlEvent>(&delivery.data)
-                                {
-                                    if event.worker_id == config.worker_id
-                                        && event.event_type == TERMINAL_CLEANUP_REQUESTED_EVENT
-                                        && event.task_id.is_some()
-                                        && event.subject_id.is_some()
-                                        && event.workspace_dir.is_some()
-                                    {
-                                        let run_service = run_service.clone();
-                                        let worker_id = config.worker_id.clone();
-                                        tokio::spawn(async move {
-                                            let result = run_service
-                                                .process_terminal_cleanup_event(
-                                                    event.run_id.as_str(),
-                                                    event.task_id.as_deref().unwrap_or_default(),
-                                                    event.subject_id.as_deref().unwrap_or_default(),
-                                                    event
-                                                        .workspace_dir
-                                                        .as_deref()
-                                                        .unwrap_or_default(),
-                                                )
-                                                .await;
-                                            let should_ack = match result {
-                                                Ok(()) => {
-                                                    info!(
-                                                        worker_id = worker_id.as_str(),
-                                                        run_id = event.run_id.as_str(),
-                                                        event_id = event.event_id.as_str(),
-                                                        "task runner worker consumed terminal cleanup event"
-                                                    );
-                                                    true
-                                                }
-                                                Err(err) => {
-                                                    warn!(
-                                                        worker_id = worker_id.as_str(),
-                                                        run_id = event.run_id.as_str(),
-                                                        error = err.as_str(),
-                                                        "task runner terminal cleanup failed; returning it to the Outbox"
-                                                    );
-                                                    run_service
-                                                        .retry_terminal_cleanup(
-                                                            event.run_id.as_str(),
-                                                            err.as_str(),
-                                                        )
-                                                        .await
-                                                        .is_ok()
-                                                }
-                                            };
-                                            if should_ack {
-                                                if let Err(err) =
-                                                    delivery.ack(BasicAckOptions::default()).await
-                                                {
-                                                    warn!(
-                                                        worker_id = worker_id.as_str(),
-                                                        run_id = event.run_id.as_str(),
-                                                        error = err.to_string().as_str(),
-                                                        "failed to acknowledge terminal cleanup event"
-                                                    );
-                                                }
-                                            } else if let Err(err) = delivery
-                                                .nack(BasicNackOptions {
-                                                    requeue: true,
-                                                    ..BasicNackOptions::default()
-                                                })
-                                                .await
-                                            {
-                                                warn!(
-                                                    worker_id = worker_id.as_str(),
-                                                    run_id = event.run_id.as_str(),
-                                                    error = err.to_string().as_str(),
-                                                    "failed to requeue terminal cleanup event"
-                                                );
-                                            }
-                                        });
-                                        continue;
-                                    }
-                                }
                                 let processing_succeeded = match serde_json::from_slice::<
                                     WorkerControlEvent,
                                 >(
@@ -278,14 +193,12 @@ pub fn spawn_run_cancel_outbox_reconciler(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval =
-            tokio::time::interval(task_queue_topology.run_dispatch_outbox_reconcile_interval);
+            tokio::time::interval(task_queue_topology.event_outbox_reconcile_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
             match run_service
-                .publish_pending_run_cancel_events(
-                    task_queue_topology.run_dispatch_outbox_batch_size,
-                )
+                .publish_pending_run_cancel_events(task_queue_topology.event_outbox_batch_size)
                 .await
             {
                 Ok(count) if count > 0 => info!(
@@ -308,14 +221,12 @@ pub fn spawn_run_terminal_outbox_reconciler(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval =
-            tokio::time::interval(task_queue_topology.run_dispatch_outbox_reconcile_interval);
+            tokio::time::interval(task_queue_topology.event_outbox_reconcile_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
             match run_service
-                .publish_pending_run_terminal_events(
-                    task_queue_topology.run_dispatch_outbox_batch_size,
-                )
+                .publish_pending_run_terminal_events(task_queue_topology.event_outbox_batch_size)
                 .await
             {
                 Ok(count) if count > 0 => info!(
@@ -338,14 +249,12 @@ pub fn spawn_ask_user_resolution_outbox_reconciler(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval =
-            tokio::time::interval(task_queue_topology.run_dispatch_outbox_reconcile_interval);
+            tokio::time::interval(task_queue_topology.event_outbox_reconcile_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
             match ask_user_prompt_service
-                .publish_pending_resolution_events(
-                    task_queue_topology.run_dispatch_outbox_batch_size,
-                )
+                .publish_pending_resolution_events(task_queue_topology.event_outbox_batch_size)
                 .await
             {
                 Ok(count) if count > 0 => info!(
@@ -380,9 +289,6 @@ pub(crate) async fn publish_run_cancel_event(
         worker_id: worker_id.to_string(),
         parent_run_id: None,
         prompt_id: None,
-        task_id: None,
-        subject_id: None,
-        workspace_dir: None,
         emitted_at: now_rfc3339(),
     };
     publish_worker_control_event(&channel, queue_name.as_str(), &event).await
@@ -403,9 +309,6 @@ pub(crate) async fn publish_run_terminal_event(
         worker_id: subscription.worker_id.clone(),
         parent_run_id: Some(subscription.parent_run_id.clone()),
         prompt_id: None,
-        task_id: None,
-        subject_id: None,
-        workspace_dir: None,
         emitted_at: now_rfc3339(),
     };
     publish_worker_control_event(&channel, queue_name.as_str(), &event).await
@@ -430,38 +333,6 @@ pub(crate) async fn publish_ask_user_resolved_event(
         worker_id: worker_id.to_string(),
         parent_run_id: None,
         prompt_id: Some(prompt_id.to_string()),
-        task_id: None,
-        subject_id: None,
-        workspace_dir: None,
-        emitted_at: now_rfc3339(),
-    };
-    publish_worker_control_event(&channel, queue_name.as_str(), &event).await
-}
-
-pub(crate) async fn publish_terminal_cleanup_event(
-    task_queue_topology: &TaskQueueTopology,
-    run: &TaskRunRecord,
-    task_id: &str,
-    subject_id: &str,
-    workspace_dir: &str,
-) -> Result<(), String> {
-    let worker_id = run
-        .worker_id
-        .as_deref()
-        .ok_or_else(|| format!("Run {} has no Worker id for terminal cleanup", run.id))?;
-    let queue_name = task_queue_topology.worker_control_queue_name(worker_id)?;
-    let (_connection, channel) =
-        open_worker_control_publisher(task_queue_topology, queue_name.as_str()).await?;
-    let event = WorkerControlEvent {
-        event_id: format!("terminal-cleanup:{}", run.id),
-        event_type: TERMINAL_CLEANUP_REQUESTED_EVENT.to_string(),
-        run_id: run.id.clone(),
-        worker_id: worker_id.to_string(),
-        parent_run_id: None,
-        prompt_id: None,
-        task_id: Some(task_id.to_string()),
-        subject_id: Some(subject_id.to_string()),
-        workspace_dir: Some(workspace_dir.to_string()),
         emitted_at: now_rfc3339(),
     };
     publish_worker_control_event(&channel, queue_name.as_str(), &event).await

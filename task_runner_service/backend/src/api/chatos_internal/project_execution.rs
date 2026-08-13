@@ -351,28 +351,6 @@ pub(super) async fn retire_chatos_project_execution(
             )));
         }
     }
-    let mut cleaned_artifacts = Vec::new();
-    for task in &tasks {
-        let runs = state
-            .run_service
-            .list_runs(Some(task.id.as_str()))
-            .await
-            .map_err(InternalApiError::internal)?;
-        for run in &runs {
-            state
-                .run_service
-                .release_sandboxes_for_terminal_run(run)
-                .await
-                .map_err(InternalApiError::internal)?;
-            cleaned_artifacts.extend(
-                state
-                    .run_service
-                    .cleanup_harness_artifacts_for_run(run)
-                    .await
-                    .map_err(InternalApiError::internal)?,
-            );
-        }
-    }
     let mut deleted_task_ids = Vec::new();
     for task in &tasks {
         if state
@@ -391,7 +369,6 @@ pub(super) async fn retire_chatos_project_execution(
         "source_session_id": source_session_id,
         "source_user_message_id": source_user_message_id,
         "deleted_task_ids": deleted_task_ids,
-        "cleaned_artifacts": cleaned_artifacts,
     }));
     audit.succeeded();
     Ok(response)

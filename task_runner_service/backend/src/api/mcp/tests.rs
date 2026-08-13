@@ -219,14 +219,6 @@ fn request_context_reads_exact_project_task_scope_header() {
 fn request_context_reads_and_normalizes_user_plugin_selection() {
     let mut headers = HeaderMap::new();
     headers.insert(
-        "x-task-runner-plugin-device-id",
-        " device-1 ".parse().expect("valid header"),
-    );
-    headers.insert(
-        "x-task-runner-plugin-workspace-id",
-        " workspace-1 ".parse().expect("valid header"),
-    );
-    headers.insert(
         "x-task-runner-selected-plugins",
         r#"["plugin-a",{"plugin_id":" plugin-a ","selected_skill_ids":[],"selected_command_ids":[]},{"plugin_id":"plugin-b","selected_skill_ids":[" skill-1 ","skill-1"],"selected_command_ids":[" review ","review"]}]"#
             .parse()
@@ -253,8 +245,6 @@ fn request_context_reads_and_normalizes_user_plugin_selection() {
         .plugin_config_override
         .expect("plugin config override");
 
-    assert_eq!(config.device_id.as_deref(), Some("device-1"));
-    assert_eq!(config.workspace_id.as_deref(), Some("workspace-1"));
     assert_eq!(config.selected_plugins.len(), 2);
     assert_eq!(config.selected_plugins[0].plugin_id, "plugin-a");
     assert_eq!(

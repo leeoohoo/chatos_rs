@@ -69,5 +69,7 @@ pub(super) fn runtime_result_from_response(response: AiResponse) -> AiRuntimeRes
         finish_reason: response.finish_reason,
         usage: response.usage,
         response_id: response.response_id,
+        response_output_items: response.response_output_items,
+        request_input_items: Vec::new(),
     }
 }

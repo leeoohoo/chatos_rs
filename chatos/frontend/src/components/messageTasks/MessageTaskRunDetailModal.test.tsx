@@ -77,53 +77,6 @@ describe('MessageTaskRunDetailModal', () => {
     expect(onLoadMoreEvents).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the program-resolved sandbox and Harness execution location', () => {
-    render(
-      <MessageTaskRunDetailModal
-        detail={{
-          ...detail,
-          run: {
-            ...detail.run,
-            input_snapshot: {
-              execution_environment_mode: 'cloud',
-              sandbox_enabled: true,
-              sandbox: {
-                provider: 'cloud',
-                sandbox_id: 'sandbox-1',
-                lease_id: 'lease-1',
-                expires_at: '2026-07-21T10:00:00Z',
-              },
-              harness: {
-                repo_path: 'projects/game-1',
-                base_branch: 'main',
-                run_branch: 'chatos/runs/run-1',
-                status: 'prepared',
-              },
-            },
-            report: {
-              output: {
-                harness: {
-                  status: 'committed',
-                  result_commit: 'abc123',
-                },
-              },
-            },
-          },
-        }}
-        onClose={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText('执行位置')).toBeInTheDocument();
-    expect(screen.getByText('云端')).toBeInTheDocument();
-    expect(screen.getByText('已准备')).toBeInTheDocument();
-    expect(screen.getByText('sandbox-1')).toBeInTheDocument();
-    expect(screen.getByText('lease-1')).toBeInTheDocument();
-    expect(screen.getByText('projects/game-1')).toBeInTheDocument();
-    expect(screen.getByText('chatos/runs/run-1')).toBeInTheDocument();
-    expect(screen.getByText('committed')).toBeInTheDocument();
-    expect(screen.getByText('abc123')).toBeInTheDocument();
-  });
 });
 
 describe('MessageTaskProcessLogModal', () => {

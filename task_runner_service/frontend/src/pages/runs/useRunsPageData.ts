@@ -6,16 +6,10 @@ import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../../api/client';
 import type { TranslateFn } from '../../i18n/I18nProvider';
-import type {
-  RemoteServerRecord,
-  TaskSummaryRecord,
-  TaskRunStatus,
-} from '../../types';
+import type { TaskSummaryRecord, TaskRunStatus } from '../../types';
 import {
-  collectRemoteToolOperations,
   collectToolCalls,
   collectToolResults,
-  summarizeRemoteOperations,
   summarizeStreamEvents,
 } from './runEventUtils';
 import {
@@ -88,10 +82,6 @@ export function useRunsPageData({
   const modelsQuery = useQuery({
     queryKey: ['model-configs'],
     queryFn: api.listModelConfigs,
-  });
-  const remoteServersQuery = useQuery({
-    queryKey: ['remote-servers'],
-    queryFn: api.listRemoteServers,
   });
   const selectedRunQuery = useQuery({
     queryKey: ['run', selectedRunId],
@@ -225,24 +215,6 @@ export function useRunsPageData({
     return map;
   }, [modelsQuery.data]);
 
-  const remoteServerMap = useMemo(() => {
-    const map = new Map<string, RemoteServerRecord>();
-    (remoteServersQuery.data || []).forEach((server) => {
-      map.set(server.id, server);
-    });
-    return map;
-  }, [remoteServersQuery.data]);
-
-  const selectedRemoteOperations = useMemo(
-    () => collectRemoteToolOperations(selectedToolCalls, selectedToolResults, remoteServerMap),
-    [remoteServerMap, selectedToolCalls, selectedToolResults],
-  );
-
-  const selectedRemoteOperationStats = useMemo(
-    () => summarizeRemoteOperations(selectedRemoteOperations),
-    [selectedRemoteOperations],
-  );
-
   return {
     runStatusOptions,
     runsQuery,
@@ -259,7 +231,5 @@ export function useRunsPageData({
     taskOptions,
     modelOptions,
     modelNameMap,
-    selectedRemoteOperations,
-    selectedRemoteOperationStats,
   };
 }

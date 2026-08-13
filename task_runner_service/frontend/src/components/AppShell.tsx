@@ -7,7 +7,6 @@ import { Button, Layout, Menu, Segmented, Space, Typography } from 'antd';
 import {
   AppstoreOutlined,
   BellOutlined,
-  DatabaseOutlined,
   DeploymentUnitOutlined,
   FolderOpenOutlined,
   LogoutOutlined,
@@ -61,11 +60,6 @@ export function AppShell({ currentUser, logoutLoading, onLogout }: AppShellProps
       key: '/models',
       label: t('nav.models'),
       icon: <DeploymentUnitOutlined />,
-    },
-    {
-      key: '/servers',
-      label: t('nav.servers'),
-      icon: <DatabaseOutlined />,
     },
     {
       key: '/runs',

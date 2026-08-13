@@ -37,9 +37,6 @@ impl RunService {
         prerequisite_context: &[PrerequisiteTaskContext],
         capability_policy: Option<&TaskRunnerCapabilityPolicy>,
         mcp_runtime_session_ref: Option<&str>,
-        plugin_session_snapshots: Option<
-            Vec<crate::services::plugin_runtime_relay::PreparedPluginSessionSnapshot>,
-        >,
     ) -> Result<PreparedModelExecution, String> {
         preparation::prepare_model_execution(
             self,
@@ -51,7 +48,6 @@ impl RunService {
             prerequisite_context,
             capability_policy,
             mcp_runtime_session_ref,
-            plugin_session_snapshots,
         )
         .await
     }

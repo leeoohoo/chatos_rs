@@ -19,8 +19,6 @@ impl InMemoryStore {
             stats.dispatch_outbox_pending += usize::from(run.dispatch_event_pending);
             stats.cancellation_outbox_pending += usize::from(run.cancel_event_pending);
             stats.post_process_outbox_pending += usize::from(run.post_process_event_pending);
-            stats.terminal_cleanup_outbox_pending +=
-                usize::from(run.terminal_cleanup_event_pending);
             if let Some(callback) = run.chatos_callback_delivery.as_ref() {
                 match callback.status {
                     ChatosCallbackDeliveryStatus::Pending => {
@@ -392,69 +390,6 @@ impl InMemoryStore {
         run.post_process_event_pending = true;
         run.post_process_event_enqueued = false;
         run.post_process_last_error = None;
-        run.updated_at = now_rfc3339();
-        true
-    }
-
-    pub(in crate::store) fn list_pending_terminal_cleanups(
-        &self,
-        limit: usize,
-    ) -> Vec<TaskRunRecord> {
-        let data = self.inner.read();
-        let mut runs = data
-            .runs
-            .values()
-            .filter(|run| run.terminal_cleanup_event_pending && run.worker_id.is_some())
-            .cloned()
-            .collect::<Vec<_>>();
-        runs.sort_by(|left, right| {
-            left.updated_at
-                .cmp(&right.updated_at)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        runs.truncate(limit.max(1));
-        runs
-    }
-
-    pub(in crate::store) fn acknowledge_terminal_cleanup_event(&self, run_id: &str) -> bool {
-        let mut data = self.inner.write();
-        let Some(run) = data.runs.get_mut(run_id) else {
-            return false;
-        };
-        if !run.terminal_cleanup_event_pending || run.terminal_cleanup_completed {
-            return false;
-        }
-        run.terminal_cleanup_event_pending = false;
-        run.terminal_cleanup_event_enqueued = true;
-        run.updated_at = now_rfc3339();
-        true
-    }
-
-    pub(in crate::store) fn retry_terminal_cleanup(&self, run_id: &str, error: &str) -> bool {
-        let mut data = self.inner.write();
-        let Some(run) = data.runs.get_mut(run_id) else {
-            return false;
-        };
-        if run.terminal_cleanup_completed {
-            return false;
-        }
-        run.terminal_cleanup_event_pending = true;
-        run.terminal_cleanup_event_enqueued = false;
-        run.terminal_cleanup_attempt_count = run.terminal_cleanup_attempt_count.saturating_add(1);
-        run.terminal_cleanup_last_error = Some(error.to_string());
-        run.updated_at = now_rfc3339();
-        true
-    }
-
-    pub(in crate::store) fn mark_terminal_cleanup_completed(&self, run_id: &str) -> bool {
-        let mut data = self.inner.write();
-        let Some(run) = data.runs.get_mut(run_id) else {
-            return false;
-        };
-        run.terminal_cleanup_event_pending = false;
-        run.terminal_cleanup_event_enqueued = false;
-        run.terminal_cleanup_completed = true;
-        run.terminal_cleanup_last_error = None;
         run.updated_at = now_rfc3339();
         true
     }

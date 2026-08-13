@@ -231,6 +231,7 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
             run.pending_batch_id = transition.pending_batch_id;
             run.pending_tool_calls = transition.pending_tool_calls;
             run.pending_tool_results = transition.pending_tool_results;
+            run.response_input_items = transition.response_input_items;
             run.terminal_outcome = transition.terminal_outcome;
             run.version = run.version.saturating_add(1);
             run.updated_at = chrono::Utc::now();
@@ -459,6 +460,7 @@ mod tests {
             pending_batch_id: None,
             pending_tool_calls: Vec::new(),
             pending_tool_results: Vec::new(),
+            response_input_items: Vec::new(),
             current_input_items_ref: format!("task_run:{run_id}:input"),
             usage_accumulator: Value::Null,
             max_iterations: 10,
@@ -506,6 +508,7 @@ mod tests {
                 pending_batch_id: None,
                 pending_tool_calls: Vec::new(),
                 pending_tool_results: Vec::new(),
+                response_input_items: Vec::new(),
                 terminal_outcome: Some(serde_json::json!({"ok": true})),
                 outbox: Vec::new(),
             })

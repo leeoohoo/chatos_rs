@@ -280,6 +280,7 @@ pub struct AppConfig {
     pub project_service_base_url: String,
     pub project_service_http_client: reqwest::Client,
     pub project_service_internal_api_secret: Option<String>,
+    pub project_service_tool_timeout: Duration,
     pub task_runner_service_base_url: String,
     pub task_runner_mtls_ca_cert_path: PathBuf,
     pub task_runner_mtls_client_identity_path: PathBuf,
@@ -441,6 +442,10 @@ impl AppConfig {
         let downstream_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")?.clamp(300, 60_000),
         );
+        let project_service_tool_timeout = Duration::from_millis(
+            required_u64("MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS")?
+                .clamp(1_000, 2 * 60 * 60 * 1_000),
+        );
         let plugin_management_service_base_url = require_https_base_url(
             "MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL",
             normalize_base_url(required_text(
@@ -517,7 +522,7 @@ impl AppConfig {
             normalize_base_url(required_text("MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL")?),
         )?;
         let project_service_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(downstream_request_timeout),
+            chatos_service_runtime::HttpClientTimeouts::new(project_service_tool_timeout),
             required_path("PROJECT_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
             required_path("PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
@@ -551,6 +556,7 @@ impl AppConfig {
             project_service_base_url,
             project_service_http_client,
             project_service_internal_api_secret,
+            project_service_tool_timeout,
             task_runner_service_base_url: require_https_base_url(
                 "MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL",
                 normalize_base_url(required_text(
@@ -640,6 +646,7 @@ impl AppConfig {
             project_service_base_url: "http://127.0.0.1:39210".to_string(),
             project_service_http_client: reqwest::Client::new(),
             project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
+            project_service_tool_timeout: Duration::from_secs(180),
             task_runner_service_base_url: "http://127.0.0.1:39090".to_string(),
             task_runner_mtls_ca_cert_path: PathBuf::new(),
             task_runner_mtls_client_identity_path: PathBuf::new(),

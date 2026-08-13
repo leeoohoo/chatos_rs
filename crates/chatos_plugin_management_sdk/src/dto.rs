@@ -153,9 +153,7 @@ pub enum SystemAgentKey {
     ProjectRequirementExecutionPlannerAgent,
     ProjectRequirementExecutionLocalPlannerAgent,
     TaskRunnerPlanPhase,
-    TaskRunnerLocalPlanPhase,
     TaskRunnerRunPhase,
-    TaskRunnerLocalRunPhase,
     ProjectManagementAgent,
     ProjectManagementLocalAgent,
     LocalConnectorCommandApprovalAgent,
@@ -167,16 +165,14 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 15] = [
         Self::ChatosConversationAgent,
         Self::ChatosLocalConversationAgent,
         Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
         Self::ProjectRequirementExecutionLocalPlannerAgent,
         Self::TaskRunnerPlanPhase,
-        Self::TaskRunnerLocalPlanPhase,
         Self::TaskRunnerRunPhase,
-        Self::TaskRunnerLocalRunPhase,
         Self::ProjectManagementAgent,
         Self::ProjectManagementLocalAgent,
         Self::LocalConnectorCommandApprovalAgent,
@@ -199,9 +195,7 @@ impl SystemAgentKey {
                 "project_requirement_execution_local_planner_agent"
             }
             Self::TaskRunnerPlanPhase => "task_runner_plan_phase",
-            Self::TaskRunnerLocalPlanPhase => "task_runner_local_plan_phase",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
-            Self::TaskRunnerLocalRunPhase => "task_runner_local_run_phase",
             Self::ProjectManagementAgent => "project_management_agent",
             Self::ProjectManagementLocalAgent => "project_management_local_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",

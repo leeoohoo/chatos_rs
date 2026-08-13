@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::{resolve_managed_prompt_for_model_with_client, TaskRunnerAgent};
 #[cfg(test)]
 use chatos_agent::AgentIdentity;
+use chatos_agent::{resolve_managed_prompt_for_model_with_client, TaskRunnerAgent};
 use chatos_plugin_management_sdk::ResolvedAgentPrompt;
 
 use super::RunService;

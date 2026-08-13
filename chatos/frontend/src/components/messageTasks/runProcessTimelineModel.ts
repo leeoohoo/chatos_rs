@@ -245,6 +245,28 @@ const extractEventText = (event: MessageTaskRunnerRunEvent): string => {
   return '';
 };
 
+const stableValueKey = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableValueKey).join(',')}]`;
+  }
+  const record = readRecord(value);
+  if (record) {
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableValueKey(record[key])}`)
+      .join(',')}}`;
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const repeatedLifecycleKey = (event: MessageTaskRunnerRunEvent): string => (
+  `${eventType(event)}\u0000${extractEventText(event)}\u0000${stableValueKey(event.payload)}`
+);
+
 const buildModelItem = (
   event: MessageTaskRunnerRunEvent,
   label: string,
@@ -270,7 +292,43 @@ const buildLifecycleModelItem = (
       extractEventText(event) || `即将发起第 ${modelRequestIndex} 次模型请求`,
     );
   }
+  const labelByType: Record<string, string> = {
+    queued: '任务入队',
+    running: '任务开始执行',
+    mcp_runtime: 'MCP 会话已准备',
+    tools_end: '工具批次已完成',
+    execution_review_checkpoint: '执行检查点',
+    completed: '任务已完成',
+    succeeded: '任务已完成',
+    success: '任务已完成',
+    cancelled: '任务已取消',
+    canceled: '任务已取消',
+  };
+  const label = labelByType[type];
+  if (label) {
+    return buildModelItem(event, label, extractEventText(event) || label);
+  }
   return null;
+};
+
+const buildLifecycleErrorItem = (
+  event: MessageTaskRunnerRunEvent,
+): Extract<TimelineItem, { type: 'tool_result' }> | null => {
+  const type = eventType(event);
+  if (!type.includes('failed') && type !== 'error') {
+    return null;
+  }
+  const error = extractEventText(event) || type.replace(/_/g, ' ');
+  return {
+    callId: '',
+    createdAt: eventDate(event),
+    error,
+    hasResult: true,
+    id: `run-lifecycle-error-${event.id}`,
+    result: event.payload,
+    status: 'error',
+    type: 'tool_result',
+  };
 };
 
 const buildUnmatchedToolResultItem = (
@@ -301,6 +359,7 @@ export const buildRunProcessTimelineItems = (
   const toolResults = buildToolResults(events);
   const knownToolCallIds = buildKnownToolCallIds(events);
   const items: TimelineItem[] = [];
+  const repeatedLifecycleItems = new Map<string, TimelineItem>();
   let modelRequestIndex = 0;
 
   for (let index = 0; index < events.length;) {
@@ -359,9 +418,29 @@ export const buildRunProcessTimelineItems = (
     if (type === 'model_request') {
       modelRequestIndex += 1;
     }
+    const lifecycleErrorItem = buildLifecycleErrorItem(event);
+    if (lifecycleErrorItem) {
+      const key = repeatedLifecycleKey(event);
+      const existing = repeatedLifecycleItems.get(key);
+      if (existing && existing.type === 'tool_result') {
+        existing.repeatCount = (existing.repeatCount || 1) + 1;
+      } else {
+        items.push(lifecycleErrorItem);
+        repeatedLifecycleItems.set(key, lifecycleErrorItem);
+      }
+      index += 1;
+      continue;
+    }
     const lifecycleItem = buildLifecycleModelItem(event, modelRequestIndex);
     if (lifecycleItem) {
-      items.push(lifecycleItem);
+      const key = repeatedLifecycleKey(event);
+      const existing = repeatedLifecycleItems.get(key);
+      if (existing && existing.type === 'model') {
+        existing.repeatCount = (existing.repeatCount || 1) + 1;
+      } else {
+        items.push(lifecycleItem);
+        repeatedLifecycleItems.set(key, lifecycleItem);
+      }
     }
     index += 1;
   }

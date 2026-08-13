@@ -38,9 +38,7 @@ pub(super) async fn initialize_model_phase(
     }
     mark_task_running(service, task, &run.id).await;
     persist_prerequisite_context(service, run, prerequisite_context).await;
-    service
-        .ensure_task_terminal_started(task, run, effective_workspace_dir, authoritative_policy)
-        .await;
+    let _ = (effective_workspace_dir, authoritative_policy);
     true
 }
 
