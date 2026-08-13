@@ -16,6 +16,13 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                     &["title", "objective"],
                 );
                 remove_tool_schema_property(tool, &["inputSchema"], "anyOf");
+                for property in [
+                    "requires_execution",
+                    "enabled_builtin_kinds",
+                    "external_mcp_config_ids",
+                ] {
+                    remove_tool_schema_property(tool, &["inputSchema", "properties"], property);
+                }
             }
             Some("create_tasks_with_prerequisites") => {
                 set_schema_required_fields(
@@ -28,6 +35,17 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                     &["inputSchema", "properties", "tasks", "items"],
                     "anyOf",
                 );
+                for property in [
+                    "requires_execution",
+                    "enabled_builtin_kinds",
+                    "external_mcp_config_ids",
+                ] {
+                    remove_tool_schema_property(
+                        tool,
+                        &["inputSchema", "properties", "tasks", "items", "properties"],
+                        property,
+                    );
+                }
             }
             Some("update_task") => {
                 remove_tool_schema_property(

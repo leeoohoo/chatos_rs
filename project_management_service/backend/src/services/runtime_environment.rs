@@ -34,7 +34,7 @@ pub async fn ensure_runtime_environment_for_project(
             };
             if !sandbox_enabled {
                 existing.sandbox_provider = RuntimeEnvironmentProvider::None;
-                existing.file_provider = RuntimeEnvironmentProvider::None;
+                existing.file_provider = project_file_provider(project);
                 existing.last_error = None;
             }
             existing.updated_at = now_rfc3339();
@@ -67,7 +67,7 @@ pub fn default_runtime_environment_for_project(
         },
         sandbox_enabled,
         sandbox_provider: RuntimeEnvironmentProvider::None,
-        file_provider: RuntimeEnvironmentProvider::None,
+        file_provider: project_file_provider(project),
         analysis_summary: None,
         not_runnable_reason: None,
         execution_service_id: None,
@@ -80,6 +80,29 @@ pub fn default_runtime_environment_for_project(
         last_error: None,
         created_at: now.clone(),
         updated_at: now,
+    }
+}
+
+fn project_file_provider(project: &ProjectRecord) -> RuntimeEnvironmentProvider {
+    match project.source_type {
+        ProjectSourceType::Cloud
+            if project
+                .harness_repo_identifier
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()) =>
+        {
+            RuntimeEnvironmentProvider::Harness
+        }
+        ProjectSourceType::Local | ProjectSourceType::LocalConnector
+            if chatos_project_execution::parse_local_connector_workspace_root(
+                project.root_path.as_deref().unwrap_or_default(),
+            )
+            .is_some() =>
+        {
+            RuntimeEnvironmentProvider::LocalConnector
+        }
+        _ => RuntimeEnvironmentProvider::None,
     }
 }
 

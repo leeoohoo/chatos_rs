@@ -624,4 +624,44 @@ mod tests {
         assert!(environment.execution_service_id.is_none());
         assert!(images.is_empty());
     }
+
+    #[test]
+    fn disabled_cloud_sandbox_preserves_harness_file_provider() {
+        let project = project(ProjectSourceType::Cloud, None);
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: project.id.clone(),
+            status: ProjectRuntimeEnvironmentStatus::Disabled,
+            sandbox_enabled: false,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::None,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut images = vec![runtime_image(
+            "workspace",
+            "workspace",
+            Some("FROM node:24"),
+            None,
+        )];
+
+        assert!(enforce_project_runtime_boundary(
+            &project,
+            &mut environment,
+            &mut images,
+        ));
+        assert_eq!(environment.sandbox_provider, RuntimeEnvironmentProvider::None);
+        assert_eq!(environment.file_provider, RuntimeEnvironmentProvider::Harness);
+        assert!(environment.execution_service_id.is_none());
+        assert!(images.is_empty());
+    }
 }

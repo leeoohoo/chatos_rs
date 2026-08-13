@@ -197,7 +197,7 @@ fn requires_execution_schema() -> Value {
     json!({
         "type": "boolean",
         "default": true,
-        "description": "Whether the task needs an isolated execution workspace. Set false only for read-only planning or project-management work that will not modify files or run commands."
+        "description": "Whether the task needs an execution workspace. Set false only when no command, Git operation, test, build, runtime check, or file mutation is needed. Harness project reads remain available without a sandbox."
     })
 }
 

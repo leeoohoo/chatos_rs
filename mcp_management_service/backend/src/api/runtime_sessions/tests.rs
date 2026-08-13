@@ -639,6 +639,21 @@ fn local_workspace_routes_remain_device_bound_without_a_sandbox_target() {
 }
 
 #[test]
+fn harness_workspace_routes_remain_project_bound_without_a_sandbox_target() {
+    let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
+    routes[0].provider_kind = McpProviderKind::Harness;
+    routes[0].provider_ref = Some("project:project-1@revision-1".to_string());
+
+    bind_runtime_sandbox_routes(routes.as_mut_slice(), None);
+
+    assert_eq!(routes[0].provider_kind, McpProviderKind::Harness);
+    assert_eq!(
+        routes[0].provider_ref.as_deref(),
+        Some("project:project-1@revision-1")
+    );
+}
+
+#[test]
 fn cloud_sandbox_images_are_bound_without_a_runtime_sandbox_target() {
     let mut routes = vec![sandbox_images_route(McpProviderKind::CloudSandbox)];
     let mut context = context();

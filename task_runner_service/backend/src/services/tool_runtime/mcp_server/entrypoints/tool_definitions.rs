@@ -152,21 +152,23 @@ impl TaskRunnerMcpService {
                 }
             }
         }
-        match self
-            .task_mcp_schema_choices(current_user, request_context)
-            .await
-        {
-            Ok((builtin_choices, external_choices)) => {
-                enrich_tool_schemas_with_task_mcp_choices(
-                    &mut tools,
-                    builtin_choices.as_slice(),
-                    external_choices.as_slice(),
-                );
+        if tool_profile != McpToolProfile::ChatosAsyncPlanner {
+            match self
+                .task_mcp_schema_choices(current_user, request_context)
+                .await
+            {
+                Ok((builtin_choices, external_choices)) => {
+                    enrich_tool_schemas_with_task_mcp_choices(
+                        &mut tools,
+                        builtin_choices.as_slice(),
+                        external_choices.as_slice(),
+                    );
+                }
+                Err(err) => tracing::warn!(
+                    error = err.as_str(),
+                    "task runner could not enrich MCP tool schemas with Agent-bound MCP choices"
+                ),
             }
-            Err(err) => tracing::warn!(
-                error = err.as_str(),
-                "task runner could not enrich MCP tool schemas with Agent-bound MCP choices"
-            ),
         }
         Ok(tools
             .into_iter()

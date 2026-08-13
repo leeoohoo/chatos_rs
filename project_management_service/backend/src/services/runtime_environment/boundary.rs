@@ -33,8 +33,28 @@ pub fn enforce_project_runtime_boundary(
             environment.sandbox_provider = RuntimeEnvironmentProvider::None;
             changed = true;
         }
-        if environment.file_provider != RuntimeEnvironmentProvider::None {
-            environment.file_provider = RuntimeEnvironmentProvider::None;
+        let desired_file_provider = match project.source_type {
+            ProjectSourceType::Cloud
+                if project
+                    .harness_repo_identifier
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty()) =>
+            {
+                RuntimeEnvironmentProvider::Harness
+            }
+            ProjectSourceType::Local | ProjectSourceType::LocalConnector
+                if chatos_project_execution::parse_local_connector_workspace_root(
+                    project.root_path.as_deref().unwrap_or_default(),
+                )
+                .is_some() =>
+            {
+                RuntimeEnvironmentProvider::LocalConnector
+            }
+            _ => RuntimeEnvironmentProvider::None,
+        };
+        if environment.file_provider != desired_file_provider {
+            environment.file_provider = desired_file_provider;
             changed = true;
         }
         if !images.is_empty() {

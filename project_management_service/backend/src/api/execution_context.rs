@@ -203,6 +203,7 @@ fn required_text<'a>(value: &'a str, field: &str) -> Result<&'a str, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ProjectRuntimeEnvironmentStatus;
 
     fn project(source_type: ProjectSourceType) -> ProjectRecord {
         ProjectRecord {
@@ -273,5 +274,35 @@ mod tests {
             resolve_sandbox_provider(&project(ProjectSourceType::LocalConnector), None),
             SandboxProviderKind::None
         );
+    }
+
+    #[test]
+    fn disabled_cloud_sandbox_still_exposes_harness_workspace() {
+        let mut project = project(ProjectSourceType::Cloud);
+        project.harness_repo_identifier = Some("repo-1".to_string());
+        let environment = ProjectRuntimeEnvironmentRecord {
+            project_id: project.id.clone(),
+            status: ProjectRuntimeEnvironmentStatus::Disabled,
+            sandbox_enabled: false,
+            sandbox_provider: RuntimeEnvironmentProvider::None,
+            file_provider: RuntimeEnvironmentProvider::Harness,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: None,
+            detected_stack: serde_json::json!({}),
+            required_services: serde_json::json!([]),
+            env_vars: serde_json::json!({}),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+
+        let context = build_execution_context(&project, Some(&environment), "user-1");
+
+        assert_eq!(context.workspace_provider, WorkspaceProviderKind::Harness);
+        assert_eq!(context.sandbox_provider, SandboxProviderKind::None);
     }
 }

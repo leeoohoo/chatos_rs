@@ -71,13 +71,11 @@ impl CreateTaskArgs {
         }
         let enabled_builtin_kinds = self.enabled_builtin_kinds.unwrap_or_default();
         let external_mcp_config_ids = self.external_mcp_config_ids.unwrap_or_default();
-        let requires_execution = if external_mcp_config_ids.is_empty()
-            && only_code_maintainer_read_selected(&enabled_builtin_kinds)
-        {
-            Some(false)
-        } else {
-            self.requires_execution
-        };
+        let requires_execution = self.requires_execution.or_else(|| {
+            (external_mcp_config_ids.is_empty()
+                && only_code_maintainer_read_selected(&enabled_builtin_kinds))
+            .then_some(false)
+        });
         let mcp_config = (requires_execution.is_some()
             || !enabled_builtin_kinds.is_empty()
             || !external_mcp_config_ids.is_empty())

@@ -232,7 +232,7 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
 }
 
 #[test]
-fn read_only_code_task_cannot_be_misclassified_as_requiring_execution() {
+fn explicit_execution_requirement_is_never_downgraded_by_read_selection() {
     let request = CreateTaskArgs {
         title: "review task".to_string(),
         description: None,
@@ -254,7 +254,7 @@ fn read_only_code_task_cannot_be_misclassified_as_requiring_execution() {
 
     assert_eq!(
         request.mcp_config.expect("MCP request").requires_execution,
-        Some(false)
+        Some(true)
     );
 }
 
@@ -599,7 +599,7 @@ fn async_planner_preserves_only_execution_intent_before_programmatic_resolution(
 }
 
 #[test]
-fn async_planner_schema_exposes_mcp_selection_without_runtime_routing() {
+fn async_planner_schema_hides_program_managed_execution_selection() {
     let mut tools = vec![json!({
         "name": "create_task",
         "inputSchema": create_task_schema(),
@@ -610,11 +610,14 @@ fn async_planner_schema_exposes_mcp_selection_without_runtime_routing() {
     let input_schema = tools[0].get("inputSchema").expect("input schema");
     assert!(input_schema.get("anyOf").is_none());
     assert!(input_schema
+        .pointer("/properties/requires_execution")
+        .is_none());
+    assert!(input_schema
         .pointer("/properties/enabled_builtin_kinds")
-        .is_some());
+        .is_none());
     assert!(input_schema
         .pointer("/properties/external_mcp_config_ids")
-        .is_some());
+        .is_none());
     assert!(input_schema
         .pointer("/properties/plugin_device_id")
         .is_none());
@@ -627,7 +630,7 @@ fn async_planner_schema_exposes_mcp_selection_without_runtime_routing() {
 }
 
 #[test]
-fn async_planner_batch_schema_exposes_per_task_mcp_selection() {
+fn async_planner_batch_schema_hides_program_managed_execution_selection() {
     let mut tools = vec![json!({
         "name": "create_tasks_with_prerequisites",
         "inputSchema": super::super::support::create_tasks_with_prerequisites_schema(),
@@ -640,11 +643,14 @@ fn async_planner_batch_schema_exposes_per_task_mcp_selection() {
         .pointer("/properties/tasks/items/anyOf")
         .is_none());
     assert!(input_schema
+        .pointer("/properties/tasks/items/properties/requires_execution")
+        .is_none());
+    assert!(input_schema
         .pointer("/properties/tasks/items/properties/enabled_builtin_kinds")
-        .is_some());
+        .is_none());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/external_mcp_config_ids")
-        .is_some());
+        .is_none());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/plugin_device_id")
         .is_none());
@@ -767,13 +773,10 @@ fn chatos_plan_context_forces_created_tasks_to_plan_phase() {
         request.task_profile.as_deref(),
         Some(TASK_PROFILE_CHATOS_PLAN)
     );
-    assert_eq!(
-        request
-            .mcp_config
-            .expect("plan MCP config")
-            .requires_execution,
-        Some(false)
-    );
+    let mcp_config = request.mcp_config.as_ref().expect("plan MCP config");
+    assert_eq!(mcp_config.requires_execution, Some(false));
+    assert!(mcp_config.enabled_builtin_kinds.is_empty());
+    assert!(mcp_config.external_mcp_config_ids.is_empty());
 }
 
 #[test]

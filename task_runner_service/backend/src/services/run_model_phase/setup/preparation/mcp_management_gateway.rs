@@ -137,11 +137,21 @@ fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
 }
 
 fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
+    let program_required_workspace_kinds = if config.requires_execution {
+        vec![
+            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead,
+            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite,
+            chatos_mcp_runtime::BuiltinMcpKind::TerminalController,
+        ]
+    } else {
+        vec![chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead]
+    };
     let builtin_kinds = complete_builtin_kind_dependencies(
         config
             .enabled_builtin_kinds
             .iter()
-            .filter_map(|kind| builtin_kind_by_any(kind)),
+            .filter_map(|kind| builtin_kind_by_any(kind))
+            .chain(program_required_workspace_kinds),
     );
     let mut resource_ids = builtin_kinds
         .iter()
@@ -190,6 +200,8 @@ mod tests {
             vec![
                 "builtin_browser_tools".to_string(),
                 "builtin_code_maintainer_read".to_string(),
+                "builtin_code_maintainer_write".to_string(),
+                "builtin_terminal_controller".to_string(),
                 "external-mcp-1".to_string(),
                 "system_mcp_task_process_log".to_string(),
             ]
@@ -208,6 +220,7 @@ mod tests {
             vec![
                 "builtin_code_maintainer_read".to_string(),
                 "builtin_code_maintainer_write".to_string(),
+                "builtin_terminal_controller".to_string(),
                 "system_mcp_task_process_log".to_string(),
             ]
         );
@@ -222,5 +235,35 @@ mod tests {
 
         assert!(requested_mcp_resource_ids(&config)
             .contains(&"system_mcp_task_process_log".to_string()));
+    }
+
+    #[test]
+    fn read_only_task_always_requests_project_read_from_the_program_contract() {
+        let config = TaskMcpConfig {
+            requires_execution: false,
+            enabled_builtin_kinds: Vec::new(),
+            ..TaskMcpConfig::default()
+        };
+
+        let ids = requested_mcp_resource_ids(&config);
+
+        assert!(ids.contains(&"builtin_code_maintainer_read".to_string()));
+        assert!(!ids.contains(&"builtin_code_maintainer_write".to_string()));
+        assert!(!ids.contains(&"builtin_terminal_controller".to_string()));
+    }
+
+    #[test]
+    fn execution_task_always_requests_read_write_and_command_capabilities() {
+        let config = TaskMcpConfig {
+            requires_execution: true,
+            enabled_builtin_kinds: Vec::new(),
+            ..TaskMcpConfig::default()
+        };
+
+        let ids = requested_mcp_resource_ids(&config);
+
+        assert!(ids.contains(&"builtin_code_maintainer_read".to_string()));
+        assert!(ids.contains(&"builtin_code_maintainer_write".to_string()));
+        assert!(ids.contains(&"builtin_terminal_controller".to_string()));
     }
 }

@@ -183,18 +183,14 @@ impl RunService {
         self.finalize_model_phase(&task, &mut run, report, effective_workspace_dir.as_str())
             .await;
         self.unregister_runtime_abort_token(run.id.as_str());
-        if let Some(session_ref) = cloud_run.mcp_runtime_session_ref {
-            let config =
-                chatos_mcp_management_sdk::McpManagementClientConfig::from_env("task-runner")
-                    .await
-                    .map_err(|error| error.to_string())?;
-            let client = chatos_mcp_management_sdk::McpManagementClient::new(config)
-                .map_err(|error| error.to_string())?;
-            client
-                .close_runtime_session(session_ref.as_str())
-                .await
-                .map_err(|error| error.to_string())?;
-        }
+        // `finalize_model_phase` finalizes the entire MCP run. MCP Management
+        // owns the run/session lifecycle and removes every session attached to
+        // the run as part of that operation. Closing this individual session a
+        // second time races with (and normally follows) run finalization, so it
+        // deterministically turns a successful terminal delivery into a 404.
+        // If run finalization fails, the durable post-process retries the same
+        // run-level operation; Task Runner must not bypass it with a separate
+        // session-level close.
         Ok(())
     }
 
