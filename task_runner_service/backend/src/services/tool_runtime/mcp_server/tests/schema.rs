@@ -57,14 +57,14 @@ fn model_config_thinking_level_schema_is_enum_choice() {
 }
 
 #[test]
-fn planner_task_creation_schemas_require_explicit_task_nature() {
+fn task_creation_schemas_leave_task_nature_to_request_context() {
     let create = create_task_schema();
-    assert!(create.pointer("/properties/is_planning_task").is_some());
+    assert!(create.pointer("/properties/is_planning_task").is_none());
 
     let batch = create_tasks_with_prerequisites_schema();
     assert!(batch
         .pointer("/properties/tasks/items/properties/is_planning_task")
-        .is_some());
+        .is_none());
 
     let project = create_project_execution_tasks_schema();
     assert!(project.pointer("/properties/execution_group_id").is_none());
@@ -94,7 +94,6 @@ fn ai_task_input_cannot_supply_mcp_configuration() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
-        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
@@ -205,7 +204,6 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
         tags: None,
         default_model_config_id: None,
         requires_execution: None,
-        is_planning_task: None,
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: Some(vec![
@@ -244,7 +242,6 @@ fn read_only_code_task_cannot_be_misclassified_as_requiring_execution() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
-        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: Some(vec!["CodeMaintainerRead".to_string()]),
         external_mcp_config_ids: None,
@@ -272,7 +269,6 @@ fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
-        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
@@ -310,7 +306,6 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
-        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
@@ -759,27 +754,25 @@ fn mcp_request_context_detects_chatos_plan_task_profile() {
 }
 
 #[test]
-fn chatos_plan_context_assigns_child_profile_from_task_nature() {
+fn chatos_plan_context_forces_created_tasks_to_plan_phase() {
     let context = McpRequestContext {
         task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
         ..McpRequestContext::default()
     };
+    let mut request = valid_planner_create_request();
+
+    context.enforce_created_task_kind(&mut request);
 
     assert_eq!(
-        context.child_task_profile(Some(true)).as_deref(),
+        request.task_profile.as_deref(),
         Some(TASK_PROFILE_CHATOS_PLAN)
     );
     assert_eq!(
-        context.child_task_profile(Some(false)).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
-    assert_eq!(
-        context.child_task_profile(None).as_deref(),
-        Some(TASK_PROFILE_CHATOS_PLAN)
-    );
-    assert_eq!(
-        context.child_task_profile(None).as_deref(),
-        Some(TASK_PROFILE_CHATOS_PLAN)
+        request
+            .mcp_config
+            .expect("plan MCP config")
+            .requires_execution,
+        Some(false)
     );
 }
 
@@ -790,16 +783,20 @@ fn project_execution_planner_always_creates_ordinary_execution_tasks() {
         ..McpRequestContext::default()
     };
 
-    assert_eq!(
-        context.child_task_profile(Some(true)).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
-    assert_eq!(
-        context.child_task_profile(Some(false)).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
-    assert_eq!(
-        context.child_task_profile(None).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
+    let mut request = valid_planner_create_request();
+
+    context.enforce_created_task_kind(&mut request);
+
+    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
+}
+
+#[test]
+fn ordinary_context_forces_created_tasks_to_default_profile() {
+    let context = McpRequestContext::default();
+    let mut request = valid_planner_create_request();
+
+    context.enforce_created_task_kind(&mut request);
+
+    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
+    assert!(request.mcp_config.is_none());
 }

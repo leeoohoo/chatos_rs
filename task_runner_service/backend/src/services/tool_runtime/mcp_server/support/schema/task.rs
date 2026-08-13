@@ -85,7 +85,6 @@ pub(crate) fn create_task_schema() -> Value {
             "priority": { "type": "integer", "description": "Higher numbers mean higher priority." },
             "tags": { "type": "array", "items": { "type": "string" }, "description": "Task tags." },
             "default_model_config_id": default_model_config_id_schema(),
-            "is_planning_task": planning_task_schema(),
             "requires_execution": requires_execution_schema(),
             "enabled_builtin_kinds": task_mcp_selection_schema(
                 "Select the builtin MCP capabilities this task needs from the target Agent binding.",
@@ -152,7 +151,6 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
                         "default_model_config_id": default_model_config_id_schema(),
-                        "is_planning_task": planning_task_schema(),
                         "requires_execution": requires_execution_schema(),
                         "enabled_builtin_kinds": task_mcp_selection_schema(
                             "Select the builtin MCP capabilities this task needs from the target Agent binding.",
@@ -200,14 +198,6 @@ fn requires_execution_schema() -> Value {
         "type": "boolean",
         "default": true,
         "description": "Whether the task needs an isolated execution workspace. Set false only for read-only planning or project-management work that will not modify files or run commands."
-    })
-}
-
-fn planning_task_schema() -> Value {
-    json!({
-        "type": "boolean",
-        "default": false,
-        "description": "Whether the task itself is planning, requirement decomposition, or project-management maintenance. Set false for coding, testing, fixing, documentation delivery, deployment, and other implementation work. This is independent from requires_execution."
     })
 }
 

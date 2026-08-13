@@ -143,8 +143,7 @@ pub fn shared_runtime_callbacks_from_chatos(callbacks: &AiClientCallbacks) -> Ru
         on_context_summarized_end: callbacks.on_context_summarized_end.clone(),
         on_before_model_input: callbacks.on_before_model_request.as_ref().map(|callback| {
             let callback = Arc::clone(callback);
-            Arc::new(move |input: Value| callback(&input, None, None))
-                as Arc<dyn Fn(Value) + Send + Sync>
+            Arc::new(move |input: Value| callback(&input, None)) as Arc<dyn Fn(Value) + Send + Sync>
         }),
         on_before_model_request: None,
         on_before_send_model_request: callbacks.on_before_send_model_request.clone(),

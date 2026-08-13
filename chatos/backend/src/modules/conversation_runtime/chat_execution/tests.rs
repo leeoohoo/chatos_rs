@@ -356,7 +356,7 @@ fn bridges_chatos_request_observers_to_shared_runtime_callbacks() {
     let callbacks = AiClientCallbacks {
         on_before_model_request: Some(Arc::new({
             let observed_input = Arc::clone(&observed_input);
-            move |input, _, _| {
+            move |input, _| {
                 *observed_input.lock().expect("input") = Some(input.clone());
             }
         })),

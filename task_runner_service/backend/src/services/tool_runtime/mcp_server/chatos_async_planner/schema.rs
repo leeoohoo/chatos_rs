@@ -13,7 +13,7 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                 set_schema_required_fields(
                     tool,
                     &["inputSchema", "required"],
-                    &["title", "objective", "is_planning_task"],
+                    &["title", "objective"],
                 );
                 remove_tool_schema_property(tool, &["inputSchema"], "anyOf");
             }
@@ -21,7 +21,7 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                 set_schema_required_fields(
                     tool,
                     &["inputSchema", "properties", "tasks", "items", "required"],
-                    &["client_ref", "title", "objective", "is_planning_task"],
+                    &["client_ref", "title", "objective"],
                 );
                 remove_tool_schema_property(
                     tool,

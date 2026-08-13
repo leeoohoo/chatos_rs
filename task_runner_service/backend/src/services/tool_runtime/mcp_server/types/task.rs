@@ -48,8 +48,6 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) requires_execution: Option<bool>,
     #[serde(default)]
-    pub(in crate::mcp_server) is_planning_task: Option<bool>,
-    #[serde(default)]
     pub(in crate::mcp_server) schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,

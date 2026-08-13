@@ -107,24 +107,16 @@ impl McpRequestContext {
         }
     }
 
-    pub(super) fn child_task_profile(&self, is_planning_task: Option<bool>) -> Option<String> {
-        if self.tool_profile() == McpToolProfile::ProjectRequirementExecutionPlanner {
-            return Some(TASK_PROFILE_DEFAULT.to_string());
-        }
+    pub(super) fn enforce_created_task_kind(&self, input: &mut CreateTaskRequest) {
         if !self.is_chatos_plan_task_profile() {
-            return None;
+            input.task_profile = Some(TASK_PROFILE_DEFAULT.to_string());
+            return;
         }
-        // Preserve the historical planning profile when an older caller omits
-        // the field. Planner-facing schemas now require an explicit value.
-        let is_planning_task = is_planning_task.unwrap_or(true);
-        Some(
-            if is_planning_task {
-                TASK_PROFILE_CHATOS_PLAN
-            } else {
-                crate::models::TASK_PROFILE_DEFAULT
-            }
-            .to_string(),
-        )
+        input.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
+        input
+            .mcp_config
+            .get_or_insert_with(Default::default)
+            .requires_execution = Some(false);
     }
 
     pub(super) fn requested_builtin_prompt_locale(&self) -> String {

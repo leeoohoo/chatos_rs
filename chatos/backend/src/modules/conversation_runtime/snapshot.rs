@@ -7,7 +7,6 @@ use crate::core::builtin_mcp_prompt::{
     inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
     BuiltinMcpPromptBuildResult,
 };
-use crate::core::messages::join_text_lines_or_json;
 use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
@@ -23,30 +22,6 @@ pub struct ActualTurnRequestContext {
     pub context_mode: Option<String>,
     pub items: Vec<TurnRuntimeSnapshotContextItemDto>,
     pub model_request_payload: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LiveRequestSnapshotContext {
-    pub session_id: String,
-    pub turn_id: String,
-    pub user_message_id: String,
-    pub model: String,
-    pub provider: String,
-    pub tool_metadata: ToolMetadataMap,
-    pub unavailable_builtin_tools: Vec<Value>,
-    pub runtime_context: ResolvedConversationRuntimeContext,
-}
-
-pub fn actual_context_items_from_v3_input(input: &Value) -> Vec<TurnRuntimeSnapshotContextItemDto> {
-    input
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(actual_context_item_from_v3_input_item)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 pub async fn sync_chat_turn_snapshot(
@@ -143,25 +118,6 @@ pub async fn sync_chat_turn_snapshot(
         .map(|_| ())
 }
 
-pub async fn sync_live_request_snapshot(
-    context: &LiveRequestSnapshotContext,
-    actual_request: &ActualTurnRequestContext,
-) -> Result<(), String> {
-    sync_chat_turn_snapshot(
-        context.session_id.as_str(),
-        context.turn_id.as_str(),
-        "running",
-        Some(context.user_message_id.clone()),
-        context.model.as_str(),
-        context.provider.as_str(),
-        &context.tool_metadata,
-        context.unavailable_builtin_tools.as_slice(),
-        &context.runtime_context,
-        Some(actual_request),
-    )
-    .await
-}
-
 pub fn inspect_builtin_mcp_prompt_for_runtime(
     builtin_servers: &[crate::services::mcp_loader::McpBuiltinServer],
     tool_metadata: &ToolMetadataMap,
@@ -202,79 +158,5 @@ fn extract_actual_request_context(
         context_mode: runtime.actual_context_mode,
         items: runtime.actual_context_items,
         model_request_payload: runtime.last_model_request_payload,
-    })
-}
-
-fn actual_context_item_from_v3_input_item(
-    item: &Value,
-) -> Option<TurnRuntimeSnapshotContextItemDto> {
-    let item_type = item
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    if item_type.is_empty() {
-        return None;
-    }
-
-    if item_type == "message" {
-        let role = item
-            .get("role")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("message");
-        let content = item
-            .get("content")
-            .map(|value| {
-                join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"])
-            })
-            .unwrap_or_default();
-        let trimmed = content.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        return Some(TurnRuntimeSnapshotContextItemDto {
-            role: Some(role.to_string()),
-            item_type: Some("message".to_string()),
-            source: Some("request".to_string()),
-            content: trimmed.to_string(),
-        });
-    }
-
-    let content = match item_type {
-        "function_call" => {
-            let name = item
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim();
-            let arguments = item
-                .get("arguments")
-                .map(|value| join_text_lines_or_json(value, &["text", "value", "content", "delta"]))
-                .unwrap_or_default();
-            format!("name={name}\narguments={arguments}")
-        }
-        "function_call_output" => item
-            .get("output")
-            .map(|value| {
-                join_text_lines_or_json(value, &["text", "value", "content", "delta", "output"])
-            })
-            .unwrap_or_default(),
-        _ => serde_json::to_string_pretty(item).ok()?,
-    };
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(TurnRuntimeSnapshotContextItemDto {
-        role: None,
-        item_type: Some(if item_type.starts_with("function_call") {
-            "tool".to_string()
-        } else {
-            item_type.to_string()
-        }),
-        source: Some("request".to_string()),
-        content: trimmed.to_string(),
     })
 }

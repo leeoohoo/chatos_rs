@@ -5,10 +5,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::modules::conversation_runtime::snapshot::LiveRequestSnapshotContext;
-
-type BeforeModelRequestCallback =
-    Arc<dyn Fn(&Value, Option<String>, Option<LiveRequestSnapshotContext>) + Send + Sync>;
+type BeforeModelRequestCallback = Arc<dyn Fn(&Value, Option<String>) + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct AiClientCallbacks {

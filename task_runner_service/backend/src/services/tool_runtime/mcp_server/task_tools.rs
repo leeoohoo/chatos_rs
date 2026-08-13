@@ -73,10 +73,9 @@ impl TaskRunnerMcpService {
             }
             "create_task" => {
                 let decoded = decode_args::<CreateTaskArgs>(args)?;
-                let child_task_profile =
-                    request_context.child_task_profile(decoded.is_planning_task);
                 let mut input: CreateTaskRequest = decoded.into_request()?;
                 request_context.enforce_plugin_config(&mut input);
+                request_context.enforce_created_task_kind(&mut input);
                 let source_context = request_context.task_source_context()?;
                 if let Some(prerequisite_task_ids) = input.prerequisite_task_ids.as_ref() {
                     self.require_tasks_for_user_in_context(
@@ -115,9 +114,6 @@ impl TaskRunnerMcpService {
                 } else {
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
-                }
-                if let Some(task_profile) = child_task_profile {
-                    input.task_profile = Some(task_profile);
                 }
                 let task = self
                     .task_service

@@ -37,8 +37,6 @@ pub mod summaries;
 pub mod task_board;
 #[path = "conversation_runtime/tools_panel.rs"]
 pub mod tools_panel;
-#[path = "conversation_runtime/turn_lifecycle.rs"]
-pub mod turn_lifecycle;
 #[path = "conversation_runtime/user_context.rs"]
 pub mod user_context;
 
