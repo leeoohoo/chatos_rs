@@ -36,6 +36,7 @@ mod managed_requirements_admin;
 mod managed_runtime_config;
 mod plugin_artifact_relay;
 mod plugin_management_capabilities;
+mod plugin_management_installations;
 mod plugin_management_mcps;
 mod plugin_management_oauth;
 mod plugin_management_plugins;

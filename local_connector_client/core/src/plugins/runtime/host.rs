@@ -171,6 +171,12 @@ impl PluginRuntimeHost {
         self
     }
 
+    pub(crate) fn installation_status_snapshot(
+        &self,
+    ) -> Result<crate::plugins::LocalPluginStatusSnapshot> {
+        self.skill_loader.installer().status_snapshot()
+    }
+
     #[cfg(test)]
     pub(super) fn with_artifact_persistence_for_tests(
         mut self,

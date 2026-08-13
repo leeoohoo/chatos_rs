@@ -22,6 +22,9 @@ use crate::models::{
 use crate::state::AppState;
 use crate::store::SessionAcquireError;
 
+use super::plugin_management_installations::{
+    is_plugin_installation_status_message, sync_socket_plugin_installations,
+};
 use super::plugin_management_mcps::{
     is_mcp_manifest_status_message, mark_device_mcps_offline, sync_socket_mcp_statuses,
 };
@@ -518,6 +521,42 @@ async fn handle_connector_socket(
                                 json!({
                                     "type": "error",
                                     "code": "skill_inventory_status_rejected",
+                                    "message": err,
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await;
+                        }
+                    }
+                } else if is_plugin_installation_status_message(text.as_str()) {
+                    match sync_socket_plugin_installations(
+                        &state,
+                        session.owner_user_id.as_str(),
+                        device_id.as_str(),
+                        text.as_str(),
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            if !send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "plugin_installation_status_ack",
+                                    "count": count,
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            let _ = send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "error",
+                                    "code": "plugin_installation_status_rejected",
                                     "message": err,
                                     "timestamp": crate::models::now_rfc3339(),
                                 }),

@@ -258,7 +258,8 @@ export function useInputAreaController({
   const pluginPicker = useTaskPluginPicker({
     client,
     conversationId,
-    projectId: selectedRuntimeProject?.id || selectedProjectId,
+    project: selectedRuntimeProject,
+    projectId: selectedProjectId,
     disabled,
     planMode: planModeEnabled,
   });

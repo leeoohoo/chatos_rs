@@ -24,7 +24,9 @@ use crate::mcp::manifest::mcp_status_message;
 use crate::mcp::repository::state_identity;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
-use crate::plugins::{oauth_status_message, PluginOAuthBroker, PluginRuntimeHost};
+use crate::plugins::{
+    installation_status_message, oauth_status_message, PluginOAuthBroker, PluginRuntimeHost,
+};
 use crate::registration::cloud_authentication_expired;
 use crate::relay::{relay_error_response, RelayRequest, MCP_RELAY_MESSAGE_TYPE};
 use crate::remote_connection::{
@@ -168,6 +170,20 @@ pub(crate) async fn connect_loop(
                     .send(Message::Text(skill_inventory.to_string().into()))
                     .await
                     .context("send Skill inventory status")?;
+                let plugin_runtime_for_status = plugin_runtime.clone();
+                let plugin_status = tokio::task::spawn_blocking(move || {
+                    plugin_runtime_for_status.installation_status_snapshot()
+                })
+                .await
+                .context("join Plugin installation status snapshot")??;
+                write
+                    .send(Message::Text(
+                        installation_status_message(&plugin_status)
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .context("send Plugin installation status")?;
                 let oauth_connections = plugin_oauth
                     .status_connections(owner_user_id.as_str(), current_device_id.as_str())
                     .context("load Plugin OAuth status")?;
@@ -368,6 +384,7 @@ async fn handle_text_message(
         | "ack"
         | "mcp_manifest_status_ack"
         | "skill_inventory_status_ack"
+        | "plugin_installation_status_ack"
         | "plugin_oauth_status_ack" => {
             tracing_stdout(format!("service message: {message_type}").as_str());
             None

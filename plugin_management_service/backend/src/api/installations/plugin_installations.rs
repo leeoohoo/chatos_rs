@@ -105,7 +105,7 @@ pub(super) async fn sync_plugin_installation_internal(
             .map(|record| record.installed_at.clone())
             .or(payload.installed_at)
             .unwrap_or_else(|| now.clone()),
-        last_checked_at: now,
+        last_checked_at: now.clone(),
         last_error: payload
             .last_error
             .as_deref()
@@ -117,6 +117,27 @@ pub(super) async fn sync_plugin_installation_internal(
         .replace_plugin_installation(&record)
         .await
         .map_err(ApiError::internal)?;
+    if state
+        .store
+        .get_user_plugin_preference(record.owner_user_id.as_str(), record.plugin_id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+        .is_none()
+    {
+        state
+            .store
+            .replace_user_plugin_preference(&UserPluginPreferenceRecord {
+                owner_user_id: record.owner_user_id.clone(),
+                plugin_id: record.plugin_id.clone(),
+                enabled: record.active,
+                auto_update: record.plugin_id.starts_with("bundled-plugin-"),
+                release_channel: release.release_channel.clone(),
+                enabled_components: Vec::new(),
+                updated_at: now.clone(),
+            })
+            .await
+            .map_err(ApiError::internal)?;
+    }
     let audit = plugin_audit_record(
         PLUGIN_AUDIT_SYNC_INSTALLATION,
         record.owner_user_id.as_str(),

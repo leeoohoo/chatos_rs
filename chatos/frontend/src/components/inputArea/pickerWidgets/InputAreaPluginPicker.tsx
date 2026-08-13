@@ -15,7 +15,7 @@ export const InputAreaPluginPicker = ({
   disabled: boolean;
 }) => {
   const { t } = useI18n();
-  if (!pluginPicker.enabled) {
+  if (!pluginPicker.visible) {
     return null;
   }
 

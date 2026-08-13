@@ -83,6 +83,22 @@ impl AppStore {
         Ok(())
     }
 
+    pub async fn list_enabled_user_plugin_preferences(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<UserPluginPreferenceRecord>, String> {
+        self.plugin_preferences
+            .find(
+                doc! { "owner_user_id": owner_user_id, "enabled": true },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
     pub async fn list_plugin_oauth_connections(
         &self,
         owner_user_id: &str,

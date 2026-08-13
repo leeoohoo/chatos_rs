@@ -6,10 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    PluginAvailabilityStatus, PluginCatalogDocument, PluginCatalogRecord,
-    PluginCloudCredentialMetadata, PluginCloudOAuthConnectionRecord, PluginComponentStatus,
-    PluginInstallStatus, PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifestSource,
-    PluginPublisher, PluginReleaseSignature, PluginRequirementStatus, SigningKeyRef,
+    PluginCatalogDocument, PluginCatalogRecord, PluginCloudCredentialMetadata,
+    PluginCloudOAuthConnectionRecord, PluginInterfaceMetadata, PluginLicenseMetadata,
+    PluginManifestSource, PluginPublisher, PluginReleaseSignature, SigningKeyRef,
 };
 
 pub const PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY: &str = "official_registry";
@@ -323,31 +322,6 @@ pub struct PluginReleasePublicationState {
     pub release_id: String,
     pub ready: bool,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginInstallationSyncPayload {
-    pub owner_user_id: String,
-    pub device_id: String,
-    pub plugin_id: String,
-    pub release_id: String,
-    pub version: String,
-    pub artifact_sha256: String,
-    pub platform: String,
-    pub install_status: PluginInstallStatus,
-    pub availability_status: PluginAvailabilityStatus,
-    pub dependency_status: PluginRequirementStatus,
-    pub permission_status: PluginRequirementStatus,
-    pub auth_status: PluginRequirementStatus,
-    #[serde(default)]
-    pub component_statuses: Vec<PluginComponentStatus>,
-    pub active: bool,
-    #[serde(default)]
-    pub previous_release_id: Option<String>,
-    #[serde(default)]
-    pub installed_at: Option<String>,
-    #[serde(default)]
-    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

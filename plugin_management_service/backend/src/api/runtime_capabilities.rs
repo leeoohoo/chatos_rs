@@ -434,6 +434,40 @@ async fn resolve_agent_capabilities_for_owner(
                 });
             }
         }
+
+        let mut resolved_plugin_ids = plugins
+            .iter()
+            .map(|item| item.catalog.id.clone())
+            .collect::<HashSet<_>>();
+        for preference in state
+            .store
+            .list_enabled_user_plugin_preferences(owner_user_id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+        {
+            if !resolved_plugin_ids.insert(preference.plugin_id.clone()) {
+                continue;
+            }
+            let binding = automatic_user_binding(
+                agent_key.as_str(),
+                owner_user_id.as_str(),
+                RESOURCE_KIND_PLUGIN,
+                preference.plugin_id.as_str(),
+            );
+            if let Some(plugin) = resolve_plugin_binding(
+                state,
+                binding,
+                owner_user_id.as_str(),
+                device_id.as_deref(),
+                runtime_context.runtime_provider.as_deref(),
+            )
+            .await?
+            {
+                if plugin.available || include_unavailable {
+                    plugins.push(plugin);
+                }
+            }
+        }
     }
 
     let generated_at = now_rfc3339();

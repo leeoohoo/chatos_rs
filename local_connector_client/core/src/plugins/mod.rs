@@ -13,6 +13,7 @@ mod oauth_sync;
 mod recovery;
 mod runtime;
 mod state;
+mod status_sync;
 mod verifier;
 
 pub use archive::{PluginArchiveLimits, VerifiedArchiveFiles};
@@ -46,6 +47,7 @@ pub use runtime::{
     PluginSkillSnapshot,
 };
 pub use state::{InstalledPluginVersion, LocalInstalledPlugin, LocalPluginRegistry};
+pub(crate) use status_sync::installation_status_message;
 pub use verifier::{
     verify_plugin_install_source, PluginArtifactVerificationRequest, PluginRequirementInventory,
     VerifiedPluginArtifact,
