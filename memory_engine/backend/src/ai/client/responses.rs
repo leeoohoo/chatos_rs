@@ -7,13 +7,6 @@ use tracing::{info, warn};
 
 use super::AiClient;
 
-pub(super) fn build_user_prompt(title: Option<&str>, input: &str) -> String {
-    match title.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(title) => format!("Thread title: {title}\n\nConversation increment:\n{input}"),
-        None => format!("Conversation increment:\n{input}"),
-    }
-}
-
 pub(super) fn request_kind(supports_responses: bool) -> &'static str {
     if supports_responses {
         "responses"

@@ -103,7 +103,8 @@ pub(crate) async fn run_thread_summary_with_thread(
     let tenant_id = thread.tenant_id.clone();
     let source_id = thread.source_id.clone();
     let thread_id = thread.id.clone();
-    let ctx = load_thread_summary_execution_context_for_thread(db, thread).await?;
+    let mut ctx = load_thread_summary_execution_context_for_thread(db, thread).await?;
+    ctx.settings.cloud_resume_kind = Some(trigger_type.to_string());
     if !ctx.should_run() {
         return Ok(noop_response(thread_id.as_str()));
     }
@@ -220,6 +221,21 @@ pub(crate) async fn execute_existing_summary_job(
     .await
 }
 
+pub(crate) async fn resume_cloud_summary_job(
+    config: &AppConfig,
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    job_run_id: &str,
+) -> Result<RunThreadSummaryResponse, String> {
+    let ctx = load_thread_summary_execution_context(db, tenant_id, source_id, thread_id).await?;
+    execute_prepared_thread_summary_job(
+        config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
+    )
+    .await
+}
+
 pub(crate) async fn execute_prepared_thread_summary_job(
     config: &AppConfig,
     db: &Db,
@@ -231,10 +247,11 @@ pub(crate) async fn execute_prepared_thread_summary_job(
 ) -> Result<RunThreadSummaryResponse, String> {
     let ThreadSummaryExecutionContext {
         thread,
-        settings,
+        mut settings,
         pending_before_count,
         selection,
     } = ctx;
+    settings.cloud_owner_entity_id = Some(job_run_id.to_string());
 
     let mut processed_count = 0_i64;
     let output_count = 0_i64;
@@ -488,6 +505,9 @@ pub(crate) async fn execute_prepared_thread_summary_job(
     .await;
 
     if let Err(err) = &result {
+        if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED {
+            return result;
+        }
         finish_thread_summary_job_run(
             db,
             job_run_id,

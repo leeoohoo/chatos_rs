@@ -55,12 +55,10 @@ pub fn build_internal_router(state: Arc<AppState>) -> Router {
                     model_profile_auth::require_model_profile_internal_auth,
                 )),
             )
-            .merge(
-                admin::routes().route_layer(middleware::from_fn_with_state(
-                    protected_state.clone(),
-                    memory_auth::require_memory_auth,
-                )),
-            )
+            .merge(admin::routes().route_layer(middleware::from_fn_with_state(
+                protected_state.clone(),
+                memory_auth::require_memory_auth,
+            )))
             .merge(
                 core::data_routes().route_layer(middleware::from_fn_with_state(
                     protected_state.clone(),
@@ -153,11 +151,8 @@ mod tests {
     #[tokio::test]
     async fn internal_data_route_requires_allowed_caller_and_data_scope() {
         let router = build_internal_router(test_state().await);
-        let wrong_scope = service_token(
-            TASK_RUNNER_SECRET,
-            "task-runner",
-            MODEL_PROFILE_SYNC_SCOPE,
-        );
+        let wrong_scope =
+            service_token(TASK_RUNNER_SECRET, "task-runner", MODEL_PROFILE_SYNC_SCOPE);
         let wrong_scope_response = router
             .clone()
             .oneshot(thread_upsert_request("task-runner", wrong_scope))
@@ -277,6 +272,7 @@ mod tests {
                 queue_elevated_messages: 100,
                 queue_critical_messages: 1_000,
             }),
+            cloud_agent_store: chatos_cloud_agent_runtime::CloudAgentStateStore::memory(),
             config,
         })
     }

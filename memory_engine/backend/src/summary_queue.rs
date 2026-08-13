@@ -258,6 +258,12 @@ async fn handle_delivery(
             .ack(BasicAckOptions::default())
             .await
             .map_err(|err| err.to_string()),
+        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
+            delivery
+                .ack(BasicAckOptions::default())
+                .await
+                .map_err(|err| err.to_string())
+        }
         Err(error) => {
             let event = envelope.as_outbox();
             let _ =

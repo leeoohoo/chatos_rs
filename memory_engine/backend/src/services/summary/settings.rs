@@ -29,5 +29,7 @@ pub(crate) async fn load_summary_job_settings(
                     .max(128),
             )
         },
+        cloud_owner_entity_id: None,
+        cloud_resume_kind: None,
     })
 }

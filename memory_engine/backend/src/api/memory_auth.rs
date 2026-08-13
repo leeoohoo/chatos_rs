@@ -22,11 +22,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{config::AppConfig, state::AppState};
 
+use super::internal_audit::MemoryInternalRequestAudit;
 use super::internal_auth::{
     require_internal_request, scope_for_memory_path, ADMIN_SCOPE, DATA_SCOPE,
     MODEL_PROFILE_SYNC_SCOPE, SOURCE_SCOPE,
 };
-use super::internal_audit::MemoryInternalRequestAudit;
 
 const PRINCIPAL_TYPE_AGENT_ACCOUNT: &str = "agent_account";
 const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";

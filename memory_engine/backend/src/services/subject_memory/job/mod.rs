@@ -6,5 +6,6 @@ mod level0;
 mod rollup;
 mod runner;
 
+pub(crate) use runner::resume_subject_memory_job;
 pub use runner::run_subject_memory_job;
 pub(crate) use runner::{run_subject_memory_job_internal, subject_memory_job_has_work};
