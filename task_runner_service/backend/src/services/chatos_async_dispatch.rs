@@ -231,6 +231,7 @@ impl RunService {
         let Some(mut task) = self.store.get_task(task_id).await? else {
             return Ok(());
         };
+        task.schedule = advance_task_schedule_after_dispatch(&task.schedule, Utc::now())?;
         task.result_summary = normalized_optional(Some(format!("scheduler error: {error}")));
         task.updated_at = now_rfc3339();
         self.store.save_task(task).await?;
@@ -443,5 +444,37 @@ mod tests {
 
         assert!(runs.is_empty());
         assert!(store.list_runs(None).await.expect("runs").is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_contact_async_dispatch_consumes_the_one_shot_schedule() {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        let mut task = ready_task("failed-dispatch");
+        task.schedule.run_at = Some("2026-08-13T16:00:00Z".to_string());
+        task.schedule.next_run_at = task.schedule.run_at.clone();
+        store.save_task(task).await.expect("save task");
+        let service = RunService::new(
+            config,
+            store.clone(),
+            AskUserPromptService::new(store.clone()),
+        );
+
+        service
+            .mark_chatos_async_schedule_failed("failed-dispatch", "missing model")
+            .await
+            .expect("mark dispatch failed");
+
+        let task = store
+            .get_task("failed-dispatch")
+            .await
+            .expect("get task")
+            .expect("task");
+        assert!(task.schedule.next_run_at.is_none());
+        assert!(task.schedule.last_scheduled_at.is_some());
+        assert_eq!(
+            task.result_summary.as_deref(),
+            Some("scheduler error: missing model")
+        );
     }
 }

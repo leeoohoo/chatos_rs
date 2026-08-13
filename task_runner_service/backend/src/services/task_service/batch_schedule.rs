@@ -130,6 +130,7 @@ impl TaskService {
         let Some(mut task) = self.store.get_task(id).await? else {
             return Ok(None);
         };
+        task.schedule = advance_task_schedule_after_dispatch(&task.schedule, Utc::now())?;
         task.result_summary = normalized_optional(Some(format!("scheduler error: {error}")));
         task.updated_at = now_rfc3339();
         Ok(Some(self.store.save_task(task).await?))

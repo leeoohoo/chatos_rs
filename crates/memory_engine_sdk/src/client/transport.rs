@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::error::Error;
+use std::time::Duration;
 
 use reqwest::{Method, RequestBuilder};
 use serde::de::DeserializeOwned;
@@ -14,6 +15,15 @@ const DATA_SCOPE: &str = "memory.data";
 const SOURCE_SCOPE: &str = "memory.source";
 const ADMIN_SCOPE: &str = "memory.admin";
 const MODEL_PROFILE_SYNC_SCOPE: &str = "model-profile.sync";
+const CONNECT_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_millis(200),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+];
+
+fn should_retry_connect_error(error: &reqwest::Error, completed_retries: usize) -> bool {
+    error.is_connect() && completed_retries < CONNECT_RETRY_DELAYS.len()
+}
 
 impl MemoryEngineClient {
     pub(super) async fn send_json<T, B>(
@@ -28,16 +38,32 @@ impl MemoryEngineClient {
     {
         let url = format!("{}{}", self.base_url, path);
         let method_label = method.as_str().to_string();
-        let req = self.http.request(method, url.clone());
-        let req = self.apply_auth(req, path)?;
-        let req = if let Some(body) = body {
-            req.json(body)
-        } else {
-            req
+        let mut connect_retry_index = 0usize;
+        let resp = loop {
+            let req = self.http.request(method.clone(), url.clone());
+            let req = self.apply_auth(req, path)?;
+            let req = if let Some(body) = body {
+                req.json(body)
+            } else {
+                req
+            };
+            match req.send().await {
+                Ok(resp) => break resp,
+                Err(err) if should_retry_connect_error(&err, connect_retry_index) => {
+                    let delay = CONNECT_RETRY_DELAYS[connect_retry_index];
+                    connect_retry_index += 1;
+                    tokio::time::sleep(delay).await;
+                }
+                Err(err) => {
+                    return Err(format_reqwest_error(
+                        "send",
+                        method_label.as_str(),
+                        url.as_str(),
+                        err,
+                    ));
+                }
+            }
         };
-        let resp = req.send().await.map_err(|err| {
-            format_reqwest_error("send", method_label.as_str(), url.as_str(), err)
-        })?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -216,7 +242,8 @@ pub(super) fn append_optional_bool_query(query: &mut String, key: &str, value: O
 mod tests {
     use super::{
         append_optional_bool_query, append_optional_i64_query, append_optional_query,
-        normalize_base_url, SOURCE_SCOPE, TOKEN_AUDIENCE,
+        normalize_base_url, should_retry_connect_error, CONNECT_RETRY_DELAYS, SOURCE_SCOPE,
+        TOKEN_AUDIENCE,
     };
     use crate::MemoryEngineClient;
     use std::time::Duration;
@@ -263,6 +290,60 @@ mod tests {
         append_optional_bool_query(&mut query, "active", None);
 
         assert!(query.is_empty());
+    }
+
+    #[tokio::test]
+    async fn connect_errors_are_retried_only_within_the_bounded_budget() {
+        let error = reqwest::Client::new()
+            .get("http://127.0.0.1:0/connect-retry-test")
+            .send()
+            .await
+            .expect_err("unused local port should refuse the connection");
+
+        assert!(should_retry_connect_error(&error, 0));
+        assert!(should_retry_connect_error(
+            &error,
+            CONNECT_RETRY_DELAYS.len() - 1
+        ));
+        assert!(!should_retry_connect_error(
+            &error,
+            CONNECT_RETRY_DELAYS.len()
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_json_recovers_when_the_service_starts_during_connect_backoff() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let reservation = TcpListener::bind("127.0.0.1:0").expect("reserve port");
+        let address = reservation.local_addr().expect("reserved address");
+        drop(reservation);
+        let server = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let listener = TcpListener::bind(address).expect("bind delayed server");
+            let (mut stream, _) = listener.accept().expect("accept retried request");
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).expect("read request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                )
+                .expect("write response");
+        });
+        let client = MemoryEngineClient::new_platform(
+            format!("http://{address}/api/memory-engine/v1"),
+            Duration::from_secs(2),
+        )
+        .expect("client");
+
+        let response: serde_json::Value = client
+            .send_json(reqwest::Method::GET, "/retry-probe", Option::<&()>::None)
+            .await
+            .expect("connect retry should recover");
+
+        assert_eq!(response, serde_json::json!({}));
+        server.join().expect("delayed server");
     }
 
     #[test]

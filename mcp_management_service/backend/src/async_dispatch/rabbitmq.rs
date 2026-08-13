@@ -463,12 +463,20 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
                                 error = error.as_str(),
                                 "reduce invocation-terminal event failed"
                             );
-                            let _ = delivery
-                                .nack(BasicNackOptions {
-                                    multiple: false,
-                                    requeue: true,
-                                })
-                                .await;
+                            if invocation_terminal_error_is_stale(error.as_str()) {
+                                // Terminal notifications are at-least-once. Once run
+                                // finalization has closed the session, a duplicate or
+                                // delayed terminal event cannot produce new state. Ack it
+                                // so stale history cannot hot-loop and starve active runs.
+                                let _ = delivery.ack(BasicAckOptions::default()).await;
+                            } else {
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: true,
+                                    })
+                                    .await;
+                            }
                         }
                     }
                 }
@@ -479,6 +487,36 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
             ),
         }
         tokio::time::sleep(topology.rabbitmq_reconnect_delay).await;
+    }
+}
+
+fn invocation_terminal_error_is_stale(error: &str) -> bool {
+    matches!(
+        error,
+        "runtime session was not found or has expired"
+            | "Runtime Tool Batch was not found"
+            | "Runtime invocation was not found"
+    )
+}
+
+#[cfg(test)]
+mod invocation_terminal_tests {
+    use super::invocation_terminal_error_is_stale;
+
+    #[test]
+    fn closed_session_and_removed_durable_records_are_consumed() {
+        assert!(invocation_terminal_error_is_stale(
+            "runtime session was not found or has expired"
+        ));
+        assert!(invocation_terminal_error_is_stale(
+            "Runtime Tool Batch was not found"
+        ));
+        assert!(invocation_terminal_error_is_stale(
+            "Runtime invocation was not found"
+        ));
+        assert!(!invocation_terminal_error_is_stale(
+            "Runtime Tool Batch CAS conflict limit was exceeded"
+        ));
     }
 }
 

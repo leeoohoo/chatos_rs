@@ -8,11 +8,12 @@ edition = "2021"
 
 [features]
 default = ["client"]
-client = ["dep:chatos_service_runtime", "dep:reqwest", "dep:urlencoding"]
+client = ["dep:chatos_service_runtime", "dep:reqwest", "dep:tokio", "dep:urlencoding"]
 
 [dependencies]
 chatos_service_runtime = { path = "../chatos_service_runtime", optional = true }
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "rustls-tls"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "time"], optional = true }
 urlencoding = { version = "2", optional = true }
