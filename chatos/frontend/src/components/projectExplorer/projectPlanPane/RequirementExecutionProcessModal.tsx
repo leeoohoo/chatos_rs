@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 
 import type { MessageTaskRunnerTask } from '../../../lib/api/client/types';
@@ -14,11 +14,12 @@ import { readString } from '../../messageTasks/utils';
 import { RequirementExecutionModalFrame } from './RequirementExecutionModalShell';
 import { RequirementExecutionActionDialogs } from './RequirementExecutionActionDialogs';
 import { RequirementExecutionTaskModals } from './RequirementExecutionTaskModals';
-import { RequirementExecutionGraphSurface, RequirementExecutionProcessActions, RequirementExecutionProcessSidebar } from './RequirementExecutionProcessView';
+import { RequirementExecutionGraphSurface, RequirementExecutionPlannerProcessModal, RequirementExecutionProcessActions, RequirementExecutionProcessSidebar } from './RequirementExecutionProcessView';
 import { readText } from './model';
 import { buildRequirementExecutionProcessEntries, createFallbackMessage, isRequirementExecutionCancellationSettling, resolveRequirementExecutionPhaseCopy, resolveRequirementExecutionProcessPhase, resolveRequirementExecutionRecoveryActions, withProcessStatus } from './requirementExecutionPhase';
 import { buildRequirementExecutionProcess, isPendingRequirementExecutionPlanError, isRequirementExecutionRerunCancellationSettlingError, REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS, shouldReplaceRequirementExecutionBatch, shouldStopRequirementExecutionBeforeReplacement, type RequirementExecutionProcess } from './requirementExecutionProcessModel';
 import { taskHasActiveRun, taskHasQueuedRun, taskHasRunningRun } from './requirementExecutionTaskRuntime';
+import { useRequirementExecutionPlannerTimeline } from './useRequirementExecutionPlannerTimeline';
 import { useRequirementExecutionProcessModalState } from './useRequirementExecutionProcessModalState';
 
 export * from './requirementExecutionProcessPublic';
@@ -162,6 +163,7 @@ export const RequirementExecutionProcessModal: React.FC<{
   const canRevise = recoveryActions.canRevise;
   const canRerun = recoveryActions.canRerun
     && !cancellationSettling;
+  const [plannerProcessOpen, setPlannerProcessOpen] = useState(false);
 
   useEffect(() => {
     if (!graphReady || actuallyStarted) return undefined;
@@ -192,6 +194,16 @@ export const RequirementExecutionProcessModal: React.FC<{
   const terminal = ['completed', 'failed', 'stopped'].includes(phase)
     && !hasActiveRuns
     && !rerunCancellationSettling;
+  const plannerActive = !terminal && [
+    'planning_context',
+    'building_graph',
+  ].includes(phase);
+  const plannerTimeline = useRequirementExecutionPlannerTimeline({
+    active: !terminal,
+    conversationId: liveProcess.conversationId,
+    turnId: liveProcess.executionGroupId,
+    userMessageId: liveProcess.messageId,
+  });
   const isLocalExecution = (liveProcess.executionPlane || '').toLowerCase() === 'local_connector'
     || liveProcess.conversationId.startsWith('lc_');
   const phaseText = resolveRequirementExecutionPhaseCopy({
@@ -266,11 +278,12 @@ export const RequirementExecutionProcessModal: React.FC<{
       await Promise.all([
         reloadGraph(silent ? { silent: true } : undefined),
         refreshPlanStatus(silent),
+        plannerTimeline.refresh(silent),
       ]);
     } finally {
       pollingRef.current = false;
     }
-  }, [refreshPlanStatus, reloadGraph]);
+  }, [plannerTimeline.refresh, refreshPlanStatus, reloadGraph]);
 
   const retryFailedTask = useCallback(async (task: MessageTaskRunnerTask) => {
     setActionError(null);
@@ -298,6 +311,10 @@ export const RequirementExecutionProcessModal: React.FC<{
 
   useEffect(() => {
     void refreshPlanStatus(true);
+  }, [liveProcess.executionGroupId]);
+
+  useEffect(() => {
+    setPlannerProcessOpen(false);
   }, [liveProcess.executionGroupId]);
 
   useEffect(() => {
@@ -704,9 +721,12 @@ export const RequirementExecutionProcessModal: React.FC<{
             cancellationSettling={cancellationSettling}
             feedback={feedback}
             onFeedbackChange={setFeedback}
+            onOpenPlannerProcess={() => setPlannerProcessOpen(true)}
             onSubmitFeedback={() => void submitFeedback()}
             phase={phase}
             phaseText={phaseText}
+            plannerActive={plannerActive}
+            plannerProcessMessageCount={plannerTimeline.processMessageCount}
             processEntries={processEntries}
             revising={revising}
             taskCount={allTasks.length}
@@ -773,6 +793,17 @@ export const RequirementExecutionProcessModal: React.FC<{
           </main>
         </div>
       </RequirementExecutionModalFrame>
+
+      {plannerProcessOpen ? (
+        <RequirementExecutionPlannerProcessModal
+          active={plannerActive}
+          error={plannerTimeline.error}
+          items={plannerTimeline.items}
+          loading={plannerTimeline.loading}
+          onClose={() => setPlannerProcessOpen(false)}
+          processMessageCount={plannerTimeline.processMessageCount}
+        />
+      ) : null}
 
       <RequirementExecutionActionDialogs
         cancelConfirmOpen={cancelConfirmOpen}
