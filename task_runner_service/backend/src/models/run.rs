@@ -161,6 +161,7 @@ pub struct TaskRunRecord {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
+    #[serde(default)]
     pub effective_tools: EffectiveTaskToolSnapshot,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_execution: Option<TaskRunWorkspaceExecution>,
@@ -334,7 +335,10 @@ pub fn task_run_memory_thread_id(task_memory_thread_id: &str, run_id: &str) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::{task_run_memory_thread_id, TaskRunAttemptStatus, TaskRunRecord};
+    use super::{
+        task_run_memory_thread_id, EffectiveTaskToolSnapshot, TaskRunAttemptStatus, TaskRunRecord,
+    };
+    use mongodb::bson;
     use serde_json::json;
 
     #[test]
@@ -377,6 +381,28 @@ mod tests {
         assert_eq!(attempt.model_response_id.as_deref(), Some("response-1"));
         assert_eq!(attempt.status, TaskRunAttemptStatus::Succeeded);
         assert_eq!(attempt.finished_at.as_deref(), Some("2026-08-07T00:02:00Z"));
+    }
+
+    #[test]
+    fn legacy_run_without_effective_tools_uses_empty_snapshot() {
+        let run = TaskRunRecord::queued(
+            "run-legacy".to_string(),
+            "task-legacy".to_string(),
+            "model-1".to_string(),
+            "thread-1".to_string(),
+            json!({}),
+            "2026-08-07T00:00:00Z".to_string(),
+        );
+        let mut document = bson::to_document(&run).expect("serialize run as Mongo document");
+        document.remove("effective_tools");
+
+        let decoded: TaskRunRecord =
+            bson::from_document(document).expect("decode legacy run without effective_tools");
+
+        assert_eq!(
+            decoded.effective_tools,
+            EffectiveTaskToolSnapshot::default()
+        );
     }
 }
 
