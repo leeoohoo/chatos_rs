@@ -935,10 +935,9 @@ pub fn reduce_single_step(
             pending_tool_results: run.pending_tool_results.clone(),
             response_input_items: run.response_input_items.clone(),
             terminal_outcome: None,
-            outbox: vec![outbox_intent(
+            outbox: vec![retry_outbox_intent(
                 &claim.ordering,
                 causation_id,
-                "ai_runtime_retry",
                 result_routing_key,
                 serde_json::json!({
                     "error": error,
@@ -947,6 +946,7 @@ pub fn reduce_single_step(
                     "disable_stream": disable_stream,
                     "downgrade_thinking_to": downgrade_thinking_to,
                 }),
+                next_model_attempt,
                 Utc::now()
                     + chrono::Duration::milliseconds(i64::try_from(backoff_ms).unwrap_or(i64::MAX)),
             )],
@@ -1156,6 +1156,26 @@ fn stable_batch_id(ordering: &CloudAgentOrdering) -> String {
         "mcp_batch_{}_{}_{}",
         ordering.agent_run_id, ordering.generation, ordering.step_seq
     )
+}
+
+fn retry_outbox_intent(
+    ordering: &CloudAgentOrdering,
+    causation_id: &str,
+    routing_key: &str,
+    payload: Value,
+    next_model_attempt: usize,
+    available_at: DateTime<Utc>,
+) -> CloudAgentOutboxIntent {
+    let mut intent = outbox_intent(
+        ordering,
+        causation_id,
+        "ai_runtime_retry",
+        routing_key,
+        payload,
+        available_at,
+    );
+    intent.event_id = format!("{}_attempt_{next_model_attempt}", intent.event_id);
+    intent
 }
 
 fn outbox_intent(
@@ -1409,6 +1429,10 @@ mod tests {
         assert_eq!(transition.next_step_seq, 2);
         assert_eq!(transition.next_retry_count, 1);
         assert_eq!(transition.outbox.len(), 1);
+        assert_eq!(
+            transition.outbox[0].event_id,
+            "ai_runtime_retry_run-1_1_2_attempt_2"
+        );
     }
 
     #[derive(Clone)]
@@ -1543,6 +1567,103 @@ mod tests {
         assert_eq!(
             outbox[0].payload["input_items"],
             serde_json::json!([{"type": "message"}])
+        );
+    }
+
+    #[tokio::test]
+    async fn consecutive_retries_publish_distinct_events_and_can_finish_terminally() {
+        let store = inserted_ready_run().await;
+        let seen_triggers = Arc::new(Mutex::new(Vec::new()));
+        let first_retry = TestSingleStepExecutor {
+            outcome: AiSingleStepOutcome::Retry {
+                error: "connect failed".to_string(),
+                retry_kind: "network".to_string(),
+                next_model_attempt: 2,
+                backoff_ms: 0,
+                disable_stream: false,
+                downgrade_thinking_to: None,
+            },
+            seen_triggers: Arc::clone(&seen_triggers),
+        };
+        consume_cloud_agent_single_step(&store, &first_retry, consume_input())
+            .await
+            .unwrap();
+        let first_outbox = store.list_ready_outbox(10).await.unwrap();
+        assert_eq!(first_outbox.len(), 1);
+        let first_event_id = first_outbox[0].event_id.clone();
+        assert!(store
+            .mark_outbox_published(first_event_id.as_str())
+            .await
+            .unwrap());
+
+        let second_retry = TestSingleStepExecutor {
+            outcome: AiSingleStepOutcome::Retry {
+                error: "dns failed".to_string(),
+                retry_kind: "network".to_string(),
+                next_model_attempt: 3,
+                backoff_ms: 0,
+                disable_stream: false,
+                downgrade_thinking_to: None,
+            },
+            seen_triggers: Arc::clone(&seen_triggers),
+        };
+        let second_input = CloudAgentConsumeInput {
+            agent_run_id: "run-1".to_string(),
+            event_id: first_event_id.clone(),
+            trigger: CloudAgentModelTrigger::Retry {
+                event_id: first_event_id,
+                model_attempt: 2,
+                payload: Value::Null,
+            },
+            expected_status: CloudAgentRunStatus::RetryScheduled,
+            expected_phase: CloudAgentRunPhase::RetryDelay,
+            claim_token: "claim-second-retry".to_string(),
+            claim_until: Utc::now() + chrono::Duration::seconds(30),
+            output_routing_key: "cloud_agent.task_runner.runtime".to_string(),
+        };
+        consume_cloud_agent_single_step(&store, &second_retry, second_input)
+            .await
+            .unwrap();
+        let second_outbox = store.list_ready_outbox(10).await.unwrap();
+        assert_eq!(second_outbox.len(), 1);
+        assert_ne!(second_outbox[0].event_id, first_outbox[0].event_id);
+        assert_eq!(second_outbox[0].payload["model_attempt"], 3);
+        let second_event_id = second_outbox[0].event_id.clone();
+        assert!(store
+            .mark_outbox_published(second_event_id.as_str())
+            .await
+            .unwrap());
+
+        let exhausted = TestSingleStepExecutor {
+            outcome: AiSingleStepOutcome::Failed {
+                error: "network retry exhausted".to_string(),
+            },
+            seen_triggers,
+        };
+        let exhausted_input = CloudAgentConsumeInput {
+            agent_run_id: "run-1".to_string(),
+            event_id: second_event_id.clone(),
+            trigger: CloudAgentModelTrigger::Retry {
+                event_id: second_event_id,
+                model_attempt: 3,
+                payload: Value::Null,
+            },
+            expected_status: CloudAgentRunStatus::RetryScheduled,
+            expected_phase: CloudAgentRunPhase::RetryDelay,
+            claim_token: "claim-exhausted-retry".to_string(),
+            claim_until: Utc::now() + chrono::Duration::seconds(30),
+            output_routing_key: "cloud_agent.task_runner.runtime".to_string(),
+        };
+        consume_cloud_agent_single_step(&store, &exhausted, exhausted_input)
+            .await
+            .unwrap();
+
+        let persisted = store.load_run("run-1").await.unwrap().unwrap();
+        assert_eq!(persisted.status, CloudAgentRunStatus::Failed);
+        assert_eq!(persisted.phase, CloudAgentRunPhase::Terminal);
+        assert_eq!(
+            persisted.terminal_outcome.unwrap()["error"],
+            "network retry exhausted"
         );
     }
 
