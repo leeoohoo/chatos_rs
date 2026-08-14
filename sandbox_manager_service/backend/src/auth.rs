@@ -561,7 +561,12 @@ fn authenticate_internal_service(
     .map_err(|_| ApiError::unauthorized("invalid Sandbox Manager internal API token"))?;
 
     let scopes = match caller.as_str() {
-        "project-service" => vec![SCOPE_IMAGES_READ, SCOPE_IMAGES_WRITE],
+        "project-service" => vec![
+            SCOPE_LEASE_CREATE,
+            SCOPE_LEASE_RELEASE,
+            SCOPE_IMAGES_READ,
+            SCOPE_IMAGES_WRITE,
+        ],
         "mcp-management-service" => vec![
             SCOPE_LEASE_READ,
             SCOPE_MCP_TOOLS,
@@ -744,6 +749,9 @@ mod tests {
         let client = authenticate_internal_service(&config, &headers)
             .expect("authentication result")
             .expect("internal client");
+        assert!(client.has_scope(SCOPE_LEASE_CREATE));
+        assert!(client.has_scope(SCOPE_LEASE_RELEASE));
+        assert!(!client.has_scope(SCOPE_MCP_CALL));
         let identity = client.internal_identity.expect("audit identity");
 
         assert_eq!(identity.caller_service, "project-service");

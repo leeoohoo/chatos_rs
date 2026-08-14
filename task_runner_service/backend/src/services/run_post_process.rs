@@ -129,7 +129,7 @@ impl RunService {
     }
 
     pub(crate) async fn process_run_post_process(&self, run_id: &str) -> Result<(), String> {
-        let Some(run) = self.store.get_run(run_id).await? else {
+        let Some(mut run) = self.store.get_run(run_id).await? else {
             return Ok(());
         };
         if run.post_process_completed || run.post_process_dead_lettered {
@@ -141,6 +141,8 @@ impl RunService {
             .await?
             .ok_or_else(|| format!("Run post-process task not found: {}", run.task_id))?;
         self.finalize_mcp_management_run(&task, &run).await?;
+        crate::services::workspace_execution::finalize_task_run_workspace(self, &task, &mut run)
+            .await?;
 
         if run.status != TaskRunStatus::Succeeded {
             self.store.mark_run_post_process_completed(run_id).await?;

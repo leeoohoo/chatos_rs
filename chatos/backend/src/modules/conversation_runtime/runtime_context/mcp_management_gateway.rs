@@ -97,9 +97,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         selected_plugins: request.selected_plugins,
         plugin_command_invocations: request.plugin_command_invocations,
         locale: normalized(request.locale),
-        requested_device_id: None,
-        requested_sandbox_provider: None,
-        sandbox_target: None,
+        workspace_route: None,
     };
     let resolved = configured_gateway_builder(session_request)?
         .resolve()
@@ -142,9 +140,7 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         selected_plugins: Vec::new(),
         plugin_command_invocations: Vec::new(),
         locale: None,
-        requested_device_id: None,
-        requested_sandbox_provider: None,
-        sandbox_target: None,
+        workspace_route: None,
     })?;
     let resolved = builder.resolve_existing(session_id).await?;
     build_resolved_gateway(resolved, "existing", "existing").await

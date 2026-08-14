@@ -715,11 +715,15 @@ services:
       PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}
       PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
       PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
+      CHATOS_RUN_WORKSPACE_ROOT: /data/chatos/run-workspaces
     depends_on:
       plugin-management-backend:
         condition: service_healthy
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PROJECT_SERVICE_PORT:-39210}:39210"
+    volumes:
+      - chatos-data:/data/chatos
+      - sandbox-manager-data:/data/sandboxes
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39210/api/health"]
       interval: 10s
@@ -969,6 +973,7 @@ services:
       SANDBOX_MANAGER_MONGODB_DATABASE: sandbox_manager_service
       SANDBOX_MANAGER_BACKEND: docker
       SANDBOX_MANAGER_WORK_ROOT: /data/sandboxes
+      SANDBOX_MANAGER_DOCKER_WORK_VOLUME: ${SANDBOX_MANAGER_DATA_VOLUME_NAME:-chatos-sandbox-manager-data}
       SANDBOX_MANAGER_DOCKER_IMAGE: ${SANDBOX_MANAGER_DOCKER_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-agent:${CHATOS_IMAGE_TAG:-latest}}
       SANDBOX_MANAGER_DOCKER_NETWORK: ${CHATOS_DOCKER_NETWORK:-chatos-cloud}
       SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE: container
@@ -990,6 +995,7 @@ services:
       - "${SANDBOX_MANAGER_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_PORT:-8095}:8095"
     volumes:
       - sandbox-manager-data:/data/sandboxes
+      - chatos-data:/data/chatos
       - ../Cargo.lock:/opt/chatos-sandbox-build-context/Cargo.lock:ro
       - ../BUILTIN_MCP_PROMPT.en-US.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.en-US.md:ro
       - ../BUILTIN_MCP_PROMPT.zh-CN.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.zh-CN.md:ro
@@ -1498,6 +1504,7 @@ volumes:
   task-runner-data:
   local-connector-data:
   sandbox-manager-data:
+    name: ${SANDBOX_MANAGER_DATA_VOLUME_NAME:-chatos-sandbox-manager-data}
   harness-data:
 
 secrets:

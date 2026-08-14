@@ -188,7 +188,8 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     #[serde(default)]
     pub(in crate::mcp_server) default_model_config_id: Option<String>,
     #[serde(default)]
-    // Rejected if present; retained for explicit fail-closed compatibility.
+    pub(in crate::mcp_server) requires_execution: Option<bool>,
+    #[serde(default)]
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,

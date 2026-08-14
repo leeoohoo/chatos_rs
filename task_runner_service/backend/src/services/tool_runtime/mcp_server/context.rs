@@ -115,8 +115,6 @@ impl McpRequestContext {
         input.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
         let mcp_config = input.mcp_config.get_or_insert_with(Default::default);
         mcp_config.requires_execution = Some(false);
-        mcp_config.enabled_builtin_kinds.clear();
-        mcp_config.external_mcp_config_ids.clear();
     }
 
     pub(super) fn requested_builtin_prompt_locale(&self) -> String {

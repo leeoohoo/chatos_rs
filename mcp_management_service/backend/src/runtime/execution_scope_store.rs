@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::{RuntimeRunTerminalStatus, WorkspaceProviderKind};
+use chatos_mcp_management_sdk::WorkspaceProviderKind;
 use mongodb::bson::{doc, DateTime};
 use mongodb::error::{ErrorKind as MongoErrorKind, WriteFailure};
 use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
@@ -15,7 +15,6 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 const ORPHAN_GRACE_SECONDS: i64 = 60;
-const TERMINAL_TOMBSTONE_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeExecutionScopeStoreError {
@@ -262,34 +261,59 @@ impl RuntimeExecutionScopeStore {
         run_id: &str,
         provider: WorkspaceProviderKind,
         session_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let id = scope_id(owner_user_id, project_id, run_id, provider);
         match self.backend.as_ref() {
             RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
-                if let Some(scope) = scopes.write().await.get_mut(id.as_str()) {
+                let mut scopes = scopes.write().await;
+                let remove = if let Some(scope) = scopes.get_mut(id.as_str()) {
                     scope.session_refs.remove(session_id);
                     scope.updated_at = DateTime::now();
+                    scope.session_refs.is_empty()
+                        && scope.invocation_queue.is_empty()
+                        && scope.running_invocation_id.is_none()
+                } else {
+                    false
+                };
+                if remove {
+                    scopes.remove(id.as_str());
                 }
-                Ok(())
+                Ok(remove)
             }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => collection
-                .update_one(
-                    doc! { "_id": id },
-                    {
-                        let mut unset = mongodb::bson::Document::new();
-                        unset.insert(format!("session_refs.{session_id}"), "");
+            RuntimeExecutionScopeStoreBackend::Mongo(collection) => {
+                collection
+                    .update_one(
+                        doc! { "_id": id },
+                        {
+                            let mut unset = mongodb::bson::Document::new();
+                            unset.insert(format!("session_refs.{session_id}"), "");
+                            doc! {
+                                "$unset": unset,
+                                "$set": { "updated_at": DateTime::now() },
+                            }
+                        },
+                        None,
+                    )
+                    .await
+                    .map_err(|error| {
+                        format!("detach Runtime Session from execution scope failed: {error}")
+                    })?;
+                collection
+                    .delete_one(
                         doc! {
-                            "$unset": unset,
-                            "$set": { "updated_at": DateTime::now() },
-                        }
-                    },
-                    None,
-                )
-                .await
-                .map(|_| ())
-                .map_err(|error| {
-                    format!("detach Runtime Session from execution scope failed: {error}")
-                }),
+                            "_id": scope_id(owner_user_id, project_id, run_id, provider),
+                            "session_refs": {},
+                            "invocation_queue": { "$size": 0 },
+                            "running_invocation_id": mongodb::bson::Bson::Null,
+                        },
+                        None,
+                    )
+                    .await
+                    .map(|result| result.deleted_count > 0)
+                    .map_err(|error| {
+                        format!("release empty Runtime Execution Scope failed: {error}")
+                    })
+            }
         }
     }
 
@@ -754,90 +778,6 @@ impl RuntimeExecutionScopeStore {
                 }),
         }
     }
-
-    pub async fn finalize_run(
-        &self,
-        owner_user_id: &str,
-        project_id: &str,
-        run_id: &str,
-        provider: WorkspaceProviderKind,
-        status: RuntimeRunTerminalStatus,
-    ) -> Result<i64, String> {
-        let id = scope_id(owner_user_id, project_id, run_id, provider);
-        let now = chrono::Utc::now().timestamp();
-        let expires_at_unix = now.saturating_add(TERMINAL_TOMBSTONE_TTL_SECONDS);
-        let terminal_status = serde_json::to_value(status)
-            .ok()
-            .and_then(|value| value.as_str().map(ToOwned::to_owned))
-            .unwrap_or_else(|| "failed".to_string());
-        match self.backend.as_ref() {
-            RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
-                let mut scopes = scopes.write().await;
-                let scope = scopes.entry(id.clone()).or_insert_with(|| {
-                    RuntimeExecutionScopeDocument {
-                        id,
-                        owner_user_id: owner_user_id.to_string(),
-                        project_id: project_id.to_string(),
-                        run_id: run_id.to_string(),
-                        provider: provider.as_str().to_string(),
-                        generation: 1,
-                        status: "terminal".to_string(),
-                        session_refs: HashMap::new(),
-                        terminal_status: Some(terminal_status.clone()),
-                        next_invocation_sequence: 0,
-                        invocation_queue: Vec::new(),
-                        running_invocation_id: None,
-                        updated_at: DateTime::now(),
-                        expires_at: DateTime::from_millis(expires_at_unix.saturating_mul(1_000)),
-                        expires_at_unix,
-                    }
-                });
-                scope.status = "terminal".to_string();
-                scope.terminal_status = Some(terminal_status);
-                scope.invocation_queue.clear();
-                scope.running_invocation_id = None;
-                scope.updated_at = DateTime::now();
-                scope.expires_at_unix = expires_at_unix;
-                scope.expires_at = DateTime::from_millis(expires_at_unix.saturating_mul(1_000));
-                Ok(scope.generation)
-            }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => collection
-                .find_one_and_update(
-                    doc! { "_id": id.as_str() },
-                    doc! {
-                        "$setOnInsert": {
-                            "owner_user_id": owner_user_id,
-                            "project_id": project_id,
-                            "run_id": run_id,
-                            "provider": provider.as_str(),
-                            "generation": 1_i64,
-                            "session_refs": {},
-                            "next_invocation_sequence": 0_i64,
-                        },
-                        "$set": {
-                            "status": "terminal",
-                            "terminal_status": terminal_status,
-                            "invocation_queue": [],
-                            "running_invocation_id": mongodb::bson::Bson::Null,
-                            "updated_at": DateTime::now(),
-                            "expires_at": DateTime::from_millis(expires_at_unix.saturating_mul(1_000)),
-                            "expires_at_unix": expires_at_unix,
-                        },
-                    },
-                    FindOneAndUpdateOptions::builder()
-                        .upsert(true)
-                        .return_document(ReturnDocument::After)
-                        .build(),
-                )
-                .await
-                .map_err(|error| format!("persist terminal execution scope failed: {error}"))?
-                .map(|scope| scope.generation)
-                .ok_or_else(|| {
-                    "persist terminal execution scope did not return the scope generation"
-                        .to_string()
-                }),
-        }
-    }
 }
 
 fn scope_id(
@@ -881,56 +821,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn terminal_tombstone_rejects_new_sessions_and_invocations() {
-        let store = RuntimeExecutionScopeStore::memory();
-        store
-            .attach_session(
-                "user-1",
-                "project-1",
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-1",
-                chrono::Utc::now().timestamp() + 300,
-            )
-            .await
-            .unwrap();
-        store
-            .finalize_run(
-                "user-1",
-                "project-1",
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                RuntimeRunTerminalStatus::Succeeded,
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            store
-                .attach_session(
-                    "user-1",
-                    "project-1",
-                    "run-1",
-                    WorkspaceProviderKind::LocalConnector,
-                    "session-2",
-                    chrono::Utc::now().timestamp() + 300,
-                )
-                .await,
-            Err(RuntimeExecutionScopeStoreError::Terminal)
-        );
-        assert_eq!(
-            store
-                .ensure_accepting_invocations(
-                    "user-1",
-                    "project-1",
-                    "run-1",
-                    WorkspaceProviderKind::LocalConnector,
-                )
-                .await,
-            Err(RuntimeExecutionScopeStoreError::Terminal)
-        );
-    }
-
-    #[tokio::test]
     async fn session_renewal_updates_one_reference_and_preserves_generation() {
         let store = RuntimeExecutionScopeStore::memory();
         let renewed_expiry = chrono::Utc::now().timestamp() + 300;
@@ -972,29 +862,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finalization_is_idempotent_for_one_generation() {
+    async fn execution_scope_is_released_only_after_the_last_session_detaches() {
         let store = RuntimeExecutionScopeStore::memory();
-        let first = store
-            .finalize_run(
+        let expires_at = chrono::Utc::now().timestamp() + 300;
+        for session_id in ["session-1", "session-2"] {
+            store
+                .attach_session(
+                    "user-1",
+                    "project-1",
+                    "run-1",
+                    WorkspaceProviderKind::LocalConnector,
+                    session_id,
+                    expires_at,
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(!store
+            .detach_session(
                 "user-1",
                 "project-1",
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
-                RuntimeRunTerminalStatus::Succeeded,
+                "session-1",
             )
             .await
-            .unwrap();
-        let repeated = store
-            .finalize_run(
+            .unwrap());
+        assert!(store
+            .detach_session(
                 "user-1",
                 "project-1",
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
-                RuntimeRunTerminalStatus::Succeeded,
+                "session-2",
             )
             .await
-            .unwrap();
-        assert_eq!(first, repeated);
+            .unwrap());
     }
 
     #[tokio::test]

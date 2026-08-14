@@ -13,7 +13,6 @@ mod dispatcher_prepare_plugins;
 mod dispatcher_prepare_sandbox;
 #[path = "dispatcher_prepare/system.rs"]
 mod dispatcher_prepare_system;
-mod dispatcher_run_lifecycle;
 mod dispatcher_runtime;
 mod dispatcher_runtime_lifecycle;
 mod dispatcher_sandbox;
@@ -21,7 +20,6 @@ mod dispatcher_support;
 mod embedded;
 mod external_http;
 mod local_connector;
-mod local_sandbox;
 mod plugin_cloud;
 mod plugin_components;
 mod plugin_local;
@@ -50,7 +48,6 @@ pub(crate) use external_http::{
     header_is_managed_or_unsafe as external_http_header_is_managed_or_unsafe,
 };
 use local_connector::LocalConnectorProvider;
-use local_sandbox::LocalSandboxProvider;
 use plugin_cloud::PluginCloudProvider;
 use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
@@ -98,7 +95,6 @@ pub enum ProviderCancelOutcome {
 #[derive(Clone)]
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
-    local_sandbox: LocalSandboxProvider,
     plugins: PluginRouteDispatcher,
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,

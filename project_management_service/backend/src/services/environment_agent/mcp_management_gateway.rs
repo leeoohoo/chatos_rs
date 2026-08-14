@@ -4,7 +4,10 @@
 use std::time::Duration;
 
 use chatos_mcp_gateway::McpManagementGatewayBuilder;
-use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
+use chatos_mcp_management_sdk::{
+    CreateRuntimeSessionRequest, HarnessBranchTarget, McpManagementRuntimeSessionHandle,
+    RuntimeWorkspaceRouteTarget,
+};
 use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::SystemAgentKey;
 use tracing::info;
@@ -136,9 +139,23 @@ fn runtime_session_request(
         selected_plugins: Vec::new(),
         plugin_command_invocations: Vec::new(),
         locale: Some("zh-CN".to_string()),
-        requested_device_id: None,
-        requested_sandbox_provider: None,
-        sandbox_target: None,
+        workspace_route: Some(match project.source_type {
+            crate::models::ProjectSourceType::Local
+            | crate::models::ProjectSourceType::LocalConnector => {
+                RuntimeWorkspaceRouteTarget::LocalConnector
+            }
+            crate::models::ProjectSourceType::Cloud => RuntimeWorkspaceRouteTarget::Harness {
+                branch: HarnessBranchTarget::Default {
+                    branch_ref: project
+                        .harness_default_branch
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("main")
+                        .to_string(),
+                },
+            },
+        }),
     }
 }
 
@@ -210,8 +227,10 @@ mod tests {
         assert_eq!(request.run_id.as_deref(), Some("run-1"));
         assert_eq!(request.default_model_config_id.as_deref(), Some("model-1"));
         assert_eq!(request.locale.as_deref(), Some("zh-CN"));
-        assert!(request.sandbox_target.is_none());
-        assert!(request.requested_sandbox_provider.is_none());
+        assert!(matches!(
+            request.workspace_route,
+            Some(RuntimeWorkspaceRouteTarget::Harness { .. })
+        ));
     }
 
     #[test]
@@ -226,6 +245,10 @@ mod tests {
         assert_eq!(
             request.agent_key,
             SystemAgentKey::ProjectManagementLocalAgent.as_str()
+        );
+        assert_eq!(
+            request.workspace_route,
+            Some(RuntimeWorkspaceRouteTarget::LocalConnector)
         );
     }
 }

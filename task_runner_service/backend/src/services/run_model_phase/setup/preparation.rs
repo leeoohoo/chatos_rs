@@ -65,14 +65,23 @@ pub(super) async fn prepare_model_execution(
     let runtime_config = build_runtime_config(service, task, run, None).await?;
 
     let runtime_config = service.apply_task_mcp_config(runtime_config, &task.mcp_config);
+    let workspace_route =
+        crate::services::workspace_execution::prepare_task_run_workspace(service, task, run)
+            .await?;
     let mcp_management_gateway = resolve_mcp_management_gateway(
         task,
         run,
         task_agent_key,
         tool_result_model_budget_limits.per_result_max_chars,
         mcp_runtime_session_ref,
+        workspace_route.as_ref(),
     )
     .await?;
+    if run.mcp_runtime_session_ref.as_deref() != Some(mcp_management_gateway.session_id()) {
+        run.mcp_runtime_session_ref = Some(mcp_management_gateway.session_id().to_string());
+        run.updated_at = now_rfc3339();
+        *run = service.store.save_run(run.clone()).await?;
+    }
     let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
     let gateway_plugin_instruction_items = mcp_management_gateway.plugin_instruction_items.clone();
     let mut prefixed_input_items =
@@ -563,6 +572,9 @@ mod tests {
             started_at: None,
             finished_at: None,
             input_snapshot: json!({}),
+            effective_tools: Default::default(),
+            workspace_execution: None,
+            mcp_runtime_session_ref: None,
             context_snapshot: None,
             result_summary: None,
             error_message: None,

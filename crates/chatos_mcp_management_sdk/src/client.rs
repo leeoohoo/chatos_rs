@@ -9,10 +9,9 @@ use std::fs;
 
 use crate::config::McpManagementClientConfig;
 use crate::dto::{
-    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, FinalizeRuntimeRunRequest,
-    FinalizeRuntimeRunResponse, McpCatalogResponse, ResolveMcpRoutesRequest,
-    ResolveMcpRoutesResponse, RuntimeInvocationResponse, RuntimeSessionResponse,
-    RuntimeSessionRoutesResponse,
+    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpCatalogResponse,
+    ResolveMcpRoutesRequest, ResolveMcpRoutesResponse, RuntimeInvocationResponse,
+    RuntimeSessionResponse, RuntimeSessionRoutesResponse,
 };
 use crate::error::McpManagementClientError;
 
@@ -24,7 +23,6 @@ const ROUTES_RESOLVE_SCOPE: &str = "routes.resolve";
 const RUNTIME_SESSIONS_RESOLVE_SCOPE: &str = "runtime.sessions.resolve";
 const RUNTIME_SESSIONS_READ_SCOPE: &str = "runtime.sessions.read";
 const RUNTIME_SESSIONS_CLOSE_SCOPE: &str = "runtime.sessions.close";
-const RUNTIME_RUNS_FINALIZE_SCOPE: &str = "runtime.runs.finalize";
 const RUNTIME_INVOCATIONS_READ_SCOPE: &str = "runtime.invocations.read";
 const RUNTIME_INVOCATIONS_RESOLVE_USER_SCOPE: &str = "runtime.invocations.resolve_user";
 
@@ -221,22 +219,6 @@ impl McpManagementClient {
                 .await
                 .map(|_| ())
         }
-    }
-
-    pub async fn finalize_runtime_run(
-        &self,
-        request: &FinalizeRuntimeRunRequest,
-    ) -> Result<FinalizeRuntimeRunResponse, McpManagementClientError> {
-        let url = format!(
-            "{}/api/internal/runtime/runs/finalize",
-            self.config.base_url
-        );
-        let response = self
-            .internal_request(Method::POST, url, RUNTIME_RUNS_FINALIZE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
     }
 
     fn internal_request(

@@ -69,8 +69,7 @@ impl ChatosProvider {
         let binding = ChatosRequestBinding::from(snapshot);
         if descriptor.key == SystemMcpKey::BrowserTools {
             if let Some(target) = snapshot
-                .sandbox_target
-                .as_ref()
+                .sandbox_target()
                 .filter(|target| target.provider == SandboxProviderKind::Cloud)
             {
                 self.authorize_sandbox_browser(
@@ -185,8 +184,7 @@ impl ChatosProvider {
             })?;
         if descriptor.key == SystemMcpKey::BrowserTools
             && snapshot
-                .sandbox_target
-                .as_ref()
+                .sandbox_target()
                 .is_some_and(|target| target.provider == SandboxProviderKind::Cloud)
         {
             return Ok(ProviderCancelOutcome::NotSupported);
@@ -245,8 +243,7 @@ impl ChatosProvider {
         let invocation_id = format!("close-{}", snapshot.session_id);
         let binding = ChatosRequestBinding::from(snapshot);
         if let Some(target) = snapshot
-            .sandbox_target
-            .as_ref()
+            .sandbox_target()
             .filter(|target| target.provider == SandboxProviderKind::Cloud)
         {
             self.authorize_sandbox_browser(&binding, CLOUD_BROWSER_SESSION_CLOSE_METHOD, None)

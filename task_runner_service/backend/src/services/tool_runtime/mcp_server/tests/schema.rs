@@ -73,7 +73,7 @@ fn task_creation_schemas_leave_task_nature_to_request_context() {
         .is_none());
     assert!(project
         .pointer("/properties/tasks/items/properties/requires_execution")
-        .is_none());
+        .is_some());
     let required = project
         .pointer("/properties/tasks/items/required")
         .and_then(|value| value.as_array())
@@ -81,6 +81,12 @@ fn task_creation_schemas_leave_task_nature_to_request_context() {
     assert!(!required
         .iter()
         .any(|value| value.as_str() == Some("is_planning_task")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("requires_execution")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
 }
 
 #[test]
@@ -599,7 +605,7 @@ fn async_planner_preserves_only_execution_intent_before_programmatic_resolution(
 }
 
 #[test]
-fn async_planner_schema_hides_program_managed_execution_selection() {
+fn async_planner_schema_requires_explicit_agent_capability_selection() {
     let mut tools = vec![json!({
         "name": "create_task",
         "inputSchema": create_task_schema(),
@@ -611,13 +617,23 @@ fn async_planner_schema_hides_program_managed_execution_selection() {
     assert!(input_schema.get("anyOf").is_none());
     assert!(input_schema
         .pointer("/properties/requires_execution")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/enabled_builtin_kinds")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/external_mcp_config_ids")
-        .is_none());
+        .is_some());
+    let required = input_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .expect("required fields");
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("requires_execution")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
     assert!(input_schema
         .pointer("/properties/plugin_device_id")
         .is_none());
@@ -630,7 +646,7 @@ fn async_planner_schema_hides_program_managed_execution_selection() {
 }
 
 #[test]
-fn async_planner_batch_schema_hides_program_managed_execution_selection() {
+fn async_planner_batch_schema_requires_explicit_agent_capability_selection() {
     let mut tools = vec![json!({
         "name": "create_tasks_with_prerequisites",
         "inputSchema": super::super::support::create_tasks_with_prerequisites_schema(),
@@ -644,13 +660,23 @@ fn async_planner_batch_schema_hides_program_managed_execution_selection() {
         .is_none());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/requires_execution")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/enabled_builtin_kinds")
-        .is_none());
+        .is_some());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/external_mcp_config_ids")
-        .is_none());
+        .is_some());
+    let required = input_schema
+        .pointer("/properties/tasks/items/required")
+        .and_then(Value::as_array)
+        .expect("required fields");
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("requires_execution")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/plugin_device_id")
         .is_none());
@@ -801,5 +827,5 @@ fn ordinary_context_forces_created_tasks_to_default_profile() {
     context.enforce_created_task_kind(&mut request);
 
     assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
-    assert!(request.mcp_config.is_none());
+    assert!(request.mcp_config.is_some());
 }

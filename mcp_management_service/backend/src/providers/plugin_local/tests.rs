@@ -280,7 +280,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         default_model_config_id: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: context(),
         policy_revision: "policy-1".to_string(),
         route_revision: "route-1".to_string(),

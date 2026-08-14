@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
+use chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -68,6 +69,68 @@ pub struct ChatosCallbackDeliveryState {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EffectiveTaskToolSnapshot {
+    #[serde(default)]
+    pub requested_mcp_resource_ids: Vec<String>,
+    #[serde(default)]
+    pub workspace_read: bool,
+    #[serde(default)]
+    pub workspace_write: bool,
+    #[serde(default)]
+    pub terminal: bool,
+}
+
+impl EffectiveTaskToolSnapshot {
+    pub fn mutates_workspace(&self) -> bool {
+        self.workspace_write || self.terminal
+    }
+
+    pub fn uses_workspace(&self) -> bool {
+        self.workspace_read || self.workspace_write || self.terminal
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePreparationStatus {
+    Pending,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskRunBranchTarget {
+    Local,
+    Default {
+        branch_ref: String,
+    },
+    Run {
+        branch_id: String,
+        branch_ref: String,
+        base_branch: String,
+        base_commit: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunWorkspaceExecution {
+    pub status: WorkspacePreparationStatus,
+    #[serde(default)]
+    pub route: Option<RuntimeWorkspaceRouteTarget>,
+    #[serde(default)]
+    pub branch_target: Option<TaskRunBranchTarget>,
+    #[serde(default)]
+    pub prepared_at: Option<String>,
+    #[serde(default)]
+    pub finalized_at: Option<String>,
+    #[serde(default)]
+    pub finalization_error: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -98,6 +161,11 @@ pub struct TaskRunRecord {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
+    pub effective_tools: EffectiveTaskToolSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_execution: Option<TaskRunWorkspaceExecution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_runtime_session_ref: Option<String>,
     pub context_snapshot: Option<Value>,
     pub result_summary: Option<String>,
     pub error_message: Option<String>,
@@ -167,6 +235,9 @@ impl TaskRunRecord {
             started_at: None,
             finished_at: None,
             input_snapshot,
+            effective_tools: EffectiveTaskToolSnapshot::default(),
+            workspace_execution: None,
+            mcp_runtime_session_ref: None,
             context_snapshot: None,
             result_summary: None,
             error_message: None,

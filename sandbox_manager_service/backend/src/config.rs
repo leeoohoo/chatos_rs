@@ -65,6 +65,7 @@ pub struct AppConfig {
     pub docker_agent_connect_host: String,
     pub docker_config: Option<PathBuf>,
     pub docker_host: Option<String>,
+    pub docker_work_volume: Option<String>,
     pub runtime_http_proxy: Option<String>,
     pub runtime_https_proxy: Option<String>,
     pub runtime_no_proxy: Option<String>,
@@ -135,6 +136,10 @@ impl AppConfig {
         let lease_ttl = Duration::from_secs(lease_ttl_seconds);
         let system_client_max_lease_ttl_seconds =
             required_u64("SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS")?.max(60);
+        let work_root = PathBuf::from(required_text("SANDBOX_MANAGER_WORK_ROOT")?);
+        if !work_root.is_absolute() {
+            return Err("SANDBOX_MANAGER_WORK_ROOT must be an absolute path".to_string());
+        }
 
         let config = Self {
             host,
@@ -142,9 +147,7 @@ impl AppConfig {
             database_url: required_text("SANDBOX_MANAGER_DATABASE_URL")?,
             mongodb_database: required_text("SANDBOX_MANAGER_MONGODB_DATABASE")?,
             backend,
-            work_root: normalized_env("SANDBOX_MANAGER_WORK_ROOT")
-                .map(PathBuf::from)
-                .unwrap_or_else(default_work_root),
+            work_root,
             pool_max_active: required_usize("SANDBOX_MANAGER_POOL_MAX_ACTIVE")?,
             pool_max_pending: required_usize("SANDBOX_MANAGER_POOL_MAX_PENDING")?,
             lease_ttl,
@@ -162,6 +165,7 @@ impl AppConfig {
                 .unwrap_or_else(|| "127.0.0.1".to_string()),
             docker_config: normalized_env("SANDBOX_MANAGER_DOCKER_CONFIG").map(PathBuf::from),
             docker_host: normalized_env("SANDBOX_MANAGER_DOCKER_HOST"),
+            docker_work_volume: normalized_env("SANDBOX_MANAGER_DOCKER_WORK_VOLUME"),
             runtime_http_proxy: normalized_env("SANDBOX_MANAGER_RUNTIME_HTTP_PROXY"),
             runtime_https_proxy: normalized_env("SANDBOX_MANAGER_RUNTIME_HTTPS_PROXY"),
             runtime_no_proxy: normalized_env("SANDBOX_MANAGER_RUNTIME_NO_PROXY"),
@@ -273,6 +277,7 @@ impl AppConfig {
             docker_agent_connect_host: "127.0.0.1".to_string(),
             docker_config: None,
             docker_host: None,
+            docker_work_volume: None,
             runtime_http_proxy: None,
             runtime_https_proxy: None,
             runtime_no_proxy: None,
@@ -375,10 +380,6 @@ fn valid_storage_limit(value: &str) -> bool {
     !digits.is_empty()
         && digits.parse::<u64>().is_ok_and(|value| value > 0)
         && matches!(suffix, "" | "b" | "kb" | "mb" | "gb" | "tb")
-}
-
-fn default_work_root() -> PathBuf {
-    PathBuf::from(".chatos").join("sandboxes")
 }
 
 fn default_image_build_context() -> PathBuf {

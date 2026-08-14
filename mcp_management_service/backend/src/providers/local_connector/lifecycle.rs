@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_management_sdk::{
-    ProjectExecutionContext, RuntimeRunTerminalStatus, WorkspaceProviderKind,
-};
+use chatos_mcp_management_sdk::{ProjectExecutionContext, WorkspaceProviderKind};
 use serde_json::{json, Value};
 
 use super::{
@@ -20,7 +18,7 @@ impl LocalConnectorProvider {
         project_id: &str,
         run_id: &str,
         generation: i64,
-        status: RuntimeRunTerminalStatus,
+        status: &str,
     ) -> Result<(), ProviderCallError> {
         if context.workspace_provider != WorkspaceProviderKind::LocalConnector {
             return Ok(());

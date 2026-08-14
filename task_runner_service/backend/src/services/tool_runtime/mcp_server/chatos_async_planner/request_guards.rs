@@ -61,7 +61,26 @@ pub(in crate::mcp_server) fn planner_prerequisite_create_request(
 pub(in crate::mcp_server) fn ensure_planner_required_fields(
     input: &CreateTaskRequest,
 ) -> Result<(), String> {
-    let _ = input;
+    let mcp_config = input.mcp_config.as_ref().ok_or_else(|| {
+        "创建任务时必须显式填写 requires_execution 和 enabled_builtin_kinds；由 Agent 根据任务目标选择最小工具能力"
+            .to_string()
+    })?;
+    if input
+        .task_profile
+        .as_deref()
+        .is_some_and(chatos_agent::is_chatos_plan_task_profile)
+        && mcp_config.enabled_builtin_kinds.iter().any(|kind| {
+            matches!(
+                chatos_mcp_runtime::builtin_kind_by_any(kind),
+                Some(
+                    chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite
+                        | chatos_mcp_runtime::BuiltinMcpKind::TerminalController
+                )
+            )
+        })
+    {
+        return Err("规划任务只能选择只读项目能力，不能选择文件写入或终端执行能力".to_string());
+    }
     Ok(())
 }
 

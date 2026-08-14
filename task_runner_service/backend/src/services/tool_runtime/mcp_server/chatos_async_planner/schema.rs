@@ -13,39 +13,32 @@ pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
                 set_schema_required_fields(
                     tool,
                     &["inputSchema", "required"],
-                    &["title", "objective"],
+                    &[
+                        "title",
+                        "objective",
+                        "requires_execution",
+                        "enabled_builtin_kinds",
+                    ],
                 );
                 remove_tool_schema_property(tool, &["inputSchema"], "anyOf");
-                for property in [
-                    "requires_execution",
-                    "enabled_builtin_kinds",
-                    "external_mcp_config_ids",
-                ] {
-                    remove_tool_schema_property(tool, &["inputSchema", "properties"], property);
-                }
             }
             Some("create_tasks_with_prerequisites") => {
                 set_schema_required_fields(
                     tool,
                     &["inputSchema", "properties", "tasks", "items", "required"],
-                    &["client_ref", "title", "objective"],
+                    &[
+                        "client_ref",
+                        "title",
+                        "objective",
+                        "requires_execution",
+                        "enabled_builtin_kinds",
+                    ],
                 );
                 remove_tool_schema_property(
                     tool,
                     &["inputSchema", "properties", "tasks", "items"],
                     "anyOf",
                 );
-                for property in [
-                    "requires_execution",
-                    "enabled_builtin_kinds",
-                    "external_mcp_config_ids",
-                ] {
-                    remove_tool_schema_property(
-                        tool,
-                        &["inputSchema", "properties", "tasks", "items", "properties"],
-                        property,
-                    );
-                }
             }
             Some("update_task") => {
                 remove_tool_schema_property(

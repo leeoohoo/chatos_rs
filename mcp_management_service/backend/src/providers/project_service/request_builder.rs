@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, RuntimeWorkspaceRouteTarget};
 use chatos_mcp_service::{builtin_kind_header_value, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER};
 
 use crate::runtime::RuntimeSessionSnapshot;
@@ -59,6 +59,15 @@ impl ProjectServiceProvider {
                 HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
                 builtin_kind_header_value([descriptor.key.as_str()]),
             );
+            let branch_ref = match snapshot.workspace_route.as_ref() {
+                Some(RuntimeWorkspaceRouteTarget::Harness { branch }) => branch.branch_ref(),
+                _ => {
+                    return Err(ProviderCallError::provider_unavailable(
+                        "Harness provider requires a frozen runtime branch target",
+                    ));
+                }
+            };
+            request = request.header("x-mcp-management-harness-branch-ref", branch_ref);
         }
         for (header, value) in [
             ("x-mcp-management-run-id", snapshot.run_id.as_deref()),

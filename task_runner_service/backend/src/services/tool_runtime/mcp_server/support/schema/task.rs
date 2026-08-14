@@ -97,7 +97,7 @@ pub(crate) fn create_task_schema() -> Value {
             "schedule": { "type": "object", "description": "Optional task schedule configuration." },
             "prerequisite_task_ids": prerequisite_task_ids_schema()
         },
-        "required": ["title", "objective"],
+        "required": ["title", "objective", "requires_execution", "enabled_builtin_kinds"],
         "additionalProperties": false
     })
 }
@@ -175,7 +175,7 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
-                    "required": ["client_ref", "title", "objective"],
+                    "required": ["client_ref", "title", "objective", "requires_execution", "enabled_builtin_kinds"],
                     "additionalProperties": false
                 }
             }
@@ -242,6 +242,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "type": "string",
                             "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
                         },
+                        "requires_execution": requires_execution_schema(),
                         "enabled_builtin_kinds": task_mcp_selection_schema(
                             "Select the builtin MCP capabilities this execution task needs from the Task Runner execution Agent binding.",
                             &[],
@@ -264,7 +265,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
-                    "required": ["client_ref", "project_task_id", "title", "objective"],
+                    "required": ["client_ref", "project_task_id", "title", "objective", "requires_execution", "enabled_builtin_kinds"],
                     "additionalProperties": false
                 }
             }

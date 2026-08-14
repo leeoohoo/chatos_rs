@@ -77,6 +77,7 @@ mod task_service;
 mod task_tenant_scope;
 mod task_threads;
 mod tooling_state;
+mod workspace_execution;
 #[path = "services/tool_runtime/workspace_mcp.rs"]
 mod workspace_mcp;
 

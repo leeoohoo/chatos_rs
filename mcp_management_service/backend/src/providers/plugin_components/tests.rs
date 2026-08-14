@@ -259,7 +259,7 @@ fn snapshot(
         default_model_config_id: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: local_context(),
         policy_revision: "policy-1".to_string(),
         route_revision: "route-1".to_string(),
@@ -307,7 +307,7 @@ fn cloud_snapshot(
         default_model_config_id: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),

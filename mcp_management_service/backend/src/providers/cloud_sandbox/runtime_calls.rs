@@ -29,7 +29,7 @@ impl CloudSandboxProvider {
                 "Cloud Sandbox Provider does not support this route",
             ));
         }
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "runtime session does not contain a Cloud Sandbox target",
             )
@@ -121,7 +121,7 @@ impl CloudSandboxProvider {
         if !self.supports(route) {
             return Ok(ProviderCancelOutcome::NotSupported);
         }
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "runtime session does not contain a Cloud Sandbox target",
             )

@@ -59,7 +59,7 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for ChatosRequestBinding<'a> {
             default_model_config_id: snapshot.default_model_config_id.as_deref(),
             contact_agent_id: snapshot.contact_agent_id.as_deref(),
             expected_project_task_ids: snapshot.expected_project_task_ids.as_slice(),
-            sandbox_target: snapshot.sandbox_target.as_ref(),
+            sandbox_target: snapshot.sandbox_target(),
         }
     }
 }

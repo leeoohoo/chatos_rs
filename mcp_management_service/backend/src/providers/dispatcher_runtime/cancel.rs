@@ -50,11 +50,6 @@ impl ProviderDispatcher {
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
                 }
-                McpProviderKind::LocalConnector if self.local_sandbox.supports(route) => {
-                    self.local_sandbox
-                        .cancel_invocation(snapshot, route, invocation_id)
-                        .await
-                }
                 McpProviderKind::CloudSandbox if self.cloud_sandbox.supports(route) => {
                     self.cloud_sandbox
                         .cancel_invocation(snapshot, route, invocation_id)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_mcp_management_sdk::SandboxExecutionTarget;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +22,48 @@ const PROJECT_SERVICE_TOKEN_AUDIENCE: &str = "project-service";
 pub(in crate::services) const PROJECT_READ_SCOPE: &str = "project.read";
 pub(in crate::services) const PROJECT_SYNC_SCOPE: &str = "project.sync";
 pub(in crate::services) const PROJECT_MCP_SCOPE: &str = "project.mcp";
+pub(in crate::services) const PROJECT_HARNESS_SCOPE: &str = "project.harness";
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PrepareRunWorkspaceRequest {
+    pub owner_user_id: String,
+    pub tenant_id: String,
+    pub create_run_branch: bool,
+    pub create_cloud_sandbox: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct PreparedRunBranch {
+    pub branch_id: String,
+    pub branch_ref: String,
+    pub base_branch: String,
+    pub base_commit: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FinalizeRunWorkspaceRequest {
+    pub owner_user_id: String,
+    pub promote_changes: bool,
+    pub branch: Option<PreparedRunBranch>,
+    pub sandbox_target: Option<SandboxExecutionTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FinalizeRunWorkspaceResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub promoted: bool,
+    pub result_commit: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PrepareRunWorkspaceResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub default_branch: String,
+    pub branch: Option<PreparedRunBranch>,
+    pub sandbox_target: Option<SandboxExecutionTarget>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 struct ProjectServiceProjectRecord {
@@ -202,6 +245,56 @@ pub async fn sync_get_project(
     get_project_with_sync_secret(&client, base_url, sync_secret, project_id)
         .await
         .map(|project| project.map(Into::into))
+}
+
+pub(crate) async fn prepare_run_workspace(
+    config: &AppConfig,
+    project_id: &str,
+    run_id: &str,
+    input: &PrepareRunWorkspaceRequest,
+) -> Result<PrepareRunWorkspaceResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/prepare",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
+}
+
+pub(crate) async fn finalize_run_workspace(
+    config: &AppConfig,
+    project_id: &str,
+    run_id: &str,
+    input: &FinalizeRunWorkspaceRequest,
+) -> Result<FinalizeRunWorkspaceResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/finalize",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
 }
 
 #[derive(Debug, Serialize)]

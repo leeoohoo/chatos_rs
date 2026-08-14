@@ -259,20 +259,160 @@ impl SandboxManager {
         workspace_root: &str,
         run_id: &str,
     ) -> Result<PathBuf, ApiError> {
-        let root = PathBuf::from(workspace_root.trim());
-        let base = if self.config.work_root.is_absolute() {
-            self.config.work_root.clone()
-        } else {
-            root.join(&self.config.work_root)
-        };
-        let run_workspace = base
+        let source_workspace = PathBuf::from(workspace_root.trim());
+        if !source_workspace.is_dir() {
+            return Err(ApiError::bad_request(format!(
+                "sandbox source workspace is not a directory: {}",
+                source_workspace.display()
+            )));
+        }
+        let run_root = self
+            .config
+            .work_root
             .join("runs")
-            .join(sanitize_path_segment(run_id))
-            .join("input")
-            .join("workspace");
-        std::fs::create_dir_all(&run_workspace)
-            .map_err(|err| ApiError::internal(format!("create run workspace failed: {err}")))?;
+            .join(sanitize_path_segment(run_id));
+        let run_workspace = run_root.join("input").join("workspace");
+        let baseline_workspace = run_root.join("baseline").join("workspace");
+        reset_workspace_directory(run_workspace.as_path())?;
+        reset_workspace_directory(baseline_workspace.as_path())?;
+        copy_source_workspace(
+            source_workspace.as_path(),
+            run_workspace.as_path(),
+            source_workspace.as_path(),
+        )?;
+        copy_source_workspace(
+            source_workspace.as_path(),
+            baseline_workspace.as_path(),
+            source_workspace.as_path(),
+        )?;
         prepare_sandbox_workspace_owner(run_workspace.as_path()).map_err(ApiError::internal)?;
         Ok(run_workspace)
+    }
+}
+
+fn reset_workspace_directory(path: &Path) -> Result<(), ApiError> {
+    if path.exists() {
+        std::fs::remove_dir_all(path).map_err(|error| {
+            ApiError::internal(format!(
+                "clear sandbox workspace {} failed: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    std::fs::create_dir_all(path).map_err(|error| {
+        ApiError::internal(format!(
+            "create sandbox workspace {} failed: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn copy_source_workspace(source: &Path, destination: &Path, root: &Path) -> Result<(), ApiError> {
+    for entry in std::fs::read_dir(source).map_err(|error| {
+        ApiError::internal(format!(
+            "read sandbox source workspace {} failed: {error}",
+            source.display()
+        ))
+    })? {
+        let entry = entry.map_err(|error| {
+            ApiError::internal(format!(
+                "read sandbox source workspace entry failed: {error}"
+            ))
+        })?;
+        let source_path = entry.path();
+        if should_skip_source_workspace_path(root, source_path.as_path()) {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| {
+            ApiError::internal(format!(
+                "read sandbox source file type {} failed: {error}",
+                source_path.display()
+            ))
+        })?;
+        if file_type.is_symlink() {
+            return Err(ApiError::bad_request(format!(
+                "sandbox source workspace contains an unsupported symlink: {}",
+                source_path.display()
+            )));
+        }
+        let destination_path = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            std::fs::create_dir_all(destination_path.as_path()).map_err(|error| {
+                ApiError::internal(format!(
+                    "create sandbox workspace directory {} failed: {error}",
+                    destination_path.display()
+                ))
+            })?;
+            copy_source_workspace(source_path.as_path(), destination_path.as_path(), root)?;
+        } else if file_type.is_file() {
+            std::fs::copy(source_path.as_path(), destination_path.as_path()).map_err(|error| {
+                ApiError::internal(format!(
+                    "copy sandbox source file {} failed: {error}",
+                    source_path.display()
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_source_workspace_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    relative.components().any(|component| match component {
+        std::path::Component::Normal(name) => name.to_str().is_some_and(|name| {
+            name == ".chatos"
+                || name.starts_with(".chatos-")
+                || matches!(
+                    name,
+                    ".runtime-cache"
+                        | "node_modules"
+                        | ".pnpm-store"
+                        | ".yarn"
+                        | ".vite"
+                        | "__pycache__"
+                        | ".pytest_cache"
+                        | ".mypy_cache"
+                        | ".ruff_cache"
+                        | ".venv"
+                        | "venv"
+                        | "target"
+                )
+        }),
+        _ => false,
+    })
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    #[test]
+    fn source_workspace_copy_initializes_input_and_baseline_without_runtime_caches() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let input = temp.path().join("input");
+        let baseline = temp.path().join("baseline");
+        std::fs::create_dir_all(source.join("src")).unwrap();
+        std::fs::create_dir_all(source.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(source.join(".git/refs")).unwrap();
+        std::fs::write(source.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(source.join("node_modules/pkg/index.js"), "cached\n").unwrap();
+        std::fs::write(source.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        reset_workspace_directory(input.as_path()).unwrap();
+        reset_workspace_directory(baseline.as_path()).unwrap();
+        copy_source_workspace(source.as_path(), input.as_path(), source.as_path()).unwrap();
+        copy_source_workspace(source.as_path(), baseline.as_path(), source.as_path()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(input.join("src/main.rs")).unwrap(),
+            "fn main() {}\n"
+        );
+        assert!(input.join(".git/HEAD").is_file());
+        assert!(baseline.join(".git/HEAD").is_file());
+        assert!(!input.join("node_modules").exists());
+        assert!(!baseline.join("node_modules").exists());
     }
 }

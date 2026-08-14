@@ -102,6 +102,60 @@ impl SandboxExecutionTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HarnessBranchTarget {
+    Default {
+        branch_ref: String,
+    },
+    Run {
+        branch_id: String,
+        branch_ref: String,
+        base_branch: String,
+        base_commit: String,
+    },
+}
+
+impl HarnessBranchTarget {
+    pub fn branch_ref(&self) -> &str {
+        match self {
+            Self::Default { branch_ref } | Self::Run { branch_ref, .. } => branch_ref.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeWorkspaceRouteTarget {
+    LocalConnector,
+    Harness { branch: HarnessBranchTarget },
+    CloudSandbox { target: SandboxExecutionTarget },
+}
+
+impl RuntimeWorkspaceRouteTarget {
+    pub const fn provider_kind(&self) -> WorkspaceProviderKind {
+        match self {
+            Self::LocalConnector => WorkspaceProviderKind::LocalConnector,
+            Self::Harness { .. } => WorkspaceProviderKind::Harness,
+            Self::CloudSandbox { .. } => WorkspaceProviderKind::CloudSandbox,
+        }
+    }
+
+    pub fn sandbox_target(&self) -> Option<&SandboxExecutionTarget> {
+        match self {
+            Self::CloudSandbox { target } => Some(target),
+            Self::LocalConnector | Self::Harness { .. } => None,
+        }
+    }
+
+    pub fn harness_branch(&self) -> Option<&HarnessBranchTarget> {
+        match self {
+            Self::Harness { branch } => Some(branch),
+            Self::LocalConnector | Self::CloudSandbox { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectExecutionContext {
     pub project_id: String,
     pub owner_user_id: String,
@@ -280,10 +334,8 @@ pub struct CreateRuntimeSessionRequest {
     pub plugin_command_invocations: Vec<chatos_plugin_management_sdk::PluginCommandInvocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
-    pub requested_device_id: Option<String>,
-    pub requested_sandbox_provider: Option<SandboxProviderKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub workspace_route: Option<RuntimeWorkspaceRouteTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,29 +364,6 @@ pub struct RuntimeSessionResponse {
 pub struct CloseRuntimeSessionResponse {
     pub session_id: String,
     pub closed: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeRunTerminalStatus {
-    Succeeded,
-    Failed,
-    Cancelled,
-    Blocked,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FinalizeRuntimeRunRequest {
-    pub owner_user_id: String,
-    pub project_id: String,
-    pub run_id: String,
-    pub status: RuntimeRunTerminalStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FinalizeRuntimeRunResponse {
-    pub run_id: String,
-    pub finalized: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -12,18 +12,7 @@ pub(super) fn tool_definitions(enabled: &HostCapabilityPolicy) -> Vec<Value> {
     if enabled.code_write {
         tools.extend(write_tool_definitions());
     }
-    if enabled.terminal {
-        tools.extend(terminal_tool_definitions());
-    }
     tools
-}
-
-fn terminal_tool_definitions() -> Vec<Value> {
-    chatos_mcp::builtin_tool_catalog(chatos_mcp_runtime::BuiltinMcpKind::TerminalController)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|tool| tool.get("name").and_then(Value::as_str) == Some("execute_command"))
-        .collect()
 }
 
 fn read_tool_definitions() -> Vec<Value> {
@@ -196,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_capability_exposes_project_command_execution() {
+    fn terminal_capability_is_never_exposed_by_harness() {
         let tools = tool_definitions(&HostCapabilityPolicy::from_builtin_kind_names([
             "TerminalController",
         ]));
@@ -205,6 +194,6 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
 
-        assert_eq!(names, vec!["execute_command"]);
+        assert!(names.is_empty());
     }
 }

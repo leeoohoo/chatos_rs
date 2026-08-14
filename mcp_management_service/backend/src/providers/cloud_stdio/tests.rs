@@ -436,7 +436,9 @@ async fn provider_probes_and_calls_through_the_signed_sandbox_binding() {
         default_model_config_id: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: Some(target),
+        workspace_route: Some(
+            chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox { target },
+        ),
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),

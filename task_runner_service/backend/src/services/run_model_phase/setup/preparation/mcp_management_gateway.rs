@@ -4,12 +4,14 @@
 use std::time::Duration;
 
 use chatos_mcp_gateway::McpManagementGatewayBuilder;
-use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
-use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, McpHttpServer};
+use chatos_mcp_management_sdk::{
+    CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle, RuntimeWorkspaceRouteTarget,
+};
+use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::{SystemAgentKey, SystemMcpKey};
 use tracing::info;
 
-use crate::models::{TaskMcpConfig, TaskRecord, TaskRunRecord};
+use crate::models::{TaskRecord, TaskRunRecord};
 
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
@@ -22,6 +24,7 @@ pub(super) async fn resolve_mcp_management_gateway(
     agent_key: SystemAgentKey,
     tool_result_max_chars: usize,
     existing_session_ref: Option<&str>,
+    workspace_route: Option<&RuntimeWorkspaceRouteTarget>,
 ) -> Result<ResolvedMcpManagementGateway, String> {
     let owner_user_id = normalized_task_owner_user_id(task)
         .ok_or_else(|| "task owner user id is required for MCP Management".to_string())?;
@@ -41,7 +44,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         default_model_config_id: task.default_model_config_id.clone(),
         tool_result_max_chars: Some(tool_result_max_chars.max(1)),
         expected_project_task_ids: Vec::new(),
-        requested_mcp_ids: Some(requested_mcp_resource_ids(&task.mcp_config)),
+        requested_mcp_ids: Some(run.effective_tools.requested_mcp_resource_ids.clone()),
         selected_plugins: task.plugin_config.selected_plugins.clone(),
         plugin_command_invocations: task.plugin_config.command_invocations.clone(),
         locale: Some(if task.mcp_config.locale().is_english() {
@@ -49,10 +52,19 @@ pub(super) async fn resolve_mcp_management_gateway(
         } else {
             "zh-CN".to_string()
         }),
-        requested_device_id: None,
-        requested_sandbox_provider: None,
-        sandbox_target: None,
+        workspace_route: workspace_route.cloned(),
     };
+    if run.effective_tools.terminal
+        && !matches!(
+            workspace_route,
+            Some(RuntimeWorkspaceRouteTarget::CloudSandbox { .. })
+                | Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+        )
+    {
+        return Err(
+            "TerminalController requires a prepared Cloud Sandbox for cloud projects".to_string(),
+        );
+    }
     let timeout = Duration::from_millis(
         std::env::var("TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")
             .ok()
@@ -121,6 +133,10 @@ pub(super) struct ResolvedMcpManagementGateway {
 }
 
 impl ResolvedMcpManagementGateway {
+    pub(super) fn session_id(&self) -> &str {
+        self.runtime_session.session_id()
+    }
+
     pub(super) fn into_parts(self) -> (McpHttpServer, McpManagementRuntimeSessionHandle, String) {
         (self.server, self.runtime_session, self.mcp_command_queue)
     }
@@ -136,49 +152,14 @@ fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
-    let program_required_workspace_kinds = if config.requires_execution {
-        vec![
-            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead,
-            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite,
-            chatos_mcp_runtime::BuiltinMcpKind::TerminalController,
-        ]
-    } else {
-        vec![chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerRead]
-    };
-    let builtin_kinds = complete_builtin_kind_dependencies(
-        config
-            .enabled_builtin_kinds
-            .iter()
-            .filter_map(|kind| builtin_kind_by_any(kind))
-            .chain(program_required_workspace_kinds),
-    );
-    let mut resource_ids = builtin_kinds
-        .iter()
-        .filter_map(|kind| chatos_mcp::system_mcp_descriptor_by_any(kind.kind_name()))
-        .map(|descriptor| descriptor.resource_id.to_string())
-        .chain(
-            config
-                .external_mcp_config_ids
-                .iter()
-                .filter_map(|resource_id| {
-                    let resource_id = resource_id.trim();
-                    (!resource_id.is_empty()).then(|| resource_id.to_string())
-                }),
-        )
-        .collect::<Vec<_>>();
-    if config.enabled {
-        resource_ids
-            .push(chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID.to_string());
-    }
-    resource_ids.sort();
-    resource_ids.dedup();
-    resource_ids
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::models::TaskMcpConfig;
+
+    fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
+        crate::services::workspace_execution::effective_task_tool_snapshot(config)
+            .requested_mcp_resource_ids
+    }
 
     #[test]
     fn authoritative_task_mcp_config_maps_to_runtime_resource_scope() {
@@ -200,8 +181,6 @@ mod tests {
             vec![
                 "builtin_browser_tools".to_string(),
                 "builtin_code_maintainer_read".to_string(),
-                "builtin_code_maintainer_write".to_string(),
-                "builtin_terminal_controller".to_string(),
                 "external-mcp-1".to_string(),
                 "system_mcp_task_process_log".to_string(),
             ]
@@ -220,7 +199,6 @@ mod tests {
             vec![
                 "builtin_code_maintainer_read".to_string(),
                 "builtin_code_maintainer_write".to_string(),
-                "builtin_terminal_controller".to_string(),
                 "system_mcp_task_process_log".to_string(),
             ]
         );
@@ -238,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_task_always_requests_project_read_from_the_program_contract() {
+    fn empty_selection_does_not_programmatically_add_project_tools() {
         let config = TaskMcpConfig {
             requires_execution: false,
             enabled_builtin_kinds: Vec::new(),
@@ -247,13 +225,13 @@ mod tests {
 
         let ids = requested_mcp_resource_ids(&config);
 
-        assert!(ids.contains(&"builtin_code_maintainer_read".to_string()));
+        assert!(!ids.contains(&"builtin_code_maintainer_read".to_string()));
         assert!(!ids.contains(&"builtin_code_maintainer_write".to_string()));
         assert!(!ids.contains(&"builtin_terminal_controller".to_string()));
     }
 
     #[test]
-    fn execution_task_always_requests_read_write_and_command_capabilities() {
+    fn execution_flag_does_not_expand_the_selected_tool_scope() {
         let config = TaskMcpConfig {
             requires_execution: true,
             enabled_builtin_kinds: Vec::new(),
@@ -262,8 +240,8 @@ mod tests {
 
         let ids = requested_mcp_resource_ids(&config);
 
-        assert!(ids.contains(&"builtin_code_maintainer_read".to_string()));
-        assert!(ids.contains(&"builtin_code_maintainer_write".to_string()));
-        assert!(ids.contains(&"builtin_terminal_controller".to_string()));
+        assert!(!ids.contains(&"builtin_code_maintainer_read".to_string()));
+        assert!(!ids.contains(&"builtin_code_maintainer_write".to_string()));
+        assert!(!ids.contains(&"builtin_terminal_controller".to_string()));
     }
 }

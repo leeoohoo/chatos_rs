@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use super::{
     ChatosProvider, ChatosProviderConfig, CloudSandboxProvider, CloudStdioProvider,
-    EmbeddedProvider, ExternalHttpProvider, LocalConnectorProvider, LocalSandboxProvider,
-    PluginCloudProvider, PluginComponentProvider, PluginLocalProvider, PluginRouteDispatcher,
-    ProjectServiceProvider, ProviderDispatcher, ProviderRuntimeConfig, SandboxImagesProvider,
-    TaskRunnerProvider, TaskRunnerProviderConfig,
+    EmbeddedProvider, ExternalHttpProvider, LocalConnectorProvider, PluginCloudProvider,
+    PluginComponentProvider, PluginLocalProvider, PluginRouteDispatcher, ProjectServiceProvider,
+    ProviderDispatcher, ProviderRuntimeConfig, SandboxImagesProvider, TaskRunnerProvider,
+    TaskRunnerProviderConfig,
 };
 
 impl ProviderDispatcher {
@@ -66,13 +66,6 @@ impl ProviderDispatcher {
         let plugin_cloud = PluginCloudProvider::new(cloud_stdio.clone(), external_http.clone());
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
-                local_connector_http.clone(),
-                local_connector_service_base_url.clone(),
-                runtime.downstream_request_timeout,
-                local_connector_internal_secret.clone(),
-                runtime.response_limit_bytes,
-            )?,
-            local_sandbox: LocalSandboxProvider::new(
                 local_connector_http.clone(),
                 local_connector_service_base_url.clone(),
                 runtime.downstream_request_timeout,

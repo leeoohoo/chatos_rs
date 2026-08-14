@@ -61,14 +61,18 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
     )
     .expect("provider");
     let mut bound_snapshot = snapshot();
-    bound_snapshot.sandbox_target = Some(SandboxExecutionTarget {
-        provider: SandboxProviderKind::Cloud,
-        pairing_id: None,
-        sandbox_id: "environment-1".to_string(),
-        lease_id: "lease-1".to_string(),
-        is_environment: true,
-        service_id: Some("workspace".to_string()),
-    });
+    bound_snapshot.workspace_route = Some(
+        chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox {
+            target: SandboxExecutionTarget {
+                provider: SandboxProviderKind::Cloud,
+                pairing_id: None,
+                sandbox_id: "environment-1".to_string(),
+                lease_id: "lease-1".to_string(),
+                is_environment: true,
+                service_id: Some("workspace".to_string()),
+            },
+        },
+    );
     let outcome = provider
         .call_tool(
             &bound_snapshot,
@@ -331,14 +335,18 @@ async fn cloud_browser_call_is_authorized_by_chatos_and_executed_in_the_bound_sa
     .with_cloud_sandbox(cloud_sandbox);
     let mut bound_snapshot = snapshot();
     bound_snapshot.run_id = Some("run-1".to_string());
-    bound_snapshot.sandbox_target = Some(SandboxExecutionTarget {
-        provider: SandboxProviderKind::Cloud,
-        pairing_id: None,
-        sandbox_id: "sandbox-1".to_string(),
-        lease_id: "lease-1".to_string(),
-        is_environment: false,
-        service_id: None,
-    });
+    bound_snapshot.workspace_route = Some(
+        chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox {
+            target: SandboxExecutionTarget {
+                provider: SandboxProviderKind::Cloud,
+                pairing_id: None,
+                sandbox_id: "sandbox-1".to_string(),
+                lease_id: "lease-1".to_string(),
+                is_environment: false,
+                service_id: None,
+            },
+        },
+    );
 
     let outcome = provider
         .call_tool(
@@ -651,7 +659,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_model_config_id: Some("model-1".to_string()),
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),

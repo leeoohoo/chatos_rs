@@ -103,7 +103,7 @@ impl CloudStdioProvider {
                     "Cloud stdio MCP runtime binding is missing",
                 )
             })?;
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -143,7 +143,7 @@ impl CloudStdioProvider {
         arguments: Value,
         invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -216,7 +216,7 @@ impl CloudStdioProvider {
                     "Cloud stdio MCP runtime binding is missing",
                 )
             })?;
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -240,7 +240,7 @@ impl CloudStdioProvider {
         resource_id: &str,
         invocation_id: &str,
     ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -284,7 +284,7 @@ impl CloudStdioProvider {
     }
 
     pub(in crate::providers) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
-        let Some(target) = snapshot.sandbox_target.as_ref() else {
+        let Some(target) = snapshot.sandbox_target() else {
             return;
         };
         self.close_bindings(

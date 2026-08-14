@@ -6,7 +6,6 @@ mod health;
 mod invocations;
 pub(crate) mod mcp;
 mod routes;
-mod runtime_runs;
 mod runtime_session_metadata;
 mod runtime_sessions;
 mod system;
@@ -73,10 +72,6 @@ pub fn build_internal_router(state: AppState) -> Router {
             .route(
                 "/api/internal/runtime/sessions/{session_id}/close",
                 post(runtime_sessions::close_runtime_session),
-            )
-            .route(
-                "/api/internal/runtime/runs/finalize",
-                post(runtime_runs::finalize_runtime_run),
             )
             .route(
                 "/api/internal/runtime/invocations/{invocation_id}",

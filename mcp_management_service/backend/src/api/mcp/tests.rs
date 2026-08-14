@@ -41,7 +41,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_model_config_id: Some("model-1".to_string()),
         tool_result_max_chars: Some(40_000),
         expected_project_task_ids: vec!["project-task-1".to_string()],
-        sandbox_target: None,
+        workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),

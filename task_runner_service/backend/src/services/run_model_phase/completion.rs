@@ -179,30 +179,26 @@ impl RunService {
         task: &TaskRecord,
         run: &TaskRunRecord,
     ) -> Result<(), String> {
-        use chatos_mcp_management_sdk::{
-            FinalizeRuntimeRunRequest, McpManagementClient, McpManagementClientConfig,
-            RuntimeRunTerminalStatus,
-        };
+        use chatos_mcp_management_sdk::{McpManagementClient, McpManagementClientConfig};
 
-        let status = match run.status {
-            TaskRunStatus::Succeeded => RuntimeRunTerminalStatus::Succeeded,
-            TaskRunStatus::Failed => RuntimeRunTerminalStatus::Failed,
-            TaskRunStatus::Cancelled => RuntimeRunTerminalStatus::Cancelled,
-            TaskRunStatus::Blocked => RuntimeRunTerminalStatus::Blocked,
-            TaskRunStatus::Queued | TaskRunStatus::Running => return Ok(()),
-        };
-        let owner_user_id = task
-            .owner_user_id
-            .as_deref()
-            .or(task.creator_user_id.as_deref())
-            .unwrap_or(task.subject_id.as_str())
-            .trim();
-        if owner_user_id.is_empty() {
-            return Err(format!(
-                "{}: owner identity is missing",
-                crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
-            ));
+        let _ = task;
+        if !matches!(
+            run.status,
+            TaskRunStatus::Succeeded
+                | TaskRunStatus::Failed
+                | TaskRunStatus::Cancelled
+                | TaskRunStatus::Blocked
+        ) {
+            return Ok(());
         }
+        let Some(session_id) = run
+            .mcp_runtime_session_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(());
+        };
         let config = match McpManagementClientConfig::from_env("task-runner").await {
             Ok(config) => config,
             Err(error) => {
@@ -221,21 +217,23 @@ impl RunService {
                 ));
             }
         };
-        client
-            .finalize_runtime_run(&FinalizeRuntimeRunRequest {
-                owner_user_id: owner_user_id.to_string(),
-                project_id: crate::models::normalize_project_id(Some(task.project_id.clone())),
-                run_id: run.id.clone(),
-                status,
-            })
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                format!(
-                    "{}: {error}",
-                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
-                )
-            })
+        match client.close_runtime_session(session_id).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let message = error.to_string();
+                if message.contains("404")
+                    || message.contains("not found")
+                    || message.contains("already closed")
+                {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{}: {message}",
+                        crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+                    ))
+                }
+            }
+        }
     }
 }
 

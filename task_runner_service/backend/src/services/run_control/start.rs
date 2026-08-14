@@ -261,6 +261,9 @@ impl RunService {
             input_snapshot,
             now,
         );
+        run.effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
+            &runtime_task.mcp_config,
+        );
         run.agent_run_id = Some(agent_run_id);
         run.dispatch_event_pending = false;
         run.agent_ordering_lane_key = Some(ordering_lane_key);

@@ -16,9 +16,7 @@ use super::internal_auth::{
     require_project_internal_request, MCP_MANAGEMENT_CALLER, PROJECT_EXECUTION_CONTEXT_SCOPE,
 };
 use super::ApiError;
-use crate::models::{
-    ProjectRecord, ProjectRuntimeEnvironmentRecord, ProjectSourceType, RuntimeEnvironmentProvider,
-};
+use crate::models::{ProjectRecord, ProjectRuntimeEnvironmentRecord, ProjectSourceType};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -77,11 +75,11 @@ fn build_execution_context(
         .root_path
         .as_deref()
         .and_then(parse_local_connector_workspace);
-    let workspace_provider = resolve_workspace_provider(project, environment, &local_workspace);
+    let workspace_provider = resolve_workspace_provider(project, &local_workspace);
     let workspace = (workspace_provider == WorkspaceProviderKind::LocalConnector)
         .then_some(local_workspace)
         .flatten();
-    let sandbox_provider = resolve_sandbox_provider(project, environment);
+    let sandbox_provider = resolve_sandbox_provider(project);
     let source_type = match project.source_type {
         ProjectSourceType::Local => "local",
         ProjectSourceType::LocalConnector => "local_connector",
@@ -110,54 +108,31 @@ fn build_execution_context(
 
 fn resolve_workspace_provider(
     project: &ProjectRecord,
-    environment: Option<&ProjectRuntimeEnvironmentRecord>,
     local_workspace: &Option<WorkspaceExecutionTarget>,
 ) -> WorkspaceProviderKind {
-    let environment_provider = environment.map(|environment| environment.file_provider);
-    match environment_provider {
-        Some(RuntimeEnvironmentProvider::LocalConnector) if local_workspace.is_some() => {
+    match project.source_type {
+        ProjectSourceType::Local | ProjectSourceType::LocalConnector
+            if local_workspace.is_some() =>
+        {
             WorkspaceProviderKind::LocalConnector
         }
-        Some(RuntimeEnvironmentProvider::Harness) => WorkspaceProviderKind::Harness,
-        Some(RuntimeEnvironmentProvider::CloudSandboxManager) => {
-            WorkspaceProviderKind::CloudSandbox
+        ProjectSourceType::Cloud
+            if project
+                .harness_repo_identifier
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()) =>
+        {
+            WorkspaceProviderKind::Harness
         }
-        Some(RuntimeEnvironmentProvider::LocalConnector | RuntimeEnvironmentProvider::None)
-        | None => match project.source_type {
-            ProjectSourceType::Local | ProjectSourceType::LocalConnector
-                if local_workspace.is_some() =>
-            {
-                WorkspaceProviderKind::LocalConnector
-            }
-            ProjectSourceType::Cloud
-                if project
-                    .harness_repo_identifier
-                    .as_deref()
-                    .map(str::trim)
-                    .is_some_and(|value| !value.is_empty()) =>
-            {
-                WorkspaceProviderKind::Harness
-            }
-            _ => WorkspaceProviderKind::None,
-        },
+        _ => WorkspaceProviderKind::None,
     }
 }
 
-fn resolve_sandbox_provider(
-    project: &ProjectRecord,
-    environment: Option<&ProjectRuntimeEnvironmentRecord>,
-) -> SandboxProviderKind {
+fn resolve_sandbox_provider(project: &ProjectRecord) -> SandboxProviderKind {
     match project.source_type {
         ProjectSourceType::Local | ProjectSourceType::LocalConnector => SandboxProviderKind::None,
-        ProjectSourceType::Cloud => environment
-            .map(|environment| match environment.sandbox_provider {
-                RuntimeEnvironmentProvider::Harness
-                | RuntimeEnvironmentProvider::CloudSandboxManager => SandboxProviderKind::Cloud,
-                RuntimeEnvironmentProvider::LocalConnector | RuntimeEnvironmentProvider::None => {
-                    SandboxProviderKind::None
-                }
-            })
-            .unwrap_or(SandboxProviderKind::None),
+        ProjectSourceType::Cloud => SandboxProviderKind::Cloud,
     }
 }
 
@@ -203,7 +178,7 @@ fn required_text<'a>(value: &'a str, field: &str) -> Result<&'a str, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::ProjectRuntimeEnvironmentStatus;
+    use crate::models::{ProjectRuntimeEnvironmentStatus, RuntimeEnvironmentProvider};
 
     fn project(source_type: ProjectSourceType) -> ProjectRecord {
         ProjectRecord {
@@ -267,17 +242,17 @@ mod tests {
     #[test]
     fn local_projects_never_expose_a_sandbox_provider() {
         assert_eq!(
-            resolve_sandbox_provider(&project(ProjectSourceType::Local), None),
+            resolve_sandbox_provider(&project(ProjectSourceType::Local)),
             SandboxProviderKind::None
         );
         assert_eq!(
-            resolve_sandbox_provider(&project(ProjectSourceType::LocalConnector), None),
+            resolve_sandbox_provider(&project(ProjectSourceType::LocalConnector)),
             SandboxProviderKind::None
         );
     }
 
     #[test]
-    fn disabled_cloud_sandbox_still_exposes_harness_workspace() {
+    fn runtime_environment_settings_do_not_change_source_workspace_capabilities() {
         let mut project = project(ProjectSourceType::Cloud);
         project.harness_repo_identifier = Some("repo-1".to_string());
         let environment = ProjectRuntimeEnvironmentRecord {
@@ -303,6 +278,6 @@ mod tests {
         let context = build_execution_context(&project, Some(&environment), "user-1");
 
         assert_eq!(context.workspace_provider, WorkspaceProviderKind::Harness);
-        assert_eq!(context.sandbox_provider, SandboxProviderKind::None);
+        assert_eq!(context.sandbox_provider, SandboxProviderKind::Cloud);
     }
 }

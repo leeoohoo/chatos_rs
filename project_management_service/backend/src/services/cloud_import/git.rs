@@ -23,7 +23,7 @@ pub(crate) fn authenticated_git_url(
     Ok(url.to_string())
 }
 
-pub(super) async fn run_git(
+pub(crate) async fn run_git(
     args: Vec<String>,
     cwd: Option<&Path>,
     config: &AppConfig,

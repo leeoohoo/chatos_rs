@@ -152,7 +152,10 @@ impl TaskRunnerMcpService {
                     priority: item.priority,
                     tags: item.tags,
                     default_model_config_id: item.default_model_config_id,
-                    requires_execution: Some(true),
+                    // Workspace capabilities are selected explicitly by the planning Agent.
+                    // Task Runner derives the runtime workspace route from that frozen tool
+                    // snapshot; it must not turn every project task into a full execution task.
+                    requires_execution: item.requires_execution,
                     // Requirement planning only materializes a deferred DAG. A due
                     // ContactAsync schedule would let the global scheduler start it
                     // before Chatos receives explicit user confirmation.

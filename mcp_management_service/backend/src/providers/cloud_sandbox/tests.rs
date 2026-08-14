@@ -159,7 +159,11 @@ async fn cloud_sandbox_call_uses_signed_manager_proxy_and_bound_headers() {
         default_model_config_id: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: Some(target.clone()),
+        workspace_route: Some(
+            chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox {
+                target: target.clone(),
+            },
+        ),
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),

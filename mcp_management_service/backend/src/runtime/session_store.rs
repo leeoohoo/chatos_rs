@@ -11,7 +11,7 @@ use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use chatos_mcp_management_sdk::{
     ProjectExecutionContext, ResolvedMcpRoute, RuntimeSessionRoutesResponse, RuntimeToolDescriptor,
-    SandboxExecutionTarget,
+    RuntimeWorkspaceRouteTarget, SandboxExecutionTarget,
 };
 use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 use futures_util::TryStreamExt;
@@ -46,7 +46,7 @@ use self::external_http::{
     PersistedExternalHttpProviderBinding,
 };
 
-const SNAPSHOT_SCHEMA_VERSION: i32 = 6;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 7;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_HEADERS: usize = 64;
 const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
@@ -153,7 +153,7 @@ pub struct RuntimeSessionSnapshot {
     pub default_model_config_id: Option<String>,
     pub tool_result_max_chars: Option<usize>,
     pub expected_project_task_ids: Vec<String>,
-    pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub workspace_route: Option<RuntimeWorkspaceRouteTarget>,
     pub project_context: ProjectExecutionContext,
     pub policy_revision: String,
     pub route_revision: String,
@@ -171,6 +171,12 @@ pub struct RuntimeSessionSnapshot {
 }
 
 impl RuntimeSessionSnapshot {
+    pub fn sandbox_target(&self) -> Option<&SandboxExecutionTarget> {
+        self.workspace_route
+            .as_ref()
+            .and_then(RuntimeWorkspaceRouteTarget::sandbox_target)
+    }
+
     pub fn routes_response(&self) -> RuntimeSessionRoutesResponse {
         RuntimeSessionRoutesResponse {
             session_id: self.session_id.clone(),
@@ -265,7 +271,7 @@ struct PersistedRuntimeSessionSnapshot {
     #[serde(default)]
     tool_result_max_chars: Option<usize>,
     expected_project_task_ids: Vec<String>,
-    sandbox_target: Option<SandboxExecutionTarget>,
+    workspace_route: Option<RuntimeWorkspaceRouteTarget>,
     project_context: ProjectExecutionContext,
     policy_revision: String,
     route_revision: String,
@@ -735,7 +741,7 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             default_model_config_id: snapshot.default_model_config_id.clone(),
             tool_result_max_chars: snapshot.tool_result_max_chars,
             expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
-            sandbox_target: snapshot.sandbox_target.clone(),
+            workspace_route: snapshot.workspace_route.clone(),
             project_context: snapshot.project_context.clone(),
             policy_revision: snapshot.policy_revision.clone(),
             route_revision: snapshot.route_revision.clone(),
@@ -792,7 +798,7 @@ impl PersistedRuntimeSessionSnapshot {
             default_model_config_id: self.default_model_config_id,
             tool_result_max_chars: self.tool_result_max_chars,
             expected_project_task_ids: self.expected_project_task_ids,
-            sandbox_target: self.sandbox_target,
+            workspace_route: self.workspace_route,
             project_context: self.project_context,
             policy_revision: self.policy_revision,
             route_revision: self.route_revision,

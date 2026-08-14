@@ -39,14 +39,19 @@ use routing::*;
 pub(super) async fn resolve_runtime_session(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<CreateRuntimeSessionRequest>,
+    Json(mut request): Json<CreateRuntimeSessionRequest>,
 ) -> Result<Json<RuntimeSessionResponse>, ApiError> {
     let identity =
         require_internal_request_identity(&state.config, &headers, "runtime.sessions.resolve")?;
     let trace_id = identity.require_signed_trace_id()?.to_string();
     let caller_service = identity.caller.clone();
     validate_session_request(&request)?;
-    let sandbox_target = normalize_sandbox_target(request.sandbox_target.clone())?;
+    request.workspace_route = normalize_runtime_workspace_route(request.workspace_route.clone())?;
+    let sandbox_target = request
+        .workspace_route
+        .as_ref()
+        .and_then(|route| route.sandbox_target())
+        .cloned();
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
     let contact_agent_id = normalized(request.contact_agent_id.clone());
     let expected_project_task_ids = normalized_unique_items(
@@ -64,14 +69,27 @@ pub(super) async fn resolve_runtime_session(
         .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
-    let execution_scope_workspace_provider = project_context.workspace_provider;
+    let execution_scope_workspace_provider = request
+        .workspace_route
+        .as_ref()
+        .map(|route| route.provider_kind())
+        .unwrap_or(project_context.workspace_provider);
     let execution_scope_run_id = normalized(request.run_id.clone());
     validate_context_overrides(&request, &project_context)?;
     let device_id = project_context
         .workspace
         .as_ref()
         .and_then(|workspace| workspace.device_id.clone());
-    let runtime_provider = capability_runtime_provider(&project_context);
+    let runtime_provider = match request.workspace_route.as_ref() {
+        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
+            "local_connector"
+        }
+        Some(
+            chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::Harness { .. }
+            | chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox { .. },
+        ) => "cloud",
+        None => capability_runtime_provider(&project_context),
+    };
     let capability_request =
         ResolveAgentCapabilitiesRequest::new(agent_key, request.owner_user_id.trim().to_string())
             .with_runtime_context(
@@ -126,9 +144,9 @@ pub(super) async fn resolve_runtime_session(
         contact_agent_id.as_deref(),
         request.source_session_id.as_deref(),
     );
-    bind_runtime_sandbox_routes(
+    bind_runtime_workspace_routes(
         route_response.routes.as_mut_slice(),
-        sandbox_target.as_ref(),
+        request.workspace_route.as_ref(),
     );
     let cloud_sandbox_target = sandbox_target
         .as_ref()
@@ -407,7 +425,7 @@ pub(super) async fn resolve_runtime_session(
             default_model_config_id: normalized(request.default_model_config_id),
             tool_result_max_chars: request.tool_result_max_chars,
             expected_project_task_ids,
-            sandbox_target,
+            workspace_route: request.workspace_route,
             project_context,
             policy_revision: capabilities.policy_revision.clone(),
             route_revision: route_revision.clone(),
@@ -720,20 +738,30 @@ pub(super) async fn close_runtime_session(
         .runtime_invocations
         .close_session(snapshot.session_id.as_str())
         .await;
-    state.providers.close_session(&snapshot).await;
-    if let Some(run_id) = snapshot.run_id.as_deref() {
+    let execution_scope_released = if let Some(run_id) = snapshot.run_id.as_deref() {
+        let provider = snapshot
+            .workspace_route
+            .as_ref()
+            .map(|route| route.provider_kind())
+            .unwrap_or(snapshot.project_context.workspace_provider);
         state
             .runtime_execution_scopes
             .detach_session(
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                provider,
                 snapshot.session_id.as_str(),
             )
             .await
-            .map_err(ApiError::internal)?;
-    }
+            .map_err(ApiError::internal)?
+    } else {
+        true
+    };
+    state
+        .providers
+        .close_session(&snapshot, execution_scope_released)
+        .await;
     let reclaimed_invocations = reclaimed_invocations.map_err(|error| {
         tracing::error!(
             session_id = snapshot.session_id.as_str(),
