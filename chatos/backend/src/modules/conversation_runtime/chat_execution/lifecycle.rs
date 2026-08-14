@@ -13,6 +13,11 @@ use crate::modules::conversation_runtime::project_execution_planner::{
     materialization_succeeded as project_execution_planner_terminal_tool_succeeded,
     FINALIZATION_PROMPT as PROJECT_EXECUTION_PLANNER_FINALIZATION_PROMPT,
 };
+use crate::modules::conversation_runtime::project_planning_delegation::{
+    background_wait_succeeded as project_planning_background_wait_succeeded,
+    task_creation_succeeded as project_planning_task_creation_succeeded,
+    FINALIZATION_PROMPT as PROJECT_PLANNING_DELEGATION_FINALIZATION_PROMPT,
+};
 use crate::modules::conversation_runtime::task_board::{
     build_task_turn_follow_up_directive, build_task_turn_follow_up_message,
     build_task_turn_review_retry_guidance, parse_task_turn_review_outcome,
@@ -43,6 +48,12 @@ pub(crate) struct TaskTurnLifecycleState {
     pub(crate) continuation_history: Vec<Value>,
     pub(crate) project_execution_plan_materialized: bool,
     pub(crate) project_planning_integrity_guard: bool,
+    #[serde(default)]
+    pub(crate) project_planning_task_created: bool,
+    #[serde(default)]
+    pub(crate) project_planning_background_acknowledged: bool,
+    #[serde(default)]
+    pub(crate) project_planning_delegation_repair_rounds: usize,
     pub(crate) project_planning_write_failures: Vec<String>,
     pub(crate) project_planning_repair_rounds: usize,
     pub(crate) project_planning_repair_mutation_succeeded: bool,
@@ -191,6 +202,14 @@ pub(crate) fn track_project_planning_integrity(
             .unwrap_or(&[]);
         if let Ok(mut state) = state.lock() {
             if state.project_planning_integrity_guard {
+                if project_planning_task_creation_succeeded(&payload) {
+                    state.project_planning_task_created = true;
+                }
+                if state.project_planning_task_created
+                    && project_planning_background_wait_succeeded(&payload)
+                {
+                    state.project_planning_background_acknowledged = true;
+                }
                 let dependency_batch_signature = state
                     .project_planning_pending_dependency_batch_signature
                     .take();
@@ -433,6 +452,41 @@ impl ChatosRuntimeLifecycleHook {
             reason: "project_planning_integrity_repair".to_string(),
         }))
     }
+
+    fn require_project_planning_delegation(
+        &self,
+        context: &RuntimeFinalResponseContext,
+    ) -> Result<Option<RuntimeFinalResponseAction>, String> {
+        let mut state = self.task_turn_state()?;
+        if !state.project_planning_integrity_guard
+            || (state.project_planning_task_created
+                && state.project_planning_background_acknowledged)
+        {
+            return Ok(None);
+        }
+        if state.project_planning_delegation_repair_rounds >= MAX_PROJECT_PLANNING_REPAIR_ROUNDS {
+            let missing = if state.project_planning_task_created {
+                "规划任务已经创建，但未完成 wait_for_task_completion 的后台执行确认"
+            } else {
+                "未创建 Task Runner 规划任务"
+            };
+            return Err(format!("规划模式委派校验失败，不能标记为完成：{missing}"));
+        }
+
+        state.project_planning_delegation_repair_rounds += 1;
+        let guidance = if state.project_planning_task_created {
+            "[Planning Delegation Guard]\n程序已确认规划任务创建成功，但尚未确认后台执行已被接管。不要输出规划内容或声称规划完成。现在必须调用 wait_for_task_completion 等待刚创建的任务进入正常后台回传流程；成功后只向用户简短确认规划已经开始。"
+        } else {
+            "[Planning Delegation Guard]\n当前是程序开启的规划模式，但本轮尚未创建 Task Runner 规划任务。不要用自由文本规划代替任务，也不要声称需求文档、技术文档或项目任务已经生成。现在必须创建 requires_execution=false 的规划任务，要求规划 Agent 生成并复核需求及验收条件、非空技术文档、项目任务和依赖关系；创建成功后必须调用 wait_for_task_completion。"
+        };
+        let input_items = Self::continue_with_response(&mut state, &context.response, guidance);
+        drop(state);
+        self.emit_task_turn_thinking(TaskTurnFollowUpMode::ContinueExecution);
+        Ok(Some(RuntimeFinalResponseAction::Continue {
+            input_items,
+            reason: "project_planning_delegation_repair".to_string(),
+        }))
+    }
 }
 
 #[async_trait]
@@ -453,8 +507,12 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
             .await;
         let state = self.task_turn_state()?;
         let project_execution_plan_materialized = state.project_execution_plan_materialized;
-        let project_planning_force_finalization = state.project_planning_force_finalization
+        let project_planning_delegation_finalized = state.project_planning_integrity_guard
+            && state.project_planning_task_created
+            && state.project_planning_background_acknowledged
             && state.project_planning_write_failures.is_empty();
+        let project_planning_force_finalization =
+            state.project_planning_force_finalization && project_planning_delegation_finalized;
         let review_mode = matches!(state.mode, Some(TaskTurnFollowUpMode::ReviewExecution));
         drop(state);
         if project_execution_plan_materialized {
@@ -462,8 +520,13 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
                 PROJECT_EXECUTION_PLANNER_FINALIZATION_PROMPT,
             ));
         }
-        if project_planning_force_finalization {
+        if project_planning_force_finalization && !project_planning_delegation_finalized {
             input_items.push(system_input_item(PROJECT_PLANNING_LOOP_FINALIZATION_PROMPT));
+        }
+        if project_planning_delegation_finalized {
+            input_items.push(system_input_item(
+                PROJECT_PLANNING_DELEGATION_FINALIZATION_PROMPT,
+            ));
         }
         Ok(RuntimeBeforeModelRequest::unchanged()
             .with_input_items(input_items)
@@ -471,7 +534,8 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
             .with_tools_enabled(
                 !review_mode
                     && !project_execution_plan_materialized
-                    && !project_planning_force_finalization,
+                    && !project_planning_force_finalization
+                    && !project_planning_delegation_finalized,
             ))
     }
 
@@ -487,12 +551,27 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
             let state = self.task_turn_state()?;
             state.project_planning_force_finalization
                 && state.project_planning_write_failures.is_empty()
+                && state.project_planning_task_created
+                && state.project_planning_background_acknowledged
         };
         if should_force_finalize {
             self.task_turn_state()?.mode = None;
             return Ok(RuntimeFinalResponseAction::Accept);
         }
         if let Some(action) = self.repair_failed_project_planning_writes(&context)? {
+            return Ok(action);
+        }
+        let delegation_finalized = {
+            let state = self.task_turn_state()?;
+            state.project_planning_integrity_guard
+                && state.project_planning_task_created
+                && state.project_planning_background_acknowledged
+        };
+        if delegation_finalized {
+            self.task_turn_state()?.mode = None;
+            return Ok(RuntimeFinalResponseAction::Accept);
+        }
+        if let Some(action) = self.require_project_planning_delegation(&context)? {
             return Ok(action);
         }
         if matches!(
@@ -569,6 +648,9 @@ pub(crate) fn task_turn_review_metadata(state: &TaskTurnLifecycleState) -> Value
         },
         "project_planning_integrity": {
             "guarded": state.project_planning_integrity_guard,
+            "planning_task_created": state.project_planning_task_created,
+            "background_acknowledged": state.project_planning_background_acknowledged,
+            "delegation_repair_rounds": state.project_planning_delegation_repair_rounds,
             "pending_write_failure_count": state.project_planning_write_failures.len(),
             "repair_rounds": state.project_planning_repair_rounds,
         }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_plugin_management_sdk::DEFAULT_AGENT_PROMPT_PROFILE;
 use chatos_plugin_management_sdk::{agent_prompt_checksum, AgentPromptVendor, SystemAgentKey};
 
 use crate::models::{
@@ -15,11 +16,12 @@ pub(super) async fn seed_agent_prompts(
 ) -> Result<(), String> {
     let mut seeded_any = false;
     let mut changed_agents = Vec::new();
-    for (agent_key, content) in baseline_prompts() {
+    for (agent_key, profile, content) in baseline_prompts() {
         let content = content.trim().to_string();
         let checksum = agent_prompt_checksum(content.as_str());
         for vendor in AgentPromptVendor::ALL {
-            if let Some(mut existing) = store.get_agent_prompt(agent_key, vendor).await? {
+            if let Some(mut existing) = store.get_agent_prompt(agent_key, profile, vendor).await? {
+                existing.profile = profile.to_string();
                 let should_sync = should_sync_system_seed(&existing);
                 let baseline_changed = existing.published_checksum.as_deref() != Some(&checksum);
                 if should_sync && baseline_changed {
@@ -48,8 +50,9 @@ pub(super) async fn seed_agent_prompts(
             }
             let now = now_rfc3339();
             let record = AgentProviderPromptRecord {
-                id: format!("{agent_key}__prompt__{vendor}"),
+                id: prompt_record_id(agent_key, profile, vendor),
                 agent_key: agent_key.to_string(),
+                profile: profile.to_string(),
                 vendor,
                 draft_content: Some(content.clone()),
                 published_content: Some(content.clone()),
@@ -129,6 +132,7 @@ async fn persist_seed_prompt_version(
                 return None;
             }
             Some(AgentPromptVersionPrompt {
+                profile: record.profile,
                 vendor: record.vendor,
                 content,
                 revision: record.published_revision,
@@ -146,6 +150,7 @@ async fn persist_seed_prompt_version(
             agent_key: agent_key.to_string(),
             bundle_version: bundle.version,
             changed_vendor: None,
+            changed_profile: None,
             prompts,
             published_by: admin_user_id.to_string(),
             published_at: bundle.updated_at.clone(),
@@ -185,6 +190,7 @@ pub(super) async fn backfill_agent_prompt_versions(store: &AppStore) -> Result<(
                     return None;
                 }
                 Some(AgentPromptVersionPrompt {
+                    profile: record.profile,
                     vendor: record.vendor,
                     content,
                     revision: record.published_revision,
@@ -204,6 +210,7 @@ pub(super) async fn backfill_agent_prompt_versions(store: &AppStore) -> Result<(
                 agent_key,
                 bundle_version: bundle.version,
                 changed_vendor: None,
+                changed_profile: None,
                 prompts,
                 published_by,
                 published_at: bundle.updated_at.clone(),
@@ -213,69 +220,112 @@ pub(super) async fn backfill_agent_prompt_versions(store: &AppStore) -> Result<(
     Ok(())
 }
 
-fn baseline_prompts() -> [(&'static str, &'static str); 14] {
-    [
+fn baseline_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
         (
             SystemAgentKey::ChatosConversationAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/chatos_conversation_agent.md"),
         ),
         (
             SystemAgentKey::ChatosLocalConversationAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/chatos_local_conversation_agent.md"),
         ),
         (
+            SystemAgentKey::ChatosConversationAgent.as_str(),
+            chatos_agent::CHATOS_PLAN_TASK_PROFILE,
+            include_str!("../../seed_data/agent_prompts/chatos_plan_profile.md"),
+        ),
+        (
+            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
+            chatos_agent::CHATOS_PLAN_TASK_PROFILE,
+            include_str!("../../seed_data/agent_prompts/chatos_plan_profile.md"),
+        ),
+        (
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!(
                 "../../seed_data/agent_prompts/project_requirement_execution_planner_agent.md"
             ),
         ),
         (
             SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!(
                 "../../seed_data/agent_prompts/project_requirement_execution_local_planner_agent.md"
             ),
         ),
         (
             SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
         ),
         (
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
         ),
         (
             SystemAgentKey::ProjectManagementAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/project_management_agent.md"),
         ),
         (
             SystemAgentKey::ProjectManagementLocalAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/project_management_local_agent.md"),
         ),
         (
             SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/local_connector_command_approval_agent.md"),
         ),
         (
             SystemAgentKey::MemoryEngineSummaryAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/memory_engine_summary_agent.md"),
         ),
         (
             SystemAgentKey::MemoryEngineRollupAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/memory_engine_rollup_agent.md"),
         ),
         (
             SystemAgentKey::MemoryEngineSubjectMemoryAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/memory_engine_subject_memory_agent.md"),
         ),
         (
             SystemAgentKey::MemoryEngineMemoryRollupAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/memory_engine_memory_rollup_agent.md"),
         ),
         (
             SystemAgentKey::MemoryEngineThreadRepairAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/memory_engine_thread_repair_agent.md"),
         ),
     ]
+}
+
+pub(crate) fn agent_prompt_profiles_for_agent(agent_key: &str) -> Vec<&'static str> {
+    let mut profiles = baseline_prompts()
+        .into_iter()
+        .filter(|(key, _, _)| *key == agent_key)
+        .map(|(_, profile, _)| profile)
+        .collect::<Vec<_>>();
+    let mut seen = std::collections::HashSet::new();
+    profiles.retain(|profile| seen.insert(*profile));
+    profiles
+}
+
+fn prompt_record_id(agent_key: &str, profile: &str, vendor: AgentPromptVendor) -> String {
+    if profile == DEFAULT_AGENT_PROMPT_PROFILE {
+        format!("{agent_key}__prompt__{vendor}")
+    } else {
+        format!("{agent_key}__prompt__{profile}__{vendor}")
+    }
 }
 
 #[cfg(test)]
@@ -285,10 +335,38 @@ mod tests {
     #[test]
     fn baseline_catalog_covers_all_system_agents() {
         let prompts = baseline_prompts();
-        assert_eq!(prompts.len(), chatos_agent::system_agent_catalog().len());
+        assert_eq!(
+            prompts.len(),
+            chatos_agent::system_agent_catalog().len() + 2
+        );
         assert!(prompts
             .iter()
-            .all(|(_, content)| !content.trim().is_empty()));
+            .all(|(_, _, content)| !content.trim().is_empty()));
+    }
+
+    #[test]
+    fn chatos_agents_publish_distinct_default_and_plan_profiles() {
+        for agent_key in [
+            SystemAgentKey::ChatosConversationAgent.as_str(),
+            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
+        ] {
+            assert_eq!(
+                agent_prompt_profiles_for_agent(agent_key),
+                vec![
+                    DEFAULT_AGENT_PROMPT_PROFILE,
+                    chatos_agent::CHATOS_PLAN_TASK_PROFILE
+                ]
+            );
+            let plan = baseline_prompts()
+                .into_iter()
+                .find(|(key, profile, _)| {
+                    *key == agent_key && *profile == chatos_agent::CHATOS_PLAN_TASK_PROFILE
+                })
+                .map(|(_, _, content)| content)
+                .expect("plan prompt");
+            assert!(plan.contains("不能用一篇自由文本规划代替"));
+            assert!(plan.contains("wait_for_task_completion"));
+        }
     }
 
     #[test]
@@ -304,8 +382,10 @@ mod tests {
         ] {
             let content = prompts
                 .iter()
-                .find(|(key, _)| *key == agent_key)
-                .map(|(_, content)| *content)
+                .find(|(key, profile, _)| {
+                    *key == agent_key && *profile == DEFAULT_AGENT_PROMPT_PROFILE
+                })
+                .map(|(_, _, content)| *content)
                 .unwrap_or_else(|| panic!("missing prompt: {agent_key}"));
             assert!(content.contains("用户语言") || content.contains("用户当前语言"));
             assert!(content.contains("代码标识符"));
@@ -358,6 +438,7 @@ mod tests {
         AgentProviderPromptRecord {
             id: "agent__prompt__gpt".to_string(),
             agent_key: "agent".to_string(),
+            profile: DEFAULT_AGENT_PROMPT_PROFILE.to_string(),
             vendor: AgentPromptVendor::Gpt,
             draft_content: Some(content.clone()),
             published_content: Some(content),

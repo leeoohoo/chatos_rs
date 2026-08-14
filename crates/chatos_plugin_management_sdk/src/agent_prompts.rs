@@ -8,6 +8,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub const DEFAULT_AGENT_PROMPT_PROFILE: &str = "default";
+
+pub fn normalize_agent_prompt_profile(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_AGENT_PROMPT_PROFILE)
+        .to_string()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentPromptVendor {
@@ -146,5 +156,15 @@ mod tests {
             "changed",
             checksum.as_str()
         ));
+    }
+
+    #[test]
+    fn missing_prompt_profile_resolves_to_default() {
+        assert_eq!(normalize_agent_prompt_profile(None), "default");
+        assert_eq!(normalize_agent_prompt_profile(Some("  ")), "default");
+        assert_eq!(
+            normalize_agent_prompt_profile(Some("chatos_plan")),
+            "chatos_plan"
+        );
     }
 }

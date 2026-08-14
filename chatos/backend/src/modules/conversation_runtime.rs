@@ -21,6 +21,8 @@ pub mod memory_compat;
 pub mod messages;
 #[path = "conversation_runtime/project_execution_planner.rs"]
 mod project_execution_planner;
+#[path = "conversation_runtime/project_planning_delegation.rs"]
+mod project_planning_delegation;
 #[path = "conversation_runtime/review_repair.rs"]
 pub mod review_repair;
 #[path = "conversation_runtime/runtime_context.rs"]

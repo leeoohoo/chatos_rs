@@ -26,6 +26,7 @@ use agent_bindings::{
     binding_matches_seed_variant, task_runner_cloud_plan_phase_builtin_kinds,
     task_runner_cloud_plan_phase_required, task_runner_cloud_run_phase_optional_builtin_kinds,
 };
+pub(crate) use agent_prompts::agent_prompt_profiles_for_agent;
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 #[cfg(test)]
 use agents::system_agent_specs;

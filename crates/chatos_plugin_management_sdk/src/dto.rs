@@ -218,6 +218,8 @@ impl fmt::Display for SystemAgentKey {
 pub struct ResolveAgentPromptRequest {
     pub agent_key: SystemAgentKey,
     pub vendor: AgentPromptVendor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -252,6 +254,12 @@ pub struct AgentPromptCompleteness {
     pub required_vendors: Vec<AgentPromptVendor>,
     pub published_vendors: Vec<AgentPromptVendor>,
     pub missing_vendors: Vec<AgentPromptVendor>,
+    #[serde(default)]
+    pub required_profiles: Vec<String>,
+    #[serde(default)]
+    pub published_prompt_count: usize,
+    #[serde(default)]
+    pub required_prompt_count: usize,
     pub ready: bool,
 }
 

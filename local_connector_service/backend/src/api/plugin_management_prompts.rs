@@ -43,6 +43,7 @@ pub(super) async fn get_agent_prompt_bundle(
             .resolve_agent_prompt_for_service(&ResolveAgentPromptRequest {
                 agent_key: SystemAgentKey::LocalConnectorCommandApprovalAgent,
                 vendor,
+                profile: None,
             })
             .await
             .map_err(plugin_management_error)?;

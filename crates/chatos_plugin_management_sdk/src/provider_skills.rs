@@ -18,6 +18,8 @@ pub struct McpProviderSkill {
     pub instructions: String,
     #[serde(default)]
     pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_profiles: Vec<String>,
 }
 
 pub fn provider_skills_from_metadata(metadata: &ResourceMetadata) -> Vec<McpProviderSkill> {
@@ -33,6 +35,14 @@ pub fn compose_mcp_provider_skills_prompt<'a>(
     mcps: impl IntoIterator<Item = &'a McpRecord>,
     locale: Option<&str>,
 ) -> Option<String> {
+    compose_mcp_provider_skills_prompt_for_task_profile(mcps, locale, None)
+}
+
+pub fn compose_mcp_provider_skills_prompt_for_task_profile<'a>(
+    mcps: impl IntoIterator<Item = &'a McpRecord>,
+    locale: Option<&str>,
+    task_profile: Option<&str>,
+) -> Option<String> {
     let locale = normalize_locale(locale);
     let mut seen_resources = HashSet::new();
     let mut seen_skills = HashSet::new();
@@ -42,7 +52,11 @@ pub fn compose_mcp_provider_skills_prompt<'a>(
         if !mcp.enabled || !seen_resources.insert(mcp.id.as_str()) {
             continue;
         }
-        let skills = select_skills_for_locale(provider_skills_from_metadata(&mcp.metadata), locale);
+        let skills = select_skills_for_context(
+            provider_skills_from_metadata(&mcp.metadata),
+            locale,
+            task_profile,
+        );
         let skill_sections = skills
             .into_iter()
             .filter_map(|skill| {
@@ -140,6 +154,35 @@ impl ResolvedAgentCapabilities {
             .collect::<Vec<_>>();
         compose_mcp_provider_skills_prompt(mcps.into_iter().map(|item| &item.resource), locale)
     }
+
+    pub fn compose_provider_skills_prompt_for_task_profile<'a>(
+        &self,
+        effective_mcp_identifiers: impl IntoIterator<Item = &'a str>,
+        locale: Option<&str>,
+        task_profile: Option<&str>,
+    ) -> Option<String> {
+        let mut seen = HashSet::new();
+        let mcps = effective_mcp_identifiers
+            .into_iter()
+            .filter_map(|identifier| {
+                let identifier = identifier.trim();
+                if identifier.is_empty() {
+                    return None;
+                }
+                let item = self.mcps.iter().find(|item| {
+                    item.binding.enabled
+                        && item.resource.enabled
+                        && mcp_matches_identifier(&item.resource, identifier)
+                })?;
+                seen.insert(item.resource.id.as_str()).then_some(item)
+            })
+            .collect::<Vec<_>>();
+        compose_mcp_provider_skills_prompt_for_task_profile(
+            mcps.into_iter().map(|item| &item.resource),
+            locale,
+            task_profile,
+        )
+    }
 }
 
 fn mcp_matches_identifier(mcp: &McpRecord, identifier: &str) -> bool {
@@ -150,10 +193,25 @@ fn mcp_matches_identifier(mcp: &McpRecord, identifier: &str) -> bool {
         || mcp.runtime.builtin_kind.as_deref() == Some(identifier)
 }
 
-fn select_skills_for_locale(
+fn select_skills_for_context(
     skills: Vec<McpProviderSkill>,
     locale: Option<&str>,
+    task_profile: Option<&str>,
 ) -> Vec<McpProviderSkill> {
+    let task_profile = task_profile
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
+    let skills = skills
+        .into_iter()
+        .filter(|skill| {
+            skill.task_profiles.is_empty()
+                || skill
+                    .task_profiles
+                    .iter()
+                    .any(|profile| profile.trim() == task_profile)
+        })
+        .collect::<Vec<_>>();
     let untagged = || {
         skills
             .iter()
@@ -349,5 +407,48 @@ mod tests {
             .expect("effective provider prompt");
 
         assert!(prompt.contains("使用 code_maintainer_write"));
+    }
+
+    #[test]
+    fn provider_prompt_selects_only_the_program_task_profile() {
+        let mut task_runner = resolved_mcp("task-runner", "task_runner_service", true, true);
+        task_runner.resource.metadata.extra.insert(
+            PROVIDER_SKILLS_METADATA_KEY.to_string(),
+            json!([
+                {
+                    "id": "ordinary",
+                    "name": "普通模式",
+                    "instructions": "创建普通执行任务",
+                    "task_profiles": ["default"]
+                },
+                {
+                    "id": "planning",
+                    "name": "规划模式",
+                    "instructions": "创建规划任务并等待回传",
+                    "task_profiles": ["chatos_plan"]
+                }
+            ]),
+        );
+        let capabilities = capabilities(vec![task_runner]);
+
+        let ordinary = capabilities
+            .compose_provider_skills_prompt_for_task_profile(
+                ["task_runner_service"],
+                Some("zh-CN"),
+                None,
+            )
+            .expect("ordinary provider prompt");
+        assert!(ordinary.contains("创建普通执行任务"));
+        assert!(!ordinary.contains("创建规划任务并等待回传"));
+
+        let planning = capabilities
+            .compose_provider_skills_prompt_for_task_profile(
+                ["task_runner_service"],
+                Some("zh-CN"),
+                Some("chatos_plan"),
+            )
+            .expect("planning provider prompt");
+        assert!(!planning.contains("创建普通执行任务"));
+        assert!(planning.contains("创建规划任务并等待回传"));
     }
 }

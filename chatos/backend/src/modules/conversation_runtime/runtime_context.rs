@@ -278,6 +278,7 @@ pub async fn resolve_runtime_context(
         agent_profile.key(),
         req.prompt_vendor.as_deref(),
         req.model_provider.as_str(),
+        agent_profile.task_runner_task_profile(),
     )
     .await
     {

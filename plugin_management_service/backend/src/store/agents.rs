@@ -48,7 +48,9 @@ impl AppStore {
         &self,
         agent_key: &str,
     ) -> Result<Vec<AgentProviderPromptRecord>, String> {
-        let options = FindOptions::builder().sort(doc! { "vendor": 1 }).build();
+        let options = FindOptions::builder()
+            .sort(doc! { "profile": 1, "vendor": 1 })
+            .build();
         self.agent_prompts
             .find(doc! { "agent_key": agent_key }, options)
             .await
@@ -61,11 +63,31 @@ impl AppStore {
     pub async fn get_agent_prompt(
         &self,
         agent_key: &str,
+        profile: &str,
         vendor: chatos_plugin_management_sdk::AgentPromptVendor,
     ) -> Result<Option<AgentProviderPromptRecord>, String> {
         let vendor = mongodb::bson::to_bson(&vendor).map_err(|err| err.to_string())?;
+        let profile = chatos_plugin_management_sdk::normalize_agent_prompt_profile(Some(profile));
+        let profile_filter =
+            if profile == chatos_plugin_management_sdk::DEFAULT_AGENT_PROMPT_PROFILE {
+                doc! {
+                    "$or": [
+                        { "profile": &profile },
+                        { "profile": { "$exists": false } },
+                    ]
+                }
+            } else {
+                doc! { "profile": &profile }
+            };
         self.agent_prompts
-            .find_one(doc! { "agent_key": agent_key, "vendor": vendor }, None)
+            .find_one(
+                doc! {
+                    "agent_key": agent_key,
+                    "vendor": vendor,
+                    "$and": [profile_filter],
+                },
+                None,
+            )
             .await
             .map_err(|err| err.to_string())
     }
@@ -74,7 +96,7 @@ impl AppStore {
         &self,
     ) -> Result<Vec<AgentProviderPromptRecord>, String> {
         let options = FindOptions::builder()
-            .sort(doc! { "agent_key": 1, "vendor": 1 })
+            .sort(doc! { "agent_key": 1, "profile": 1, "vendor": 1 })
             .build();
         self.agent_prompts
             .find(

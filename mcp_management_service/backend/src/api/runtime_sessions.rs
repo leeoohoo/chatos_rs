@@ -399,6 +399,7 @@ pub(super) async fn resolve_runtime_session(
             &capabilities,
             tool_result.tools.as_slice(),
             request.locale.as_deref(),
+            request.task_profile.as_deref(),
         );
         let plugin_instruction_items = plugin_instruction_items(
             &plugin_local_tool_component_bindings,

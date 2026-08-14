@@ -14,17 +14,55 @@ pub struct SystemMcpProviderSkill {
     pub description: String,
     pub instructions: String,
     pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_profiles: Vec<String>,
 }
 
 pub fn system_mcp_provider_skills(key: SystemMcpKey) -> Vec<SystemMcpProviderSkill> {
     if key == SystemMcpKey::TaskManager {
         return Vec::new();
     }
+    if key == SystemMcpKey::TaskRunnerService {
+        return vec![
+            task_runner_provider_skill(false),
+            task_runner_provider_skill(true),
+        ];
+    }
     let descriptor = system_mcp_descriptor(key);
     if let Some(kind) = descriptor.embedded_kind {
         return builtin_provider_skills(kind, descriptor.display_name);
     }
     service_provider_skill(key).into_iter().collect()
+}
+
+pub fn task_runner_provider_skill(planning: bool) -> SystemMcpProviderSkill {
+    let (id, name, description, instructions) = if planning {
+        (
+            "task_runner_planning_usage",
+            "规划模式异步任务工具使用指南",
+            "指导 AI 将当前规划需求委派给 Task Runner 规划阶段并等待后台回传。",
+            include_str!("../provider_skills/task-runner-planning-service.md"),
+        )
+    } else {
+        (
+            "task_runner_usage",
+            "普通模式异步任务工具使用指南",
+            "指导 AI 把当前用户和项目需求安排为可持续执行和回传结果的后台任务。",
+            include_str!("../provider_skills/task-runner-service.md"),
+        )
+    };
+    SystemMcpProviderSkill {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: description.to_string(),
+        instructions: instructions.trim().to_string(),
+        locale: None,
+        task_profiles: vec![if planning {
+            "chatos_plan".to_string()
+        } else {
+            "default".to_string()
+        }],
+    }
 }
 
 fn builtin_provider_skills(
@@ -55,6 +93,7 @@ fn builtin_provider_skills(
             description,
             instructions,
             locale: Some(locale_key.to_string()),
+            task_profiles: Vec::new(),
         })
     })
     .collect()
@@ -92,12 +131,6 @@ fn service_provider_skill(key: SystemMcpKey) -> Option<SystemMcpProviderSkill> {
             "指导执行 Agent 记录简短、可展示的当前任务执行过程。",
             include_str!("../provider_skills/task-process-log.md"),
         ),
-        SystemMcpKey::TaskRunnerService => (
-            "task_runner_usage",
-            "异步任务工具使用指南",
-            "指导 AI 把当前用户和项目需求安排为可持续执行和回传结果的后台任务。",
-            include_str!("../provider_skills/task-runner-service.md"),
-        ),
         _ => return None,
     };
     Some(SystemMcpProviderSkill {
@@ -106,6 +139,7 @@ fn service_provider_skill(key: SystemMcpKey) -> Option<SystemMcpProviderSkill> {
         description: description.to_string(),
         instructions: instructions.trim().to_string(),
         locale: None,
+        task_profiles: Vec::new(),
     })
 }
 
@@ -120,21 +154,37 @@ mod tests {
             SystemMcpKey::ProjectRuntimeEnvironment,
             SystemMcpKey::TaskProcessLog,
         ] {
-            let guidance = service_provider_skill(key).expect("service tool guidance");
-            let content = format!(
-                "{}\n{}\n{}",
-                guidance.name, guidance.description, guidance.instructions
-            );
-            for forbidden in [
-                "MCP",
-                "Local Connector",
-                "Harness",
-                "Provider",
-                "execution plane",
-                "Runtime Session",
-            ] {
-                assert!(!content.contains(forbidden), "{key:?}: {forbidden}");
+            let guidance = system_mcp_provider_skills(key);
+            assert!(!guidance.is_empty(), "service tool guidance");
+            for guidance in guidance {
+                let content = format!(
+                    "{}\n{}\n{}",
+                    guidance.name, guidance.description, guidance.instructions
+                );
+                for forbidden in [
+                    "MCP",
+                    "Local Connector",
+                    "Harness",
+                    "Provider",
+                    "execution plane",
+                    "Runtime Session",
+                ] {
+                    assert!(!content.contains(forbidden), "{key:?}: {forbidden}");
+                }
             }
         }
+    }
+
+    #[test]
+    fn task_runner_guidance_is_split_by_program_task_profile() {
+        let ordinary = task_runner_provider_skill(false);
+        let planning = task_runner_provider_skill(true);
+
+        assert!(ordinary.instructions.contains("普通模式"));
+        assert!(!ordinary.instructions.contains("自由文本规划"));
+        assert!(planning.instructions.contains("规划模式"));
+        assert!(planning.instructions.contains("不得用自由文本规划"));
+        assert!(planning.instructions.contains("wait_for_task_completion"));
+        assert_ne!(ordinary.id, planning.id);
     }
 }

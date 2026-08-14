@@ -75,6 +75,14 @@ fn successful_dependency_graph_result() -> Value {
     })
 }
 
+fn successful_planning_delegation_result(name: &str) -> Value {
+    json!({
+        "name": name,
+        "success": true,
+        "is_error": false,
+    })
+}
+
 fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelConfig {
     ResolvedChatModelConfig {
         model_config_id: Some("model-config-1".to_string()),
@@ -532,6 +540,30 @@ fn planning_integrity_tracker_requires_repair_then_later_graph_verification() {
 }
 
 #[test]
+fn planning_integrity_tracker_records_task_creation_and_background_acknowledgement() {
+    let state = Arc::new(Mutex::new(TaskTurnLifecycleState {
+        project_planning_integrity_guard: true,
+        ..TaskTurnLifecycleState::default()
+    }));
+    let callbacks =
+        track_project_planning_integrity(RuntimeCallbacks::default(), Arc::clone(&state));
+    let callback = callbacks.on_tools_end.expect("tools end callback");
+
+    callback(json!({
+        "tool_results": [
+            successful_planning_delegation_result("task_runner_service_create_task"),
+            successful_planning_delegation_result(
+                "task_runner_service_wait_for_task_completion"
+            )
+        ]
+    }));
+
+    let state = state.lock().expect("state");
+    assert!(state.project_planning_task_created);
+    assert!(state.project_planning_background_acknowledged);
+}
+
+#[test]
 fn planning_integrity_tracker_finalizes_a_repeated_successful_dependency_batch_after_verification()
 {
     let state = Arc::new(Mutex::new(TaskTurnLifecycleState {
@@ -700,10 +732,165 @@ async fn planning_integrity_guard_rejects_a_false_success_summary() {
 }
 
 #[tokio::test]
+async fn planning_mode_without_task_creation_continues_instead_of_succeeding() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        project_planning_integrity_guard: true,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let action = hook
+        .after_final_response(final_response_context(ai_response(
+            "下面是完整的游戏需求、技术方案和任务拆分。",
+        )))
+        .await
+        .expect("planning delegation continuation");
+
+    match action {
+        RuntimeFinalResponseAction::Continue {
+            input_items,
+            reason,
+        } => {
+            assert_eq!(reason, "project_planning_delegation_repair");
+            assert!(input_items.iter().any(|item| {
+                item.get("role").and_then(Value::as_str) == Some("system")
+                    && item.to_string().contains("不要用自由文本规划代替任务")
+            }));
+        }
+        _ => panic!("expected planning delegation continuation"),
+    }
+}
+
+#[tokio::test]
+async fn legacy_planning_finalization_cannot_bypass_task_delegation() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        project_planning_integrity_guard: true,
+        project_planning_force_finalization: true,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let directive = hook
+        .before_model_request(RuntimeIterationContext {
+            conversation_id: Some("session-1".to_string()),
+            conversation_turn_id: Some("turn-1".to_string()),
+            iteration: 3,
+            reason: "tool_results".to_string(),
+            input: json!([]),
+        })
+        .await
+        .expect("planning delegation remains enabled");
+    assert!(directive.tools_enabled);
+
+    let action = hook
+        .after_final_response(final_response_context(ai_response("规划完成。")))
+        .await
+        .expect("planning delegation continuation");
+    assert!(matches!(
+        action,
+        RuntimeFinalResponseAction::Continue { reason, .. }
+            if reason == "project_planning_delegation_repair"
+    ));
+}
+
+#[tokio::test]
+async fn planning_mode_with_created_task_requires_background_wait() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        project_planning_integrity_guard: true,
+        project_planning_task_created: true,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let action = hook
+        .after_final_response(final_response_context(ai_response("规划任务已创建。")))
+        .await
+        .expect("background wait continuation");
+
+    match action {
+        RuntimeFinalResponseAction::Continue {
+            input_items,
+            reason,
+        } => {
+            assert_eq!(reason, "project_planning_delegation_repair");
+            assert!(input_items
+                .iter()
+                .any(|item| item.to_string().contains("wait_for_task_completion")));
+        }
+        _ => panic!("expected background wait continuation"),
+    }
+}
+
+#[tokio::test]
+async fn completed_planning_delegation_enters_tool_free_finalization() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        project_planning_integrity_guard: true,
+        project_planning_task_created: true,
+        project_planning_background_acknowledged: true,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let directive = hook
+        .before_model_request(RuntimeIterationContext {
+            conversation_id: Some("session-1".to_string()),
+            conversation_turn_id: Some("turn-1".to_string()),
+            iteration: 3,
+            reason: "tool_results".to_string(),
+            input: json!([]),
+        })
+        .await
+        .expect("planning delegation finalization directive");
+
+    assert!(!directive.tools_enabled);
+    assert!(directive.input_items.iter().any(|item| {
+        item.to_string()
+            .contains("Planning Delegation Finalization")
+            && item.to_string().contains("planning has started")
+    }));
+
+    let action = hook
+        .after_final_response(final_response_context(ai_response(
+            "规划已开始，完成后会正常回传结果。",
+        )))
+        .await
+        .expect("planning delegation final response");
+    assert!(matches!(action, RuntimeFinalResponseAction::Accept));
+}
+
+#[tokio::test]
+async fn planning_mode_fails_after_three_missing_delegation_repairs() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        project_planning_integrity_guard: true,
+        project_planning_delegation_repair_rounds: 3,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let error = hook
+        .after_final_response(final_response_context(ai_response("规划完成。")))
+        .await
+        .expect_err("missing planning delegation must fail");
+
+    assert!(error.contains("不能标记为完成"));
+    assert!(error.contains("未创建 Task Runner 规划任务"));
+}
+
+#[tokio::test]
+async fn ordinary_mode_is_not_blocked_by_planning_delegation_guard() {
+    let mut hook = lifecycle_hook_with_state(TaskTurnLifecycleState::default());
+    hook.max_task_follow_up_rounds = 0;
+
+    let action = hook
+        .after_final_response(final_response_context(ai_response("普通回复。")))
+        .await
+        .expect("ordinary final response");
+
+    assert!(matches!(action, RuntimeFinalResponseAction::Accept));
+}
+
+#[tokio::test]
 async fn repeated_planning_writes_enter_a_tool_free_finalization_iteration() {
     let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
         project_planning_integrity_guard: true,
         project_planning_force_finalization: true,
+        project_planning_task_created: true,
+        project_planning_background_acknowledged: true,
         mode: Some(TaskTurnFollowUpMode::ContinueExecution),
         ..TaskTurnLifecycleState::default()
     });
@@ -725,8 +912,8 @@ async fn repeated_planning_writes_enter_a_tool_free_finalization_iteration() {
         item.get("role").and_then(Value::as_str) == Some("system")
             && item
                 .to_string()
-                .contains("identical project-task dependency")
-            && item.to_string().contains("Do not call any more tools")
+                .contains("Planning Delegation Finalization")
+            && item.to_string().contains("Do not call more tools")
     }));
 }
 
@@ -735,6 +922,8 @@ async fn repeated_planning_writes_accept_the_first_final_response() {
     let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
         project_planning_integrity_guard: true,
         project_planning_force_finalization: true,
+        project_planning_task_created: true,
+        project_planning_background_acknowledged: true,
         mode: Some(TaskTurnFollowUpMode::ContinueExecution),
         ..TaskTurnLifecycleState::default()
     });
