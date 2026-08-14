@@ -56,10 +56,13 @@ impl MongoStore {
             )
             .await
             .map_err(|err| {
-                if is_mongo_active_run_conflict(&err.to_string()) {
+                let message = err.to_string();
+                if is_mongo_active_run_conflict(message.as_str()) {
                     "当前任务已有正在执行的运行".to_string()
+                } else if is_mongo_execution_lane_conflict(message.as_str()) {
+                    EXECUTION_LANE_BUSY_ERROR.to_string()
                 } else {
-                    err.to_string()
+                    message
                 }
             })?;
         self.sync_cancel_requested_cache(&run);

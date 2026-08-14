@@ -383,7 +383,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                 "tasks": [
                     {
                         "client_ref": "prepare",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Prepare implementation",
                         "objective": "Inspect the current implementation and prepare the change.",
                         "default_model_config_id": "model-that-must-be-overridden",
@@ -394,7 +394,7 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                     },
                     {
                         "client_ref": "implement",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
                         "default_model_config_id": "another-model-that-must-be-overridden",
@@ -620,13 +620,13 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                 "tasks": [
                     {
                         "client_ref": "prepare",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Prepare implementation",
                         "objective": "Inspect the current implementation and prepare the change."
                     },
                     {
                         "client_ref": "implement",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
                         "prerequisite_refs": ["prepare"]

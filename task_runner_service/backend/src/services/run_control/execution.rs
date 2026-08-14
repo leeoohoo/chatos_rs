@@ -352,9 +352,9 @@ impl TaskRunnerSingleStepResolver {
                     &prerequisite_context,
                     true,
                 )
-                .await
+                .await?
         {
-            return Err("Task Run could not enter the model phase".to_string());
+            return Err("Task Run was cancelled before entering the model phase".to_string());
         }
         let prepared = self
             .service

@@ -45,12 +45,32 @@ impl TaskRunnerMcpService {
             return Err("tasks 不能为空".to_string());
         }
 
+        let project_task_ids_by_ref = chatos_project_execution::build_project_task_scope_refs(
+            request_context
+                .expected_project_task_ids
+                .iter()
+                .map(String::as_str),
+        )
+        .into_iter()
+        .map(|(project_task_id, project_task_ref)| (project_task_ref, project_task_id))
+        .collect::<BTreeMap<_, _>>();
         let submitted_project_task_ids = args
             .tasks
             .iter()
-            .map(|item| item.project_task_id.trim())
+            .map(|item| item.project_task_ref.trim())
             .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
+            .map(|project_task_ref| {
+                project_task_ids_by_ref
+                    .get(project_task_ref)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "未知 project_task_ref: {project_task_ref}；必须使用 selected_project_tasks 中的程序引用"
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
         validate_project_execution_scope(
             &request_context.expected_project_task_ids,
@@ -125,10 +145,15 @@ impl TaskRunnerMcpService {
             if client_ref.is_empty() {
                 return Err("client_ref 不能为空".to_string());
             }
-            let project_task_id = item.project_task_id.trim().to_string();
-            if project_task_id.is_empty() {
-                return Err(format!("project_task_id 不能为空: {client_ref}"));
-            }
+            let project_task_ref = item.project_task_ref.trim();
+            let project_task_id = project_task_ids_by_ref
+                .get(project_task_ref)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "未知 project_task_ref: {project_task_ref}；必须使用 selected_project_tasks 中的程序引用"
+                    )
+                })?;
             if project_task_by_ref
                 .insert(client_ref.clone(), project_task_id.clone())
                 .is_some()

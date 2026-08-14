@@ -90,6 +90,31 @@ fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
 }
 
 #[test]
+fn running_execution_lane_lookup_excludes_the_waiting_run() {
+    let store = test_store();
+    let mut active = queued_run();
+    active.id = "run-active".to_string();
+    active.task_id = "task-active".to_string();
+    active.status = TaskRunStatus::Running;
+    active.execution_lane_key = Some("project:one".to_string());
+    store.save_run(active).expect("save active lane owner");
+
+    let mut waiting = queued_run();
+    waiting.id = "run-waiting".to_string();
+    waiting.task_id = "task-waiting".to_string();
+    waiting.execution_lane_key = Some("project:one".to_string());
+    store.save_run(waiting).expect("save queued lane waiter");
+
+    let owner = store
+        .get_running_run_for_execution_lane("project:one", "run-waiting")
+        .expect("find active lane owner");
+    assert_eq!(owner.id, "run-active");
+    assert!(store
+        .get_running_run_for_execution_lane("project:two", "run-waiting")
+        .is_none());
+}
+
+#[test]
 fn stale_cancel_repair_updates_terminal_runs_in_place() {
     let store = test_store();
     let mut terminal = queued_run();

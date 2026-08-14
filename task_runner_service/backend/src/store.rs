@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{self, doc, Bson, Document},
-    options::{FindOptions, IndexOptions, ReplaceOptions},
+    options::{FindOneOptions, FindOptions, IndexOptions, ReplaceOptions},
     Client, Collection, IndexModel,
 };
 use parking_lot::RwLock;
@@ -44,7 +44,8 @@ use self::codec::ask_user_prompt_status_to_str;
 use self::mongo_support::{
     bson_string_field, bson_usize_field, build_limit_stage, build_mongo_prompt_filter,
     build_mongo_run_filter, build_mongo_task_filter, build_skip_stage,
-    is_mongo_active_run_conflict, is_mongo_active_run_index_conflict, mongo_find_options,
+    is_mongo_active_run_conflict, is_mongo_active_run_index_conflict,
+    is_mongo_execution_lane_conflict, mongo_find_options,
 };
 use self::task_support::{
     apply_offset_limit, build_page_response, empty_task_stats, slice_page_items, task_due_at,
@@ -54,6 +55,7 @@ use self::task_support::{
 const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
 const ACTIVE_EXECUTION_LANE_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_execution_lane_unique";
 const TASK_RUNS_TASK_CREATED_INDEX_NAME: &str = "idx_task_runs_task_created_at";
+pub(crate) const EXECUTION_LANE_BUSY_ERROR: &str = "当前项目执行通道已有正在执行的运行";
 
 fn task_run_status_is_terminal(status: TaskRunStatus) -> bool {
     matches!(

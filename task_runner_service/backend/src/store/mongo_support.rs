@@ -23,6 +23,13 @@ pub(super) fn is_mongo_active_run_conflict(message: &str) -> bool {
         && normalized.contains("task_id")
 }
 
+pub(super) fn is_mongo_execution_lane_conflict(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    (normalized.contains("e11000") || normalized.contains("duplicate key"))
+        && (normalized.contains("execution_lane_key")
+            || normalized.contains(super::ACTIVE_EXECUTION_LANE_UNIQUE_INDEX_NAME))
+}
+
 pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     let mut filter = Document::new();
     let mut and_clauses = Vec::<Document>::new();

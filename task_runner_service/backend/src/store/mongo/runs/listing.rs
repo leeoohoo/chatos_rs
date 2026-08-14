@@ -174,6 +174,26 @@ impl MongoStore {
     ) -> Result<Option<TaskRunRecord>, String> {
         self.find_by_id(&self.runs, id).await
     }
+
+    pub(in crate::store) async fn get_running_run_for_execution_lane(
+        &self,
+        execution_lane_key: &str,
+        exclude_run_id: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.runs
+            .find_one(
+                doc! {
+                    "execution_lane_key": execution_lane_key,
+                    "status": "running",
+                    "id": { "$ne": exclude_run_id },
+                },
+                FindOneOptions::builder()
+                    .sort(doc! { "started_at": 1, "id": 1 })
+                    .build(),
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
 }
 
 fn decode_run_execution_stats_document(

@@ -315,7 +315,8 @@ mod tests {
 
         assert!(prompt.contains("must_call_tool"));
         assert!(prompt.contains("create_project_execution_tasks"));
-        assert!(prompt.contains("project-task-1"));
+        assert!(prompt.contains("project_task_001"));
+        assert!(!prompt.contains("project-task-1"));
         assert!(prompt.contains("model-selected"));
         assert!(!prompt.contains("execution_plane"));
         assert!(!prompt.contains("local_connector"));

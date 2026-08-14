@@ -9,6 +9,7 @@ use crate::mcp_server::support::{
 use crate::mcp_server::PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE;
 use crate::mcp_server::{reject_ai_runtime_config, support::remove_internal_task_fields};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -87,6 +88,30 @@ fn task_creation_schemas_leave_task_nature_to_request_context() {
     assert!(required
         .iter()
         .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
+}
+
+#[test]
+fn project_execution_schema_exposes_program_owned_project_task_refs() {
+    let mut tools = vec![serde_json::json!({
+        "name": "create_project_execution_tasks",
+        "inputSchema": create_project_execution_tasks_schema(),
+    })];
+    super::super::support::enrich_project_execution_task_scope_schema(
+        &mut tools,
+        &BTreeSet::from(["project-task-a".to_string(), "project-task-b".to_string()]),
+    );
+
+    let values = tools[0]
+        .pointer("/inputSchema/properties/tasks/items/properties/project_task_ref/enum")
+        .and_then(Value::as_array)
+        .expect("request-scoped project task enum");
+    assert_eq!(
+        values,
+        &vec![
+            Value::String("project_task_001".to_string()),
+            Value::String("project_task_002".to_string()),
+        ]
+    );
 }
 
 #[test]

@@ -15,7 +15,7 @@ impl RunService {
         effective_workspace_dir: &str,
         prerequisite_context: &[PrerequisiteTaskContext],
         authoritative_policy: bool,
-    ) -> bool {
+    ) -> Result<bool, String> {
         initialization::initialize_model_phase(
             self,
             task,

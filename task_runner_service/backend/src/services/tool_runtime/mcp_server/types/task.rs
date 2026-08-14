@@ -174,7 +174,7 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTasksArgs {
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) client_ref: String,
-    pub(in crate::mcp_server) project_task_id: String,
+    pub(in crate::mcp_server) project_task_ref: String,
     pub(in crate::mcp_server) title: String,
     #[serde(default)]
     pub(in crate::mcp_server) description: Option<String>,

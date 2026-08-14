@@ -154,6 +154,28 @@ impl InMemoryStore {
         self.inner.read().runs.get(id).cloned()
     }
 
+    pub(in crate::store) fn get_running_run_for_execution_lane(
+        &self,
+        execution_lane_key: &str,
+        exclude_run_id: &str,
+    ) -> Option<TaskRunRecord> {
+        self.inner
+            .read()
+            .runs
+            .values()
+            .filter(|run| {
+                run.id != exclude_run_id
+                    && run.status == TaskRunStatus::Running
+                    && run.execution_lane_key.as_deref() == Some(execution_lane_key)
+            })
+            .min_by(|left, right| {
+                left.started_at
+                    .cmp(&right.started_at)
+                    .then_with(|| left.id.cmp(&right.id))
+            })
+            .cloned()
+    }
+
     pub(in crate::store) fn subscribe_run_terminal(
         &self,
         subscription: RunTerminalSubscriptionRecord,

@@ -1,12 +1,48 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeSet;
+
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskMcpSchemaChoice {
     pub value: String,
     pub title: String,
+}
+
+pub(crate) fn enrich_project_execution_task_scope_schema(
+    tools: &mut [Value],
+    expected_project_task_ids: &BTreeSet<String>,
+) {
+    if expected_project_task_ids.is_empty() {
+        return;
+    }
+    let allowed_refs = chatos_project_execution::build_project_task_scope_refs(
+        expected_project_task_ids.iter().map(String::as_str),
+    )
+    .into_values()
+    .map(Value::String)
+    .collect::<Vec<_>>();
+    for tool in tools {
+        if tool.get("name").and_then(Value::as_str) != Some("create_project_execution_tasks") {
+            continue;
+        }
+        let Some(schema) = tool
+            .pointer_mut("/inputSchema/properties/tasks/items/properties/project_task_ref")
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        schema.insert("enum".to_string(), Value::Array(allowed_refs.clone()));
+        schema.insert(
+            "description".to_string(),
+            Value::String(
+                "Select the request-scoped project task reference shown in selected_project_tasks. Task Runner resolves the reference to the internal project task id; never send UUID values."
+                    .to_string(),
+            ),
+        );
+    }
 }
 
 pub(crate) fn enrich_tool_schemas_with_task_mcp_choices(
@@ -227,10 +263,10 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "minLength": 1,
                             "description": "Temporary reference within this tool call. Task Runner returns real task ids."
                         },
-                        "project_task_id": {
+                        "project_task_ref": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Project-management task/work item id this execution task contributes to."
+                            "description": "Program-generated reference for the project-management task/work item this execution task contributes to."
                         },
                         "title": { "type": "string", "minLength": 1, "description": "Execution-task title in the current user's language." },
                         "description": { "type": "string", "description": "Execution-task description in the current user's language." },
@@ -265,7 +301,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
-                    "required": ["client_ref", "project_task_id", "title", "objective", "requires_execution", "enabled_builtin_kinds"],
+                    "required": ["client_ref", "project_task_ref", "title", "objective", "requires_execution", "enabled_builtin_kinds"],
                     "additionalProperties": false
                 }
             }

@@ -170,6 +170,12 @@ impl TaskRunnerMcpService {
                 ),
             }
         }
+        if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
+            enrich_project_execution_task_scope_schema(
+                &mut tools,
+                &request_context.expected_project_task_ids,
+            );
+        }
         Ok(tools
             .into_iter()
             .filter(|tool| {
