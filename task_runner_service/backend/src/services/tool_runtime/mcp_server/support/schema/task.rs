@@ -307,6 +307,13 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "Select the external MCP configuration ids this execution task needs from the Task Runner execution Agent binding.",
                             &[],
                         ),
+                        "owned_paths": {
+                            "type": "array",
+                            "maxItems": 200,
+                            "items": { "type": "string", "minLength": 1 },
+                            "uniqueItems": true,
+                            "description": "Structured repository-relative files or directories owned by this execution task. Implementation tasks that select CodeMaintainerWrite must declare at least one path. Verification tasks must use an empty array."
+                        },
                         "prerequisite_refs": {
                             "type": "array",
                             "items": { "type": "string", "minLength": 1 },
@@ -322,13 +329,232 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
                     "required": ["client_ref", "project_task_ref", "title", "objective", "acceptance_criteria", "task_role", "requires_execution", "enabled_builtin_kinds", "owned_paths"],
-                    "additionalProperties": false
+                    "additionalProperties": false,
+                    "examples": [{
+                        "client_ref": "implementation_001",
+                        "project_task_ref": "project_task_001",
+                        "title": "实现项目任务",
+                        "objective": "完成项目任务并验证结果",
+                        "acceptance_criteria": ["目标功能通过验证"],
+                        "task_role": "implementation",
+                        "requires_execution": true,
+                        "enabled_builtin_kinds": ["CodeMaintainerWrite", "TerminalController"],
+                        "owned_paths": ["src"]
+                    }]
                 }
             }
         },
         "required": ["project_id", "requirement_id", "tasks"],
         "additionalProperties": false
     })
+}
+
+pub(crate) fn validate_create_project_execution_tasks_arguments(
+    value: &Value,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    let Some(root) = value.as_object() else {
+        return Err(
+            "create_project_execution_tasks 参数校验失败:\n- arguments 必须是对象".to_string(),
+        );
+    };
+    collect_unknown_fields(
+        root,
+        "arguments",
+        &["project_id", "requirement_id", "tasks"],
+        &mut errors,
+    );
+    collect_required_non_empty_string(root, "project_id", "project_id", &mut errors);
+    collect_required_non_empty_string(root, "requirement_id", "requirement_id", &mut errors);
+    match root.get("tasks") {
+        None => errors.push("tasks 缺失".to_string()),
+        Some(Value::Array(tasks)) => {
+            if tasks.is_empty() {
+                errors.push("tasks 至少需要 1 项".to_string());
+            }
+            if tasks.len() > 50 {
+                errors.push("tasks 最多允许 50 项".to_string());
+            }
+            for (index, task) in tasks.iter().enumerate() {
+                collect_project_execution_task_errors(task, index, &mut errors);
+            }
+        }
+        Some(_) => errors.push("tasks 必须是数组".to_string()),
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "create_project_execution_tasks 参数校验失败:\n- {}",
+            errors.join("\n- ")
+        ))
+    }
+}
+
+fn collect_project_execution_task_errors(value: &Value, index: usize, errors: &mut Vec<String>) {
+    let path = format!("tasks[{index}]");
+    let Some(task) = value.as_object() else {
+        errors.push(format!("{path} 必须是对象"));
+        return;
+    };
+    collect_unknown_fields(
+        task,
+        path.as_str(),
+        &[
+            "client_ref",
+            "project_task_ref",
+            "title",
+            "description",
+            "objective",
+            "acceptance_criteria",
+            "task_role",
+            "input_payload",
+            "priority",
+            "tags",
+            "default_model_config_id",
+            "requires_execution",
+            "enabled_builtin_kinds",
+            "external_mcp_config_ids",
+            "owned_paths",
+            "prerequisite_refs",
+            "context_refs",
+            "prerequisite_task_ids",
+        ],
+        errors,
+    );
+    for field in ["client_ref", "project_task_ref", "title", "objective"] {
+        collect_required_non_empty_string(task, field, format!("{path}.{field}"), errors);
+    }
+    if let Some(description) = task.get("description") {
+        if !description.is_string() {
+            errors.push(format!("{path}.description 必须是字符串"));
+        }
+    }
+    if let Some(priority) = task.get("priority") {
+        if !priority.is_i64() && !priority.is_u64() {
+            errors.push(format!("{path}.priority 必须是整数"));
+        }
+    }
+    if let Some(default_model_config_id) = task.get("default_model_config_id") {
+        if default_model_config_id
+            .as_str()
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            errors.push(format!("{path}.default_model_config_id 必须是非空字符串"));
+        }
+    }
+    match task.get("task_role") {
+        None => errors.push(format!("{path}.task_role 缺失")),
+        Some(Value::String(role))
+            if matches!(
+                role.trim().to_ascii_lowercase().as_str(),
+                "implementation" | "verification"
+            ) => {}
+        Some(Value::String(_)) => errors.push(format!(
+            "{path}.task_role 必须是 implementation 或 verification"
+        )),
+        Some(_) => errors.push(format!("{path}.task_role 必须是字符串")),
+    }
+    match task.get("requires_execution") {
+        None => errors.push(format!("{path}.requires_execution 缺失")),
+        Some(Value::Bool(_)) => {}
+        Some(_) => errors.push(format!("{path}.requires_execution 必须是布尔值")),
+    }
+    collect_required_string_array(
+        task,
+        "acceptance_criteria",
+        format!("{path}.acceptance_criteria"),
+        true,
+        errors,
+    );
+    collect_required_string_array(
+        task,
+        "enabled_builtin_kinds",
+        format!("{path}.enabled_builtin_kinds"),
+        false,
+        errors,
+    );
+    collect_required_string_array(
+        task,
+        "owned_paths",
+        format!("{path}.owned_paths"),
+        false,
+        errors,
+    );
+    for field in [
+        "tags",
+        "external_mcp_config_ids",
+        "prerequisite_refs",
+        "context_refs",
+        "prerequisite_task_ids",
+    ] {
+        if let Some(value) = task.get(field) {
+            collect_string_array(value, format!("{path}.{field}"), false, errors);
+        }
+    }
+}
+
+fn collect_unknown_fields(
+    object: &serde_json::Map<String, Value>,
+    path: &str,
+    allowed: &[&str],
+    errors: &mut Vec<String>,
+) {
+    let allowed = allowed.iter().copied().collect::<BTreeSet<_>>();
+    for field in object
+        .keys()
+        .filter(|field| !allowed.contains(field.as_str()))
+    {
+        errors.push(format!("{path}.{field} 是未知字段"));
+    }
+}
+
+fn collect_required_non_empty_string(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    path: impl Into<String>,
+    errors: &mut Vec<String>,
+) {
+    let path = path.into();
+    match object.get(field) {
+        None => errors.push(format!("{path} 缺失")),
+        Some(Value::String(value)) if !value.trim().is_empty() => {}
+        Some(Value::String(_)) => errors.push(format!("{path} 不能为空")),
+        Some(_) => errors.push(format!("{path} 必须是字符串")),
+    }
+}
+
+fn collect_required_string_array(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    path: String,
+    require_non_empty: bool,
+    errors: &mut Vec<String>,
+) {
+    match object.get(field) {
+        None => errors.push(format!("{path} 缺失")),
+        Some(value) => collect_string_array(value, path, require_non_empty, errors),
+    }
+}
+
+fn collect_string_array(
+    value: &Value,
+    path: String,
+    require_non_empty: bool,
+    errors: &mut Vec<String>,
+) {
+    let Some(items) = value.as_array() else {
+        errors.push(format!("{path} 必须是字符串数组"));
+        return;
+    };
+    if require_non_empty && items.is_empty() {
+        errors.push(format!("{path} 至少需要 1 项"));
+    }
+    for (index, item) in items.iter().enumerate() {
+        if item.as_str().is_none_or(|value| value.trim().is_empty()) {
+            errors.push(format!("{path}[{index}] 必须是非空字符串"));
+        }
+    }
 }
 
 pub(crate) fn task_status_values() -> Vec<&'static str> {

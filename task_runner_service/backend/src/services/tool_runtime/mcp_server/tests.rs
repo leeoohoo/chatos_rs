@@ -71,8 +71,20 @@ async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectSe
 async fn test_mcp_service_with_config(
     config: AppConfig,
 ) -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
+    test_mcp_service_with_config_and_policy_mode(config, false).await
+}
+
+async fn test_mcp_service_with_config_and_policy_mode(
+    config: AppConfig,
+    allow_unresolved_plugin_policy: bool,
+) -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
     let store = AppStore::new(&config).await.expect("store");
     let task_service = TaskService::new(config.clone(), store.clone());
+    let task_service = if allow_unresolved_plugin_policy {
+        task_service.with_unresolved_plugin_policy_for_test()
+    } else {
+        task_service
+    };
     let model_config_service = ModelConfigService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone());
@@ -152,6 +164,7 @@ async fn get_project_sync_record(
         "name": "Project A",
         "root_path": null,
         "git_url": null,
+        "source_type": "cloud",
         "description": null,
         "status": "active",
         "created_at": "2026-01-01T00:00:00Z",

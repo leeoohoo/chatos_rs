@@ -30,10 +30,13 @@ use super::super::requirement_execution::{
     sync_requirement_execution_state, topological_work_item_order,
     validate_requirement_prerequisites, work_item_dependency_map, HandlerError,
 };
+use super::plan_query::{
+    find_latest_cloud_execution_source_message, is_cloud_execution_planner_status_pending,
+};
 use super::rerun_support::ensure_old_cloud_execution_batch_ready_for_replacement;
 use super::{
     expected_execution_project_task_ids, load_cloud_execution_source_message,
-    ExecuteRequirementRequest,
+    repair_stale_cloud_execution_planner_message, ExecuteRequirementRequest,
 };
 
 pub(super) async fn execute_requirement_inner(
@@ -197,6 +200,15 @@ pub(super) async fn execute_requirement_inner(
             "该需求执行范围内没有需要执行的未完成项目任务",
         ));
     }
+    ensure_latest_cloud_execution_planner_not_active(
+        &auth,
+        project.id.as_str(),
+        requirement_id.as_str(),
+        cfg.project_service_base_url.as_str(),
+        access_token.as_str(),
+        all_work_items.as_slice(),
+    )
+    .await?;
     ensure_requirement_execution_not_active(
         &root_requirement,
         &selected_work_items,
@@ -357,6 +369,50 @@ pub(super) async fn execute_requirement_inner(
         "planner_agent_key": chatos_plugin_management_sdk::SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
         "plan_mode_enabled": false,
     }))
+}
+
+async fn ensure_latest_cloud_execution_planner_not_active(
+    auth: &AuthUser,
+    project_id: &str,
+    requirement_id: &str,
+    project_service_base_url: &str,
+    access_token: &str,
+    all_work_items: &[super::super::requirement_execution::WorkItemPlanItem],
+) -> Result<(), HandlerError> {
+    let Some(message) =
+        find_latest_cloud_execution_source_message(auth, project_id, requirement_id).await?
+    else {
+        return Ok(());
+    };
+    let project_task_ids =
+        expected_execution_project_task_ids(message.metadata.as_ref(), project_id, requirement_id)?;
+    let planner_work_items = all_work_items
+        .iter()
+        .filter(|item| project_task_ids.contains(item.id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let current_links = load_execution_links_for_work_items(
+        project_service_base_url,
+        access_token,
+        planner_work_items.as_slice(),
+    )
+    .await?
+    .into_iter()
+    .filter(|link| {
+        link.source_session_id.as_deref() == Some(message.session_id.as_str())
+            && link.source_user_message_id.as_deref() == Some(message.id.as_str())
+    })
+    .collect::<Vec<_>>();
+    let message =
+        repair_stale_cloud_execution_planner_message(message, current_links.is_empty()).await?;
+    if is_cloud_execution_planner_status_pending(
+        super::plan_query::execution_message_status(&message).as_str(),
+    ) {
+        return Err(HandlerError::bad_request(
+            "该需求已有正在生成的执行计划，请等待当前规划完成或停止后重试",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn prepare_requirement_planner_turn(session_id: &str, execution_group_id: &str) {

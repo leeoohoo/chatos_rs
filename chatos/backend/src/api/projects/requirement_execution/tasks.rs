@@ -74,10 +74,9 @@ pub(in crate::api::projects) async fn ensure_requirement_execution_not_active(
 }
 
 fn requirement_execution_should_block(links: &[ExecutionLink]) -> bool {
-    links.is_empty()
-        || links
-            .iter()
-            .any(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
+    links
+        .iter()
+        .any(|link| task_runner_status_is_active(link.task_runner_status.as_deref()))
 }
 
 fn active_work_item_blocker<'a>(
@@ -143,11 +142,18 @@ mod tests {
     }
 
     #[test]
-    fn active_work_item_without_execution_link_still_blocks() {
+    fn empty_execution_link_batch_does_not_claim_an_active_runner_task() {
         let mut item = work_item(false);
         item.status = "in_progress".to_string();
 
         assert!(active_work_item_blocker(&[item], &[]).is_some());
-        assert!(requirement_execution_should_block(&[]));
+        assert!(!requirement_execution_should_block(&[]));
+    }
+
+    #[test]
+    fn active_execution_link_blocks_replanning() {
+        let links = vec![execution_link("task-1", "running")];
+
+        assert!(requirement_execution_should_block(&links));
     }
 }

@@ -5,9 +5,12 @@ use super::*;
 use crate::mcp_server::support::{
     create_model_config_schema, create_project_execution_tasks_schema,
     create_tasks_with_prerequisites_schema, update_model_config_schema,
+    validate_create_project_execution_tasks_arguments,
 };
 use crate::mcp_server::PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE;
-use crate::mcp_server::{reject_ai_runtime_config, support::remove_internal_task_fields};
+use crate::mcp_server::{
+    reject_ai_runtime_config, support::remove_internal_task_fields, CreateProjectExecutionTasksArgs,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -88,6 +91,68 @@ fn task_creation_schemas_leave_task_nature_to_request_context() {
     assert!(required
         .iter()
         .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
+    assert!(project
+        .pointer("/properties/tasks/items/properties/owned_paths")
+        .is_some());
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("owned_paths")));
+}
+
+#[test]
+fn project_execution_schema_example_matches_the_wire_contract() {
+    let schema = create_project_execution_tasks_schema();
+    let task = schema
+        .pointer("/properties/tasks/items/examples/0")
+        .cloned()
+        .expect("project execution task example");
+    let arguments = json!({
+        "project_id": "project-1",
+        "requirement_id": "requirement-1",
+        "tasks": [task]
+    });
+
+    validate_create_project_execution_tasks_arguments(&arguments)
+        .expect("schema example must pass aggregate validation");
+    serde_json::from_value::<CreateProjectExecutionTasksArgs>(arguments)
+        .expect("schema example must decode through the wire type");
+}
+
+#[test]
+fn project_execution_argument_validation_reports_all_schema_errors_once() {
+    let error = validate_create_project_execution_tasks_arguments(&json!({
+        "project_id": "project-1",
+        "unknown_root": true,
+        "tasks": [{
+            "ref": "task-1",
+            "project_task_id": "project-task-1",
+            "title": "",
+            "objective": "implement",
+            "acceptance_criteria": "done",
+            "task_role": "quality",
+            "requires_execution": "yes",
+            "enabled_builtin_kinds": [],
+            "owned_paths": []
+        }]
+    }))
+    .expect_err("invalid batch must be rejected");
+
+    for expected in [
+        "arguments.unknown_root 是未知字段",
+        "requirement_id 缺失",
+        "tasks[0].ref 是未知字段",
+        "tasks[0].client_ref 缺失",
+        "tasks[0].project_task_ref 缺失",
+        "tasks[0].title 不能为空",
+        "tasks[0].acceptance_criteria 必须是字符串数组",
+        "tasks[0].task_role 必须是 implementation 或 verification",
+        "tasks[0].requires_execution 必须是布尔值",
+    ] {
+        assert!(
+            error.contains(expected),
+            "missing error: {expected}\n{error}"
+        );
+    }
 }
 
 #[test]

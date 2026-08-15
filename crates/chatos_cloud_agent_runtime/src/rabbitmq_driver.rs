@@ -27,6 +27,10 @@ use crate::{
     CloudAgentStateStore,
 };
 
+const DELIVERY_ATTEMPT_HEADER: &str = "x-chatos-delivery-attempt";
+const DELIVERY_FAILURE_HEADER: &str = "x-chatos-delivery-failure";
+const MAX_DELIVERY_ATTEMPTS: u32 = 8;
+
 #[derive(Debug, Clone)]
 pub struct CloudAgentRabbitMqTopology {
     pub rabbitmq_url: String,
@@ -333,6 +337,7 @@ async fn process_delivery<O>(
 where
     O: CloudAgentQueueOwner,
 {
+    let delivery_attempt = cloud_agent_delivery_attempt(&delivery.properties);
     match consume_delivery(owner, delivery.data.as_slice()).await {
         Ok(
             CloudAgentConsumeDisposition::Committed
@@ -343,7 +348,17 @@ where
             .await
             .map_err(|error| error.to_string())?,
         Ok(CloudAgentConsumeDisposition::OutOfOrder | CloudAgentConsumeDisposition::Conflict) => {
-            defer_delivery(channel, topology, delivery.data.as_slice()).await?;
+            // Ordering conflicts are expected while an earlier event in the same
+            // lane is still running (a model step may take much longer than the
+            // retry delay). Keep deferring them without consuming the bounded
+            // failure budget; only actual processing errors are DLQ-bounded.
+            defer_delivery(
+                channel,
+                topology,
+                delivery.data.as_slice(),
+                delivery_attempt,
+            )
+            .await?;
             delivery
                 .ack(BasicAckOptions::default())
                 .await
@@ -355,7 +370,31 @@ where
                 error = error.as_str(),
                 "Cloud Agent delivery failed"
             );
-            defer_delivery(channel, topology, delivery.data.as_slice()).await?;
+            if cloud_agent_delivery_error_is_stale(error.as_str()) {
+                delivery
+                    .ack(BasicAckOptions::default())
+                    .await
+                    .map_err(|ack_error| ack_error.to_string())?;
+                return Ok(());
+            }
+            if delivery_attempt >= MAX_DELIVERY_ATTEMPTS {
+                dead_letter_delivery(
+                    channel,
+                    topology,
+                    delivery.data.as_slice(),
+                    delivery_attempt,
+                    error.as_str(),
+                )
+                .await?;
+            } else {
+                defer_delivery(
+                    channel,
+                    topology,
+                    delivery.data.as_slice(),
+                    delivery_attempt.saturating_add(1),
+                )
+                .await?;
+            }
             delivery
                 .ack(BasicAckOptions::default())
                 .await
@@ -363,6 +402,56 @@ where
         }
     }
     Ok(())
+}
+
+fn cloud_agent_delivery_attempt(properties: &BasicProperties) -> u32 {
+    properties
+        .headers()
+        .as_ref()
+        .and_then(|headers| {
+            headers
+                .inner()
+                .iter()
+                .find(|(key, _)| key.as_str() == DELIVERY_ATTEMPT_HEADER)
+                .and_then(|(_, value)| match value {
+                    AMQPValue::LongUInt(value) => Some(*value),
+                    _ => None,
+                })
+        })
+        .filter(|attempt| *attempt > 0)
+        .unwrap_or(1)
+}
+
+fn cloud_agent_delivery_error_is_stale(error: &str) -> bool {
+    [
+        "Cloud Agent run not found:",
+        "Task Run not found:",
+        "Task not found:",
+        "parent Task Run not found:",
+        "parent Cloud Agent run not found",
+    ]
+    .iter()
+    .any(|prefix| error.starts_with(prefix))
+}
+
+fn cloud_agent_delivery_headers(attempt: u32, failure: Option<&str>) -> FieldTable {
+    let mut headers = FieldTable::default();
+    headers.insert(
+        DELIVERY_ATTEMPT_HEADER.into(),
+        AMQPValue::LongUInt(attempt.max(1)),
+    );
+    if let Some(failure) = failure {
+        headers.insert(
+            DELIVERY_FAILURE_HEADER.into(),
+            AMQPValue::LongString(truncate_delivery_failure(failure).into()),
+        );
+    }
+    headers
+}
+
+fn truncate_delivery_failure(error: &str) -> String {
+    const MAX_CHARS: usize = 1_024;
+    error.chars().take(MAX_CHARS).collect()
 }
 
 async fn consume_delivery<O>(
@@ -575,15 +664,45 @@ async fn ensure_topology(
         )
         .await
         .map_err(|error| error.to_string())?;
+    let dead_letter_queue = dead_letter_queue_name(topology);
+    channel
+        .queue_declare(
+            dead_letter_queue.as_str(),
+            QueueDeclareOptions {
+                durable: true,
+                ..QueueDeclareOptions::default()
+            },
+            FieldTable::default(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    channel
+        .queue_bind(
+            dead_letter_queue.as_str(),
+            topology.exchange.as_str(),
+            dead_letter_queue.as_str(),
+            QueueBindOptions::default(),
+            FieldTable::default(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn dead_letter_queue_name(topology: &CloudAgentRabbitMqTopology) -> String {
+    format!("{}.dead", topology.runtime_queue)
 }
 
 async fn defer_delivery(
     channel: &Channel,
     topology: &CloudAgentRabbitMqTopology,
     payload: &[u8],
+    delivery_attempt: u32,
 ) -> Result<(), String> {
-    let expiration = topology.conflict_retry_delay.as_millis().max(1).to_string();
+    let expiration = cloud_agent_retry_delay(topology.conflict_retry_delay, delivery_attempt)
+        .as_millis()
+        .max(1)
+        .to_string();
     let confirmation = channel
         .basic_publish(
             topology.exchange.as_str(),
@@ -596,6 +715,7 @@ async fn defer_delivery(
             BasicProperties::default()
                 .with_content_type("application/json".into())
                 .with_delivery_mode(2)
+                .with_headers(cloud_agent_delivery_headers(delivery_attempt, None))
                 .with_expiration(expiration.into()),
         )
         .await
@@ -603,6 +723,46 @@ async fn defer_delivery(
         .await
         .map_err(|error| error.to_string())?;
     confirmed("deferred Cloud Agent event", confirmation)
+}
+
+fn cloud_agent_retry_delay(base: Duration, delivery_attempt: u32) -> Duration {
+    const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
+    let exponent = delivery_attempt.saturating_sub(2).min(6);
+    base.checked_mul(1_u32 << exponent)
+        .unwrap_or(MAX_RETRY_DELAY)
+        .min(MAX_RETRY_DELAY)
+}
+
+async fn dead_letter_delivery(
+    channel: &Channel,
+    topology: &CloudAgentRabbitMqTopology,
+    payload: &[u8],
+    delivery_attempt: u32,
+    failure: &str,
+) -> Result<(), String> {
+    let queue = dead_letter_queue_name(topology);
+    let confirmation = channel
+        .basic_publish(
+            topology.exchange.as_str(),
+            queue.as_str(),
+            BasicPublishOptions {
+                mandatory: true,
+                ..BasicPublishOptions::default()
+            },
+            payload,
+            BasicProperties::default()
+                .with_content_type("application/json".into())
+                .with_delivery_mode(2)
+                .with_headers(cloud_agent_delivery_headers(
+                    delivery_attempt,
+                    Some(failure),
+                )),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| error.to_string())?;
+    confirmed("dead-lettered Cloud Agent event", confirmation)
 }
 
 async fn publish_intent(
@@ -707,5 +867,42 @@ mod tests {
         assert!(topology.validate().is_ok());
         topology.consumer_concurrency = 0;
         assert!(topology.validate().is_err());
+    }
+
+    #[test]
+    fn delivery_attempt_defaults_to_one_and_reads_retry_header() {
+        assert_eq!(cloud_agent_delivery_attempt(&BasicProperties::default()), 1);
+        let properties =
+            BasicProperties::default().with_headers(cloud_agent_delivery_headers(4, None));
+        assert_eq!(cloud_agent_delivery_attempt(&properties), 4);
+    }
+
+    #[test]
+    fn deleted_owner_entities_are_consumed_as_stale() {
+        for error in [
+            "Cloud Agent run not found: run-1",
+            "Task Run not found: run-1",
+            "Task not found: task-1",
+            "parent Task Run not found: run-1",
+            "parent Cloud Agent run not found",
+        ] {
+            assert!(cloud_agent_delivery_error_is_stale(error));
+        }
+        assert!(!cloud_agent_delivery_error_is_stale(
+            "Cloud Agent lifecycle arrived before terminal state"
+        ));
+    }
+
+    #[test]
+    fn delivery_failure_header_is_bounded() {
+        assert_eq!(truncate_delivery_failure(&"x".repeat(2_000)).len(), 1_024);
+    }
+
+    #[test]
+    fn processing_error_retry_delay_is_exponential_and_capped() {
+        let base = Duration::from_secs(1);
+        assert_eq!(cloud_agent_retry_delay(base, 2), Duration::from_secs(1));
+        assert_eq!(cloud_agent_retry_delay(base, 3), Duration::from_secs(2));
+        assert_eq!(cloud_agent_retry_delay(base, 8), Duration::from_secs(60));
     }
 }

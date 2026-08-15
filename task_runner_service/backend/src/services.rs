@@ -140,6 +140,8 @@ pub struct TaskService {
     config: AppConfig,
     store: AppStore,
     plugin_management_client: Option<PluginManagementClient>,
+    #[cfg(test)]
+    allow_unresolved_plugin_policy_for_test: bool,
 }
 
 #[derive(Debug, Clone)]

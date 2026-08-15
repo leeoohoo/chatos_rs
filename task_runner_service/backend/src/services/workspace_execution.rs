@@ -112,6 +112,176 @@ pub(crate) fn effective_task_tool_snapshot(config: &TaskMcpConfig) -> EffectiveT
     }
 }
 
+pub(crate) fn validate_project_execution_task_runtime_contract(
+    task: &TaskRecord,
+    tools: &EffectiveTaskToolSnapshot,
+) -> Result<(), String> {
+    let payload = task
+        .input_payload
+        .as_ref()
+        .unwrap_or(&serde_json::Value::Null);
+    if payload.get("source").and_then(serde_json::Value::as_str)
+        != Some("chatos_project_requirement_execution")
+    {
+        return Ok(());
+    }
+    let role = payload
+        .get("task_role")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| {
+            "platform_task_capability_invalid: project execution task is missing task_role"
+                .to_string()
+        })?;
+    let owned_path_values = payload
+        .get("owned_paths")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if owned_path_values
+        .iter()
+        .any(|value| value.as_str().is_none_or(|path| path.trim().is_empty()))
+    {
+        return Err(
+            "platform_task_capability_invalid: owned_paths must contain only non-empty strings"
+                .to_string(),
+        );
+    }
+    let owned_paths = owned_path_values
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    if task.mcp_config.workspace_changes_required != tools.workspace_write {
+        return Err(format!(
+            "platform_task_capability_invalid: workspace_changes_required={} conflicts with frozen workspace_write={}",
+            task.mcp_config.workspace_changes_required, tools.workspace_write
+        ));
+    }
+    if (tools.workspace_write || tools.terminal) && !task.mcp_config.requires_execution {
+        return Err(
+            "platform_task_capability_invalid: write or terminal capability requires requires_execution=true"
+                .to_string(),
+        );
+    }
+    match role.as_str() {
+        "implementation" => {
+            if !tools.workspace_write {
+                return Err(
+                    "platform_task_capability_invalid: implementation task requires CodeMaintainerWrite selected through Plugin Management"
+                        .to_string(),
+                );
+            }
+            if !tools.workspace_read {
+                return Err(
+                    "platform_task_capability_invalid: implementation write capability is missing its read dependency"
+                        .to_string(),
+                );
+            }
+            if owned_paths.is_empty() {
+                return Err(
+                    "platform_task_capability_invalid: implementation task requires non-empty owned_paths"
+                        .to_string(),
+                );
+            }
+        }
+        "verification" => {
+            if tools.workspace_write {
+                return Err(
+                    "platform_task_capability_invalid: verification task must remain read-only"
+                        .to_string(),
+                );
+            }
+            if !owned_paths.is_empty() {
+                return Err(
+                    "platform_task_capability_invalid: verification task owned_paths must be empty"
+                        .to_string(),
+                );
+            }
+            let has_explicit_capability = task
+                .mcp_config
+                .enabled_builtin_kinds
+                .iter()
+                .any(|kind| builtin_kind_by_any(kind).is_some())
+                || task
+                    .mcp_config
+                    .external_mcp_config_ids
+                    .iter()
+                    .any(|id| !id.trim().is_empty());
+            if !has_explicit_capability {
+                return Err(
+                    "platform_task_capability_invalid: verification task requires at least one explicit MCP capability"
+                        .to_string(),
+                );
+            }
+        }
+        other => {
+            return Err(format!(
+                "platform_task_capability_invalid: unsupported project execution task_role={other}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn task_runtime_capability_fingerprint(task: &TaskRecord) -> String {
+    let mut builtin_kinds = task
+        .mcp_config
+        .enabled_builtin_kinds
+        .iter()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    builtin_kinds.sort();
+    builtin_kinds.dedup();
+    let mut external_mcp_config_ids = task
+        .mcp_config
+        .external_mcp_config_ids
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    external_mcp_config_ids.sort();
+    external_mcp_config_ids.dedup();
+    let mut owned_paths = task
+        .input_payload
+        .as_ref()
+        .and_then(|payload| payload.get("owned_paths"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(|value| value.trim().replace('\\', "/"))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    owned_paths.sort();
+    owned_paths.dedup();
+    let snapshot = serde_json::json!({
+        "project_id": task.project_id,
+        "task_profile": task.task_profile,
+        "requires_execution": task.mcp_config.requires_execution,
+        "workspace_changes_required": task.mcp_config.workspace_changes_required,
+        "workspace_dir": task.mcp_config.workspace_dir,
+        "enabled_builtin_kinds": builtin_kinds,
+        "external_mcp_config_ids": external_mcp_config_ids,
+        "task_role": task.input_payload.as_ref()
+            .and_then(|payload| payload.get("task_role"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .map(str::to_ascii_lowercase),
+        "owned_paths": owned_paths,
+    });
+    let serialized = serde_json::to_vec(&snapshot).unwrap_or_default();
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in serialized {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
 pub(crate) fn decide_workspace_route(
     source_type: Option<&str>,
     tools: &EffectiveTaskToolSnapshot,

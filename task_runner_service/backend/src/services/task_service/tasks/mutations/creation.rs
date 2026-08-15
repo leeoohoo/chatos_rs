@@ -99,7 +99,18 @@ impl TaskService {
                 schedule.mode.mode_key(),
             )
             .await?;
+        let allow_unresolved_plugin_policy = {
+            #[cfg(test)]
+            {
+                self.allow_unresolved_plugin_policy_for_test
+            }
+            #[cfg(not(test))]
+            {
+                false
+            }
+        };
         if !capability_policy_resolved
+            && !allow_unresolved_plugin_policy
             && (!mcp_config.enabled_builtin_kinds.is_empty()
                 || !mcp_config.external_mcp_config_ids.is_empty()
                 || !plugin_config.selected_plugins.is_empty())

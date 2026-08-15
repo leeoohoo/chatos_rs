@@ -382,6 +382,21 @@ impl TaskRunnerMcpService {
             let client_ref = client_ref.trim().to_string();
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
             let mut request = task.into_request()?;
+            if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
+                let workspace_write_selected = request.mcp_config.as_ref().is_some_and(|config| {
+                    config.enabled_builtin_kinds.iter().any(|kind| {
+                        chatos_mcp_runtime::builtin_kind_by_any(kind)
+                            == Some(chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite)
+                    })
+                });
+                if let Some(config) = request.mcp_config.as_mut() {
+                    // The planner selects capabilities. The program derives the
+                    // workspace mutation contract from that frozen selection so
+                    // the legacy default `true` cannot contradict an empty/read-only
+                    // tool snapshot.
+                    config.workspace_changes_required = Some(workspace_write_selected);
+                }
+            }
             attach_dependency_context_payload(
                 &mut request.input_payload,
                 client_ref.as_str(),
@@ -676,26 +691,67 @@ fn validate_project_execution_task_contracts(
                 "执行任务 {client_ref} 的 task_role 必须是 implementation 或 verification"
             ));
         }
+        let write_selected = project_execution_item_selects_kind(
+            item,
+            chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite,
+        );
+        let terminal_selected = project_execution_item_selects_kind(
+            item,
+            chatos_mcp_runtime::BuiltinMcpKind::TerminalController,
+        );
+        if task_role == "implementation" {
+            if !write_selected {
+                return Err(format!(
+                    "实施任务 {client_ref} 必须从 Plugin Management 能力清单中选择 CodeMaintainerWrite"
+                ));
+            }
+            if item.owned_paths.is_empty() {
+                return Err(format!("实施任务 {client_ref} 必须声明非空 owned_paths"));
+            }
+        }
         if task_role == "verification" {
             if !item.owned_paths.is_empty() {
                 return Err(format!(
                     "验收任务 {client_ref} 必须保持只读，owned_paths 必须为空"
                 ));
             }
-            let write_selected = item.enabled_builtin_kinds.as_ref().is_some_and(|kinds| {
-                kinds.iter().any(|kind| {
-                    chatos_mcp_runtime::builtin_kind_by_any(kind)
-                        == Some(chatos_mcp_runtime::BuiltinMcpKind::CodeMaintainerWrite)
-                })
-            });
             if write_selected {
                 return Err(format!(
                     "验收任务 {client_ref} 不能启用 CodeMaintainerWrite；发现缺陷后必须进入 repair/reverify 流程"
                 ));
             }
+            if item
+                .enabled_builtin_kinds
+                .as_ref()
+                .is_none_or(|kinds| kinds.is_empty())
+                && item
+                    .external_mcp_config_ids
+                    .as_ref()
+                    .is_none_or(|ids| ids.is_empty())
+            {
+                return Err(format!(
+                    "验收任务 {client_ref} 必须明确选择至少一个只读、终端、浏览器或外部 MCP 能力"
+                ));
+            }
+        }
+        if (write_selected || terminal_selected) && item.requires_execution != Some(true) {
+            return Err(format!(
+                "执行任务 {client_ref} 选择了写入或终端能力时 requires_execution 必须为 true"
+            ));
         }
     }
     Ok(())
+}
+
+fn project_execution_item_selects_kind(
+    item: &CreateProjectExecutionTaskItem,
+    expected: chatos_mcp_runtime::BuiltinMcpKind,
+) -> bool {
+    item.enabled_builtin_kinds.as_ref().is_some_and(|kinds| {
+        kinds
+            .iter()
+            .any(|kind| chatos_mcp_runtime::builtin_kind_by_any(kind) == Some(expected))
+    })
 }
 
 fn normalize_acceptance_criteria<'a>(

@@ -424,7 +424,25 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
                         "reconcile pending MCP batches failed"
                     );
                 }
-                while let Some(delivery) = consumer.next().await {
+                let mut watchdog = tokio::time::interval(std::time::Duration::from_secs(5));
+                watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                // Consume the interval's immediate first tick because connection-time
+                // reconciliation has just completed above.
+                watchdog.tick().await;
+                loop {
+                    let delivery = tokio::select! {
+                        delivery = consumer.next() => delivery,
+                        _ = watchdog.tick() => {
+                            if let Err(error) = reconcile_live_batches(&state, &topology, &channel).await {
+                                warn!(
+                                    error = error.as_str(),
+                                    "periodic MCP batch watchdog reconciliation failed"
+                                );
+                            }
+                            continue;
+                        }
+                    };
+                    let Some(delivery) = delivery else { break };
                     let Ok(delivery) = delivery else { break };
                     let outcome =
                         match serde_json::from_slice::<InvocationTerminalEvent>(&delivery.data) {
@@ -499,6 +517,80 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
         }
         tokio::time::sleep(topology.rabbitmq_reconnect_delay).await;
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveBatchWatchdogAction {
+    None,
+    EnsureInvocationReady,
+    ResumeTerminal,
+}
+
+fn live_batch_watchdog_action(status: RuntimeInvocationStatus) -> LiveBatchWatchdogAction {
+    match status {
+        RuntimeInvocationStatus::Queued => LiveBatchWatchdogAction::EnsureInvocationReady,
+        RuntimeInvocationStatus::Completed
+        | RuntimeInvocationStatus::Failed
+        | RuntimeInvocationStatus::Cancelled
+        | RuntimeInvocationStatus::UnknownExecutionState => LiveBatchWatchdogAction::ResumeTerminal,
+        RuntimeInvocationStatus::Running
+        | RuntimeInvocationStatus::WaitingForUser
+        | RuntimeInvocationStatus::CancelRequested => LiveBatchWatchdogAction::None,
+    }
+}
+
+async fn reconcile_live_batches(
+    state: &AppState,
+    topology: &AsyncToolDispatchTopology,
+    channel: &Channel,
+) -> Result<(), String> {
+    for batch in state.runtime_tool_batches.list_active(1_000).await? {
+        let outcome: Result<(), String> = async {
+            let Some(call) = batch.command.calls.get(batch.next_call_index) else {
+                return Ok(());
+            };
+            let Some(invocation) = state
+                .runtime_invocations
+                .get_for_caller(
+                    call.invocation_id.as_str(),
+                    batch.command.owner_service.as_str(),
+                )
+                .await?
+            else {
+                state
+                    .runtime_tool_batches
+                    .ensure_invocation_ready_for(call.invocation_id.as_str())
+                    .await?;
+                return Ok(());
+            };
+            match live_batch_watchdog_action(invocation.status) {
+                LiveBatchWatchdogAction::None => {}
+                LiveBatchWatchdogAction::EnsureInvocationReady => {
+                    state
+                        .runtime_tool_batches
+                        .ensure_invocation_ready_for(invocation.invocation_id.as_str())
+                        .await?;
+                }
+                LiveBatchWatchdogAction::ResumeTerminal => {
+                    crate::api::mcp::resume_terminal_tool_batch_invocation(
+                        state,
+                        invocation.invocation_id.as_str(),
+                    )
+                    .await?;
+                }
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = outcome {
+            warn!(
+                batch_id = batch.batch_id.as_str(),
+                error = error.as_str(),
+                "MCP batch watchdog skipped one invalid batch"
+            );
+        }
+    }
+    reconcile_pending_batches(state, topology, channel).await
 }
 
 async fn reconcile_orphan_invocations(state: &AppState) -> Result<(), String> {
@@ -627,7 +719,10 @@ fn invocation_terminal_error_is_stale(error: &str) -> bool {
 
 #[cfg(test)]
 mod invocation_terminal_tests {
-    use super::{invocation_terminal_error_is_stale, is_recoverable_terminal_invocation_status};
+    use super::{
+        invocation_terminal_error_is_stale, is_recoverable_terminal_invocation_status,
+        live_batch_watchdog_action, LiveBatchWatchdogAction,
+    };
     use crate::runtime::RuntimeInvocationStatus;
 
     #[test]
@@ -663,6 +758,35 @@ mod invocation_terminal_tests {
             RuntimeInvocationStatus::CancelRequested,
         ] {
             assert!(!is_recoverable_terminal_invocation_status(status));
+        }
+    }
+
+    #[test]
+    fn live_watchdog_republishes_queued_and_reduces_terminal_without_restart() {
+        assert_eq!(
+            live_batch_watchdog_action(RuntimeInvocationStatus::Queued),
+            LiveBatchWatchdogAction::EnsureInvocationReady
+        );
+        for status in [
+            RuntimeInvocationStatus::Completed,
+            RuntimeInvocationStatus::Failed,
+            RuntimeInvocationStatus::Cancelled,
+            RuntimeInvocationStatus::UnknownExecutionState,
+        ] {
+            assert_eq!(
+                live_batch_watchdog_action(status),
+                LiveBatchWatchdogAction::ResumeTerminal
+            );
+        }
+        for status in [
+            RuntimeInvocationStatus::Running,
+            RuntimeInvocationStatus::WaitingForUser,
+            RuntimeInvocationStatus::CancelRequested,
+        ] {
+            assert_eq!(
+                live_batch_watchdog_action(status),
+                LiveBatchWatchdogAction::None
+            );
         }
     }
 }

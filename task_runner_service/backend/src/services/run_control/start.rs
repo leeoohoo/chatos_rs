@@ -175,6 +175,14 @@ impl RunService {
         let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
             &runtime_task.mcp_config,
         );
+        crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
+            &runtime_task,
+            &effective_tools,
+        )?;
+        let task_runtime_capability_fingerprint =
+            crate::services::workspace_execution::task_runtime_capability_fingerprint(
+                &runtime_task,
+            );
         let execution_lane_key = crate::services::workspace_execution::model_execution_lane_key(
             self,
             &runtime_task,
@@ -201,6 +209,7 @@ impl RunService {
             "mcp_config": runtime_task.mcp_config,
             "skill_snapshots": skill_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
+            "task_runtime_capability_fingerprint": task_runtime_capability_fingerprint,
             "retry_of_run_id": retry_of_run_id,
             "started_as_prerequisite": trigger == RunTriggerSource::Dependency,
         });
