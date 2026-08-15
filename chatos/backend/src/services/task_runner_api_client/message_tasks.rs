@@ -112,6 +112,27 @@ pub async fn get_message_run(
     get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }
 
+pub async fn get_message_run_changes(
+    base_url: &str,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-runs/{}/changes",
+        urlencoding::encode(run_id.trim())
+    );
+    let mut query = vec![("source_session_id", source_session_id)];
+    if let Some(source_user_message_id) = source_user_message_id {
+        query.push(("source_user_message_id", source_user_message_id));
+    }
+    if let Some(source_turn_id) = source_turn_id {
+        query.push(("source_turn_id", source_turn_id));
+    }
+    get_internal_json(base_url, path.as_str(), query.as_slice()).await
+}
+
 #[derive(Debug, Serialize)]
 struct RetryMessageRunRequest<'a> {
     source_session_id: &'a str,
@@ -143,6 +164,37 @@ pub async fn retry_message_run(
             source_turn_id,
             retry_instruction,
             execution_service_id,
+        },
+        "chatos.execution.start",
+    )
+    .await
+}
+
+#[derive(Debug, Serialize)]
+struct RetryMessageRunIntegrationRequest<'a> {
+    source_session_id: &'a str,
+    source_user_message_id: Option<&'a str>,
+    source_turn_id: Option<&'a str>,
+}
+
+pub async fn retry_message_run_integration(
+    base_url: &str,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-runs/{}/integration/retry",
+        urlencoding::encode(run_id.trim())
+    );
+    post_internal_json_with_scope(
+        base_url,
+        path.as_str(),
+        &RetryMessageRunIntegrationRequest {
+            source_session_id,
+            source_user_message_id,
+            source_turn_id,
         },
         "chatos.execution.start",
     )

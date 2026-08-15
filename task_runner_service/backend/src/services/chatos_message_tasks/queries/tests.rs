@@ -107,6 +107,7 @@ fn failed_run_for_task(task: &TaskRecord, run_id: &str) -> TaskRunRecord {
         model_config_id: "model-1".to_string(),
         memory_thread_id: task.memory_thread_id.clone(),
         status: TaskRunStatus::Failed,
+        model_phase_status: crate::models::ModelPhaseStatus::Failed,
         started_at: Some(now.clone()),
         finished_at: Some(now.clone()),
         input_snapshot: json!({}),

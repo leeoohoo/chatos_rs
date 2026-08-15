@@ -34,6 +34,7 @@ use crate::store::AppStore;
 
 pub(crate) const MCP_RUN_FINALIZATION_ERROR_PREFIX: &str = "MCP runtime run finalization failed";
 pub(crate) const CLOUD_AGENT_DEPENDENCY_WAITING: &str = "cloud_agent_dependency_waiting";
+pub(crate) const WORKSPACE_INTEGRATION_RETRY_PREFIX: &str = "workspace integration retry";
 
 mod batch_ops;
 mod builtin_providers;
@@ -78,6 +79,7 @@ mod task_tenant_scope;
 mod task_threads;
 mod tooling_state;
 mod workspace_execution;
+pub(crate) use workspace_execution::load_task_run_workspace_changes;
 #[path = "services/tool_runtime/workspace_mcp.rs"]
 mod workspace_mcp;
 
@@ -168,6 +170,12 @@ pub struct RunService {
     callback_delivery_locks: Arc<KeyedAsyncLockRegistry>,
     runtime_abort_tokens:
         Arc<parking_lot::Mutex<HashMap<String, tokio_util::sync::CancellationToken>>>,
+}
+
+impl RunService {
+    pub(crate) fn worker_concurrency(&self) -> usize {
+        self.config.worker_concurrency.max(1)
+    }
 }
 
 #[derive(Default)]

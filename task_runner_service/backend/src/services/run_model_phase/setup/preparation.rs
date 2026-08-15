@@ -568,6 +568,7 @@ mod tests {
                 task.memory_thread_id.as_str(),
                 "run-1",
             ),
+            model_phase_status: crate::models::ModelPhaseStatus::Pending,
             status: crate::models::TaskRunStatus::Queued,
             started_at: None,
             finished_at: None,

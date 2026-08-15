@@ -155,6 +155,7 @@ fn topology(state: &AppState) -> CloudAgentRabbitMqTopology {
         outbox_reconcile_interval: Duration::from_secs(1),
         outbox_batch_size: 100,
         prefetch_count: 32,
+        consumer_concurrency: 4,
         conflict_retry_delay: Duration::from_secs(1),
     }
 }

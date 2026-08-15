@@ -36,6 +36,7 @@ fn runtime(
 
 fn cloud_agent_topology(
     topology: &TaskQueueTopology,
+    consumer_concurrency: usize,
 ) -> Result<CloudAgentRabbitMqTopology, String> {
     Ok(CloudAgentRabbitMqTopology {
         rabbitmq_url: topology.rabbitmq_url.clone().ok_or_else(|| {
@@ -49,6 +50,7 @@ fn cloud_agent_topology(
         outbox_reconcile_interval: Duration::from_secs(1),
         outbox_batch_size: 100,
         prefetch_count: 32,
+        consumer_concurrency: consumer_concurrency.max(1),
         conflict_retry_delay: Duration::from_secs(1),
     })
 }
@@ -57,7 +59,7 @@ pub fn spawn_cloud_agent_outbox_reconciler(
     topology: TaskQueueTopology,
     run_service: RunService,
 ) -> JoinHandle<()> {
-    let cloud_topology = cloud_agent_topology(&topology)
+    let cloud_topology = cloud_agent_topology(&topology, run_service.worker_concurrency())
         .expect("Task Runner Cloud Agent RabbitMQ topology must be configured");
     chatos_cloud_agent_runtime::spawn_cloud_agent_outbox_reconciler(
         cloud_topology,
@@ -69,7 +71,7 @@ pub fn spawn_cloud_agent_consumer(
     topology: TaskQueueTopology,
     run_service: RunService,
 ) -> JoinHandle<()> {
-    let cloud_topology = cloud_agent_topology(&topology)
+    let cloud_topology = cloud_agent_topology(&topology, run_service.worker_concurrency())
         .expect("Task Runner Cloud Agent RabbitMQ topology must be configured");
     chatos_cloud_agent_runtime::spawn_cloud_agent_consumer(
         cloud_topology,
@@ -114,7 +116,7 @@ pub(crate) async fn publish_dependency_resume(
         }),
     };
     publish_cloud_agent_intent(
-        &cloud_agent_topology(topology)?,
+        &cloud_agent_topology(topology, run_service.worker_concurrency())?,
         &runtime(run_service.clone())?,
         &intent,
     )

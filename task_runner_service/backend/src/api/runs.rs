@@ -8,7 +8,8 @@ mod listing;
 mod streaming;
 
 pub(in crate::api) use self::lifecycle::{
-    cancel_run, get_run, list_run_events, retry_run, start_task_run,
+    cancel_run, get_run, get_run_workspace_changes, get_run_workspace_integration, list_run_events,
+    retry_run, retry_run_workspace_integration, start_task_run,
 };
 pub(in crate::api) use self::listing::{
     list_run_index, list_run_summaries, list_runs, list_runs_page, list_task_runs,

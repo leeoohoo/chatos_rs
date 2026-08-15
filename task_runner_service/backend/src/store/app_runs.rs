@@ -82,6 +82,43 @@ impl AppStore {
         }
     }
 
+    pub(crate) async fn get_prior_pending_integration_run(
+        &self,
+        execution_group_id: &str,
+        integration_ready_at: &str,
+        created_at: &str,
+        run_id: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.get_prior_pending_integration_run(
+                execution_group_id,
+                integration_ready_at,
+                created_at,
+                run_id,
+            )),
+            Self::Mongo(store) => {
+                store
+                    .get_prior_pending_integration_run(
+                        execution_group_id,
+                        integration_ready_at,
+                        created_at,
+                        run_id,
+                    )
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn rearm_run_workspace_integration(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.rearm_run_workspace_integration(run_id)),
+            Self::Mongo(store) => store.rearm_run_workspace_integration(run_id).await,
+        }
+    }
+
     pub(crate) async fn subscribe_run_terminal(
         &self,
         subscription: RunTerminalSubscriptionRecord,

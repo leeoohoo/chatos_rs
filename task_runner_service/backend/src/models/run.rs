@@ -99,6 +99,30 @@ pub enum WorkspacePreparationStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelPhaseStatus {
+    #[default]
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIntegrationStatus {
+    #[default]
+    NotRequired,
+    Pending,
+    Integrating,
+    Integrated,
+    Conflict,
+    Failed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskRunBranchTarget {
@@ -122,6 +146,36 @@ pub struct TaskRunWorkspaceExecution {
     #[serde(default)]
     pub branch_target: Option<TaskRunBranchTarget>,
     #[serde(default)]
+    pub execution_group_id: Option<String>,
+    #[serde(default)]
+    pub execution_branch_ref: Option<String>,
+    #[serde(default)]
+    pub execution_base_commit: Option<String>,
+    #[serde(default)]
+    pub integration_status: WorkspaceIntegrationStatus,
+    #[serde(default)]
+    pub integration_ready_at: Option<String>,
+    #[serde(default)]
+    pub integration_started_at: Option<String>,
+    #[serde(default)]
+    pub integrated_at: Option<String>,
+    #[serde(default)]
+    pub integration_attempt_count: u32,
+    #[serde(default)]
+    pub integration_base_commit: Option<String>,
+    #[serde(default)]
+    pub result_commit: Option<String>,
+    #[serde(default)]
+    pub integrated_commit: Option<String>,
+    #[serde(default)]
+    pub promoted_commit: Option<String>,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    #[serde(default)]
+    pub conflict_message: Option<String>,
+    #[serde(default)]
+    pub integration_last_error: Option<String>,
+    #[serde(default)]
     pub prepared_at: Option<String>,
     #[serde(default)]
     pub finalized_at: Option<String>,
@@ -129,6 +183,24 @@ pub struct TaskRunWorkspaceExecution {
     pub finalization_error: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+}
+
+impl TaskRunWorkspaceExecution {
+    pub fn integration_requires_post_process(&self) -> bool {
+        matches!(
+            self.integration_status,
+            WorkspaceIntegrationStatus::Pending
+                | WorkspaceIntegrationStatus::Integrating
+                | WorkspaceIntegrationStatus::Failed
+        )
+    }
+
+    pub fn integration_satisfied(&self) -> bool {
+        matches!(
+            self.integration_status,
+            WorkspaceIntegrationStatus::NotRequired | WorkspaceIntegrationStatus::Integrated
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,6 +230,8 @@ pub struct TaskRunRecord {
     pub model_config_id: String,
     pub memory_thread_id: String,
     pub status: TaskRunStatus,
+    #[serde(default)]
+    pub model_phase_status: ModelPhaseStatus,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
@@ -213,6 +287,19 @@ pub struct TaskRunRecord {
 }
 
 impl TaskRunRecord {
+    pub fn requires_post_process(&self) -> bool {
+        matches!(
+            self.status,
+            TaskRunStatus::Succeeded
+                | TaskRunStatus::Failed
+                | TaskRunStatus::Cancelled
+                | TaskRunStatus::Blocked
+        ) || self
+            .workspace_execution
+            .as_ref()
+            .is_some_and(TaskRunWorkspaceExecution::integration_requires_post_process)
+    }
+
     pub fn queued(
         id: String,
         task_id: String,
@@ -233,6 +320,7 @@ impl TaskRunRecord {
             model_config_id,
             memory_thread_id,
             status: TaskRunStatus::Queued,
+            model_phase_status: ModelPhaseStatus::Pending,
             started_at: None,
             finished_at: None,
             input_snapshot,

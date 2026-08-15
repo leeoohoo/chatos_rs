@@ -20,6 +20,7 @@ fn queued_run() -> TaskRunRecord {
         model_config_id: "model-1".to_string(),
         memory_thread_id: "thread-1".to_string(),
         status: TaskRunStatus::Queued,
+        model_phase_status: crate::models::ModelPhaseStatus::Pending,
         started_at: None,
         finished_at: None,
         input_snapshot: serde_json::json!({}),
@@ -112,6 +113,92 @@ fn running_execution_lane_lookup_excludes_the_waiting_run() {
     assert!(store
         .get_running_run_for_execution_lane("project:two", "run-waiting")
         .is_none());
+}
+
+#[test]
+fn integration_order_uses_ready_time_created_time_and_run_id() {
+    let store = test_store();
+    let mut first = queued_run();
+    first.id = "run-a".to_string();
+    first.created_at = "2026-08-15T01:00:00Z".to_string();
+    first.workspace_execution = Some(
+        serde_json::from_value(serde_json::json!({
+            "status": "ready",
+            "execution_group_id": "group-1",
+            "integration_status": "pending",
+            "integration_ready_at": "2026-08-15T02:00:00Z"
+        }))
+        .expect("first integration state"),
+    );
+    store.save_run(first).expect("save first run");
+
+    let mut second = queued_run();
+    second.id = "run-b".to_string();
+    second.created_at = "2026-08-15T01:00:01Z".to_string();
+    second.workspace_execution = Some(
+        serde_json::from_value(serde_json::json!({
+            "status": "ready",
+            "execution_group_id": "group-1",
+            "integration_status": "pending",
+            "integration_ready_at": "2026-08-15T02:00:00Z"
+        }))
+        .expect("second integration state"),
+    );
+    store.save_run(second).expect("save second run");
+
+    let prior = store
+        .get_prior_pending_integration_run(
+            "group-1",
+            "2026-08-15T02:00:00Z",
+            "2026-08-15T01:00:01Z",
+            "run-b",
+        )
+        .expect("prior run");
+    assert_eq!(prior.id, "run-a");
+}
+
+#[test]
+fn integration_conflict_retry_rearms_the_same_run_without_changing_its_order() {
+    let store = test_store();
+    let mut run = queued_run();
+    run.status = TaskRunStatus::Blocked;
+    run.finished_at = Some("2026-08-15T03:00:00Z".to_string());
+    run.error_message = Some("integration conflict".to_string());
+    run.workspace_execution = Some(
+        serde_json::from_value(serde_json::json!({
+            "status": "ready",
+            "execution_group_id": "group-1",
+            "integration_status": "conflict",
+            "integration_ready_at": "2026-08-15T02:00:00Z",
+            "integration_attempt_count": 1,
+            "conflict_files": ["src/main.rs"],
+            "conflict_message": "same line changed"
+        }))
+        .expect("conflict integration state"),
+    );
+    store.save_run(run).expect("save conflict run");
+
+    let retried = store
+        .rearm_run_workspace_integration("run-1")
+        .expect("rearm integration conflict");
+    let integration = retried
+        .workspace_execution
+        .as_ref()
+        .expect("workspace execution");
+
+    assert_eq!(retried.status, TaskRunStatus::Running);
+    assert!(retried.finished_at.is_none());
+    assert_eq!(
+        integration.integration_status,
+        WorkspaceIntegrationStatus::Pending
+    );
+    assert_eq!(
+        integration.integration_ready_at.as_deref(),
+        Some("2026-08-15T02:00:00Z")
+    );
+    assert_eq!(integration.integration_attempt_count, 1);
+    assert!(integration.conflict_files.is_empty());
+    assert!(retried.post_process_event_pending);
 }
 
 #[test]

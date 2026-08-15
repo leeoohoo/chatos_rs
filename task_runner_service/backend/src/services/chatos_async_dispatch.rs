@@ -200,6 +200,18 @@ impl RunService {
             if task.status != TaskStatus::Succeeded {
                 return Ok(false);
             }
+            if let Some(last_run_id) = task.last_run_id.as_deref() {
+                let Some(run) = self.store.get_run(last_run_id).await? else {
+                    return Ok(false);
+                };
+                if run
+                    .workspace_execution
+                    .as_ref()
+                    .is_some_and(|execution| !execution.integration_satisfied())
+                {
+                    return Ok(false);
+                }
+            }
         }
         Ok(true)
     }

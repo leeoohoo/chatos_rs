@@ -56,6 +56,12 @@ export const statusTone = (status?: string | null): string => {
   if (normalized === 'running' || normalized === 'processing') {
     return 'border-sky-200 bg-sky-50 text-sky-700';
   }
+  if (normalized === 'integration_pending' || normalized === 'integrating') {
+    return 'border-violet-200 bg-violet-50 text-violet-700';
+  }
+  if (normalized === 'integration_conflict' || normalized === 'integration_failed') {
+    return 'border-orange-200 bg-orange-50 text-orange-700';
+  }
   if (normalized === 'waiting_prerequisite') {
     return 'border-amber-200 bg-amber-50 text-amber-700';
   }

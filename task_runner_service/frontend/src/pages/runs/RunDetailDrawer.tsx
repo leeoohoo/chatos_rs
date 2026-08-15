@@ -4,6 +4,7 @@
 import {
   Drawer,
   Empty,
+  Modal,
   Space,
 } from 'antd';
 
@@ -14,6 +15,7 @@ import type {
   TaskSummaryRecord,
   AskUserPromptRecord,
   AskUserPromptStatus,
+  RunWorkspaceChanges,
 } from '../../types';
 import { JsonBlock } from './payloadView';
 import type {
@@ -61,11 +63,17 @@ type RunDetailDrawerProps = {
   eventsLoading: boolean;
   canceling: boolean;
   retrying: boolean;
+  integrationRetrying: boolean;
+  changes: RunWorkspaceChanges | null;
+  changesLoading: boolean;
   onClose: () => void;
   onOpenTask: (taskId: string) => void;
   onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
+  onRetryIntegration: (runId: string) => void;
+  onOpenChanges: (runId: string) => void;
+  onCloseChanges: () => void;
   onOpenPrompt: (promptId: string, runId: string) => void;
   onPromptPageChange: (page: number, pageSize: number) => void;
 };
@@ -89,18 +97,25 @@ export function RunDetailDrawer({
   eventsLoading,
   canceling,
   retrying,
+  integrationRetrying,
+  changes,
+  changesLoading,
   onClose,
   onOpenTask,
   onOpenModel,
   onCancel,
   onRetry,
+  onRetryIntegration,
+  onOpenChanges,
+  onCloseChanges,
   onOpenPrompt,
   onPromptPageChange,
 }: RunDetailDrawerProps) {
   const promptStatusLabel = (status: AskUserPromptStatus) => t(`prompts.status.${status}`);
 
   return (
-    <Drawer
+    <>
+      <Drawer
       title={t('runs.detail.title')}
       open={open}
       width={760}
@@ -119,10 +134,14 @@ export function RunDetailDrawer({
             streamStats={streamStats}
             canceling={canceling}
             retrying={retrying}
+            integrationRetrying={integrationRetrying}
+            changesLoading={changesLoading}
             onOpenTask={onOpenTask}
             onOpenModel={onOpenModel}
             onCancel={onCancel}
             onRetry={onRetry}
+            onRetryIntegration={onRetryIntegration}
+            onOpenChanges={onOpenChanges}
           />
 
           <RunAttemptsTimeline t={t} attempts={run.attempts || []} />
@@ -163,6 +182,37 @@ export function RunDetailDrawer({
       ) : loading ? null : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
       )}
-    </Drawer>
+      </Drawer>
+      <Modal
+        title={t('runs.changes.title')}
+        open={Boolean(changes)}
+        footer={null}
+        width={920}
+        onCancel={onCloseChanges}
+      >
+        {changes ? (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <div>
+              {t('runs.changes.summary', {
+                count: changes.files.length,
+                branch: changes.branch_ref,
+              })}
+            </div>
+            <JsonBlock
+              title={t('runs.changes.files')}
+              value={changes.files}
+              t={t}
+            />
+            <JsonBlock
+              title={changes.patch_truncated
+                ? t('runs.changes.patchTruncated')
+                : t('runs.changes.patch')}
+              value={changes.patch || t('runs.changes.empty')}
+              t={t}
+            />
+          </Space>
+        ) : null}
+      </Modal>
+    </>
   );
 }

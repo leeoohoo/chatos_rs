@@ -6,12 +6,13 @@ use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies
 
 use crate::models::{
     now_rfc3339, EffectiveTaskToolSnapshot, TaskMcpConfig, TaskRecord, TaskRunBranchTarget,
-    TaskRunRecord, TaskRunWorkspaceExecution, WorkspacePreparationStatus,
+    TaskRunRecord, TaskRunWorkspaceExecution, WorkspaceIntegrationStatus,
+    WorkspacePreparationStatus,
 };
 
 use super::project_management_api_client::{
-    FinalizeRunWorkspaceRequest, PrepareRunWorkspaceRequest, PrepareRunWorkspaceResponse,
-    PreparedRunBranch,
+    FinalizeRunWorkspaceRequest, IntegrateRunWorkspaceRequest, PrepareRunWorkspaceRequest,
+    PrepareRunWorkspaceResponse, PreparedRunBranch, RunWorkspaceIntegrationResultStatus,
 };
 use super::RunService;
 
@@ -27,6 +28,36 @@ pub(crate) enum WorkspaceRouteDecision {
 struct PreparedWorkspaceExecution {
     route: RuntimeWorkspaceRouteTarget,
     branch_target: TaskRunBranchTarget,
+    execution_group_id: Option<String>,
+    execution_branch_ref: Option<String>,
+    execution_base_commit: Option<String>,
+}
+
+fn workspace_execution(status: WorkspacePreparationStatus) -> TaskRunWorkspaceExecution {
+    TaskRunWorkspaceExecution {
+        status,
+        route: None,
+        branch_target: None,
+        execution_group_id: None,
+        execution_branch_ref: None,
+        execution_base_commit: None,
+        integration_status: WorkspaceIntegrationStatus::NotRequired,
+        integration_ready_at: None,
+        integration_started_at: None,
+        integrated_at: None,
+        integration_attempt_count: 0,
+        integration_base_commit: None,
+        result_commit: None,
+        integrated_commit: None,
+        promoted_commit: None,
+        conflict_files: Vec::new(),
+        conflict_message: None,
+        integration_last_error: None,
+        prepared_at: None,
+        finalized_at: None,
+        finalization_error: None,
+        error: None,
+    }
 }
 
 pub(crate) fn effective_task_tool_snapshot(config: &TaskMcpConfig) -> EffectiveTaskToolSnapshot {
@@ -94,6 +125,40 @@ pub(crate) fn decide_workspace_route(
     }
 }
 
+pub(crate) async fn model_execution_lane_key(
+    service: &RunService,
+    task: &TaskRecord,
+    tools: &EffectiveTaskToolSnapshot,
+) -> Result<Option<String>, String> {
+    if !tools.mutates_workspace() {
+        return Ok(None);
+    }
+    let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
+    if project_id == crate::models::PUBLIC_PROJECT_ID {
+        return Ok(None);
+    }
+    let project = super::project_management_api_client::sync_get_project(
+        &service.config,
+        project_id.as_str(),
+    )
+    .await?
+    .ok_or_else(|| format!("project not found while resolving execution lane: {project_id}"))?;
+    match project
+        .source_type
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("local_connector") | Some("local") => Ok(Some(format!("project:{project_id}"))),
+        Some("cloud") => Ok(None),
+        Some(value) => Err(format!(
+            "unsupported project source_type for execution lane: {value}"
+        )),
+        None => Err("project source_type is required for execution lane".to_string()),
+    }
+}
+
 pub(crate) async fn prepare_task_run_workspace(
     service: &RunService,
     task: &TaskRecord,
@@ -116,15 +181,7 @@ pub(crate) async fn prepare_task_run_workspace(
     }
 
     if run.workspace_execution.is_none() {
-        run.workspace_execution = Some(TaskRunWorkspaceExecution {
-            status: WorkspacePreparationStatus::Pending,
-            route: None,
-            branch_target: None,
-            prepared_at: None,
-            finalized_at: None,
-            finalization_error: None,
-            error: None,
-        });
+        run.workspace_execution = Some(workspace_execution(WorkspacePreparationStatus::Pending));
         run.updated_at = now_rfc3339();
         persist_workspace_execution(service, run).await?;
     }
@@ -132,14 +189,21 @@ pub(crate) async fn prepare_task_run_workspace(
     let prepared = prepare_workspace_inner(service, task, run).await;
     match prepared {
         Ok(prepared) => {
+            let integration_status =
+                if matches!(prepared.branch_target, TaskRunBranchTarget::Run { .. }) {
+                    WorkspaceIntegrationStatus::Pending
+                } else {
+                    WorkspaceIntegrationStatus::NotRequired
+                };
             run.workspace_execution = Some(TaskRunWorkspaceExecution {
-                status: WorkspacePreparationStatus::Ready,
                 route: Some(prepared.route.clone()),
                 branch_target: Some(prepared.branch_target),
+                execution_group_id: prepared.execution_group_id,
+                execution_branch_ref: prepared.execution_branch_ref,
+                execution_base_commit: prepared.execution_base_commit,
+                integration_status,
                 prepared_at: Some(now_rfc3339()),
-                finalized_at: None,
-                finalization_error: None,
-                error: None,
+                ..workspace_execution(WorkspacePreparationStatus::Ready)
             });
             run.updated_at = now_rfc3339();
             persist_workspace_execution(service, run).await?;
@@ -156,13 +220,8 @@ pub(crate) async fn prepare_task_run_workspace(
         }
         Err(error) => {
             run.workspace_execution = Some(TaskRunWorkspaceExecution {
-                status: WorkspacePreparationStatus::Failed,
-                route: None,
-                branch_target: None,
-                prepared_at: None,
-                finalized_at: None,
-                finalization_error: None,
                 error: Some(error.clone()),
+                ..workspace_execution(WorkspacePreparationStatus::Failed)
             });
             run.updated_at = now_rfc3339();
             let _ = persist_workspace_execution(service, run).await;
@@ -200,6 +259,9 @@ async fn prepare_workspace_inner(
         WorkspaceRouteDecision::LocalConnector => Ok(PreparedWorkspaceExecution {
             route: RuntimeWorkspaceRouteTarget::LocalConnector,
             branch_target: TaskRunBranchTarget::Local,
+            execution_group_id: None,
+            execution_branch_ref: None,
+            execution_base_commit: None,
         }),
         WorkspaceRouteDecision::HarnessDefaultBranch
         | WorkspaceRouteDecision::HarnessRunBranch
@@ -210,6 +272,7 @@ async fn prepare_workspace_inner(
                     | WorkspaceRouteDecision::CloudSandboxRunBranch
             );
             let create_cloud_sandbox = decision == WorkspaceRouteDecision::CloudSandboxRunBranch;
+            let execution_group_id = create_run_branch.then(|| execution_group_id_for_task(task));
             let response = super::project_management_api_client::prepare_run_workspace(
                 &service.config,
                 project_id.as_str(),
@@ -219,6 +282,8 @@ async fn prepare_workspace_inner(
                     tenant_id: task.tenant_id.trim().to_string(),
                     create_run_branch,
                     create_cloud_sandbox,
+                    execution_group_id: execution_group_id.clone(),
+                    expected_execution_commit: None,
                 },
             )
             .await?;
@@ -233,6 +298,9 @@ async fn prepare_workspace_inner(
                             },
                         },
                         branch_target: TaskRunBranchTarget::Default { branch_ref },
+                        execution_group_id: None,
+                        execution_branch_ref: None,
+                        execution_base_commit: None,
                     })
                 }
                 WorkspaceRouteDecision::HarnessRunBranch => {
@@ -254,6 +322,9 @@ async fn prepare_workspace_inner(
                             base_branch: branch.base_branch,
                             base_commit: branch.base_commit,
                         },
+                        execution_group_id,
+                        execution_branch_ref: response.execution_branch_ref,
+                        execution_base_commit: response.execution_base_commit,
                     })
                 }
                 WorkspaceRouteDecision::CloudSandboxRunBranch => {
@@ -276,6 +347,9 @@ async fn prepare_workspace_inner(
                             base_branch: branch.base_branch,
                             base_commit: branch.base_commit,
                         },
+                        execution_group_id,
+                        execution_branch_ref: response.execution_branch_ref,
+                        execution_base_commit: response.execution_base_commit,
                     })
                 }
                 WorkspaceRouteDecision::None | WorkspaceRouteDecision::LocalConnector => {
@@ -284,6 +358,23 @@ async fn prepare_workspace_inner(
             }
         }
     }
+}
+
+pub(super) fn execution_group_id_for_task(task: &TaskRecord) -> String {
+    task.input_payload
+        .as_ref()
+        .and_then(|payload| payload.get("execution_group_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            task.source_user_message_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or(task.id.as_str())
+        .to_string()
 }
 
 async fn persist_workspace_execution(
@@ -321,6 +412,58 @@ fn validate_prepared_identity(
     Ok(())
 }
 
+pub(crate) async fn load_task_run_workspace_changes(
+    service: &RunService,
+    task: &TaskRecord,
+    run: &TaskRunRecord,
+) -> Result<super::project_management_api_client::GetRunWorkspaceChangesResponse, String> {
+    let execution = run
+        .workspace_execution
+        .as_ref()
+        .ok_or_else(|| "当前运行没有代码变更上下文".to_string())?;
+    let TaskRunBranchTarget::Run {
+        branch_id,
+        branch_ref,
+        base_branch,
+        base_commit,
+    } = execution
+        .branch_target
+        .as_ref()
+        .ok_or_else(|| "当前运行没有独立代码分支".to_string())?
+    else {
+        return Err("当前运行没有独立代码分支".to_string());
+    };
+    let changes_base_commit =
+        if execution.integration_status == WorkspaceIntegrationStatus::Integrated {
+            execution
+                .integration_base_commit
+                .as_ref()
+                .unwrap_or(base_commit)
+        } else {
+            base_commit
+        };
+    let owner_user_id = task_owner_user_id(task)?;
+    let changes = super::project_management_api_client::get_run_workspace_changes(
+        &service.config,
+        task.project_id.as_str(),
+        run.id.as_str(),
+        &super::project_management_api_client::GetRunWorkspaceChangesRequest {
+            owner_user_id,
+            branch: PreparedRunBranch {
+                branch_id: branch_id.clone(),
+                branch_ref: branch_ref.clone(),
+                base_branch: base_branch.clone(),
+                base_commit: changes_base_commit.clone(),
+            },
+        },
+    )
+    .await?;
+    if changes.project_id != task.project_id || changes.run_id != run.id {
+        return Err("Project Service returned changes for a different Task Run".to_string());
+    }
+    Ok(changes)
+}
+
 pub(crate) async fn finalize_task_run_workspace(
     service: &RunService,
     task: &TaskRecord,
@@ -329,9 +472,6 @@ pub(crate) async fn finalize_task_run_workspace(
     let Some(execution) = run.workspace_execution.clone() else {
         return Ok(());
     };
-    if execution.finalized_at.is_some() {
-        return Ok(());
-    }
     if execution.status != WorkspacePreparationStatus::Ready {
         return Ok(());
     }
@@ -359,41 +499,168 @@ pub(crate) async fn finalize_task_run_workspace(
         return Ok(());
     }
     let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
-    let response = super::project_management_api_client::finalize_run_workspace(
+    let owner_user_id = task_owner_user_id(task)?;
+    if execution.finalized_at.is_none() {
+        let response = super::project_management_api_client::finalize_run_workspace(
+            &service.config,
+            project_id.as_str(),
+            run.id.as_str(),
+            &FinalizeRunWorkspaceRequest {
+                owner_user_id: owner_user_id.clone(),
+                branch: branch.clone(),
+                sandbox_target,
+            },
+        )
+        .await;
+        match response {
+            Ok(response) => {
+                if response.project_id.trim() != project_id || response.run_id.trim() != run.id {
+                    return Err(
+                        "Project Service finalized a different Task Run workspace".to_string()
+                    );
+                }
+                mark_workspace_finalized(service, run, response.result_commit).await?;
+            }
+            Err(error) => {
+                if let Some(execution) = run.workspace_execution.as_mut() {
+                    execution.finalization_error = Some(error.clone());
+                }
+                run.updated_at = now_rfc3339();
+                let _ = persist_workspace_execution(service, run).await;
+                return Err(error);
+            }
+        }
+    }
+    if run.model_phase_status != crate::models::ModelPhaseStatus::Succeeded {
+        return Ok(());
+    }
+    let Some(branch) = branch else {
+        return Ok(());
+    };
+    let execution = run
+        .workspace_execution
+        .as_ref()
+        .ok_or_else(|| "Task Run workspace state disappeared before integration".to_string())?;
+    if execution.integration_status == WorkspaceIntegrationStatus::Integrated
+        || execution.integration_status == WorkspaceIntegrationStatus::Conflict
+    {
+        return Ok(());
+    }
+    let execution_group_id = execution
+        .execution_group_id
+        .clone()
+        .ok_or_else(|| "Task Run workspace is missing execution_group_id".to_string())?;
+    let execution_branch_ref = execution
+        .execution_branch_ref
+        .clone()
+        .ok_or_else(|| "Task Run workspace is missing execution_branch_ref".to_string())?;
+    let result_commit = execution
+        .result_commit
+        .clone()
+        .ok_or_else(|| "Task Run workspace finalization returned no result commit".to_string())?;
+    let integration_ready_at = execution
+        .integration_ready_at
+        .clone()
+        .unwrap_or_else(now_rfc3339);
+    if let Some(prior) = service
+        .store
+        .get_prior_pending_integration_run(
+            execution_group_id.as_str(),
+            integration_ready_at.as_str(),
+            run.created_at.as_str(),
+            run.id.as_str(),
+        )
+        .await?
+    {
+        return Err(format!(
+            "{}: waiting for prior Run {} in execution group {}",
+            crate::services::WORKSPACE_INTEGRATION_RETRY_PREFIX,
+            prior.id,
+            execution_group_id
+        ));
+    }
+    if let Some(execution) = run.workspace_execution.as_mut() {
+        execution.integration_status = WorkspaceIntegrationStatus::Integrating;
+        execution.integration_started_at = Some(now_rfc3339());
+        execution.integration_attempt_count = execution.integration_attempt_count.saturating_add(1);
+        execution.integration_base_commit = execution.execution_base_commit.clone();
+        execution.integration_last_error = None;
+    }
+    run.updated_at = now_rfc3339();
+    persist_workspace_execution(service, run).await?;
+    service
+        .store
+        .append_run_event(crate::models::TaskRunEventRecord::new(
+            run.id.clone(),
+            "integration_started",
+            Some("开始集成任务代码到执行批次分支".to_string()),
+            Some(serde_json::json!({
+                "execution_group_id": execution_group_id,
+                "execution_branch_ref": execution_branch_ref,
+                "result_commit": result_commit,
+            })),
+        ))
+        .await?;
+    let response = super::project_management_api_client::integrate_run_workspace(
         &service.config,
         project_id.as_str(),
         run.id.as_str(),
-        &FinalizeRunWorkspaceRequest {
-            owner_user_id: task_owner_user_id(task)?,
-            promote_changes: run.status == crate::models::TaskRunStatus::Succeeded,
+        &IntegrateRunWorkspaceRequest {
+            owner_user_id,
+            execution_group_id,
+            execution_branch_ref,
+            integration_ready_at,
             branch,
-            sandbox_target,
+            result_commit: result_commit.clone(),
         },
     )
-    .await;
-    match response {
-        Ok(response) => {
-            if response.project_id.trim() != project_id || response.run_id.trim() != run.id {
-                return Err("Project Service finalized a different Task Run workspace".to_string());
-            }
-            if run.status == crate::models::TaskRunStatus::Succeeded
-                && execution
-                    .branch_target
-                    .as_ref()
-                    .is_some_and(|target| matches!(target, TaskRunBranchTarget::Run { .. }))
-                && !response.promoted
-            {
-                return Err("Task Run workspace changes were not promoted".to_string());
-            }
-            mark_workspace_finalized(service, run, response.result_commit).await
-        }
-        Err(error) => {
+    .await?;
+    if response.project_id.trim() != project_id || response.run_id.trim() != run.id {
+        return Err("Project Service integrated a different Task Run workspace".to_string());
+    }
+    match response.status {
+        RunWorkspaceIntegrationResultStatus::Integrated => {
             if let Some(execution) = run.workspace_execution.as_mut() {
-                execution.finalization_error = Some(error.clone());
+                execution.integration_status = WorkspaceIntegrationStatus::Integrated;
+                execution.integrated_at = Some(now_rfc3339());
+                execution.result_commit = Some(response.result_commit);
+                execution.integrated_commit = response.integrated_commit;
+                if response.integration_base_commit.is_some() {
+                    execution.integration_base_commit = response.integration_base_commit;
+                }
+                execution.conflict_files.clear();
+                execution.conflict_message = None;
+                execution.integration_last_error = None;
+            }
+            run.updated_at = now_rfc3339();
+            persist_workspace_execution(service, run).await?;
+            Ok(())
+        }
+        RunWorkspaceIntegrationResultStatus::Conflict => {
+            if let Some(execution) = run.workspace_execution.as_mut() {
+                execution.integration_status = WorkspaceIntegrationStatus::Conflict;
+                execution.conflict_files = response.conflict_files;
+                execution.conflict_message = response.message;
+                execution.integration_last_error = None;
+            }
+            run.updated_at = now_rfc3339();
+            persist_workspace_execution(service, run).await?;
+            Ok(())
+        }
+        RunWorkspaceIntegrationResultStatus::RetryableError => {
+            let message = response.message.unwrap_or_else(|| {
+                "Project Service reported a retryable integration error".to_string()
+            });
+            if let Some(execution) = run.workspace_execution.as_mut() {
+                execution.integration_status = WorkspaceIntegrationStatus::Failed;
+                execution.integration_last_error = Some(message.clone());
             }
             run.updated_at = now_rfc3339();
             let _ = persist_workspace_execution(service, run).await;
-            Err(error)
+            Err(format!(
+                "{}: {message}",
+                crate::services::WORKSPACE_INTEGRATION_RETRY_PREFIX
+            ))
         }
     }
 }
@@ -406,6 +673,7 @@ async fn mark_workspace_finalized(
     if let Some(execution) = run.workspace_execution.as_mut() {
         execution.finalized_at = Some(now_rfc3339());
         execution.finalization_error = None;
+        execution.result_commit = result_commit.clone();
     }
     run.updated_at = now_rfc3339();
     persist_workspace_execution(service, run).await?;

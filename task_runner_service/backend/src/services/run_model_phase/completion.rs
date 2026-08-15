@@ -2,6 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::{
+    ModelPhaseStatus, TaskRunBranchTarget, WorkspaceIntegrationStatus, WorkspacePreparationStatus,
+};
 
 #[cfg(test)]
 #[path = "completion/tests.rs"]
@@ -61,7 +64,16 @@ impl RunService {
             TaskRunStatus::Queued | TaskRunStatus::Running => None,
         };
         run.updated_at = now_rfc3339();
-        run.finished_at = Some(report.completed_at.clone());
+        run.model_phase_status = model_phase_status_for_terminal(terminal_status);
+        let integration_pending = terminal_status == TaskRunStatus::Succeeded
+            && run.workspace_execution.as_ref().is_some_and(|execution| {
+                execution.status == WorkspacePreparationStatus::Ready
+                    && matches!(
+                        execution.branch_target,
+                        Some(TaskRunBranchTarget::Run { .. })
+                    )
+            });
+        run.finished_at = (!integration_pending).then(|| report.completed_at.clone());
         run.result_summary = result_summary.clone();
         run.error_message = match terminal_status {
             TaskRunStatus::Blocked | TaskRunStatus::Failed => report
@@ -77,8 +89,26 @@ impl RunService {
         run.usage = report.usage.clone();
         run.report = report_json.clone();
         run.cancel_requested = false;
-        run.status = terminal_status;
-        if task_already_succeeded && run.status != TaskRunStatus::Succeeded {
+        run.status = if integration_pending {
+            TaskRunStatus::Running
+        } else {
+            terminal_status
+        };
+        if let Some(execution) = run.workspace_execution.as_mut() {
+            if integration_pending {
+                execution.integration_status = WorkspaceIntegrationStatus::Pending;
+                execution.integration_ready_at = Some(report.completed_at.clone());
+                execution.integration_started_at = None;
+                execution.integrated_at = None;
+                execution.conflict_files.clear();
+                execution.conflict_message = None;
+                execution.integration_last_error = None;
+            } else if terminal_status != TaskRunStatus::Succeeded {
+                execution.integration_status = WorkspaceIntegrationStatus::NotRequired;
+            }
+        }
+        if task_already_succeeded && !integration_pending && run.status != TaskRunStatus::Succeeded
+        {
             run.status = TaskRunStatus::Succeeded;
             run.error_message = None;
             result_summary = existing_task
@@ -98,29 +128,37 @@ impl RunService {
         }
         self.notify_mcp_management_run_finalized(task, run).await;
 
-        let event_type = match run.status {
-            TaskRunStatus::Succeeded => "completed",
-            TaskRunStatus::Failed => "failed",
-            TaskRunStatus::Cancelled => "cancelled",
-            TaskRunStatus::Blocked => "blocked",
-            TaskRunStatus::Queued | TaskRunStatus::Running => "finished",
+        let event_type = if integration_pending {
+            "model_phase_succeeded"
+        } else {
+            match run.status {
+                TaskRunStatus::Succeeded => "completed",
+                TaskRunStatus::Failed => "failed",
+                TaskRunStatus::Cancelled => "cancelled",
+                TaskRunStatus::Blocked => "blocked",
+                TaskRunStatus::Queued | TaskRunStatus::Running => "finished",
+            }
         };
         if let Err(err) = self
             .store
             .append_run_event(TaskRunEventRecord::new(
                 run.id.clone(),
                 event_type,
-                Some(match run.status {
-                    TaskRunStatus::Blocked => format!(
-                        "任务执行受阻：{}",
-                        run.error_message.as_deref().unwrap_or("存在终态阻塞子任务")
-                    ),
-                    TaskRunStatus::Failed => format!(
-                        "任务执行失败：{}",
-                        run.error_message.as_deref().unwrap_or("未知错误")
-                    ),
-                    TaskRunStatus::Cancelled => "任务已取消。".to_string(),
-                    _ => report.user_message(),
+                Some(if integration_pending {
+                    "模型阶段已完成，等待代码集成。".to_string()
+                } else {
+                    match run.status {
+                        TaskRunStatus::Blocked => format!(
+                            "任务执行受阻：{}",
+                            run.error_message.as_deref().unwrap_or("存在终态阻塞子任务")
+                        ),
+                        TaskRunStatus::Failed => format!(
+                            "任务执行失败：{}",
+                            run.error_message.as_deref().unwrap_or("未知错误")
+                        ),
+                        TaskRunStatus::Cancelled => "任务已取消。".to_string(),
+                        _ => report.user_message(),
+                    }
                 }),
                 report_json.clone(),
             ))
@@ -150,7 +188,7 @@ impl RunService {
                 }
             }
         }
-        if !task_already_cancelled {
+        if !task_already_cancelled && !integration_pending {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
         }
         self.enqueue_terminal_side_effects(run).await;
@@ -183,11 +221,11 @@ impl RunService {
 
         let _ = task;
         if !matches!(
-            run.status,
-            TaskRunStatus::Succeeded
-                | TaskRunStatus::Failed
-                | TaskRunStatus::Cancelled
-                | TaskRunStatus::Blocked
+            run.model_phase_status,
+            ModelPhaseStatus::Succeeded
+                | ModelPhaseStatus::Failed
+                | ModelPhaseStatus::Cancelled
+                | ModelPhaseStatus::Blocked
         ) {
             return Ok(());
         }
@@ -234,6 +272,17 @@ impl RunService {
                 }
             }
         }
+    }
+}
+
+fn model_phase_status_for_terminal(status: TaskRunStatus) -> ModelPhaseStatus {
+    match status {
+        TaskRunStatus::Succeeded => ModelPhaseStatus::Succeeded,
+        TaskRunStatus::Failed => ModelPhaseStatus::Failed,
+        TaskRunStatus::Cancelled => ModelPhaseStatus::Cancelled,
+        TaskRunStatus::Blocked => ModelPhaseStatus::Blocked,
+        TaskRunStatus::Queued => ModelPhaseStatus::Pending,
+        TaskRunStatus::Running => ModelPhaseStatus::Running,
     }
 }
 

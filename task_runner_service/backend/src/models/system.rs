@@ -88,6 +88,10 @@ pub struct TaskRunnerRunStatsSnapshot {
     pub dispatch_outbox_pending: usize,
     pub cancellation_outbox_pending: usize,
     pub post_process_outbox_pending: usize,
+    pub integration_pending: usize,
+    pub integration_active: usize,
+    pub integration_conflicts: usize,
+    pub integration_failed: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -106,6 +110,10 @@ pub struct RunExecutionStats {
     pub dispatch_outbox_pending: usize,
     pub cancellation_outbox_pending: usize,
     pub post_process_outbox_pending: usize,
+    pub integration_pending: usize,
+    pub integration_active: usize,
+    pub integration_conflicts: usize,
+    pub integration_failed: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

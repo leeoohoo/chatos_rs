@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::TaskRunWorkspaceExecution;
 
 pub(in crate::api) async fn start_task_run(
     Path(id): Path<String>,
@@ -36,6 +37,51 @@ pub(in crate::api) async fn get_run(
         .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
     ensure_run_access(&state, &run, &current_user).await?;
     Ok(Json(redact_workspace_paths(&state, run)?))
+}
+
+pub(in crate::api) async fn get_run_workspace_integration(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+) -> Result<Json<TaskRunWorkspaceExecution>, ApiError> {
+    let run = state
+        .run_service
+        .get_run(&id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
+    ensure_run_access(&state, &run, &current_user).await?;
+    let integration = run
+        .workspace_execution
+        .ok_or_else(|| ApiError::not_found("当前运行没有代码集成上下文"))?;
+    Ok(Json(redact_workspace_paths(&state, integration)?))
+}
+
+pub(in crate::api) async fn get_run_workspace_changes(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+) -> Result<
+    Json<crate::services::project_management_api_client::GetRunWorkspaceChangesResponse>,
+    ApiError,
+> {
+    let run = state
+        .run_service
+        .get_run(&id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
+    ensure_run_access(&state, &run, &current_user).await?;
+    let task = state
+        .task_service
+        .get_task(run.task_id.as_str())
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("任务不存在: {}", run.task_id)))?;
+    let changes = crate::services::load_task_run_workspace_changes(&state.run_service, &task, &run)
+        .await
+        .map_err(ApiError::bad_gateway)?;
+    Ok(Json(redact_workspace_paths(&state, changes)?))
 }
 
 pub(in crate::api) async fn list_run_events(
@@ -120,4 +166,25 @@ pub(in crate::api) async fn retry_run(
         StatusCode::CREATED,
         Json(redact_workspace_paths(&state, run)?),
     ))
+}
+
+pub(in crate::api) async fn retry_run_workspace_integration(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+) -> Result<Json<TaskRunRecord>, ApiError> {
+    let existing = state
+        .run_service
+        .get_run(&id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
+    ensure_run_access(&state, &existing, &current_user).await?;
+    let run = state
+        .run_service
+        .retry_run_workspace_integration(&id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::conflict("当前运行没有可重试的代码集成冲突"))?;
+    Ok(Json(redact_workspace_paths(&state, run)?))
 }

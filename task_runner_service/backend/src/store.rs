@@ -84,13 +84,13 @@ fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecor
         run.claim_token = None;
         run.claim_until = None;
         ensure_terminal_callback_pending(&mut run);
-        ensure_run_post_process_pending(&mut run);
     }
+    ensure_run_post_process_pending(&mut run);
     run
 }
 
 fn ensure_run_post_process_pending(run: &mut TaskRunRecord) {
-    if task_run_status_is_terminal(run.status)
+    if run.requires_post_process()
         && !run.post_process_completed
         && !run.post_process_dead_lettered
         && !run.post_process_event_enqueued

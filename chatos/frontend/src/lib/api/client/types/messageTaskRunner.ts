@@ -3,6 +3,36 @@
 
 type UnknownRecord = Record<string, unknown>;
 
+export interface MessageTaskRunnerWorkspaceExecution {
+  execution_group_id?: string | null;
+  execution_branch_ref?: string | null;
+  integration_status?: string | null;
+  result_commit?: string | null;
+  integrated_commit?: string | null;
+  promoted_commit?: string | null;
+  conflict_files?: string[];
+  conflict_message?: string | null;
+  integration_last_error?: string | null;
+  integration_attempt_count?: number;
+}
+
+export interface MessageTaskRunnerRunChangedFile {
+  status: string;
+  path: string;
+  old_path?: string | null;
+}
+
+export interface MessageTaskRunnerRunChanges {
+  project_id: string;
+  run_id: string;
+  branch_ref: string;
+  base_commit: string;
+  result_commit: string;
+  files: MessageTaskRunnerRunChangedFile[];
+  patch: string;
+  patch_truncated: boolean;
+}
+
 export interface MessageTaskRunnerTaskSummary {
   id: string;
   title?: string | null;
@@ -32,6 +62,8 @@ export interface MessageTaskRunnerRunSummary {
   task_id?: string | null;
   model_config_id?: string | null;
   status?: string | null;
+  model_phase_status?: string | null;
+  workspace_execution?: MessageTaskRunnerWorkspaceExecution | null;
   started_at?: string | null;
   finished_at?: string | null;
   result_summary?: string | null;
@@ -115,6 +147,8 @@ export interface MessageTaskRunnerRun {
   model_config_id?: string | null;
   memory_thread_id?: string | null;
   status?: string | null;
+  model_phase_status?: string | null;
+  workspace_execution?: MessageTaskRunnerWorkspaceExecution | null;
   started_at?: string | null;
   finished_at?: string | null;
   input_snapshot?: unknown;

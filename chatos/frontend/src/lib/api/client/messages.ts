@@ -5,6 +5,7 @@ import type {
   MessageTaskRunnerGraphResponse,
   MessageCreatePayload,
   MessageTaskRunnerRunDetailResponse,
+  MessageTaskRunnerRunChanges,
   MessageTaskRunnerRetryRunResponse,
   MessageTaskRunnerTask,
   MessageTaskRunnerTasksResponse,
@@ -95,6 +96,15 @@ export const getMessageTaskRunnerRun = (
   );
 };
 
+export const getMessageTaskRunnerRunChanges = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  options?: MessageTaskRunnerLookupOptions,
+): Promise<MessageTaskRunnerRunChanges> => request<MessageTaskRunnerRunChanges>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/changes${messageTaskRunnerLookupQuery(options)}`,
+);
+
 export const retryMessageTaskRunnerRun = (
   request: ApiRequestFn,
   messageId: string,
@@ -118,6 +128,16 @@ export const retryMessageTaskRunnerRun = (
     },
   );
 };
+
+export const retryMessageTaskRunnerRunIntegration = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  options?: MessageTaskRunnerLookupOptions,
+): Promise<MessageTaskRunnerRetryRunResponse> => request<MessageTaskRunnerRetryRunResponse>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/integration/retry${messageTaskRunnerLookupQuery(options)}`,
+  { method: 'POST' },
+);
 
 export const createPluginUiWorkbenchSession = (
   request: ApiRequestFn,

@@ -69,6 +69,14 @@ pub fn router() -> Router<AppState> {
             post(retry_chatos_message_run),
         )
         .route(
+            "/internal/chatos/message-runs/{run_id}/changes",
+            get(get_chatos_message_run_changes),
+        )
+        .route(
+            "/internal/chatos/message-runs/{run_id}/integration/retry",
+            post(retry_chatos_message_run_integration),
+        )
+        .route(
             "/internal/chatos/message-runs/{run_id}/events/{event_id}",
             get(get_chatos_message_run_event),
         )
@@ -337,6 +345,12 @@ struct RetryChatosMessageRunRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct RetryChatosMessageRunIntegrationRequest {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChatosMessageRunQuery {
     #[serde(flatten)]
     source: ChatosMessageTaskQuery,
@@ -426,6 +440,13 @@ impl InternalApiError {
     fn conflict(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
+
+    fn bad_gateway(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
             message: message.into(),
         }
     }
@@ -725,6 +746,85 @@ async fn retry_chatos_message_run(
     );
     audit.succeeded();
     Ok(response)
+}
+
+async fn retry_chatos_message_run_integration(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RetryChatosMessageRunIntegrationRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    let identity = require_chatos_execution_mutation(&state, &headers)?;
+    let run_id = required_internal_text(run_id, "run_id")?;
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        None,
+        "task_run_integration",
+        run_id.as_str(),
+        "retry",
+    );
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&request.source)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.as_str(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    if let Ok(Some(task)) = state.task_service.get_task(run.task_id.as_str()).await {
+        audit.represented_user_id(
+            task.owner_user_id
+                .as_deref()
+                .or(task.creator_user_id.as_deref()),
+        );
+        audit.tenant_id(Some(task.tenant_id.as_str()));
+        audit.project_id(Some(task.project_id.as_str()));
+        audit.resource_name(Some(task.title.as_str()));
+    }
+    let retried = state
+        .run_service
+        .retry_run_workspace_integration(run.id.as_str())
+        .await
+        .map_err(InternalApiError::bad_request)?
+        .ok_or_else(|| {
+            InternalApiError::conflict("run does not have a retryable code integration conflict")
+        })?;
+    audit.succeeded();
+    Ok(Json(json!({
+        "success": true,
+        "run": ChatosMessageTaskRun::from(retried),
+    })))
+}
+
+async fn get_chatos_message_run_changes(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ChatosMessageTaskQuery>,
+) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.trim(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    let task = state
+        .task_service
+        .get_task(run.task_id.as_str())
+        .await
+        .map_err(InternalApiError::internal)?
+        .ok_or_else(|| InternalApiError::not_found("task not found for message"))?;
+    let changes = crate::services::load_task_run_workspace_changes(&state.run_service, &task, &run)
+        .await
+        .map_err(InternalApiError::bad_gateway)?;
+    Ok(Json(redact_workspace_paths_internal(&state, changes)?))
 }
 
 fn require_retryable_message_run(status: &TaskRunStatus) -> Result<(), InternalApiError> {

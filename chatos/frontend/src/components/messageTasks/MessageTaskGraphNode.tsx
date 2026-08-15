@@ -58,6 +58,20 @@ const displayStatusForTask = (
   prerequisiteCount: number,
 ): string | null | undefined => {
   const status = readString(task.status)?.toLowerCase();
+  const integrationStatus = readString(task.last_run?.workspace_execution?.integration_status)
+    ?.toLowerCase();
+  if (integrationStatus === 'pending') {
+    return 'integration_pending';
+  }
+  if (integrationStatus === 'integrating') {
+    return 'integrating';
+  }
+  if (integrationStatus === 'conflict') {
+    return 'integration_conflict';
+  }
+  if (integrationStatus === 'failed') {
+    return 'integration_failed';
+  }
   const hasIncompletePrerequisite = prerequisiteCount > 0
     && (task.prerequisite_tasks || []).some(
       (prerequisite) => readString(prerequisite.status)?.toLowerCase() !== 'succeeded',

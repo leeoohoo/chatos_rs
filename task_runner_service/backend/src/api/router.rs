@@ -40,8 +40,9 @@ use super::prompts::{
     list_run_prompts, submit_prompt,
 };
 use super::runs::{
-    cancel_run, get_run, list_run_events, list_run_index, list_run_summaries, list_runs,
-    list_runs_page, list_task_runs, retry_run, start_task_run, stream_run_events,
+    cancel_run, get_run, get_run_workspace_changes, get_run_workspace_integration, list_run_events,
+    list_run_index, list_run_summaries, list_runs, list_runs_page, list_task_runs, retry_run,
+    retry_run_workspace_integration, start_task_run, stream_run_events,
 };
 use super::tasks::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
@@ -145,11 +146,20 @@ pub fn build_public_router(state: AppState) -> Router {
         .route("/api/runs/page", get(list_runs_page))
         .route("/api/runs/index", get(list_run_index))
         .route("/api/runs/{id}", get(get_run))
+        .route(
+            "/api/runs/{id}/integration",
+            get(get_run_workspace_integration),
+        )
+        .route("/api/runs/{id}/changes", get(get_run_workspace_changes))
         .route("/api/runs/{id}/events", get(list_run_events))
         .route("/api/runs/{id}/prompts", get(list_run_prompts))
         .route("/api/runs/{id}/stream", get(stream_run_events))
         .route("/api/runs/{id}/cancel", post(cancel_run))
         .route("/api/runs/{id}/retry", post(retry_run))
+        .route(
+            "/api/runs/{id}/integration/retry",
+            post(retry_run_workspace_integration),
+        )
         .route(
             "/api/queue-operations/run-post-process/replay",
             post(replay_run_post_process),

@@ -31,10 +31,14 @@ type RunDetailSummaryProps = {
   streamStats: RunStreamStats;
   canceling: boolean;
   retrying: boolean;
+  integrationRetrying: boolean;
+  changesLoading: boolean;
   onOpenTask: (taskId: string) => void;
   onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
+  onRetryIntegration: (runId: string) => void;
+  onOpenChanges: (runId: string) => void;
 };
 
 export function RunDetailSummary({
@@ -48,10 +52,14 @@ export function RunDetailSummary({
   streamStats,
   canceling,
   retrying,
+  integrationRetrying,
+  changesLoading,
   onOpenTask,
   onOpenModel,
   onCancel,
   onRetry,
+  onRetryIntegration,
+  onOpenChanges,
 }: RunDetailSummaryProps) {
   const runStatusLabel = (status: TaskRunStatus) => t(`runs.status.${status}`);
   const inputSnapshot =
@@ -68,6 +76,7 @@ export function RunDetailSummary({
   const totalDuration = run.started_at
     ? formatDuration(run.started_at, run.finished_at || undefined)
     : '-';
+  const integration = run.workspace_execution;
 
   return (
     <>
@@ -89,6 +98,20 @@ export function RunDetailSummary({
         >
           {t('runs.detail.retryWithCurrentConfig')}
         </Button>
+        <Button
+          disabled={integration?.integration_status !== 'conflict'}
+          loading={integrationRetrying}
+          onClick={() => onRetryIntegration(run.id)}
+        >
+          {t('runs.detail.retryIntegration')}
+        </Button>
+        <Button
+          disabled={!integration?.result_commit}
+          loading={changesLoading}
+          onClick={() => onOpenChanges(run.id)}
+        >
+          {t('runs.detail.viewChanges')}
+        </Button>
       </Space>
 
       <Descriptions bordered column={1} size="small">
@@ -99,6 +122,24 @@ export function RunDetailSummary({
         <Descriptions.Item label={t('common.status')}>
           <Tag color={runColorMap[run.status]}>{runStatusLabel(run.status)}</Tag>
         </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.modelPhaseStatus')}>
+          {t(`runs.modelPhaseStatus.${run.model_phase_status}`)}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.integrationStatus')}>
+          {integration
+            ? t(`runs.integrationStatus.${integration.integration_status}`)
+            : t('runs.integrationStatus.not_required')}
+        </Descriptions.Item>
+        {integration?.execution_branch_ref ? (
+          <Descriptions.Item label={t('runs.detail.executionBranch')}>
+            {integration.execution_branch_ref}
+          </Descriptions.Item>
+        ) : null}
+        {integration?.conflict_files?.length ? (
+          <Descriptions.Item label={t('runs.detail.conflictFiles')}>
+            {integration.conflict_files.join(', ')}
+          </Descriptions.Item>
+        ) : null}
         <Descriptions.Item label={t('runs.detail.agent')}>{agentLabel}</Descriptions.Item>
         <Descriptions.Item label={t('runs.column.modelConfig')}>
           <Button

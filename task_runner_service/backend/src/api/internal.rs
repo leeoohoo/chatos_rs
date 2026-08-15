@@ -267,13 +267,37 @@ pub(super) async fn get_system_stats(
             dispatch_outbox_pending: run_stats.dispatch_outbox_pending,
             cancellation_outbox_pending: run_stats.cancellation_outbox_pending,
             post_process_outbox_pending: run_stats.post_process_outbox_pending,
+            integration_pending: run_stats.integration_pending,
+            integration_active: run_stats.integration_active,
+            integration_conflicts: run_stats.integration_conflicts,
+            integration_failed: run_stats.integration_failed,
         },
     }))
 }
 
 pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
     let stats = task_runner_rabbitmq_queue_stats(&state).await;
+    let run_stats = state
+        .run_service
+        .execution_stats()
+        .await
+        .unwrap_or_default();
     let mut body = chatos_queue_observability::render_prometheus_metrics("task-runner", &stats);
+    body.push_str(
+        "# HELP chatos_task_runner_integration_runs Current Run counts by code integration state.\n\
+# TYPE chatos_task_runner_integration_runs gauge\n",
+    );
+    for (status, value) in [
+        ("pending", run_stats.integration_pending),
+        ("integrating", run_stats.integration_active),
+        ("conflict", run_stats.integration_conflicts),
+        ("failed", run_stats.integration_failed),
+    ] {
+        body.push_str(
+            format!("chatos_task_runner_integration_runs{{status=\"{status}\"}} {value}\n")
+                .as_str(),
+        );
+    }
     body.push_str(
         "# HELP chatos_task_runner_run_dispatch_fairness_deferrals_total Fair scheduling triggers deferred because all eligible project execution lanes were occupied.\n\
 # TYPE chatos_task_runner_run_dispatch_fairness_deferrals_total counter\n",

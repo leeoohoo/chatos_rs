@@ -278,6 +278,7 @@ fn run_record(task: &TaskRecord) -> TaskRunRecord {
         model_config_id: "model-1".to_string(),
         memory_thread_id: task.memory_thread_id.clone(),
         status: TaskRunStatus::Running,
+        model_phase_status: crate::models::ModelPhaseStatus::Running,
         started_at: Some(now.clone()),
         finished_at: None,
         input_snapshot: json!({}),
@@ -361,6 +362,84 @@ async fn completed_run_persists_success_when_report_completed() {
         .expect("get parent")
         .expect("parent");
     assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+}
+
+#[tokio::test]
+async fn successful_write_run_waits_for_workspace_integration_before_business_success() {
+    let (task_service, run_service) = test_services().await;
+    let task = create_task(&task_service, "write task", TaskStatus::Ready).await;
+    let mut run = run_record(&task);
+    run.workspace_execution = Some(
+        serde_json::from_value(json!({
+            "status": "ready",
+            "branch_target": {
+                "kind": "run",
+                "branch_id": "project:run-1",
+                "branch_ref": "chatos/runs/run-1",
+                "base_branch": "chatos/executions/group-1",
+                "base_commit": "1111111111111111111111111111111111111111"
+            },
+            "execution_group_id": "group-1",
+            "execution_branch_ref": "chatos/executions/group-1",
+            "execution_base_commit": "1111111111111111111111111111111111111111",
+            "integration_status": "pending"
+        }))
+        .expect("workspace execution"),
+    );
+    run_service
+        .store
+        .save_run(run.clone())
+        .await
+        .expect("save run");
+    let report = TaskRunReport {
+        task_id: task.id.clone(),
+        run_id: run.id.clone(),
+        model_config_id: Some(run.model_config_id.clone()),
+        status: AiTurnStatus::Completed,
+        execution_outcome: Some(TaskExecutionOutcome::succeeded(
+            "done",
+            vec!["write verified".to_string()],
+        )),
+        content: Some("done".to_string()),
+        reasoning: None,
+        error: None,
+        tool_calls: None,
+        finish_reason: Some("stop".to_string()),
+        usage: None,
+        response_id: None,
+        completed_at: now_rfc3339(),
+    };
+
+    run_service
+        .finalize_model_phase(&task, &mut run, report, ".")
+        .await;
+
+    let saved_run = run_service
+        .store
+        .get_run(run.id.as_str())
+        .await
+        .expect("get run")
+        .expect("run");
+    assert_eq!(saved_run.status, TaskRunStatus::Running);
+    assert_eq!(
+        saved_run.model_phase_status,
+        crate::models::ModelPhaseStatus::Succeeded
+    );
+    assert_eq!(
+        saved_run
+            .workspace_execution
+            .as_ref()
+            .map(|workspace| workspace.integration_status),
+        Some(crate::models::WorkspaceIntegrationStatus::Pending)
+    );
+    assert!(saved_run.post_process_event_pending || saved_run.post_process_event_enqueued);
+    assert!(saved_run.chatos_callback_delivery.is_none());
+    let saved_task = task_service
+        .get_task(task.id.as_str())
+        .await
+        .expect("get task")
+        .expect("task");
+    assert_eq!(saved_task.status, TaskStatus::Running);
 }
 
 #[tokio::test]

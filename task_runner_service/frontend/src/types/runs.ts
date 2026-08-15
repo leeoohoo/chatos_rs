@@ -17,6 +17,52 @@ export type TaskRunAttemptStatus =
   | 'blocked'
   | 'interrupted';
 
+export type ModelPhaseStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked';
+
+export type WorkspaceIntegrationStatus =
+  | 'not_required'
+  | 'pending'
+  | 'integrating'
+  | 'integrated'
+  | 'conflict'
+  | 'failed';
+
+export interface TaskRunWorkspaceExecution {
+  execution_group_id?: string | null;
+  execution_branch_ref?: string | null;
+  integration_status: WorkspaceIntegrationStatus;
+  result_commit?: string | null;
+  integrated_commit?: string | null;
+  promoted_commit?: string | null;
+  conflict_files?: string[];
+  conflict_message?: string | null;
+  integration_last_error?: string | null;
+  integration_attempt_count?: number;
+}
+
+export interface RunWorkspaceChangedFile {
+  status: string;
+  path: string;
+  old_path?: string | null;
+}
+
+export interface RunWorkspaceChanges {
+  project_id: string;
+  run_id: string;
+  branch_ref: string;
+  base_commit: string;
+  result_commit: string;
+  files: RunWorkspaceChangedFile[];
+  patch: string;
+  patch_truncated: boolean;
+}
+
 export interface TaskRunAttemptRecord {
   attempt_id: string;
   sequence: number;
@@ -33,6 +79,8 @@ export interface TaskRunRecord {
   model_config_id: string;
   memory_thread_id: string;
   status: TaskRunStatus;
+  model_phase_status: ModelPhaseStatus;
+  workspace_execution?: TaskRunWorkspaceExecution | null;
   started_at?: string | null;
   finished_at?: string | null;
   input_snapshot: unknown;

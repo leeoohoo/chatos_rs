@@ -10,6 +10,7 @@ use mongodb::{Client, Collection, IndexModel};
 
 use crate::models::*;
 
+mod execution_integrations;
 mod projects;
 mod requirement_documents;
 mod requirements;
@@ -28,6 +29,8 @@ pub struct MongoStore {
     work_items: Collection<ProjectWorkItemRecord>,
     work_item_dependencies: Collection<WorkItemDependencyRecord>,
     task_runner_links: Collection<ProjectWorkItemTaskRunnerLinkRecord>,
+    execution_integrations: Collection<ProjectExecutionIntegrationRecord>,
+    branch_promotion_leases: Collection<ProjectBranchPromotionLeaseRecord>,
 }
 
 impl MongoStore {
@@ -55,6 +58,8 @@ impl MongoStore {
             work_items: database.collection("project_work_items"),
             work_item_dependencies: database.collection("project_work_item_dependencies"),
             task_runner_links: database.collection("project_work_item_task_runner_links"),
+            execution_integrations: database.collection("project_execution_integrations"),
+            branch_promotion_leases: database.collection("project_branch_promotion_leases"),
         })
     }
 
@@ -97,6 +102,27 @@ impl MongoStore {
             doc! { "project_id": 1, "priority": -1, "updated_at": -1, "id": 1 },
             false,
             "idx_requirements_project_sort",
+        )
+        .await?;
+        ensure_named_index(
+            &self.branch_promotion_leases,
+            doc! { "project_id": 1, "target_branch": 1 },
+            true,
+            "idx_project_branch_promotion_leases_target_unique",
+        )
+        .await?;
+        ensure_named_index(
+            &self.execution_integrations,
+            doc! { "project_id": 1, "execution_group_id": 1 },
+            true,
+            "idx_project_execution_integrations_group_unique",
+        )
+        .await?;
+        ensure_named_index(
+            &self.execution_integrations,
+            doc! { "project_id": 1, "target_branch": 1, "status": 1 },
+            false,
+            "idx_project_execution_integrations_target_status",
         )
         .await?;
         ensure_named_index(

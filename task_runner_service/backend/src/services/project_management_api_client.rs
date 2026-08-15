@@ -30,6 +30,8 @@ pub(crate) struct PrepareRunWorkspaceRequest {
     pub tenant_id: String,
     pub create_run_branch: bool,
     pub create_cloud_sandbox: bool,
+    pub execution_group_id: Option<String>,
+    pub expected_execution_commit: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -43,7 +45,6 @@ pub(crate) struct PreparedRunBranch {
 #[derive(Debug, Serialize)]
 pub(crate) struct FinalizeRunWorkspaceRequest {
     pub owner_user_id: String,
-    pub promote_changes: bool,
     pub branch: Option<PreparedRunBranch>,
     pub sandbox_target: Option<SandboxExecutionTarget>,
 }
@@ -52,8 +53,91 @@ pub(crate) struct FinalizeRunWorkspaceRequest {
 pub(crate) struct FinalizeRunWorkspaceResponse {
     pub project_id: String,
     pub run_id: String,
-    pub promoted: bool,
     pub result_commit: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetRunWorkspaceChangesRequest {
+    pub owner_user_id: String,
+    pub branch: PreparedRunBranch,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct RunWorkspaceChangedFile {
+    pub status: String,
+    pub path: String,
+    pub old_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct GetRunWorkspaceChangesResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub branch_ref: String,
+    pub base_commit: String,
+    pub result_commit: String,
+    pub files: Vec<RunWorkspaceChangedFile>,
+    pub patch: String,
+    pub patch_truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct IntegrateRunWorkspaceRequest {
+    pub owner_user_id: String,
+    pub execution_group_id: String,
+    pub execution_branch_ref: String,
+    pub integration_ready_at: String,
+    pub branch: PreparedRunBranch,
+    pub result_commit: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunWorkspaceIntegrationResultStatus {
+    Integrated,
+    Conflict,
+    RetryableError,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct IntegrateRunWorkspaceResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub status: RunWorkspaceIntegrationResultStatus,
+    pub result_commit: String,
+    pub integration_base_commit: Option<String>,
+    pub integrated_commit: Option<String>,
+    #[serde(rename = "execution_head_commit")]
+    pub _execution_head_commit: Option<String>,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PromoteExecutionWorkspaceRequest {
+    pub owner_user_id: String,
+    pub execution_group_id: String,
+    pub execution_branch_ref: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PromoteExecutionWorkspaceStatus {
+    Promoted,
+    Conflict,
+    RetryableError,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PromoteExecutionWorkspaceResponse {
+    pub project_id: String,
+    pub execution_group_id: String,
+    pub status: PromoteExecutionWorkspaceStatus,
+    pub promoted_commit: Option<String>,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +147,8 @@ pub(crate) struct PrepareRunWorkspaceResponse {
     pub default_branch: String,
     pub branch: Option<PreparedRunBranch>,
     pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub execution_branch_ref: Option<String>,
+    pub execution_base_commit: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -281,10 +367,85 @@ pub(crate) async fn finalize_run_workspace(
     let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
-        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/finalize",
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/finalize-result",
         base_url.trim().trim_end_matches('/'),
         urlencoding::encode(project_id.trim()),
         urlencoding::encode(run_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
+}
+
+pub(crate) async fn integrate_run_workspace(
+    config: &AppConfig,
+    project_id: &str,
+    run_id: &str,
+    input: &IntegrateRunWorkspaceRequest,
+) -> Result<IntegrateRunWorkspaceResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/integrate",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
+}
+
+pub(crate) async fn get_run_workspace_changes(
+    config: &AppConfig,
+    project_id: &str,
+    run_id: &str,
+    input: &GetRunWorkspaceChangesRequest,
+) -> Result<GetRunWorkspaceChangesResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/changes",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
+}
+
+pub(crate) async fn promote_execution_workspace(
+    config: &AppConfig,
+    project_id: &str,
+    execution_group_id: &str,
+    input: &PromoteExecutionWorkspaceRequest,
+) -> Result<PromoteExecutionWorkspaceResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/execution-workspaces/{}/promote",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(execution_group_id.trim())
     );
     send_json(
         signed_project_service_request(

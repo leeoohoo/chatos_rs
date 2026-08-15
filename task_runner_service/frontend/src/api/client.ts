@@ -30,6 +30,7 @@ import type {
   StartTaskRunPayload,
   SubmitAskUserPromptPayload,
   RunSummaryRecord,
+  RunWorkspaceChanges,
   RunListFilters,
   TaskStatsResponse,
   TaskIndexResponse,
@@ -403,6 +404,12 @@ export const api = {
     request<TaskRunRecord>(`/api/runs/${runId}/retry`, {
       method: 'POST',
     }),
+  retryRunIntegration: (runId: string) =>
+    request<TaskRunRecord>(`/api/runs/${runId}/integration/retry`, {
+      method: 'POST',
+    }),
+  getRunChanges: (runId: string) =>
+    request<RunWorkspaceChanges>(`/api/runs/${runId}/changes`),
   listPrompts: (filters?: PromptListFilters) =>
     request<AskUserPromptRecord[]>(
       withQuery('/api/prompts', {

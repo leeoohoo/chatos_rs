@@ -6,7 +6,11 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { canRetryMessageTask, MessageTaskDetailModal } from './MessageTaskDetailModal';
+import {
+  canRetryMessageTask,
+  canRetryMessageTaskIntegration,
+  MessageTaskDetailModal,
+} from './MessageTaskDetailModal';
 
 afterEach(() => cleanup());
 
@@ -110,5 +114,42 @@ describe('message task node retry', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     await user.click(screen.getByRole('button', { name: '重试此任务' }));
     expect(onRetry).toHaveBeenCalledWith(task);
+  });
+
+  it('retries only code integration for an integration conflict', async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: 'task-conflict',
+      title: '冲突任务',
+      status: 'blocked',
+      last_run_id: 'run-conflict',
+      last_run: {
+        id: 'run-conflict',
+        workspace_execution: {
+          integration_status: 'conflict',
+          execution_branch_ref: 'chatos/executions/group-1',
+          conflict_files: ['src/main.rs'],
+        },
+      },
+    };
+    const onRetry = vi.fn();
+    const onRetryIntegration = vi.fn();
+
+    expect(canRetryMessageTask(task)).toBe(false);
+    expect(canRetryMessageTaskIntegration(task)).toBe(true);
+    render(
+      <MessageTaskDetailModal
+        task={task}
+        onRetry={onRetry}
+        onRetryIntegration={onRetryIntegration}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('src/main.rs')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '重新集成代码' }));
+
+    expect(onRetryIntegration).toHaveBeenCalledWith(task);
+    expect(onRetry).not.toHaveBeenCalled();
   });
 });

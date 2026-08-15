@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::WorkspaceIntegrationStatus;
 
 #[path = "runs/events.rs"]
 mod events;
@@ -29,6 +30,16 @@ impl InMemoryStore {
                     }
                     ChatosCallbackDeliveryStatus::Delivered
                     | ChatosCallbackDeliveryStatus::Skipped => {}
+                }
+            }
+            if let Some(execution) = run.workspace_execution.as_ref() {
+                match execution.integration_status {
+                    WorkspaceIntegrationStatus::Pending => stats.integration_pending += 1,
+                    WorkspaceIntegrationStatus::Integrating => stats.integration_active += 1,
+                    WorkspaceIntegrationStatus::Conflict => stats.integration_conflicts += 1,
+                    WorkspaceIntegrationStatus::Failed => stats.integration_failed += 1,
+                    WorkspaceIntegrationStatus::NotRequired
+                    | WorkspaceIntegrationStatus::Integrated => {}
                 }
             }
             match run.status {
@@ -176,6 +187,54 @@ impl InMemoryStore {
             .cloned()
     }
 
+    pub(in crate::store) fn get_prior_pending_integration_run(
+        &self,
+        execution_group_id: &str,
+        integration_ready_at: &str,
+        created_at: &str,
+        run_id: &str,
+    ) -> Option<TaskRunRecord> {
+        let current_key = (integration_ready_at, created_at, run_id);
+        self.inner
+            .read()
+            .runs
+            .values()
+            .filter(|candidate| candidate.id != run_id)
+            .filter(|candidate| {
+                candidate
+                    .workspace_execution
+                    .as_ref()
+                    .is_some_and(|execution| {
+                        execution.execution_group_id.as_deref() == Some(execution_group_id)
+                            && matches!(
+                                execution.integration_status,
+                                WorkspaceIntegrationStatus::Pending
+                                    | WorkspaceIntegrationStatus::Integrating
+                                    | WorkspaceIntegrationStatus::Failed
+                                    | WorkspaceIntegrationStatus::Conflict
+                            )
+                            && (
+                                execution.integration_ready_at.as_deref().unwrap_or(""),
+                                candidate.created_at.as_str(),
+                                candidate.id.as_str(),
+                            ) < current_key
+                    })
+            })
+            .min_by(|left, right| {
+                let left_execution = left.workspace_execution.as_ref();
+                let right_execution = right.workspace_execution.as_ref();
+                left_execution
+                    .and_then(|execution| execution.integration_ready_at.as_deref())
+                    .cmp(
+                        &right_execution
+                            .and_then(|execution| execution.integration_ready_at.as_deref()),
+                    )
+                    .then_with(|| left.created_at.cmp(&right.created_at))
+                    .then_with(|| left.id.cmp(&right.id))
+            })
+            .cloned()
+    }
+
     pub(in crate::store) fn subscribe_run_terminal(
         &self,
         subscription: RunTerminalSubscriptionRecord,
@@ -277,7 +336,7 @@ impl InMemoryStore {
             .runs
             .values()
             .filter(|run| {
-                task_run_status_is_terminal(run.status)
+                run.requires_post_process()
                     && run.post_process_event_pending
                     && !run.post_process_dead_lettered
             })
@@ -401,7 +460,7 @@ impl InMemoryStore {
         let Some(run) = data.runs.get_mut(run_id) else {
             return false;
         };
-        if !task_run_status_is_terminal(run.status)
+        if !run.requires_post_process()
             || run.post_process_completed
             || !run.post_process_dead_lettered
         {
@@ -414,6 +473,40 @@ impl InMemoryStore {
         run.post_process_last_error = None;
         run.updated_at = now_rfc3339();
         true
+    }
+
+    pub(in crate::store) fn rearm_run_workspace_integration(
+        &self,
+        run_id: &str,
+    ) -> Option<TaskRunRecord> {
+        let mut data = self.inner.write();
+        let run = data.runs.get_mut(run_id)?;
+        let execution = run.workspace_execution.as_mut()?;
+        if run.status != TaskRunStatus::Blocked
+            || execution.integration_status != WorkspaceIntegrationStatus::Conflict
+        {
+            return None;
+        }
+        run.status = TaskRunStatus::Running;
+        run.finished_at = None;
+        run.error_message = None;
+        run.chatos_callback_delivery = None;
+        run.post_process_event_pending = true;
+        run.post_process_event_enqueued = false;
+        run.post_process_completed = false;
+        run.post_process_dead_lettered = false;
+        run.post_process_attempt_count = 0;
+        run.post_process_last_error = None;
+        run.memory_summary_processed = false;
+        run.chatos_followup_processed = false;
+        execution.integration_status = WorkspaceIntegrationStatus::Pending;
+        execution.integration_started_at = None;
+        execution.integrated_at = None;
+        execution.conflict_files.clear();
+        execution.conflict_message = None;
+        execution.integration_last_error = None;
+        run.updated_at = now_rfc3339();
+        Some(run.clone())
     }
 
     pub(in crate::store) fn list_pending_chatos_callback_runs(

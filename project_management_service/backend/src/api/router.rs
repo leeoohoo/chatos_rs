@@ -36,7 +36,10 @@ use super::requirements::{
     list_requirement_documents, update_requirement, update_requirement_document,
     upsert_requirement_technical_overview,
 };
-use super::run_workspace::{finalize_run_workspace, prepare_run_workspace};
+use super::run_workspace::{
+    finalize_run_workspace, get_run_workspace_changes, integrate_run_workspace,
+    prepare_run_workspace, promote_execution_workspace,
+};
 use super::runtime_environment::{
     analyze_project_runtime_environment_handler,
     generate_project_runtime_environment_image_handler, get_project_runtime_environment,
@@ -263,8 +266,20 @@ pub fn build_internal_router(state: AppState) -> Router {
                 post(prepare_run_workspace),
             )
             .route(
-                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/finalize",
+                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/finalize-result",
                 post(finalize_run_workspace),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/changes",
+                post(get_run_workspace_changes),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/integrate",
+                post(integrate_run_workspace),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/execution-workspaces/{execution_group_id}/promote",
+                post(promote_execution_workspace),
             )
             .route(
                 "/api/chatos-sync/work-items/{work_item_id}/task-runner-status",

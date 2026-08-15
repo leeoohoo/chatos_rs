@@ -3,6 +3,7 @@
 
 mod auth;
 mod common;
+mod execution_integrations;
 mod graphs;
 mod projects;
 mod requirements;
@@ -11,6 +12,7 @@ mod work_items;
 
 pub use self::auth::*;
 pub use self::common::*;
+pub use self::execution_integrations::*;
 pub use self::graphs::*;
 pub use self::projects::*;
 pub use self::requirements::*;

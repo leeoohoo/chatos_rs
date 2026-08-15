@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type { FC } from 'react';
+import { useEffect, useState, type FC } from 'react';
+import { getMessageTaskRunnerRunChanges } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
-import type { MessageTaskRunnerRunDetailResponse } from '../../lib/api/client/types';
+import type {
+  MessageTaskRunnerRunChanges,
+  MessageTaskRunnerRunDetailResponse,
+} from '../../lib/api/client/types';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import { sanitizeUserVisibleAppError } from '../../lib/domain/userVisibleError';
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, ModalShell } from './parts';
@@ -56,6 +61,15 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   onLoadMoreEvents,
   onClose,
 }) => {
+  const apiClient = useApiClient();
+  const [changes, setChanges] = useState<MessageTaskRunnerRunChanges | null>(null);
+  const [changesLoading, setChangesLoading] = useState(false);
+  const [changesError, setChangesError] = useState<string | null>(null);
+  useEffect(() => {
+    setChanges(null);
+    setChangesLoading(false);
+    setChangesError(null);
+  }, [detail?.run.id]);
   if (!detail) {
     return null;
   }
@@ -78,6 +92,31 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
     normalizedReportContent
       && normalizedReportContent !== resultSummary,
   );
+  const canLoadChanges = Boolean(
+    messageId
+      && taskLookup
+      && readString(run.workspace_execution?.result_commit),
+  );
+
+  const loadChanges = async () => {
+    if (!messageId || !taskLookup || changesLoading) {
+      return;
+    }
+    setChangesLoading(true);
+    setChangesError(null);
+    try {
+      setChanges(await getMessageTaskRunnerRunChanges(
+        apiClient.getRequestFn(),
+        messageId,
+        run.id,
+        taskLookup,
+      ));
+    } catch (error) {
+      setChangesError(error instanceof Error ? error.message : '读取任务代码变更失败');
+    } finally {
+      setChangesLoading(false);
+    }
+  };
 
   return (
     <ModalShell
@@ -91,6 +130,10 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
           ['运行 ID', run.id],
           ['任务', task.title || run.task_id],
           ['状态', run.status],
+          ['模型阶段', run.model_phase_status],
+          ['代码集成', run.workspace_execution?.integration_status || 'not_required'],
+          ['执行批次分支', run.workspace_execution?.execution_branch_ref || '-'],
+          ['冲突文件', run.workspace_execution?.conflict_files?.join('、') || '-'],
           ['模型', formatModelConfig(detail.model_config, run.model_config_id)],
           ['开始时间', formatDateTime(run.started_at)],
           ['结束时间', formatDateTime(run.finished_at)],
@@ -101,6 +144,35 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       />
 
       <PluginRunSnapshotCard inputSnapshot={run.input_snapshot} />
+      {canLoadChanges ? (
+        <CollapsibleSection
+          title="代码变更"
+          summary={changes ? `${changes.files.length} 个文件` : '查看任务分支相对执行基线的真实差异'}
+          defaultOpen={Boolean(changes || changesError)}
+        >
+          {!changes ? (
+            <button
+              type="button"
+              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+              disabled={changesLoading}
+              onClick={() => void loadChanges()}
+            >
+              {changesLoading ? '正在读取代码变更' : '查看代码变更'}
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <CollapsibleText value={changes.files} code />
+              <CollapsibleText value={changes.patch || '没有代码差异'} code />
+              {changes.patch_truncated ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">差异内容过长，已截断展示。</p>
+              ) : null}
+            </div>
+          )}
+          {changesError ? (
+            <p role="alert" className="mt-2 text-xs text-destructive">{changesError}</p>
+          ) : null}
+        </CollapsibleSection>
+      ) : null}
       <BrowserSessionEventsCard events={events} />
       <PluginRuntimeEventsCard events={events} />
       {messageId && taskLookup ? (

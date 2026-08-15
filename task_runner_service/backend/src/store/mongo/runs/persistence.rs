@@ -113,7 +113,10 @@ impl MongoStore {
         self.runs
             .find(
                 doc! {
-                    "status": { "$in": ["succeeded", "failed", "cancelled", "blocked"] },
+                    "$or": [
+                        { "status": { "$in": ["succeeded", "failed", "cancelled", "blocked"] } },
+                        { "workspace_execution.integration_status": { "$in": ["pending", "integrating", "failed"] } },
+                    ],
                     "post_process_event_pending": true,
                     "post_process_dead_lettered": { "$ne": true },
                 },
@@ -291,7 +294,10 @@ impl MongoStore {
             .update_one(
                 doc! {
                     "id": run_id,
-                    "status": { "$in": ["succeeded", "failed", "cancelled", "blocked"] },
+                    "$or": [
+                        { "status": { "$in": ["succeeded", "failed", "cancelled", "blocked"] } },
+                        { "workspace_execution.integration_status": { "$in": ["pending", "integrating", "failed"] } },
+                    ],
                     "post_process_completed": { "$ne": true },
                     "post_process_dead_lettered": true,
                 },
@@ -310,5 +316,52 @@ impl MongoStore {
             .await
             .map(|result| result.modified_count > 0)
             .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn rearm_run_workspace_integration(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        let result = self
+            .runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "status": "blocked",
+                    "workspace_execution.integration_status": "conflict",
+                },
+                doc! {
+                    "$set": {
+                        "status": "running",
+                        "workspace_execution.integration_status": "pending",
+                        "post_process_event_pending": true,
+                        "post_process_event_enqueued": false,
+                        "post_process_completed": false,
+                        "post_process_dead_lettered": false,
+                        "post_process_attempt_count": 0_i64,
+                        "memory_summary_processed": false,
+                        "chatos_followup_processed": false,
+                        "updated_at": now_rfc3339(),
+                    },
+                    "$unset": {
+                        "finished_at": "",
+                        "error_message": "",
+                        "chatos_callback_delivery": "",
+                        "post_process_last_error": "",
+                        "workspace_execution.integration_started_at": "",
+                        "workspace_execution.integrated_at": "",
+                        "workspace_execution.conflict_files": "",
+                        "workspace_execution.conflict_message": "",
+                        "workspace_execution.integration_last_error": "",
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        if result.modified_count == 0 {
+            return Ok(None);
+        }
+        self.get_run(run_id).await
     }
 }

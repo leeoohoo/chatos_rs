@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -37,6 +38,7 @@ pub struct CloudAgentRabbitMqTopology {
     pub outbox_reconcile_interval: Duration,
     pub outbox_batch_size: i64,
     pub prefetch_count: u16,
+    pub consumer_concurrency: usize,
     pub conflict_retry_delay: Duration,
 }
 
@@ -53,7 +55,8 @@ impl CloudAgentRabbitMqTopology {
                 return Err(format!("Cloud Agent RabbitMQ {name} must not be empty"));
             }
         }
-        if self.prefetch_count == 0 || self.outbox_batch_size <= 0 {
+        if self.prefetch_count == 0 || self.consumer_concurrency == 0 || self.outbox_batch_size <= 0
+        {
             return Err(
                 "Cloud Agent RabbitMQ prefetch and outbox batch size must be positive".to_string(),
             );
@@ -293,38 +296,70 @@ where
         queue = topology.runtime_queue.as_str(),
         "Cloud Agent consumer connected"
     );
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(topology.consumer_concurrency));
+    let mut jobs = tokio::task::JoinSet::new();
     while let Some(delivery) = consumer.next().await {
         let delivery = delivery.map_err(|error| error.to_string())?;
-        match consume_delivery(owner, delivery.data.as_slice()).await {
-            Ok(
-                CloudAgentConsumeDisposition::Committed
-                | CloudAgentConsumeDisposition::Duplicate
-                | CloudAgentConsumeDisposition::Terminal,
-            ) => delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|error| error.to_string())?,
-            Ok(
-                CloudAgentConsumeDisposition::OutOfOrder | CloudAgentConsumeDisposition::Conflict,
-            ) => {
-                defer_delivery(&channel, topology, delivery.data.as_slice()).await?;
-                delivery
-                    .ack(BasicAckOptions::default())
-                    .await
-                    .map_err(|error| error.to_string())?;
-            }
-            Err(error) => {
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| "Cloud Agent consumer concurrency gate closed".to_string())?;
+        let owner = owner.clone();
+        let channel = channel.clone();
+        let topology = topology.clone();
+        jobs.spawn(async move {
+            let _permit = permit;
+            if let Err(error) = process_delivery(&channel, &topology, &owner, delivery).await {
                 warn!(
                     owner_service = owner.owner_service(),
                     error = error.as_str(),
-                    "Cloud Agent delivery failed"
+                    "Cloud Agent delivery processing failed"
                 );
-                defer_delivery(&channel, topology, delivery.data.as_slice()).await?;
-                delivery
-                    .ack(BasicAckOptions::default())
-                    .await
-                    .map_err(|ack_error| ack_error.to_string())?;
             }
+        });
+        while jobs.try_join_next().is_some() {}
+    }
+    while jobs.join_next().await.is_some() {}
+    Ok(())
+}
+
+async fn process_delivery<O>(
+    channel: &Channel,
+    topology: &CloudAgentRabbitMqTopology,
+    owner: &O,
+    delivery: lapin::message::Delivery,
+) -> Result<(), String>
+where
+    O: CloudAgentQueueOwner,
+{
+    match consume_delivery(owner, delivery.data.as_slice()).await {
+        Ok(
+            CloudAgentConsumeDisposition::Committed
+            | CloudAgentConsumeDisposition::Duplicate
+            | CloudAgentConsumeDisposition::Terminal,
+        ) => delivery
+            .ack(BasicAckOptions::default())
+            .await
+            .map_err(|error| error.to_string())?,
+        Ok(CloudAgentConsumeDisposition::OutOfOrder | CloudAgentConsumeDisposition::Conflict) => {
+            defer_delivery(channel, topology, delivery.data.as_slice()).await?;
+            delivery
+                .ack(BasicAckOptions::default())
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Err(error) => {
+            warn!(
+                owner_service = owner.owner_service(),
+                error = error.as_str(),
+                "Cloud Agent delivery failed"
+            );
+            defer_delivery(channel, topology, delivery.data.as_slice()).await?;
+            delivery
+                .ack(BasicAckOptions::default())
+                .await
+                .map_err(|ack_error| ack_error.to_string())?;
         }
     }
     Ok(())
@@ -656,7 +691,7 @@ mod tests {
 
     #[test]
     fn topology_requires_distinct_durable_queue_identities() {
-        let topology = CloudAgentRabbitMqTopology {
+        let mut topology = CloudAgentRabbitMqTopology {
             rabbitmq_url: "amqp://localhost".to_string(),
             exchange: "cloud_agent".to_string(),
             runtime_queue: "cloud_agent.project.runtime".to_string(),
@@ -666,8 +701,11 @@ mod tests {
             outbox_reconcile_interval: Duration::from_secs(1),
             outbox_batch_size: 100,
             prefetch_count: 32,
+            consumer_concurrency: 4,
             conflict_retry_delay: Duration::from_secs(1),
         };
         assert!(topology.validate().is_ok());
+        topology.consumer_concurrency = 0;
+        assert!(topology.validate().is_err());
     }
 }

@@ -115,6 +115,7 @@ async fn wait_for_execution_lane(
 async fn mark_run_running(service: &RunService, run: &mut TaskRunRecord) -> Result<(), String> {
     let mut candidate = run.clone();
     candidate.status = TaskRunStatus::Running;
+    candidate.model_phase_status = crate::models::ModelPhaseStatus::Running;
     if candidate.started_at.is_none() {
         candidate.started_at = Some(now_rfc3339());
     }

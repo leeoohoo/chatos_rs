@@ -172,6 +172,15 @@ impl RunService {
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
+        let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
+            &runtime_task.mcp_config,
+        );
+        let execution_lane_key = crate::services::workspace_execution::model_execution_lane_key(
+            self,
+            &runtime_task,
+            &effective_tools,
+        )
+        .await?;
         let run_id = Uuid::new_v4().to_string();
         let skill_snapshots = capability_policy
             .as_ref()
@@ -207,14 +216,7 @@ impl RunService {
         let max_iterations =
             u32::try_from(self.effective_task_execution_max_iterations().await?)
                 .map_err(|_| "Task Runner max iterations exceeds Cloud Agent range".to_string())?;
-        let ordering_lane_key = if trigger == RunTriggerSource::Dependency {
-            // The parent is durably waiting and may own the project lane. A prerequisite
-            // uses its own task lane, while repeated runs of that prerequisite remain serial.
-            format!("task:{}", task.id)
-        } else {
-            task.execution_lane_key()
-                .unwrap_or_else(|| format!("task:{}", task.id))
-        };
+        let ordering_lane_key = format!("task:{}", task.id);
         let agent_run_id = format!("task_runner_agent_{run_id}");
         let cloud_run = chatos_cloud_agent_runtime::create_cloud_agent_run(
             &self.cloud_agent_store,
@@ -261,14 +263,12 @@ impl RunService {
             input_snapshot,
             now,
         );
-        run.effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
-            &runtime_task.mcp_config,
-        );
+        run.effective_tools = effective_tools;
         run.agent_run_id = Some(agent_run_id);
         run.dispatch_event_pending = false;
         run.agent_ordering_lane_key = Some(ordering_lane_key);
         run.agent_lane_seq = Some(lane_seq);
-        run.execution_lane_key = task.execution_lane_key();
+        run.execution_lane_key = execution_lane_key;
         let requested_dispatch_paused = task.task_tool_state.execution_paused;
         run.dispatch_paused = requested_dispatch_paused || retry_of_run_id.is_some();
         if let Err(error) = self.store.save_run(run.clone()).await {

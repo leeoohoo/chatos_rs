@@ -14,6 +14,7 @@ import {
   getMessageTaskRunnerGraphRun,
   getMessageTaskRunnerTask,
   retryMessageTaskRunnerRun,
+  retryMessageTaskRunnerRunIntegration,
 } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
@@ -431,6 +432,57 @@ export function useMessageTaskGraph({
     }
   }, [apiClient, graph, lookup, messageId, reloadGraph, retryingTaskId]);
 
+  const retryTaskIntegration = useCallback(async (task: MessageTaskRunnerTask) => {
+    const taskId = readString(task.id);
+    const runId = readString(task.last_run_id);
+    const integrationStatus = readString(task.last_run?.workspace_execution?.integration_status)
+      ?.toLowerCase();
+    if (!taskId || !runId || integrationStatus !== 'conflict') {
+      setRetryError('当前任务没有可重新集成的代码冲突，请刷新任务流程后重试。');
+      return false;
+    }
+    if (retryingTaskId) {
+      setRetryError('另一个任务节点正在重新处理，请等待其提交完成后再试。');
+      return false;
+    }
+    const source = buildTaskSourceLookup({
+      task,
+      graph,
+      fallbackMessageId: messageId,
+      fallbackLookup: lookup,
+    });
+    setRetryingTaskId(taskId);
+    setRetryError(null);
+    setError(null);
+    try {
+      const response = await retryMessageTaskRunnerRunIntegration(
+        apiClient.getRequestFn(),
+        source.messageId,
+        runId,
+        source.lookup,
+      );
+      setDetailTask((current) => (
+        current?.id === taskId
+          ? {
+            ...current,
+            status: readString(response.run.status) || 'running',
+            last_run_id: response.run.id,
+            last_run: response.run,
+          }
+          : current
+      ));
+      await reloadGraph();
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '重新集成任务代码失败';
+      setRetryError(message);
+      setError(message);
+      return false;
+    } finally {
+      setRetryingTaskId(null);
+    }
+  }, [apiClient, graph, lookup, messageId, reloadGraph, retryingTaskId]);
+
   const loadMoreRunEvents = useCallback(async () => {
     if (!runDetail?.events_has_more) {
       return;
@@ -537,6 +589,7 @@ export function useMessageTaskGraph({
     openProcessLog,
     openRun,
     retryTask,
+    retryTaskIntegration,
     loadMoreRunEvents,
     closeDetail: () => {
       nextOverlayRequestSequence();

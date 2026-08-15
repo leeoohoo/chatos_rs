@@ -23,6 +23,7 @@ interface MessageTaskDetailModalProps {
     retryInstruction?: string,
     executionServiceId?: string,
   ) => unknown | Promise<unknown>;
+  onRetryIntegration?: (task: MessageTaskRunnerTask) => unknown | Promise<unknown>;
   retrying?: boolean;
   retryError?: string | null;
   onClose: () => void;
@@ -40,6 +41,12 @@ const shortId = (value: string): string => (
 
 export const canRetryMessageTask = (task: MessageTaskRunnerTask): boolean => (
   ['failed', 'blocked'].includes(readString(task.status)?.toLowerCase() || '')
+  && Boolean(readString(task.last_run_id))
+  && readString(task.last_run?.workspace_execution?.integration_status)?.toLowerCase() !== 'conflict'
+);
+
+export const canRetryMessageTaskIntegration = (task: MessageTaskRunnerTask): boolean => (
+  readString(task.last_run?.workspace_execution?.integration_status)?.toLowerCase() === 'conflict'
   && Boolean(readString(task.last_run_id))
 );
 
@@ -95,6 +102,7 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   task,
   relatedTasks = [],
   onRetry,
+  onRetryIntegration,
   retrying = false,
   retryError = null,
   onClose,
@@ -109,6 +117,8 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   }
   const normalizedStatus = readString(task.status)?.toLowerCase();
   const isBlocked = normalizedStatus === 'blocked';
+  const isIntegrationConflict = canRetryMessageTaskIntegration(task);
+  const integration = task.last_run?.workspace_execution;
   const taskToolState = isRecord(task.task_tool_state) ? task.task_tool_state : {};
   const blockedReason = readString(task.last_run?.error_message)
     || readString(taskToolState.blocker_reason)
@@ -156,6 +166,52 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
       onClose={onClose}
       widthClassName="max-w-5xl"
     >
+      {isIntegrationConflict && onRetryIntegration ? (
+        <div className="space-y-3 rounded-md border border-orange-300 bg-orange-50 px-3 py-3 dark:border-orange-800 dark:bg-orange-950/30">
+          <div className="flex items-start gap-2.5">
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-orange-600 dark:text-orange-300" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-orange-900 dark:text-orange-100">
+                代码集成冲突
+              </div>
+              <p className="mt-0.5 text-xs leading-5 text-orange-800 dark:text-orange-200">
+                模型执行已经完成，但任务分支尚未进入执行批次分支。修复任务分支或批次分支后，可直接重新集成，不会重新调用模型。
+              </p>
+              {integration?.execution_branch_ref ? (
+                <p className="mt-2 break-all text-xs text-orange-800 dark:text-orange-200">
+                  执行批次分支：{integration.execution_branch_ref}
+                </p>
+              ) : null}
+              {integration?.conflict_files?.length ? (
+                <div className="mt-2 text-xs text-orange-800 dark:text-orange-200">
+                  <span className="font-medium">冲突文件：</span>
+                  {integration.conflict_files.join('、')}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={retrying}
+              onClick={() => void onRetryIntegration(task)}
+            >
+              {retrying
+                ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                : <RotateCcw className="h-3.5 w-3.5" />}
+              {retrying ? '正在重新集成' : '重新集成代码'}
+            </button>
+          </div>
+          {retryError ? (
+            <div role="alert" className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+              <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{retryError}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {canRetryMessageTask(task) && onRetry ? (
         <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-3 dark:border-amber-800 dark:bg-amber-950/30">
           <div className="flex items-start gap-2.5">
