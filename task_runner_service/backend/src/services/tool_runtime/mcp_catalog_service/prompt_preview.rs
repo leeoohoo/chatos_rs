@@ -61,6 +61,7 @@ impl McpCatalogService {
             enabled_builtin_kinds: selected_kind_names,
             workspace_dir: normalized_optional(request.workspace_dir),
             requires_execution: true,
+            workspace_changes_required: true,
             execution_service_id: None,
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),

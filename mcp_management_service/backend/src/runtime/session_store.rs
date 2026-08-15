@@ -46,7 +46,7 @@ use self::external_http::{
     PersistedExternalHttpProviderBinding,
 };
 
-const SNAPSHOT_SCHEMA_VERSION: i32 = 7;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 8;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_HEADERS: usize = 64;
 const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
@@ -144,6 +144,7 @@ pub struct RuntimeSessionSnapshot {
     pub project_id: String,
     pub device_id: Option<String>,
     pub run_id: Option<String>,
+    pub execution_group_id: Option<String>,
     pub execution_scope_generation: Option<i64>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
@@ -261,6 +262,8 @@ struct PersistedRuntimeSessionSnapshot {
     project_id: String,
     device_id: Option<String>,
     run_id: Option<String>,
+    #[serde(default)]
+    execution_group_id: Option<String>,
     execution_scope_generation: Option<i64>,
     turn_id: Option<String>,
     task_id: Option<String>,
@@ -732,6 +735,7 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             project_id: snapshot.project_id.clone(),
             device_id: snapshot.device_id.clone(),
             run_id: snapshot.run_id.clone(),
+            execution_group_id: snapshot.execution_group_id.clone(),
             execution_scope_generation: snapshot.execution_scope_generation,
             turn_id: snapshot.turn_id.clone(),
             task_id: snapshot.task_id.clone(),
@@ -789,6 +793,7 @@ impl PersistedRuntimeSessionSnapshot {
             project_id: self.project_id,
             device_id: self.device_id,
             run_id: self.run_id,
+            execution_group_id: self.execution_group_id,
             execution_scope_generation: self.execution_scope_generation,
             turn_id: self.turn_id,
             task_id: self.task_id,

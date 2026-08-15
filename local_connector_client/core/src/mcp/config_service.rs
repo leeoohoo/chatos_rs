@@ -112,6 +112,7 @@ async fn handle_mcp_body_without_user_runtime(
                 .ok_or_else(|| anyhow::anyhow!("local execution scope runtime is unavailable"))?;
             super::execution_scope::finalize_local_execution_scope(
                 request,
+                state,
                 sandbox_runtime,
                 database.ok_or_else(|| {
                     anyhow::anyhow!("local execution scope database is unavailable")

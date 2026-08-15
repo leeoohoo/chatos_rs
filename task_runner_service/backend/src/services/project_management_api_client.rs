@@ -63,20 +63,13 @@ pub(crate) struct GetRunWorkspaceChangesRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct RunWorkspaceChangedFile {
-    pub status: String,
-    pub path: String,
-    pub old_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct GetRunWorkspaceChangesResponse {
     pub project_id: String,
     pub run_id: String,
     pub branch_ref: String,
     pub base_commit: String,
     pub result_commit: String,
-    pub files: Vec<RunWorkspaceChangedFile>,
+    pub files: Vec<crate::models::TaskRunWorkspaceChangedFile>,
     pub patch: String,
     pub patch_truncated: bool,
 }

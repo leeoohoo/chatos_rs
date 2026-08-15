@@ -72,6 +72,83 @@ fn select_execution_promotion(
 }
 
 impl RunService {
+    pub async fn waive_run_workspace_integration(
+        &self,
+        run_id: &str,
+        reason: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err("放弃代码必须填写原因".to_string());
+        }
+        if reason.chars().count() > 2_000 {
+            return Err("放弃代码原因不能超过 2000 个字符".to_string());
+        }
+        let Some(existing) = self.store.get_run(run_id).await? else {
+            return Ok(None);
+        };
+        let frozen_mcp_config = existing
+            .input_snapshot
+            .get("mcp_config")
+            .cloned()
+            .ok_or_else(|| "运行缺少冻结的 MCP 配置，不能放弃代码变更".to_string())
+            .and_then(|value| {
+                serde_json::from_value::<crate::models::TaskMcpConfig>(value)
+                    .map_err(|error| format!("运行的冻结 MCP 配置无效：{error}"))
+            })?;
+        if frozen_mcp_config.workspace_changes_required {
+            return Err(
+                "该任务的代码变更属于必需结果，不能放弃；请重新集成或重新执行任务".to_string(),
+            );
+        }
+        let mut task = self
+            .store
+            .get_task(existing.task_id.as_str())
+            .await?
+            .ok_or_else(|| {
+                format!(
+                    "Task not found for integration waiver: {}",
+                    existing.task_id
+                )
+            })?;
+        let Some(run) = self
+            .store
+            .waive_run_workspace_integration(run_id, reason)
+            .await?
+        else {
+            return Ok(None);
+        };
+        task.status = TaskStatus::Succeeded;
+        task.result_summary = run.result_summary.clone();
+        task.last_run_id = Some(run.id.clone());
+        task.updated_at = now_rfc3339();
+        self.store.save_task(task.clone()).await?;
+        self.store
+            .append_run_event(TaskRunEventRecord::new(
+                run.id.clone(),
+                "integration_waived",
+                Some(format!("已放弃该可选任务的代码变更：{reason}")),
+                Some(serde_json::json!({
+                    "reason": reason,
+                    "execution_group_id": run.workspace_execution.as_ref()
+                        .and_then(|execution| execution.execution_group_id.clone()),
+                    "result_commit": run.workspace_execution.as_ref()
+                        .and_then(|execution| execution.result_commit.clone()),
+                })),
+            ))
+            .await?;
+        self.try_send_terminal_callback(task.id.as_str(), &run)
+            .await;
+        if let Err(error) = self.enqueue_run_post_process_if_needed(&run).await {
+            warn!(
+                run_id = run.id.as_str(),
+                error = error.as_str(),
+                "failed to publish waived Run post-process event; Outbox reconciliation will retry"
+            );
+        }
+        Ok(Some(self.store.get_run(run_id).await?.unwrap_or(run)))
+    }
+
     pub async fn retry_run_workspace_integration(
         &self,
         run_id: &str,
@@ -235,7 +312,15 @@ impl RunService {
             .get_task(run.task_id.as_str())
             .await?
             .ok_or_else(|| format!("Run post-process task not found: {}", run.task_id))?;
-        self.finalize_mcp_management_run(&task, &run).await?;
+        let close_response = self.finalize_mcp_management_run(&task, &run).await?;
+        crate::services::workspace_execution::apply_runtime_provider_finalization(
+            self,
+            &mut run,
+            close_response
+                .as_ref()
+                .and_then(|response| response.provider_finalization.as_ref()),
+        )
+        .await?;
         crate::services::workspace_execution::finalize_task_run_workspace(self, &task, &mut run)
             .await?;
 
@@ -249,6 +334,7 @@ impl RunService {
                     self.finish_run_after_integration(&task, &mut run, TaskRunStatus::Succeeded)
                         .await?;
                 }
+                Some(WorkspaceIntegrationStatus::Waived) => {}
                 Some(WorkspaceIntegrationStatus::Conflict) => {
                     self.finish_run_after_integration(&task, &mut run, TaskRunStatus::Blocked)
                         .await?;
@@ -566,8 +652,133 @@ impl RunService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{TaskRunWorkspaceExecution, WorkspacePreparationStatus};
+    use crate::ask_user_prompt_service::AskUserPromptService;
+    use crate::config::{AppConfig, StoreMode};
+    use crate::models::{CreateTaskRequest, TaskRunWorkspaceExecution, WorkspacePreparationStatus};
+    use crate::services::TaskService;
+    use crate::store::AppStore;
     use serde_json::json;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+            otlp_trace_sample_ratio: 0.0,
+            otlp_export_timeout: Duration::from_secs(1),
+            role: crate::config::TaskRunnerRole::All,
+            store_mode: StoreMode::Memory,
+            database_url: "memory://run-post-process-test".to_string(),
+            memory_engine_base_url: None,
+            memory_engine_source_id: "task".to_string(),
+            memory_engine_operator_token: None,
+            memory_engine_http_client: reqwest::Client::new(),
+            default_tenant_id: "tenant".to_string(),
+            default_subject_id: "subject".to_string(),
+            default_workspace_dir: ".".to_string(),
+            memory_timeout: Duration::from_millis(1_000),
+            execution_timeout: Duration::from_millis(1_000),
+            scheduler_poll_interval: Duration::from_millis(1_000),
+            worker_id: "test-worker".to_string(),
+            worker_claim_ttl: Duration::from_millis(120_000),
+            worker_concurrency: 4,
+            auto_memory_summary: false,
+            default_task_execution_max_iterations: 1,
+            default_tool_result_model_max_chars: 1_000,
+            default_tool_results_model_total_max_chars: 2_000,
+            chatos_callback_url: String::new(),
+            chatos_callback_http_client: reqwest::Client::new(),
+            internal_api_secret: None,
+            chatos_internal_api_secret: None,
+            mcp_management_internal_api_secret: None,
+            user_service_internal_api_secret: None,
+            callback_timeout: Duration::from_millis(1_000),
+            admin_username: "admin".to_string(),
+            admin_password: "admin".to_string(),
+            admin_display_name: "Admin".to_string(),
+            user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_request_timeout: Duration::from_millis(5_000),
+            project_service_base_url: None,
+            project_service_internal_base_url: None,
+            project_service_internal_http_client: reqwest::Client::new(),
+            project_service_sync_secret: None,
+            project_service_request_timeout: Duration::from_millis(5_000),
+        }
+    }
+
+    async fn waiver_services() -> (TaskService, RunService, AppStore) {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        let task_service = TaskService::new(config.clone(), store.clone());
+        let run_service = RunService::new(
+            config,
+            store.clone(),
+            AskUserPromptService::new(store.clone()),
+        );
+        (task_service, run_service, store)
+    }
+
+    async fn create_waiver_task(
+        task_service: &TaskService,
+        store: &AppStore,
+        workspace_changes_required: bool,
+    ) -> crate::models::TaskRecord {
+        let mut task = task_service
+            .create_task(
+                CreateTaskRequest {
+                    title: "integration waiver task".to_string(),
+                    description: None,
+                    objective: "test integration waiver".to_string(),
+                    input_payload: None,
+                    status: Some(TaskStatus::Blocked),
+                    priority: None,
+                    tags: None,
+                    default_model_config_id: None,
+                    project_id: None,
+                    task_profile: None,
+                    tenant_id: None,
+                    subject_id: None,
+                    schedule: None,
+                    plugin_config: Default::default(),
+                    mcp_config: None,
+                    prerequisite_task_ids: None,
+                },
+                None,
+                None,
+            )
+            .await
+            .expect("create task");
+        task.mcp_config.workspace_changes_required = workspace_changes_required;
+        store.save_task(task).await.expect("save waiver policy")
+    }
+
+    async fn save_conflicted_run(
+        store: &AppStore,
+        task_id: &str,
+        workspace_changes_required: bool,
+    ) -> TaskRunRecord {
+        let mut run = run(
+            "waiver-run",
+            "2026-08-15T10:00:00Z",
+            Some(WorkspaceIntegrationStatus::Conflict),
+        );
+        run.task_id = task_id.to_string();
+        run.status = TaskRunStatus::Blocked;
+        run.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
+        run.finished_at = Some("2026-08-15T10:01:00Z".to_string());
+        run.result_summary = Some("model output retained".to_string());
+        run.input_snapshot = json!({
+            "mcp_config": {
+                "workspace_changes_required": workspace_changes_required,
+            },
+        });
+        let execution = run.workspace_execution.as_mut().expect("workspace");
+        execution.result_commit = Some("result-commit-1".to_string());
+        execution.conflict_files = vec!["src/main.rs".to_string()];
+        store.save_run(run).await.expect("save conflicted run")
+    }
 
     fn run(
         id: &str,
@@ -600,6 +811,11 @@ mod tests {
                 result_commit: None,
                 integrated_commit: None,
                 promoted_commit: None,
+                waived_at: None,
+                waiver_reason: None,
+                local_changed_files: Vec::new(),
+                local_patch: None,
+                local_patch_truncated: false,
                 conflict_files: Vec::new(),
                 conflict_message: None,
                 integration_last_error: None,
@@ -679,5 +895,80 @@ mod tests {
             select_execution_promotion("group-1", &[run("read-run", "2026-08-14T10:00:00Z", None)]),
             ExecutionPromotionSelection::NotReady
         );
+    }
+
+    #[tokio::test]
+    async fn required_workspace_changes_cannot_be_waived() {
+        let (task_service, run_service, store) = waiver_services().await;
+        let task = create_waiver_task(&task_service, &store, false).await;
+        save_conflicted_run(&store, task.id.as_str(), true).await;
+
+        let error = run_service
+            .waive_run_workspace_integration("waiver-run", "skip it")
+            .await
+            .expect_err("required changes must fail closed");
+        assert!(error.contains("不能放弃"));
+
+        let unchanged = store
+            .get_run("waiver-run")
+            .await
+            .expect("load run")
+            .expect("run");
+        assert_eq!(unchanged.status, TaskRunStatus::Blocked);
+        assert_eq!(
+            unchanged
+                .workspace_execution
+                .expect("workspace")
+                .integration_status,
+            WorkspaceIntegrationStatus::Conflict
+        );
+    }
+
+    #[tokio::test]
+    async fn optional_workspace_changes_can_be_waived_and_continue_post_process() {
+        let (task_service, run_service, store) = waiver_services().await;
+        let task = create_waiver_task(&task_service, &store, true).await;
+        save_conflicted_run(&store, task.id.as_str(), false).await;
+
+        let waived = run_service
+            .waive_run_workspace_integration("waiver-run", "optional output is not required")
+            .await
+            .expect("waive optional integration")
+            .expect("waived run");
+        let integration = waived.workspace_execution.as_ref().expect("workspace");
+        assert_eq!(waived.status, TaskRunStatus::Succeeded);
+        assert_eq!(
+            integration.integration_status,
+            WorkspaceIntegrationStatus::Waived
+        );
+        assert_eq!(
+            integration.result_commit.as_deref(),
+            Some("result-commit-1")
+        );
+        assert_eq!(
+            integration.waiver_reason.as_deref(),
+            Some("optional output is not required")
+        );
+        assert!(integration.waived_at.is_some());
+        assert!(waived.post_process_event_enqueued || waived.post_process_event_pending);
+
+        let saved_task = task_service
+            .get_task(task.id.as_str())
+            .await
+            .expect("load task")
+            .expect("task");
+        assert_eq!(saved_task.status, TaskStatus::Succeeded);
+        assert_eq!(
+            saved_task.result_summary.as_deref(),
+            Some("model output retained")
+        );
+
+        let events = store
+            .list_run_events("waiver-run")
+            .await
+            .expect("list events");
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == "integration_waived"));
     }
 }

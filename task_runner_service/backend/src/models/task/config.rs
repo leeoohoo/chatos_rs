@@ -77,6 +77,8 @@ pub struct TaskMcpConfig {
     pub workspace_dir: Option<String>,
     #[serde(default = "task_requires_execution_default")]
     pub requires_execution: bool,
+    #[serde(default = "task_workspace_changes_required_default")]
+    pub workspace_changes_required: bool,
     #[serde(default)]
     pub execution_service_id: Option<String>,
     #[serde(default)]
@@ -99,6 +101,7 @@ impl Default for TaskMcpConfig {
             enabled_builtin_kinds: task_mcp_builtin_kinds_default(),
             workspace_dir: None,
             requires_execution: task_requires_execution_default(),
+            workspace_changes_required: task_workspace_changes_required_default(),
             execution_service_id: None,
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),
@@ -119,6 +122,10 @@ fn task_mcp_enabled_default() -> bool {
 }
 
 fn task_requires_execution_default() -> bool {
+    true
+}
+
+fn task_workspace_changes_required_default() -> bool {
     true
 }
 

@@ -2,10 +2,41 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::{Context, Result};
+use serde_json::Value;
 
 use super::LocalDatabase;
 
 impl LocalDatabase {
+    pub(crate) async fn execution_scope_finalization_result(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: &str,
+        generation: i64,
+    ) -> Result<Option<Value>> {
+        let now = chrono::Utc::now().timestamp();
+        let value = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT finalization_result_json FROM execution_scope_tombstones \
+             WHERE owner_user_id = ? AND project_id = ? AND run_id = ? AND generation = ? \
+             AND expires_at_unix > ?",
+        )
+        .bind(owner_user_id)
+        .bind(project_id)
+        .bind(run_id)
+        .bind(generation)
+        .bind(now)
+        .fetch_optional(self.pool())
+        .await
+        .context("query execution scope finalization result")?
+        .flatten();
+        value
+            .map(|value| {
+                serde_json::from_str(value.as_str())
+                    .context("decode execution scope finalization result")
+            })
+            .transpose()
+    }
+
     pub(crate) async fn execution_scope_is_terminal(
         &self,
         owner_user_id: &str,
@@ -35,7 +66,7 @@ impl LocalDatabase {
         .context("query execution scope tombstone")
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) async fn persist_execution_scope_tombstone(
         &self,
         owner_user_id: &str,
@@ -65,6 +96,44 @@ impl LocalDatabase {
         .execute(self.pool())
         .await
         .context("persist execution scope tombstone")?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn persist_execution_scope_finalization_result(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: &str,
+        generation: i64,
+        terminal_status: &str,
+        finalization_result: &Value,
+        expires_at_unix: i64,
+    ) -> Result<()> {
+        let finalized_at_unix = chrono::Utc::now().timestamp();
+        let finalization_result_json = serde_json::to_string(finalization_result)
+            .context("encode execution scope finalization result")?;
+        sqlx::query(
+            "INSERT INTO execution_scope_tombstones \
+             (owner_user_id, project_id, run_id, generation, terminal_status, finalized_at_unix, expires_at_unix, finalization_result_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(owner_user_id, project_id, run_id, generation) DO UPDATE SET \
+             terminal_status = excluded.terminal_status, \
+             finalized_at_unix = excluded.finalized_at_unix, \
+             expires_at_unix = MAX(execution_scope_tombstones.expires_at_unix, excluded.expires_at_unix), \
+             finalization_result_json = excluded.finalization_result_json",
+        )
+        .bind(owner_user_id)
+        .bind(project_id)
+        .bind(run_id)
+        .bind(generation)
+        .bind(terminal_status)
+        .bind(finalized_at_unix)
+        .bind(expires_at_unix)
+        .bind(finalization_result_json)
+        .execute(self.pool())
+        .await
+        .context("persist execution scope finalization result")?;
         Ok(())
     }
 }

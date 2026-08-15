@@ -408,6 +408,11 @@ export const api = {
     request<TaskRunRecord>(`/api/runs/${runId}/integration/retry`, {
       method: 'POST',
     }),
+  waiveRunIntegration: (runId: string, reason: string) =>
+    request<TaskRunRecord>(`/api/runs/${runId}/integration/waive`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason.trim() }),
+    }),
   getRunChanges: (runId: string) =>
     request<RunWorkspaceChanges>(`/api/runs/${runId}/changes`),
   listPrompts: (filters?: PromptListFilters) =>

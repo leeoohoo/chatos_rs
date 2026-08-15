@@ -4,6 +4,11 @@
 use super::*;
 use crate::models::TaskRunWorkspaceExecution;
 
+#[derive(Debug, Deserialize)]
+pub(in crate::api) struct WaiveRunWorkspaceIntegrationRequest {
+    reason: String,
+}
+
 pub(in crate::api) async fn start_task_run(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -186,5 +191,27 @@ pub(in crate::api) async fn retry_run_workspace_integration(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::conflict("当前运行没有可重试的代码集成冲突"))?;
+    Ok(Json(redact_workspace_paths(&state, run)?))
+}
+
+pub(in crate::api) async fn waive_run_workspace_integration(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(request): Json<WaiveRunWorkspaceIntegrationRequest>,
+) -> Result<Json<TaskRunRecord>, ApiError> {
+    let existing = state
+        .run_service
+        .get_run(&id)
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found(format!("运行记录不存在: {id}")))?;
+    ensure_run_access(&state, &existing, &current_user).await?;
+    let run = state
+        .run_service
+        .waive_run_workspace_integration(&id, request.reason.as_str())
+        .await
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::conflict("当前运行没有可放弃的代码集成冲突"))?;
     Ok(Json(redact_workspace_paths(&state, run)?))
 }

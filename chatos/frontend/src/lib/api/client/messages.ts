@@ -139,6 +139,20 @@ export const retryMessageTaskRunnerRunIntegration = (
   { method: 'POST' },
 );
 
+export const waiveMessageTaskRunnerRunIntegration = (
+  request: ApiRequestFn,
+  messageId: string,
+  runId: string,
+  reason: string,
+  options?: MessageTaskRunnerLookupOptions,
+): Promise<MessageTaskRunnerRetryRunResponse> => request<MessageTaskRunnerRetryRunResponse>(
+  `/messages/${encodeURIComponent(messageId)}/task-runner/runs/${encodeURIComponent(runId)}/integration/waive${messageTaskRunnerLookupQuery(options)}`,
+  {
+    method: 'POST',
+    body: JSON.stringify({ reason: reason.trim() }),
+  },
+);
+
 export const createPluginUiWorkbenchSession = (
   request: ApiRequestFn,
   messageId: string,

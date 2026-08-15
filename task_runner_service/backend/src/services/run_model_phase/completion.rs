@@ -68,9 +68,10 @@ impl RunService {
         let integration_pending = terminal_status == TaskRunStatus::Succeeded
             && run.workspace_execution.as_ref().is_some_and(|execution| {
                 execution.status == WorkspacePreparationStatus::Ready
+                    && execution.execution_group_id.is_some()
                     && matches!(
                         execution.branch_target,
-                        Some(TaskRunBranchTarget::Run { .. })
+                        Some(TaskRunBranchTarget::Run { .. } | TaskRunBranchTarget::Local)
                     )
             });
         run.finished_at = (!integration_pending).then(|| report.completed_at.clone());
@@ -126,7 +127,9 @@ impl RunService {
                 return;
             }
         }
-        self.notify_mcp_management_run_finalized(task, run).await;
+        if !integration_pending {
+            self.notify_mcp_management_run_finalized(task, run).await;
+        }
 
         let event_type = if integration_pending {
             "model_phase_succeeded"
@@ -216,7 +219,7 @@ impl RunService {
         &self,
         task: &TaskRecord,
         run: &TaskRunRecord,
-    ) -> Result<(), String> {
+    ) -> Result<Option<chatos_mcp_management_sdk::CloseRuntimeSessionResponse>, String> {
         use chatos_mcp_management_sdk::{McpManagementClient, McpManagementClientConfig};
 
         let _ = task;
@@ -227,7 +230,7 @@ impl RunService {
                 | ModelPhaseStatus::Cancelled
                 | ModelPhaseStatus::Blocked
         ) {
-            return Ok(());
+            return Ok(None);
         }
         let Some(session_id) = run
             .mcp_runtime_session_ref
@@ -235,7 +238,7 @@ impl RunService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         else {
-            return Ok(());
+            return Ok(None);
         };
         let config = match McpManagementClientConfig::from_env("task-runner").await {
             Ok(config) => config,
@@ -255,15 +258,18 @@ impl RunService {
                 ));
             }
         };
-        match client.close_runtime_session(session_id).await {
-            Ok(_) => Ok(()),
+        match client
+            .close_runtime_session_with_status(session_id, task_run_terminal_status_name(run))
+            .await
+        {
+            Ok(response) => Ok(Some(response)),
             Err(error) => {
                 let message = error.to_string();
                 if message.contains("404")
                     || message.contains("not found")
                     || message.contains("already closed")
                 {
-                    Ok(())
+                    Ok(None)
                 } else {
                     Err(format!(
                         "{}: {message}",
@@ -272,6 +278,23 @@ impl RunService {
                 }
             }
         }
+    }
+}
+
+fn task_run_terminal_status_name(run: &TaskRunRecord) -> &'static str {
+    if run
+        .workspace_execution
+        .as_ref()
+        .is_some_and(|execution| execution.integration_status == WorkspaceIntegrationStatus::Waived)
+    {
+        return "waived";
+    }
+    match run.status {
+        TaskRunStatus::Succeeded => "succeeded",
+        TaskRunStatus::Failed => "failed",
+        TaskRunStatus::Cancelled => "cancelled",
+        TaskRunStatus::Blocked => "blocked",
+        TaskRunStatus::Queued | TaskRunStatus::Running => "succeeded",
     }
 }
 

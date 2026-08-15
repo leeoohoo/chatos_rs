@@ -108,6 +108,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
     openRun,
     retryTask,
     retryTaskIntegration,
+    waiveTaskIntegration,
     loadMoreRunEvents,
     closeDetail,
     closeProcessLog,
@@ -439,6 +440,7 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
         retryError={retryError}
         onRetry={retryTask}
         onRetryIntegration={retryTaskIntegration}
+        onWaiveIntegration={waiveTaskIntegration}
         onClose={closeDetail}
       />
       <MessageTaskProcessLogModal

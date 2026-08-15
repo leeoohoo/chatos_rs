@@ -6,6 +6,7 @@ mod grant;
 mod invocation_store;
 mod plugin_mcp;
 mod quota;
+mod session_close_store;
 mod session_store;
 mod tool_batch_store;
 
@@ -25,6 +26,7 @@ pub use plugin_mcp::{
 pub use quota::{
     RuntimeInvocationQuota, RuntimeInvocationQuotaLimits, RuntimeInvocationQuotaReserveError,
 };
+pub use session_close_store::RuntimeSessionCloseStore;
 pub use session_store::{
     CloudStdioProviderBinding, ExternalHttpProviderBinding, RuntimeSessionCacheLimits,
     RuntimeSessionSnapshot, RuntimeSessionStore, RuntimeSessionStoreStats,

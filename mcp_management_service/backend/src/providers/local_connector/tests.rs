@@ -42,6 +42,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_group_id: Some("group-1".to_string()),
         execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
@@ -146,6 +147,12 @@ async fn start_local_connector(
         );
         assert_eq!(
             headers
+                .get(MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("group-1")
+        );
+        assert_eq!(
+            headers
                 .get(MCP_MANAGEMENT_TASK_ID_HEADER)
                 .and_then(|value| value.to_str().ok()),
             Some("task-1")
@@ -200,6 +207,123 @@ async fn start_local_connector(
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), handle)
+}
+
+async fn start_local_connector_lifecycle(
+    secret: &'static str,
+) -> (String, tokio::task::JoinHandle<()>) {
+    async fn handler(
+        State(secret): State<&'static str>,
+        headers: HeaderMap,
+        Query(query): Query<HashMap<String, String>>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_RUN_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("group-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_SCOPE_GENERATION_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("7")
+        );
+        assert_eq!(
+            query.get("workspace_id").map(String::as_str),
+            Some("workspace-1")
+        );
+        assert_eq!(query.get("cwd").map(String::as_str), Some("apps/backend"));
+        let token = headers
+            .get("x-local-connector-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("signed Local Connector token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            secret,
+            CALLER_SERVICE,
+            TOKEN_AUDIENCE,
+            MCP_RELAY_SCOPE,
+        )
+        .expect("valid Local Connector token");
+        assert_eq!(
+            request.pointer("/params/status").and_then(Value::as_str),
+            Some("succeeded")
+        );
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {
+                "status": "conflict",
+                "execution_group_id": "group-1",
+                "execution_branch_ref": "chatos/executions/local-group",
+                "base_commit": "base-commit",
+                "result_commit": "result-commit",
+                "integrated_commit": null,
+                "conflict_files": ["src/lib.rs"],
+                "files": [{"status": "M", "path": "src/lib.rs", "old_path": null}],
+                "message": "same line conflict",
+                "patch": "diff --git a/src/lib.rs b/src/lib.rs",
+                "patch_truncated": false
+            }
+        }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route("/api/local-connectors/relay/device-1/mcp", post(handler))
+        .with_state(secret);
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), handle)
+}
+
+#[tokio::test]
+async fn finalize_run_forwards_execution_group_and_decodes_structured_conflict() {
+    const SECRET: &str = "a-long-local-connector-secret";
+    let (base_url, server) = start_local_connector_lifecycle(SECRET).await;
+    let provider = LocalConnectorProvider::new(
+        reqwest::Client::new(),
+        base_url,
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let finalization = provider
+        .finalize_run(
+            &snapshot().project_context,
+            "user-1",
+            "project-1",
+            "run-1",
+            Some("group-1"),
+            7,
+            "succeeded",
+        )
+        .await
+        .unwrap()
+        .expect("Local Connector finalization");
+    assert_eq!(
+        finalization.status,
+        chatos_mcp_management_sdk::RuntimeProviderFinalizationStatus::Conflict
+    );
+    assert_eq!(
+        finalization.execution_branch_ref.as_deref(),
+        Some("chatos/executions/local-group")
+    );
+    assert_eq!(finalization.conflict_files, vec!["src/lib.rs"]);
+    assert_eq!(finalization.files.len(), 1);
+    assert_eq!(finalization.files[0].path, "src/lib.rs");
+    server.abort();
 }
 
 #[tokio::test]

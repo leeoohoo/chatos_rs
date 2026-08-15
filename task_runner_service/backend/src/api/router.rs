@@ -43,6 +43,7 @@ use super::runs::{
     cancel_run, get_run, get_run_workspace_changes, get_run_workspace_integration, list_run_events,
     list_run_index, list_run_summaries, list_runs, list_runs_page, list_task_runs, retry_run,
     retry_run_workspace_integration, start_task_run, stream_run_events,
+    waive_run_workspace_integration,
 };
 use super::tasks::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
@@ -159,6 +160,10 @@ pub fn build_public_router(state: AppState) -> Router {
         .route(
             "/api/runs/{id}/integration/retry",
             post(retry_run_workspace_integration),
+        )
+        .route(
+            "/api/runs/{id}/integration/waive",
+            post(waive_run_workspace_integration),
         )
         .route(
             "/api/queue-operations/run-post-process/replay",

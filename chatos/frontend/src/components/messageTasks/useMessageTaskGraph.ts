@@ -15,6 +15,7 @@ import {
   getMessageTaskRunnerTask,
   retryMessageTaskRunnerRun,
   retryMessageTaskRunnerRunIntegration,
+  waiveMessageTaskRunnerRunIntegration,
 } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
@@ -22,7 +23,7 @@ import type {
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerTask,
 } from '../../lib/api/client/types';
-import { readString } from './utils';
+import { isRecord, readString } from './utils';
 
 interface UseMessageTaskGraphArgs {
   open: boolean;
@@ -483,6 +484,75 @@ export function useMessageTaskGraph({
     }
   }, [apiClient, graph, lookup, messageId, reloadGraph, retryingTaskId]);
 
+  const waiveTaskIntegration = useCallback(async (
+    task: MessageTaskRunnerTask,
+    reason: string,
+  ) => {
+    const taskId = readString(task.id);
+    const runId = readString(task.last_run_id);
+    const integrationStatus = readString(task.last_run?.workspace_execution?.integration_status)
+      ?.toLowerCase();
+    const workspaceChangesRequired = isRecord(task.mcp_config)
+      ? task.mcp_config.workspace_changes_required
+      : undefined;
+    const normalizedReason = reason.trim();
+    if (
+      !taskId
+      || !runId
+      || integrationStatus !== 'conflict'
+      || workspaceChangesRequired !== false
+    ) {
+      setRetryError('当前任务不是可放弃代码变更的可选冲突任务，请刷新任务流程后重试。');
+      return false;
+    }
+    if (!normalizedReason) {
+      setRetryError('请填写放弃代码变更的原因。');
+      return false;
+    }
+    if (retryingTaskId) {
+      setRetryError('另一个任务节点正在重新处理，请等待其提交完成后再试。');
+      return false;
+    }
+    const source = buildTaskSourceLookup({
+      task,
+      graph,
+      fallbackMessageId: messageId,
+      fallbackLookup: lookup,
+    });
+    setRetryingTaskId(taskId);
+    setRetryError(null);
+    setError(null);
+    try {
+      const response = await waiveMessageTaskRunnerRunIntegration(
+        apiClient.getRequestFn(),
+        source.messageId,
+        runId,
+        normalizedReason,
+        source.lookup,
+      );
+      setDetailTask((current) => (
+        current?.id === taskId
+          ? {
+            ...current,
+            status: readString(response.run.status) || 'succeeded',
+            last_run_id: response.run.id,
+            last_run: response.run,
+            result_summary: response.run.result_summary ?? current.result_summary,
+          }
+          : current
+      ));
+      await reloadGraph();
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '放弃任务代码变更失败';
+      setRetryError(message);
+      setError(message);
+      return false;
+    } finally {
+      setRetryingTaskId(null);
+    }
+  }, [apiClient, graph, lookup, messageId, reloadGraph, retryingTaskId]);
+
   const loadMoreRunEvents = useCallback(async () => {
     if (!runDetail?.events_has_more) {
       return;
@@ -590,6 +660,7 @@ export function useMessageTaskGraph({
     openRun,
     retryTask,
     retryTaskIntegration,
+    waiveTaskIntegration,
     loadMoreRunEvents,
     closeDetail: () => {
       nextOverlayRequestSequence();

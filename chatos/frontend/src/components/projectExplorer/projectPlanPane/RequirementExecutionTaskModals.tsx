@@ -25,8 +25,10 @@ export const RequirementExecutionTaskModals: React.FC<{
     processTask,
     retryError,
     retryTask,
+    retryTaskIntegration,
     retryingTaskId,
     runDetail,
+    waiveTaskIntegration,
   } = taskGraph;
 
   return (
@@ -37,6 +39,8 @@ export const RequirementExecutionTaskModals: React.FC<{
         retrying={Boolean(retryingTaskId)}
         retryError={retryError}
         onRetry={retryTask}
+        onRetryIntegration={retryTaskIntegration}
+        onWaiveIntegration={waiveTaskIntegration}
         onClose={closeDetail}
       />
       <MessageTaskProcessLogModal

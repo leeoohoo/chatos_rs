@@ -126,6 +126,7 @@ fn runtime_session_request(
         agent_key: agent_key.as_str().to_string(),
         project_id: project.id.trim().to_string(),
         run_id: Some(run_id.trim().to_string()),
+        execution_group_id: None,
         turn_id: None,
         task_id: None,
         task_profile: None,

@@ -11,7 +11,7 @@ use crate::routing::RoutingEngine;
 use crate::runtime::{
     RuntimeExecutionScopeStore, RuntimeGrantService, RuntimeInvocationQuota,
     RuntimeInvocationQuotaLimits, RuntimeInvocationStore, RuntimeSessionCacheLimits,
-    RuntimeSessionStore, RuntimeToolBatchStore,
+    RuntimeSessionCloseStore, RuntimeSessionStore, RuntimeToolBatchStore,
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 #[cfg(not(test))]
@@ -45,6 +45,7 @@ pub struct AppState {
     pub providers: ProviderDispatcher,
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
+    pub runtime_session_closes: RuntimeSessionCloseStore,
     pub runtime_execution_scopes: RuntimeExecutionScopeStore,
     pub runtime_invocations: RuntimeInvocationStore,
     pub runtime_tool_batches: RuntimeToolBatchStore,
@@ -136,6 +137,10 @@ impl AppState {
                 }
             }
         };
+        let runtime_session_closes = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => RuntimeSessionCloseStore::connect(database_url).await?,
+            None => RuntimeSessionCloseStore::memory(),
+        };
         let runtime_execution_scopes = match config.runtime_session_database_url.as_deref() {
             Some(database_url) => RuntimeExecutionScopeStore::connect(database_url).await?,
             None => RuntimeExecutionScopeStore::memory(),
@@ -157,6 +162,7 @@ impl AppState {
             project_context_client,
             providers,
             runtime_sessions,
+            runtime_session_closes,
             runtime_execution_scopes,
             runtime_invocations,
             runtime_tool_batches,

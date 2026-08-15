@@ -81,6 +81,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         agent_key: agent_key.clone(),
         project_id: project_id.to_string(),
         run_id: None,
+        execution_group_id: None,
         turn_id: Some(turn_id.to_string()),
         task_id: None,
         task_profile: request
@@ -127,6 +128,7 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         agent_key: String::new(),
         project_id: String::new(),
         run_id: None,
+        execution_group_id: None,
         turn_id: None,
         task_id: None,
         task_profile: None,

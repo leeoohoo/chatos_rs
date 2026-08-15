@@ -278,6 +278,22 @@ export function RunsPage() {
     onError: (error: Error) => messageApi.error(error.message),
   });
 
+  const waiveRunIntegrationMutation = useMutation({
+    mutationFn: ({ runId, reason }: { runId: string; reason: string }) => (
+      api.waiveRunIntegration(runId, reason)
+    ),
+    onSuccess: async (run) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['run-index'] }),
+        queryClient.invalidateQueries({ queryKey: ['run', run.id] }),
+        queryClient.invalidateQueries({ queryKey: ['run-events', run.id] }),
+      ]);
+      messageApi.success(t('runs.integrationWaived'));
+    },
+    onError: (error: Error) => messageApi.error(error.message),
+  });
+
   const runChangesMutation = useMutation({
     mutationFn: api.getRunChanges,
     onSuccess: setRunChanges,
@@ -379,6 +395,7 @@ export function RunsPage() {
         canceling={cancelRunMutation.isPending}
         retrying={retryRunMutation.isPending}
         integrationRetrying={retryRunIntegrationMutation.isPending}
+        integrationWaiving={waiveRunIntegrationMutation.isPending}
         changes={runChanges}
         changesLoading={runChangesMutation.isPending}
         onClose={() => {
@@ -393,6 +410,9 @@ export function RunsPage() {
         onCancel={(runId) => cancelRunMutation.mutate(runId)}
         onRetry={(runId) => retryRunMutation.mutate(runId)}
         onRetryIntegration={(runId) => retryRunIntegrationMutation.mutate(runId)}
+        onWaiveIntegration={async (runId, reason) => {
+          await waiveRunIntegrationMutation.mutateAsync({ runId, reason });
+        }}
         onOpenChanges={(runId) => runChangesMutation.mutate(runId)}
         onCloseChanges={() => setRunChanges(null)}
         onOpenPrompt={(promptId, runId) =>

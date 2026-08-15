@@ -201,6 +201,40 @@ pub async fn retry_message_run_integration(
     .await
 }
 
+#[derive(Debug, Serialize)]
+struct WaiveMessageRunIntegrationRequest<'a> {
+    source_session_id: &'a str,
+    source_user_message_id: Option<&'a str>,
+    source_turn_id: Option<&'a str>,
+    reason: &'a str,
+}
+
+pub async fn waive_message_run_integration(
+    base_url: &str,
+    run_id: &str,
+    source_session_id: &str,
+    source_user_message_id: Option<&str>,
+    source_turn_id: Option<&str>,
+    reason: &str,
+) -> Result<Value, String> {
+    let path = format!(
+        "/internal/chatos/message-runs/{}/integration/waive",
+        urlencoding::encode(run_id.trim())
+    );
+    post_internal_json_with_scope(
+        base_url,
+        path.as_str(),
+        &WaiveMessageRunIntegrationRequest {
+            source_session_id,
+            source_user_message_id,
+            source_turn_id,
+            reason,
+        },
+        "chatos.execution.start",
+    )
+    .await
+}
+
 pub async fn get_message_run_event(
     base_url: &str,
     run_id: &str,

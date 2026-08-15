@@ -9,6 +9,8 @@ pub struct TaskMcpRequestConfig {
     #[serde(default)]
     pub requires_execution: Option<bool>,
     #[serde(default)]
+    pub workspace_changes_required: Option<bool>,
+    #[serde(default)]
     pub enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
     pub external_mcp_config_ids: Vec<String>,

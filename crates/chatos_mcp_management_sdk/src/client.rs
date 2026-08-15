@@ -23,6 +23,7 @@ const ROUTES_RESOLVE_SCOPE: &str = "routes.resolve";
 const RUNTIME_SESSIONS_RESOLVE_SCOPE: &str = "runtime.sessions.resolve";
 const RUNTIME_SESSIONS_READ_SCOPE: &str = "runtime.sessions.read";
 const RUNTIME_SESSIONS_CLOSE_SCOPE: &str = "runtime.sessions.close";
+const RUNTIME_SESSION_TERMINAL_STATUS_HEADER: &str = "x-mcp-management-terminal-status";
 const RUNTIME_INVOCATIONS_READ_SCOPE: &str = "runtime.invocations.read";
 const RUNTIME_INVOCATIONS_RESOLVE_USER_SCOPE: &str = "runtime.invocations.resolve_user";
 
@@ -171,6 +172,15 @@ impl McpManagementClient {
         &self,
         session_id: &str,
     ) -> Result<CloseRuntimeSessionResponse, McpManagementClientError> {
+        self.close_runtime_session_with_status(session_id, "closed")
+            .await
+    }
+
+    pub async fn close_runtime_session_with_status(
+        &self,
+        session_id: &str,
+        terminal_status: &str,
+    ) -> Result<CloseRuntimeSessionResponse, McpManagementClientError> {
         let url = format!(
             "{}/api/internal/runtime/sessions/{}/close",
             self.config.base_url,
@@ -178,6 +188,10 @@ impl McpManagementClient {
         );
         let response = self
             .internal_request(Method::POST, url, RUNTIME_SESSIONS_CLOSE_SCOPE)?
+            .header(
+                RUNTIME_SESSION_TERMINAL_STATUS_HEADER,
+                terminal_status.trim(),
+            )
             .send()
             .await?;
         parse_response(response).await

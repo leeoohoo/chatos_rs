@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_management_sdk::{HarnessBranchTarget, RuntimeWorkspaceRouteTarget};
+use chatos_mcp_management_sdk::{
+    HarnessBranchTarget, McpProviderKind, RuntimeProviderFinalization,
+    RuntimeProviderFinalizationStatus, RuntimeWorkspaceRouteTarget,
+};
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
 use crate::models::{
@@ -50,6 +53,11 @@ fn workspace_execution(status: WorkspacePreparationStatus) -> TaskRunWorkspaceEx
         result_commit: None,
         integrated_commit: None,
         promoted_commit: None,
+        waived_at: None,
+        waiver_reason: None,
+        local_changed_files: Vec::new(),
+        local_patch: None,
+        local_patch_truncated: false,
         conflict_files: Vec::new(),
         conflict_message: None,
         integration_last_error: None,
@@ -150,7 +158,7 @@ pub(crate) async fn model_execution_lane_key(
         .map(str::to_ascii_lowercase)
         .as_deref()
     {
-        Some("local_connector") | Some("local") => Ok(Some(format!("project:{project_id}"))),
+        Some("local_connector") | Some("local") => Ok(None),
         Some("cloud") => Ok(None),
         Some(value) => Err(format!(
             "unsupported project source_type for execution lane: {value}"
@@ -189,12 +197,15 @@ pub(crate) async fn prepare_task_run_workspace(
     let prepared = prepare_workspace_inner(service, task, run).await;
     match prepared {
         Ok(prepared) => {
-            let integration_status =
-                if matches!(prepared.branch_target, TaskRunBranchTarget::Run { .. }) {
-                    WorkspaceIntegrationStatus::Pending
-                } else {
-                    WorkspaceIntegrationStatus::NotRequired
-                };
+            let integration_status = if prepared.execution_group_id.is_some()
+                && matches!(
+                    prepared.branch_target,
+                    TaskRunBranchTarget::Run { .. } | TaskRunBranchTarget::Local
+                ) {
+                WorkspaceIntegrationStatus::Pending
+            } else {
+                WorkspaceIntegrationStatus::NotRequired
+            };
             run.workspace_execution = Some(TaskRunWorkspaceExecution {
                 route: Some(prepared.route.clone()),
                 branch_target: Some(prepared.branch_target),
@@ -259,7 +270,10 @@ async fn prepare_workspace_inner(
         WorkspaceRouteDecision::LocalConnector => Ok(PreparedWorkspaceExecution {
             route: RuntimeWorkspaceRouteTarget::LocalConnector,
             branch_target: TaskRunBranchTarget::Local,
-            execution_group_id: None,
+            execution_group_id: run
+                .effective_tools
+                .mutates_workspace()
+                .then(|| execution_group_id_for_task(task)),
             execution_branch_ref: None,
             execution_base_commit: None,
         }),
@@ -421,6 +435,35 @@ pub(crate) async fn load_task_run_workspace_changes(
         .workspace_execution
         .as_ref()
         .ok_or_else(|| "当前运行没有代码变更上下文".to_string())?;
+    if matches!(
+        execution.route.as_ref(),
+        Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+    ) {
+        return Ok(
+            super::project_management_api_client::GetRunWorkspaceChangesResponse {
+                project_id: task.project_id.clone(),
+                run_id: run.id.clone(),
+                branch_ref: format!(
+                    "local-run:{}",
+                    execution
+                        .execution_group_id
+                        .as_deref()
+                        .unwrap_or(run.id.as_str())
+                ),
+                base_commit: execution
+                    .execution_base_commit
+                    .clone()
+                    .ok_or_else(|| "本地运行尚未返回代码快照提交".to_string())?,
+                result_commit: execution
+                    .result_commit
+                    .clone()
+                    .ok_or_else(|| "本地运行尚未返回结果提交".to_string())?,
+                files: execution.local_changed_files.clone(),
+                patch: execution.local_patch.clone().unwrap_or_default(),
+                patch_truncated: execution.local_patch_truncated,
+            },
+        );
+    }
     let TaskRunBranchTarget::Run {
         branch_id,
         branch_ref,
@@ -473,6 +516,12 @@ pub(crate) async fn finalize_task_run_workspace(
         return Ok(());
     };
     if execution.status != WorkspacePreparationStatus::Ready {
+        return Ok(());
+    }
+    if matches!(
+        execution.route.as_ref(),
+        Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+    ) {
         return Ok(());
     }
     let branch = match execution.branch_target.as_ref() {
@@ -542,6 +591,7 @@ pub(crate) async fn finalize_task_run_workspace(
         .as_ref()
         .ok_or_else(|| "Task Run workspace state disappeared before integration".to_string())?;
     if execution.integration_status == WorkspaceIntegrationStatus::Integrated
+        || execution.integration_status == WorkspaceIntegrationStatus::Waived
         || execution.integration_status == WorkspaceIntegrationStatus::Conflict
     {
         return Ok(());
@@ -663,6 +713,115 @@ pub(crate) async fn finalize_task_run_workspace(
             ))
         }
     }
+}
+
+pub(crate) async fn apply_runtime_provider_finalization(
+    service: &RunService,
+    run: &mut TaskRunRecord,
+    provider_finalization: Option<&RuntimeProviderFinalization>,
+) -> Result<(), String> {
+    let Some(execution) = run.workspace_execution.as_ref() else {
+        return Ok(());
+    };
+    if !matches!(
+        execution.route.as_ref(),
+        Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+    ) {
+        return Ok(());
+    }
+    if run.model_phase_status != crate::models::ModelPhaseStatus::Succeeded {
+        return Ok(());
+    }
+    if execution.integration_status == WorkspaceIntegrationStatus::Waived {
+        return Ok(());
+    }
+    if execution.finalized_at.is_some()
+        && matches!(
+            execution.integration_status,
+            WorkspaceIntegrationStatus::Integrated | WorkspaceIntegrationStatus::Conflict
+        )
+    {
+        return Ok(());
+    }
+    let finalization = provider_finalization.ok_or_else(|| {
+        format!(
+            "{}: Local Connector did not return a Git finalization result",
+            crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+        )
+    })?;
+    if finalization.provider_kind != McpProviderKind::LocalConnector {
+        return Err("MCP Management returned finalization for the wrong provider".to_string());
+    }
+    if finalization.execution_group_id.as_deref() != execution.execution_group_id.as_deref() {
+        return Err(
+            "Local Connector returned finalization for a different execution group".to_string(),
+        );
+    }
+    let now = now_rfc3339();
+    let execution = run
+        .workspace_execution
+        .as_mut()
+        .expect("workspace execution checked above");
+    execution.finalized_at = Some(now.clone());
+    execution.finalization_error = None;
+    execution.execution_branch_ref = finalization.execution_branch_ref.clone();
+    execution.execution_base_commit = finalization.base_commit.clone();
+    execution.result_commit = finalization.result_commit.clone();
+    execution.local_changed_files = finalization
+        .files
+        .iter()
+        .map(|file| crate::models::TaskRunWorkspaceChangedFile {
+            status: file.status.clone(),
+            path: file.path.clone(),
+            old_path: file.old_path.clone(),
+        })
+        .collect();
+    execution.local_patch = finalization.patch.clone();
+    execution.local_patch_truncated = finalization.patch_truncated;
+    execution.integration_attempt_count = execution.integration_attempt_count.saturating_add(1);
+    match finalization.status {
+        RuntimeProviderFinalizationStatus::Succeeded
+        | RuntimeProviderFinalizationStatus::NoChanges => {
+            execution.integration_status = WorkspaceIntegrationStatus::Integrated;
+            execution.integrated_at = Some(now.clone());
+            execution.integrated_commit = finalization.integrated_commit.clone();
+            execution.conflict_files.clear();
+            execution.conflict_message = None;
+            execution.integration_last_error = None;
+        }
+        RuntimeProviderFinalizationStatus::Conflict => {
+            execution.integration_status = WorkspaceIntegrationStatus::Conflict;
+            execution.conflict_files = finalization.conflict_files.clone();
+            execution.conflict_message = finalization.message.clone();
+            execution.integration_last_error = None;
+        }
+    }
+    run.updated_at = now;
+    persist_workspace_execution(service, run).await?;
+    service
+        .store
+        .append_run_event(crate::models::TaskRunEventRecord::new(
+            run.id.clone(),
+            match finalization.status {
+                RuntimeProviderFinalizationStatus::Succeeded
+                | RuntimeProviderFinalizationStatus::NoChanges => "integration_completed",
+                RuntimeProviderFinalizationStatus::Conflict => "integration_conflict",
+            },
+            Some(match finalization.status {
+                RuntimeProviderFinalizationStatus::Succeeded => {
+                    "本地 Run 代码已集成到执行批次 worktree".to_string()
+                }
+                RuntimeProviderFinalizationStatus::NoChanges => {
+                    "本地 Run 没有代码变更，已完成集成门禁".to_string()
+                }
+                RuntimeProviderFinalizationStatus::Conflict => {
+                    "本地 Run 代码与执行批次 worktree 冲突".to_string()
+                }
+            }),
+            serde_json::to_value(finalization).ok(),
+        ))
+        .await?;
+    Ok(())
 }
 
 async fn mark_workspace_finalized(

@@ -66,6 +66,10 @@ pub fn router() -> Router {
             post(retry_message_task_runner_run_integration),
         )
         .route(
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/integration/waive",
+            post(waive_message_task_runner_run_integration),
+        )
+        .route(
             "/api/messages/{message_id}/task-runner/graph/runs/{run_id}",
             get(get_message_task_runner_graph_run),
         )
@@ -89,6 +93,11 @@ struct ConversationTaskRunnerActiveMessageTasksRequest {
 struct RetryMessageTaskRunnerRunRequest {
     retry_instruction: Option<String>,
     execution_service_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WaiveMessageTaskRunnerRunIntegrationRequest {
+    reason: String,
 }
 
 fn parse_retry_message_task_runner_run_request(
@@ -571,6 +580,40 @@ async fn retry_message_task_runner_run_integration(
         Err(err) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({"error": "重新集成任务代码失败", "detail": err})),
+        ),
+    }
+}
+
+async fn waive_message_task_runner_run_integration(
+    auth: AuthUser,
+    Path((message_id, run_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+    Json(request): Json<WaiveMessageTaskRunnerRunIntegrationRequest>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
+            );
+        }
+        Err(err) => return err,
+    };
+    match task_runner_api_client::waive_message_run_integration(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+        request.reason.as_str(),
+    )
+    .await
+    {
+        Ok(payload) => (StatusCode::OK, Json(payload)),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "放弃任务代码变更失败", "detail": err})),
         ),
     }
 }

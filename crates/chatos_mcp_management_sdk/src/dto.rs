@@ -314,6 +314,8 @@ pub struct CreateRuntimeSessionRequest {
     pub project_id: String,
     #[serde(default)]
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_group_id: Option<String>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
     pub task_profile: Option<String>,
@@ -336,6 +338,48 @@ pub struct CreateRuntimeSessionRequest {
     pub locale: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_route: Option<RuntimeWorkspaceRouteTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProviderFinalizationStatus {
+    Succeeded,
+    NoChanges,
+    Conflict,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeProviderChangedFile {
+    pub status: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeProviderFinalization {
+    pub provider_kind: McpProviderKind,
+    pub status: RuntimeProviderFinalizationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_branch_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrated_commit: Option<String>,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    #[serde(default)]
+    pub files: Vec<RuntimeProviderChangedFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
+    #[serde(default)]
+    pub patch_truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,6 +408,8 @@ pub struct RuntimeSessionResponse {
 pub struct CloseRuntimeSessionResponse {
     pub session_id: String,
     pub closed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_finalization: Option<RuntimeProviderFinalization>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

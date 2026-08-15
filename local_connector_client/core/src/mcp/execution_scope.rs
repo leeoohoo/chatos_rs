@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,11 +50,23 @@ use crate::{
 const SESSION_ID_HEADER: &str = "x-mcp-management-session-id";
 const SESSION_EXPIRES_AT_UNIX_HEADER: &str = "x-mcp-management-session-expires-at-unix";
 const RUN_ID_HEADER: &str = "x-mcp-management-run-id";
+const EXECUTION_GROUP_ID_HEADER: &str = "x-mcp-management-execution-group-id";
 const SCOPE_GENERATION_HEADER: &str = "x-mcp-management-execution-scope-generation";
 const PROJECT_ID_HEADER: &str = "x-local-connector-project-id";
 const EXECUTION_SCOPE_REAPER_INTERVAL: Duration = Duration::from_secs(15);
 const EXECUTION_SCOPE_ORPHAN_GRACE_SECONDS: i64 = 60;
 const EXECUTION_SCOPE_TOMBSTONE_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
+const FINALIZATION_PATCH_MAX_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Clone)]
+struct LocalGitExecutionWorkspace {
+    execution_group_id: String,
+    execution_branch_ref: String,
+    snapshot_commit: String,
+    integration_worktree: PathBuf,
+    run_worktree: PathBuf,
+    run_project_root: PathBuf,
+}
 
 #[derive(Debug)]
 pub(crate) struct LocalExecutionScope {
@@ -63,6 +75,7 @@ pub(crate) struct LocalExecutionScope {
     backend: SandboxBackendKind,
     agent_endpoint: Option<String>,
     agent_token: String,
+    git_workspace: Option<LocalGitExecutionWorkspace>,
     active_invocations: AtomicUsize,
     draining: std::sync::atomic::AtomicBool,
     releasing: std::sync::atomic::AtomicBool,
@@ -150,6 +163,7 @@ pub(crate) async fn call_local_execution_scope_tool(
 
 pub(crate) async fn finalize_local_execution_scope(
     request: &RelayRequest,
+    state: &LocalState,
     runtime: &LocalSandboxRuntime,
     database: &LocalDatabase,
 ) -> Result<Value> {
@@ -170,18 +184,18 @@ pub(crate) async fn finalize_local_execution_scope(
         .pointer("/params/status")
         .and_then(Value::as_str)
         .unwrap_or("failed");
-    database
-        .persist_execution_scope_tombstone(
-            owner_user_id,
-            project_id,
-            run_id,
-            generation,
-            terminal_status,
-            Utc::now()
-                .timestamp()
-                .saturating_add(EXECUTION_SCOPE_TOMBSTONE_TTL_SECONDS),
-        )
-        .await?;
+    if let Some(result) = database
+        .execution_scope_finalization_result(owner_user_id, project_id, run_id, generation)
+        .await?
+    {
+        if result.get("status").and_then(Value::as_str) != Some("conflict") {
+            return Ok(json!({
+                "jsonrpc": "2.0",
+                "id": request.body.get("id").cloned().unwrap_or(Value::Null),
+                "result": result,
+            }));
+        }
+    }
     let matching = runtime
         .execution_scopes
         .read()
@@ -193,21 +207,80 @@ pub(crate) async fn finalize_local_execution_scope(
         })
         .map(|(key, scope)| (key.clone(), scope.clone()))
         .collect::<Vec<_>>();
-    let mut released = 0usize;
-    for (key, scope) in matching {
+    for (_, scope) in &matching {
         {
             let _lifecycle = scope.lifecycle_lock.lock().await;
             scope.draining.store(true, Ordering::Release);
             scope.expires_at_unix.store(0, Ordering::Release);
+            if scope.active_invocations.load(Ordering::Acquire) != 0 {
+                scope.draining.store(false, Ordering::Release);
+                return Err(anyhow!(
+                    "local execution scope still has active tool invocations"
+                ));
+            }
         }
+    }
+    let git_workspace = matching
+        .iter()
+        .find_map(|(_, scope)| scope.git_workspace.clone())
+        .or_else(|| None);
+    let git_workspace = match git_workspace {
+        Some(workspace) => Some(workspace),
+        None => {
+            let workspace = state
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == request.workspace_id)
+                .ok_or_else(|| anyhow!("local execution scope workspace is unavailable"))?;
+            let project_root = request_project_root(workspace, request)?;
+            prepare_local_git_execution_workspace(request, project_root.as_path()).await?
+        }
+    };
+    let result = if let Some(workspace) = git_workspace.as_ref() {
+        finalize_local_git_execution_workspace(workspace, run_id, terminal_status == "succeeded")
+            .await?
+    } else {
+        json!({
+            "ok": true,
+            "status": "no_changes",
+            "execution_group_id": relay_header(request, EXECUTION_GROUP_ID_HEADER),
+            "execution_branch_ref": Value::Null,
+            "base_commit": Value::Null,
+            "result_commit": Value::Null,
+            "integrated_commit": Value::Null,
+            "conflict_files": [],
+            "files": [],
+            "patch": "",
+            "patch_truncated": false,
+        })
+    };
+    database
+        .persist_execution_scope_finalization_result(
+            owner_user_id,
+            project_id,
+            run_id,
+            generation,
+            terminal_status,
+            &result,
+            Utc::now()
+                .timestamp()
+                .saturating_add(EXECUTION_SCOPE_TOMBSTONE_TTL_SECONDS),
+        )
+        .await?;
+    let mut released = 0usize;
+    for (key, scope) in matching {
         if try_release_scope(runtime, key.as_str(), &scope).await? {
             released = released.saturating_add(1);
         }
     }
+    let mut result = result;
+    if let Some(map) = result.as_object_mut() {
+        map.insert("released_scopes".to_string(), json!(released));
+    }
     Ok(json!({
         "jsonrpc": "2.0",
         "id": request.body.get("id").cloned().unwrap_or(Value::Null),
-        "result": { "ok": true, "released_scopes": released },
+        "result": result,
     }))
 }
 
@@ -442,12 +515,17 @@ async fn get_or_create_scope(
         return Ok(scope);
     }
 
+    let git_workspace = prepare_local_git_execution_workspace(request, project_root).await?;
+    let execution_project_root = git_workspace
+        .as_ref()
+        .map(|workspace| workspace.run_project_root.as_path())
+        .unwrap_or(project_root);
     let backend = state.sandbox.default_backend;
     let policy = state.sandbox.effective_policy_defaults();
     let permissions = state.sandbox.effective_permissions(
         None,
         &policy,
-        vec![project_root.to_string_lossy().to_string()],
+        vec![execution_project_root.to_string_lossy().to_string()],
     );
     let limits = LocalSandboxResourceLimits::default();
     let agent_token = format!("scope-token-{}", uuid::Uuid::new_v4().simple());
@@ -460,7 +538,7 @@ async fn get_or_create_scope(
             start_native_sandbox_process(
                 runtime,
                 identity.scope_id.as_str(),
-                project_root,
+                execution_project_root,
                 &policy,
                 &permissions,
                 &limits,
@@ -486,7 +564,7 @@ async fn get_or_create_scope(
             };
             start_local_sandbox_container(
                 identity.scope_id.as_str(),
-                project_root,
+                execution_project_root,
                 image_ref.as_str(),
                 agent_token.as_str(),
                 &limits,
@@ -515,6 +593,7 @@ async fn get_or_create_scope(
         backend,
         agent_endpoint,
         agent_token,
+        git_workspace,
         active_invocations: AtomicUsize::new(0),
         draining: std::sync::atomic::AtomicBool::new(false),
         releasing: std::sync::atomic::AtomicBool::new(false),
@@ -527,6 +606,496 @@ async fn get_or_create_scope(
         .await
         .insert(identity.key, scope.clone());
     Ok(scope)
+}
+
+async fn prepare_local_git_execution_workspace(
+    request: &RelayRequest,
+    project_root: &Path,
+) -> Result<Option<LocalGitExecutionWorkspace>> {
+    let Some(execution_group_id) = relay_header(request, EXECUTION_GROUP_ID_HEADER) else {
+        return Ok(None);
+    };
+    let run_id = relay_header(request, RUN_ID_HEADER)
+        .ok_or_else(|| anyhow!("local Git execution workspace is missing run identity"))?;
+    let repository_root =
+        PathBuf::from(git_stdout(project_root, &["rev-parse", "--show-toplevel"]).await?);
+    let repository_root = repository_root
+        .canonicalize()
+        .context("canonicalize local Git repository root")?;
+    let canonical_project_root = project_root
+        .canonicalize()
+        .context("canonicalize local project root")?;
+    let project_relative_root = canonical_project_root
+        .strip_prefix(repository_root.as_path())
+        .context("local project root is outside its Git repository")?;
+    let group_digest = short_digest(execution_group_id);
+    let run_digest = short_digest(run_id);
+    let group_root = repository_root
+        .join(".chatos")
+        .join("executions")
+        .join(group_digest.as_str());
+    ensure_local_chatos_git_exclude(repository_root.as_path()).await?;
+    let integration_worktree = group_root.join("integration");
+    let run_worktree = group_root.join("runs").join(run_digest.as_str());
+    tokio::fs::create_dir_all(group_root.join("runs"))
+        .await
+        .context("create local ChatOS execution workspace directories")?;
+
+    let snapshot_path = group_root.join("snapshot_commit");
+    let snapshot_commit = match tokio::fs::read_to_string(snapshot_path.as_path()).await {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => {
+            let snapshot = create_dirty_worktree_snapshot(
+                repository_root.as_path(),
+                group_root.as_path(),
+                execution_group_id,
+            )
+            .await?;
+            tokio::fs::write(snapshot_path.as_path(), format!("{snapshot}\n"))
+                .await
+                .context("persist local execution snapshot commit")?;
+            snapshot
+        }
+    };
+    let execution_branch_ref = format!("chatos/executions/local-{group_digest}");
+    ensure_git_worktree(
+        repository_root.as_path(),
+        integration_worktree.as_path(),
+        execution_branch_ref.as_str(),
+        snapshot_commit.as_str(),
+    )
+    .await?;
+    let run_base_commit =
+        git_stdout(integration_worktree.as_path(), &["rev-parse", "HEAD"]).await?;
+    ensure_git_worktree(
+        repository_root.as_path(),
+        run_worktree.as_path(),
+        format!("chatos/runs/local-{run_digest}").as_str(),
+        run_base_commit.as_str(),
+    )
+    .await?;
+    let run_project_root = run_worktree.join(project_relative_root);
+    if !run_project_root.is_dir() {
+        return Err(anyhow!(
+            "local Run worktree does not contain project root {}",
+            project_relative_root.display()
+        ));
+    }
+    Ok(Some(LocalGitExecutionWorkspace {
+        execution_group_id: execution_group_id.to_string(),
+        execution_branch_ref,
+        snapshot_commit: run_base_commit,
+        integration_worktree,
+        run_worktree,
+        run_project_root,
+    }))
+}
+
+async fn ensure_local_chatos_git_exclude(repository_root: &Path) -> Result<()> {
+    let git_dir = PathBuf::from(git_stdout(repository_root, &["rev-parse", "--git-dir"]).await?);
+    let git_dir = if git_dir.is_absolute() {
+        git_dir
+    } else {
+        repository_root.join(git_dir)
+    };
+    let exclude_path = git_dir.join("info").join("exclude");
+    let current = tokio::fs::read_to_string(exclude_path.as_path())
+        .await
+        .unwrap_or_default();
+    if current.lines().any(|line| line.trim() == ".chatos/") {
+        return Ok(());
+    }
+    if let Some(parent) = exclude_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .context("create local Git info directory")?;
+    }
+    let mut updated = current;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(".chatos/\n");
+    tokio::fs::write(exclude_path, updated)
+        .await
+        .context("exclude local ChatOS execution workspace from Git status")
+}
+
+async fn create_dirty_worktree_snapshot(
+    repository_root: &Path,
+    group_root: &Path,
+    execution_group_id: &str,
+) -> Result<String> {
+    let head = git_stdout(repository_root, &["rev-parse", "HEAD"]).await?;
+    let head_tree = git_stdout(repository_root, &["rev-parse", "HEAD^{tree}"]).await?;
+    let index_path = group_root.join("snapshot.index");
+    let _ = tokio::fs::remove_file(index_path.as_path()).await;
+    git_stdout_with_index(
+        repository_root,
+        index_path.as_path(),
+        &["read-tree", "HEAD"],
+    )
+    .await?;
+    git_stdout_with_index(
+        repository_root,
+        index_path.as_path(),
+        &["add", "-A", "--", "."],
+    )
+    .await?;
+    let tree =
+        git_stdout_with_index(repository_root, index_path.as_path(), &["write-tree"]).await?;
+    let snapshot = if tree == head_tree {
+        head
+    } else {
+        git_stdout_with_identity_and_index(
+            repository_root,
+            index_path.as_path(),
+            &[
+                "commit-tree",
+                tree.as_str(),
+                "-p",
+                head.as_str(),
+                "-m",
+                format!("ChatOS local execution snapshot {execution_group_id}").as_str(),
+            ],
+        )
+        .await?
+    };
+    let _ = tokio::fs::remove_file(index_path).await;
+    Ok(snapshot)
+}
+
+async fn ensure_git_worktree(
+    repository_root: &Path,
+    worktree: &Path,
+    branch_ref: &str,
+    start_commit: &str,
+) -> Result<()> {
+    if worktree.join(".git").exists() {
+        return Ok(());
+    }
+    if worktree.exists() {
+        let mut entries = tokio::fs::read_dir(worktree)
+            .await
+            .context("inspect existing local Git worktree directory")?;
+        if entries
+            .next_entry()
+            .await
+            .context("read existing local Git worktree directory")?
+            .is_some()
+        {
+            return Err(anyhow!(
+                "local Git worktree path is occupied: {}",
+                worktree.display()
+            ));
+        }
+    }
+    let branch_exists = git_status(
+        repository_root,
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            format!("refs/heads/{branch_ref}").as_str(),
+        ],
+    )
+    .await?
+        == 0;
+    let worktree_text = worktree.to_string_lossy().to_string();
+    if branch_exists {
+        git_stdout(
+            repository_root,
+            &["worktree", "add", worktree_text.as_str(), branch_ref],
+        )
+        .await?;
+    } else {
+        git_stdout(
+            repository_root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                branch_ref,
+                worktree_text.as_str(),
+                start_commit,
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn finalize_local_git_execution_workspace(
+    workspace: &LocalGitExecutionWorkspace,
+    run_id: &str,
+    should_integrate: bool,
+) -> Result<Value> {
+    git_stdout(workspace.run_worktree.as_path(), &["add", "-A"]).await?;
+    let status = git_stdout(
+        workspace.run_worktree.as_path(),
+        &["status", "--porcelain=v1"],
+    )
+    .await?;
+    let changed = !status.trim().is_empty();
+    if changed {
+        git_stdout_with_identity(
+            workspace.run_worktree.as_path(),
+            &["commit", "-m", format!("ChatOS Run {run_id}").as_str()],
+        )
+        .await?;
+    }
+    let result_commit =
+        git_stdout(workspace.run_worktree.as_path(), &["rev-parse", "HEAD"]).await?;
+    let patch = git_stdout(
+        workspace.run_worktree.as_path(),
+        &[
+            "diff",
+            "--binary",
+            workspace.snapshot_commit.as_str(),
+            result_commit.as_str(),
+        ],
+    )
+    .await?;
+    let (patch, patch_truncated) = truncate_text_bytes(patch, FINALIZATION_PATCH_MAX_BYTES);
+    let files = git_stdout(
+        workspace.run_worktree.as_path(),
+        &[
+            "diff",
+            "--name-status",
+            workspace.snapshot_commit.as_str(),
+            result_commit.as_str(),
+        ],
+    )
+    .await?
+    .lines()
+    .filter_map(parse_git_name_status)
+    .collect::<Vec<_>>();
+    let has_result_changes = !files.is_empty();
+    let current_integration_commit = git_stdout(
+        workspace.integration_worktree.as_path(),
+        &["rev-parse", "HEAD"],
+    )
+    .await?;
+    if !should_integrate || !has_result_changes {
+        return Ok(json!({
+            "ok": true,
+            "status": "no_changes",
+            "execution_group_id": workspace.execution_group_id,
+            "execution_branch_ref": workspace.execution_branch_ref,
+            "base_commit": workspace.snapshot_commit,
+            "result_commit": result_commit,
+            "integrated_commit": current_integration_commit,
+            "conflict_files": [],
+            "files": files,
+            "patch": patch,
+            "patch_truncated": patch_truncated,
+        }));
+    }
+    if git_status(
+        workspace.integration_worktree.as_path(),
+        &[
+            "merge-base",
+            "--is-ancestor",
+            result_commit.as_str(),
+            "HEAD",
+        ],
+    )
+    .await?
+        == 0
+    {
+        return Ok(json!({
+            "ok": true,
+            "status": "succeeded",
+            "execution_group_id": workspace.execution_group_id,
+            "execution_branch_ref": workspace.execution_branch_ref,
+            "base_commit": workspace.snapshot_commit,
+            "result_commit": result_commit,
+            "integrated_commit": current_integration_commit,
+            "conflict_files": [],
+            "files": files,
+            "patch": patch,
+            "patch_truncated": patch_truncated,
+        }));
+    }
+    let cherry_pick_status = git_status_with_identity(
+        workspace.integration_worktree.as_path(),
+        &["cherry-pick", result_commit.as_str()],
+    )
+    .await?;
+    if cherry_pick_status == 0 {
+        let integrated_commit = git_stdout(
+            workspace.integration_worktree.as_path(),
+            &["rev-parse", "HEAD"],
+        )
+        .await?;
+        return Ok(json!({
+            "ok": true,
+            "status": "succeeded",
+            "execution_group_id": workspace.execution_group_id,
+            "execution_branch_ref": workspace.execution_branch_ref,
+            "base_commit": workspace.snapshot_commit,
+            "result_commit": result_commit,
+            "integrated_commit": integrated_commit,
+            "conflict_files": [],
+            "files": files,
+            "patch": patch,
+            "patch_truncated": patch_truncated,
+        }));
+    }
+    let conflict_files = git_stdout(
+        workspace.integration_worktree.as_path(),
+        &["diff", "--name-only", "--diff-filter=U"],
+    )
+    .await?
+    .lines()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned)
+    .collect::<Vec<_>>();
+    let _ = git_status(
+        workspace.integration_worktree.as_path(),
+        &["cherry-pick", "--abort"],
+    )
+    .await;
+    if conflict_files.is_empty() {
+        return Err(anyhow!(
+            "local execution integration failed without Git conflicts"
+        ));
+    }
+    Ok(json!({
+        "ok": true,
+        "status": "conflict",
+        "execution_group_id": workspace.execution_group_id,
+        "execution_branch_ref": workspace.execution_branch_ref,
+        "base_commit": workspace.snapshot_commit,
+        "result_commit": result_commit,
+        "integrated_commit": Value::Null,
+        "conflict_files": conflict_files,
+        "files": files,
+        "message": "Local Run changes conflict with the execution integration branch",
+        "patch": patch,
+        "patch_truncated": patch_truncated,
+    }))
+}
+
+fn parse_git_name_status(line: &str) -> Option<Value> {
+    let mut parts = line.split('\t');
+    let status = parts.next()?.trim();
+    let first_path = parts.next()?.trim();
+    if status.is_empty() || first_path.is_empty() {
+        return None;
+    }
+    let second_path = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some(if let Some(path) = second_path {
+        json!({
+            "status": status.chars().next().unwrap_or('M').to_string(),
+            "path": path,
+            "old_path": first_path,
+        })
+    } else {
+        json!({
+            "status": status.chars().next().unwrap_or('M').to_string(),
+            "path": first_path,
+            "old_path": Value::Null,
+        })
+    })
+}
+
+fn short_digest(value: &str) -> String {
+    hex::encode(Sha256::digest(value.as_bytes()))[..24].to_string()
+}
+
+fn truncate_text_bytes(mut value: String, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value, false);
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    value.truncate(boundary);
+    (value, true)
+}
+
+async fn git_stdout(cwd: &Path, args: &[&str]) -> Result<String> {
+    git_stdout_command(cwd, args, None, false).await
+}
+
+async fn git_stdout_with_identity(cwd: &Path, args: &[&str]) -> Result<String> {
+    git_stdout_command(cwd, args, None, true).await
+}
+
+async fn git_stdout_with_index(cwd: &Path, index: &Path, args: &[&str]) -> Result<String> {
+    git_stdout_command(cwd, args, Some(index), false).await
+}
+
+async fn git_stdout_with_identity_and_index(
+    cwd: &Path,
+    index: &Path,
+    args: &[&str],
+) -> Result<String> {
+    git_stdout_command(cwd, args, Some(index), true).await
+}
+
+async fn git_stdout_command(
+    cwd: &Path,
+    args: &[&str],
+    index: Option<&Path>,
+    identity: bool,
+) -> Result<String> {
+    let mut command = tokio::process::Command::new("git");
+    command.current_dir(cwd).args(args);
+    if let Some(index) = index {
+        command.env("GIT_INDEX_FILE", index);
+    }
+    if identity {
+        command
+            .env("GIT_AUTHOR_NAME", "ChatOS")
+            .env("GIT_AUTHOR_EMAIL", "chatos@local")
+            .env("GIT_COMMITTER_NAME", "ChatOS")
+            .env("GIT_COMMITTER_EMAIL", "chatos@local");
+    }
+    let output = command
+        .output()
+        .await
+        .with_context(|| format!("run git {}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(output.stderr.as_slice()).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(output.stdout.as_slice())
+        .trim()
+        .to_string())
+}
+
+async fn git_status(cwd: &Path, args: &[&str]) -> Result<i32> {
+    git_status_command(cwd, args, false).await
+}
+
+async fn git_status_with_identity(cwd: &Path, args: &[&str]) -> Result<i32> {
+    git_status_command(cwd, args, true).await
+}
+
+async fn git_status_command(cwd: &Path, args: &[&str], identity: bool) -> Result<i32> {
+    let mut command = tokio::process::Command::new("git");
+    command.current_dir(cwd).args(args);
+    if identity {
+        command
+            .env("GIT_AUTHOR_NAME", "ChatOS")
+            .env("GIT_AUTHOR_EMAIL", "chatos@local")
+            .env("GIT_COMMITTER_NAME", "ChatOS")
+            .env("GIT_COMMITTER_EMAIL", "chatos@local");
+    }
+    let output = command
+        .output()
+        .await
+        .with_context(|| format!("run git {}", args.join(" ")))?;
+    Ok(output.status.code().unwrap_or(1))
 }
 
 struct ExecutionScopeIdentity {
@@ -785,6 +1354,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::fs;
+    use std::process::Command;
 
     fn request(_root: &Path, run_id: Option<&str>) -> RelayRequest {
         let mut headers = BTreeMap::from([
@@ -815,6 +1385,42 @@ mod tests {
             platform_timestamp: None,
             platform_nonce: None,
         }
+    }
+
+    fn git(cwd: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(output.stderr.as_slice())
+        );
+        String::from_utf8_lossy(output.stdout.as_slice())
+            .trim()
+            .to_string()
+    }
+
+    fn git_repository() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        git(root.path(), &["init", "-b", "main"]);
+        git(root.path(), &["config", "user.name", "Test"]);
+        git(root.path(), &["config", "user.email", "test@example.com"]);
+        fs::write(root.path().join("game.txt"), "base\n").unwrap();
+        git(root.path(), &["add", "game.txt"]);
+        git(root.path(), &["commit", "-m", "initial"]);
+        root
+    }
+
+    fn execution_request(root: &Path, group_id: &str, run_id: &str) -> RelayRequest {
+        let mut request = request(root, Some(run_id));
+        request
+            .headers
+            .insert(EXECUTION_GROUP_ID_HEADER.to_string(), group_id.to_string());
+        request
     }
 
     #[test]
@@ -869,6 +1475,7 @@ mod tests {
             backend: SandboxBackendKind::LocalProcess,
             agent_endpoint: None,
             agent_token: "token".to_string(),
+            git_workspace: None,
             active_invocations: AtomicUsize::new(0),
             draining: std::sync::atomic::AtomicBool::new(true),
             releasing: std::sync::atomic::AtomicBool::new(false),
@@ -877,5 +1484,89 @@ mod tests {
         });
         assert!(scope.begin_invocation(&runtime).await.is_err());
         assert_eq!(scope.active_invocations.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn local_git_workspace_snapshots_dirty_and_untracked_files_without_touching_index() {
+        let root = git_repository();
+        fs::write(root.path().join("game.txt"), "dirty\n").unwrap();
+        fs::write(root.path().join("notes.txt"), "untracked\n").unwrap();
+        fs::write(root.path().join("staged.txt"), "staged\n").unwrap();
+        git(root.path(), &["add", "staged.txt"]);
+        let staged_before = git(root.path(), &["diff", "--cached", "--name-only"]);
+        let request = execution_request(root.path(), "group-dirty", "run-dirty");
+
+        let workspace = prepare_local_git_execution_workspace(&request, root.path())
+            .await
+            .unwrap()
+            .expect("Git execution workspace");
+
+        assert_eq!(
+            fs::read_to_string(workspace.run_project_root.join("game.txt")).unwrap(),
+            "dirty\n"
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.run_project_root.join("notes.txt")).unwrap(),
+            "untracked\n"
+        );
+        assert_eq!(
+            git(root.path(), &["diff", "--cached", "--name-only"]),
+            staged_before
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("game.txt")).unwrap(),
+            "dirty\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_git_runs_integrate_serially_and_report_same_line_conflict() {
+        let root = git_repository();
+        let first_request = execution_request(root.path(), "group-conflict", "run-first");
+        let second_request = execution_request(root.path(), "group-conflict", "run-second");
+        let first = prepare_local_git_execution_workspace(&first_request, root.path())
+            .await
+            .unwrap()
+            .expect("first Git workspace");
+        let second = prepare_local_git_execution_workspace(&second_request, root.path())
+            .await
+            .unwrap()
+            .expect("second Git workspace");
+        fs::write(first.run_project_root.join("game.txt"), "first\n").unwrap();
+        fs::write(second.run_project_root.join("game.txt"), "second\n").unwrap();
+
+        let first_result = finalize_local_git_execution_workspace(&first, "run-first", true)
+            .await
+            .unwrap();
+        assert_eq!(first_result["status"], "succeeded");
+        let second_result = finalize_local_git_execution_workspace(&second, "run-second", true)
+            .await
+            .unwrap();
+        assert_eq!(second_result["status"], "conflict");
+        assert_eq!(second_result["conflict_files"], json!(["game.txt"]));
+        let second_commit = second_result["result_commit"].as_str().unwrap();
+        git(
+            first.integration_worktree.as_path(),
+            &[
+                "merge",
+                "-s",
+                "ours",
+                second_commit,
+                "-m",
+                "resolve conflict",
+            ],
+        );
+        let retried = finalize_local_git_execution_workspace(&second, "run-second", true)
+            .await
+            .unwrap();
+        assert_eq!(retried["status"], "succeeded");
+        assert_eq!(
+            fs::read_to_string(first.integration_worktree.join("game.txt")).unwrap(),
+            "first\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("game.txt")).unwrap(),
+            "base\n"
+        );
     }
 }

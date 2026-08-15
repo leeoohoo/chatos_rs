@@ -26,6 +26,7 @@ export interface TaskMcpConfig {
   builtin_prompt_locale: string;
   enabled_builtin_kinds: string[];
   requires_execution: boolean;
+  workspace_changes_required: boolean;
   execution_service_id?: string | null;
   workspace_dir?: string | null;
   external_mcp_config_ids: string[];

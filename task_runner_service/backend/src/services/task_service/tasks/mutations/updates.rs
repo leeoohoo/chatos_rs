@@ -138,6 +138,9 @@ impl TaskService {
                     task.mcp_config.requires_execution != requires_execution;
                 task.mcp_config.requires_execution = requires_execution;
             }
+            if let Some(workspace_changes_required) = mcp_config.workspace_changes_required {
+                task.mcp_config.workspace_changes_required = workspace_changes_required;
+            }
         }
         if let Some(plugin_config) = patch.plugin_config {
             task.plugin_config = plugin_config;

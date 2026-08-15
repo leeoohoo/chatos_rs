@@ -81,6 +81,7 @@ impl CreateTaskArgs {
             || !external_mcp_config_ids.is_empty())
         .then_some(TaskMcpRequestConfig {
             requires_execution,
+            workspace_changes_required: None,
             enabled_builtin_kinds,
             external_mcp_config_ids,
         });

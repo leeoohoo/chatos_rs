@@ -55,6 +55,7 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         plugin_config: Default::default(),
         mcp_config: Some(TaskMcpRequestConfig {
             requires_execution: Some(false),
+            workspace_changes_required: None,
             enabled_builtin_kinds: Vec::new(),
             external_mcp_config_ids: Vec::new(),
         }),

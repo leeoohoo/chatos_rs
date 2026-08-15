@@ -202,6 +202,58 @@ fn integration_conflict_retry_rearms_the_same_run_without_changing_its_order() {
 }
 
 #[test]
+fn integration_conflict_waiver_preserves_result_and_rearms_post_process() {
+    let store = test_store();
+    let mut run = queued_run();
+    run.status = TaskRunStatus::Blocked;
+    run.finished_at = Some("2026-08-15T03:00:00Z".to_string());
+    run.error_message = Some("integration conflict".to_string());
+    run.result_summary = Some("optional analysis completed".to_string());
+    run.workspace_execution = Some(
+        serde_json::from_value(serde_json::json!({
+            "status": "ready",
+            "execution_group_id": "group-1",
+            "integration_status": "conflict",
+            "result_commit": "result-commit-1",
+            "integration_attempt_count": 1,
+            "conflict_files": ["src/main.rs"]
+        }))
+        .expect("conflict integration state"),
+    );
+    store.save_run(run).expect("save conflict run");
+
+    let waived = store
+        .waive_run_workspace_integration("run-1", "optional change is not needed")
+        .expect("waive integration conflict");
+    let integration = waived
+        .workspace_execution
+        .as_ref()
+        .expect("workspace execution");
+
+    assert_eq!(waived.status, TaskRunStatus::Succeeded);
+    assert!(waived.finished_at.is_some());
+    assert_eq!(
+        waived.result_summary.as_deref(),
+        Some("optional analysis completed")
+    );
+    assert_eq!(
+        integration.integration_status,
+        WorkspaceIntegrationStatus::Waived
+    );
+    assert_eq!(
+        integration.result_commit.as_deref(),
+        Some("result-commit-1")
+    );
+    assert_eq!(
+        integration.waiver_reason.as_deref(),
+        Some("optional change is not needed")
+    );
+    assert!(integration.waived_at.is_some());
+    assert!(waived.post_process_event_pending);
+    assert!(!waived.post_process_completed);
+}
+
+#[test]
 fn stale_cancel_repair_updates_terminal_runs_in_place() {
     let store = test_store();
     let mut terminal = queued_run();

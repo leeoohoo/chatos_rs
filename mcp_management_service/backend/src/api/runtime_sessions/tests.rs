@@ -19,6 +19,7 @@ fn request() -> CreateRuntimeSessionRequest {
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         project_id: "project-1".to_string(),
         run_id: Some("run-1".to_string()),
+        execution_group_id: None,
         turn_id: None,
         task_id: Some("task-1".to_string()),
         task_profile: Some("implementation".to_string()),

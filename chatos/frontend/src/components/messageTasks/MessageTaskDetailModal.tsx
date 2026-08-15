@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { useEffect, useState, type FC } from 'react';
-import { CircleAlert, LoaderCircle, RotateCcw } from 'lucide-react';
+import { Ban, CircleAlert, LoaderCircle, RotateCcw } from 'lucide-react';
 import type {
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerModelConfigSummary,
@@ -24,6 +24,10 @@ interface MessageTaskDetailModalProps {
     executionServiceId?: string,
   ) => unknown | Promise<unknown>;
   onRetryIntegration?: (task: MessageTaskRunnerTask) => unknown | Promise<unknown>;
+  onWaiveIntegration?: (
+    task: MessageTaskRunnerTask,
+    reason: string,
+  ) => unknown | Promise<unknown>;
   retrying?: boolean;
   retryError?: string | null;
   onClose: () => void;
@@ -48,6 +52,12 @@ export const canRetryMessageTask = (task: MessageTaskRunnerTask): boolean => (
 export const canRetryMessageTaskIntegration = (task: MessageTaskRunnerTask): boolean => (
   readString(task.last_run?.workspace_execution?.integration_status)?.toLowerCase() === 'conflict'
   && Boolean(readString(task.last_run_id))
+);
+
+export const canWaiveMessageTaskIntegration = (task: MessageTaskRunnerTask): boolean => (
+  canRetryMessageTaskIntegration(task)
+  && isRecord(task.mcp_config)
+  && task.mcp_config.workspace_changes_required === false
 );
 
 const formatModelConfig = (
@@ -103,13 +113,16 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   relatedTasks = [],
   onRetry,
   onRetryIntegration,
+  onWaiveIntegration,
   retrying = false,
   retryError = null,
   onClose,
 }) => {
   const [retryInstruction, setRetryInstruction] = useState('');
+  const [waiverReason, setWaiverReason] = useState('');
   useEffect(() => {
     setRetryInstruction('');
+    setWaiverReason('');
   }, [task?.id]);
 
   if (!task) {
@@ -118,6 +131,7 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   const normalizedStatus = readString(task.status)?.toLowerCase();
   const isBlocked = normalizedStatus === 'blocked';
   const isIntegrationConflict = canRetryMessageTaskIntegration(task);
+  const canWaiveIntegration = canWaiveMessageTaskIntegration(task);
   const integration = task.last_run?.workspace_execution;
   const taskToolState = isRecord(task.task_tool_state) ? task.task_tool_state : {};
   const blockedReason = readString(task.last_run?.error_message)
@@ -190,7 +204,40 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
               ) : null}
             </div>
           </div>
-          <div className="flex justify-end">
+          {canWaiveIntegration && onWaiveIntegration ? (
+            <div className="rounded-md border border-orange-200 bg-white/70 px-3 py-3 dark:border-orange-900/70 dark:bg-background/50">
+              <label className="block">
+                <span className="text-xs font-medium text-orange-900 dark:text-orange-100">
+                  放弃代码变更原因（必填）
+                </span>
+                <textarea
+                  className="mt-1.5 min-h-20 w-full resize-y rounded-md border border-orange-300 bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-orange-800"
+                  value={waiverReason}
+                  maxLength={2000}
+                  disabled={retrying}
+                  placeholder="说明为什么该可选任务可以不合入本次代码变更。"
+                  onChange={(event) => setWaiverReason(event.target.value)}
+                />
+              </label>
+              <p className="mt-2 text-xs leading-5 text-orange-800 dark:text-orange-200">
+                此操作不会重新调用模型；Run 分支、结果提交和审计记录仍会保留，该可选节点将按成功继续解锁后续流程。
+              </p>
+            </div>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            {canWaiveIntegration && onWaiveIntegration ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-orange-400 bg-background px-3 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-orange-700 dark:text-orange-200 dark:hover:bg-orange-950/60"
+                disabled={retrying || !waiverReason.trim()}
+                onClick={() => void onWaiveIntegration(task, waiverReason.trim())}
+              >
+                {retrying
+                  ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  : <Ban className="h-3.5 w-3.5" />}
+                {retrying ? '正在处理' : '放弃代码变更'}
+              </button>
+            ) : null}
             <button
               type="button"
               className="inline-flex items-center gap-1.5 rounded-md bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"

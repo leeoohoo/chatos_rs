@@ -650,6 +650,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: None,
+        execution_group_id: None,
         execution_scope_generation: None,
         turn_id: Some("turn-1".to_string()),
         task_id: None,

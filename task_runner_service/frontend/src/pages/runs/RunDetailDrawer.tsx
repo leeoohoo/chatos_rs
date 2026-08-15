@@ -64,6 +64,7 @@ type RunDetailDrawerProps = {
   canceling: boolean;
   retrying: boolean;
   integrationRetrying: boolean;
+  integrationWaiving: boolean;
   changes: RunWorkspaceChanges | null;
   changesLoading: boolean;
   onClose: () => void;
@@ -72,6 +73,7 @@ type RunDetailDrawerProps = {
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
   onRetryIntegration: (runId: string) => void;
+  onWaiveIntegration: (runId: string, reason: string) => Promise<void>;
   onOpenChanges: (runId: string) => void;
   onCloseChanges: () => void;
   onOpenPrompt: (promptId: string, runId: string) => void;
@@ -98,6 +100,7 @@ export function RunDetailDrawer({
   canceling,
   retrying,
   integrationRetrying,
+  integrationWaiving,
   changes,
   changesLoading,
   onClose,
@@ -106,6 +109,7 @@ export function RunDetailDrawer({
   onCancel,
   onRetry,
   onRetryIntegration,
+  onWaiveIntegration,
   onOpenChanges,
   onCloseChanges,
   onOpenPrompt,
@@ -135,12 +139,14 @@ export function RunDetailDrawer({
             canceling={canceling}
             retrying={retrying}
             integrationRetrying={integrationRetrying}
+            integrationWaiving={integrationWaiving}
             changesLoading={changesLoading}
             onOpenTask={onOpenTask}
             onOpenModel={onOpenModel}
             onCancel={onCancel}
             onRetry={onRetry}
             onRetryIntegration={onRetryIntegration}
+            onWaiveIntegration={onWaiveIntegration}
             onOpenChanges={onOpenChanges}
           />
 

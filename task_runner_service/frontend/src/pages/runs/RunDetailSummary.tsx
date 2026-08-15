@@ -4,6 +4,9 @@
 import {
   Button,
   Descriptions,
+  Input,
+  message,
+  Modal,
   Space,
   Tag,
 } from 'antd';
@@ -32,12 +35,14 @@ type RunDetailSummaryProps = {
   canceling: boolean;
   retrying: boolean;
   integrationRetrying: boolean;
+  integrationWaiving: boolean;
   changesLoading: boolean;
   onOpenTask: (taskId: string) => void;
   onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
   onRetryIntegration: (runId: string) => void;
+  onWaiveIntegration: (runId: string, reason: string) => Promise<void>;
   onOpenChanges: (runId: string) => void;
 };
 
@@ -53,12 +58,14 @@ export function RunDetailSummary({
   canceling,
   retrying,
   integrationRetrying,
+  integrationWaiving,
   changesLoading,
   onOpenTask,
   onOpenModel,
   onCancel,
   onRetry,
   onRetryIntegration,
+  onWaiveIntegration,
   onOpenChanges,
 }: RunDetailSummaryProps) {
   const runStatusLabel = (status: TaskRunStatus) => t(`runs.status.${status}`);
@@ -77,6 +84,41 @@ export function RunDetailSummary({
     ? formatDuration(run.started_at, run.finished_at || undefined)
     : '-';
   const integration = run.workspace_execution;
+  const mcpConfig = inputSnapshot?.mcp_config && typeof inputSnapshot.mcp_config === 'object'
+    ? inputSnapshot.mcp_config as Record<string, unknown>
+    : null;
+  const canWaiveIntegration = integration?.integration_status === 'conflict'
+    && mcpConfig?.workspace_changes_required === false;
+  const openWaiveIntegrationConfirm = () => {
+    let reason = '';
+    Modal.confirm({
+      title: t('runs.detail.waiveIntegration'),
+      content: (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>{t('runs.detail.waiveIntegrationHelp')}</div>
+          <Input.TextArea
+            rows={4}
+            maxLength={2000}
+            showCount
+            placeholder={t('runs.detail.waiveIntegrationReasonPlaceholder')}
+            onChange={(event) => {
+              reason = event.target.value;
+            }}
+          />
+        </Space>
+      ),
+      okText: t('runs.detail.waiveIntegrationConfirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        if (!reason.trim()) {
+          message.warning(t('runs.detail.waiveIntegrationReasonRequired'));
+          throw new Error(t('runs.detail.waiveIntegrationReasonRequired'));
+        }
+        await onWaiveIntegration(run.id, reason.trim());
+      },
+    });
+  };
 
   return (
     <>
@@ -105,6 +147,15 @@ export function RunDetailSummary({
         >
           {t('runs.detail.retryIntegration')}
         </Button>
+        {canWaiveIntegration ? (
+          <Button
+            danger
+            loading={integrationWaiving}
+            onClick={openWaiveIntegrationConfirm}
+          >
+            {t('runs.detail.waiveIntegration')}
+          </Button>
+        ) : null}
         <Button
           disabled={!integration?.result_commit}
           loading={changesLoading}

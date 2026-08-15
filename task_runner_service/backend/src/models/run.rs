@@ -119,6 +119,7 @@ pub enum WorkspaceIntegrationStatus {
     Pending,
     Integrating,
     Integrated,
+    Waived,
     Conflict,
     Failed,
 }
@@ -136,6 +137,13 @@ pub enum TaskRunBranchTarget {
         base_branch: String,
         base_commit: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunWorkspaceChangedFile {
+    pub status: String,
+    pub path: String,
+    pub old_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -170,6 +178,16 @@ pub struct TaskRunWorkspaceExecution {
     #[serde(default)]
     pub promoted_commit: Option<String>,
     #[serde(default)]
+    pub waived_at: Option<String>,
+    #[serde(default)]
+    pub waiver_reason: Option<String>,
+    #[serde(default)]
+    pub local_changed_files: Vec<TaskRunWorkspaceChangedFile>,
+    #[serde(default)]
+    pub local_patch: Option<String>,
+    #[serde(default)]
+    pub local_patch_truncated: bool,
+    #[serde(default)]
     pub conflict_files: Vec<String>,
     #[serde(default)]
     pub conflict_message: Option<String>,
@@ -198,7 +216,9 @@ impl TaskRunWorkspaceExecution {
     pub fn integration_satisfied(&self) -> bool {
         matches!(
             self.integration_status,
-            WorkspaceIntegrationStatus::NotRequired | WorkspaceIntegrationStatus::Integrated
+            WorkspaceIntegrationStatus::NotRequired
+                | WorkspaceIntegrationStatus::Integrated
+                | WorkspaceIntegrationStatus::Waived
         )
     }
 }

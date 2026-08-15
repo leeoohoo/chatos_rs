@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   canRetryMessageTask,
   canRetryMessageTaskIntegration,
+  canWaiveMessageTaskIntegration,
   MessageTaskDetailModal,
 } from './MessageTaskDetailModal';
 
@@ -151,5 +152,51 @@ describe('message task node retry', () => {
 
     expect(onRetryIntegration).toHaveBeenCalledWith(task);
     expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('only allows an optional conflict task to waive its code changes with a reason', async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: 'task-optional-conflict',
+      title: '可选冲突任务',
+      status: 'blocked',
+      last_run_id: 'run-optional-conflict',
+      mcp_config: {
+        workspace_changes_required: false,
+      },
+      last_run: {
+        id: 'run-optional-conflict',
+        workspace_execution: {
+          integration_status: 'conflict',
+        },
+      },
+    };
+    const onWaiveIntegration = vi.fn();
+
+    expect(canWaiveMessageTaskIntegration(task)).toBe(true);
+    expect(canWaiveMessageTaskIntegration({
+      ...task,
+      mcp_config: { workspace_changes_required: true },
+    })).toBe(false);
+
+    render(
+      <MessageTaskDetailModal
+        task={task}
+        onRetryIntegration={vi.fn()}
+        onWaiveIntegration={onWaiveIntegration}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const waiveButton = screen.getByRole('button', { name: '放弃代码变更' });
+    expect((waiveButton as HTMLButtonElement).disabled).toBe(true);
+    await user.type(
+      screen.getByRole('textbox', { name: '放弃代码变更原因（必填）' }),
+      '该可选报告不需要进入本次发布',
+    );
+    await user.click(waiveButton);
+
+    expect(onWaiveIntegration).toHaveBeenCalledWith(task, '该可选报告不需要进入本次发布');
+    expect(screen.getAllByText(/不会重新调用模型/).length).toBeGreaterThan(0);
   });
 });

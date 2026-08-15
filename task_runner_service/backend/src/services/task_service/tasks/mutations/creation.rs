@@ -62,6 +62,9 @@ impl TaskService {
         if let Some(requires_execution) = requested_mcp_config.requires_execution {
             mcp_config.requires_execution = requires_execution;
         }
+        if let Some(workspace_changes_required) = requested_mcp_config.workspace_changes_required {
+            mcp_config.workspace_changes_required = workspace_changes_required;
+        }
         mcp_config.enabled_builtin_kinds = requested_mcp_config.enabled_builtin_kinds;
         mcp_config.external_mcp_config_ids = requested_mcp_config.external_mcp_config_ids;
         if let Some(builtin_prompt_locale) =

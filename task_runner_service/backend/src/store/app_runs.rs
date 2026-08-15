@@ -119,6 +119,17 @@ impl AppStore {
         }
     }
 
+    pub(crate) async fn waive_run_workspace_integration(
+        &self,
+        run_id: &str,
+        reason: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.waive_run_workspace_integration(run_id, reason)),
+            Self::Mongo(store) => store.waive_run_workspace_integration(run_id, reason).await,
+        }
+    }
+
     pub(crate) async fn subscribe_run_terminal(
         &self,
         subscription: RunTerminalSubscriptionRecord,

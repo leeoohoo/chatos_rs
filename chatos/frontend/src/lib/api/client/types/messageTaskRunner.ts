@@ -10,6 +10,8 @@ export interface MessageTaskRunnerWorkspaceExecution {
   result_commit?: string | null;
   integrated_commit?: string | null;
   promoted_commit?: string | null;
+  waived_at?: string | null;
+  waiver_reason?: string | null;
   conflict_files?: string[];
   conflict_message?: string | null;
   integration_last_error?: string | null;

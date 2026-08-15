@@ -364,4 +364,51 @@ impl MongoStore {
         }
         self.get_run(run_id).await
     }
+
+    pub(in crate::store) async fn waive_run_workspace_integration(
+        &self,
+        run_id: &str,
+        reason: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        let now = now_rfc3339();
+        let result = self
+            .runs
+            .update_one(
+                doc! {
+                    "id": run_id,
+                    "status": "blocked",
+                    "workspace_execution.integration_status": "conflict",
+                },
+                doc! {
+                    "$set": {
+                        "status": "succeeded",
+                        "finished_at": now.as_str(),
+                        "workspace_execution.integration_status": "waived",
+                        "workspace_execution.waived_at": now.as_str(),
+                        "workspace_execution.waiver_reason": reason,
+                        "post_process_event_pending": true,
+                        "post_process_event_enqueued": false,
+                        "post_process_completed": false,
+                        "post_process_dead_lettered": false,
+                        "post_process_attempt_count": 0_i64,
+                        "memory_summary_processed": false,
+                        "chatos_followup_processed": false,
+                        "updated_at": now.as_str(),
+                    },
+                    "$unset": {
+                        "error_message": "",
+                        "chatos_callback_delivery": "",
+                        "post_process_last_error": "",
+                        "workspace_execution.integration_last_error": "",
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        if result.modified_count == 0 {
+            return Ok(None);
+        }
+        self.get_run(run_id).await
+    }
 }

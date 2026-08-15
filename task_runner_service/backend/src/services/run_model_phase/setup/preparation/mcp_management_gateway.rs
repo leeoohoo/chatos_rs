@@ -35,6 +35,10 @@ pub(super) async fn resolve_mcp_management_gateway(
         agent_key: agent_key.as_str().to_string(),
         project_id: crate::models::normalize_project_id(Some(task.project_id.clone())),
         run_id: Some(run.id.clone()),
+        execution_group_id: run
+            .workspace_execution
+            .as_ref()
+            .and_then(|execution| execution.execution_group_id.clone()),
         turn_id: None,
         task_id: Some(task.id.clone()),
         task_profile: Some(task.task_profile.clone()),

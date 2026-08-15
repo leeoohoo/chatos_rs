@@ -17,6 +17,7 @@ const MCP_RELAY_SCOPE: &str = "relay.mcp";
 const LOCAL_CONNECTOR_PROJECT_ID_HEADER: &str = "x-local-connector-project-id";
 const MCP_MANAGEMENT_SESSION_ID_HEADER: &str = "x-mcp-management-session-id";
 const MCP_MANAGEMENT_RUN_ID_HEADER: &str = "x-mcp-management-run-id";
+const MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER: &str = "x-mcp-management-execution-group-id";
 const MCP_MANAGEMENT_SCOPE_GENERATION_HEADER: &str = "x-mcp-management-execution-scope-generation";
 const MCP_MANAGEMENT_TASK_ID_HEADER: &str = "x-mcp-management-task-id";
 const MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER: &str =

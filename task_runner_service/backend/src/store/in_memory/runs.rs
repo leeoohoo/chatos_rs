@@ -39,7 +39,8 @@ impl InMemoryStore {
                     WorkspaceIntegrationStatus::Conflict => stats.integration_conflicts += 1,
                     WorkspaceIntegrationStatus::Failed => stats.integration_failed += 1,
                     WorkspaceIntegrationStatus::NotRequired
-                    | WorkspaceIntegrationStatus::Integrated => {}
+                    | WorkspaceIntegrationStatus::Integrated
+                    | WorkspaceIntegrationStatus::Waived => {}
                 }
             }
             match run.status {
@@ -506,6 +507,40 @@ impl InMemoryStore {
         execution.conflict_message = None;
         execution.integration_last_error = None;
         run.updated_at = now_rfc3339();
+        Some(run.clone())
+    }
+
+    pub(in crate::store) fn waive_run_workspace_integration(
+        &self,
+        run_id: &str,
+        reason: &str,
+    ) -> Option<TaskRunRecord> {
+        let mut data = self.inner.write();
+        let run = data.runs.get_mut(run_id)?;
+        let execution = run.workspace_execution.as_mut()?;
+        if run.status != TaskRunStatus::Blocked
+            || execution.integration_status != WorkspaceIntegrationStatus::Conflict
+        {
+            return None;
+        }
+        let now = now_rfc3339();
+        run.status = TaskRunStatus::Succeeded;
+        run.finished_at = Some(now.clone());
+        run.error_message = None;
+        run.chatos_callback_delivery = None;
+        run.post_process_event_pending = true;
+        run.post_process_event_enqueued = false;
+        run.post_process_completed = false;
+        run.post_process_dead_lettered = false;
+        run.post_process_attempt_count = 0;
+        run.post_process_last_error = None;
+        run.memory_summary_processed = false;
+        run.chatos_followup_processed = false;
+        execution.integration_status = WorkspaceIntegrationStatus::Waived;
+        execution.waived_at = Some(now.clone());
+        execution.waiver_reason = Some(reason.to_string());
+        execution.integration_last_error = None;
+        run.updated_at = now;
         Some(run.clone())
     }
 

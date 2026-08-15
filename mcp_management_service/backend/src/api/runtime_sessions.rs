@@ -13,8 +13,8 @@ use chatos_agent::{
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute,
-    RuntimeSessionResponse, RuntimeSessionRoutesResponse, SandboxExecutionTarget,
-    SandboxProviderKind, WorkspaceProviderKind,
+    RuntimeProviderFinalizationStatus, RuntimeSessionResponse, RuntimeSessionRoutesResponse,
+    SandboxExecutionTarget, SandboxProviderKind, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     PluginComponentKind, ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities,
@@ -417,6 +417,7 @@ pub(super) async fn resolve_runtime_session(
             project_id: request.project_id.trim().to_string(),
             device_id,
             run_id: normalized(request.run_id),
+            execution_group_id: normalized(request.execution_group_id),
             execution_scope_generation: None,
             turn_id: normalized(request.turn_id),
             task_id: normalized(request.task_id),
@@ -713,7 +714,26 @@ pub(super) async fn close_runtime_session(
     let identity =
         require_internal_request_identity(&state.config, &headers, "runtime.sessions.close")?;
     let trace_id = identity.require_signed_trace_id()?.to_string();
+    let terminal_status = headers
+        .get("x-mcp-management-terminal-status")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| {
+            matches!(
+                *value,
+                "succeeded" | "failed" | "cancelled" | "blocked" | "waived" | "closed"
+            )
+        })
+        .unwrap_or("closed");
     let session_id = session_id.trim();
+    if let Some(response) = state
+        .runtime_session_closes
+        .get(session_id, identity.caller.as_str())
+        .await
+        .map_err(ApiError::internal)?
+    {
+        return Ok(Json(response));
+    }
     let snapshot = state
         .runtime_sessions
         .get(session_id)
@@ -725,20 +745,18 @@ pub(super) async fn close_runtime_session(
             "runtime session belongs to another caller service",
         ));
     }
-    let Some(snapshot) = state
-        .runtime_sessions
-        .remove(session_id)
-        .await
-        .map_err(ApiError::internal)?
-    else {
-        return Err(ApiError::not_found(
-            "runtime session was already closed or expired",
-        ));
-    };
     let reclaimed_invocations = state
         .runtime_invocations
         .close_session(snapshot.session_id.as_str())
         .await;
+    let reclaimed_invocations = reclaimed_invocations.map_err(|error| {
+        tracing::error!(
+            session_id = snapshot.session_id.as_str(),
+            error = error.as_str(),
+            "close active Runtime Invocations for Runtime Session failed"
+        );
+        ApiError::internal(error)
+    })?;
     let execution_scope_released = if let Some(run_id) = snapshot.run_id.as_deref() {
         let provider = snapshot
             .workspace_route
@@ -759,28 +777,103 @@ pub(super) async fn close_runtime_session(
     } else {
         true
     };
-    state
+    let provider_finalization = match state
         .providers
-        .close_session(&snapshot, execution_scope_released)
-        .await;
-    let reclaimed_invocations = reclaimed_invocations.map_err(|error| {
-        tracing::error!(
-            session_id = snapshot.session_id.as_str(),
-            error = error.as_str(),
-            "close active Runtime Invocations for Runtime Session failed"
-        );
-        ApiError::internal(error)
-    })?;
+        .close_session(&snapshot, execution_scope_released, terminal_status)
+        .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            if execution_scope_released {
+                if let Some(run_id) = snapshot.run_id.as_deref() {
+                    let provider = snapshot
+                        .workspace_route
+                        .as_ref()
+                        .map(|route| route.provider_kind())
+                        .unwrap_or(snapshot.project_context.workspace_provider);
+                    if let Err(reattach_error) = state
+                        .runtime_execution_scopes
+                        .attach_session(
+                            snapshot.owner_user_id.as_str(),
+                            snapshot.project_id.as_str(),
+                            run_id,
+                            provider,
+                            snapshot.session_id.as_str(),
+                            snapshot.expires_at_unix,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            session_id = snapshot.session_id.as_str(),
+                            error = %reattach_error,
+                            "failed to restore Runtime Session execution scope after provider finalization error"
+                        );
+                    }
+                }
+            }
+            return Err(ApiError::bad_gateway(error.message));
+        }
+    };
     tracing::info!(
         session_id = snapshot.session_id.as_str(),
         reclaimed_invocations,
         "closed Runtime Session active invocations"
     );
-    record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "close", "succeeded");
-    Ok(Json(CloseRuntimeSessionResponse {
+    let integration_conflict = provider_finalization
+        .as_ref()
+        .is_some_and(|result| result.status == RuntimeProviderFinalizationStatus::Conflict);
+    if integration_conflict {
+        if execution_scope_released {
+            if let Some(run_id) = snapshot.run_id.as_deref() {
+                let provider = snapshot
+                    .workspace_route
+                    .as_ref()
+                    .map(|route| route.provider_kind())
+                    .unwrap_or(snapshot.project_context.workspace_provider);
+                state
+                    .runtime_execution_scopes
+                    .attach_session(
+                        snapshot.owner_user_id.as_str(),
+                        snapshot.project_id.as_str(),
+                        run_id,
+                        provider,
+                        snapshot.session_id.as_str(),
+                        snapshot.expires_at_unix,
+                    )
+                    .await
+                    .map_err(|error| ApiError::internal(error.to_string()))?;
+            }
+        }
+        record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "close", "conflict");
+        return Ok(Json(CloseRuntimeSessionResponse {
+            session_id: snapshot.session_id.clone(),
+            closed: false,
+            provider_finalization,
+        }));
+    }
+    let close_response = CloseRuntimeSessionResponse {
         session_id: snapshot.session_id.clone(),
         closed: true,
-    }))
+        provider_finalization,
+    };
+    state
+        .runtime_session_closes
+        .save(
+            identity.caller.as_str(),
+            close_response.clone(),
+            chrono::Utc::now()
+                .timestamp()
+                .saturating_add(7 * 24 * 60 * 60),
+        )
+        .await
+        .map_err(ApiError::internal)?;
+    let _removed = state
+        .runtime_sessions
+        .remove(session_id)
+        .await
+        .map_err(ApiError::internal)?;
+    record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "close", "succeeded");
+    Ok(Json(close_response))
 }
 
 fn record_runtime_session_audit(
