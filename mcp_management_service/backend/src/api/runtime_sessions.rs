@@ -69,11 +69,6 @@ pub(super) async fn resolve_runtime_session(
         .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
-    let execution_scope_workspace_provider = request
-        .workspace_route
-        .as_ref()
-        .map(|route| route.provider_kind())
-        .unwrap_or(project_context.workspace_provider);
     let execution_scope_run_id = normalized(request.run_id.clone());
     validate_context_overrides(&request, &project_context)?;
     let device_id = project_context
@@ -462,6 +457,7 @@ pub(super) async fn resolve_runtime_session(
             outcome: "succeeded".to_string(),
         };
         session_audit.validate().map_err(ApiError::internal)?;
+        let execution_scope_provider = snapshot.execution_scope_provider();
         if let Some(run_id) = execution_scope_run_id.as_deref() {
             match state
                 .runtime_execution_scopes
@@ -469,7 +465,7 @@ pub(super) async fn resolve_runtime_session(
                     request.owner_user_id.trim(),
                     request.project_id.trim(),
                     run_id,
-                    execution_scope_workspace_provider,
+                    execution_scope_provider,
                     session_id.as_str(),
                     grant.expires_at_unix,
                 )
@@ -496,7 +492,7 @@ pub(super) async fn resolve_runtime_session(
                         request.owner_user_id.trim(),
                         request.project_id.trim(),
                         run_id,
-                        execution_scope_workspace_provider,
+                        execution_scope_provider,
                         session_id.as_str(),
                     )
                     .await;
@@ -762,11 +758,7 @@ pub(super) async fn close_runtime_session(
         ApiError::internal(error)
     })?;
     let execution_scope_released = if let Some(run_id) = snapshot.run_id.as_deref() {
-        let provider = snapshot
-            .workspace_route
-            .as_ref()
-            .map(|route| route.provider_kind())
-            .unwrap_or(snapshot.project_context.workspace_provider);
+        let provider = snapshot.execution_scope_provider();
         state
             .runtime_execution_scopes
             .detach_session(
@@ -790,11 +782,7 @@ pub(super) async fn close_runtime_session(
         Err(error) => {
             if execution_scope_released {
                 if let Some(run_id) = snapshot.run_id.as_deref() {
-                    let provider = snapshot
-                        .workspace_route
-                        .as_ref()
-                        .map(|route| route.provider_kind())
-                        .unwrap_or(snapshot.project_context.workspace_provider);
+                    let provider = snapshot.execution_scope_provider();
                     if let Err(reattach_error) = state
                         .runtime_execution_scopes
                         .attach_session(
@@ -829,11 +817,7 @@ pub(super) async fn close_runtime_session(
     if integration_conflict {
         if execution_scope_released {
             if let Some(run_id) = snapshot.run_id.as_deref() {
-                let provider = snapshot
-                    .workspace_route
-                    .as_ref()
-                    .map(|route| route.provider_kind())
-                    .unwrap_or(snapshot.project_context.workspace_provider);
+                let provider = snapshot.execution_scope_provider();
                 state
                     .runtime_execution_scopes
                     .attach_session(

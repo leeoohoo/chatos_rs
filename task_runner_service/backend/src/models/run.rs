@@ -111,6 +111,15 @@ pub enum ModelPhaseStatus {
     Blocked,
 }
 
+impl ModelPhaseStatus {
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Cancelled | Self::Blocked
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceIntegrationStatus {
@@ -310,16 +319,17 @@ pub struct TaskRunRecord {
 
 impl TaskRunRecord {
     pub fn requires_post_process(&self) -> bool {
-        matches!(
-            self.status,
-            TaskRunStatus::Succeeded
-                | TaskRunStatus::Failed
-                | TaskRunStatus::Cancelled
-                | TaskRunStatus::Blocked
-        ) || self
-            .workspace_execution
-            .as_ref()
-            .is_some_and(TaskRunWorkspaceExecution::integration_requires_post_process)
+        self.model_phase_status.is_terminal()
+            && (matches!(
+                self.status,
+                TaskRunStatus::Succeeded
+                    | TaskRunStatus::Failed
+                    | TaskRunStatus::Cancelled
+                    | TaskRunStatus::Blocked
+            ) || self
+                .workspace_execution
+                .as_ref()
+                .is_some_and(TaskRunWorkspaceExecution::integration_requires_post_process))
     }
 
     pub fn queued(

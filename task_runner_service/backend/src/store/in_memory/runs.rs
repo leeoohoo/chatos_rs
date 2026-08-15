@@ -19,7 +19,8 @@ impl InMemoryStore {
             stats.dispatch_paused += usize::from(run.dispatch_paused);
             stats.dispatch_outbox_pending += usize::from(run.dispatch_event_pending);
             stats.cancellation_outbox_pending += usize::from(run.cancel_event_pending);
-            stats.post_process_outbox_pending += usize::from(run.post_process_event_pending);
+            stats.post_process_outbox_pending +=
+                usize::from(run.requires_post_process() && run.post_process_event_pending);
             if let Some(callback) = run.chatos_callback_delivery.as_ref() {
                 match callback.status {
                     ChatosCallbackDeliveryStatus::Pending => {

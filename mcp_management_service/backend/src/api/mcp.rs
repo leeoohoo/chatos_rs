@@ -334,7 +334,7 @@ pub(crate) async fn register_tool_call_command(
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
                 command.batch_id.as_str(),
                 invocations.as_slice(),
             )
@@ -521,7 +521,7 @@ pub(crate) async fn execute_tool_batch_invocation(
                         snapshot.owner_user_id.as_str(),
                         snapshot.project_id.as_str(),
                         run_id,
-                        snapshot.project_context.workspace_provider,
+                        snapshot.execution_scope_provider(),
                         call.invocation_id.as_str(),
                     )
                     .await?;
@@ -618,7 +618,7 @@ pub(crate) async fn execute_tool_batch_invocation(
                     .run_id
                     .as_deref()
                     .ok_or_else(|| "Ask User invocation requires run_id".to_string())?,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
                 call.invocation_id.as_str(),
             )
             .await?
@@ -664,7 +664,7 @@ pub(crate) async fn execute_tool_batch_invocation(
                                     snapshot.owner_user_id.as_str(),
                                     snapshot.project_id.as_str(),
                                     run_id,
-                                    snapshot.project_context.workspace_provider,
+                                    snapshot.execution_scope_provider(),
                                     call.invocation_id.as_str(),
                                 )
                                 .await?;
@@ -824,7 +824,7 @@ pub(crate) async fn resume_terminal_tool_batch_invocation(
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
                 invocation_id,
             )
             .await?
@@ -960,7 +960,7 @@ async fn register_runtime_invocation(
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
             )
             .await
             .map_err(|error| match error {
@@ -989,7 +989,7 @@ async fn register_runtime_invocation(
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
                 invocation_id.as_str(),
             )
             .await
@@ -1091,7 +1091,7 @@ async fn dispatch_provider_call(
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
                 invocation_id,
             )
             .await
@@ -1126,7 +1126,7 @@ async fn dispatch_provider_call(
                     snapshot.owner_user_id.as_str(),
                     snapshot.project_id.as_str(),
                     run_id,
-                    snapshot.project_context.workspace_provider,
+                    snapshot.execution_scope_provider(),
                     invocation_id,
                 )
                 .await
@@ -1174,7 +1174,7 @@ async fn dispatch_provider_call(
                             snapshot.owner_user_id.as_str(),
                             snapshot.project_id.as_str(),
                             run_id,
-                            snapshot.project_context.workspace_provider,
+                            snapshot.execution_scope_provider(),
                             invocation_id,
                         )
                         .await;
@@ -1205,7 +1205,7 @@ async fn dispatch_provider_call(
                             snapshot.owner_user_id.as_str(),
                             snapshot.project_id.as_str(),
                             run_id,
-                            snapshot.project_context.workspace_provider,
+                            snapshot.execution_scope_provider(),
                             invocation_id,
                         )
                         .await
@@ -1233,7 +1233,7 @@ async fn dispatch_provider_call(
                             snapshot.owner_user_id.as_str(),
                             snapshot.project_id.as_str(),
                             run_id,
-                            snapshot.project_context.workspace_provider,
+                            snapshot.execution_scope_provider(),
                             invocation_id,
                         )
                         .await
@@ -1296,7 +1296,7 @@ async fn dispatch_provider_call(
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
                 invocation_id,
             )
             .await
@@ -1342,7 +1342,7 @@ pub(crate) async fn execute_async_tool_call(
                         snapshot.owner_user_id.as_str(),
                         snapshot.project_id.as_str(),
                         run_id,
-                        snapshot.project_context.workspace_provider,
+                        snapshot.execution_scope_provider(),
                         invocation_id.as_str(),
                     )
                     .await?;
@@ -1367,7 +1367,7 @@ pub(crate) async fn execute_async_tool_call(
                         snapshot.owner_user_id.as_str(),
                         snapshot.project_id.as_str(),
                         run_id,
-                        snapshot.project_context.workspace_provider,
+                        snapshot.execution_scope_provider(),
                         invocation_id.as_str(),
                     )
                     .await?;

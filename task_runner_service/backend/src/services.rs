@@ -35,6 +35,8 @@ use crate::store::AppStore;
 pub(crate) const MCP_RUN_FINALIZATION_ERROR_PREFIX: &str = "MCP runtime run finalization failed";
 pub(crate) const CLOUD_AGENT_DEPENDENCY_WAITING: &str = "cloud_agent_dependency_waiting";
 pub(crate) const WORKSPACE_INTEGRATION_RETRY_PREFIX: &str = "workspace integration retry";
+pub(crate) const RUN_POST_PROCESS_MODEL_PHASE_PENDING_ERROR: &str =
+    "Task Run model phase has not reached a durable terminal state; post-process cannot finalize MCP or workspace resources";
 
 mod batch_ops;
 mod builtin_providers;

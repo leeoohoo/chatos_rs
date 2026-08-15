@@ -81,35 +81,6 @@ impl MessageManagerCore {
         self.persist_message(message).await
     }
 
-    pub(crate) async fn save_assistant_response_message(
-        &self,
-        session_id: &str,
-        content: &str,
-        reasoning: Option<String>,
-        message_mode: Option<String>,
-        message_source: Option<String>,
-        metadata: Option<Value>,
-        tool_calls: Option<Value>,
-        response_id: Option<&str>,
-        turn_id: Option<&str>,
-        response_status: Option<&str>,
-    ) -> Result<Message, String> {
-        self.save_assistant_response_message_with_id(
-            session_id,
-            content,
-            reasoning,
-            message_mode,
-            message_source,
-            metadata,
-            tool_calls,
-            response_id,
-            turn_id,
-            response_status,
-            None,
-        )
-        .await
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn save_assistant_response_message_with_id(
         &self,

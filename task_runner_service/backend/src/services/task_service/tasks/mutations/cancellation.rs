@@ -242,6 +242,7 @@ impl TaskService {
             }
             if run.status == TaskRunStatus::Queued {
                 run.status = TaskRunStatus::Cancelled;
+                run.model_phase_status = crate::models::ModelPhaseStatus::Cancelled;
                 run.cancel_requested = true;
                 run.claim_token = None;
                 run.claim_until = None;

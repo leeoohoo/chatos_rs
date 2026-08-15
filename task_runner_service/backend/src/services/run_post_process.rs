@@ -25,10 +25,7 @@ fn ensure_model_phase_terminal_for_post_process(run: &TaskRunRecord) -> Result<(
         run.model_phase_status,
         crate::models::ModelPhaseStatus::Pending | crate::models::ModelPhaseStatus::Running
     ) {
-        return Err(
-            "Task Run model phase has not reached a durable terminal state; post-process cannot finalize MCP or workspace resources"
-                .to_string(),
-        );
+        return Err(super::RUN_POST_PROCESS_MODEL_PHASE_PENDING_ERROR.to_string());
     }
     Ok(())
 }
@@ -239,7 +236,10 @@ impl RunService {
         &self,
         run: &TaskRunRecord,
     ) -> Result<bool, String> {
-        if !run.post_process_event_pending || run.post_process_completed {
+        if !run.requires_post_process()
+            || !run.post_process_event_pending
+            || run.post_process_completed
+        {
             return Ok(false);
         }
         crate::run_post_process_queue::enqueue_run_post_process(

@@ -488,6 +488,9 @@ impl RuntimeExecutionScopeStore {
                 if scope.status == "terminal" {
                     return Err(RuntimeExecutionScopeStoreError::Terminal);
                 }
+                if let Some(sequences) = existing_batch_sequences(scope, batch_id, invocations) {
+                    return Ok(sequences);
+                }
                 if invocations.iter().any(|(invocation_id, _)| {
                     scope.running_invocation_id.as_deref() == Some(invocation_id.as_str())
                         || scope
@@ -580,12 +583,21 @@ impl RuntimeExecutionScopeStore {
                         .find_one(doc! { "_id": id }, None)
                         .await
                         .map_err(store_error)?;
-                    return if scope.is_some_and(|scope| scope.status == "terminal") {
-                        Err(RuntimeExecutionScopeStoreError::Terminal)
-                    } else {
-                        Err(RuntimeExecutionScopeStoreError::Unavailable(
-                            "execution scope rejected invocation batch insertion".to_string(),
-                        ))
+                    return match scope {
+                        Some(scope) if scope.status == "terminal" => {
+                            Err(RuntimeExecutionScopeStoreError::Terminal)
+                        }
+                        Some(scope) => existing_batch_sequences(&scope, batch_id, invocations)
+                            .ok_or_else(|| {
+                                RuntimeExecutionScopeStoreError::Unavailable(
+                                    "execution scope rejected invocation batch insertion because one or more invocation ids are already active under a different batch"
+                                        .to_string(),
+                                )
+                            }),
+                        None => Err(RuntimeExecutionScopeStoreError::Unavailable(
+                            "execution scope is missing while enqueueing an invocation batch"
+                                .to_string(),
+                        )),
                     };
                 };
                 invocation_ids
@@ -778,6 +790,27 @@ impl RuntimeExecutionScopeStore {
                 }),
         }
     }
+}
+
+fn existing_batch_sequences(
+    scope: &RuntimeExecutionScopeDocument,
+    batch_id: &str,
+    invocations: &[(String, usize)],
+) -> Option<Vec<i64>> {
+    invocations
+        .iter()
+        .map(|(invocation_id, call_index)| {
+            scope
+                .invocation_queue
+                .iter()
+                .find(|reference| {
+                    reference.invocation_id == *invocation_id
+                        && reference.batch_id.as_deref() == Some(batch_id)
+                        && reference.call_index == Some(*call_index)
+                })
+                .map(|reference| reference.sequence)
+        })
+        .collect()
 }
 
 fn scope_id(
@@ -992,6 +1025,92 @@ mod tests {
                 .unwrap(),
             RuntimeExecutionTurnState::Acquired
         );
+    }
+
+    #[tokio::test]
+    async fn exact_batch_replay_reuses_existing_scope_queue_entries() {
+        let store = RuntimeExecutionScopeStore::memory();
+        store
+            .attach_session(
+                "user-1",
+                "project-1",
+                "run-1",
+                WorkspaceProviderKind::CloudSandbox,
+                "session-1",
+                chrono::Utc::now().timestamp() + 300,
+            )
+            .await
+            .unwrap();
+        let invocations = [
+            ("invocation-1".to_string(), 0),
+            ("invocation-2".to_string(), 1),
+        ];
+        let first = store
+            .enqueue_invocation_batch(
+                "user-1",
+                "project-1",
+                "run-1",
+                WorkspaceProviderKind::CloudSandbox,
+                "batch-1",
+                &invocations,
+            )
+            .await
+            .unwrap();
+        let replay = store
+            .enqueue_invocation_batch(
+                "user-1",
+                "project-1",
+                "run-1",
+                WorkspaceProviderKind::CloudSandbox,
+                "batch-1",
+                &invocations,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(replay, first);
+        assert_eq!(store.queued_invocation_ids().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn invocation_ids_cannot_be_reused_by_a_different_batch() {
+        let store = RuntimeExecutionScopeStore::memory();
+        store
+            .attach_session(
+                "user-1",
+                "project-1",
+                "run-1",
+                WorkspaceProviderKind::CloudSandbox,
+                "session-1",
+                chrono::Utc::now().timestamp() + 300,
+            )
+            .await
+            .unwrap();
+        let invocations = [("invocation-1".to_string(), 0)];
+        store
+            .enqueue_invocation_batch(
+                "user-1",
+                "project-1",
+                "run-1",
+                WorkspaceProviderKind::CloudSandbox,
+                "batch-1",
+                &invocations,
+            )
+            .await
+            .unwrap();
+
+        let error = store
+            .enqueue_invocation_batch(
+                "user-1",
+                "project-1",
+                "run-1",
+                WorkspaceProviderKind::CloudSandbox,
+                "batch-2",
+                &invocations,
+            )
+            .await
+            .expect_err("different batch must not reuse an active invocation id");
+        assert!(error.to_string().contains("active duplicate"));
     }
 
     #[tokio::test]

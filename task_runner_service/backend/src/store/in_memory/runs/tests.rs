@@ -74,6 +74,7 @@ fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
     succeeded.id = "run-3".to_string();
     succeeded.task_id = "task-3".to_string();
     succeeded.status = TaskRunStatus::Succeeded;
+    succeeded.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
     succeeded.dispatch_event_pending = false;
     succeeded.post_process_event_pending = true;
     store.save_run(succeeded).expect("save succeeded run");
@@ -162,6 +163,7 @@ fn integration_conflict_retry_rearms_the_same_run_without_changing_its_order() {
     let store = test_store();
     let mut run = queued_run();
     run.status = TaskRunStatus::Blocked;
+    run.model_phase_status = crate::models::ModelPhaseStatus::Blocked;
     run.finished_at = Some("2026-08-15T03:00:00Z".to_string());
     run.error_message = Some("integration conflict".to_string());
     run.workspace_execution = Some(
@@ -206,6 +208,7 @@ fn integration_conflict_waiver_preserves_result_and_rearms_post_process() {
     let store = test_store();
     let mut run = queued_run();
     run.status = TaskRunStatus::Blocked;
+    run.model_phase_status = crate::models::ModelPhaseStatus::Blocked;
     run.finished_at = Some("2026-08-15T03:00:00Z".to_string());
     run.error_message = Some("integration conflict".to_string());
     run.result_summary = Some("optional analysis completed".to_string());
@@ -304,6 +307,7 @@ fn successful_run_post_process_outbox_is_monotonic_across_stale_saves() {
     let store = test_store();
     let mut run = queued_run();
     run.status = TaskRunStatus::Succeeded;
+    run.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
     run.finished_at = Some(now_rfc3339());
     let saved = store.save_run(run).expect("save successful run");
     assert!(saved.post_process_event_pending);
@@ -342,6 +346,13 @@ fn every_terminal_status_requests_run_lifecycle_post_process() {
         let mut run = queued_run();
         run.id = format!("run-{index}");
         run.status = status;
+        run.model_phase_status = match status {
+            TaskRunStatus::Succeeded => crate::models::ModelPhaseStatus::Succeeded,
+            TaskRunStatus::Failed => crate::models::ModelPhaseStatus::Failed,
+            TaskRunStatus::Cancelled => crate::models::ModelPhaseStatus::Cancelled,
+            TaskRunStatus::Blocked => crate::models::ModelPhaseStatus::Blocked,
+            TaskRunStatus::Queued | TaskRunStatus::Running => unreachable!(),
+        };
         run.finished_at = Some(now_rfc3339());
         let saved = store.save_run(run).expect("save terminal run");
         assert!(saved.post_process_event_pending);
@@ -350,10 +361,39 @@ fn every_terminal_status_requests_run_lifecycle_post_process() {
 }
 
 #[test]
+fn workspace_integration_waits_for_the_durable_model_terminal_state() {
+    let store = test_store();
+    let mut run = queued_run();
+    run.status = TaskRunStatus::Running;
+    run.model_phase_status = crate::models::ModelPhaseStatus::Running;
+    run.workspace_execution = Some(
+        serde_json::from_value(serde_json::json!({
+            "status": "ready",
+            "execution_group_id": "group-1",
+            "integration_status": "pending"
+        }))
+        .expect("workspace integration state"),
+    );
+
+    let running = store.save_run(run).expect("save running model phase");
+    assert!(!running.post_process_event_pending);
+    assert!(store.list_pending_run_post_processes(10).is_empty());
+
+    let mut terminal_model = running;
+    terminal_model.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
+    let terminal_model = store
+        .save_run(terminal_model)
+        .expect("save durable model terminal state");
+    assert!(terminal_model.post_process_event_pending);
+    assert_eq!(store.list_pending_run_post_processes(10).len(), 1);
+}
+
+#[test]
 fn dead_lettered_post_process_is_not_rearmed_by_later_run_saves() {
     let store = test_store();
     let mut run = queued_run();
     run.status = TaskRunStatus::Succeeded;
+    run.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
     let saved = store.save_run(run).expect("save successful run");
     assert!(store.acknowledge_run_post_process_event(saved.id.as_str()));
     assert!(store.record_run_post_process_failure(saved.id.as_str(), "poison event"));
@@ -371,6 +411,7 @@ fn dead_lettered_post_process_can_only_be_explicitly_rearmed() {
     let store = test_store();
     let mut run = queued_run();
     run.status = TaskRunStatus::Succeeded;
+    run.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
     run.post_process_dead_lettered = true;
     run.post_process_attempt_count = 8;
     run.post_process_last_error = Some("poison event".to_string());

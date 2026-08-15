@@ -37,7 +37,10 @@ impl MongoStore {
                     "$eq": ["$cancel_event_pending", true]
                 }),
                 "post_process_outbox_pending": count_when(doc! {
-                    "$eq": ["$post_process_event_pending", true]
+                    "$and": [
+                        { "$eq": ["$post_process_event_pending", true] },
+                        { "$in": ["$model_phase_status", ["succeeded", "failed", "cancelled", "blocked"]] },
+                    ]
                 }),
                 "integration_pending": count_when(doc! {
                     "$eq": ["$workspace_execution.integration_status", "pending"]

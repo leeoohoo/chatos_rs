@@ -12,7 +12,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    RuntimeToolDescriptor, SandboxProviderKind, WorkspaceProviderKind,
+    RuntimeToolDescriptor, RuntimeWorkspaceRouteTarget, SandboxExecutionTarget,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
 use chatos_mcp_service::{McpToolCallCommandItem, METHOD_TOOLS_CALL};
 use tokio::sync::{mpsc, Notify};
@@ -114,6 +115,30 @@ fn ask_user_snapshot() -> RuntimeSessionSnapshot {
     snapshot
 }
 
+#[test]
+fn explicit_workspace_route_is_the_execution_scope_provider_authority() {
+    let mut snapshot = snapshot();
+    assert_eq!(
+        snapshot.execution_scope_provider(),
+        WorkspaceProviderKind::Harness
+    );
+    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::CloudSandbox {
+        target: SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        },
+    });
+
+    assert_eq!(
+        snapshot.execution_scope_provider(),
+        WorkspaceProviderKind::CloudSandbox
+    );
+}
+
 fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGrantClaims {
     crate::runtime::RuntimeGrantClaims {
         iss: "mcp-management-service".to_string(),
@@ -155,7 +180,7 @@ async fn persist_runtime_session(state: &AppState, snapshot: &RuntimeSessionSnap
                 snapshot.owner_user_id.as_str(),
                 snapshot.project_id.as_str(),
                 run_id,
-                snapshot.project_context.workspace_provider,
+                snapshot.execution_scope_provider(),
                 snapshot.session_id.as_str(),
                 snapshot.expires_at_unix,
             )
@@ -191,6 +216,48 @@ fn tool_call_command(
         calls,
         delivery_attempt: 1,
     }
+}
+
+#[tokio::test]
+async fn cloud_sandbox_route_and_harness_project_share_one_execution_scope_authority() {
+    let state = AppState::new(crate::config::AppConfig::test())
+        .await
+        .unwrap();
+    let mut snapshot = snapshot();
+    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::CloudSandbox {
+        target: SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        },
+    });
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "sandbox-invocation".to_string(),
+            tool_call_id: "sandbox-call".to_string(),
+            call_index: 0,
+            name: "demo_search".to_string(),
+            arguments: json!({}),
+            preflight_error: None,
+        }],
+    );
+
+    let batch = register_tool_call_command(&state, &command)
+        .await
+        .expect("Cloud Sandbox batch must enqueue through the explicit route scope")
+        .record;
+
+    assert_eq!(batch.status, RuntimeToolBatchStatus::Active);
+    assert_eq!(
+        state.runtime_execution_scopes.queued_invocation_ids().await,
+        vec!["sandbox-invocation".to_string()]
+    );
 }
 
 #[tokio::test]

@@ -311,9 +311,9 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
             input.project_id.clone(),
             Some(input.user_message_id.clone()),
         );
-        let callback_bundle = build_chat_stream_callbacks(&sink, input.session_id.as_str(), true);
+        let stream_callbacks = build_chat_stream_callbacks(&sink, input.session_id.as_str(), true);
         let lifecycle_state = Arc::new(Mutex::new(input.lifecycle.clone()));
-        let mut callbacks = shared_callbacks(callback_bundle.callbacks.clone());
+        let mut callbacks = shared_callbacks(stream_callbacks.clone());
         callbacks = cloud_track_project_planning_integrity(callbacks, Arc::clone(&lifecycle_state));
         if input.project_requirement_execution_planner {
             callbacks = cloud_track_project_execution_planner_completion(
@@ -344,7 +344,7 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
             turn_id: input.turn_id.clone(),
             model_name: input.model_name.clone(),
             supports_images: Some(model_runtime.supports_images),
-            callbacks: callback_bundle.callbacks,
+            callbacks: stream_callbacks,
             max_task_follow_up_rounds: input.max_task_follow_up_rounds,
             task_turn: Arc::clone(&lifecycle_state),
         }) as Arc<dyn RuntimeLifecycleHook>;

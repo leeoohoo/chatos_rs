@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
@@ -11,29 +10,18 @@ use crate::services::ai_client_common::AiClientCallbacks as AgentAiClientCallbac
 use crate::utils::abort_registry;
 use crate::utils::events::Events;
 
-use super::text::join_stream_text;
-use super::ChatStreamCallbacks;
-
 pub fn build_chat_stream_callbacks(
     sink: &ChatEventSink,
     session_id: &str,
     enable_tools: bool,
-) -> ChatStreamCallbacks {
+) -> AgentAiClientCallbacks {
     let sid = session_id.to_string();
-    let chunk_sent = Arc::new(AtomicBool::new(false));
-    let streamed_content = Arc::new(Mutex::new(String::new()));
 
     let sink_chunk = sink.clone();
     let sid_chunk = sid.clone();
-    let chunk_flag = chunk_sent.clone();
-    let streamed_content_chunk = streamed_content.clone();
     let on_chunk = move |chunk: String| {
         if abort_registry::is_aborted(&sid_chunk) {
             return;
-        }
-        chunk_flag.store(true, Ordering::Relaxed);
-        if let Ok(mut acc) = streamed_content_chunk.lock() {
-            *acc = join_stream_text(acc.as_str(), chunk.as_str());
         }
         sink_chunk.send_json_event(
             "chat.turn.delta",
@@ -194,9 +182,5 @@ pub fn build_chat_stream_callbacks(
         on_before_model_request: None,
     };
 
-    ChatStreamCallbacks {
-        callbacks,
-        chunk_sent,
-        streamed_content,
-    }
+    callbacks
 }

@@ -113,6 +113,9 @@ impl MongoStore {
         self.runs
             .find(
                 doc! {
+                    "model_phase_status": {
+                        "$in": ["succeeded", "failed", "cancelled", "blocked"]
+                    },
                     "$or": [
                         { "status": { "$in": ["succeeded", "failed", "cancelled", "blocked"] } },
                         { "workspace_execution.integration_status": { "$in": ["pending", "integrating", "failed"] } },

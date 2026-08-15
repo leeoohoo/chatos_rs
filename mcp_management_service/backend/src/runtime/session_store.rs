@@ -11,7 +11,7 @@ use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use chatos_mcp_management_sdk::{
     ProjectExecutionContext, ResolvedMcpRoute, RuntimeSessionRoutesResponse, RuntimeToolDescriptor,
-    RuntimeWorkspaceRouteTarget, SandboxExecutionTarget,
+    RuntimeWorkspaceRouteTarget, SandboxExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 use futures_util::TryStreamExt;
@@ -172,6 +172,13 @@ pub struct RuntimeSessionSnapshot {
 }
 
 impl RuntimeSessionSnapshot {
+    pub fn execution_scope_provider(&self) -> WorkspaceProviderKind {
+        self.workspace_route
+            .as_ref()
+            .map(RuntimeWorkspaceRouteTarget::provider_kind)
+            .unwrap_or(self.project_context.workspace_provider)
+    }
+
     pub fn sandbox_target(&self) -> Option<&SandboxExecutionTarget> {
         self.workspace_route
             .as_ref()
