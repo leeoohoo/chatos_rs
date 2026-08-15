@@ -386,6 +386,9 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "project_task_ref": "project_task_001",
                         "title": "Prepare implementation",
                         "objective": "Inspect the current implementation and prepare the change.",
+                        "acceptance_criteria": ["Current implementation is inspected"],
+                        "task_role": "implementation",
+                        "owned_paths": [],
                         "default_model_config_id": "model-that-must-be-overridden",
                         "input_payload": {
                             "requirement_id": "child-requirement-1",
@@ -397,6 +400,9 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "project_task_ref": "project_task_001",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
+                        "acceptance_criteria": ["Change is implemented and verified"],
+                        "task_role": "implementation",
+                        "owned_paths": ["src"],
                         "default_model_config_id": "another-model-that-must-be-overridden",
                         "prerequisite_refs": ["prepare"],
                         "context_refs": ["prepare"],
@@ -622,13 +628,19 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "client_ref": "prepare",
                         "project_task_ref": "project_task_001",
                         "title": "Prepare implementation",
-                        "objective": "Inspect the current implementation and prepare the change."
+                        "objective": "Inspect the current implementation and prepare the change.",
+                        "acceptance_criteria": ["Current implementation is inspected"],
+                        "task_role": "implementation",
+                        "owned_paths": []
                     },
                     {
                         "client_ref": "implement",
                         "project_task_ref": "project_task_001",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
+                        "acceptance_criteria": ["Change is implemented and verified"],
+                        "task_role": "implementation",
+                        "owned_paths": ["src"],
                         "prerequisite_refs": ["prepare"]
                     }
                 ]

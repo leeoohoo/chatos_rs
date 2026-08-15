@@ -83,6 +83,7 @@ impl From<UpdateProjectTaskPatch> for UpdateProjectWorkItemRequest {
             due_at: value.due_at,
             sort_order: value.sort_order,
             tags: value.tags,
+            owned_paths: value.owned_paths,
             is_planning_task: value.is_planning_task,
         }
     }

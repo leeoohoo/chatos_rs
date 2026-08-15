@@ -1344,7 +1344,7 @@ fn record_file_modification_outcome(
 ) {
     let (outcome, success, changed, changed_target_count) = match invocation {
         Ok(value) => {
-            let payload = value.get("_structured_result").unwrap_or(value);
+            let payload = chatos_mcp_runtime::structured_result_payload(value);
             let changed = payload
                 .get("changed")
                 .and_then(Value::as_bool)

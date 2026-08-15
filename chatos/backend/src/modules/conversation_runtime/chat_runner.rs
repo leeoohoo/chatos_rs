@@ -137,6 +137,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             resolved_turn_id.as_str(),
             user_message_id.as_str(),
             false,
+            None,
             &empty_chunk_sent,
             &empty_streamed_content,
             Err(runtime_error),
@@ -165,6 +166,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             resolved_turn_id.as_str(),
             user_message_id.as_str(),
             false,
+            None,
             &empty_chunk_sent,
             &empty_streamed_content,
             Err(attachment_error),
@@ -202,6 +204,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
                 resolved_turn_id.as_str(),
                 user_message_id.as_str(),
                 false,
+                None,
                 &empty_chunk_sent,
                 &empty_streamed_content,
                 Err(error),
@@ -270,6 +273,7 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
             resolved_turn_id.as_str(),
             user_message_id.as_str(),
             true,
+            None,
             &chunk_sent,
             &streamed_content,
             Err(error),
@@ -341,6 +345,7 @@ pub async fn finalize_chat_result<FC, FE>(
     turn_id: &str,
     user_message_id: &str,
     mark_task_runner_async_completed: bool,
+    task_runner_async_success_status: Option<&str>,
     chunk_sent: &Arc<AtomicBool>,
     streamed_content: &Arc<Mutex<String>>,
     result: Result<Value, String>,
@@ -352,7 +357,11 @@ pub async fn finalize_chat_result<FC, FE>(
     FE: FnMut(&str),
 {
     if mark_task_runner_async_completed {
-        let overall_status = task_runner_async_status_for_result(session_id, &result);
+        let overall_status = task_runner_async_status_for_result(
+            session_id,
+            &result,
+            task_runner_async_success_status,
+        );
         match set_task_runner_async_overall_status_for_session(
             session_id,
             user_message_id,
@@ -416,6 +425,7 @@ pub async fn finalize_chat_result<FC, FE>(
 fn task_runner_async_status_for_result(
     session_id: &str,
     result: &Result<Value, String>,
+    success_status: Option<&str>,
 ) -> &'static str {
     if abort_registry::is_aborted(session_id)
         || matches!(result, Err(err) if err.trim().eq_ignore_ascii_case("aborted"))
@@ -424,7 +434,11 @@ fn task_runner_async_status_for_result(
     }
 
     if result.is_ok() {
-        "completed"
+        if success_status.is_some_and(|status| status.eq_ignore_ascii_case("processing")) {
+            "processing"
+        } else {
+            "completed"
+        }
     } else {
         "failed"
     }

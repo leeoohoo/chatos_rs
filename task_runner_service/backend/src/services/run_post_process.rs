@@ -20,6 +20,19 @@ enum ExecutionPromotionSelection {
     },
 }
 
+fn ensure_model_phase_terminal_for_post_process(run: &TaskRunRecord) -> Result<(), String> {
+    if matches!(
+        run.model_phase_status,
+        crate::models::ModelPhaseStatus::Pending | crate::models::ModelPhaseStatus::Running
+    ) {
+        return Err(
+            "Task Run model phase has not reached a durable terminal state; post-process cannot finalize MCP or workspace resources"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn select_execution_promotion(
     execution_group_id: &str,
     group_runs: &[TaskRunRecord],
@@ -307,6 +320,7 @@ impl RunService {
         if run.post_process_completed || run.post_process_dead_lettered {
             return Ok(());
         }
+        ensure_model_phase_terminal_for_post_process(&run)?;
         let task = self
             .store
             .get_task(run.task_id.as_str())
@@ -353,6 +367,10 @@ impl RunService {
                 }
                 Some(WorkspaceIntegrationStatus::NotRequired) | None => {}
             }
+        }
+
+        if run.status == TaskRunStatus::Blocked {
+            self.ensure_verification_repair_chain(&task, &run).await?;
         }
 
         if run.status != TaskRunStatus::Succeeded {
@@ -511,6 +529,11 @@ impl RunService {
             .await?;
         group_tasks.retain(|candidate| {
             super::workspace_execution::execution_group_id_for_task(candidate) == execution_group_id
+                && candidate
+                    .task_tool_state
+                    .superseded_by_task_id
+                    .as_deref()
+                    .is_none()
         });
         if group_tasks.is_empty() {
             group_tasks.push(task.clone());
@@ -660,6 +683,19 @@ mod tests {
     use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
+
+    #[test]
+    fn post_process_rejects_non_terminal_model_phase_before_resource_finalization() {
+        let mut pending = run("pending-model", "2026-08-15T10:00:00Z", None);
+        pending.model_phase_status = crate::models::ModelPhaseStatus::Pending;
+        assert!(ensure_model_phase_terminal_for_post_process(&pending).is_err());
+
+        pending.model_phase_status = crate::models::ModelPhaseStatus::Running;
+        assert!(ensure_model_phase_terminal_for_post_process(&pending).is_err());
+
+        pending.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
+        assert!(ensure_model_phase_terminal_for_post_process(&pending).is_ok());
+    }
 
     fn test_config() -> AppConfig {
         AppConfig {
@@ -821,6 +857,7 @@ mod tests {
                 integration_last_error: None,
                 prepared_at: None,
                 finalized_at: None,
+                sandbox_retained_for_diagnostics: false,
                 finalization_error: None,
                 error: None,
             });

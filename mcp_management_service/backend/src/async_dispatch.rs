@@ -3,6 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use std::{error::Error, fmt};
 
 use chatos_queue_observability::{
@@ -20,6 +21,8 @@ const RABBITMQ_CONSUMER_TAG: &str = "mcp-management-async-tool-dispatch";
 const RABBITMQ_INVOCATION_CONSUMER_TAG: &str = "mcp-management-tool-invocation";
 const RABBITMQ_INVOCATION_TERMINAL_CONSUMER_TAG: &str = "mcp-management-tool-invocation-terminal";
 const RABBITMQ_CANCELLATION_CONSUMER_TAG: &str = "mcp-management-invocation-cancellations";
+const RABBITMQ_STARTUP_MAX_ATTEMPTS: u32 = 6;
+const RABBITMQ_STARTUP_MAX_RETRY_DELAY: Duration = Duration::from_secs(10);
 
 mod rabbitmq;
 #[cfg(test)]
@@ -105,6 +108,45 @@ impl AsyncToolDispatch {
                 .cancellation_publisher_connected
                 .load(Ordering::Relaxed),
         }
+    }
+
+    /// Declare the complete durable topology before any consumer attaches.
+    /// Service readiness therefore cannot race queue creation during startup.
+    pub async fn initialize(&self) -> Result<(), AsyncToolEnqueueError> {
+        if self.topology.mode != AsyncToolDispatchMode::RabbitMq {
+            return Ok(());
+        }
+        let mut last_error = None;
+        for attempt in 1..=RABBITMQ_STARTUP_MAX_ATTEMPTS {
+            match self.rabbitmq_publisher().await {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    self.metrics
+                        .cancellation_publisher_connected
+                        .store(false, Ordering::Relaxed);
+                    let delay = rabbitmq_startup_retry_delay(
+                        self.topology.rabbitmq_reconnect_delay,
+                        attempt,
+                    );
+                    tracing::warn!(
+                        attempt,
+                        max_attempts = RABBITMQ_STARTUP_MAX_ATTEMPTS,
+                        retry_delay_ms = delay.as_millis() as u64,
+                        error = %error,
+                        "MCP Management RabbitMQ topology is not ready"
+                    );
+                    last_error = Some(error);
+                    if attempt < RABBITMQ_STARTUP_MAX_ATTEMPTS {
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            AsyncToolEnqueueError::Unavailable(
+                "MCP Management RabbitMQ topology initialization failed".to_string(),
+            )
+        }))
     }
 
     pub async fn rabbitmq_queue_stats(&self) -> RabbitMqQueueRuntimeStats {
@@ -286,4 +328,10 @@ impl AsyncToolDispatch {
         )
         .await
     }
+}
+
+fn rabbitmq_startup_retry_delay(base: Duration, attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(8);
+    base.saturating_mul(1u32 << exponent)
+        .min(RABBITMQ_STARTUP_MAX_RETRY_DELAY)
 }

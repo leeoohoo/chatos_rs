@@ -37,6 +37,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let internal_mtls_bind_addr = config.internal_mtls_bind_addr();
     let internal_mtls_config = load_internal_mtls_config(&config)?;
     let app_state = AppState::new(config.clone()).await?;
+    app_state
+        .async_tool_dispatch
+        .initialize()
+        .await
+        .map_err(|error| format!("initialize MCP Management RabbitMQ topology failed: {error}"))?;
     tracing::info!(
         async_tool_dispatch_mode = app_state.config.async_tool_dispatch_topology.mode.as_str(),
         async_tool_worker_concurrency = app_state

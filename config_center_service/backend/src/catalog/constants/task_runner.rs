@@ -7,6 +7,10 @@ pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
     "task_runner.supply_chain.node_audit_level";
 pub const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
     "task_runner.supply_chain.install_script_allowlist";
+pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_INSTALL_REGISTRY_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_install_registry";
+pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_REGISTRY_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_audit_registry";
 pub const TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY: &str =
     "task_runner.queue.callback_delivery_mode";
 pub const TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY: &str = "task_runner.queue.rabbitmq_url";

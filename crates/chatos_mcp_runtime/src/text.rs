@@ -27,6 +27,19 @@ pub fn to_text_and_structured_result_with_transient_limit(
     to_text_and_structured_result_inner(result, true, max_chars.max(1))
 }
 
+/// Return the innermost MCP structured payload.
+///
+/// Providers and transports may independently wrap a tool result in
+/// `_structured_result`. Keeping the unwrapping here prevents the synchronous,
+/// asynchronous and recovery paths from interpreting the same result
+/// differently.
+pub fn structured_result_payload(mut result: &Value) -> &Value {
+    while let Some(payload) = result.get("_structured_result") {
+        result = payload;
+    }
+    result
+}
+
 pub(crate) fn take_transient_model_input(
     structured_result: &mut Option<Value>,
 ) -> Option<TransientToolModelInput> {
@@ -41,7 +54,10 @@ fn to_text_and_structured_result_inner(
     include_transient: bool,
     max_chars: usize,
 ) -> (String, Option<Value>) {
-    let mut structured_result = result.get("_structured_result").cloned();
+    let mut structured_result = result
+        .get("_structured_result")
+        .map(structured_result_payload)
+        .cloned();
     if include_transient {
         if let Some(items) = validated_model_input_images(result.get(MODEL_INPUT_FIELD)) {
             let structured =
@@ -226,5 +242,29 @@ mod tests {
 
         assert_eq!(text.chars().count(), 20_000);
         assert!(!text.contains("...[truncated"));
+    }
+
+    #[test]
+    fn nested_structured_result_wrappers_are_fully_unwrapped() {
+        let payload = json!({
+            "content": [{"type": "text", "text": "completed"}],
+            "_structured_result": {
+                "_structured_result": {
+                    "_structured_result": {
+                        "changed": true,
+                        "sha256": "abc"
+                    }
+                }
+            }
+        });
+
+        let (text, structured) = to_text_and_structured_result(&payload);
+
+        assert_eq!(text, "completed");
+        assert_eq!(structured, Some(json!({"changed": true, "sha256": "abc"})));
+        assert_eq!(
+            structured_result_payload(&payload),
+            &json!({"changed": true, "sha256": "abc"})
+        );
     }
 }

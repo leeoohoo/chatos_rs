@@ -16,6 +16,19 @@ pub enum TaskExecutionOutcomeStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskAcceptanceEvidence {
+    pub criterion: String,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    #[serde(default)]
+    pub referenced_paths: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    #[serde(default)]
+    pub tool_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionOutcome {
     pub status: TaskExecutionOutcomeStatus,
     pub summary: String,
@@ -25,6 +38,8 @@ pub struct TaskExecutionOutcome {
     pub unmet_acceptance_criteria: Vec<String>,
     #[serde(default)]
     pub verification_evidence: Vec<String>,
+    #[serde(default)]
+    pub acceptance_evidence: Vec<TaskAcceptanceEvidence>,
     #[serde(default)]
     pub referenced_paths: Vec<String>,
     #[serde(default)]
@@ -39,6 +54,7 @@ impl TaskExecutionOutcome {
             blocking_reason: None,
             unmet_acceptance_criteria: Vec::new(),
             verification_evidence,
+            acceptance_evidence: Vec::new(),
             referenced_paths: Vec::new(),
             referenced_endpoints: Vec::new(),
         }

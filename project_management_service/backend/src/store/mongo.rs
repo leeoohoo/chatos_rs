@@ -740,6 +740,7 @@ mod tests {
                     due_at: None,
                     sort_order: None,
                     tags: None,
+                    owned_paths: Vec::new(),
                     is_planning_task: false,
                 },
                 &test_user(),

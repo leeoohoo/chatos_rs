@@ -164,6 +164,7 @@ impl MongoStore {
             due_at: normalized_optional(input.due_at),
             sort_order: input.sort_order.unwrap_or_default(),
             tags: normalize_id_list(input.tags.unwrap_or_default()),
+            owned_paths: input.owned_paths,
             is_planning_task: input.is_planning_task,
             creator_user_id: Some(user.id.clone()),
             creator_username: Some(user.username.clone()),
@@ -257,6 +258,9 @@ impl MongoStore {
         }
         if let Some(tags) = patch.tags {
             item.tags = normalize_id_list(tags);
+        }
+        if let Some(owned_paths) = patch.owned_paths {
+            item.owned_paths = owned_paths;
         }
         if let Some(is_planning_task) = patch.is_planning_task {
             item.is_planning_task = is_planning_task;
@@ -514,6 +518,49 @@ impl MongoStore {
         )
         .await?;
         Ok(link)
+    }
+
+    pub async fn supersede_task_runner_links(
+        &self,
+        work_item_id: &str,
+        execution_group_id: Option<&str>,
+        task_runner_task_ids: &[String],
+    ) -> Result<u64, String> {
+        let task_runner_task_ids = task_runner_task_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<std::collections::BTreeSet<_>>();
+        if task_runner_task_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut filter = doc! {
+            "work_item_id": work_item_id,
+            "task_runner_task_id": { "$in": task_runner_task_ids.into_iter().collect::<Vec<_>>() },
+            "is_current": { "$ne": false },
+        };
+        if let Some(execution_group_id) = execution_group_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            filter.insert("execution_group_id", execution_group_id);
+        }
+        let now = now_rfc3339();
+        self.task_runner_links
+            .update_many(
+                filter,
+                doc! {
+                    "$set": {
+                        "is_current": false,
+                        "superseded_at": now.as_str(),
+                        "updated_at": now.as_str(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count)
+            .map_err(|error| format!("supersede Task Runner links failed: {error}"))
     }
 
     pub async fn delete_task_runner_link(

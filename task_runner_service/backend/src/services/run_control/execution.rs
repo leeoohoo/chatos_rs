@@ -173,6 +173,18 @@ impl RunService {
                     Some(supply_chain_report.event_payload()),
                 ));
             }
+            if let Some(input_snapshot) = run.input_snapshot.as_object_mut() {
+                match supply_chain_evidence
+                    .passed_receipt(&supply_chain_policy, &supply_chain_report)
+                {
+                    Some(receipt) => {
+                        input_snapshot.insert("supply_chain_receipt".to_string(), receipt);
+                    }
+                    None => {
+                        input_snapshot.remove("supply_chain_receipt");
+                    }
+                }
+            }
         }
         let effective_workspace_dir = run
             .input_snapshot
@@ -223,6 +235,7 @@ struct TaskRunnerSingleStepExecutable {
     iteration: usize,
     reason: String,
     model_attempt: usize,
+    automatic_recovery_calls: Vec<Value>,
 }
 
 impl TaskRunnerSingleStepExecutable {
@@ -233,10 +246,43 @@ impl TaskRunnerSingleStepExecutable {
         let progress = Arc::clone(&self.prepared.progress);
         let pending_stream_event = Arc::clone(&self.prepared.pending_stream_event);
         let supply_chain_evidence = Arc::clone(&self.prepared.supply_chain_evidence);
-        let outcome = self
-            .prepared
-            .execute(self.iteration, self.reason, self.model_attempt)
-            .await?;
+        let outcome = if self.automatic_recovery_calls.is_empty() {
+            self.prepared
+                .execute(self.iteration, self.reason, self.model_attempt)
+                .await?
+        } else {
+            let response_output_items = self
+                .automatic_recovery_calls
+                .iter()
+                .filter_map(|call| {
+                    let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)?;
+                    let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)?;
+                    Some(chatos_ai_runtime::tool_call::build_function_call_item(
+                        call_id,
+                        name,
+                        chatos_ai_runtime::tool_call::tool_call_arguments_text(call).as_str(),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if response_output_items.len() != self.automatic_recovery_calls.len() {
+                return Err(
+                    "automatic stale-write recovery produced an invalid tool call".to_string(),
+                );
+            }
+            chatos_ai_runtime::AiSingleStepOutcome::ToolCommand {
+                response: chatos_ai_runtime::AiRuntimeResult {
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: None,
+                    finish_reason: Some("runtime_stale_write_recovery".to_string()),
+                    usage: None,
+                    response_id: None,
+                    response_output_items,
+                    request_input_items: self.prepared.continuation_input_items(),
+                },
+                tool_calls: Value::Array(self.automatic_recovery_calls),
+            }
+        };
         let lifecycle = lifecycle_state.lock().clone();
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
             self.service.config.default_workspace_dir.as_str(),
@@ -374,32 +420,36 @@ impl TaskRunnerSingleStepResolver {
             .prepare_single_model_step(&task, &run, &model_config, prepared)
             .await?
             .prepare_for_trigger(cloud_run, trigger)?;
-        if let CloudAgentModelTrigger::ToolResults { items, .. } = trigger {
-            prepared
-                .persist_external_tool_results(
+        let automatic_recovery_calls =
+            if let CloudAgentModelTrigger::ToolResults { items, .. } = trigger {
+                let tool_results = prepared
+                    .persist_external_tool_results(
+                        cloud_run.pending_tool_calls.as_slice(),
+                        items.as_slice(),
+                    )
+                    .await?;
+                let callbacks = &prepared.runtime_options.callbacks;
+                if let Some(on_start) = callbacks.on_tools_start.as_ref() {
+                    on_start(Value::Array(cloud_run.pending_tool_calls.clone()));
+                }
+                let payload = cloud_agent_mcp_result_callback_payload(
                     cloud_run.pending_tool_calls.as_slice(),
                     items.as_slice(),
-                )
-                .await?;
-            let callbacks = &prepared.runtime_options.callbacks;
-            if let Some(on_start) = callbacks.on_tools_start.as_ref() {
-                on_start(Value::Array(cloud_run.pending_tool_calls.clone()));
-            }
-            let payload = cloud_agent_mcp_result_callback_payload(
-                cloud_run.pending_tool_calls.as_slice(),
-                items.as_slice(),
-            )?;
-            if let Some(on_stream) = callbacks.on_tools_stream.as_ref() {
-                if let Some(results) = payload.get("tool_results").and_then(Value::as_array) {
-                    for result in results {
-                        on_stream(result.clone());
+                )?;
+                if let Some(on_stream) = callbacks.on_tools_stream.as_ref() {
+                    if let Some(results) = payload.get("tool_results").and_then(Value::as_array) {
+                        for result in results {
+                            on_stream(result.clone());
+                        }
                     }
                 }
-            }
-            if let Some(on_end) = callbacks.on_tools_end.as_ref() {
-                on_end(payload);
-            }
-        }
+                if let Some(on_end) = callbacks.on_tools_end.as_ref() {
+                    on_end(payload);
+                }
+                prepared.automatic_file_write_recovery_calls(tool_results.as_slice())?
+            } else {
+                Vec::new()
+            };
         let (reason, model_attempt) = cloud_agent_trigger_execution_identity(trigger);
         Ok(TaskRunnerSingleStepExecutable {
             service: self.service.clone(),
@@ -409,6 +459,7 @@ impl TaskRunnerSingleStepResolver {
             iteration: usize::try_from(cloud_run.iteration.saturating_add(1)).unwrap_or(usize::MAX),
             reason,
             model_attempt,
+            automatic_recovery_calls,
         })
     }
 }

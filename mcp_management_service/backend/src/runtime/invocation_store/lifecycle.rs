@@ -5,8 +5,90 @@ use super::*;
 use chatos_mcp_service::MCP_ERROR_INTERNAL;
 
 const TERMINAL_PROCESS_WAIT_TIMEOUT_MESSAGE: &str = "terminal process wait timed out";
+const RESTART_INTERRUPTED_MESSAGE: &str =
+    "MCP Management restarted before the provider returned a durable tool result";
+const MISSING_BATCH_MESSAGE: &str =
+    "MCP Management could not recover the durable tool batch for this invocation";
 
 impl RuntimeInvocationStore {
+    pub async fn recover_after_restart(
+        &self,
+        record: &RuntimeInvocationRecord,
+        durable_batch_exists: bool,
+    ) -> Result<bool, String> {
+        use chatos_mcp_service::MCP_ERROR_UNKNOWN_EXECUTION_STATE;
+
+        let missing_batch = !durable_batch_exists;
+        match record.status {
+            RuntimeInvocationStatus::Queued if !missing_batch => Ok(false),
+            RuntimeInvocationStatus::WaitingForUser if !missing_batch => Ok(false),
+            RuntimeInvocationStatus::Queued => {
+                self.fail(
+                    record.invocation_id.as_str(),
+                    MCP_ERROR_INTERNAL,
+                    MISSING_BATCH_MESSAGE,
+                )
+                .await
+            }
+            RuntimeInvocationStatus::Running | RuntimeInvocationStatus::WaitingForUser => {
+                let message = if missing_batch {
+                    MISSING_BATCH_MESSAGE
+                } else {
+                    RESTART_INTERRUPTED_MESSAGE
+                };
+                if record.mutation_may_have_started && record.started_at_unix_ms.is_some() {
+                    self.transition_terminal(
+                        record.invocation_id.as_str(),
+                        &[record.status],
+                        RuntimeInvocationStatus::UnknownExecutionState,
+                        None,
+                        Some(MCP_ERROR_UNKNOWN_EXECUTION_STATE),
+                        Some(message.to_string()),
+                    )
+                    .await
+                } else {
+                    self.transition_terminal(
+                        record.invocation_id.as_str(),
+                        &[record.status],
+                        RuntimeInvocationStatus::Failed,
+                        None,
+                        Some(MCP_ERROR_INTERNAL),
+                        Some(message.to_string()),
+                    )
+                    .await
+                }
+            }
+            RuntimeInvocationStatus::CancelRequested => {
+                let unknown =
+                    record.mutation_may_have_started && record.started_at_unix_ms.is_some();
+                self.transition_terminal(
+                    record.invocation_id.as_str(),
+                    &[RuntimeInvocationStatus::CancelRequested],
+                    if unknown {
+                        RuntimeInvocationStatus::UnknownExecutionState
+                    } else {
+                        RuntimeInvocationStatus::Cancelled
+                    },
+                    None,
+                    unknown.then_some(MCP_ERROR_UNKNOWN_EXECUTION_STATE),
+                    Some(
+                        if missing_batch {
+                            MISSING_BATCH_MESSAGE
+                        } else {
+                            RESTART_INTERRUPTED_MESSAGE
+                        }
+                        .to_string(),
+                    ),
+                )
+                .await
+            }
+            RuntimeInvocationStatus::Completed
+            | RuntimeInvocationStatus::Failed
+            | RuntimeInvocationStatus::Cancelled
+            | RuntimeInvocationStatus::UnknownExecutionState => Ok(false),
+        }
+    }
+
     pub async fn mark_running(&self, invocation_id: &str) -> Result<bool, String> {
         self.transition_status(
             invocation_id,
@@ -271,7 +353,7 @@ impl RuntimeInvocationStore {
 }
 
 fn terminal_process_wait_timed_out(result: &Value) -> bool {
-    let payload = result.get("_structured_result").unwrap_or(result);
+    let payload = chatos_mcp_runtime::structured_result_payload(result);
     payload.get("timed_out").and_then(Value::as_bool) == Some(true)
         && payload.get("completed").and_then(Value::as_bool) == Some(false)
         && payload.get("wait_status").and_then(Value::as_str) == Some("timeout")
@@ -297,7 +379,7 @@ fn terminal_file_modification_outcome(
 }
 
 fn file_modification_outcome_from_result(result: &Value) -> Option<FileModificationOutcome> {
-    let payload = result.get("_structured_result").unwrap_or(result);
+    let payload = chatos_mcp_runtime::structured_result_payload(result);
     if let Some(outcome) = payload.get("outcome").and_then(Value::as_str) {
         return match outcome {
             "changed" => Some(FileModificationOutcome::Changed),

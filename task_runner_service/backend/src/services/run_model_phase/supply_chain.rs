@@ -12,6 +12,8 @@ pub(crate) struct NodeSupplyChainPolicy {
     pub(crate) dependency_requirements: BTreeMap<String, String>,
     pub(crate) audit_level: String,
     pub(crate) install_script_allowlist: BTreeSet<String>,
+    pub(crate) install_registry: String,
+    pub(crate) audit_registry: String,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -28,6 +30,15 @@ pub(in crate::services) struct SupplyChainEvidenceState {
     pending_package_manifest_events: BTreeMap<String, PackageManifestSessionEvent>,
     staged_package_manifest_updates: BTreeMap<String, Option<NodePackageManifestEvidence>>,
     pending_terminal_commands: BTreeMap<String, String>,
+    #[serde(default)]
+    inherited_from_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SupplyChainEvidenceReceipt {
+    baseline_revision: String,
+    status: String,
+    evidence: SupplyChainEvidenceState,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -116,6 +127,70 @@ pub(in crate::services) struct SupplyChainAuditReport {
 }
 
 impl SupplyChainEvidenceState {
+    pub(in crate::services) fn inherit_for_run(
+        run: &crate::models::TaskRunRecord,
+        policy: &NodeSupplyChainPolicy,
+    ) -> Option<Self> {
+        let workspace = run.workspace_execution.as_ref()?;
+        let execution_group_id = workspace.execution_group_id.as_deref()?;
+        let execution_base_commit = workspace.execution_base_commit.as_deref()?;
+        let prerequisites = run
+            .input_snapshot
+            .get("resolved_prerequisites")
+            .and_then(Value::as_array)?;
+        prerequisites.iter().rev().find_map(|prerequisite| {
+            if prerequisite
+                .get("execution_group_id")
+                .and_then(Value::as_str)
+                != Some(execution_group_id)
+                || prerequisite
+                    .get("integrated_commit")
+                    .and_then(Value::as_str)
+                    != Some(execution_base_commit)
+            {
+                return None;
+            }
+            let run_id = prerequisite.get("run_id").and_then(Value::as_str)?;
+            let receipt = prerequisite.get("supply_chain_receipt")?.clone();
+            let receipt = serde_json::from_value::<SupplyChainEvidenceReceipt>(receipt).ok()?;
+            if receipt.status != "passed" || receipt.baseline_revision != policy.baseline_revision {
+                return None;
+            }
+            let mut evidence = receipt.evidence;
+            evidence.pending_package_manifest_events.clear();
+            evidence.staged_package_manifest_updates.clear();
+            evidence.pending_terminal_commands.clear();
+            evidence.inherited_from_run_id = Some(run_id.to_string());
+            Some(evidence)
+        })
+    }
+
+    pub(in crate::services) fn passed_receipt(
+        &self,
+        policy: &NodeSupplyChainPolicy,
+        report: &SupplyChainAuditReport,
+    ) -> Option<Value> {
+        (report.status == "passed").then(|| {
+            serde_json::to_value(SupplyChainEvidenceReceipt {
+                baseline_revision: policy.baseline_revision.clone(),
+                status: "passed".to_string(),
+                evidence: self.clone(),
+            })
+            .unwrap_or(Value::Null)
+        })
+    }
+
+    fn invalidate_inherited_evidence(&mut self) {
+        if self.inherited_from_run_id.take().is_none() {
+            return;
+        }
+        self.install = None;
+        self.audit = None;
+        self.rebuilds.clear();
+        self.unsafe_install_commands.clear();
+        self.lockfile_observed = false;
+    }
+
     pub(super) fn observe_tool_calls(&mut self, payload: &Value) {
         let Some(calls) = payload.as_array() else {
             return;
@@ -155,6 +230,7 @@ impl SupplyChainEvidenceState {
                         let update = self.staged_package_manifest_updates.remove(&session_id);
                         if succeeded {
                             if let Some(update) = update {
+                                self.invalidate_inherited_evidence();
                                 applied_manifest_update = true;
                                 self.node_project_observed = true;
                                 self.dependency_activity_observed = true;
@@ -180,6 +256,7 @@ impl SupplyChainEvidenceState {
                 self.package_manifest = None;
             }
             if result_mutates_node_dependency_files(payload) {
+                self.invalidate_inherited_evidence();
                 self.node_project_observed = true;
                 self.dependency_activity_observed = true;
             }
@@ -336,7 +413,21 @@ impl SupplyChainEvidenceState {
         match self.install.as_ref() {
             Some(install)
                 if install.exit_code == Some(0)
-                    && !command_masks_failure(install.command.as_str()) => {}
+                    && !command_masks_failure(install.command.as_str()) =>
+            {
+                if self.package_manager.as_deref() == Some("npm")
+                    && !policy.install_registry.trim().is_empty()
+                    && !command_uses_registry(
+                        install.command.as_str(),
+                        policy.install_registry.as_str(),
+                    )
+                {
+                    blocking_reasons.push(format!(
+                        "Node.js dependency installation did not use the configured registry `{}`",
+                        policy.install_registry
+                    ));
+                }
+            }
             Some(_) => blocking_reasons.push("Node.js dependency installation failed".to_string()),
             None => blocking_reasons.push(
                 "Node.js dependency installation was not executed with recorded evidence"
@@ -413,6 +504,18 @@ impl SupplyChainEvidenceState {
                 );
             }
             Some(audit) => {
+                if self.package_manager.as_deref() == Some("npm")
+                    && !policy.audit_registry.trim().is_empty()
+                    && !command_uses_registry(
+                        audit.command.as_str(),
+                        policy.audit_registry.as_str(),
+                    )
+                {
+                    blocking_reasons.push(format!(
+                        "Node.js dependency audit did not use the configured audit registry `{}`",
+                        policy.audit_registry
+                    ));
+                }
                 let vulnerabilities = audit.vulnerabilities.as_ref().expect("checked above");
                 if vulnerabilities.high > 0 || vulnerabilities.critical > 0 {
                     blocking_reasons.push(format!(
@@ -509,8 +612,13 @@ pub(super) fn policy_guidance(policy: &NodeSupplyChainPolicy) -> Value {
         "type": "message",
         "role": "system",
         "content": format!(
-            "[Node.js supply-chain requirements]\nFor any Node.js project, keep the dependency lockfile and use these exact centrally reviewed requirements whenever the package is present: {dependency_requirements}. After the final dependency change, read the complete package.json so the runtime can verify the baseline. Install dependencies with lifecycle scripts disabled, run lifecycle scripts only for these approved packages: {allowlist}, and finish with a JSON dependency audit at `{}` severity. The active dependency baseline revision is `{}`. A Node.js implementation is not complete until the final package.json, installation, and audit commands have successful, parseable tool evidence and high/critical vulnerabilities are zero.",
+            "[Node.js supply-chain requirements]\nFor any Node.js project, keep the dependency lockfile and use these exact centrally reviewed requirements whenever the package is present: {dependency_requirements}. After the final dependency change, read the complete package.json so the runtime can verify the baseline. Install dependencies with lifecycle scripts disabled using registry `{}` (for npm: `npm ci --ignore-scripts --registry={}`), run lifecycle scripts only for these approved packages: {allowlist}, and finish with a JSON dependency audit at `{}` severity using the independently configured audit registry `{}` (for npm: `npm audit --audit-level={} --json --registry={}`). The active dependency baseline revision is `{}`. A Node.js implementation is not complete until the final package.json, installation, and audit commands have successful, parseable tool evidence and high/critical vulnerabilities are zero.",
+            policy.install_registry,
+            policy.install_registry,
             policy.audit_level,
+            policy.audit_registry,
+            policy.audit_level,
+            policy.audit_registry,
             policy.baseline_revision,
         ),
     })
@@ -687,7 +795,10 @@ fn observe_project_paths(value: &Value, evidence: &mut SupplyChainEvidenceState)
 
 fn terminal_result(payload: &Value) -> Option<TerminalCommandResult> {
     let content = terminal_content(payload);
-    let result = payload.get("result").filter(|value| value.is_object());
+    let result = payload
+        .get("result")
+        .map(chatos_mcp_runtime::structured_result_payload)
+        .filter(|value| value.is_object());
     let command = content
         .as_ref()
         .and_then(|value| value.get("common").or_else(|| value.get("command")))
@@ -738,7 +849,10 @@ fn terminal_result(payload: &Value) -> Option<TerminalCommandResult> {
 
 fn terminal_wait_result(payload: &Value) -> Option<TerminalWaitResult> {
     let content = terminal_content(payload);
-    let result = payload.get("result").filter(|value| value.is_object());
+    let result = payload
+        .get("result")
+        .map(chatos_mcp_runtime::structured_result_payload)
+        .filter(|value| value.is_object());
     let process_id = result
         .and_then(|value| value.get("process_id"))
         .and_then(Value::as_str)
@@ -793,6 +907,7 @@ fn terminal_process_id(payload: &Value) -> Option<String> {
     let content = terminal_content(payload);
     payload
         .get("result")
+        .map(chatos_mcp_runtime::structured_result_payload)
         .and_then(|value| value.get("process_id"))
         .and_then(Value::as_str)
         .or_else(|| {
@@ -807,11 +922,31 @@ fn terminal_process_id(payload: &Value) -> Option<String> {
 }
 
 fn terminal_content(payload: &Value) -> Option<Value> {
-    payload
+    let parsed = payload
         .get("content")
         .and_then(Value::as_str)
         .and_then(|content| serde_json::from_str::<Value>(content).ok())
-        .filter(Value::is_object)
+        .filter(Value::is_object)?;
+    Some(chatos_mcp_runtime::structured_result_payload(&parsed).clone())
+}
+
+fn command_uses_registry(command: &str, expected_registry: &str) -> bool {
+    let expected_registry = expected_registry.trim().trim_end_matches('/');
+    if expected_registry.is_empty() {
+        return false;
+    }
+    let tokens = command
+        .split_whitespace()
+        .map(|token| token.trim_matches(|character| matches!(character, '\'' | '"')))
+        .collect::<Vec<_>>();
+    tokens
+        .windows(2)
+        .any(|pair| pair[0] == "--registry" && pair[1].trim_end_matches('/') == expected_registry)
+        || tokens.iter().any(|token| {
+            token
+                .strip_prefix("--registry=")
+                .is_some_and(|registry| registry.trim_end_matches('/') == expected_registry)
+        })
 }
 
 fn node_package_manager(command: &str) -> Option<&'static str> {
@@ -1042,6 +1177,8 @@ mod tests {
             ]),
             audit_level: "high".to_string(),
             install_script_allowlist: BTreeSet::from(["esbuild".to_string()]),
+            install_registry: String::new(),
+            audit_registry: String::new(),
         }
     }
 
@@ -1599,5 +1736,128 @@ mod tests {
             .blocking_reasons
             .iter()
             .any(|reason| reason.contains("truncated")));
+    }
+
+    #[test]
+    fn npm_install_and_audit_use_independently_configured_registries() {
+        let mut policy = policy();
+        policy.install_registry = "https://install.example.test".to_string();
+        policy.audit_registry = "https://registry.npmjs.org".to_string();
+        let mut evidence = evidence_with_manifest();
+        evidence.observe_tool_result(&terminal_result(
+            "npm ci --ignore-scripts --registry=https://install.example.test",
+            0,
+            "",
+        ));
+        evidence.observe_tool_result(&terminal_result(
+            "npm audit --audit-level=high --json --registry=https://registry.npmjs.org",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+
+        assert_eq!(evidence.evaluate(&policy).status, "passed");
+
+        policy.audit_registry = "https://audit.example.test".to_string();
+        let report = evidence.evaluate(&policy);
+        assert_eq!(report.status, "blocked");
+        assert!(report
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("configured audit registry")));
+    }
+
+    #[test]
+    fn nested_structured_terminal_results_are_archived_as_supply_chain_evidence() {
+        let mut evidence = evidence_with_manifest();
+        let mut install = terminal_result("npm ci --ignore-scripts", 0, "");
+        install["result"] = json!({
+            "_structured_result": {
+                "_structured_result": install["result"].clone()
+            }
+        });
+        evidence.observe_tool_result(&install);
+        let mut audit = terminal_result(
+            "npm audit --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        );
+        audit["result"] = json!({
+            "_structured_result": {
+                "_structured_result": audit["result"].clone()
+            }
+        });
+        evidence.observe_tool_result(&audit);
+
+        let report = evidence.evaluate(&policy());
+        assert_eq!(report.status, "passed");
+        assert_eq!(report.install_exit_code, Some(0));
+        assert_eq!(report.audit_exit_code, Some(0));
+    }
+
+    #[test]
+    fn passed_receipt_is_inherited_only_at_the_matching_execution_head_and_invalidated_by_changes()
+    {
+        let policy = policy();
+        let mut previous = evidence_with_manifest();
+        previous.observe_tool_result(&terminal_result("npm ci --ignore-scripts", 0, ""));
+        previous.observe_tool_result(&terminal_result(
+            "npm audit --audit-level=high --json",
+            0,
+            r#"{"metadata":{"vulnerabilities":{"total":0,"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}"#,
+        ));
+        let previous_report = previous.evaluate(&policy);
+        let receipt = previous
+            .passed_receipt(&policy, &previous_report)
+            .expect("passed receipt");
+        let mut run = crate::models::TaskRunRecord::queued(
+            "run-current".to_string(),
+            "task-current".to_string(),
+            "model".to_string(),
+            "thread".to_string(),
+            json!({
+                "resolved_prerequisites": [{
+                    "run_id": "run-previous",
+                    "execution_group_id": "group-1",
+                    "integrated_commit": "head-1",
+                    "supply_chain_receipt": receipt,
+                }]
+            }),
+            "2026-08-15T10:00:00Z".to_string(),
+        );
+        run.workspace_execution = Some(
+            serde_json::from_value(json!({
+                "status": "ready",
+                "execution_group_id": "group-1",
+                "execution_base_commit": "head-1"
+            }))
+            .expect("workspace execution"),
+        );
+
+        let mut inherited = SupplyChainEvidenceState::inherit_for_run(&run, &policy)
+            .expect("matching receipt should inherit");
+        assert_eq!(inherited.evaluate(&policy).status, "passed");
+
+        inherited.observe_tool_result(&json!({
+            "name": "code_maintainer_write_commit_edit_session",
+            "success": true,
+            "is_error": false,
+            "result": { "committed_paths": [{ "path": "package-lock.json" }] }
+        }));
+        let invalidated = inherited.evaluate(&policy);
+        assert_eq!(invalidated.status, "blocked");
+        assert!(invalidated
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("installation was not executed")));
+        assert!(invalidated
+            .blocking_reasons
+            .iter()
+            .any(|reason| reason.contains("audit was not executed")));
+
+        run.workspace_execution
+            .as_mut()
+            .expect("workspace")
+            .execution_base_commit = Some("different-head".to_string());
+        assert!(SupplyChainEvidenceState::inherit_for_run(&run, &policy).is_none());
     }
 }

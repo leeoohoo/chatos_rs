@@ -181,6 +181,9 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) description: Option<String>,
     pub(in crate::mcp_server) objective: String,
     #[serde(default)]
+    pub(in crate::mcp_server) acceptance_criteria: Vec<String>,
+    pub(in crate::mcp_server) task_role: String,
+    #[serde(default)]
     pub(in crate::mcp_server) input_payload: Option<Value>,
     #[serde(default)]
     pub(in crate::mcp_server) priority: Option<i32>,
@@ -194,6 +197,8 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::mcp_server) owned_paths: Vec<String>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]

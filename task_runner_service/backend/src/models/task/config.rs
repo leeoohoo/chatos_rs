@@ -235,6 +235,12 @@ pub struct TaskToolState {
     #[serde(default)]
     pub superseded_by_run_id: Option<String>,
     #[serde(default)]
+    pub superseded_by_task_id: Option<String>,
+    #[serde(default)]
+    pub repair_origin_verification_run_id: Option<String>,
+    #[serde(default)]
+    pub repair_attempt: u32,
+    #[serde(default)]
     pub idempotency_key: Option<String>,
     #[serde(default)]
     pub lifecycle_updated_at: Option<String>,

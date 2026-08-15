@@ -148,6 +148,10 @@ pub(super) async fn resolve_runtime_session(
         route_response.routes.as_mut_slice(),
         request.workspace_route.as_ref(),
     );
+    validate_runtime_workspace_route_binding(
+        route_response.routes.as_slice(),
+        request.workspace_route.as_ref(),
+    )?;
     let cloud_sandbox_target = sandbox_target
         .as_ref()
         .filter(|target| target.provider == SandboxProviderKind::Cloud);

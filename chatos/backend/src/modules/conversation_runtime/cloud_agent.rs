@@ -594,6 +594,7 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
         input.turn_id.as_str(),
         input.user_message_id.as_str(),
         true,
+        task_runner_async_success_status_for_lifecycle(&input.lifecycle),
         &chunk_sent,
         &streamed_content,
         result,
@@ -604,6 +605,13 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
     .await;
     super::guidance::close_active_turn(input.session_id.as_str(), input.turn_id.as_str());
     Ok(())
+}
+
+fn task_runner_async_success_status_for_lifecycle(
+    lifecycle: &CloudTaskTurnLifecycleState,
+) -> Option<&'static str> {
+    (lifecycle.project_planning_task_created || lifecycle.project_execution_plan_materialized)
+        .then_some("processing")
 }
 
 fn reconstructed_runtime_context(
@@ -727,4 +735,31 @@ async fn persist_mcp_tool_results(
     ChatosMemoryRecordWriterAdapter::new(MessageManager::new())
         .save_tool_records(records)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn created_background_tasks_keep_source_message_processing() {
+        let mut lifecycle = CloudTaskTurnLifecycleState::default();
+        assert_eq!(
+            task_runner_async_success_status_for_lifecycle(&lifecycle),
+            None
+        );
+
+        lifecycle.project_planning_task_created = true;
+        assert_eq!(
+            task_runner_async_success_status_for_lifecycle(&lifecycle),
+            Some("processing")
+        );
+
+        lifecycle.project_planning_task_created = false;
+        lifecycle.project_execution_plan_materialized = true;
+        assert_eq!(
+            task_runner_async_success_status_for_lifecycle(&lifecycle),
+            Some("processing")
+        );
+    }
 }

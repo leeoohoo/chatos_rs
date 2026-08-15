@@ -31,6 +31,7 @@ struct TaskRunnerLifecycleHook {
     requires_execution: bool,
     store: crate::store::AppStore,
     run_id: String,
+    expected_acceptance_criteria: Vec<String>,
 }
 
 impl TaskRunnerLifecycleHook {
@@ -41,6 +42,7 @@ impl TaskRunnerLifecycleHook {
         requires_execution: bool,
         store: crate::store::AppStore,
         run_id: String,
+        expected_acceptance_criteria: Vec<String>,
     ) -> Self {
         Self {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
@@ -50,6 +52,7 @@ impl TaskRunnerLifecycleHook {
             requires_execution,
             store,
             run_id,
+            expected_acceptance_criteria,
         }
     }
 
@@ -124,7 +127,14 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         context: RuntimeFinalResponseContext,
     ) -> Result<RuntimeFinalResponseAction, String> {
         if context.reason == TASK_OUTCOME_REVIEW_REASON {
-            let outcome = parse_task_execution_outcome(context.response.content.as_str())?;
+            let outcome = parse_task_execution_outcome_with_evidence(
+                context.response.content.as_str(),
+                self.expected_acceptance_criteria.as_slice(),
+                self.progress.confirmed_project_paths().as_slice(),
+                self.progress.confirmed_validation_commands().as_slice(),
+                self.progress.confirmed_acceptance_tools().as_slice(),
+                self.requires_execution,
+            )?;
             let mut state = self.state.lock();
             state.execution_outcome = Some(outcome);
             let visible_response = state
@@ -147,7 +157,10 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
                         "text": context.response.content
                     }]
                 }),
-                task_execution_outcome_review_message(self.requires_execution),
+                task_execution_outcome_review_message(
+                    self.requires_execution,
+                    self.expected_acceptance_criteria.as_slice(),
+                ),
             ],
             reason: TASK_OUTCOME_REVIEW_REASON.to_string(),
         })
@@ -170,23 +183,40 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
     }
 }
 
-fn task_execution_outcome_review_message(requires_execution: bool) -> Value {
+fn task_execution_outcome_review_message(
+    requires_execution: bool,
+    expected_acceptance_criteria: &[String],
+) -> Value {
     let evidence_rule = if requires_execution {
         "This task requires execution. Success evidence must cite actual tool results, changed project files, and necessary command or test results; prose claims are not evidence."
     } else {
         "This is a non-execution planning task. Success evidence may cite concrete sections of the delivered planning response that satisfy the requested artifacts; do not require file changes, a sandbox, or command execution unless the task explicitly requested them."
     };
+    let acceptance_criteria =
+        serde_json::to_string(expected_acceptance_criteria).unwrap_or_else(|_| "[]".to_string());
     json!({
         "type": "message",
         "role": "system",
         "content": [{
             "type": "input_text",
-            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule} Return exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result without paths, ports, or URLs\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"],\"referenced_paths\":[\"workspace-relative/path\"],\"referenced_endpoints\":[\"http://127.0.0.1:4000/health\"]}}\nSet status to succeeded only when every required acceptance criterion has concrete evidence and all necessary verification has passed. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Put every user-facing file or directory reference in referenced_paths using workspace-relative paths only. Put every user-facing URL or port-bearing address in referenced_endpoints as an absolute HTTP/HTTPS URL without credentials. Keep summary free of paths, ports, and URLs because the platform builds those receipt sections from validated references. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
+            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule}\nAuthoritative hard acceptance criteria: {acceptance_criteria}\nReturn exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result without paths, ports, or URLs\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"],\"acceptance_evidence\":[{{\"criterion\":\"exact criterion text\",\"evidence\":[\"exact item copied from verification_evidence\"],\"referenced_paths\":[\"workspace-relative/path\"],\"commands\":[\"exact successful validation command\"],\"tool_names\":[\"exact successful BrowserTools tool name\"]}}],\"referenced_paths\":[\"workspace-relative/path\"],\"referenced_endpoints\":[\"http://127.0.0.1:4000/health\"]}}\nSet status to succeeded only when every required acceptance criterion has exactly one acceptance_evidence item backed by recorded runtime paths, successful validation commands, or successful BrowserTools calls, and all necessary verification has passed. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Put every user-facing file or directory reference in referenced_paths using workspace-relative paths only. Put every user-facing URL or port-bearing address in referenced_endpoints as an absolute HTTP/HTTPS URL without credentials. Keep summary free of paths, ports, and URLs because the platform builds those receipt sections from validated references. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
         }]
     })
 }
 
+#[cfg(test)]
 fn parse_task_execution_outcome(content: &str) -> Result<TaskExecutionOutcome, String> {
+    parse_task_execution_outcome_with_evidence(content, &[], &[], &[], &[], false)
+}
+
+fn parse_task_execution_outcome_with_evidence(
+    content: &str,
+    expected_acceptance_criteria: &[String],
+    confirmed_project_paths: &[String],
+    confirmed_validation_commands: &[String],
+    confirmed_acceptance_tools: &[String],
+    requires_execution: bool,
+) -> Result<TaskExecutionOutcome, String> {
     let outcome = serde_json::from_str::<TaskExecutionOutcome>(content.trim())
         .map_err(|err| format!("invalid task execution outcome JSON: {err}"))?;
     if !matches!(
@@ -198,7 +228,113 @@ fn parse_task_execution_outcome(content: &str) -> Result<TaskExecutionOutcome, S
         );
     }
     outcome.validate()?;
+    validate_acceptance_evidence(
+        &outcome,
+        expected_acceptance_criteria,
+        confirmed_project_paths,
+        confirmed_validation_commands,
+        confirmed_acceptance_tools,
+        requires_execution,
+    )?;
     Ok(outcome)
+}
+
+fn validate_acceptance_evidence(
+    outcome: &TaskExecutionOutcome,
+    expected_acceptance_criteria: &[String],
+    confirmed_project_paths: &[String],
+    confirmed_validation_commands: &[String],
+    confirmed_acceptance_tools: &[String],
+    requires_execution: bool,
+) -> Result<(), String> {
+    if outcome.status != TaskExecutionOutcomeStatus::Succeeded {
+        return Ok(());
+    }
+    let expected = expected_acceptance_criteria
+        .iter()
+        .map(|criterion| criterion.trim())
+        .filter(|criterion| !criterion.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let mut mapped = std::collections::BTreeSet::new();
+    let confirmed_paths = confirmed_project_paths
+        .iter()
+        .map(|path| path.trim())
+        .collect::<std::collections::BTreeSet<_>>();
+    let confirmed_commands = confirmed_validation_commands
+        .iter()
+        .map(|command| command.trim().to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    let confirmed_tools = confirmed_acceptance_tools
+        .iter()
+        .map(|name| name.trim())
+        .collect::<std::collections::BTreeSet<_>>();
+    for item in &outcome.acceptance_evidence {
+        let criterion = item.criterion.trim();
+        if !expected.contains(criterion) || !mapped.insert(criterion) {
+            return Err(format!(
+                "acceptance evidence criterion is unknown or duplicated: {criterion}"
+            ));
+        }
+        if item.evidence.is_empty()
+            || item.evidence.iter().any(|evidence| {
+                !outcome
+                    .verification_evidence
+                    .iter()
+                    .any(|recorded| recorded == evidence)
+            })
+        {
+            return Err(format!(
+                "acceptance criterion lacks recorded verification evidence: {criterion}"
+            ));
+        }
+        if item.referenced_paths.iter().any(|path| {
+            !outcome
+                .referenced_paths
+                .iter()
+                .any(|recorded| recorded == path)
+                || (requires_execution && !confirmed_paths.contains(path.trim()))
+        }) {
+            return Err(format!(
+                "acceptance criterion references an unconfirmed project path: {criterion}"
+            ));
+        }
+        if item.commands.iter().any(|command| {
+            !confirmed_commands.contains(command.trim().to_ascii_lowercase().as_str())
+        }) {
+            return Err(format!(
+                "acceptance criterion references a command without successful runtime evidence: {criterion}"
+            ));
+        }
+        if item
+            .tool_names
+            .iter()
+            .any(|name| !confirmed_tools.contains(name.trim()))
+        {
+            return Err(format!(
+                "acceptance criterion references a tool without successful runtime evidence: {criterion}"
+            ));
+        }
+        if requires_execution
+            && item.referenced_paths.is_empty()
+            && item.commands.is_empty()
+            && item.tool_names.is_empty()
+        {
+            return Err(format!(
+                "acceptance criterion has no concrete runtime path, command, or browser evidence: {criterion}"
+            ));
+        }
+    }
+    if mapped != expected {
+        let missing = expected.difference(&mapped).copied().collect::<Vec<_>>();
+        return Err(format!(
+            "acceptance evidence does not cover every hard criterion: {}",
+            missing.join("; ")
+        ));
+    }
+    Ok(())
 }
 
 fn persistent_review_checkpoint(
@@ -271,6 +407,7 @@ impl RunService {
         review_policy: TaskExecutionReviewPolicy,
         requires_execution: bool,
         effective_workspace_dir: &str,
+        expected_acceptance_criteria: Vec<String>,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
             self.config.default_workspace_dir.as_str(),
@@ -307,6 +444,7 @@ impl RunService {
                 requires_execution,
                 self.store.clone(),
                 run.id.clone(),
+                expected_acceptance_criteria,
             ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))

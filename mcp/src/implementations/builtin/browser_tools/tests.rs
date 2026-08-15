@@ -789,6 +789,110 @@ fn real_route_and_full_cdp_commands_are_session_scoped_when_explicitly_enabled()
     outcome.expect("real privileged BrowserTools E2E");
 }
 
+#[test]
+fn real_blob_download_captures_filename_mime_and_json_bytes_when_explicitly_enabled() {
+    if std::env::var("CHATOS_REAL_BROWSER_DOWNLOAD_E2E").as_deref() != Ok("1") {
+        return;
+    }
+    let binary = std::env::var("CHATOS_BROWSER_E2E_AGENT_BROWSER_BIN")
+        .expect("CHATOS_BROWSER_E2E_AGENT_BROWSER_BIN is required for download E2E");
+    let _env_lock = REAL_BROWSER_E2E_ENV_LOCK
+        .lock()
+        .expect("lock browser E2E env");
+    let previous_binary = std::env::var_os("AGENT_BROWSER_BIN");
+    let previous_namespace = std::env::var_os("AGENT_BROWSER_NAMESPACE");
+    std::env::set_var("AGENT_BROWSER_BIN", binary);
+    std::env::set_var(
+        "AGENT_BROWSER_NAMESPACE",
+        format!("c{}", &Uuid::new_v4().simple().to_string()[..8]),
+    );
+
+    let workspace = std::env::temp_dir().join(format!(
+        "chatos_browser_download_e2e_{}",
+        Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir_all(workspace.as_path()).expect("create download E2E workspace");
+    let service = BrowserToolsService::new(BrowserToolsOptions {
+        workspace_dir: workspace.clone(),
+        command_timeout_seconds: 60,
+        ..BrowserToolsOptions::default()
+    })
+    .expect("create BrowserTools download service");
+    let conversation_id = format!("download-e2e-{}", Uuid::new_v4().simple());
+
+    let outcome = (|| -> Result<(), String> {
+        ensure_browser_tool_success(service.call_tool(
+            "browser_navigate",
+            serde_json::json!({"url": "about:blank"}),
+            Some(conversation_id.as_str()),
+        )?)?;
+        ensure_browser_tool_success(service.call_tool(
+            "browser_console",
+            serde_json::json!({
+                "expression": r#"(()=>{document.body.innerHTML='<button id="export">Export</button>';document.querySelector('#export').onclick=()=>{const blob=new Blob([JSON.stringify({ok:true})],{type:'application/json'});const anchor=document.createElement('a');anchor.href=URL.createObjectURL(blob);anchor.download='ledger.json';anchor.click();URL.revokeObjectURL(anchor.href)};return true})()"#
+            }),
+            Some(conversation_id.as_str()),
+        )?)?;
+        let snapshot = ensure_browser_tool_success(service.call_tool(
+            "browser_snapshot",
+            serde_json::json!({}),
+            Some(conversation_id.as_str()),
+        )?)?;
+        if !snapshot
+            .get("snapshot")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("Export") && value.contains("ref=e1"))
+        {
+            return Err(format!(
+                "download E2E snapshot did not expose the Export button: {snapshot}"
+            ));
+        }
+        let downloaded = ensure_browser_tool_success(service.call_tool(
+            "browser_download",
+            serde_json::json!({"ref": "@e1", "path": "ledger.json"}),
+            Some(conversation_id.as_str()),
+        )?)?;
+        if downloaded
+            .get("suggested_filename")
+            .and_then(serde_json::Value::as_str)
+            != Some("ledger.json")
+            || downloaded
+                .get("mime_type")
+                .and_then(serde_json::Value::as_str)
+                != Some("application/json")
+            || downloaded.get("bytes").and_then(serde_json::Value::as_u64) != Some(11)
+            || downloaded.get("json_content") != Some(&serde_json::json!({"ok": true}))
+        {
+            return Err(format!(
+                "browser_download returned incomplete Blob evidence: {downloaded}"
+            ));
+        }
+        let bytes = std::fs::read(workspace.join("ledger.json"))
+            .map_err(|error| format!("read downloaded ledger JSON failed: {error}"))?;
+        if bytes != br#"{"ok":true}"# {
+            return Err("browser_download persisted different Blob bytes".to_string());
+        }
+        Ok(())
+    })();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build browser close runtime");
+    let _ = runtime.block_on(service.close_attached_managed_session(conversation_id.as_str()));
+    let _ = std::fs::remove_dir_all(workspace);
+    match previous_binary {
+        Some(value) => std::env::set_var("AGENT_BROWSER_BIN", value),
+        None => std::env::remove_var("AGENT_BROWSER_BIN"),
+    }
+    match previous_namespace {
+        Some(value) => std::env::set_var("AGENT_BROWSER_NAMESPACE", value),
+        None => std::env::remove_var("AGENT_BROWSER_NAMESPACE"),
+    }
+
+    outcome.expect("real BrowserTools Blob download E2E");
+}
+
 fn ensure_browser_tool_success(result: serde_json::Value) -> Result<serde_json::Value, String> {
     let structured = result.get("_structured_result").cloned().unwrap_or(result);
     if structured

@@ -78,6 +78,7 @@ mod task_service;
 mod task_tenant_scope;
 mod task_threads;
 mod tooling_state;
+mod verification_repair;
 mod workspace_execution;
 pub(crate) use workspace_execution::load_task_run_workspace_changes;
 #[path = "services/tool_runtime/workspace_mcp.rs"]
@@ -105,7 +106,9 @@ use self::managed_config::{
     TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
+    TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_REGISTRY_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
+    TASK_RUNNER_SUPPLY_CHAIN_NODE_INSTALL_REGISTRY_CONFIG_KEY,
     TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
     TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
 };

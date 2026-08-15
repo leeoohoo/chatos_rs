@@ -91,6 +91,7 @@ pub(in crate::api::projects) async fn sync_execution_link_status(
             last_error_message: None,
             source_session_id: link.source_session_id.clone(),
             source_user_message_id: link.source_user_message_id.clone(),
+            supersedes_task_runner_task_ids: Vec::new(),
         },
     )
     .await

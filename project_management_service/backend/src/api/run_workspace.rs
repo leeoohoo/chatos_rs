@@ -67,6 +67,7 @@ pub(in crate::api) struct FinalizeRunWorkspaceRequest {
     owner_user_id: String,
     branch: Option<PreparedRunBranch>,
     sandbox_target: Option<SandboxExecutionTarget>,
+    destroy_sandbox: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +75,7 @@ pub(in crate::api) struct FinalizeRunWorkspaceResponse {
     project_id: String,
     run_id: String,
     result_commit: Option<String>,
+    sandbox_retained_for_diagnostics: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +394,7 @@ pub(in crate::api) async fn finalize_run_workspace(
             project_id,
             run_id,
             result_commit: None,
+            sandbox_retained_for_diagnostics: false,
         }));
     };
     let git_url = required(&project.harness_git_url, "harness_git_url")?;
@@ -406,7 +409,7 @@ pub(in crate::api) async fn finalize_run_workspace(
     .map_err(ApiError::bad_request)?;
     let scrub = [access.access_token.as_str(), authenticated_url.as_str()];
     let released_output = match request.sandbox_target.as_ref() {
-        Some(target) => Some(release_cloud_sandbox(&state, target).await?),
+        Some(target) => Some(release_cloud_sandbox(&state, target, request.destroy_sandbox).await?),
         None => None,
     };
     let workspace = prepare_shared_workspace(
@@ -435,14 +438,14 @@ pub(in crate::api) async fn finalize_run_workspace(
         &scrub,
     )
     .await?;
-    let shared_workspace = run_workspace_path(project_id.as_str(), run_id.as_str());
-    if shared_workspace.starts_with(run_workspace_root()) {
-        let _ = std::fs::remove_dir_all(shared_workspace);
-    }
+    let shared_workspace = run_workspace_path(project_id.as_str(), run_id.as_str())?;
+    remove_verified_run_workspace(shared_workspace.as_path())?;
     Ok(Json(FinalizeRunWorkspaceResponse {
         project_id,
         run_id,
         result_commit: Some(result_commit),
+        sandbox_retained_for_diagnostics: request.sandbox_target.is_some()
+            && !request.destroy_sandbox,
     }))
 }
 
@@ -1356,6 +1359,7 @@ pub(in crate::api) async fn promote_execution_workspace(
 async fn release_cloud_sandbox(
     state: &AppState,
     target: &SandboxExecutionTarget,
+    destroy: bool,
 ) -> Result<String, ApiError> {
     if target.provider != SandboxProviderKind::Cloud {
         return Err(ApiError::bad_request(
@@ -1380,7 +1384,7 @@ async fn release_cloud_sandbox(
         .json(&json!({
             "lease_id": target.lease_id,
             "export_result": true,
-            "destroy": true
+            "destroy": destroy
         }))
         .with_internal_trace_context()
         .send()
@@ -1699,28 +1703,11 @@ async fn initialize_run_branch_workspace(
     default_branch: &str,
     scrub: &[&str],
 ) -> Result<PathBuf, ApiError> {
-    let workspace = run_workspace_path(project_id, run_id);
-    if !workspace.starts_with(run_workspace_root()) {
-        return Err(ApiError::bad_gateway(
-            "run branch workspace escaped the configured root",
-        ));
-    }
+    let workspace = run_workspace_path(project_id, run_id)?;
     if workspace.exists() {
-        std::fs::remove_dir_all(workspace.as_path()).map_err(|error| {
-            ApiError::bad_gateway(format!(
-                "remove stale run branch workspace {} failed: {error}",
-                workspace.display()
-            ))
-        })?;
+        remove_verified_run_workspace(workspace.as_path())?;
     }
-    let parent = workspace
-        .parent()
-        .ok_or_else(|| ApiError::bad_gateway("run branch workspace has no parent"))?;
-    tokio::fs::create_dir_all(parent).await.map_err(|error| {
-        ApiError::bad_gateway(format!(
-            "create run branch workspace parent failed: {error}"
-        ))
-    })?;
+    ensure_run_workspace_parent(workspace.as_path())?;
     run_git(
         vec!["init".to_string(), workspace.to_string_lossy().to_string()],
         None,
@@ -1767,6 +1754,7 @@ async fn initialize_run_branch_workspace(
     )
     .await
     .map_err(ApiError::bad_gateway)?;
+    validate_workspace_symlink_boundaries(workspace.as_path())?;
     Ok(workspace)
 }
 
@@ -1805,14 +1793,10 @@ async fn prepare_shared_workspace(
     branch_ref: &str,
     scrub: &[&str],
 ) -> Result<PathBuf, ApiError> {
-    let workspace = run_workspace_path(project_id, run_id);
-    let parent = workspace
-        .parent()
-        .ok_or_else(|| ApiError::bad_gateway("run workspace has no parent"))?;
-    tokio::fs::create_dir_all(parent).await.map_err(|error| {
-        ApiError::bad_gateway(format!("create run workspace parent failed: {error}"))
-    })?;
+    let workspace = run_workspace_path(project_id, run_id)?;
+    ensure_run_workspace_parent(workspace.as_path())?;
     if workspace.join(".git").is_dir() {
+        validate_workspace_symlink_boundaries(workspace.as_path())?;
         run_git(
             vec![
                 "fetch".to_string(),
@@ -1847,12 +1831,7 @@ async fn prepare_shared_workspace(
         .map_err(ApiError::bad_gateway)?;
     } else {
         if workspace.exists() {
-            std::fs::remove_dir_all(workspace.as_path()).map_err(|error| {
-                ApiError::bad_gateway(format!(
-                    "remove incomplete run workspace {} failed: {error}",
-                    workspace.display()
-                ))
-            })?;
+            remove_verified_run_workspace(workspace.as_path())?;
         }
         run_git(
             vec![
@@ -1869,6 +1848,7 @@ async fn prepare_shared_workspace(
         )
         .await
         .map_err(ApiError::bad_gateway)?;
+        validate_workspace_symlink_boundaries(workspace.as_path())?;
     }
     run_git(
         vec![
@@ -2118,15 +2098,161 @@ fn sandbox_manager_token(state: &AppState) -> Result<String, ApiError> {
     .map_err(ApiError::bad_gateway)
 }
 
-fn run_workspace_root() -> PathBuf {
-    std::env::var("CHATOS_RUN_WORKSPACE_ROOT")
-        .ok()
+fn run_workspace_root() -> Result<PathBuf, ApiError> {
+    let configured = std::env::var_os("CHATOS_RUN_WORKSPACE_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/data/chatos"))
+        .unwrap_or_else(|| PathBuf::from("/data/chatos"));
+    canonical_workspace_root(configured.as_path())
 }
 
-fn run_workspace_path(project_id: &str, run_id: &str) -> PathBuf {
-    run_workspace_root().join(project_id).join(run_id)
+fn canonical_workspace_root(configured: &Path) -> Result<PathBuf, ApiError> {
+    let absolute = if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| {
+                ApiError::bad_gateway(format!(
+                    "resolve current workspace directory failed: {error}"
+                ))
+            })?
+            .join(configured)
+    };
+    std::fs::create_dir_all(absolute.as_path()).map_err(|error| {
+        ApiError::bad_gateway(format!(
+            "create configured run workspace root {} failed: {error}",
+            absolute.display()
+        ))
+    })?;
+    absolute.canonicalize().map_err(|error| {
+        ApiError::bad_gateway(format!(
+            "canonicalize configured run workspace root {} failed: {error}",
+            absolute.display()
+        ))
+    })
+}
+
+fn reject_symlink_or_non_directory(path: &Path, label: &str) -> Result<(), ApiError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(ApiError::bad_gateway(format!(
+                "inspect {label} {} failed: {error}",
+                path.display()
+            )))
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(ApiError::bad_gateway(format!(
+            "{label} must not be a symbolic link: {}",
+            path.display()
+        )));
+    }
+    if !metadata.is_dir() {
+        return Err(ApiError::bad_gateway(format!(
+            "{label} must be a directory: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn run_workspace_path(project_id: &str, run_id: &str) -> Result<PathBuf, ApiError> {
+    let root = run_workspace_root()?;
+    checked_workspace_path(root.as_path(), project_id, run_id)
+}
+
+fn checked_workspace_path(
+    root: &Path,
+    project_id: &str,
+    run_id: &str,
+) -> Result<PathBuf, ApiError> {
+    let project_root = root.join(project_id);
+    reject_symlink_or_non_directory(project_root.as_path(), "run workspace project directory")?;
+    let workspace = project_root.join(run_id);
+    reject_symlink_or_non_directory(workspace.as_path(), "run workspace")?;
+    Ok(workspace)
+}
+
+fn ensure_run_workspace_parent(workspace: &Path) -> Result<(), ApiError> {
+    let root = run_workspace_root()?;
+    let parent = workspace
+        .parent()
+        .ok_or_else(|| ApiError::bad_gateway("run workspace has no parent"))?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        ApiError::bad_gateway(format!("create run workspace parent failed: {error}"))
+    })?;
+    let canonical_parent = parent.canonicalize().map_err(|error| {
+        ApiError::bad_gateway(format!("canonicalize run workspace parent failed: {error}"))
+    })?;
+    if !canonical_parent.starts_with(root.as_path()) {
+        return Err(ApiError::bad_gateway(
+            "run workspace parent escaped the configured root",
+        ));
+    }
+    reject_symlink_or_non_directory(workspace, "run workspace")
+}
+
+fn remove_verified_run_workspace(workspace: &Path) -> Result<(), ApiError> {
+    let root = run_workspace_root()?;
+    reject_symlink_or_non_directory(workspace, "run workspace")?;
+    if !workspace.exists() {
+        return Ok(());
+    }
+    let canonical_workspace = workspace.canonicalize().map_err(|error| {
+        ApiError::bad_gateway(format!("canonicalize run workspace failed: {error}"))
+    })?;
+    if canonical_workspace == root || !canonical_workspace.starts_with(root.as_path()) {
+        return Err(ApiError::bad_gateway(
+            "refusing to remove a run workspace outside the configured root",
+        ));
+    }
+    std::fs::remove_dir_all(canonical_workspace.as_path()).map_err(|error| {
+        ApiError::bad_gateway(format!(
+            "remove run workspace {} failed: {error}",
+            canonical_workspace.display()
+        ))
+    })
+}
+
+fn validate_workspace_symlink_boundaries(workspace: &Path) -> Result<(), ApiError> {
+    reject_symlink_or_non_directory(workspace, "run workspace")?;
+    let canonical_workspace = workspace.canonicalize().map_err(|error| {
+        ApiError::bad_gateway(format!("canonicalize run workspace failed: {error}"))
+    })?;
+    for entry in walkdir::WalkDir::new(workspace).follow_links(false) {
+        let entry = entry.map_err(|error| {
+            ApiError::bad_gateway(format!("scan run workspace failed: {error}"))
+        })?;
+        if !entry.file_type().is_symlink() {
+            continue;
+        }
+        let link_target = std::fs::read_link(entry.path()).map_err(|error| {
+            ApiError::bad_gateway(format!(
+                "read run workspace symbolic link {} failed: {error}",
+                entry.path().display()
+            ))
+        })?;
+        let resolved = if link_target.is_absolute() {
+            link_target
+        } else {
+            entry.path().parent().unwrap_or(workspace).join(link_target)
+        };
+        let canonical_target = resolved.canonicalize().map_err(|error| {
+            ApiError::bad_gateway(format!(
+                "run workspace symbolic link {} has an unresolved target: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if !canonical_target.starts_with(canonical_workspace.as_path()) {
+            return Err(ApiError::bad_gateway(format!(
+                "run workspace symbolic link escapes the isolated worktree: {} -> {}",
+                entry.path().display(),
+                canonical_target.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn sandbox_manager_internal_url(base_url: &str, path: &str) -> String {
@@ -2250,6 +2376,69 @@ mod tests {
         assert!(validate_project_id("project-123").is_ok());
         assert!(validate_project_id("project_123").is_ok());
         assert!(validate_project_id("../project-123").is_err());
+    }
+
+    #[test]
+    fn configured_workspace_root_is_canonicalized_on_an_absolute_external_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let configured = temp.path().join("external-volume").join("chatos-runs");
+
+        let resolved = canonical_workspace_root(configured.as_path()).unwrap();
+
+        assert!(resolved.is_absolute());
+        assert_eq!(resolved, configured.canonicalize().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_workspace_root_symlink_resolves_to_its_real_directory() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let real_root = temp.path().join("real-root");
+        let linked_root = temp.path().join("linked-root");
+        std::fs::create_dir_all(real_root.as_path()).unwrap();
+        symlink(real_root.as_path(), linked_root.as_path()).unwrap();
+
+        assert_eq!(
+            canonical_workspace_root(linked_root.as_path()).unwrap(),
+            real_root.canonicalize().unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_and_workspace_symlinks_are_rejected_before_use_or_removal() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(root.as_path()).unwrap();
+        std::fs::create_dir_all(outside.as_path()).unwrap();
+        symlink(outside.as_path(), root.join("project-1")).unwrap();
+        assert!(checked_workspace_path(root.as_path(), "project-1", "run-1").is_err());
+
+        std::fs::remove_file(root.join("project-1")).unwrap();
+        std::fs::create_dir_all(root.join("project-1")).unwrap();
+        symlink(outside.as_path(), root.join("project-1/run-1")).unwrap();
+        assert!(checked_workspace_path(root.as_path(), "project-1", "run-1").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_workspace_rejects_links_that_escape_to_a_source_tree() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let source = temp.path().join("source");
+        std::fs::create_dir_all(workspace.as_path()).unwrap();
+        std::fs::create_dir_all(source.as_path()).unwrap();
+        std::fs::write(source.join("Cargo.toml"), "[workspace]\n").unwrap();
+        symlink(source.join("Cargo.toml"), workspace.join("Cargo.toml")).unwrap();
+
+        assert!(validate_workspace_symlink_boundaries(workspace.as_path()).is_err());
     }
 
     #[test]

@@ -579,6 +579,9 @@ fn cloud_sandbox_route_pins_all_workspace_tools_to_the_same_lease() {
 
     bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route));
 
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route))
+        .expect("cloud sandbox binding");
+
     assert!(routes.iter().all(|resolved| {
         resolved.provider_kind == McpProviderKind::CloudSandbox
             && resolved.provider_ref.as_deref() == Some("sandbox:sandbox-1/lease:lease-1")
@@ -599,7 +602,13 @@ fn local_connector_route_pins_all_workspace_tools_without_exposing_runtime_mode(
 
     for route in &routes {
         assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
+        assert_eq!(route.provider_ref, None);
     }
+    validate_runtime_workspace_route_binding(
+        routes.as_slice(),
+        Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+    )
+    .expect("local connector binding");
 }
 
 #[test]
@@ -626,6 +635,8 @@ fn harness_route_binds_read_write_and_rejects_terminal() {
     assert!(routes[2]
         .reason
         .contains("requires a Task Runner cloud sandbox"));
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route))
+        .expect("harness run binding");
 }
 
 #[test]
@@ -645,6 +656,18 @@ fn harness_default_branch_is_read_only() {
     assert_eq!(routes[0].provider_kind, McpProviderKind::Harness);
     assert_eq!(routes[1].provider_kind, McpProviderKind::Unavailable);
     assert!(routes[1].reason.contains("Task Run branch"));
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route))
+        .expect("harness default binding");
+}
+
+#[test]
+fn workspace_route_binding_validation_rejects_provider_drift() {
+    let route = RuntimeWorkspaceRouteTarget::LocalConnector;
+    let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route));
+    routes[0].provider_kind = McpProviderKind::Harness;
+
+    assert!(validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route)).is_err());
 }
 
 #[test]

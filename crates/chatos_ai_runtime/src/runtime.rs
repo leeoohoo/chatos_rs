@@ -11,6 +11,8 @@ use tracing::{info, warn};
 
 #[cfg(feature = "local-agent-loop")]
 use crate::error_policy::is_missing_tool_call_error;
+#[cfg(feature = "local-agent-loop")]
+use crate::file_write_recovery::automatic_file_write_recovery_calls;
 use crate::request::AiRequestHandler;
 #[cfg(feature = "local-agent-loop")]
 use crate::request_retry::is_previous_response_id_unsupported_error;
@@ -64,8 +66,7 @@ use self::request_error::{handle_model_request_error, ModelRequestErrorAction};
 use self::summaries::summarize_tool_call_names;
 #[cfg(feature = "local-agent-loop")]
 use self::tool_execution::{
-    automatic_file_write_recovery_calls, execute_runtime_tools,
-    next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
+    execute_runtime_tools, next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
 };
 
 pub struct AiRuntime {

@@ -516,6 +516,7 @@ async fn structured_blocked_outcome_persists_blocked_terminal_state() {
             blocking_reason: Some("required upstream service is unavailable".to_string()),
             unmet_acceptance_criteria: vec!["integration verification passes".to_string()],
             verification_evidence: vec!["health request returned connection refused".to_string()],
+            acceptance_evidence: Vec::new(),
             referenced_paths: Vec::new(),
             referenced_endpoints: Vec::new(),
         }),

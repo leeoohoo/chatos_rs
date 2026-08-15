@@ -247,12 +247,24 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
         *task_runner_async = Value::Object(serde_json::Map::new());
     }
     if let Value::Object(task_runner_async_map) = task_runner_async {
+        let requested_overall_status = if overall_status.trim().eq_ignore_ascii_case("completed")
+            && task_runner_async_has_pending_created_tasks(task_runner_async_map)
+        {
+            "processing"
+        } else {
+            overall_status
+        };
         let current_overall_status = task_runner_async_map
             .get("overall_status")
             .and_then(Value::as_str)
             .unwrap_or_default();
         if task_runner_async_status_is_stop_locked(current_overall_status)
-            && !task_runner_async_status_is_stop_locked(overall_status)
+            && !task_runner_async_status_is_stop_locked(requested_overall_status)
+        {
+            return;
+        }
+        if task_runner_async_callback_is_terminal(task_runner_async_map)
+            && !current_overall_status.eq_ignore_ascii_case(requested_overall_status)
         {
             return;
         }
@@ -261,18 +273,56 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
             .or_insert_with(|| Value::String("contact_async".to_string()));
         task_runner_async_map.insert(
             "overall_status".to_string(),
-            Value::String(overall_status.to_string()),
+            Value::String(requested_overall_status.to_string()),
         );
         if matches!(
-            overall_status.trim().to_ascii_lowercase().as_str(),
+            requested_overall_status
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
             "failed" | "error" | "stopping" | "stopped" | "cancelled" | "canceled"
         ) {
             task_runner_async_map.insert(
                 "confirmation_status".to_string(),
-                Value::String(overall_status.to_string()),
+                Value::String(requested_overall_status.to_string()),
             );
         }
     }
+}
+
+fn task_runner_async_has_pending_created_tasks(
+    task_runner_async: &serde_json::Map<String, Value>,
+) -> bool {
+    let created = task_runner_async
+        .get("created_task_ids")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if created.is_empty() {
+        return false;
+    }
+    let terminal = task_runner_async
+        .get("terminal_task_ids")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+    created.iter().any(|task_id| !terminal.contains(task_id))
+}
+
+fn task_runner_async_callback_is_terminal(
+    task_runner_async: &serde_json::Map<String, Value>,
+) -> bool {
+    let created_count = task_runner_async
+        .get("created_task_ids")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    created_count > 0 && !task_runner_async_has_pending_created_tasks(task_runner_async)
 }
 
 fn task_runner_async_status_is_stop_locked(status: &str) -> bool {
@@ -736,6 +786,53 @@ mod tests {
                 .get("confirmation_status")
                 .and_then(Value::as_str),
             Some("stopped")
+        );
+    }
+
+    #[test]
+    fn planner_completion_keeps_message_processing_while_created_tasks_are_active() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "processing",
+                "created_task_ids": ["task-1", "task-2"],
+                "terminal_task_ids": ["task-1"]
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "completed");
+
+        assert_eq!(
+            message.metadata.as_ref().unwrap()["task_runner_async"]["overall_status"],
+            "processing"
+        );
+    }
+
+    #[test]
+    fn planner_finalize_does_not_overwrite_terminal_callback_failure() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "failed",
+                "created_task_ids": ["task-1"],
+                "terminal_task_ids": ["task-1"],
+                "failed_task_ids": ["task-1"]
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "completed");
+
+        assert_eq!(
+            message.metadata.as_ref().unwrap()["task_runner_async"]["overall_status"],
+            "failed"
         );
     }
 }

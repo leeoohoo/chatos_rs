@@ -33,9 +33,9 @@ pub(super) use self::run::{
 };
 pub(super) use self::task::{
     reject_ai_runtime_config, BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs,
-    CancelTaskArgs, CreateProjectExecutionTasksArgs, CreateTaskArgs,
-    CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs, ListTasksArgs,
-    SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
+    CancelTaskArgs, CreateProjectExecutionTaskItem, CreateProjectExecutionTasksArgs,
+    CreateTaskArgs, CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs,
+    ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
 };
 
 #[allow(dead_code)]

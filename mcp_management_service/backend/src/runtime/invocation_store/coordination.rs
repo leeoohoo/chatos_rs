@@ -4,6 +4,46 @@
 use super::*;
 
 impl RuntimeInvocationStore {
+    pub async fn list_active(&self, limit: usize) -> Result<Vec<RuntimeInvocationRecord>, String> {
+        let now = chrono::Utc::now().timestamp();
+        let active_statuses = active_runtime_invocation_statuses();
+        let limit = limit.clamp(1, 10_000);
+        let mut records = match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => {
+                let mut invocations = invocations.write().await;
+                invocations.retain(|_, record| record.expires_at_unix > now);
+                invocations
+                    .values()
+                    .filter(|record| active_statuses.contains(&record.status))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            }
+            RuntimeInvocationStoreBackend::Mongo(collection) => collection
+                .find(
+                    doc! {
+                        "status": { "$in": active_statuses
+                            .iter()
+                            .map(|status| status.as_str())
+                            .collect::<Vec<_>>() },
+                        "expires_at_unix": { "$gt": now },
+                    },
+                    None,
+                )
+                .await
+                .map_err(|error| format!("list active Runtime Invocations failed: {error}"))?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| format!("read active Runtime Invocations failed: {error}"))?,
+        };
+        records.sort_by(|left, right| {
+            left.created_at_unix_ms
+                .cmp(&right.created_at_unix_ms)
+                .then_with(|| left.invocation_id.cmp(&right.invocation_id))
+        });
+        records.truncate(limit);
+        Ok(records)
+    }
+
     pub async fn discard_queued_registration(
         &self,
         invocation_id: &str,

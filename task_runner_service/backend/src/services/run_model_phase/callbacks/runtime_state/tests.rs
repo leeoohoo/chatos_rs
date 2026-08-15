@@ -128,6 +128,46 @@ fn task_outcome_review_rejects_success_without_evidence() {
 }
 
 #[test]
+fn task_outcome_review_requires_one_to_one_runtime_backed_acceptance_evidence() {
+    let outcome = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["dashboard render test passed"],"acceptance_evidence":[{"criterion":"dashboard renders","evidence":["dashboard render test passed"],"referenced_paths":["src/Dashboard.tsx"],"commands":["npm test"]}],"referenced_paths":["src/Dashboard.tsx"],"referenced_endpoints":[]}"#,
+        &["dashboard renders".to_string()],
+        &["src/Dashboard.tsx".to_string()],
+        &["npm test".to_string()],
+        &[],
+        true,
+    )
+    .expect("runtime-backed acceptance evidence");
+    assert_eq!(outcome.acceptance_evidence.len(), 1);
+
+    let error = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"claimed","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["dashboard render test passed"],"acceptance_evidence":[{"criterion":"dashboard renders","evidence":["dashboard render test passed"],"referenced_paths":[],"commands":["npm test"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
+        &["dashboard renders".to_string()],
+        &[],
+        &["npm run build".to_string()],
+        &[],
+        true,
+    )
+    .expect_err("unrecorded command must fail closed");
+    assert!(error.contains("without successful runtime evidence"));
+}
+
+#[test]
+fn task_outcome_review_accepts_recorded_browser_evidence() {
+    let outcome = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"verified responsive layout","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["320px browser snapshot rendered without overflow"],"acceptance_evidence":[{"criterion":"works at 320px","evidence":["320px browser snapshot rendered without overflow"],"referenced_paths":[],"commands":[],"tool_names":["browser_tools_browser_snapshot"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
+        &["works at 320px".to_string()],
+        &[],
+        &[],
+        &["browser_tools_browser_snapshot".to_string()],
+        true,
+    )
+    .expect("recorded browser evidence");
+
+    assert_eq!(outcome.acceptance_evidence.len(), 1);
+}
+
+#[test]
 fn task_outcome_review_rejects_markdown_wrapped_json() {
     let error = parse_task_execution_outcome("```json\n{\"status\":\"blocked\"}\n```")
         .expect_err("review response must be strict JSON");
@@ -137,8 +177,8 @@ fn task_outcome_review_rejects_markdown_wrapped_json() {
 
 #[test]
 fn task_outcome_review_distinguishes_execution_and_planning_evidence() {
-    let execution = task_execution_outcome_review_message(true).to_string();
-    let planning = task_execution_outcome_review_message(false).to_string();
+    let execution = task_execution_outcome_review_message(true, &[]).to_string();
+    let planning = task_execution_outcome_review_message(false, &[]).to_string();
 
     assert!(execution.contains("actual tool results"));
     assert!(execution.contains("changed project files"));

@@ -409,8 +409,8 @@ fn parse_harness_tool_response(response: Value) -> Result<Value, String> {
             .unwrap_or("Harness MCP tool failed");
         return Err(message.to_string());
     }
-    if let Some(structured) = result.get("_structured_result") {
-        return Ok(structured.clone());
+    if result.get("_structured_result").is_some() {
+        return Ok(chatos_mcp_runtime::structured_result_payload(result).clone());
     }
     let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str) else {
         return Ok(result.clone());
@@ -567,6 +567,8 @@ pub struct SyncTaskRunnerWorkItemStatusRequest {
     pub last_error_message: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supersedes_task_runner_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -766,6 +768,24 @@ mod tests {
         assert_eq!(
             parsed.pointer("/entries/0/path").and_then(Value::as_str),
             Some("src")
+        );
+    }
+
+    #[test]
+    fn harness_tool_response_recursively_unwraps_structured_result() {
+        let parsed = parse_harness_tool_response(json!({
+            "result": {
+                "content": [{ "type": "text", "text": "ignored" }],
+                "_structured_result": {
+                    "_structured_result": { "entries": [{ "path": "src/main.rs" }] }
+                },
+                "isError": false
+            }
+        }))
+        .expect("parse nested Harness tool response");
+        assert_eq!(
+            parsed.pointer("/entries/0/path").and_then(Value::as_str),
+            Some("src/main.rs")
         );
     }
 }

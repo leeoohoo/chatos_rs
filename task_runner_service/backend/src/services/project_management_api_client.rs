@@ -47,6 +47,7 @@ pub(crate) struct FinalizeRunWorkspaceRequest {
     pub owner_user_id: String,
     pub branch: Option<PreparedRunBranch>,
     pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub destroy_sandbox: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,6 +55,8 @@ pub(crate) struct FinalizeRunWorkspaceResponse {
     pub project_id: String,
     pub run_id: String,
     pub result_commit: Option<String>,
+    #[serde(default)]
+    pub sandbox_retained_for_diagnostics: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -462,6 +465,8 @@ pub struct SyncTaskRunnerWorkItemStatusRequest {
     pub last_error_message: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub supersedes_task_runner_task_ids: Vec<String>,
 }
 
 pub async fn sync_work_item_task_runner_status(

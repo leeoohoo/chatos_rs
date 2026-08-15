@@ -98,6 +98,14 @@ impl RunService {
                     &snapshot,
                     TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
                 )?,
+                install_registry: require_managed_string(
+                    &snapshot,
+                    TASK_RUNNER_SUPPLY_CHAIN_NODE_INSTALL_REGISTRY_CONFIG_KEY,
+                )?,
+                audit_registry: require_managed_string(
+                    &snapshot,
+                    TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_REGISTRY_CONFIG_KEY,
+                )?,
             },
         )
     }

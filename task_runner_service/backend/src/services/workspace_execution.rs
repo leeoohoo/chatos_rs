@@ -36,6 +36,13 @@ struct PreparedWorkspaceExecution {
     execution_base_commit: Option<String>,
 }
 
+fn retain_sandbox_for_diagnostics(status: crate::models::ModelPhaseStatus) -> bool {
+    matches!(
+        status,
+        crate::models::ModelPhaseStatus::Failed | crate::models::ModelPhaseStatus::Blocked
+    )
+}
+
 fn workspace_execution(status: WorkspacePreparationStatus) -> TaskRunWorkspaceExecution {
     TaskRunWorkspaceExecution {
         status,
@@ -63,6 +70,7 @@ fn workspace_execution(status: WorkspacePreparationStatus) -> TaskRunWorkspaceEx
         integration_last_error: None,
         prepared_at: None,
         finalized_at: None,
+        sandbox_retained_for_diagnostics: false,
         finalization_error: None,
         error: None,
     }
@@ -544,12 +552,13 @@ pub(crate) async fn finalize_task_run_workspace(
         .and_then(RuntimeWorkspaceRouteTarget::sandbox_target)
         .cloned();
     if branch.is_none() && sandbox_target.is_none() {
-        mark_workspace_finalized(service, run, None).await?;
+        mark_workspace_finalized(service, run, None, false).await?;
         return Ok(());
     }
     let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
     let owner_user_id = task_owner_user_id(task)?;
     if execution.finalized_at.is_none() {
+        let retain_sandbox_for_diagnostics = retain_sandbox_for_diagnostics(run.model_phase_status);
         let response = super::project_management_api_client::finalize_run_workspace(
             &service.config,
             project_id.as_str(),
@@ -558,6 +567,7 @@ pub(crate) async fn finalize_task_run_workspace(
                 owner_user_id: owner_user_id.clone(),
                 branch: branch.clone(),
                 sandbox_target,
+                destroy_sandbox: !retain_sandbox_for_diagnostics,
             },
         )
         .await;
@@ -568,7 +578,13 @@ pub(crate) async fn finalize_task_run_workspace(
                         "Project Service finalized a different Task Run workspace".to_string()
                     );
                 }
-                mark_workspace_finalized(service, run, response.result_commit).await?;
+                mark_workspace_finalized(
+                    service,
+                    run,
+                    response.result_commit,
+                    response.sandbox_retained_for_diagnostics,
+                )
+                .await?;
             }
             Err(error) => {
                 if let Some(execution) = run.workspace_execution.as_mut() {
@@ -828,11 +844,13 @@ async fn mark_workspace_finalized(
     service: &RunService,
     run: &mut TaskRunRecord,
     result_commit: Option<String>,
+    sandbox_retained_for_diagnostics: bool,
 ) -> Result<(), String> {
     if let Some(execution) = run.workspace_execution.as_mut() {
         execution.finalized_at = Some(now_rfc3339());
         execution.finalization_error = None;
         execution.result_commit = result_commit.clone();
+        execution.sandbox_retained_for_diagnostics = sandbox_retained_for_diagnostics;
     }
     run.updated_at = now_rfc3339();
     persist_workspace_execution(service, run).await?;
@@ -841,8 +859,15 @@ async fn mark_workspace_finalized(
         .append_run_event(crate::models::TaskRunEventRecord::new(
             run.id.clone(),
             "workspace_finalized",
-            Some("任务工作区已完成回收".to_string()),
-            Some(serde_json::json!({"result_commit": result_commit})),
+            Some(if sandbox_retained_for_diagnostics {
+                "任务工作区已导出，失败沙箱保留到租约到期以便诊断".to_string()
+            } else {
+                "任务工作区已完成回收".to_string()
+            }),
+            Some(serde_json::json!({
+                "result_commit": result_commit,
+                "sandbox_retained_for_diagnostics": sandbox_retained_for_diagnostics,
+            })),
         ))
         .await?;
     Ok(())
@@ -867,6 +892,22 @@ mod tests {
             decide_workspace_route(Some("cloud"), &tools(true, true, true)).unwrap(),
             WorkspaceRouteDecision::CloudSandboxRunBranch
         );
+    }
+
+    #[test]
+    fn failed_and_blocked_runs_retain_the_sandbox_until_lease_expiry() {
+        assert!(retain_sandbox_for_diagnostics(
+            crate::models::ModelPhaseStatus::Failed
+        ));
+        assert!(retain_sandbox_for_diagnostics(
+            crate::models::ModelPhaseStatus::Blocked
+        ));
+        assert!(!retain_sandbox_for_diagnostics(
+            crate::models::ModelPhaseStatus::Succeeded
+        ));
+        assert!(!retain_sandbox_for_diagnostics(
+            crate::models::ModelPhaseStatus::Cancelled
+        ));
     }
 
     #[test]

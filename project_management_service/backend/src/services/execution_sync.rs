@@ -76,6 +76,14 @@ pub async fn sync_task_runner_work_item_status(
         )
         .await
         .map_err(ExecutionSyncError::bad_request)?;
+    store
+        .supersede_task_runner_links(
+            work_item_id,
+            link.execution_group_id.as_deref(),
+            input.supersedes_task_runner_task_ids.as_slice(),
+        )
+        .await
+        .map_err(ExecutionSyncError::bad_request)?;
 
     let current_links = store
         .list_task_runner_links(work_item_id)

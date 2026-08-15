@@ -84,3 +84,17 @@ fn publisher_nack_is_reported_as_queue_backpressure() {
         .expect_err("publisher nack must fail");
     assert_eq!(error, AsyncToolEnqueueError::CapacityExhausted);
 }
+
+#[test]
+fn rabbitmq_startup_retry_delay_is_exponential_and_capped() {
+    let base = std::time::Duration::from_millis(250);
+    assert_eq!(rabbitmq_startup_retry_delay(base, 1), base);
+    assert_eq!(
+        rabbitmq_startup_retry_delay(base, 4),
+        std::time::Duration::from_secs(2)
+    );
+    assert_eq!(
+        rabbitmq_startup_retry_delay(base, 20),
+        RABBITMQ_STARTUP_MAX_RETRY_DELAY
+    );
+}

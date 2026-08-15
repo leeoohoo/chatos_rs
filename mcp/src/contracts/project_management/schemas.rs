@@ -241,6 +241,10 @@ fn tool_definitions(include_delete_tools: bool) -> Vec<Value> {
                     optional_string_field("due_at", "Optional due time as string."),
                     integer_field("sort_order", "Optional sort order."),
                     string_array_field("tags", "Optional tags."),
+                    string_array_field(
+                        "owned_paths",
+                        "Structured repository-relative files or directories owned by this work item. Use an empty array for planning-only or genuinely read-only work. Parallel implementation work items must not declare overlapping ownership unless their dependency graph serializes them.",
+                    ),
                     boolean_field(
                         "is_planning_task",
                         "Set true only when this project task is itself a planning/decomposition task whose execution should continue project planning through TaskRunner chatos_plan profile. Leave false for implementation, testing, documentation, deployment, or other concrete execution work.",
@@ -250,7 +254,7 @@ fn tool_definitions(include_delete_tools: bool) -> Vec<Value> {
                         "Optional full list of prerequisite project task ids.",
                     ),
                 ],
-                vec!["requirement_id", "title"],
+                vec!["requirement_id", "title", "owned_paths"],
             ),
         ),
         tool_definition(
@@ -467,6 +471,10 @@ fn project_task_patch_field() -> (&'static str, Value) {
                 optional_string_field("due_at", "Optional due time as string."),
                 integer_field("sort_order", "Optional sort order."),
                 string_array_field("tags", "Optional tags."),
+                string_array_field(
+                    "owned_paths",
+                    "Optional full replacement for structured repository-relative file or directory ownership.",
+                ),
                 optional_boolean_field(
                     "is_planning_task",
                     "Set true only when this project task should execute as a TaskRunner chatos_plan planning/decomposition task. Set false for concrete implementation or delivery work.",

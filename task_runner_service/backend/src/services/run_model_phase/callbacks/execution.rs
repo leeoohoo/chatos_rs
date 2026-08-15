@@ -30,7 +30,30 @@ impl RunService {
             review_policy,
             task.mcp_config.requires_execution,
             prepared_execution.effective_workspace_dir.as_str(),
+            task.input_payload
+                .as_ref()
+                .and_then(|payload| payload.get("acceptance_criteria"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|criterion| !criterion.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
         );
+        let supply_chain_policy = if task.mcp_config.requires_execution {
+            Some(self.effective_node_supply_chain_policy().await?)
+        } else {
+            None
+        };
+        if let Some(policy) = supply_chain_policy.as_ref() {
+            if let Some(inherited) =
+                super::supply_chain::SupplyChainEvidenceState::inherit_for_run(run, policy)
+            {
+                *runtime_execution.supply_chain_evidence.lock() = inherited;
+            }
+        }
         let runtime_config = prepared_execution.runtime_config;
         let runtime = runtime_config
             .build_runtime_with_mcp_builder_and_memory_http_client(
@@ -44,10 +67,12 @@ impl RunService {
         if task.mcp_config.requires_execution
             && run_spec.model_config.previous_response_id.is_none()
         {
-            let policy = self.effective_node_supply_chain_policy().await?;
+            let policy = supply_chain_policy
+                .as_ref()
+                .expect("execution supply-chain policy was loaded");
             run_spec
                 .prefixed_input_items
-                .push(super::supply_chain::policy_guidance(&policy));
+                .push(super::supply_chain::policy_guidance(policy));
         }
         append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
         Ok(PreparedSingleModelStep {

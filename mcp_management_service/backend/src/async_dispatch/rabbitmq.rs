@@ -17,6 +17,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn};
 
 use crate::config::AsyncToolDispatchTopology;
+use crate::runtime::RuntimeInvocationStatus;
 use crate::state::AppState;
 use chatos_mcp_service::{
     McpToolCallCommand, McpToolCallResult, McpToolCallResultItem, McpToolCallResultStatus,
@@ -398,6 +399,7 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
     state: AppState,
     topology: AsyncToolDispatchTopology,
 ) {
+    let mut startup_recovery_completed = false;
     loop {
         match open_named_consumer(
             &topology,
@@ -407,6 +409,15 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
         .await
         {
             Ok((_connection, channel, mut consumer)) => {
+                if !startup_recovery_completed {
+                    match reconcile_orphan_invocations(&state).await {
+                        Ok(()) => startup_recovery_completed = true,
+                        Err(error) => warn!(
+                            error = error.as_str(),
+                            "reconcile orphan MCP invocations failed"
+                        ),
+                    }
+                }
                 if let Err(error) = reconcile_pending_batches(&state, &topology, &channel).await {
                     warn!(
                         error = error.as_str(),
@@ -490,6 +501,121 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
     }
 }
 
+async fn reconcile_orphan_invocations(state: &AppState) -> Result<(), String> {
+    use crate::runtime::RuntimeInvocationStatus;
+
+    let active_invocations = state.runtime_invocations.list_active(10_000).await?;
+    let active_batches = state.runtime_tool_batches.list_active(1_000).await?;
+    let batched_invocation_ids = active_batches
+        .iter()
+        .flat_map(|batch| batch.invocation_ids.iter().cloned())
+        .collect::<std::collections::HashSet<_>>();
+
+    // First close durable invocations that have lost their batch entirely. They
+    // cannot be replayed safely and otherwise retain quota forever.
+    for invocation in active_invocations
+        .iter()
+        .filter(|record| !batched_invocation_ids.contains(record.invocation_id.as_str()))
+    {
+        state
+            .runtime_invocations
+            .recover_after_restart(invocation, false)
+            .await?;
+    }
+
+    // A batch is the ordering barrier. Recover only its current call and let
+    // normal FIFO progression expose the next call; this keeps one task/run
+    // serial even when a model emitted a multi-tool batch.
+    for batch in active_batches {
+        let Some(call) = batch.command.calls.get(batch.next_call_index) else {
+            continue;
+        };
+        let Some(invocation) = state
+            .runtime_invocations
+            .get_for_caller(
+                call.invocation_id.as_str(),
+                batch.command.owner_service.as_str(),
+            )
+            .await?
+        else {
+            // The durable batch remains authoritative. Republishing its current
+            // ready event lets the normal reducer persist a structured missing-
+            // invocation failure and advance the FIFO instead of stalling.
+            state
+                .runtime_tool_batches
+                .ensure_invocation_ready_for(call.invocation_id.as_str())
+                .await?;
+            continue;
+        };
+        let session_exists = state
+            .runtime_sessions
+            .get(batch.session_id.as_str())
+            .await?
+            .is_some();
+        if !session_exists {
+            if is_recoverable_terminal_invocation_status(invocation.status)
+                || state
+                    .runtime_invocations
+                    .close_registered_invocation(
+                        invocation.invocation_id.as_str(),
+                        invocation.session_id.as_str(),
+                    )
+                    .await?
+            {
+                crate::api::mcp::persist_terminal_tool_batch_invocation_without_session(
+                    state,
+                    invocation.invocation_id.as_str(),
+                )
+                .await?;
+            }
+            continue;
+        }
+        match invocation.status {
+            RuntimeInvocationStatus::Queued => {
+                state
+                    .runtime_tool_batches
+                    .ensure_invocation_ready_for(invocation.invocation_id.as_str())
+                    .await?;
+            }
+            RuntimeInvocationStatus::Running | RuntimeInvocationStatus::CancelRequested => {
+                if state
+                    .runtime_invocations
+                    .recover_after_restart(&invocation, true)
+                    .await?
+                {
+                    crate::api::mcp::resume_terminal_tool_batch_invocation(
+                        state,
+                        invocation.invocation_id.as_str(),
+                    )
+                    .await?;
+                }
+            }
+            RuntimeInvocationStatus::WaitingForUser => {}
+            RuntimeInvocationStatus::Completed
+            | RuntimeInvocationStatus::Failed
+            | RuntimeInvocationStatus::Cancelled
+            | RuntimeInvocationStatus::UnknownExecutionState => {
+                crate::api::mcp::resume_terminal_tool_batch_invocation(
+                    state,
+                    invocation.invocation_id.as_str(),
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_recoverable_terminal_invocation_status(status: RuntimeInvocationStatus) -> bool {
+    matches!(
+        status,
+        RuntimeInvocationStatus::Completed
+            | RuntimeInvocationStatus::Failed
+            | RuntimeInvocationStatus::Cancelled
+            | RuntimeInvocationStatus::UnknownExecutionState
+    )
+}
+
 fn invocation_terminal_error_is_stale(error: &str) -> bool {
     matches!(
         error,
@@ -501,7 +627,8 @@ fn invocation_terminal_error_is_stale(error: &str) -> bool {
 
 #[cfg(test)]
 mod invocation_terminal_tests {
-    use super::invocation_terminal_error_is_stale;
+    use super::{invocation_terminal_error_is_stale, is_recoverable_terminal_invocation_status};
+    use crate::runtime::RuntimeInvocationStatus;
 
     #[test]
     fn closed_session_and_removed_durable_records_are_consumed() {
@@ -517,6 +644,26 @@ mod invocation_terminal_tests {
         assert!(!invocation_terminal_error_is_stale(
             "Runtime Tool Batch CAS conflict limit was exceeded"
         ));
+    }
+
+    #[test]
+    fn restart_reconciliation_reduces_every_durable_terminal_invocation() {
+        for status in [
+            RuntimeInvocationStatus::Completed,
+            RuntimeInvocationStatus::Failed,
+            RuntimeInvocationStatus::Cancelled,
+            RuntimeInvocationStatus::UnknownExecutionState,
+        ] {
+            assert!(is_recoverable_terminal_invocation_status(status));
+        }
+        for status in [
+            RuntimeInvocationStatus::Queued,
+            RuntimeInvocationStatus::Running,
+            RuntimeInvocationStatus::WaitingForUser,
+            RuntimeInvocationStatus::CancelRequested,
+        ] {
+            assert!(!is_recoverable_terminal_invocation_status(status));
+        }
     }
 }
 

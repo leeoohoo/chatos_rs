@@ -119,6 +119,8 @@ pub struct ProjectWorkItemRecord {
     pub sort_order: i64,
     pub tags: Vec<String>,
     #[serde(default)]
+    pub owned_paths: Vec<String>,
+    #[serde(default)]
     pub is_planning_task: bool,
     #[serde(default)]
     pub creator_user_id: Option<String>,
@@ -149,6 +151,8 @@ pub struct CreateProjectWorkItemRequest {
     pub sort_order: Option<i64>,
     pub tags: Option<Vec<String>>,
     #[serde(default)]
+    pub owned_paths: Vec<String>,
+    #[serde(default)]
     pub is_planning_task: bool,
 }
 
@@ -164,6 +168,7 @@ pub struct UpdateProjectWorkItemRequest {
     pub due_at: Option<String>,
     pub sort_order: Option<i64>,
     pub tags: Option<Vec<String>>,
+    pub owned_paths: Option<Vec<String>>,
     pub is_planning_task: Option<bool>,
 }
 
@@ -236,6 +241,8 @@ pub struct SyncTaskRunnerWorkItemStatusRequest {
     pub last_error_message: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    #[serde(default)]
+    pub supersedes_task_runner_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

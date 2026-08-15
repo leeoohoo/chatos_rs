@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -290,6 +291,92 @@ async fn single_tool_command_dispatches_and_returns_one_result() {
             "arguments": {"status": "draft"}
         }))
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn duplicate_ready_delivery_returns_the_durable_result_without_executing_twice() {
+    #[derive(Clone)]
+    struct ProviderState {
+        calls: Arc<AtomicUsize>,
+    }
+
+    async fn provider(
+        State(state): State<ProviderState>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        state.calls.fetch_add(1, Ordering::SeqCst);
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"durable": true}
+        }))
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_calls = Arc::clone(&calls);
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/mcp", post(provider))
+                .with_state(ProviderState {
+                    calls: server_calls,
+                }),
+        )
+        .await
+        .unwrap();
+    });
+    let mut config = crate::config::AppConfig::test();
+    config.project_service_base_url = format!("http://{address}");
+    let state = AppState::new(config).await.unwrap();
+    let mut snapshot = snapshot();
+    snapshot.routes = vec![ResolvedMcpRoute {
+        resource_id: "builtin_project_management".to_string(),
+        server_name: "project_management_service".to_string(),
+        provider_kind: McpProviderKind::InternalService,
+        provider_ref: Some("project_management_service".to_string()),
+        tool_namespace: "project_management_service".to_string(),
+        allow_writes: false,
+        retry_class: McpRetryClass::IdempotentRead,
+        cancel_supported: true,
+        reason: "test".to_string(),
+    }];
+    snapshot.tools = vec![RuntimeToolDescriptor {
+        exposed_name: "project_management_service_list_requirements".to_string(),
+        original_name: "list_requirements".to_string(),
+        resource_id: "builtin_project_management".to_string(),
+        definition: json!({
+            "name": "project_management_service_list_requirements",
+            "inputSchema": {"type": "object"}
+        }),
+    }];
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "invocation-duplicate-ready".to_string(),
+            tool_call_id: "call-duplicate-ready".to_string(),
+            call_index: 0,
+            name: "project_management_service_list_requirements".to_string(),
+            arguments: json!({"status": "draft"}),
+            preflight_error: None,
+        }],
+    );
+
+    let first = execute_tool_call_command(&state, &command).await.unwrap();
+    let duplicate = execute_tool_call_command(&state, &command).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(first.items, duplicate.items);
+    assert_eq!(
+        duplicate.items[0].status,
+        McpToolCallResultStatus::Completed
+    );
+    assert_eq!(duplicate.items[0].result, Some(json!({"durable": true})));
     server.abort();
 }
 

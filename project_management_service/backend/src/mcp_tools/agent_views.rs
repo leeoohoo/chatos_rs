@@ -69,6 +69,7 @@ pub(super) fn project_task(record: &ProjectWorkItemRecord) -> Value {
         "due_at": record.due_at,
         "sort_order": record.sort_order,
         "tags": record.tags,
+        "owned_paths": record.owned_paths,
         "is_planning_task": record.is_planning_task,
     })
 }
@@ -191,6 +192,7 @@ mod tests {
             due_at: Some("later".to_string()),
             sort_order: 1,
             tags: vec!["frontend".to_string()],
+            owned_paths: vec!["src/components".to_string()],
             is_planning_task: false,
             creator_user_id: Some("creator-1".to_string()),
             creator_username: Some("creator@example.com".to_string()),

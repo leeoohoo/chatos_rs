@@ -525,7 +525,7 @@ mod tests {
                     descriptor.execution_location == AgentExecutionLocation::CloudEventDriven
                 })
                 .count(),
-            15
+            system_agent_catalog().len() - local_loop_agents.len()
         );
     }
 }

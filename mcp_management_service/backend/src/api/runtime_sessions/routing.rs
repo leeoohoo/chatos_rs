@@ -209,6 +209,7 @@ pub(super) fn bind_runtime_workspace_routes(
         match workspace_route {
             Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
                 route.provider_kind = McpProviderKind::LocalConnector;
+                route.provider_ref = None;
                 route.reason = "runtime workspace is pinned to the Local Connector".to_string();
             }
             Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::Harness { branch }) => {
@@ -253,6 +254,67 @@ pub(super) fn bind_runtime_workspace_routes(
             }
         }
     }
+}
+
+pub(super) fn validate_runtime_workspace_route_binding(
+    routes: &[ResolvedMcpRoute],
+    workspace_route: Option<&chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>,
+) -> Result<(), ApiError> {
+    use chatos_mcp_management_sdk::{HarnessBranchTarget, RuntimeWorkspaceRouteTarget};
+
+    let Some(workspace_route) = workspace_route else {
+        return Ok(());
+    };
+    for route in routes {
+        let Some(system_key) =
+            chatos_mcp::system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+                .map(|descriptor| descriptor.key)
+        else {
+            continue;
+        };
+        if !matches!(
+            system_key,
+            SystemMcpKey::CodeMaintainerRead
+                | SystemMcpKey::CodeMaintainerWrite
+                | SystemMcpKey::TerminalController
+        ) {
+            continue;
+        }
+
+        let valid = match workspace_route {
+            RuntimeWorkspaceRouteTarget::LocalConnector => {
+                route.provider_kind == McpProviderKind::LocalConnector
+                    && route.provider_ref.is_none()
+            }
+            RuntimeWorkspaceRouteTarget::Harness { branch } => match system_key {
+                SystemMcpKey::TerminalController => {
+                    route.provider_kind == McpProviderKind::Unavailable
+                        && route.provider_ref.is_none()
+                }
+                SystemMcpKey::CodeMaintainerWrite
+                    if matches!(branch, HarnessBranchTarget::Default { .. }) =>
+                {
+                    route.provider_kind == McpProviderKind::Unavailable
+                        && route.provider_ref.is_none()
+                }
+                SystemMcpKey::CodeMaintainerRead | SystemMcpKey::CodeMaintainerWrite => {
+                    route.provider_kind == McpProviderKind::Harness && route.provider_ref.is_none()
+                }
+                _ => false,
+            },
+            RuntimeWorkspaceRouteTarget::CloudSandbox { target } => {
+                route.provider_kind == McpProviderKind::CloudSandbox
+                    && route.provider_ref.as_deref() == Some(target.provider_ref().as_str())
+            }
+        };
+        if !valid {
+            return Err(ApiError::conflict(format!(
+                "runtime workspace route binding is inconsistent for {}: provider={:?}, provider_ref={:?}",
+                route.resource_id, route.provider_kind, route.provider_ref
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn bind_sandbox_image_routes(

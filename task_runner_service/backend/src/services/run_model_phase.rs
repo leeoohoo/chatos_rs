@@ -96,7 +96,7 @@ impl PreparedSingleModelStep {
         &self,
         calls: &[Value],
         results: &[Value],
-    ) -> Result<(), String> {
+    ) -> Result<Vec<chatos_mcp_runtime::ToolResult>, String> {
         if calls.len() != results.len() {
             return Err("MCP aggregate result count does not match pending tool calls".to_string());
         }
@@ -150,7 +150,23 @@ impl PreparedSingleModelStep {
         self.runtime
             .runner()
             .persist_external_tool_results(&options, tool_results.as_slice())
-            .await
+            .await?;
+        Ok(tool_results)
+    }
+
+    pub(crate) fn automatic_file_write_recovery_calls(
+        &self,
+        tool_results: &[chatos_mcp_runtime::ToolResult],
+    ) -> Result<Vec<Value>, String> {
+        let available_tools = self
+            .runtime
+            .mcp_executor()
+            .map(|executor| executor.available_tools())
+            .unwrap_or_default();
+        chatos_ai_runtime::automatic_file_write_recovery_calls(
+            tool_results,
+            available_tools.as_slice(),
+        )
     }
 
     fn restore_durable_state(&self, input: &Value) -> Result<(), String> {
@@ -194,7 +210,7 @@ impl PreparedSingleModelStep {
 #[cfg(test)]
 mod cloud_trigger_tests {
     #[test]
-    fn cloud_event_driven_model_config_is_stateless() {
+    fn cloud_event_driven_model_config_uses_durable_full_input() {
         let mut config = chatos_ai_runtime::ModelRuntimeConfig::openai_compatible(
             "https://api.openai.com/v1",
             "secret",

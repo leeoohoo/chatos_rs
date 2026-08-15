@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_mcp_service::MCP_ERROR_INTERNAL;
 
 fn record() -> RuntimeInvocationRecord {
     RuntimeInvocationRecord {
@@ -595,4 +596,92 @@ async fn stats_summarize_memory_store_by_status() {
     assert_eq!(stats.cancel_requested, 0);
     assert_eq!(stats.terminal, 1);
     assert_eq!(stats.duration.completed_count, 1);
+}
+
+#[tokio::test]
+async fn restart_recovery_requeues_queued_and_preserves_waiting_user_invocations() {
+    let store = RuntimeInvocationStore::memory();
+    let mut queued = record();
+    queued.invocation_id = "invocation-recovery-queued".to_string();
+    queued.request_id_key = "\"request-recovery-queued\"".to_string();
+    queued.status = RuntimeInvocationStatus::Queued;
+    queued.started_at_unix_ms = None;
+    store.register(queued.clone()).await.unwrap();
+
+    let mut waiting = record();
+    waiting.invocation_id = "invocation-recovery-waiting".to_string();
+    waiting.request_id_key = "\"request-recovery-waiting\"".to_string();
+    store.register(waiting.clone()).await.unwrap();
+    store
+        .mark_waiting_for_user(waiting.invocation_id.as_str())
+        .await
+        .unwrap();
+    waiting.status = RuntimeInvocationStatus::WaitingForUser;
+
+    assert!(!store.recover_after_restart(&queued, true).await.unwrap());
+    assert!(!store.recover_after_restart(&waiting, true).await.unwrap());
+    let active = store.list_active(10).await.unwrap();
+    assert_eq!(active.len(), 2);
+}
+
+#[tokio::test]
+async fn restart_recovery_fails_read_only_but_marks_started_mutation_unknown() {
+    let store = RuntimeInvocationStore::memory();
+    let read = record();
+    store.register(read.clone()).await.unwrap();
+    assert!(store.recover_after_restart(&read, true).await.unwrap());
+    let read = store
+        .get_for_caller(read.invocation_id.as_str(), read.caller_service.as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(read.status, RuntimeInvocationStatus::Failed);
+    assert_eq!(read.terminal_error_code, Some(MCP_ERROR_INTERNAL));
+
+    let mut mutation = record();
+    mutation.invocation_id = "invocation-recovery-mutation".to_string();
+    mutation.request_id_key = "\"request-recovery-mutation\"".to_string();
+    mutation.mutation_may_have_started = true;
+    store.register(mutation.clone()).await.unwrap();
+    assert!(store.recover_after_restart(&mutation, true).await.unwrap());
+    let mutation = store
+        .get_for_caller(
+            mutation.invocation_id.as_str(),
+            mutation.caller_service.as_str(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        mutation.status,
+        RuntimeInvocationStatus::UnknownExecutionState
+    );
+    assert_eq!(
+        mutation.terminal_error_code,
+        Some(chatos_mcp_service::MCP_ERROR_UNKNOWN_EXECUTION_STATE)
+    );
+}
+
+#[tokio::test]
+async fn restart_recovery_closes_invocation_whose_batch_is_missing() {
+    let store = RuntimeInvocationStore::memory();
+    let mut queued = record();
+    queued.status = RuntimeInvocationStatus::Queued;
+    queued.started_at_unix_ms = None;
+    store.register(queued.clone()).await.unwrap();
+
+    assert!(store.recover_after_restart(&queued, false).await.unwrap());
+    let recovered = store
+        .get_for_caller(
+            queued.invocation_id.as_str(),
+            queued.caller_service.as_str(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.status, RuntimeInvocationStatus::Failed);
+    assert!(recovered
+        .terminal_error_message
+        .as_deref()
+        .is_some_and(|message| message.contains("durable tool batch")));
 }

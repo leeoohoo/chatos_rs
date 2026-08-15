@@ -557,6 +557,30 @@ pub(crate) async fn execute_tool_batch_invocation(
     {
         Some(snapshot) => snapshot,
         None => {
+            state
+                .runtime_invocations
+                .close_registered_invocation(
+                    call.invocation_id.as_str(),
+                    record.session_id.as_str(),
+                )
+                .await?;
+            let recovered = state
+                .runtime_invocations
+                .get_for_caller(
+                    call.invocation_id.as_str(),
+                    batch.command.owner_service.as_str(),
+                )
+                .await?;
+            if let Some(recovered) = recovered {
+                return state
+                    .runtime_tool_batches
+                    .record_terminal_item(
+                        batch_id,
+                        call_index,
+                        result_item_from_record(call, recovered),
+                    )
+                    .await;
+            }
             return state
                 .runtime_tool_batches
                 .record_terminal_item(
@@ -824,6 +848,45 @@ pub(crate) async fn resume_terminal_tool_batch_invocation(
             .map(Some);
     }
     Ok(Some(batch))
+}
+
+pub(crate) async fn persist_terminal_tool_batch_invocation_without_session(
+    state: &AppState,
+    invocation_id: &str,
+) -> Result<Option<RuntimeToolBatchRecord>, String> {
+    let Some(batch) = state
+        .runtime_tool_batches
+        .find_by_invocation(invocation_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Some(call_index) = batch
+        .command
+        .calls
+        .iter()
+        .position(|call| call.invocation_id == invocation_id)
+    else {
+        return Ok(None);
+    };
+    let call = &batch.command.calls[call_index];
+    let record = state
+        .runtime_invocations
+        .get_for_caller(invocation_id, batch.command.owner_service.as_str())
+        .await?
+        .ok_or_else(|| "recovered Runtime Invocation record is missing".to_string())?;
+    if !is_terminal_invocation_status(record.status) {
+        return Ok(Some(batch));
+    }
+    state
+        .runtime_tool_batches
+        .record_terminal_item(
+            batch.batch_id.as_str(),
+            call_index,
+            result_item_from_record(call, record),
+        )
+        .await
+        .map(Some)
 }
 
 fn is_terminal_invocation_status(status: RuntimeInvocationStatus) -> bool {

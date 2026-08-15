@@ -21,6 +21,9 @@ pub(super) struct PrerequisiteTaskContext {
     pub(super) run_result_summary: Option<String>,
     pub(super) process_log: Option<String>,
     pub(super) report_content: Option<String>,
+    pub(super) execution_group_id: Option<String>,
+    pub(super) integrated_commit: Option<String>,
+    pub(super) supply_chain_receipt: Option<Value>,
 }
 
 pub(super) fn build_task_prompt(
@@ -292,6 +295,15 @@ pub(super) fn build_prerequisite_context(
             has_terminal_output,
         ),
         report_content,
+        execution_group_id: run
+            .and_then(|run| run.workspace_execution.as_ref())
+            .and_then(|workspace| workspace.execution_group_id.clone()),
+        integrated_commit: run
+            .and_then(|run| run.workspace_execution.as_ref())
+            .and_then(|workspace| workspace.integrated_commit.clone()),
+        supply_chain_receipt: run
+            .and_then(|run| run.input_snapshot.get("supply_chain_receipt"))
+            .cloned(),
     }
 }
 
@@ -357,6 +369,9 @@ pub(super) fn prerequisite_context_json(contexts: &[PrerequisiteTaskContext]) ->
                 "run_result_summary": context.run_result_summary,
                 "process_log": context.process_log,
                 "report_content": context.report_content,
+                "execution_group_id": context.execution_group_id,
+                "integrated_commit": context.integrated_commit,
+                "supply_chain_receipt": context.supply_chain_receipt,
             })
         })
         .collect::<Vec<_>>())
@@ -461,6 +476,9 @@ mod tests {
                 run_result_summary: Some("新增 src/domain.test.ts".to_string()),
                 process_log: None,
                 report_content: None,
+                execution_group_id: None,
+                integrated_commit: None,
+                supply_chain_receipt: None,
             }],
             BuiltinMcpPromptLocale::ZhCn,
         );

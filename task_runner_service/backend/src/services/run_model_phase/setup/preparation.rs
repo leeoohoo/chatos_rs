@@ -21,6 +21,19 @@ pub(super) async fn prepare_model_execution(
     capability_policy: Option<&TaskRunnerCapabilityPolicy>,
     mcp_runtime_session_ref: Option<&str>,
 ) -> Result<PreparedModelExecution, String> {
+    let task_role = task
+        .input_payload
+        .as_ref()
+        .and_then(|payload| payload.get("task_role"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("implementation");
+    if task_role.eq_ignore_ascii_case("verification") && run.effective_tools.workspace_write {
+        return Err(
+            "verification task runtime cannot expose CodeMaintainerWrite; create a repair task and re-run verification"
+                .to_string(),
+        );
+    }
     let task_agent_key = service.resolve_task_runner_agent_key_for_task(task).await?;
     service.ensure_run_thread(task, run).await?;
     let effective_workspace_dir = effective_workspace_dir.to_string();

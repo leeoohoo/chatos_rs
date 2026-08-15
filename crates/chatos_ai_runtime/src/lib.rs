@@ -4,6 +4,7 @@
 pub mod builder;
 pub mod compat;
 pub mod error_policy;
+pub mod file_write_recovery;
 pub mod input_transform;
 pub mod lifecycle;
 pub mod mcp_executor;
@@ -40,6 +41,7 @@ pub use error_policy::{
     replay_request_error_policy, should_retry_without_stream, transient_retry_backoff_ms,
     transient_retry_kind_label, RequestErrorReplay, TransientRetryAction,
 };
+pub use file_write_recovery::automatic_file_write_recovery_calls;
 pub use input_transform::{
     append_input_items, assistant_visible_text, build_current_input_items, content_parts_to_text,
     convert_parts_to_response_input, extract_raw_input, normalize_input_for_provider,
@@ -74,7 +76,7 @@ pub use stateless_history::{
 pub use task::TaskRunExecution;
 pub use task::{
     tool_result_is_meaningful_engineering_action, tool_result_is_missing_targeted_read,
-    tool_result_is_placeholder_progress_write, TaskBuiltinMcpPromptMode,
+    tool_result_is_placeholder_progress_write, TaskAcceptanceEvidence, TaskBuiltinMcpPromptMode,
     TaskBuiltinMcpPromptSnapshot, TaskExecutionOutcome, TaskExecutionOutcomeStatus,
     TaskExecutionProgressSnapshot, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
     TaskExecutionReviewPolicy, TaskExecutionReviewTrigger, TaskMcpInitMode,

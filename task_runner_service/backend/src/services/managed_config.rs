@@ -20,6 +20,10 @@ pub(super) const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY: &str =
     "task_runner.supply_chain.node_audit_level";
 pub(super) const TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY: &str =
     "task_runner.supply_chain.install_script_allowlist";
+pub(super) const TASK_RUNNER_SUPPLY_CHAIN_NODE_INSTALL_REGISTRY_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_install_registry";
+pub(super) const TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_REGISTRY_CONFIG_KEY: &str =
+    "task_runner.supply_chain.node_audit_registry";
 
 #[cfg(not(test))]
 fn managed_config_client() -> Result<&'static chatos_config_sdk::ConfigClient, String> {
@@ -106,6 +110,14 @@ pub(super) async fn load_managed_config_snapshot(
             (
                 TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY.to_string(),
                 json!(["esbuild"]),
+            ),
+            (
+                TASK_RUNNER_SUPPLY_CHAIN_NODE_INSTALL_REGISTRY_CONFIG_KEY.to_string(),
+                json!("https://registry.npmjs.org"),
+            ),
+            (
+                TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_REGISTRY_CONFIG_KEY.to_string(),
+                json!("https://registry.npmjs.org"),
             ),
         ]),
         env: BTreeMap::new(),

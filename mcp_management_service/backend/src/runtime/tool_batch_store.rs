@@ -403,6 +403,34 @@ impl RuntimeToolBatchStore {
         }
     }
 
+    pub async fn list_active(&self, limit: usize) -> Result<Vec<RuntimeToolBatchRecord>, String> {
+        let limit = limit.clamp(1, 1_000);
+        let mut records = match self.backend.as_ref() {
+            RuntimeToolBatchStoreBackend::Memory(records) => records
+                .read()
+                .await
+                .values()
+                .filter(|record| record.status == RuntimeToolBatchStatus::Active)
+                .cloned()
+                .collect::<Vec<_>>(),
+            RuntimeToolBatchStoreBackend::Mongo(collection) => collection
+                .find(doc! { "status": "active" }, None)
+                .await
+                .map_err(|error| format!("list active Runtime Tool Batches failed: {error}"))?
+                .take(limit)
+                .try_collect()
+                .await
+                .map_err(|error| format!("read active Runtime Tool Batches failed: {error}"))?,
+        };
+        records.sort_by(|left, right| {
+            left.created_at_unix_ms
+                .cmp(&right.created_at_unix_ms)
+                .then_with(|| left.batch_id.cmp(&right.batch_id))
+        });
+        records.truncate(limit);
+        Ok(records)
+    }
+
     async fn mutate<F>(
         &self,
         batch_id: &str,
@@ -658,5 +686,27 @@ mod tests {
             batch.pending_event,
             Some(RuntimeToolBatchPendingEvent::InvocationReady { call_index: 1 })
         );
+    }
+
+    #[tokio::test]
+    async fn active_batch_scan_includes_acked_running_batch_without_pending_event() {
+        let store = RuntimeToolBatchStore::memory();
+        store
+            .insert_or_get(record(1, vec![None]))
+            .await
+            .expect("insert batch");
+        store
+            .acknowledge_pending_event(
+                "batch-1",
+                &RuntimeToolBatchPendingEvent::InvocationReady { call_index: 0 },
+            )
+            .await
+            .expect("ack ready event");
+
+        assert!(store.list_pending(10).await.unwrap().is_empty());
+        let active = store.list_active(10).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].next_call_index, 0);
+        assert_eq!(active[0].pending_event, None);
     }
 }

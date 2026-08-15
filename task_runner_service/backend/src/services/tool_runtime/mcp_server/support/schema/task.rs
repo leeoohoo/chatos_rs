@@ -196,6 +196,13 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                             "Select the external MCP configuration ids this task needs from the target Agent binding.",
                             &[],
                         ),
+                        "owned_paths": {
+                            "type": "array",
+                            "maxItems": 200,
+                            "items": { "type": "string", "minLength": 1 },
+                            "uniqueItems": true,
+                            "description": "Structured repository-relative files or directories owned by this execution task. Use an empty array only for a genuinely read-only verification task. Parallel tasks must not own overlapping paths; add a hard prerequisite edge when ownership must be sequential."
+                        },
                         "schedule": { "type": "object" },
                         "prerequisite_refs": {
                             "type": "array",
@@ -271,6 +278,19 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         "title": { "type": "string", "minLength": 1, "description": "Execution-task title in the current user's language." },
                         "description": { "type": "string", "description": "Execution-task description in the current user's language." },
                         "objective": { "type": "string", "minLength": 1, "description": "Execution objective in the current user's language; preserve code, commands, paths, APIs, and product names." },
+                        "acceptance_criteria": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "items": { "type": "string", "minLength": 1 },
+                            "uniqueItems": true,
+                            "description": "Every hard acceptance criterion this execution task must prove. Outcome Review requires a one-to-one structured evidence mapping before succeeded is allowed."
+                        },
+                        "task_role": {
+                            "type": "string",
+                            "enum": ["implementation", "verification"],
+                            "description": "Programmatic task boundary. Verification tasks are read-only for project files and must create a repair task instead of modifying product code."
+                        },
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
@@ -301,7 +321,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         },
                         "prerequisite_task_ids": prerequisite_task_ids_schema()
                     },
-                    "required": ["client_ref", "project_task_ref", "title", "objective", "requires_execution", "enabled_builtin_kinds"],
+                    "required": ["client_ref", "project_task_ref", "title", "objective", "acceptance_criteria", "task_role", "requires_execution", "enabled_builtin_kinds", "owned_paths"],
                     "additionalProperties": false
                 }
             }

@@ -264,6 +264,7 @@ pub(super) async fn rerun_requirement_execution_inner(
                 last_error_message: None,
                 source_session_id: Some(session.id.clone()),
                 source_user_message_id: Some(new_execution_group_id.clone()),
+                supersedes_task_runner_task_ids: Vec::new(),
             },
         )
         .await;
