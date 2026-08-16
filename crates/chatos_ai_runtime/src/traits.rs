@@ -10,7 +10,7 @@ mod tests;
 
 pub use executor::ToolExecutor;
 pub use model::{
-    ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage,
+    JsonSchemaOutputFormat, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage,
     DEFAULT_MODEL_REQUEST_MAX_RETRIES,
 };
 pub use records::{

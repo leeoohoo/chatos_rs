@@ -3,11 +3,14 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 
 use super::{CodeMaintainerOptions, CodeMaintainerService};
+
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
@@ -15,7 +18,13 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("unix epoch")
         .as_nanos();
-    path.push(format!("{prefix}_{nonce}"));
+    let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    path.push(format!(
+        "{prefix}_{}_{}_{}",
+        std::process::id(),
+        nonce,
+        sequence
+    ));
     path
 }
 

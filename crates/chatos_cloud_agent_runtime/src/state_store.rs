@@ -18,13 +18,47 @@ struct InMemoryCloudAgentState {
     runs: HashMap<String, CloudAgentRunRecord>,
     lanes: HashMap<String, InMemoryLane>,
     claims: HashMap<String, String>,
-    outbox: HashMap<String, CloudAgentOutboxIntent>,
+    outbox: HashMap<String, InMemoryCloudAgentOutboxRecord>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct InMemoryLane {
     next_lane_seq: u64,
     active_lane_seq: u64,
+}
+
+#[derive(Debug, Clone)]
+struct InMemoryCloudAgentOutboxRecord {
+    intent: CloudAgentOutboxIntent,
+    available_at: chrono::DateTime<chrono::Utc>,
+    publish_attempts: u32,
+    last_error: Option<String>,
+    dead_lettered: bool,
+}
+
+impl InMemoryCloudAgentOutboxRecord {
+    fn pending(intent: CloudAgentOutboxIntent) -> Self {
+        Self {
+            available_at: intent.available_at,
+            intent,
+            publish_attempts: 0,
+            last_error: None,
+            dead_lettered: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudAgentOutboxPublishFailure {
+    pub publish_attempts: u32,
+    pub dead_lettered: bool,
+    pub available_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CloudAgentPendingOutboxIntent {
+    pub intent: CloudAgentOutboxIntent,
+    pub publish_attempts: u32,
 }
 
 #[derive(Clone, Default)]
@@ -94,7 +128,7 @@ impl InMemoryCloudAgentRunStore {
             state
                 .outbox
                 .entry(intent.event_id.clone())
-                .or_insert(intent);
+                .or_insert_with(|| InMemoryCloudAgentOutboxRecord::pending(intent));
         }
         Ok(())
     }
@@ -121,6 +155,18 @@ impl InMemoryCloudAgentRunStore {
         &self,
         limit: i64,
     ) -> Result<Vec<CloudAgentOutboxIntent>, String> {
+        Ok(self
+            .list_ready_outbox_with_attempts(limit)
+            .await?
+            .into_iter()
+            .map(|record| record.intent)
+            .collect())
+    }
+
+    pub(crate) async fn list_ready_outbox_with_attempts(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
         let now = chrono::Utc::now();
         let mut intents = self
             .state
@@ -128,13 +174,21 @@ impl InMemoryCloudAgentRunStore {
             .await
             .outbox
             .values()
-            .filter(|intent| intent.available_at <= now)
-            .cloned()
+            .filter(|record| !record.dead_lettered && record.available_at <= now)
+            .map(|record| {
+                let mut intent = record.intent.clone();
+                intent.available_at = record.available_at;
+                CloudAgentPendingOutboxIntent {
+                    intent,
+                    publish_attempts: record.publish_attempts,
+                }
+            })
             .collect::<Vec<_>>();
         intents.sort_by(|left, right| {
-            left.available_at
-                .cmp(&right.available_at)
-                .then_with(|| left.event_id.cmp(&right.event_id))
+            left.intent
+                .available_at
+                .cmp(&right.intent.available_at)
+                .then_with(|| left.intent.event_id.cmp(&right.intent.event_id))
         });
         intents.truncate(usize::try_from(limit.max(1)).unwrap_or(usize::MAX));
         Ok(intents)
@@ -142,6 +196,31 @@ impl InMemoryCloudAgentRunStore {
 
     pub async fn mark_outbox_published(&self, event_id: &str) -> Result<bool, String> {
         Ok(self.state.lock().await.outbox.remove(event_id).is_some())
+    }
+
+    pub async fn mark_outbox_publish_failed(
+        &self,
+        event_id: &str,
+        error: &str,
+        next_available_at: chrono::DateTime<chrono::Utc>,
+        max_attempts: u32,
+    ) -> Result<Option<CloudAgentOutboxPublishFailure>, String> {
+        let mut state = self.state.lock().await;
+        let Some(record) = state.outbox.get_mut(event_id) else {
+            return Ok(None);
+        };
+        if record.dead_lettered {
+            return Ok(None);
+        }
+        record.publish_attempts = record.publish_attempts.saturating_add(1);
+        record.last_error = Some(bounded_outbox_publish_error(error));
+        record.dead_lettered = record.publish_attempts >= max_attempts.max(1);
+        record.available_at = next_available_at;
+        Ok(Some(CloudAgentOutboxPublishFailure {
+            publish_attempts: record.publish_attempts,
+            dead_lettered: record.dead_lettered,
+            available_at: record.available_at,
+        }))
     }
 }
 
@@ -240,7 +319,7 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
             state
                 .outbox
                 .entry(intent.event_id.clone())
-                .or_insert(intent);
+                .or_insert_with(|| InMemoryCloudAgentOutboxRecord::pending(intent));
         }
         if transition.next_status.is_terminal() {
             let lane = state
@@ -363,12 +442,48 @@ impl CloudAgentStateStore {
         }
     }
 
+    pub(crate) async fn list_ready_outbox_with_attempts(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
+        match self {
+            Self::Memory(store) => store.list_ready_outbox_with_attempts(limit).await,
+            Self::Mongo(store) => store.list_ready_outbox_with_attempts(limit).await,
+        }
+    }
+
     pub async fn mark_outbox_published(&self, event_id: &str) -> Result<bool, String> {
         match self {
             Self::Memory(store) => store.mark_outbox_published(event_id).await,
             Self::Mongo(store) => store.mark_outbox_published(event_id).await,
         }
     }
+
+    pub async fn mark_outbox_publish_failed(
+        &self,
+        event_id: &str,
+        error: &str,
+        next_available_at: chrono::DateTime<chrono::Utc>,
+        max_attempts: u32,
+    ) -> Result<Option<CloudAgentOutboxPublishFailure>, String> {
+        match self {
+            Self::Memory(store) => {
+                store
+                    .mark_outbox_publish_failed(event_id, error, next_available_at, max_attempts)
+                    .await
+            }
+            Self::Mongo(store) => {
+                store
+                    .mark_outbox_publish_failed(event_id, error, next_available_at, max_attempts)
+                    .await
+            }
+        }
+    }
+}
+
+pub(super) fn bounded_outbox_publish_error(error: &str) -> String {
+    const MAX_ERROR_CHARS: usize = 2_000;
+    error.chars().take(MAX_ERROR_CHARS).collect()
 }
 
 fn validate_initial_outbox(
@@ -474,6 +589,19 @@ mod tests {
         }
     }
 
+    fn outbox_intent(run: &CloudAgentRunRecord) -> CloudAgentOutboxIntent {
+        CloudAgentOutboxIntent {
+            event_id: format!("{}:event", run.ordering.agent_run_id),
+            topic: "run_started".to_string(),
+            routing_key: "cloud_agent.test.runtime".to_string(),
+            ordering: run.ordering.clone(),
+            causation_id: "cause-1".to_string(),
+            correlation_id: "correlation-1".to_string(),
+            available_at: Utc::now() - chrono::Duration::seconds(1),
+            payload: serde_json::json!({}),
+        }
+    }
+
     #[tokio::test]
     async fn terminal_commit_advances_an_empty_lane_for_the_next_future_run() {
         let store = InMemoryCloudAgentRunStore::new();
@@ -530,6 +658,54 @@ mod tests {
         assert_eq!(
             store.acquire_short_claim(&second_claim).await.unwrap(),
             CloudAgentClaimResult::Acquired
+        );
+    }
+
+    #[tokio::test]
+    async fn outbox_publish_failures_back_off_and_eventually_dead_letter() {
+        let store = InMemoryCloudAgentRunStore::new();
+        let lane_seq = store.allocate_lane_seq("task:task-1").await.unwrap();
+        let run = run_record("run-outbox", lane_seq);
+        let intent = outbox_intent(&run);
+        store
+            .insert_run_with_outbox(run, vec![intent.clone()])
+            .await
+            .unwrap();
+
+        assert_eq!(store.list_ready_outbox(10).await.unwrap().len(), 1);
+        let retry_at = Utc::now() + chrono::Duration::minutes(1);
+        let first = store
+            .mark_outbox_publish_failed(intent.event_id.as_str(), "publish failed", retry_at, 8)
+            .await
+            .unwrap()
+            .expect("pending outbox failure");
+        assert_eq!(first.publish_attempts, 1);
+        assert!(!first.dead_lettered);
+        assert!(store.list_ready_outbox(10).await.unwrap().is_empty());
+
+        let mut latest = first;
+        for _ in 2..=8 {
+            latest = store
+                .mark_outbox_publish_failed(
+                    intent.event_id.as_str(),
+                    "publish failed again",
+                    Utc::now() - chrono::Duration::seconds(1),
+                    8,
+                )
+                .await
+                .unwrap()
+                .expect("pending outbox failure");
+        }
+        assert_eq!(latest.publish_attempts, 8);
+        assert!(latest.dead_lettered);
+        assert!(store.list_ready_outbox(10).await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn outbox_publish_errors_are_bounded() {
+        assert_eq!(
+            bounded_outbox_publish_error(&"x".repeat(3_000)).len(),
+            2_000
         );
     }
 }

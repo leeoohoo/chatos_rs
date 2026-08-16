@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { useEffect, useState, type FC } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { getMessageTaskRunnerRunChanges } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type {
@@ -27,7 +28,9 @@ interface MessageTaskRunDetailModalProps {
   messageId?: string;
   taskLookup?: MessageTaskRunnerLookupOptions;
   loadingMoreEvents?: boolean;
+  refreshing?: boolean;
   onLoadMoreEvents?: () => void;
+  onRefresh?: () => void;
   onClose: () => void;
 }
 
@@ -58,7 +61,9 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   messageId,
   taskLookup,
   loadingMoreEvents = false,
+  refreshing = false,
   onLoadMoreEvents,
+  onRefresh,
   onClose,
 }) => {
   const apiClient = useApiClient();
@@ -125,6 +130,19 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       onClose={onClose}
       widthClassName="max-w-6xl"
     >
+      {onRefresh ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+            disabled={refreshing}
+            onClick={onRefresh}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? '正在刷新' : '刷新运行详情'}
+          </button>
+        </div>
+      ) : null}
       <FieldGrid
         items={[
           ['运行 ID', run.id],

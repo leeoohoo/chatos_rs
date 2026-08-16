@@ -10,6 +10,7 @@ use crate::model_config::{
     normalize_provider, reasoning_effort_for_provider, thinking_mode_for_provider,
 };
 use crate::response_parse::{chat_message_content_to_text, tool_arguments_to_string};
+use crate::JsonSchemaOutputFormat;
 
 pub const CHAT_PROMPT_CACHE_RETENTION: &str = "24h";
 
@@ -28,6 +29,7 @@ pub fn build_responses_request_payload(
     thinking_level: Option<String>,
     stream: bool,
     include_prompt_cache_retention: bool,
+    output_format: Option<JsonSchemaOutputFormat>,
 ) -> Value {
     let should_request_reasoning_summary =
         should_request_responses_reasoning_summary(provider.as_deref(), model.as_str());
@@ -72,6 +74,11 @@ pub fn build_responses_request_payload(
         }
         payload["reasoning"] = reasoning_payload;
     }
+    if let Some(output_format) = output_format {
+        payload["text"] = json!({
+            "format": responses_json_schema_format(output_format),
+        });
+    }
     payload["stream"] = Value::Bool(stream);
     payload
 }
@@ -106,6 +113,7 @@ pub fn build_chat_completions_request_payload(
     provider: Option<String>,
     thinking_level: Option<String>,
     stream: bool,
+    output_format: Option<JsonSchemaOutputFormat>,
 ) -> Value {
     let mut messages = input_to_chat_messages(input);
     if let Some(system) = normalized_option(instructions.as_deref()) {
@@ -140,11 +148,42 @@ pub fn build_chat_completions_request_payload(
     if let Some(mode) = thinking_mode_for_provider(provider.as_deref(), thinking_level.as_deref()) {
         payload["thinking"] = json!({ "type": mode });
     }
+    if let Some(output_format) = output_format {
+        payload["response_format"] = json!({
+            "type": "json_schema",
+            "json_schema": chat_completions_json_schema_format(output_format),
+        });
+    }
     payload["stream"] = Value::Bool(stream);
     if stream {
         payload["stream_options"] = json!({ "include_usage": true });
     }
     payload
+}
+
+fn responses_json_schema_format(output_format: JsonSchemaOutputFormat) -> Value {
+    let mut format = json!({
+        "type": "json_schema",
+        "name": output_format.name,
+        "schema": output_format.schema,
+        "strict": output_format.strict,
+    });
+    if let Some(description) = output_format.description {
+        format["description"] = Value::String(description);
+    }
+    format
+}
+
+fn chat_completions_json_schema_format(output_format: JsonSchemaOutputFormat) -> Value {
+    let mut format = json!({
+        "name": output_format.name,
+        "schema": output_format.schema,
+        "strict": output_format.strict,
+    });
+    if let Some(description) = output_format.description {
+        format["description"] = Value::String(description);
+    }
+    format
 }
 
 pub fn input_to_chat_messages(input: Value) -> Vec<Value> {

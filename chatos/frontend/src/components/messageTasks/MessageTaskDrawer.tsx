@@ -110,6 +110,8 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
     retryTaskIntegration,
     waiveTaskIntegration,
     loadMoreRunEvents,
+    refreshRunDetail,
+    refreshingRunDetail,
     closeDetail,
     closeProcessLog,
     closeRun,
@@ -453,7 +455,9 @@ export const MessageTaskDrawer: FC<MessageTaskDrawerProps> = ({
         messageId={message.id}
         taskLookup={taskLookup}
         loadingMoreEvents={Boolean(runDetail && loadingRunId === runDetail.run?.id)}
+        refreshing={refreshingRunDetail}
         onLoadMoreEvents={loadMoreRunEvents}
+        onRefresh={() => void refreshRunDetail(false)}
         onClose={closeRun}
       />
     </>

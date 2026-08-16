@@ -83,6 +83,7 @@ fn deepseek_thinking_chat_payload_skips_temperature() {
         Some("deepseek".to_string()),
         Some("high".to_string()),
         true,
+        None,
     );
 
     assert!(payload.get("temperature").is_none());
@@ -107,6 +108,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         abort_token: None,
         force_identity_encoding: false,
         stream: true,
+        output_format: None,
     };
     let payload = build_responses_request_payload(
         json!([]),
@@ -122,6 +124,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         Some("medium".to_string()),
         true,
         options.include_prompt_cache_retention,
+        options.output_format,
     );
 
     assert_eq!(
@@ -182,6 +185,7 @@ fn responses_payload_normalizes_legacy_text_parts_by_message_role() {
         None,
         true,
         false,
+        None,
     );
 
     assert_eq!(
@@ -214,6 +218,7 @@ fn responses_payload_requests_summary_for_gpt_model_on_compatible_provider() {
         Some("xhigh".to_string()),
         true,
         false,
+        None,
     );
 
     assert_eq!(
@@ -242,6 +247,7 @@ fn responses_payload_omits_summary_for_generic_compatible_model() {
         Some("high".to_string()),
         true,
         false,
+        None,
     );
 
     assert_eq!(

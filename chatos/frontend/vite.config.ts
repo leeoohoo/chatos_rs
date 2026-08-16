@@ -191,7 +191,9 @@ export default defineConfig({
       ),
     },
     sourcemap: false,
-    chunkSizeWarningLimit: 600,
+    // Mermaid parsers and the main application shell are intentionally split into
+    // stable cacheable chunks; keep the warning budget aligned with that layout.
+    chunkSizeWarningLimit: 1_100,
     rollupOptions: {
       output: {
         manualChunks(id) {

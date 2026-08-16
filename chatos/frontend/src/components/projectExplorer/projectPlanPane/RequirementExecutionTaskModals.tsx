@@ -23,6 +23,8 @@ export const RequirementExecutionTaskModals: React.FC<{
     loadingRunId,
     processRunDetail,
     processTask,
+    refreshRunDetail,
+    refreshingRunDetail,
     retryError,
     retryTask,
     retryTaskIntegration,
@@ -51,7 +53,9 @@ export const RequirementExecutionTaskModals: React.FC<{
       <MessageTaskRunDetailModal
         detail={runDetail}
         loadingMoreEvents={Boolean(runDetail && loadingRunId === runDetail.run?.id)}
+        refreshing={refreshingRunDetail}
         onLoadMoreEvents={loadMoreRunEvents}
+        onRefresh={() => void refreshRunDetail(false)}
         onClose={closeRun}
       />
     </>

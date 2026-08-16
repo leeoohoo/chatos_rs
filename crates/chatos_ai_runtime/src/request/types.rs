@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::JsonSchemaOutputFormat;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiResponse {
     pub content: String,
@@ -51,6 +53,7 @@ pub struct AiRequestOptions {
     /// subscribe to incremental callbacks. Recovery requests can disable
     /// streaming for OpenAI-compatible gateways that truncate SSE bodies.
     pub stream: bool,
+    pub output_format: Option<JsonSchemaOutputFormat>,
 }
 
 impl Default for AiRequestOptions {
@@ -64,6 +67,7 @@ impl Default for AiRequestOptions {
             abort_token: None,
             force_identity_encoding: false,
             stream: true,
+            output_format: None,
         }
     }
 }

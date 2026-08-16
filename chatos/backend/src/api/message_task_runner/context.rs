@@ -43,6 +43,7 @@ pub(super) struct MessageTaskRunnerLookupQuery {
     source_user_message_id: Option<String>,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
+    include_events: Option<bool>,
 }
 
 impl MessageTaskRunnerLookupQuery {
@@ -74,6 +75,10 @@ impl MessageTaskRunnerLookupQuery {
 
     pub(super) fn event_offset(&self) -> Option<usize> {
         self.event_offset
+    }
+
+    pub(super) fn include_events(&self) -> Option<bool> {
+        self.include_events
     }
 }
 

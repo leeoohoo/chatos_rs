@@ -388,6 +388,7 @@ async fn get_message_task_runner_graph_run(
         context.source_turn_id.as_deref(),
         query.event_limit(),
         query.event_offset(),
+        query.include_events(),
     )
     .await
     {
@@ -425,6 +426,7 @@ async fn get_message_task_runner_run(
         context.source_turn_id.as_deref(),
         query.event_limit(),
         query.event_offset(),
+        query.include_events(),
     )
     .await
     {

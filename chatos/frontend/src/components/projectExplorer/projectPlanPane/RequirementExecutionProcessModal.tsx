@@ -103,6 +103,7 @@ export const RequirementExecutionProcessModal: React.FC<{
     graph, allTasks, loading, error: graphError,
     loadingProcessTaskId, loadingRunId,
     retryingTaskId, reloadGraph,
+    refreshRunDetail,
     openDetail, openProcessLog, openRun, retryTask,
   } = taskGraph;
 
@@ -277,13 +278,14 @@ export const RequirementExecutionProcessModal: React.FC<{
     try {
       await Promise.all([
         reloadGraph(silent ? { silent: true } : undefined),
+        refreshRunDetail(silent),
         refreshPlanStatus(silent),
         plannerTimeline.refresh(silent),
       ]);
     } finally {
       pollingRef.current = false;
     }
-  }, [plannerTimeline.refresh, refreshPlanStatus, reloadGraph]);
+  }, [plannerTimeline.refresh, refreshPlanStatus, refreshRunDetail, reloadGraph]);
 
   const retryFailedTask = useCallback(async (task: MessageTaskRunnerTask) => {
     setActionError(null);

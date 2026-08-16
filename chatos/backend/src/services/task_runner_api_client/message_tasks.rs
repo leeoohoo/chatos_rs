@@ -89,6 +89,7 @@ pub async fn get_message_run(
     source_turn_id: Option<&str>,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
+    include_events: Option<bool>,
 ) -> Result<Value, String> {
     let path = format!(
         "/internal/chatos/message-runs/{}",
@@ -103,11 +104,15 @@ pub async fn get_message_run(
     }
     let event_limit = event_limit.map(|value| value.to_string());
     let event_offset = event_offset.map(|value| value.to_string());
+    let include_events = include_events.map(|value| value.to_string());
     if let Some(value) = event_limit.as_deref() {
         query.push(("event_limit", value));
     }
     if let Some(value) = event_offset.as_deref() {
         query.push(("event_offset", value));
+    }
+    if let Some(value) = include_events.as_deref() {
+        query.push(("include_events", value));
     }
     get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }
@@ -266,6 +271,7 @@ pub async fn get_message_graph_run(
     source_turn_id: Option<&str>,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
+    include_events: Option<bool>,
 ) -> Result<Value, String> {
     let path = format!(
         "/internal/chatos/message-graph/runs/{}",
@@ -280,11 +286,15 @@ pub async fn get_message_graph_run(
     }
     let event_limit = event_limit.map(|value| value.to_string());
     let event_offset = event_offset.map(|value| value.to_string());
+    let include_events = include_events.map(|value| value.to_string());
     if let Some(value) = event_limit.as_deref() {
         query.push(("event_limit", value));
     }
     if let Some(value) = event_offset.as_deref() {
         query.push(("event_offset", value));
+    }
+    if let Some(value) = include_events.as_deref() {
+        query.push(("include_events", value));
     }
     get_internal_json(base_url, path.as_str(), query.as_slice()).await
 }

@@ -26,7 +26,9 @@ pub use rabbitmq_driver::{
     CloudAgentQueueOwner, CloudAgentRabbitMqTopology, CloudAgentServiceAdapter,
     CloudAgentServiceRuntime,
 };
-pub use state_store::{CloudAgentStateStore, InMemoryCloudAgentRunStore};
+pub use state_store::{
+    CloudAgentOutboxPublishFailure, CloudAgentStateStore, InMemoryCloudAgentRunStore,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CloudAgentClaim {

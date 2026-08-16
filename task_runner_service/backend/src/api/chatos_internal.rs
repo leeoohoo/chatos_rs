@@ -367,6 +367,7 @@ struct ChatosMessageRunQuery {
     source: ChatosMessageTaskQuery,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
+    include_events: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -653,19 +654,22 @@ async fn get_chatos_message_run(
         .await
         .map_err(InternalApiError::internal)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    let events = state
-        .run_service
-        .list_run_events(run.id.as_str())
-        .await
-        .map_err(InternalApiError::internal)?;
-    let tool_text_limit_chars = state
-        .task_service
-        .effective_tool_result_model_budget_limits()
-        .await
-        .map_err(InternalApiError::internal)?
-        .per_result_max_chars;
-    let (events, events_total, events_has_more) =
-        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars);
+    let (events, events_total, events_has_more) = if query.include_events.unwrap_or(true) {
+        let events = state
+            .run_service
+            .list_run_events(run.id.as_str())
+            .await
+            .map_err(InternalApiError::internal)?;
+        let tool_text_limit_chars = state
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await
+            .map_err(InternalApiError::internal)?
+            .per_result_max_chars;
+        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars)
+    } else {
+        (Vec::new(), 0, false)
+    };
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())
@@ -996,19 +1000,22 @@ async fn get_chatos_message_graph_run(
         .find(|node| node.task.id == run.task_id)
         .map(|node| node.task)
         .ok_or_else(|| InternalApiError::not_found("run not found for graph"))?;
-    let events = state
-        .run_service
-        .list_run_events(run.id.as_str())
-        .await
-        .map_err(InternalApiError::internal)?;
-    let tool_text_limit_chars = state
-        .task_service
-        .effective_tool_result_model_budget_limits()
-        .await
-        .map_err(InternalApiError::internal)?
-        .per_result_max_chars;
-    let (events, events_total, events_has_more) =
-        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars);
+    let (events, events_total, events_has_more) = if query.include_events.unwrap_or(true) {
+        let events = state
+            .run_service
+            .list_run_events(run.id.as_str())
+            .await
+            .map_err(InternalApiError::internal)?;
+        let tool_text_limit_chars = state
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await
+            .map_err(InternalApiError::internal)?
+            .per_result_max_chars;
+        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars)
+    } else {
+        (Vec::new(), 0, false)
+    };
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())

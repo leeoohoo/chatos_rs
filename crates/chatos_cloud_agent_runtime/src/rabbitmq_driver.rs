@@ -17,6 +17,7 @@ use lapin::{
     types::{AMQPValue, FieldTable},
     BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind,
 };
+use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
@@ -30,6 +31,8 @@ use crate::{
 const DELIVERY_ATTEMPT_HEADER: &str = "x-chatos-delivery-attempt";
 const DELIVERY_FAILURE_HEADER: &str = "x-chatos-delivery-failure";
 const MAX_DELIVERY_ATTEMPTS: u32 = 8;
+const MAX_OUTBOX_PUBLISH_ATTEMPTS: u32 = 8;
+const MAX_AMQP_SHORT_STRING_BYTES: usize = 255;
 
 #[derive(Debug, Clone)]
 pub struct CloudAgentRabbitMqTopology {
@@ -545,19 +548,59 @@ where
     O: CloudAgentQueueOwner,
 {
     let store = owner.cloud_agent_store();
-    let intents = store.list_ready_outbox(topology.outbox_batch_size).await?;
-    if intents.is_empty() {
+    let pending = store
+        .list_ready_outbox_with_attempts(topology.outbox_batch_size)
+        .await?;
+    if pending.is_empty() {
         return Ok(0);
     }
     let (connection, channel) = open_publisher(topology).await?;
     let _connection = connection;
     let mut published = 0usize;
-    for intent in intents {
-        publish_intent(&channel, topology, &store, &intent).await?;
-        store
-            .mark_outbox_published(intent.event_id.as_str())
-            .await?;
-        published = published.saturating_add(1);
+    let mut state_errors = Vec::new();
+    for record in pending {
+        let intent = record.intent;
+        match publish_intent(&channel, topology, &store, &intent).await {
+            Ok(()) => {
+                store
+                    .mark_outbox_published(intent.event_id.as_str())
+                    .await?;
+                published = published.saturating_add(1);
+            }
+            Err(error) => {
+                let next_attempt = record.publish_attempts.saturating_add(1);
+                let next_available_at = chrono::Utc::now()
+                    + chrono::Duration::from_std(outbox_publish_retry_delay(next_attempt))
+                        .unwrap_or_else(|_| chrono::Duration::minutes(5));
+                match store
+                    .mark_outbox_publish_failed(
+                        intent.event_id.as_str(),
+                        error.as_str(),
+                        next_available_at,
+                        MAX_OUTBOX_PUBLISH_ATTEMPTS,
+                    )
+                    .await
+                {
+                    Ok(Some(failure)) => warn!(
+                        owner_service = owner.owner_service(),
+                        event_id = intent.event_id.as_str(),
+                        publish_attempts = failure.publish_attempts,
+                        dead_lettered = failure.dead_lettered,
+                        error = error.as_str(),
+                        "Cloud Agent outbox event publish failed"
+                    ),
+                    Ok(None) => {}
+                    Err(state_error) => state_errors.push(state_error),
+                }
+            }
+        }
+    }
+    if !state_errors.is_empty() {
+        return Err(format!(
+            "failed to persist {} Cloud Agent outbox publish failures: {}",
+            state_errors.len(),
+            state_errors.join("; ")
+        ));
     }
     Ok(published)
 }
@@ -798,8 +841,8 @@ async fn publish_intent(
     let mut properties = BasicProperties::default()
         .with_content_type("application/json".into())
         .with_delivery_mode(2)
-        .with_message_id(intent.event_id.clone().into())
-        .with_correlation_id(intent.correlation_id.clone().into());
+        .with_message_id(bounded_amqp_property_id(intent.event_id.as_str()).into())
+        .with_correlation_id(bounded_amqp_property_id(intent.correlation_id.as_str()).into());
     if intent.topic == "ai_runtime_retry" {
         let delay = intent
             .available_at
@@ -832,6 +875,26 @@ async fn publish_intent(
         format!("Cloud Agent event for {routing_key}").as_str(),
         confirmation,
     )
+}
+
+fn bounded_amqp_property_id(value: &str) -> String {
+    if value.len() <= MAX_AMQP_SHORT_STRING_BYTES {
+        return value.to_string();
+    }
+    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+    let suffix = format!("#{digest}");
+    let max_prefix_bytes = MAX_AMQP_SHORT_STRING_BYTES.saturating_sub(suffix.len());
+    let mut prefix_end = max_prefix_bytes.min(value.len());
+    while prefix_end > 0 && !value.is_char_boundary(prefix_end) {
+        prefix_end -= 1;
+    }
+    format!("{}{suffix}", &value[..prefix_end])
+}
+
+fn outbox_publish_retry_delay(publish_attempt: u32) -> Duration {
+    const MAX_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
+    let exponent = publish_attempt.saturating_sub(1).min(9);
+    Duration::from_secs(1_u64 << exponent).min(MAX_RETRY_DELAY)
 }
 
 fn confirmed(label: &str, confirmation: Confirmation) -> Result<(), String> {
@@ -896,6 +959,30 @@ mod tests {
     #[test]
     fn delivery_failure_header_is_bounded() {
         assert_eq!(truncate_delivery_failure(&"x".repeat(2_000)).len(), 1_024);
+    }
+
+    #[test]
+    fn amqp_property_ids_are_utf8_safe_stable_and_bounded() {
+        let short = "event-1";
+        assert_eq!(bounded_amqp_property_id(short), short);
+
+        let long = format!("event:{}", "任务".repeat(120));
+        let bounded = bounded_amqp_property_id(long.as_str());
+        assert!(bounded.len() <= MAX_AMQP_SHORT_STRING_BYTES);
+        assert_eq!(bounded, bounded_amqp_property_id(long.as_str()));
+        assert_ne!(
+            bounded,
+            bounded_amqp_property_id(format!("{long}-different").as_str())
+        );
+        assert!(bounded.contains('#'));
+    }
+
+    #[test]
+    fn outbox_publish_retry_delay_is_exponential_and_capped() {
+        assert_eq!(outbox_publish_retry_delay(1), Duration::from_secs(1));
+        assert_eq!(outbox_publish_retry_delay(2), Duration::from_secs(2));
+        assert_eq!(outbox_publish_retry_delay(8), Duration::from_secs(128));
+        assert_eq!(outbox_publish_retry_delay(20), Duration::from_secs(300));
     }
 
     #[test]

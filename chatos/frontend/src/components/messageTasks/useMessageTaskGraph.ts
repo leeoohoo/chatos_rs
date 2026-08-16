@@ -51,6 +51,36 @@ const EMPTY_GRAPH: MessageTaskRunnerGraphResponse = {
 };
 
 const RUN_EVENT_PAGE_SIZE = 40;
+const RUN_DETAIL_REFRESH_INTERVAL_MS = 2_000;
+
+const RUN_TERMINAL_STATUSES = new Set([
+  'succeeded',
+  'failed',
+  'cancelled',
+  'canceled',
+  'blocked',
+]);
+
+const MODEL_PHASE_TERMINAL_STATUSES = new Set([
+  'succeeded',
+  'failed',
+  'cancelled',
+  'canceled',
+  'blocked',
+]);
+
+const INTEGRATION_ACTIVE_STATUSES = new Set(['pending', 'integrating']);
+
+const isRunDetailStable = (detail: MessageTaskRunnerRunDetailResponse): boolean => {
+  const runStatus = readString(detail.run?.status)?.toLowerCase();
+  const modelPhaseStatus = readString(detail.run?.model_phase_status)?.toLowerCase();
+  const integrationStatus = readString(
+    detail.run?.workspace_execution?.integration_status,
+  )?.toLowerCase();
+  return Boolean(runStatus && RUN_TERMINAL_STATUSES.has(runStatus))
+    && (!modelPhaseStatus || MODEL_PHASE_TERMINAL_STATUSES.has(modelPhaseStatus))
+    && (!integrationStatus || !INTEGRATION_ACTIVE_STATUSES.has(integrationStatus));
+};
 
 const isTemporaryMessageId = (value: string): boolean => value.startsWith('temp_');
 
@@ -127,12 +157,14 @@ export function useMessageTaskGraph({
   const [processTask, setProcessTask] = useState<MessageTaskRunnerTask | null>(null);
   const [processRunDetail, setProcessRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
   const [runDetail, setRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
+  const [refreshingRunDetail, setRefreshingRunDetail] = useState(false);
   const [loadingProcessTaskId, setLoadingProcessTaskId] = useState<string | null>(null);
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const graphRequestSequenceRef = useRef(0);
   const overlayRequestSequenceRef = useRef(0);
+  const runDetailRefreshInFlightRef = useRef(false);
   const graphRequestIdentity = useMemo(() => JSON.stringify([
     messageId,
     lookup?.sessionId ?? null,
@@ -606,6 +638,63 @@ export function useMessageTaskGraph({
     runDetail,
   ]);
 
+  const refreshRunDetail = useCallback(async (silent = false) => {
+    const currentDetail = runDetail;
+    const runId = readString(currentDetail?.run?.id);
+    if (!currentDetail || !runId || runDetailRefreshInFlightRef.current) {
+      return;
+    }
+    const requestSequence = overlayRequestSequenceRef.current;
+    runDetailRefreshInFlightRef.current = true;
+    setRefreshingRunDetail(true);
+    if (!silent) {
+      setError(null);
+    }
+    try {
+      const detailSource = buildTaskSourceLookup({
+        task: currentDetail.task,
+        graph,
+        fallbackMessageId: messageId,
+        fallbackLookup: lookup,
+      });
+      const offset = (currentDetail.events_offset ?? 0) + currentDetail.events.length;
+      const detail = await getMessageTaskRunnerGraphRun(
+        apiClient.getRequestFn(),
+        detailSource.messageId,
+        runId,
+        {
+          ...detailSource.lookup,
+          eventLimit: RUN_EVENT_PAGE_SIZE,
+          eventOffset: offset,
+        },
+      );
+      if (!isCurrentOverlayRequest(requestSequence)) {
+        return;
+      }
+      setRunDetail((current) => (
+        current && readString(current.run?.id) === runId
+          ? mergeRunEventPage(current, detail)
+          : current
+      ));
+    } catch (err) {
+      if (!silent && isCurrentOverlayRequest(requestSequence)) {
+        setError(err instanceof Error ? err.message : '刷新运行详情失败');
+      }
+    } finally {
+      runDetailRefreshInFlightRef.current = false;
+      if (isCurrentOverlayRequest(requestSequence)) {
+        setRefreshingRunDetail(false);
+      }
+    }
+  }, [
+    apiClient,
+    graph,
+    isCurrentOverlayRequest,
+    lookup,
+    messageId,
+    runDetail,
+  ]);
+
   useEffect(() => {
     if (!open) {
       return;
@@ -614,12 +703,23 @@ export function useMessageTaskGraph({
   }, [open, reloadGraph]);
 
   useEffect(() => {
+    if (!open || !runDetail || isRunDetailStable(runDetail)) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void refreshRunDetail(true);
+    }, RUN_DETAIL_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [open, refreshRunDetail, runDetail]);
+
+  useEffect(() => {
     if (!open) {
       nextOverlayRequestSequence();
       setDetailTask(null);
       setProcessTask(null);
       setProcessRunDetail(null);
       setRunDetail(null);
+      setRefreshingRunDetail(false);
       setRetryingTaskId(null);
       setRetryError(null);
       setError(null);
@@ -632,6 +732,7 @@ export function useMessageTaskGraph({
     setProcessTask(null);
     setProcessRunDetail(null);
     setRunDetail(null);
+    setRefreshingRunDetail(false);
     setLoadingProcessTaskId(null);
     setLoadingRunId(null);
     setRetryingTaskId(null);
@@ -651,6 +752,7 @@ export function useMessageTaskGraph({
     processRunDetail,
     loadingProcessTaskId,
     runDetail,
+    refreshingRunDetail,
     loadingRunId,
     retryingTaskId,
     retryError,
@@ -662,6 +764,7 @@ export function useMessageTaskGraph({
     retryTaskIntegration,
     waiveTaskIntegration,
     loadMoreRunEvents,
+    refreshRunDetail,
     closeDetail: () => {
       nextOverlayRequestSequence();
       setDetailTask(null);
@@ -677,6 +780,7 @@ export function useMessageTaskGraph({
       nextOverlayRequestSequence();
       setRunDetail(null);
       setLoadingRunId(null);
+      setRefreshingRunDetail(false);
     },
   };
 }

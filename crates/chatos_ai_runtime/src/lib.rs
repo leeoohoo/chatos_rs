@@ -93,9 +93,9 @@ pub use tool_runtime::{
     TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
 pub use traits::{
-    MemoryRecordWriter, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage,
-    RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput, SaveToolRecordInput,
-    ToolExecutor, DEFAULT_MODEL_REQUEST_MAX_RETRIES,
+    JsonSchemaOutputFormat, MemoryRecordWriter, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks,
+    RuntimeMessage, RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput,
+    SaveToolRecordInput, ToolExecutor, DEFAULT_MODEL_REQUEST_MAX_RETRIES,
 };
 pub use turn::{
     build_contextual_input, input_value_to_items, message_item, user_text_item,

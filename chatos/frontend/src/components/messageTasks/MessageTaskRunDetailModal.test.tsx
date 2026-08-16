@@ -60,11 +60,13 @@ describe('MessageTaskRunDetailModal', () => {
 
   it('labels run events as diagnostics and keeps raw events collapsed by default', () => {
     const onLoadMoreEvents = vi.fn();
+    const onRefresh = vi.fn();
     render(
       <MessageTaskRunDetailModal
         detail={detail}
         onClose={vi.fn()}
         onLoadMoreEvents={onLoadMoreEvents}
+        onRefresh={onRefresh}
       />,
     );
 
@@ -75,6 +77,8 @@ describe('MessageTaskRunDetailModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '加载更多诊断事件（剩余 59）' }));
     expect(onLoadMoreEvents).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: '刷新运行详情' }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
 });

@@ -8,9 +8,10 @@ use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
 use mongodb::{Client, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
 
+use crate::state_store::CloudAgentPendingOutboxIntent;
 use crate::{
     CloudAgentAtomicTransition, CloudAgentClaim, CloudAgentClaimResult, CloudAgentOutboxIntent,
-    CloudAgentRunStore,
+    CloudAgentOutboxPublishFailure, CloudAgentRunStore,
 };
 
 const RUN_COLLECTION: &str = "cloud_agent_runs";
@@ -45,7 +46,10 @@ struct CloudAgentOutboxDocument {
     intent: CloudAgentOutboxIntent,
     available_at: DateTime,
     status: String,
+    #[serde(default)]
     publish_attempts: u32,
+    #[serde(default)]
+    last_error: Option<String>,
     created_at: DateTime,
     updated_at: DateTime,
 }
@@ -216,6 +220,7 @@ impl MongoCloudAgentRunStore {
                             ),
                             status: "pending".to_string(),
                             publish_attempts: 0,
+                            last_error: None,
                             created_at: DateTime::now(),
                             updated_at: DateTime::now(),
                         },
@@ -282,6 +287,18 @@ impl MongoCloudAgentRunStore {
         &self,
         limit: i64,
     ) -> Result<Vec<CloudAgentOutboxIntent>, String> {
+        Ok(self
+            .list_ready_outbox_with_attempts(limit)
+            .await?
+            .into_iter()
+            .map(|record| record.intent)
+            .collect())
+    }
+
+    pub(crate) async fn list_ready_outbox_with_attempts(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
         use futures_util::TryStreamExt;
 
         self.outbox
@@ -297,7 +314,10 @@ impl MongoCloudAgentRunStore {
             )
             .await
             .map_err(|error| format!("load Cloud Agent outbox failed: {error}"))?
-            .map_ok(|document| document.intent)
+            .map_ok(|document| CloudAgentPendingOutboxIntent {
+                intent: document.intent,
+                publish_attempts: document.publish_attempts,
+            })
             .try_collect()
             .await
             .map_err(|error| format!("read Cloud Agent outbox failed: {error}"))
@@ -316,6 +336,52 @@ impl MongoCloudAgentRunStore {
             .await
             .map(|result| result.modified_count == 1)
             .map_err(|error| format!("mark Cloud Agent outbox published failed: {error}"))
+    }
+
+    pub async fn mark_outbox_publish_failed(
+        &self,
+        event_id: &str,
+        error: &str,
+        next_available_at: chrono::DateTime<chrono::Utc>,
+        max_attempts: u32,
+    ) -> Result<Option<CloudAgentOutboxPublishFailure>, String> {
+        let max_attempts = i64::from(max_attempts.max(1));
+        let next_attempts = doc! {
+            "$add": [
+                { "$ifNull": ["$publish_attempts", 0_i64] },
+                1_i64,
+            ]
+        };
+        let updated = self
+            .outbox
+            .find_one_and_update(
+                doc! { "_id": event_id, "status": "pending" },
+                vec![doc! {
+                    "$set": {
+                        "publish_attempts": next_attempts.clone(),
+                        "last_error": super::state_store::bounded_outbox_publish_error(error),
+                        "available_at": DateTime::from_millis(next_available_at.timestamp_millis()),
+                        "status": {
+                            "$cond": [
+                                { "$gte": [next_attempts, max_attempts] },
+                                "dead_lettered",
+                                "pending",
+                            ]
+                        },
+                        "updated_at": DateTime::now(),
+                    }
+                }],
+                FindOneAndUpdateOptions::builder()
+                    .return_document(ReturnDocument::After)
+                    .build(),
+            )
+            .await
+            .map_err(|error| format!("mark Cloud Agent outbox publish failed: {error}"))?;
+        Ok(updated.map(|document| CloudAgentOutboxPublishFailure {
+            publish_attempts: document.publish_attempts,
+            dead_lettered: document.status == "dead_lettered",
+            available_at: next_available_at,
+        }))
     }
 }
 
@@ -523,6 +589,7 @@ impl MongoCloudAgentRunStore {
                             "available_at": DateTime::from_millis(intent.available_at.timestamp_millis()),
                             "status": "pending",
                             "publish_attempts": 0_i32,
+                            "last_error": bson::Bson::Null,
                             "created_at": DateTime::now(),
                             "updated_at": DateTime::now(),
                         }
@@ -616,6 +683,7 @@ mod tests {
             available_at: DateTime::from_millis(available_at.timestamp_millis()),
             status: "pending".to_string(),
             publish_attempts: 0,
+            last_error: None,
             created_at: DateTime::now(),
             updated_at: DateTime::now(),
         };

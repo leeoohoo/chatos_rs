@@ -5,22 +5,27 @@ use super::*;
 use crate::services::run_model_phase::supply_chain::SupplyChainEvidenceState;
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    AiResponse, RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
-    RuntimeIterationContext, RuntimeLifecycleHook, TaskExecutionOutcome,
-    TaskExecutionOutcomeStatus, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
-    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+    AiResponse, JsonSchemaOutputFormat, RuntimeBeforeModelRequest, RuntimeFinalResponseAction,
+    RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook,
+    TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskExecutionProgressState,
+    TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
 };
 #[cfg(test)]
 #[path = "runtime_state/tests.rs"]
 mod tests;
 
 const TASK_OUTCOME_REVIEW_REASON: &str = "task_execution_outcome_review";
+const TASK_OUTCOME_REPAIR_REASON: &str = "task_execution_outcome_repair";
 const TASK_EXECUTION_OUTCOME_METADATA_KEY: &str = "task_execution_outcome";
+const MAX_TASK_OUTCOME_REPAIR_ATTEMPTS: u8 = 2;
+const TASK_OUTCOME_RAW_RESPONSE_MAX_CHARS: usize = 8_000;
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(in crate::services) struct TaskRunnerLifecycleState {
     pub(in crate::services) visible_response: Option<AiResponse>,
     pub(in crate::services) execution_outcome: Option<TaskExecutionOutcome>,
+    #[serde(default)]
+    pub(in crate::services) outcome_repair_attempts: u8,
 }
 
 struct TaskRunnerLifecycleHook {
@@ -93,10 +98,11 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
         self.progress.begin_iteration(context.iteration);
-        if context.reason == TASK_OUTCOME_REVIEW_REASON {
+        if is_task_outcome_protocol_reason(context.reason.as_str()) {
             return Ok(RuntimeBeforeModelRequest::unchanged()
                 .with_stream_output(false)
-                .with_tools_enabled(false));
+                .with_tools_enabled(false)
+                .with_output_format(task_execution_outcome_output_format()));
         }
         let iteration = context.iteration;
         let mut before = self.finalization.before_model_request(context).await?;
@@ -126,17 +132,27 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         &self,
         context: RuntimeFinalResponseContext,
     ) -> Result<RuntimeFinalResponseAction, String> {
-        if context.reason == TASK_OUTCOME_REVIEW_REASON {
-            let outcome = parse_task_execution_outcome_with_evidence(
+        if is_task_outcome_protocol_reason(context.reason.as_str()) {
+            let parsed = parse_task_execution_outcome_with_evidence(
                 context.response.content.as_str(),
                 self.expected_acceptance_criteria.as_slice(),
                 self.progress.confirmed_project_paths().as_slice(),
                 self.progress.confirmed_validation_commands().as_slice(),
                 self.progress.confirmed_acceptance_tools().as_slice(),
                 self.requires_execution,
-            )?;
+            );
+            let outcome = match parsed {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    return self.repair_invalid_task_outcome(
+                        context.response.content.as_str(),
+                        error.as_str(),
+                    );
+                }
+            };
             let mut state = self.state.lock();
             state.execution_outcome = Some(outcome);
+            state.outcome_repair_attempts = 0;
             let visible_response = state
                 .visible_response
                 .take()
@@ -181,6 +197,145 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
             })
             .transpose()
     }
+}
+
+impl TaskRunnerLifecycleHook {
+    fn repair_invalid_task_outcome(
+        &self,
+        raw_response: &str,
+        error: &str,
+    ) -> Result<RuntimeFinalResponseAction, String> {
+        let (attempt, exhausted) = {
+            let mut state = self.state.lock();
+            state.outcome_repair_attempts = state.outcome_repair_attempts.saturating_add(1);
+            (
+                state.outcome_repair_attempts,
+                state.outcome_repair_attempts > MAX_TASK_OUTCOME_REPAIR_ATTEMPTS,
+            )
+        };
+        self.store.append_run_event_sync(TaskRunEventRecord::new(
+            self.run_id.clone(),
+            "task_execution_outcome_protocol_error",
+            Some(if exhausted {
+                "任务结果协议修复失败".to_string()
+            } else {
+                format!(
+                    "任务结果协议格式无效，正在执行第 {attempt}/{} 次自动修复",
+                    MAX_TASK_OUTCOME_REPAIR_ATTEMPTS
+                )
+            }),
+            Some(json!({
+                "attempt": attempt,
+                "max_repair_attempts": MAX_TASK_OUTCOME_REPAIR_ATTEMPTS,
+                "exhausted": exhausted,
+                "parse_error": error,
+                "raw_response": bounded_task_outcome_raw_response(raw_response),
+            })),
+        ));
+        if exhausted {
+            return Err(format!(
+                "task execution outcome protocol repair exhausted after {} attempts: {error}",
+                MAX_TASK_OUTCOME_REPAIR_ATTEMPTS
+            ));
+        }
+        Ok(RuntimeFinalResponseAction::Continue {
+            input_items: vec![
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": raw_response
+                    }]
+                }),
+                task_execution_outcome_repair_message(error),
+            ],
+            reason: TASK_OUTCOME_REPAIR_REASON.to_string(),
+        })
+    }
+}
+
+fn is_task_outcome_protocol_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        TASK_OUTCOME_REVIEW_REASON | TASK_OUTCOME_REPAIR_REASON
+    )
+}
+
+fn bounded_task_outcome_raw_response(value: &str) -> String {
+    const TRUNCATED_SUFFIX: &str = "\n...[truncated]";
+    let mut chars = value.chars();
+    let preview = chars
+        .by_ref()
+        .take(TASK_OUTCOME_RAW_RESPONSE_MAX_CHARS.saturating_sub(TRUNCATED_SUFFIX.chars().count()))
+        .collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}{TRUNCATED_SUFFIX}")
+    } else {
+        preview
+    }
+}
+
+fn task_execution_outcome_repair_message(error: &str) -> Value {
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": format!("[Task Execution Outcome Protocol Repair]\nThe previous hidden outcome review did not satisfy the required JSON schema: {error}\nRebuild the result from the already recorded task evidence. Return only the schema-constrained JSON object. Do not add markdown, comments, trailing commas, undefined values, or explanatory text. Do not change the underlying task conclusion merely to repair syntax.")
+        }]
+    })
+}
+
+fn task_execution_outcome_output_format() -> JsonSchemaOutputFormat {
+    JsonSchemaOutputFormat::strict(
+        "task_execution_outcome",
+        json!({
+            "type": "object",
+            "properties": {
+                "status": { "type": "string", "enum": ["succeeded", "blocked"] },
+                "summary": { "type": "string" },
+                "blocking_reason": { "type": ["string", "null"] },
+                "unmet_acceptance_criteria": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "verification_evidence": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "acceptance_evidence": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "criterion": { "type": "string" },
+                            "evidence": { "type": "array", "items": { "type": "string" } },
+                            "referenced_paths": { "type": "array", "items": { "type": "string" } },
+                            "commands": { "type": "array", "items": { "type": "string" } },
+                            "tool_names": { "type": "array", "items": { "type": "string" } }
+                        },
+                        "required": ["criterion", "evidence", "referenced_paths", "commands", "tool_names"],
+                        "additionalProperties": false
+                    }
+                },
+                "referenced_paths": { "type": "array", "items": { "type": "string" } },
+                "referenced_endpoints": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": [
+                "status",
+                "summary",
+                "blocking_reason",
+                "unmet_acceptance_criteria",
+                "verification_evidence",
+                "acceptance_evidence",
+                "referenced_paths",
+                "referenced_endpoints"
+            ],
+            "additionalProperties": false
+        }),
+    )
+    .with_description("Validated terminal outcome for one Task Runner execution")
 }
 
 fn task_execution_outcome_review_message(

@@ -754,6 +754,9 @@ async fn prepare_iteration_request(
             })
         });
     }
+    if let Some(output_format) = lifecycle_before.output_format.clone() {
+        iteration_request.output_format = Some(output_format);
+    }
     Ok((iteration_request, lifecycle_before))
 }
 

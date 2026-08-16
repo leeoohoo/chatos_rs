@@ -370,6 +370,28 @@ mod tests {
     }
 
     #[test]
+    fn execution_planner_prompts_require_terminal_for_dependency_manifests() {
+        let prompts = baseline_prompts();
+        for agent_key in [
+            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
+            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
+        ] {
+            let content = prompts
+                .iter()
+                .find(|(key, profile, _)| {
+                    *key == agent_key && *profile == DEFAULT_AGENT_PROMPT_PROFILE
+                })
+                .map(|(_, _, content)| *content)
+                .unwrap_or_else(|| panic!("missing prompt: {agent_key}"));
+            assert!(content.contains("package.json"));
+            assert!(content.contains("lockfile 验证"));
+            assert!(content.contains("供应链审计"));
+            assert!(content.contains("TerminalController"));
+            assert!(content.contains("enabled_builtin_kinds"));
+        }
+    }
+
+    #[test]
     fn language_sensitive_agents_follow_the_user_language() {
         let prompts = baseline_prompts();
         for agent_key in [

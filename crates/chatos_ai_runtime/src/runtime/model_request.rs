@@ -104,6 +104,7 @@ pub(super) async fn dispatch_model_request(
                 abort_token: options.abort_token.clone(),
                 force_identity_encoding,
                 stream: provider_stream,
+                output_format: request.output_format.clone(),
             },
         )
         .await;

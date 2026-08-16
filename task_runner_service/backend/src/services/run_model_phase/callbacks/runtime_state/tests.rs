@@ -176,6 +176,40 @@ fn task_outcome_review_rejects_markdown_wrapped_json() {
 }
 
 #[test]
+fn task_outcome_review_uses_strict_provider_json_schema() {
+    let format = task_execution_outcome_output_format();
+
+    assert_eq!(format.name, "task_execution_outcome");
+    assert!(format.strict);
+    assert_eq!(
+        format.schema.pointer("/additionalProperties"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        format.schema.pointer("/properties/status/enum"),
+        Some(&json!(["succeeded", "blocked"]))
+    );
+    assert!(format
+        .schema
+        .pointer("/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.iter().any(|value| value == "acceptance_evidence")));
+}
+
+#[test]
+fn task_outcome_protocol_repair_is_bounded_and_actionable() {
+    let raw = "x".repeat(TASK_OUTCOME_RAW_RESPONSE_MAX_CHARS + 10);
+    let bounded = bounded_task_outcome_raw_response(raw.as_str());
+    assert!(bounded.ends_with("...[truncated]"));
+    assert!(bounded.chars().count() < raw.chars().count());
+
+    let repair = task_execution_outcome_repair_message("expected value").to_string();
+    assert!(repair.contains("expected value"));
+    assert!(repair.contains("schema-constrained JSON object"));
+    assert!(repair.contains("Do not change the underlying task conclusion"));
+}
+
+#[test]
 fn task_outcome_review_distinguishes_execution_and_planning_evidence() {
     let execution = task_execution_outcome_review_message(true, &[]).to_string();
     let planning = task_execution_outcome_review_message(false, &[]).to_string();

@@ -376,6 +376,7 @@ fn build_request_payload(
             thinking_level,
             options.stream,
             options.include_prompt_cache_retention,
+            options.output_format.clone(),
         ),
         AiTransport::ChatCompletions => build_chat_completions_request_payload(
             input,
@@ -387,6 +388,7 @@ fn build_request_payload(
             provider,
             thinking_level,
             options.stream,
+            options.output_format.clone(),
         ),
     }
 }
