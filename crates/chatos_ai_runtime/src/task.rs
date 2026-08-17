@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use chatos_mcp_runtime::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale, McpExecutor};
 
 use crate::runtime::AiRuntimeOptions;
-use crate::turn::{ContextualTurnExecutionOptions, ContextualTurnRunner};
+use crate::turn::ContextualTurnRunner;
 use crate::AiSingleStepOutcome;
 
 mod config;
@@ -131,34 +131,13 @@ impl TaskRuntime {
         reason: impl Into<String>,
         model_attempt: usize,
     ) -> Result<AiSingleStepOutcome, String> {
-        self.execute_task_once_with_options(
-            spec,
-            runtime_options,
-            iteration,
-            reason,
-            model_attempt,
-            ContextualTurnExecutionOptions::default(),
-        )
-        .await
-    }
-
-    pub async fn execute_task_once_with_options(
-        &self,
-        spec: TaskRunSpec,
-        runtime_options: AiRuntimeOptions,
-        iteration: usize,
-        reason: impl Into<String>,
-        model_attempt: usize,
-        execution_options: ContextualTurnExecutionOptions,
-    ) -> Result<AiSingleStepOutcome, String> {
         self.runner
-            .execute_once_with_options(
+            .execute_once(
                 self.prepare_spec(spec)
                     .into_contextual_turn_request_with_options(runtime_options),
                 iteration,
                 reason,
                 model_attempt,
-                execution_options,
             )
             .await
     }

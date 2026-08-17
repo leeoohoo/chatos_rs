@@ -331,34 +331,6 @@ pub fn cloud_agent_trigger_execution_identity(trigger: &CloudAgentModelTrigger) 
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CloudAgentModelRetryOptions {
-    pub force_non_stream: bool,
-    pub force_identity_encoding: bool,
-    pub thinking_level_override: Option<String>,
-}
-
-pub fn cloud_agent_trigger_retry_options(
-    trigger: &CloudAgentModelTrigger,
-) -> CloudAgentModelRetryOptions {
-    let CloudAgentModelTrigger::Retry { payload, .. } = trigger else {
-        return CloudAgentModelRetryOptions::default();
-    };
-    CloudAgentModelRetryOptions {
-        force_non_stream: payload
-            .get("disable_stream")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        force_identity_encoding: true,
-        thinking_level_override: payload
-            .get("downgrade_thinking_to")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
-    }
-}
-
 pub fn cloud_agent_trigger_input_items(
     run: &CloudAgentRunRecord,
     trigger: &CloudAgentModelTrigger,
@@ -740,10 +712,9 @@ where
                 AiSingleStepOutcome::Failed { error },
             )),
         };
-        let CloudAgentSingleStepExecution::Apply(mut output) = execution else {
+        let CloudAgentSingleStepExecution::Apply(output) = execution else {
             return Ok(None);
         };
-        carry_forward_retry_recovery_options(&input.trigger, &mut output.outcome);
         let mut transition = reduce_single_step(
             &run,
             claim.clone(),
@@ -841,35 +812,6 @@ where
             store.release_short_claim(&claim).await?;
             Err(error)
         }
-    }
-}
-
-fn carry_forward_retry_recovery_options(
-    trigger: &CloudAgentModelTrigger,
-    outcome: &mut AiSingleStepOutcome,
-) {
-    let CloudAgentModelTrigger::Retry { payload, .. } = trigger else {
-        return;
-    };
-    let AiSingleStepOutcome::Retry {
-        disable_stream,
-        downgrade_thinking_to,
-        ..
-    } = outcome
-    else {
-        return;
-    };
-    *disable_stream |= payload
-        .get("disable_stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if downgrade_thinking_to.is_none() {
-        *downgrade_thinking_to = payload
-            .get("downgrade_thinking_to")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
     }
 }
 
@@ -1050,8 +992,6 @@ pub fn reduce_single_step(
             retry_kind,
             next_model_attempt,
             backoff_ms,
-            disable_stream,
-            downgrade_thinking_to,
         } => CloudAgentAtomicTransition {
             claim: claim.clone(),
             next_input: run.input.clone(),
@@ -1078,8 +1018,6 @@ pub fn reduce_single_step(
                     "error": error,
                     "retry_kind": retry_kind,
                     "model_attempt": next_model_attempt,
-                    "disable_stream": disable_stream,
-                    "downgrade_thinking_to": downgrade_thinking_to,
                 }),
                 next_model_attempt,
                 Utc::now()
@@ -1342,60 +1280,6 @@ mod tests {
     use chatos_ai_runtime::AiRuntimeResult;
     use std::sync::{Arc, Mutex};
 
-    #[test]
-    fn retry_trigger_preserves_transport_recovery_options() {
-        let trigger = CloudAgentModelTrigger::Retry {
-            event_id: "retry-1".to_string(),
-            model_attempt: 2,
-            payload: serde_json::json!({
-                "disable_stream": true,
-                "downgrade_thinking_to": "medium"
-            }),
-        };
-
-        assert_eq!(
-            cloud_agent_trigger_retry_options(&trigger),
-            CloudAgentModelRetryOptions {
-                force_non_stream: true,
-                force_identity_encoding: true,
-                thinking_level_override: Some("medium".to_string()),
-            }
-        );
-    }
-
-    #[test]
-    fn retry_recovery_options_remain_sticky_across_a_different_transient_error() {
-        let trigger = CloudAgentModelTrigger::Retry {
-            event_id: "retry-2".to_string(),
-            model_attempt: 2,
-            payload: serde_json::json!({
-                "disable_stream": true,
-                "downgrade_thinking_to": "medium"
-            }),
-        };
-        let mut outcome = AiSingleStepOutcome::Retry {
-            error: "status 503: auth_unavailable".to_string(),
-            retry_kind: "upstream_auth_unavailable".to_string(),
-            next_model_attempt: 3,
-            backoff_ms: 6_000,
-            disable_stream: false,
-            downgrade_thinking_to: None,
-        };
-
-        carry_forward_retry_recovery_options(&trigger, &mut outcome);
-
-        let AiSingleStepOutcome::Retry {
-            disable_stream,
-            downgrade_thinking_to,
-            ..
-        } = outcome
-        else {
-            panic!("expected retry outcome");
-        };
-        assert!(disable_stream);
-        assert_eq!(downgrade_thinking_to.as_deref(), Some("medium"));
-    }
-
     fn ordering() -> CloudAgentOrdering {
         CloudAgentOrdering {
             ordering_lane_key: "task:task-1".to_string(),
@@ -1638,8 +1522,6 @@ mod tests {
                 retry_kind: "network".to_string(),
                 next_model_attempt: 2,
                 backoff_ms: 500,
-                disable_stream: false,
-                downgrade_thinking_to: None,
             },
         )
         .unwrap();
@@ -1769,8 +1651,6 @@ mod tests {
                 retry_kind: "network".to_string(),
                 next_model_attempt: 2,
                 backoff_ms: 0,
-                disable_stream: false,
-                downgrade_thinking_to: None,
             },
             seen_triggers: Arc::new(Mutex::new(Vec::new())),
         };
@@ -1785,6 +1665,8 @@ mod tests {
             outbox[0].payload["input_items"],
             serde_json::json!([{"type": "message"}])
         );
+        assert!(outbox[0].payload.get("disable_stream").is_none());
+        assert!(outbox[0].payload.get("downgrade_thinking_to").is_none());
     }
 
     #[tokio::test]
@@ -1833,8 +1715,6 @@ mod tests {
                 retry_kind: "network".to_string(),
                 next_model_attempt: 2,
                 backoff_ms: 0,
-                disable_stream: true,
-                downgrade_thinking_to: None,
             },
             seen_triggers: Arc::clone(&seen_triggers),
         };
@@ -1975,8 +1855,6 @@ mod tests {
                 retry_kind: "network".to_string(),
                 next_model_attempt: 2,
                 backoff_ms: 0,
-                disable_stream: false,
-                downgrade_thinking_to: None,
             },
             seen_triggers: Arc::clone(&seen_triggers),
         };
@@ -1997,8 +1875,6 @@ mod tests {
                 retry_kind: "network".to_string(),
                 next_model_attempt: 3,
                 backoff_ms: 0,
-                disable_stream: false,
-                downgrade_thinking_to: None,
             },
             seen_triggers: Arc::clone(&seen_triggers),
         };

@@ -124,37 +124,8 @@ impl TaskRunnerAgent {
         reason: impl Into<String>,
         model_attempt: usize,
     ) -> Result<AiSingleStepOutcome, String> {
-        self.execute_once_with_runtime_and_execution_options(
-            run_spec,
-            runtime,
-            runtime_options,
-            iteration,
-            reason,
-            model_attempt,
-            chatos_ai_runtime::ContextualTurnExecutionOptions::default(),
-        )
-        .await
-    }
-
-    pub async fn execute_once_with_runtime_and_execution_options(
-        &self,
-        run_spec: TaskRunSpec,
-        runtime: &TaskRuntime,
-        runtime_options: AiRuntimeOptions,
-        iteration: usize,
-        reason: impl Into<String>,
-        model_attempt: usize,
-        execution_options: chatos_ai_runtime::ContextualTurnExecutionOptions,
-    ) -> Result<AiSingleStepOutcome, String> {
         runtime
-            .execute_task_once_with_options(
-                run_spec,
-                runtime_options,
-                iteration,
-                reason,
-                model_attempt,
-                execution_options,
-            )
+            .execute_task_once(run_spec, runtime_options, iteration, reason, model_attempt)
             .await
     }
 

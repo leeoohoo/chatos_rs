@@ -74,13 +74,6 @@ pub fn is_response_parse_error(err: &str) -> bool {
         || message.contains("eof while parsing")
 }
 
-/// A streaming response that failed while reading or parsing should not be
-/// replayed in the same fragile mode. The runtime keeps non-stream mode for
-/// the rest of the current model iteration once this recovery is activated.
-pub fn should_retry_without_stream(err: &str) -> bool {
-    is_response_parse_error(err)
-}
-
 pub fn is_transient_network_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("error sending request for url")
@@ -432,8 +425,8 @@ mod tests {
         is_retryable_provider_overload_error, is_transient_network_error,
         is_transient_transport_or_parse_error, is_upstream_auth_unavailable_error,
         is_upstream_connection_interrupted_error, replay_request_error_policy,
-        should_retry_without_stream, transient_retry_backoff_ms, transient_retry_kind_label,
-        RequestErrorReplay, TransientRetryAction,
+        transient_retry_backoff_ms, transient_retry_kind_label, RequestErrorReplay,
+        TransientRetryAction,
     };
 
     #[test]
@@ -493,9 +486,6 @@ mod tests {
         ));
         assert!(is_response_parse_error(
             "stream response body failed after 3 valid events: operation timed out"
-        ));
-        assert!(should_retry_without_stream(
-            "stream response body failed: error decoding response body"
         ));
         assert!(!is_response_parse_error("status 401: unauthorized"));
     }

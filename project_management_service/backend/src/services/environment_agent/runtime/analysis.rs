@@ -7,15 +7,14 @@ use super::super::source_snapshot::{
 use super::super::*;
 use chatos_agent::{AgentIdentity, SystemAgentDefinition};
 use chatos_ai_runtime::{
-    AiRuntime, AiRuntimeOptions, ContextualTurnExecutionOptions, ContextualTurnRequest,
-    ContextualTurnRunner, McpRuntimeToolExecutor, MemoryContextOverflowRecovery,
-    RuntimeRecordOptions, SaveRecordInput,
+    AiRuntime, AiRuntimeOptions, ContextualTurnRequest, ContextualTurnRunner,
+    McpRuntimeToolExecutor, MemoryContextOverflowRecovery, RuntimeRecordOptions, SaveRecordInput,
 };
 use chatos_cloud_agent_protocol::{CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_trigger_execution_identity, cloud_agent_trigger_input_items,
-    cloud_agent_trigger_retry_options, create_cloud_agent_run, CloudAgentModelTrigger,
-    CloudAgentProfile, CloudAgentSingleStepExecution, CloudAgentSingleStepOutput, NewCloudAgentRun,
+    create_cloud_agent_run, CloudAgentModelTrigger, CloudAgentProfile,
+    CloudAgentSingleStepExecution, CloudAgentSingleStepOutput, NewCloudAgentRun,
 };
 use chatos_mcp_runtime::McpExecutor;
 use chrono::Utc;
@@ -143,7 +142,6 @@ impl CloudAgentProfile for ProjectEnvironmentSingleStepExecutor {
                     .with_trigger_reason(agent.context_overflow_trigger()),
             ));
         let (reason, model_attempt) = cloud_agent_trigger_execution_identity(trigger);
-        let retry_options = cloud_agent_trigger_retry_options(trigger);
         let outcome = if cloud_run
             .deadline_at
             .is_some_and(|deadline| deadline <= Utc::now())
@@ -153,16 +151,11 @@ impl CloudAgentProfile for ProjectEnvironmentSingleStepExecutor {
             }
         } else {
             runner
-                .execute_once_with_options(
+                .execute_once(
                     request,
                     usize::try_from(cloud_run.iteration.saturating_add(1)).unwrap_or(usize::MAX),
                     reason,
                     model_attempt,
-                    ContextualTurnExecutionOptions {
-                        force_non_stream: retry_options.force_non_stream,
-                        force_identity_encoding: retry_options.force_identity_encoding,
-                        thinking_level_override: retry_options.thinking_level_override,
-                    },
                 )
                 .await?
         };

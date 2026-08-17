@@ -68,7 +68,6 @@ use self::input_items::{
 use self::model_request::dispatch_model_request;
 use self::persistence::normalized_option;
 use self::persistence::should_persist_tool_result;
-use self::request_error::downgraded_thinking_level;
 #[cfg(feature = "local-agent-loop")]
 use self::request_error::{handle_model_request_error, ModelRequestErrorAction};
 #[cfg(feature = "local-agent-loop")]
@@ -379,7 +378,6 @@ impl AiRuntime {
             let tool_count = iteration_request.tools.len();
             let mut transient_retry_count = 0usize;
             let mut recovery_request_handler: Option<AiRequestHandler> = None;
-            let mut force_non_stream = false;
             let mut request_attempt = 0usize;
             let mut response = loop {
                 request_attempt = request_attempt.saturating_add(1);
@@ -387,7 +385,6 @@ impl AiRuntime {
                     .as_ref()
                     .unwrap_or(&self.request_handler);
                 let force_identity_encoding = recovery_request_handler.is_some();
-                let provider_stream = !force_non_stream;
                 let input_item_count = input_item_count(&iteration_request.input);
                 let input_bytes = json_value_size_bytes(&iteration_request.input);
                 let response = dispatch_model_request(
@@ -401,7 +398,7 @@ impl AiRuntime {
                     tool_count,
                     request_attempt,
                     lifecycle_before.stream_output,
-                    provider_stream,
+                    true,
                     force_identity_encoding,
                 )
                 .await;
@@ -438,7 +435,6 @@ impl AiRuntime {
                             pending_tool_outputs.as_deref(),
                             &mut context_overflow_recovery_attempted,
                             &mut transient_retry_count,
-                            provider_stream,
                         )
                         .await?
                         {
@@ -452,39 +448,10 @@ impl AiRuntime {
                                 iteration_reason = "context_overflow_recovery".to_string();
                                 continue 'runtime_loop;
                             }
-                            ModelRequestErrorAction::RetryRequest {
-                                disable_stream,
-                                downgrade_thinking,
-                            } => {
+                            ModelRequestErrorAction::RetryRequest => {
                                 // A retry must not inherit a potentially unhealthy pooled
                                 // connection. Build a new client for every retry attempt and
                                 // ask the provider to close that isolated connection afterward.
-                                force_non_stream |= disable_stream;
-                                if downgrade_thinking {
-                                    if let Some(next_level) = downgraded_thinking_level(
-                                        iteration_request.thinking_level.as_deref(),
-                                    ) {
-                                        warn!(
-                                            conversation_id = options
-                                                .conversation_id
-                                                .as_deref()
-                                                .unwrap_or(""),
-                                            conversation_turn_id = options
-                                                .conversation_turn_id
-                                                .as_deref()
-                                                .unwrap_or(""),
-                                            iteration,
-                                            request_attempt,
-                                            previous_thinking_level = iteration_request
-                                                .thinking_level
-                                                .as_deref()
-                                                .unwrap_or("default"),
-                                            next_thinking_level = next_level.as_str(),
-                                            "ai runtime lowering reasoning effort for transport retry"
-                                        );
-                                        iteration_request.thinking_level = Some(next_level);
-                                    }
-                                }
                                 recovery_request_handler = Some(AiRequestHandler::new());
                                 continue;
                             }

@@ -29,13 +29,6 @@ pub struct ContextualTurnRequest {
     pub user_record: Option<SaveRecordInput>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ContextualTurnExecutionOptions {
-    pub force_non_stream: bool,
-    pub force_identity_encoding: bool,
-    pub thinking_level_override: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeTurnSpec {
     pub model_config: ModelRuntimeConfig,
@@ -131,24 +124,6 @@ impl ContextualTurnRunner {
         reason: impl Into<String>,
         model_attempt: usize,
     ) -> Result<AiSingleStepOutcome, String> {
-        self.execute_once_with_options(
-            request,
-            iteration,
-            reason,
-            model_attempt,
-            ContextualTurnExecutionOptions::default(),
-        )
-        .await
-    }
-
-    pub async fn execute_once_with_options(
-        &self,
-        request: ContextualTurnRequest,
-        iteration: usize,
-        reason: impl Into<String>,
-        model_attempt: usize,
-        execution_options: ContextualTurnExecutionOptions,
-    ) -> Result<AiSingleStepOutcome, String> {
         let ContextualTurnRequest {
             mut model_request,
             runtime_options,
@@ -157,9 +132,6 @@ impl ContextualTurnRunner {
             current_input_items,
             user_record,
         } = request;
-        if let Some(thinking_level) = execution_options.thinking_level_override.clone() {
-            model_request.thinking_level = Some(thinking_level);
-        }
         let contextual_input = build_contextual_input(
             self.memory_composer.as_ref(),
             memory_scope.as_ref(),
@@ -187,8 +159,7 @@ impl ContextualTurnRunner {
             iteration,
             reason: reason.into(),
             model_attempt,
-            force_non_stream: execution_options.force_non_stream,
-            force_identity_encoding: execution_options.force_identity_encoding,
+            force_identity_encoding: false,
         };
         self.runtime.execute_once(single_step).await
     }

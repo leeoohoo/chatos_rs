@@ -38,8 +38,8 @@ pub use error_policy::{
     is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
     is_transient_network_error, is_transient_transport_or_parse_error,
     is_upstream_auth_unavailable_error, is_upstream_connection_interrupted_error,
-    replay_request_error_policy, should_retry_without_stream, transient_retry_backoff_ms,
-    transient_retry_kind_label, RequestErrorReplay, TransientRetryAction,
+    replay_request_error_policy, transient_retry_backoff_ms, transient_retry_kind_label,
+    RequestErrorReplay, TransientRetryAction,
 };
 pub use file_write_recovery::automatic_file_write_recovery_calls;
 pub use input_transform::{
@@ -99,5 +99,5 @@ pub use traits::{
 };
 pub use turn::{
     build_contextual_input, input_value_to_items, message_item, user_text_item,
-    ContextualTurnExecutionOptions, ContextualTurnRequest, ContextualTurnRunner, RuntimeTurnSpec,
+    ContextualTurnRequest, ContextualTurnRunner, RuntimeTurnSpec,
 };

@@ -3,10 +3,7 @@
 
 use serde_json::Value;
 
-use crate::error_policy::{
-    classify_transient_retry, is_response_parse_error, is_upstream_connection_interrupted_error,
-    should_retry_without_stream, TransientRetryAction,
-};
+use crate::error_policy::{classify_transient_retry, TransientRetryAction};
 use crate::model_config::{effective_responses_support, supports_previous_response_id};
 use crate::tool_call::tool_calls_value_has_items;
 use crate::traits::{ModelRequest, DEFAULT_MODEL_REQUEST_MAX_RETRIES};
@@ -15,9 +12,9 @@ use crate::{RuntimeFinalResponseAction, RuntimeFinalResponseContext};
 use super::input_items::{append_runtime_input_items, input_item_count, json_value_size_bytes};
 use super::model_request::dispatch_model_request;
 use super::{
-    count_iteration_input_tokens, downgraded_thinking_level, estimated_iteration_input_tokens,
-    prepare_iteration_request, runtime_result_from_response, AiRuntime, AiRuntimeOptions,
-    AiRuntimeResult, ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS, MAX_ACTIVE_CONTEXT_COMPACTION_PASSES,
+    count_iteration_input_tokens, estimated_iteration_input_tokens, prepare_iteration_request,
+    runtime_result_from_response, AiRuntime, AiRuntimeOptions, AiRuntimeResult,
+    ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS, MAX_ACTIVE_CONTEXT_COMPACTION_PASSES,
 };
 
 #[derive(Clone)]
@@ -27,7 +24,6 @@ pub struct AiSingleStepRequest {
     pub iteration: usize,
     pub reason: String,
     pub model_attempt: usize,
-    pub force_non_stream: bool,
     pub force_identity_encoding: bool,
 }
 
@@ -39,7 +35,6 @@ impl AiSingleStepRequest {
             iteration: 1,
             reason: "initial".to_string(),
             model_attempt: 1,
-            force_non_stream: false,
             force_identity_encoding: false,
         }
     }
@@ -75,8 +70,6 @@ pub enum AiSingleStepOutcome {
         retry_kind: String,
         next_model_attempt: usize,
         backoff_ms: u64,
-        disable_stream: bool,
-        downgrade_thinking_to: Option<String>,
     },
     Failed {
         error: String,
@@ -104,7 +97,6 @@ pub(super) async fn execute_once(
         iteration,
         reason,
         model_attempt,
-        force_non_stream,
         force_identity_encoding,
     } = request;
     model_request.supports_responses = effective_responses_support(
@@ -235,20 +227,13 @@ pub(super) async fn execute_once(
         iteration_request.tools.len(),
         model_attempt,
         lifecycle_before.stream_output,
-        !force_non_stream,
+        true,
         force_identity_encoding,
     )
     .await;
     let mut response = match response {
         Ok(response) => response,
-        Err(error) => {
-            return Ok(retry_or_fail(
-                error,
-                &iteration_request,
-                model_attempt,
-                !force_non_stream,
-            ))
-        }
+        Err(error) => return Ok(retry_or_fail(error, &iteration_request, model_attempt)),
     };
     if runtime_options.is_aborted() {
         return Ok(AiSingleStepOutcome::Cancelled);
@@ -343,7 +328,6 @@ fn retry_or_fail(
     error: String,
     request: &ModelRequest,
     model_attempt: usize,
-    provider_stream: bool,
 ) -> AiSingleStepOutcome {
     let completed_retries = model_attempt.saturating_sub(1);
     let max_retries = request
@@ -359,14 +343,6 @@ fn retry_or_fail(
             retry_kind: retry_kind.to_string(),
             next_model_attempt: next_retry_count.saturating_add(1),
             backoff_ms,
-            disable_stream: provider_stream && should_retry_without_stream(error.as_str()),
-            downgrade_thinking_to: if is_response_parse_error(error.as_str())
-                || is_upstream_connection_interrupted_error(error.as_str())
-            {
-                downgraded_thinking_level(request.thinking_level.as_deref())
-            } else {
-                None
-            },
         },
         Some(TransientRetryAction::Exhausted { error_message }) => AiSingleStepOutcome::Failed {
             error: error_message,
@@ -402,7 +378,6 @@ mod tests {
             "connection reset before message completed".to_string(),
             &request,
             1,
-            true,
         );
         match outcome {
             AiSingleStepOutcome::Retry {

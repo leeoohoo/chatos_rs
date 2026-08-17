@@ -7,14 +7,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chatos_agent::ChatosAgentProfile;
 use chatos_ai_runtime::{
-    AiRuntimeOptions, ContextualTurnExecutionOptions, ContextualTurnRequest, ModelRuntimeConfig,
-    RuntimeCallbacks, RuntimeLifecycleHook,
+    AiRuntimeOptions, ContextualTurnRequest, RuntimeCallbacks, RuntimeLifecycleHook,
 };
 use chatos_cloud_agent_protocol::{CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_mcp_result_callback_payload, cloud_agent_trigger_execution_identity,
-    cloud_agent_trigger_input_items, cloud_agent_trigger_retry_options, create_cloud_agent_run,
-    CloudAgentModelTrigger, CloudAgentProfile, CloudAgentProfileRegistry, CloudAgentServiceRuntime,
+    cloud_agent_trigger_input_items, create_cloud_agent_run, CloudAgentModelTrigger,
+    CloudAgentProfile, CloudAgentProfileRegistry, CloudAgentServiceRuntime,
     CloudAgentSingleStepExecution, CloudAgentSingleStepOutput, NewCloudAgentRun,
 };
 use chatos_plugin_management_sdk::SystemAgentKey;
@@ -351,14 +350,13 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
             max_task_follow_up_rounds: input.max_task_follow_up_rounds,
             task_turn: Arc::clone(&lifecycle_state),
         }) as Arc<dyn RuntimeLifecycleHook>;
-        let mut shared_model_config = shared_model_runtime_config_from_resolved(&model_runtime)
+        let shared_model_config = shared_model_runtime_config_from_resolved(&model_runtime)
             .with_instructions(compose_agent_instructions(&runtime_context, &model_runtime))
             .with_max_output_tokens(input.max_tokens)
             .with_prompt_cache_key(Some(input.session_id.clone()))
             .with_previous_response_id(None)
             .with_request_cwd(None)
             .with_prompt_cache_retention(true);
-        apply_retry_overrides(&mut shared_model_config, trigger);
         let initial_items = vec![json!({
             "type": "message",
             "role": "user",
@@ -449,18 +447,12 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
             input.max_iterations,
         )?;
         let (reason, model_attempt) = cloud_agent_trigger_execution_identity(trigger);
-        let retry_options = cloud_agent_trigger_retry_options(trigger);
         let outcome = runner
-            .execute_once_with_options(
+            .execute_once(
                 request,
                 usize::try_from(run.iteration.saturating_add(1)).unwrap_or(usize::MAX),
                 reason,
                 model_attempt,
-                ContextualTurnExecutionOptions {
-                    force_non_stream: retry_options.force_non_stream,
-                    force_identity_encoding: retry_options.force_identity_encoding,
-                    thinking_level_override: retry_options.thinking_level_override,
-                },
             )
             .await?;
         input.lifecycle = lifecycle_state
@@ -688,20 +680,6 @@ fn reconstructed_runtime_context(
 
 fn shared_callbacks(callbacks: AiClientCallbacks) -> RuntimeCallbacks {
     super::chat_execution::shared_runtime_callbacks_from_chatos(&callbacks)
-}
-
-fn apply_retry_overrides(config: &mut ModelRuntimeConfig, trigger: &CloudAgentModelTrigger) {
-    let CloudAgentModelTrigger::Retry { payload, .. } = trigger else {
-        return;
-    };
-    if let Some(level) = payload
-        .get("downgrade_thinking_to")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        config.thinking_level = Some(level.to_string());
-    }
 }
 
 fn required_text<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, String> {

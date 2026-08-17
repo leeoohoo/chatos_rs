@@ -157,8 +157,6 @@ impl CloudSummaryPipelineState {
                     retry_kind,
                     next_model_attempt: model_attempt.saturating_add(1),
                     backoff_ms,
-                    disable_stream: false,
-                    downgrade_thinking_to: None,
                 },
                 self,
                 None,
