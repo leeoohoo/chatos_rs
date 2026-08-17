@@ -177,7 +177,6 @@ pub fn start_pressure_reporter(
             let stats = state
                 .rabbitmq_queue_inspector
                 .inspect(&[
-                    RabbitMqQueueSpec::new("summary", state.config.summary_queue.as_str()),
                     RabbitMqQueueSpec::new("rollup", state.config.rollup_queue.as_str()),
                     RabbitMqQueueSpec::new(
                         "subject_memory",
@@ -347,8 +346,8 @@ mod tests {
             enabled: true,
             available: true,
             queues: vec![chatos_queue_observability::RabbitMqQueueDepth {
-                role: "summary".to_string(),
-                name: "summary".to_string(),
+                role: "rollup".to_string(),
+                name: "rollup".to_string(),
                 messages: 100,
                 consumers: 1,
             }],

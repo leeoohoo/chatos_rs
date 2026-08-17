@@ -64,8 +64,7 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
         if event_type == "response.output_text.delta" {
             if let Some(delta) = event.get("delta").and_then(extract_text_delta) {
                 if !delta.is_empty() {
-                    state.full_content =
-                        join_stream_text(state.full_content.as_str(), delta.as_str());
+                    append_stream_text(&mut state.full_content, delta.as_str());
                     state.sent_any_chunk = true;
                     payload.chunk = Some(delta);
                 }
@@ -119,8 +118,12 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
             merge_function_call_done(state, event, name_piece, args_piece.as_deref());
         } else if let Some(reasoning_delta) = extract_reasoning_event_text(event_type, event) {
             if !reasoning_delta.is_empty() {
-                state.reasoning =
-                    join_stream_text(state.reasoning.as_str(), reasoning_delta.as_str());
+                if event_type.ends_with(".delta") {
+                    append_stream_text(&mut state.reasoning, reasoning_delta.as_str());
+                } else {
+                    state.reasoning =
+                        join_stream_text(state.reasoning.as_str(), reasoning_delta.as_str());
+                }
                 payload.thinking = Some(reasoning_delta);
             }
         } else if event_type == "response.completed" {
@@ -130,8 +133,7 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(response);
                     if !extracted.is_empty() {
-                        state.full_content =
-                            join_stream_text(state.full_content.as_str(), extracted.as_str());
+                        append_stream_text(&mut state.full_content, extracted.as_str());
                         state.sent_any_chunk = true;
                         payload.chunk = Some(extracted);
                     }
@@ -142,8 +144,7 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(event);
                     if !extracted.is_empty() {
-                        state.full_content =
-                            join_stream_text(state.full_content.as_str(), extracted.as_str());
+                        append_stream_text(&mut state.full_content, extracted.as_str());
                         state.sent_any_chunk = true;
                         payload.chunk = Some(extracted);
                     }
@@ -196,8 +197,7 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
         if state.full_content.is_empty() {
             let extracted = extract_output_text(event);
             if !extracted.is_empty() {
-                state.full_content =
-                    join_stream_text(state.full_content.as_str(), extracted.as_str());
+                append_stream_text(&mut state.full_content, extracted.as_str());
                 state.sent_any_chunk = true;
                 payload.chunk = Some(extracted);
             }
@@ -280,15 +280,26 @@ pub fn apply_chat_completions_stream_event(
     }
 
     let delta = choice.get("delta").or_else(|| choice.get("message"));
+    let is_incremental_delta = choice.get("delta").is_some();
     if let Some(delta) = delta {
         if let Some(content) = extract_chat_delta_text(delta) {
-            append_stream_text(&mut state.full_content, content.as_str());
+            if is_incremental_delta {
+                append_stream_text(&mut state.full_content, content.as_str());
+            } else {
+                state.full_content =
+                    join_stream_text(state.full_content.as_str(), content.as_str());
+            }
             state.sent_any_chunk = true;
             payload.chunk = Some(content);
         }
         if reasoning_enabled {
             if let Some(reasoning) = extract_chat_reasoning_text(delta) {
-                append_stream_text(&mut state.reasoning, reasoning.as_str());
+                if is_incremental_delta {
+                    append_stream_text(&mut state.reasoning, reasoning.as_str());
+                } else {
+                    state.reasoning =
+                        join_stream_text(state.reasoning.as_str(), reasoning.as_str());
+                }
                 payload.thinking = Some(reasoning);
             }
         }
@@ -367,5 +378,50 @@ pub fn finalize_chat_completions_stream_state(state: &mut StreamState) -> Finali
         usage: state.usage.clone(),
         response_id: state.response_id.clone(),
         response_output_items: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{apply_chat_completions_stream_event, apply_responses_stream_event, StreamState};
+
+    #[test]
+    fn responses_text_deltas_keep_repeated_boundary_characters() {
+        let mut state = StreamState::default();
+
+        apply_responses_stream_event(
+            &mut state,
+            &json!({"type": "response.output_text.delta", "delta": "a"}),
+        );
+        apply_responses_stream_event(
+            &mut state,
+            &json!({"type": "response.output_text.delta", "delta": "a"}),
+        );
+
+        assert_eq!(state.full_content, "aa");
+    }
+
+    #[test]
+    fn chat_completion_deltas_keep_repeated_boundary_characters() {
+        let mut state = StreamState::default();
+
+        apply_chat_completions_stream_event(
+            &mut state,
+            &json!({
+                "choices": [{"delta": {"content": "a"}, "finish_reason": null}]
+            }),
+            false,
+        );
+        apply_chat_completions_stream_event(
+            &mut state,
+            &json!({
+                "choices": [{"delta": {"content": "a"}, "finish_reason": null}]
+            }),
+            false,
+        );
+
+        assert_eq!(state.full_content, "aa");
     }
 }

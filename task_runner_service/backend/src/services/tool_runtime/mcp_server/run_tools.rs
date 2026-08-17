@@ -12,7 +12,7 @@ use crate::models::{
 use super::support::{ensure_task_startable_from_mcp, value_for_agent_tool};
 use super::{
     decode_args, text_result, BatchTaskRunArgs, GetTaskMemoryContextArgs, ListRunsArgs,
-    ListTaskMemoryRecordsArgs, McpRequestContext, RunIdArgs, StartTaskRunArgs, TaskIdArgs,
+    ListTaskMemoryRecordsArgs, McpRequestContext, RunIdArgs, StartTaskRunArgs,
     TaskRunnerMcpService,
 };
 
@@ -152,21 +152,6 @@ impl TaskRunnerMcpService {
                             order: args.order,
                         },
                     )
-                    .await?
-                    .ok_or_else(|| format!("task not found: {}", args.task_id))?;
-                Ok(text_result(value_for_agent_tool(json!(response))))
-            }
-            "summarize_task_memory" => {
-                let args: TaskIdArgs = decode_args(args)?;
-                self.require_task_for_user_in_context(
-                    args.task_id.as_str(),
-                    current_user,
-                    request_context,
-                )
-                .await?;
-                let response = self
-                    .task_service
-                    .summarize_task_memory(args.task_id.as_str())
                     .await?
                     .ok_or_else(|| format!("task not found: {}", args.task_id))?;
                 Ok(text_result(value_for_agent_tool(json!(response))))

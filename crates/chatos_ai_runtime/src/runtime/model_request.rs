@@ -7,6 +7,7 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
+use crate::compat::extract_usage_snapshot;
 use crate::request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
 use crate::traits::{ModelRequest, RuntimeCallbacks};
 
@@ -118,6 +119,7 @@ pub(super) async fn dispatch_model_request(
     let model_request_ms = started_at.elapsed().as_millis();
     match &result {
         Ok(response) => {
+            let usage = response.usage.as_ref().map(extract_usage_snapshot);
             info!(
                 conversation_id = options.conversation_id.as_deref().unwrap_or(""),
                 conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
@@ -135,6 +137,9 @@ pub(super) async fn dispatch_model_request(
                     .and_then(|value| value.as_array())
                     .map(Vec::len)
                     .unwrap_or_default(),
+                input_tokens = usage.map(|usage| usage.input_tokens).unwrap_or(-1),
+                cached_tokens = usage.map(|usage| usage.cached_tokens).unwrap_or(0),
+                output_tokens = usage.map(|usage| usage.output_tokens).unwrap_or(-1),
                 "ai runtime model request completed"
             );
         }

@@ -382,47 +382,11 @@ impl RunService {
             .await?;
 
         if !run.memory_summary_processed {
-            let summary_job_run_id = if run.summary_job_run_id.is_some()
-                || self.config.memory_engine_base_url.is_none()
-                || !self.config.auto_memory_summary
-            {
-                run.summary_job_run_id.clone()
-            } else {
-                let client = self
-                    .config
-                    .memory_client()?
-                    .ok_or_else(|| "Memory Engine client is not configured".to_string())?;
-                let response = client
-                    .run_thread_repair_summary(&run.memory_thread_id, &task.tenant_id)
-                    .await?;
-                info!(
-                    run_id = run.id.as_str(),
-                    task_id = task.id.as_str(),
-                    memory_thread_id = run.memory_thread_id.as_str(),
-                    summary_job_run_id = response.job_run_id.as_deref().unwrap_or(""),
-                    "task runner post-processor triggered Memory Engine summary"
-                );
-                let event_payload = serde_json::to_value(&response).ok();
-                if let Err(err) = self
-                    .store
-                    .append_run_event(TaskRunEventRecord::new(
-                        run.id.clone(),
-                        "memory_summary_requested",
-                        Some("已触发 Memory Engine repair summary".to_string()),
-                        event_payload,
-                    ))
-                    .await
-                {
-                    warn!(
-                        run_id = run.id.as_str(),
-                        error = err.as_str(),
-                        "failed to append memory summary requested event"
-                    );
-                }
-                response.job_run_id
-            };
             self.store
-                .mark_run_memory_summary_processed(run.id.as_str(), summary_job_run_id.as_deref())
+                .mark_run_memory_summary_processed(
+                    run.id.as_str(),
+                    run.summary_job_run_id.as_deref(),
+                )
                 .await?;
         }
 

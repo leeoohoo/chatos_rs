@@ -343,6 +343,15 @@ pub(super) fn build_error_event_payload(error: &str, result: Option<&Value>) -> 
 fn sanitize_unclassified_user_facing_error(error: &str) -> (String, Option<String>) {
     let normalized = error.trim();
     let lower = normalized.to_ascii_lowercase();
+    let chat_runtime_error = lower.contains("mcp management")
+        || lower.contains("resolve chatos mcp gateway")
+        || lower.contains("project execution context");
+    if chat_runtime_error {
+        return (
+            "聊天工具运行环境暂时不可用，请稍后重试。".to_string(),
+            Some("CHAT_RUNTIME_UNAVAILABLE".to_string()),
+        );
+    }
     let response_parse_error = lower.contains("stream response parse failed")
         || lower.contains("invalid json response")
         || lower.contains("error decoding response body")

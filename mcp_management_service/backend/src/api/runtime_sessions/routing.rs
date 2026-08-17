@@ -195,6 +195,7 @@ pub(super) fn normalize_runtime_workspace_route(
 pub(super) fn bind_runtime_workspace_routes(
     routes: &mut [ResolvedMcpRoute],
     workspace_route: Option<&chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>,
+    project_context: &chatos_mcp_management_sdk::ProjectExecutionContext,
 ) {
     let runtime_resource_ids = [
         SystemMcpKey::CodeMaintainerRead,
@@ -208,9 +209,17 @@ pub(super) fn bind_runtime_workspace_routes(
     {
         match workspace_route {
             Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
-                route.provider_kind = McpProviderKind::LocalConnector;
-                route.provider_ref = None;
-                route.reason = "runtime workspace is pinned to the Local Connector".to_string();
+                if let Some(provider_ref) = local_connector_workspace_provider_ref(project_context)
+                {
+                    route.provider_kind = McpProviderKind::LocalConnector;
+                    route.provider_ref = Some(provider_ref);
+                    route.reason = "runtime workspace is pinned to the Local Connector".to_string();
+                } else {
+                    route.provider_kind = McpProviderKind::Unavailable;
+                    route.provider_ref = None;
+                    route.reason = "Local Connector runtime workspace is missing its device or workspace identity"
+                        .to_string();
+                }
             }
             Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::Harness { branch }) => {
                 let system_key =
@@ -259,6 +268,7 @@ pub(super) fn bind_runtime_workspace_routes(
 pub(super) fn validate_runtime_workspace_route_binding(
     routes: &[ResolvedMcpRoute],
     workspace_route: Option<&chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>,
+    project_context: &chatos_mcp_management_sdk::ProjectExecutionContext,
 ) -> Result<(), ApiError> {
     use chatos_mcp_management_sdk::{HarnessBranchTarget, RuntimeWorkspaceRouteTarget};
 
@@ -284,7 +294,9 @@ pub(super) fn validate_runtime_workspace_route_binding(
         let valid = match workspace_route {
             RuntimeWorkspaceRouteTarget::LocalConnector => {
                 route.provider_kind == McpProviderKind::LocalConnector
-                    && route.provider_ref.is_none()
+                    && local_connector_workspace_provider_ref(project_context)
+                        .as_deref()
+                        .is_some_and(|expected| route.provider_ref.as_deref() == Some(expected))
             }
             RuntimeWorkspaceRouteTarget::Harness { branch } => match system_key {
                 SystemMcpKey::TerminalController => {
@@ -315,6 +327,18 @@ pub(super) fn validate_runtime_workspace_route_binding(
         }
     }
     Ok(())
+}
+
+fn local_connector_workspace_provider_ref(
+    context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+) -> Option<String> {
+    let workspace = context.workspace.as_ref()?;
+    let device_id = workspace.device_id.as_deref()?.trim();
+    let workspace_id = workspace.workspace_id.trim();
+    if device_id.is_empty() || workspace_id.is_empty() {
+        return None;
+    }
+    Some(format!("device:{device_id}/workspace:{workspace_id}"))
 }
 
 pub(super) fn bind_sandbox_image_routes(

@@ -30,7 +30,6 @@ pub(crate) fn agent_tool_allowed(name: &str) -> bool {
             | "batch_start_task_runs"
             | "get_task_memory_context"
             | "list_task_memory_records"
-            | "summarize_task_memory"
             | "cancel_run"
             | "list_run_events"
             | "list_prompts"

@@ -260,7 +260,24 @@ pub(crate) async fn finalize_terminal(
             .and_then(Value::as_str)
             .unwrap_or("Memory Cloud Agent failed")
             .to_string();
-        finalize_failed_domain_job(state, &terminal_context, error).await?;
+        if is_thread_summary_resume_kind(resume_kind) {
+            let job_run_id = terminal_context
+                .get("job_run_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Memory summary terminal context has no job_run_id".to_string())?;
+            crate::services::summary::fail_cloud_summary_job(
+                &state.pool,
+                tenant_id,
+                source_id,
+                thread_id,
+                job_run_id,
+                error,
+            )
+            .await?;
+            settle_summary_dispatch(state, tenant_id, source_id, thread_id, false).await?;
+        } else {
+            finalize_failed_domain_job(state, &terminal_context, error).await?;
+        }
         release_subject_scope_slot(state, &terminal_context).await?;
         return Ok(());
     }
@@ -281,7 +298,9 @@ pub(crate) async fn finalize_terminal(
             )
             .await;
             match result {
-                Ok(_) => Ok(()),
+                Ok(_) => {
+                    settle_summary_dispatch(state, tenant_id, source_id, thread_id, true).await
+                }
                 Err(error) if error == MEMORY_CLOUD_AGENT_DEFERRED => Ok(()),
                 Err(error) => Err(error),
             }
@@ -381,6 +400,33 @@ pub(crate) async fn finalize_terminal(
             "unsupported Memory Cloud Agent resume_kind: {other}"
         )),
     }
+}
+
+fn is_thread_summary_resume_kind(resume_kind: &str) -> bool {
+    matches!(
+        resume_kind,
+        "queue" | "summary_direct" | "scheduler" | "thread_direct"
+    )
+}
+
+async fn settle_summary_dispatch(
+    state: &Arc<AppState>,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    _rearm: bool,
+) -> Result<(), String> {
+    if let Some(event) = crate::repositories::threads::get_summary_dispatch_state(
+        &state.pool,
+        tenant_id,
+        source_id,
+        thread_id,
+    )
+    .await?
+    {
+        crate::repositories::threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
+    }
+    Ok(())
 }
 
 async fn finalize_failed_domain_job(

@@ -520,6 +520,27 @@ fn confirmed_project_paths_from_tool_result(payload: &Value) -> Vec<String> {
     let Some(name) = payload.get("name").and_then(Value::as_str) else {
         return Vec::new();
     };
+    if name.ends_with("terminal_controller_execute_command") {
+        if !terminal_result_exit_succeeded(payload) {
+            return Vec::new();
+        }
+        let command = terminal_result_command(payload);
+        let mut paths = BTreeSet::new();
+        if command.starts_with("npm ") || command == "npm" {
+            paths.insert("package.json".to_string());
+            if command.contains(" ci") || command.contains(" install") || command.contains(" audit")
+            {
+                // npm resolves these files from the current workspace. A successful install,
+                // ci, or audit therefore proves the package baseline exists even when the model
+                // did not issue a separate read/list call for package-lock.json.
+                paths.insert("package-lock.json".to_string());
+            }
+        }
+        return paths
+            .into_iter()
+            .filter(|path| project_path_is_meaningful_progress(path))
+            .collect();
+    }
     if !tool_name_ends_with_any(
         name,
         &[
@@ -809,11 +830,23 @@ fn terminal_result_has_validation_command(payload: &Value) -> bool {
         "python -m unittest",
         "npm test",
         "npm run test",
+        "npm run typecheck",
         "npm run build",
+        "npm ci",
+        "npm install",
+        "npm audit",
         "pnpm test",
+        "pnpm run test",
+        "pnpm run typecheck",
         "pnpm build",
+        "pnpm install",
+        "pnpm audit",
         "yarn test",
+        "yarn run test",
+        "yarn run typecheck",
         "yarn build",
+        "yarn install",
+        "yarn audit",
         "go test",
         "mvn test",
         "gradle test",
@@ -1126,6 +1159,42 @@ mod tests {
         assert_eq!(
             progress.confirmed_validation_commands(),
             vec!["npm run build".to_string(), "npm test".to_string()]
+        );
+    }
+
+    #[test]
+    fn common_node_dependency_and_typecheck_commands_are_kept_for_acceptance_evidence() {
+        let progress = TaskExecutionProgressState::default();
+        for command in [
+            "npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org",
+            "npm ci --ignore-scripts --registry=https://registry.npmjs.org",
+            "npm run typecheck",
+            "npm audit --audit-level=high --json --registry=https://registry.npmjs.org",
+        ] {
+            progress.observe_tool_result(&json!({
+                "name": "terminal_controller_execute_command",
+                "success": true,
+                "is_error": false,
+                "content": serde_json::to_string(&json!({
+                    "common": command,
+                    "exit_code": 0,
+                })).expect("content"),
+                "result": { "exit_code": 0 },
+            }));
+        }
+
+        assert_eq!(
+            progress.confirmed_validation_commands(),
+            vec![
+                "npm audit --audit-level=high --json --registry=https://registry.npmjs.org".to_string(),
+                "npm ci --ignore-scripts --registry=https://registry.npmjs.org".to_string(),
+                "npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org".to_string(),
+                "npm run typecheck".to_string(),
+            ]
+        );
+        assert_eq!(
+            progress.confirmed_project_paths(),
+            vec!["package-lock.json".to_string(), "package.json".to_string()]
         );
     }
 

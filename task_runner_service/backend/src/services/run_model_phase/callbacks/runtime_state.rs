@@ -354,7 +354,7 @@ fn task_execution_outcome_review_message(
         "role": "system",
         "content": [{
             "type": "input_text",
-            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule}\nAuthoritative hard acceptance criteria: {acceptance_criteria}\nReturn exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result without paths, ports, or URLs\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"],\"acceptance_evidence\":[{{\"criterion\":\"exact criterion text\",\"evidence\":[\"exact item copied from verification_evidence\"],\"referenced_paths\":[\"workspace-relative/path\"],\"commands\":[\"exact successful validation command\"],\"tool_names\":[\"exact successful BrowserTools tool name\"]}}],\"referenced_paths\":[\"workspace-relative/path\"],\"referenced_endpoints\":[\"http://127.0.0.1:4000/health\"]}}\nSet status to succeeded only when every required acceptance criterion has exactly one acceptance_evidence item backed by recorded runtime paths, successful validation commands, or successful BrowserTools calls, and all necessary verification has passed. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Put every user-facing file or directory reference in referenced_paths using workspace-relative paths only. Put every user-facing URL or port-bearing address in referenced_endpoints as an absolute HTTP/HTTPS URL without credentials. Keep summary free of paths, ports, and URLs because the platform builds those receipt sections from validated references. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
+            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule}\nAuthoritative hard acceptance criteria: {acceptance_criteria}\nReturn exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result without paths, ports, or URLs\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"],\"acceptance_evidence\":[{{\"criterion\":\"exact criterion text\",\"evidence\":[\"exact item copied from verification_evidence\"],\"referenced_paths\":[\"workspace-relative/path\"],\"commands\":[\"exact successful validation command\"],\"tool_names\":[\"exact successful BrowserTools tool name\"]}}],\"referenced_paths\":[\"workspace-relative/path\"],\"referenced_endpoints\":[\"http://127.0.0.1:4000/health\"]}}\nSet status to succeeded only when every required acceptance criterion has exactly one acceptance_evidence item backed by recorded runtime paths, successful validation commands, or successful BrowserTools calls, and all necessary verification has passed. Use tool_names only for successful BrowserTools calls; omit ordinary runtime tools such as terminal or CodeMaintainer from that field. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Put every user-facing file or directory reference in referenced_paths using workspace-relative paths only. Put every user-facing URL or port-bearing address in referenced_endpoints as an absolute HTTP/HTTPS URL without credentials. Keep summary free of paths, ports, and URLs because the platform builds those receipt sections from validated references. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
         }]
     })
 }
@@ -463,19 +463,28 @@ fn validate_acceptance_evidence(
                 "acceptance criterion references a command without successful runtime evidence: {criterion}"
             ));
         }
+        // `tool_names` is an optional browser-evidence field. Models occasionally include
+        // ordinary runtime tools (for example CodeMaintainer or terminal) alongside paths and
+        // commands. Those tools are already validated by their own evidence indexes and must not
+        // invalidate an otherwise complete acceptance record. Keep the fail-closed check for
+        // actual BrowserTools names, which are the only tools this field is intended to attest.
         if item
             .tool_names
             .iter()
-            .any(|name| !confirmed_tools.contains(name.trim()))
+            .any(|name| name.contains("browser_tools") && !confirmed_tools.contains(name.trim()))
         {
             return Err(format!(
                 "acceptance criterion references a tool without successful runtime evidence: {criterion}"
             ));
         }
+        let has_confirmed_browser_tool = item
+            .tool_names
+            .iter()
+            .any(|name| name.contains("browser_tools") && confirmed_tools.contains(name.trim()));
         if requires_execution
             && item.referenced_paths.is_empty()
             && item.commands.is_empty()
-            && item.tool_names.is_empty()
+            && !has_confirmed_browser_tool
         {
             return Err(format!(
                 "acceptance criterion has no concrete runtime path, command, or browser evidence: {criterion}"

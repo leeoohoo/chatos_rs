@@ -62,10 +62,10 @@ export const getErrorMessageFromPayload = (
   }
   const detailValue = payload.detail;
   const errorValue = payload.error;
-  if (typeof errorValue === 'string' && errorValue.trim().length > 0) {
-    const errorMessage = errorValue.trim();
-    if (typeof detailValue === 'string' && detailValue.trim().length > 0) {
-      const detailMessage = detailValue.trim();
+  const errorMessage = nestedErrorMessage(errorValue);
+  const detailMessage = nestedErrorMessage(detailValue);
+  if (errorMessage) {
+    if (detailMessage) {
       if (detailMessage !== errorMessage) {
         return `${errorMessage}: ${detailMessage}`;
       }
@@ -75,18 +75,34 @@ export const getErrorMessageFromPayload = (
   const messageValue = payload.message;
   if (typeof messageValue === 'string' && messageValue.trim().length > 0) {
     const message = messageValue.trim();
-    if (typeof detailValue === 'string' && detailValue.trim().length > 0) {
-      const detailMessage = detailValue.trim();
+    if (detailMessage) {
       if (detailMessage !== message) {
         return `${message}: ${detailMessage}`;
       }
     }
     return message;
   }
-  if (typeof detailValue === 'string' && detailValue.trim().length > 0) {
-    return detailValue.trim();
+  if (detailMessage) {
+    return detailMessage;
   }
   return fallback;
+};
+
+const nestedErrorMessage = (value: unknown, depth = 0): string | undefined => {
+  if (typeof value === 'string') {
+    const message = value.trim();
+    return message.length > 0 ? message : undefined;
+  }
+  if (depth >= 4 || !isJsonRecord(value)) {
+    return undefined;
+  }
+  for (const key of ['message', 'error', 'detail']) {
+    const message = nestedErrorMessage(value[key], depth + 1);
+    if (message) {
+      return message;
+    }
+  }
+  return undefined;
 };
 
 export const getErrorCodeFromPayload = (payload: unknown): string | undefined => {

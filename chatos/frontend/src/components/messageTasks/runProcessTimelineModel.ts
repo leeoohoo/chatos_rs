@@ -8,7 +8,13 @@ import type { TimelineItem, TimelineStatus } from '../userMessages/ConversationP
 type UnknownRecord = Record<string, unknown>;
 
 type ToolResultState = {
+  eventId: string;
   payload: UnknownRecord;
+};
+
+type ToolResultIndex = {
+  byCallId: Map<string, ToolResultState>;
+  legacyByName: Map<string, ToolResultState[]>;
 };
 
 const readRecord = (value: unknown): UnknownRecord | null => (
@@ -129,8 +135,9 @@ const isFinalToolResult = (payload: UnknownRecord): boolean => payload.is_stream
 
 const buildToolResults = (
   events: MessageTaskRunnerRunEvent[],
-): Map<string, ToolResultState> => {
-  const results = new Map<string, ToolResultState>();
+): ToolResultIndex => {
+  const byCallId = new Map<string, ToolResultState>();
+  const legacyByName = new Map<string, ToolResultState[]>();
   events.forEach((event) => {
     if (eventType(event) !== 'tool_stream') {
       return;
@@ -140,11 +147,19 @@ const buildToolResults = (
       return;
     }
     const callId = readToolResultCallId(payload);
+    const state = { eventId: event.id, payload };
     if (callId) {
-      results.set(callId, { payload });
+      byCallId.set(callId, state);
+      return;
+    }
+    const name = readString(payload.name);
+    if (name) {
+      const results = legacyByName.get(name) || [];
+      results.push(state);
+      legacyByName.set(name, results);
     }
   });
-  return results;
+  return { byCallId, legacyByName };
 };
 
 const buildKnownToolCallIds = (events: MessageTaskRunnerRunEvent[]): Set<string> => {
@@ -210,7 +225,7 @@ const buildToolCallItem = (
   const hasResult = hasDisplayValue(resultValue);
   const status: TimelineStatus = error
     ? 'error'
-    : hasResult
+    : result
       ? 'completed'
       : 'pending';
   const createdAt = eventDate(event);
@@ -358,6 +373,7 @@ export const buildRunProcessTimelineItems = (
 ): TimelineItem[] => {
   const toolResults = buildToolResults(events);
   const knownToolCallIds = buildKnownToolCallIds(events);
+  const consumedLegacyResultEventIds = new Set<string>();
   const items: TimelineItem[] = [];
   const repeatedLifecycleItems = new Map<string, TimelineItem>();
   let modelRequestIndex = 0;
@@ -388,11 +404,19 @@ export const buildRunProcessTimelineItems = (
     if (type === 'tools_start') {
       readToolCalls(event.payload).forEach((call, callIndex) => {
         const callId = toolCallId(call);
+        const name = toolCallName(call);
+        const legacyResults = name ? toolResults.legacyByName.get(name) : undefined;
+        const legacyResult = legacyResults?.find(
+          (result) => !consumedLegacyResultEventIds.has(result.eventId),
+        );
+        if (legacyResult) {
+          consumedLegacyResultEventIds.add(legacyResult.eventId);
+        }
         const item = buildToolCallItem(
           event,
           call,
           callIndex,
-          callId ? toolResults.get(callId) : undefined,
+          (callId ? toolResults.byCallId.get(callId) : undefined) || legacyResult,
         );
         if (item) {
           items.push(item);
@@ -405,7 +429,12 @@ export const buildRunProcessTimelineItems = (
     if (type === 'tool_stream') {
       const payload = readRecord(event.payload);
       const callId = payload ? readToolResultCallId(payload) : '';
-      if (payload && isFinalToolResult(payload) && (!callId || !knownToolCallIds.has(callId))) {
+      if (
+        payload
+        && isFinalToolResult(payload)
+        && (!callId || !knownToolCallIds.has(callId))
+        && !consumedLegacyResultEventIds.has(event.id)
+      ) {
         const item = buildUnmatchedToolResultItem(event, payload);
         if (item) {
           items.push(item);

@@ -711,13 +711,29 @@ fn value_mentions_package_manifest(value: &Value) -> bool {
 }
 
 fn package_manifest_from_tool_result(payload: &Value) -> Option<NodePackageManifestEvidence> {
-    let content = payload.get("content")?.as_str()?;
-    let result = serde_json::from_str::<Value>(content).ok()?;
-    let path = result.get("path").and_then(Value::as_str)?;
-    if !path.replace('\\', "/").ends_with("package.json") {
-        return None;
+    // MCP tool results carry the structured payload in `result` and expose a
+    // JSON/text rendering in `content`.  The latter was the only shape handled
+    // here, so real CodeMaintainer reads were visible in the event stream but
+    // never populated the final package manifest evidence.
+    let mut candidates = Vec::new();
+    for key in ["result", "structured_result"] {
+        if let Some(value) = payload.get(key) {
+            candidates.push(chatos_mcp_runtime::structured_result_payload(value).clone());
+        }
     }
-    parse_package_manifest(result.get("content")?.as_str()?)
+    if let Some(content) = payload.get("content").and_then(Value::as_str) {
+        if let Ok(value) = serde_json::from_str::<Value>(content) {
+            candidates.push(chatos_mcp_runtime::structured_result_payload(&value).clone());
+        }
+    }
+
+    candidates.into_iter().find_map(|result| {
+        let path = result.get("path").and_then(Value::as_str)?;
+        if !path.replace('\\', "/").ends_with("package.json") {
+            return None;
+        }
+        parse_package_manifest(result.get("content")?.as_str()?)
+    })
 }
 
 fn parse_package_manifest(content: &str) -> Option<NodePackageManifestEvidence> {
@@ -1523,6 +1539,65 @@ mod tests {
                 .package_manifest
                 .as_ref()
                 .expect("successful manifest")
+                .requirements["react"],
+            "^19.2.7"
+        );
+    }
+
+    #[test]
+    fn structured_file_read_result_verifies_the_final_package_manifest() {
+        let mut evidence = SupplyChainEvidenceState::default();
+
+        // This mirrors the instrumented ToolResult emitted by the MCP runtime:
+        // `content` is the model-facing rendering while `result` is the
+        // structured CodeMaintainer payload.
+        evidence.observe_tool_result(&json!({
+            "name": "code_maintainer_read_read_file_raw",
+            "success": true,
+            "is_error": false,
+            "content": "{\"path\":\"package.json\",\"content\":\"{\\\"dependencies\\\":{\\\"react\\\":\\\"^19.2.7\\\"},\\\"devDependencies\\\":{\\\"vite\\\":\\\"^8.1.4\\\"}}\"}",
+            "result": {
+                "path": "package.json",
+                "content": "{\"dependencies\":{\"react\":\"^19.2.7\"},\"devDependencies\":{\"vite\":\"^8.1.4\"}}"
+            }
+        }));
+
+        assert_eq!(
+            evidence
+                .package_manifest
+                .as_ref()
+                .expect("structured file read should verify manifest")
+                .requirements["react"],
+            "^19.2.7"
+        );
+    }
+
+    #[test]
+    fn nested_structured_file_read_result_verifies_the_final_package_manifest() {
+        let mut evidence = SupplyChainEvidenceState::default();
+
+        // This is the exact shape persisted by the cloud MCP runtime.  The
+        // ToolResult's `result` contains an outer `_structured_result` wrapper
+        // and the model-facing `content` array is present alongside it.
+        evidence.observe_tool_result(&json!({
+            "name": "code_maintainer_read_read_file_raw",
+            "success": true,
+            "is_error": false,
+            "content": "{\"_structured_result\":{\"path\":\"package.json\",\"content\":\"{\\\"dependencies\\\":{\\\"react\\\":\\\"^19.2.7\\\"},\\\"devDependencies\\\":{\\\"vite\\\":\\\"^8.1.4\\\"}}\"},\"content\":[{\"type\":\"text\",\"text\":\"...\"}]}",
+            "result": {
+                "_structured_result": {
+                    "path": "package.json",
+                    "content": "{\"dependencies\":{\"react\":\"^19.2.7\"},\"devDependencies\":{\"vite\":\"^8.1.4\"}}"
+                },
+                "content": [{"type": "text", "text": "..."}]
+            }
+        }));
+
+        assert_eq!(
+            evidence
+                .package_manifest
+                .as_ref()
+                .expect("nested structured file read should verify manifest")
                 .requirements["react"],
             "^19.2.7"
         );

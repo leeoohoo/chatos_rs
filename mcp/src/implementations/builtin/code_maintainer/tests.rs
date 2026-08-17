@@ -85,6 +85,31 @@ fn open_session(service: &CodeMaintainerService, conversation: Option<&str>) -> 
 }
 
 #[test]
+fn open_edit_session_supports_explicit_fresh_rebaseline() {
+    let (service, _root) = build_service(true);
+    let first = service
+        .call_tool("open_edit_session", json!({}), None)
+        .expect("open initial session");
+    let first_payload = response_json(&first);
+    let first_id = first_payload["result"]["session_id"]
+        .as_str()
+        .expect("initial session id")
+        .to_string();
+
+    let fresh = service
+        .call_tool("open_edit_session", json!({ "fresh": true }), None)
+        .expect("open fresh session");
+    let fresh_payload = response_json(&fresh);
+    let fresh_id = fresh_payload["result"]["session_id"]
+        .as_str()
+        .expect("fresh session id");
+
+    assert_ne!(fresh_id, first_id);
+    assert_eq!(fresh_payload["result"]["reused"], false);
+    assert!(response_text(&fresh).contains("Fresh edit session opened"));
+}
+
+#[test]
 fn list_tools_contains_compat_aliases() {
     let (service, _root) = build_service(true);
     let tools = service.list_tools();
@@ -272,6 +297,63 @@ fn later_stage_batch_accepts_the_current_staged_revision() {
         .expect("commit both staged batches");
 
     assert_eq!(fs::read_to_string(path).expect("read result"), "third");
+}
+
+#[test]
+fn stale_session_baseline_returns_a_fresh_rebaseline_recovery_contract() {
+    let (service, root) = build_service(true);
+    let path = root.join("revision.txt");
+    fs::write(&path, "first").expect("seed file");
+    let initial_read = service
+        .call_tool("read_file_raw", json!({ "path": "revision.txt" }), None)
+        .expect("read initial file");
+    let initial_hash = response_json(&initial_read)["sha256"]
+        .as_str()
+        .expect("initial hash")
+        .to_string();
+    let session_id = open_session(&service, None);
+    service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "staged",
+                    "expected_sha256": initial_hash
+                }]
+            }),
+            None,
+        )
+        .expect("stage initial edit");
+
+    fs::write(&path, "external").expect("external update");
+    let latest_read = service
+        .call_tool("read_file_raw", json!({ "path": "revision.txt" }), None)
+        .expect("read external update");
+    let latest_hash = response_json(&latest_read)["sha256"]
+        .as_str()
+        .expect("latest hash")
+        .to_string();
+    let stale = service
+        .call_tool(
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": "revision.txt",
+                    "content": "rebased",
+                    "expected_sha256": latest_hash
+                }]
+            }),
+            None,
+        )
+        .expect_err("a pending session must not silently overwrite an external update");
+    let payload: serde_json::Value = serde_json::from_str(&stale).expect("stale payload");
+    assert_eq!(payload["category"], "stale_context");
+    assert_eq!(payload["recovery"]["next_session"]["args"]["fresh"], true);
 }
 
 #[test]

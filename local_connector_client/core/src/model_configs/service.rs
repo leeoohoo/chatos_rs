@@ -128,6 +128,8 @@ fn upsert_server_model_config(state: &mut LocalState, value: &Value) -> Result<(
     let server_id = required_json_text(value, "id")?;
     let provider = normalize_configured_provider(Some(required_json_text(value, "provider")?))?;
     let model = required_json_text(value, "model")?;
+    let supports_responses =
+        json_bool(value, "supports_responses").unwrap_or_else(|| provider == "gpt");
     let now = local_now_rfc3339();
     let existing_index = state.model_configs.configs.iter().position(|item| {
         item.server_model_config_id.as_deref() == Some(server_id.as_str()) || item.id == server_id
@@ -148,7 +150,7 @@ fn upsert_server_model_config(state: &mut LocalState, value: &Value) -> Result<(
         enabled: json_bool(value, "enabled").unwrap_or(true),
         supports_images: json_bool(value, "supports_images").unwrap_or(false),
         supports_reasoning: json_bool(value, "supports_reasoning").unwrap_or(false),
-        supports_responses: json_bool(value, "supports_responses").unwrap_or(true),
+        supports_responses,
         thinking_level: json_text(value, "thinking_level"),
         task_usage_scenario: json_text(value, "task_usage_scenario"),
         task_thinking_level: json_text(value, "task_thinking_level"),

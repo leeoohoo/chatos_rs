@@ -151,13 +151,18 @@ impl ModelRuntimeConfig {
     }
 
     pub fn to_model_request(&self, input: Value, tools: Vec<Value>) -> ModelRequest {
+        let supports_responses = crate::model_config::effective_responses_support(
+            self.provider.as_str(),
+            self.base_url.as_str(),
+            self.supports_responses,
+        );
         ModelRequest {
             input,
             model: self.model.clone(),
             provider: self.provider.clone(),
             base_url: self.base_url.clone(),
             api_key: self.api_key.clone(),
-            supports_responses: self.supports_responses,
+            supports_responses,
             instructions: self.instructions.clone(),
             tools,
             temperature: self.temperature,
@@ -174,13 +179,18 @@ impl ModelRuntimeConfig {
     }
 
     pub fn to_tool_caller_model_runtime(&self) -> ToolCallerModelRuntime {
+        let supports_responses = crate::model_config::effective_responses_support(
+            self.provider.as_str(),
+            self.base_url.as_str(),
+            self.supports_responses,
+        );
         ToolCallerModelRuntime::openai_compatible(
             self.base_url.clone(),
             self.api_key.clone(),
             self.model.clone(),
             self.provider.clone(),
         )
-        .with_responses_support(self.supports_responses)
+        .with_responses_support(supports_responses)
         .with_images_support(self.supports_images)
         .with_thinking_level(self.thinking_level.clone())
         .with_temperature(self.temperature)

@@ -757,6 +757,62 @@ async fn plugin_response_completes_pending_relay_request() {
 }
 
 #[tokio::test]
+async fn workspace_directory_responses_complete_pending_relay_requests() {
+    let relay = ConnectorRelay::default();
+    let (outbound, mut inbound) = mpsc::channel(2);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    for action in ["list", "create"] {
+        let request_id = format!("workspace-directory-{action}");
+        let request_type = format!("workspace_directory_{action}_request");
+        let response_type = format!("workspace_directory_{action}_response");
+        let dispatch_relay = relay.clone();
+        let dispatch_request_id = request_id.clone();
+        let dispatch_request_type = request_type.clone();
+        let dispatch = tokio::spawn(async move {
+            let mut request = relay_request(dispatch_request_id.as_str());
+            request.message_type = dispatch_request_type;
+            request.method = if action == "list" { "GET" } else { "POST" }.to_string();
+            request.path = "/api/local/runtime/workspaces/workspace-1/directories".to_string();
+            request.body = serde_json::json!({"path":"apps"});
+            dispatch_relay
+                .dispatch(request, Duration::from_secs(1))
+                .await
+        });
+
+        let outbound = inbound.recv().await.expect("workspace directory request");
+        assert!(outbound.contains(request_type.as_str()));
+        assert!(relay
+            .handle_inbound_text(
+                serde_json::json!({
+                    "type": response_type,
+                    "request_id": request_id,
+                    "status": 200,
+                    "body": {"path":"apps","entries":[]},
+                })
+                .to_string()
+                .as_str(),
+            )
+            .await
+            .expect("workspace directory response"));
+
+        let response = dispatch
+            .await
+            .expect("workspace directory dispatch task")
+            .expect("workspace directory relay response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["path"].as_str(), Some("apps"));
+    }
+}
+
+#[tokio::test]
 async fn runtime_limits_are_applied_after_hot_reload() {
     let relay = ConnectorRelay::default();
     let (outbound, mut inbound) = mpsc::channel(8);

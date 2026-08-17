@@ -17,8 +17,14 @@ use crate::{
 struct InMemoryCloudAgentState {
     runs: HashMap<String, CloudAgentRunRecord>,
     lanes: HashMap<String, InMemoryLane>,
-    claims: HashMap<String, String>,
+    claims: HashMap<String, InMemoryClaim>,
     outbox: HashMap<String, InMemoryCloudAgentOutboxRecord>,
+}
+
+#[derive(Debug, Clone)]
+struct InMemoryClaim {
+    token: String,
+    until: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -262,18 +268,45 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
         {
             return Ok(CloudAgentClaimResult::Conflict);
         }
-        if state
-            .claims
-            .get(claim.ordering.agent_run_id.as_str())
-            .is_some_and(|token| token != &claim.claim_token)
-        {
-            return Ok(CloudAgentClaimResult::Conflict);
+        if let Some(existing) = state.claims.get(claim.ordering.agent_run_id.as_str()) {
+            if existing.token != claim.claim_token && existing.until > chrono::Utc::now() {
+                return Ok(CloudAgentClaimResult::Conflict);
+            }
         }
         state.claims.insert(
             claim.ordering.agent_run_id.clone(),
-            claim.claim_token.clone(),
+            InMemoryClaim {
+                token: claim.claim_token.clone(),
+                until: claim.claim_until,
+            },
         );
         Ok(CloudAgentClaimResult::Acquired)
+    }
+
+    async fn renew_short_claim(&self, claim: &CloudAgentClaim) -> Result<bool, String> {
+        claim.validate()?;
+        let mut state = self.state.lock().await;
+        let Some(existing) = state.claims.get(claim.ordering.agent_run_id.as_str()) else {
+            return Ok(false);
+        };
+        if existing.token != claim.claim_token {
+            return Ok(false);
+        }
+        let Some(run) = state.runs.get(claim.ordering.agent_run_id.as_str()) else {
+            return Ok(false);
+        };
+        if run.ordering != claim.ordering
+            || run.status != claim.expected_status
+            || run.phase != claim.expected_phase
+            || run.version != claim.expected_version
+            || run.status.is_terminal()
+        {
+            return Ok(false);
+        }
+        if let Some(existing) = state.claims.get_mut(claim.ordering.agent_run_id.as_str()) {
+            existing.until = claim.claim_until;
+        }
+        Ok(true)
     }
 
     async fn commit_transition(
@@ -283,7 +316,11 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
         transition.validate()?;
         let mut state = self.state.lock().await;
         let claim = &transition.claim;
-        if state.claims.get(claim.ordering.agent_run_id.as_str()) != Some(&claim.claim_token) {
+        if state
+            .claims
+            .get(claim.ordering.agent_run_id.as_str())
+            .is_none_or(|existing| existing.token != claim.claim_token)
+        {
             return Ok(false);
         }
         {
@@ -341,7 +378,11 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
 
     async fn release_short_claim(&self, claim: &CloudAgentClaim) -> Result<(), String> {
         let mut state = self.state.lock().await;
-        if state.claims.get(claim.ordering.agent_run_id.as_str()) == Some(&claim.claim_token) {
+        if state
+            .claims
+            .get(claim.ordering.agent_run_id.as_str())
+            .is_some_and(|existing| existing.token == claim.claim_token)
+        {
             state.claims.remove(claim.ordering.agent_run_id.as_str());
         }
         Ok(())
@@ -515,6 +556,13 @@ impl CloudAgentRunStore for CloudAgentStateStore {
         match self {
             Self::Memory(store) => store.acquire_short_claim(claim).await,
             Self::Mongo(store) => store.acquire_short_claim(claim).await,
+        }
+    }
+
+    async fn renew_short_claim(&self, claim: &CloudAgentClaim) -> Result<bool, String> {
+        match self {
+            Self::Memory(store) => store.renew_short_claim(claim).await,
+            Self::Mongo(store) => store.renew_short_claim(claim).await,
         }
     }
 

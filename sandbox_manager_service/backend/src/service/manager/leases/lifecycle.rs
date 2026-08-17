@@ -106,15 +106,60 @@ impl SandboxManager {
                 change_manifest: output_manifest,
             })
         } else {
-            record.status = SandboxStatus::Ready;
+            let stop_result = if record.lease_kind == "environment" {
+                self.backend
+                    .stop_environment(record.sandbox_id.as_str())
+                    .await
+            } else {
+                self.backend.stop(record.sandbox_id.as_str()).await
+            };
+            if let Err(stop_error) = stop_result {
+                tracing::error!(
+                    sandbox_id = record.sandbox_id.as_str(),
+                    lease_id = record.id.as_str(),
+                    run_id = record.run_id.as_str(),
+                    error = stop_error.as_str(),
+                    "retained sandbox stop failed; attempting force destroy"
+                );
+                let fallback = self
+                    .destroy_record(record.clone(), "sandbox_stop_failed_destroyed")
+                    .await;
+                let message = match fallback {
+                    Ok(()) => format!(
+                        "stop retained sandbox failed: {stop_error}; sandbox was force-destroyed"
+                    ),
+                    Err(destroy_error) => format!(
+                        "stop retained sandbox failed: {stop_error}; force destroy also failed: {}",
+                        destroy_error.message
+                    ),
+                };
+                return Err(ApiError::with_code(
+                    StatusCode::BAD_GATEWAY,
+                    "sandbox_stop_failed",
+                    message,
+                ));
+            }
+            if record.lease_kind == "environment" {
+                for service in &mut record.environment_services {
+                    service.status = "stopped".to_string();
+                }
+            }
+            record.status = SandboxStatus::Stopped;
             record.updated_at = now_rfc3339();
             self.store
                 .replace_lease(&record)
                 .await
                 .map_err(ApiError::internal)?;
+            self.event(
+                &record,
+                "sandbox_stopped",
+                Some("sandbox stopped and retained for diagnostics"),
+                None,
+            )
+            .await;
             Ok(ReleaseSandboxResponse {
                 ok: true,
-                status: record.status,
+                status: SandboxStatus::Stopped,
                 output_workspace,
                 diff_summary,
                 output_error,

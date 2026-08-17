@@ -215,11 +215,23 @@ describe('requirement execution process phase', () => {
       replacePreviousBatch: true,
     })).toBe(false);
     expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'planning_context',
+      replacePreviousBatch: true,
+    })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'building_graph',
+      replacePreviousBatch: true,
+    })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
       phase: 'awaiting_confirmation',
       replacePreviousBatch: true,
     })).toBe(true);
     expect(shouldStopRequirementExecutionBeforeReplacement({
       phase: 'running',
+      replacePreviousBatch: true,
+    })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'stopped',
       replacePreviousBatch: true,
     })).toBe(false);
   });

@@ -285,6 +285,7 @@ fn external_mcp_tools_hide_internal_process_recorder() {
 fn default_agent_hides_direct_history_status_tools() {
     assert!(!agent_tool_allowed("batch_update_task_status"));
     assert!(!agent_tool_allowed("retry_run"));
+    assert!(!agent_tool_allowed("summarize_task_memory"));
     assert!(agent_tool_allowed("start_task_run"));
     assert!(agent_tool_allowed("cancel_task"));
 }

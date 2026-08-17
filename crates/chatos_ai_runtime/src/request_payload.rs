@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 
 use crate::input_transform::normalize_responses_request_input;
 use crate::model_config::{
-    normalize_provider, reasoning_effort_for_provider, thinking_mode_for_provider,
+    normalize_provider, normalize_thinking_level, reasoning_effort_for_provider,
+    thinking_mode_for_provider,
 };
 use crate::response_parse::{chat_message_content_to_text, tool_arguments_to_string};
 use crate::JsonSchemaOutputFormat;
@@ -31,6 +32,11 @@ pub fn build_responses_request_payload(
     include_prompt_cache_retention: bool,
     output_format: Option<JsonSchemaOutputFormat>,
 ) -> Value {
+    let reasoning_effort = request_reasoning_effort(
+        provider.as_deref(),
+        model.as_str(),
+        thinking_level.as_deref(),
+    );
     let should_request_reasoning_summary =
         should_request_responses_reasoning_summary(provider.as_deref(), model.as_str());
     let input = normalize_responses_request_input(&input);
@@ -65,9 +71,7 @@ pub fn build_responses_request_payload(
     if let Some(value) = max_output_tokens {
         payload["max_output_tokens"] = json!(value);
     }
-    if let Some(level) =
-        reasoning_effort_for_provider(provider.as_deref(), thinking_level.as_deref())
-    {
+    if let Some(level) = reasoning_effort {
         let mut reasoning_payload = json!({ "effort": level });
         if should_request_reasoning_summary {
             reasoning_payload["summary"] = Value::String("auto".to_string());
@@ -80,6 +84,23 @@ pub fn build_responses_request_payload(
         });
     }
     payload["stream"] = Value::Bool(stream);
+    payload
+}
+
+pub(crate) fn responses_input_token_count_payload(mut payload: Value) -> Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    for key in [
+        "stream",
+        "temperature",
+        "max_output_tokens",
+        "prompt_cache_key",
+        "prompt_cache_retention",
+        "cwd",
+    ] {
+        object.remove(key);
+    }
     payload
 }
 
@@ -115,6 +136,17 @@ pub fn build_chat_completions_request_payload(
     stream: bool,
     output_format: Option<JsonSchemaOutputFormat>,
 ) -> Value {
+    let normalized_provider = normalize_provider(provider.as_deref().unwrap_or("gpt"));
+    let reasoning_effort = request_reasoning_effort(
+        provider.as_deref(),
+        model.as_str(),
+        thinking_level.as_deref(),
+    );
+    let thinking_mode = request_thinking_mode(
+        provider.as_deref(),
+        model.as_str(),
+        thinking_level.as_deref(),
+    );
     let mut messages = input_to_chat_messages(input);
     if let Some(system) = normalized_option(instructions.as_deref()) {
         messages.insert(0, json!({ "role": "system", "content": system }));
@@ -138,14 +170,16 @@ pub fn build_chat_completions_request_payload(
         }
     }
     if let Some(value) = max_output_tokens {
-        payload["max_tokens"] = json!(value);
+        if normalized_provider == "kimi" {
+            payload["max_completion_tokens"] = json!(value);
+        } else {
+            payload["max_tokens"] = json!(value);
+        }
     }
-    if let Some(level) =
-        reasoning_effort_for_provider(provider.as_deref(), thinking_level.as_deref())
-    {
+    if let Some(level) = reasoning_effort {
         payload["reasoning_effort"] = Value::String(level);
     }
-    if let Some(mode) = thinking_mode_for_provider(provider.as_deref(), thinking_level.as_deref()) {
+    if let Some(mode) = thinking_mode {
         payload["thinking"] = json!({ "type": mode });
     }
     if let Some(output_format) = output_format {
@@ -155,10 +189,80 @@ pub fn build_chat_completions_request_payload(
         });
     }
     payload["stream"] = Value::Bool(stream);
-    if stream {
+    if stream && normalized_provider != "glm" {
         payload["stream_options"] = json!({ "include_usage": true });
     }
     payload
+}
+
+fn request_reasoning_effort(
+    provider: Option<&str>,
+    model: &str,
+    thinking_level: Option<&str>,
+) -> Option<String> {
+    let provider = normalize_provider(provider.unwrap_or("gpt"));
+    let model = model.trim().to_ascii_lowercase();
+    if provider == "kimi" {
+        if !model.starts_with("kimi-k3") {
+            return None;
+        }
+        let level = normalize_thinking_level("kimi", thinking_level)
+            .ok()
+            .flatten()?;
+        return match level.as_str() {
+            // Kimi K3 always reasons; omitting the field is safer than sending
+            // an unsupported attempt to disable it.
+            "none" => None,
+            "low" => Some("low".to_string()),
+            "medium" | "high" => Some("high".to_string()),
+            "auto" | "xhigh" | "max" => Some("max".to_string()),
+            _ => None,
+        };
+    }
+    if provider == "glm" && !model.starts_with("glm-5.2") {
+        return None;
+    }
+    reasoning_effort_for_provider(Some(provider.as_str()), thinking_level)
+}
+
+fn request_thinking_mode(
+    provider: Option<&str>,
+    model: &str,
+    thinking_level: Option<&str>,
+) -> Option<&'static str> {
+    let provider = normalize_provider(provider.unwrap_or("gpt"));
+    if provider == "deepseek" {
+        return thinking_mode_for_provider(Some(provider.as_str()), thinking_level);
+    }
+    let level = normalize_thinking_level(provider.as_str(), thinking_level)
+        .ok()
+        .flatten()?;
+    let model = model.trim().to_ascii_lowercase();
+    if provider == "kimi" {
+        if model.starts_with("kimi-k3") || !model.starts_with("kimi-k2") {
+            return None;
+        }
+        if model.starts_with("kimi-k2.7-code") {
+            return Some("enabled");
+        }
+        return Some(if level == "none" {
+            "disabled"
+        } else {
+            "enabled"
+        });
+    }
+    if provider == "glm"
+        && ["glm-4.5", "glm-4.6", "glm-4.7", "glm-5"]
+            .iter()
+            .any(|prefix| model.starts_with(prefix))
+    {
+        return Some(if level == "none" {
+            "disabled"
+        } else {
+            "enabled"
+        });
+    }
+    None
 }
 
 fn responses_json_schema_format(output_format: JsonSchemaOutputFormat) -> Value {
@@ -520,6 +624,56 @@ fn chat_content_part_to_value(part: &Value) -> Option<Value> {
                     "text": text,
                 }))
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod input_token_count_tests {
+    use serde_json::json;
+
+    use super::responses_input_token_count_payload;
+
+    #[test]
+    fn input_token_count_payload_keeps_context_fields_only() {
+        let payload = responses_input_token_count_payload(json!({
+            "model": "gpt-test",
+            "input": [{"role": "user", "content": "hello"}],
+            "instructions": "system",
+            "previous_response_id": "resp_1",
+            "tools": [{"type": "function", "name": "lookup"}],
+            "tool_choice": "auto",
+            "reasoning": {"effort": "high"},
+            "text": {"format": {"type": "json_object"}},
+            "stream": true,
+            "temperature": 0.2,
+            "max_output_tokens": 100,
+            "prompt_cache_key": "cache",
+            "prompt_cache_retention": "24h",
+            "cwd": "/workspace"
+        }));
+
+        for key in [
+            "model",
+            "input",
+            "instructions",
+            "previous_response_id",
+            "tools",
+            "tool_choice",
+            "reasoning",
+            "text",
+        ] {
+            assert!(payload.get(key).is_some(), "missing {key}");
+        }
+        for key in [
+            "stream",
+            "temperature",
+            "max_output_tokens",
+            "prompt_cache_key",
+            "prompt_cache_retention",
+            "cwd",
+        ] {
+            assert!(payload.get(key).is_none(), "unexpected {key}");
         }
     }
 }

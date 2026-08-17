@@ -18,10 +18,11 @@ use tokio::sync::Mutex as AsyncMutex;
 use chatos_mcp_runtime::{ToolCallContext, ToolCallerModelRuntime, ToolResult, ToolResultCallback};
 
 use super::{
-    append_runtime_input_items, empty_final_response_followup_item,
+    append_runtime_input_items, empty_final_response_followup_item, estimated_json_tokens,
     merge_current_turn_tool_history_into_input, merge_pending_tool_turn_into_input,
     merge_record_metadata, prepare_iteration_request, should_persist_tool_result,
-    IterativeContextRefresh, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
+    IterativeContextRefresh, ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
+    EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
 };
 use crate::{
     AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepRequest, AiTurnReport,
@@ -46,6 +47,15 @@ impl MemoryRecordWriter for RecordingWriter {
 struct TestLifecycleHook;
 
 struct PagingToolExecutor;
+
+#[test]
+fn active_summary_budget_does_not_compact_a_176k_turn_but_catches_the_window_reserve() {
+    let below = json!([{"role": "user", "content": "x".repeat(704_000)}]);
+    let above = json!([{"role": "user", "content": "x".repeat(900_000)}]);
+
+    assert!(estimated_json_tokens(&below) < ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
+    assert!(estimated_json_tokens(&above) > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
+}
 
 #[async_trait]
 impl ToolExecutor for PagingToolExecutor {

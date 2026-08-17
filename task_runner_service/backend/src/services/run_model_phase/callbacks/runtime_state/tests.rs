@@ -168,6 +168,32 @@ fn task_outcome_review_accepts_recorded_browser_evidence() {
 }
 
 #[test]
+fn task_outcome_review_ignores_non_browser_tool_names_when_other_evidence_is_valid() {
+    let outcome = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["production build passed"],"acceptance_evidence":[{"criterion":"baseline exists","evidence":["production build passed"],"referenced_paths":["package.json"],"commands":["npm run build"],"tool_names":["code_maintainer_write_commit_edit_session","terminal_controller_execute_command"]}],"referenced_paths":["package.json"],"referenced_endpoints":[]}"#,
+        &["baseline exists".to_string()],
+        &["package.json".to_string()],
+        &["npm run build".to_string()],
+        &[],
+        true,
+    )
+    .expect("ordinary runtime tools must not invalidate path/command evidence");
+
+    assert_eq!(outcome.acceptance_evidence.len(), 1);
+
+    let error = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"claimed","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["claimed"],"acceptance_evidence":[{"criterion":"baseline exists","evidence":["claimed"],"referenced_paths":[],"commands":[],"tool_names":["terminal_controller_execute_command"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
+        &["baseline exists".to_string()],
+        &[],
+        &[],
+        &[],
+        true,
+    )
+    .expect_err("ordinary runtime tools alone are not acceptance evidence");
+    assert!(error.contains("no concrete runtime path, command, or browser evidence"));
+}
+
+#[test]
 fn task_outcome_review_rejects_markdown_wrapped_json() {
     let error = parse_task_execution_outcome("```json\n{\"status\":\"blocked\"}\n```")
         .expect_err("review response must be strict JSON");

@@ -239,32 +239,7 @@ pub async fn apply_summary_queue_state_delta(
                                 },
                             ]
                         },
-                        "summary_dispatch_version": {
-                            "$cond": [
-                                { "$gt": ["$pending_record_count", 0] },
-                                {
-                                    "$add": [
-                                        { "$ifNull": ["$summary_dispatch_version", 0] },
-                                        1,
-                                    ]
-                                },
-                                { "$ifNull": ["$summary_dispatch_version", 0] },
-                            ]
-                        },
-                        "summary_dispatch_requested_at": {
-                            "$cond": [
-                                { "$gt": ["$pending_record_count", 0] },
-                                &now,
-                                { "$ifNull": ["$summary_dispatch_requested_at", Bson::Null] },
-                            ]
-                        },
-                        "summary_dispatch_pending": {
-                            "$cond": [
-                                { "$gt": ["$pending_record_count", 0] },
-                                true,
-                                { "$ifNull": ["$summary_dispatch_pending", false] },
-                            ]
-                        }
+                        "summary_dispatch_pending": false,
                     }
                 },
             ],
@@ -394,6 +369,37 @@ pub async fn try_acquire_summary_slot(
         .return_document(mongodb::options::ReturnDocument::After)
         .await
         .map_err(|err| err.to_string())
+}
+
+pub async fn refresh_summary_slot(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    job_run_id: &str,
+    lock_timeout_secs: i64,
+) -> Result<bool, String> {
+    let now = now_rfc3339();
+    let expires_at = now_plus_seconds_rfc3339(lock_timeout_secs.max(SUMMARY_LOCK_TIMEOUT_SECS));
+    let result = thread_collection(db)
+        .update_one(
+            doc! {
+                "tenant_id": tenant_id,
+                "source_id": source_id,
+                "id": thread_id,
+                "summary_status": "running",
+                "summary_job_run_id": job_run_id,
+            },
+            doc! {
+                "$set": {
+                    "summary_lock_expires_at": expires_at,
+                    "updated_at": now,
+                }
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(result.matched_count > 0)
 }
 
 pub async fn release_summary_slot(

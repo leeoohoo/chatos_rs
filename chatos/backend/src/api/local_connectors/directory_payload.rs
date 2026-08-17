@@ -3,6 +3,13 @@
 
 use serde_json::{json, Value};
 pub(super) fn local_connector_directory_list_payload(path: &str, value: Value) -> Value {
+    let response_path = value
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| if path.trim().is_empty() { "." } else { path });
+    let parent = value.get("parent").cloned().unwrap_or(Value::Null);
     let mut entries = value
         .get("entries")
         .and_then(Value::as_array)
@@ -48,8 +55,33 @@ pub(super) fn local_connector_directory_list_payload(path: &str, value: Value) -
         left_name.cmp(&right_name)
     });
     json!({
-        "path": if path.trim().is_empty() { "." } else { path },
-        "parent": Value::Null,
+        "path": response_path,
+        "parent": parent,
         "entries": entries,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_connector_directory_list_payload;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_control_plane_path_and_parent() {
+        let payload = local_connector_directory_list_payload(
+            ".",
+            json!({
+                "path": "apps",
+                "parent": ".",
+                "entries": [{ "name": "backend", "path": "apps/backend", "is_dir": true }],
+            }),
+        );
+
+        assert_eq!(payload.get("path"), Some(&json!("apps")));
+        assert_eq!(payload.get("parent"), Some(&json!(".")));
+        assert_eq!(
+            payload.pointer("/entries/0/path"),
+            Some(&json!("apps/backend"))
+        );
+    }
 }

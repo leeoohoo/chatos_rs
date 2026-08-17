@@ -28,6 +28,12 @@ pub(crate) fn select_pending_records_for_summary(
             continue;
         }
 
+        if !selected.is_empty()
+            && selected_token_count.saturating_add(record_tokens) > effective_limit
+        {
+            break;
+        }
+
         selected_token_count += record_tokens;
         selected.push(record);
     }
@@ -60,6 +66,7 @@ pub(crate) async fn mark_oversized_records_as_summarized(
     source_id: &str,
     thread_id: &str,
     oversized_records: &[EngineRecord],
+    job_run_id: &str,
     summary_id: &str,
 ) -> Result<usize, String> {
     if oversized_records.is_empty() {
@@ -70,12 +77,13 @@ pub(crate) async fn mark_oversized_records_as_summarized(
         .iter()
         .map(|item| item.id.clone())
         .collect::<Vec<_>>();
-    records::mark_records_summarized(
+    records::mark_claimed_records_summarized(
         db,
         tenant_id,
         source_id,
         thread_id,
         record_ids.as_slice(),
+        job_run_id,
         summary_id,
     )
     .await
@@ -134,9 +142,45 @@ pub(crate) async fn select_rollup_batch(
 
 #[cfg(test)]
 mod tests {
-    use crate::models::EngineSummary;
+    use crate::models::{EngineRecord, EngineSummary};
 
-    use super::select_rollup_batch;
+    use super::{select_pending_records_for_summary, select_rollup_batch};
+
+    fn record(id: &str, content: &str) -> EngineRecord {
+        EngineRecord {
+            id: id.to_string(),
+            thread_id: "thread".to_string(),
+            tenant_id: "tenant".to_string(),
+            source_id: "source".to_string(),
+            external_record_id: None,
+            role: "tool".to_string(),
+            record_type: "message".to_string(),
+            content: content.to_string(),
+            structured_payload: None,
+            metadata: None,
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn pending_selector_caps_the_cumulative_batch_instead_of_only_each_record() {
+        let content = "x".repeat(2_000);
+        let selection = select_pending_records_for_summary(
+            vec![
+                record("record-1", content.as_str()),
+                record("record-2", content.as_str()),
+                record("record-3", content.as_str()),
+            ],
+            1_100,
+        );
+
+        assert_eq!(selection.selected.len(), 2);
+        assert!(selection.selected_token_count <= 1_100);
+        assert!(selection.oversized.is_empty());
+    }
 
     #[test]
     fn count_limit_caps_rollup_batch_size() {

@@ -14,22 +14,6 @@ use crate::services::ai_pipeline::{SummaryBuildResult, MIN_TOKEN_LIMIT};
 use super::render::record_to_summary_block;
 use super::{RollupSettings, SummaryJobSettings};
 
-pub(crate) fn summary_cloud_owner_entity_id(records: &[EngineRecord]) -> Result<String, String> {
-    let first = records
-        .first()
-        .ok_or_else(|| "summary records are empty".to_string())?;
-    let last = records
-        .last()
-        .ok_or_else(|| "summary records are empty".to_string())?;
-    Ok(format!(
-        "summary:{}:{}:{}:{}",
-        first.thread_id,
-        first.id,
-        last.id,
-        records.len()
-    ))
-}
-
 pub(crate) async fn build_summary_text(
     config: &AppConfig,
     db: &Db,
@@ -45,7 +29,12 @@ pub(crate) async fn build_summary_text(
     let first = records
         .first()
         .ok_or_else(|| "summary records are empty".to_string())?;
-    let owner_entity_id = summary_cloud_owner_entity_id(records)?;
+    let owner_entity_id = settings
+        .cloud_owner_entity_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "summary Cloud Agent job_run_id is required".to_string())?;
     crate::services::memory_cloud_agent::generate_or_defer_from_config(
         config,
         db,
@@ -53,7 +42,7 @@ pub(crate) async fn build_summary_text(
         owner_user_id,
         format!("memory_thread:{}", first.thread_id),
         "summary_job_run",
-        owner_entity_id.as_str(),
+        owner_entity_id,
         CloudSummaryPipelineSpec {
             prompt_title: title.unwrap_or("Thread summary").to_string(),
             summary_prompt: None,

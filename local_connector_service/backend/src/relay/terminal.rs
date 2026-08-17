@@ -181,6 +181,8 @@ impl ConnectorRelay {
                 | "plugin_artifact_read_response"
                 | "plugin_artifact_create_response"
                 | "plugin_artifact_update_response"
+                | "workspace_directory_list_response"
+                | "workspace_directory_create_response"
                 | "relay_response"
         ) {
             return Ok(false);

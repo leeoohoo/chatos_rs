@@ -105,6 +105,103 @@ impl IterativeContextRefresh {
         Ok(Value::Array(items))
     }
 
+    pub fn has_memory_composer(&self) -> bool {
+        self.memory_composer.is_some() && self.memory_scope.is_some()
+    }
+
+    pub async fn wait_for_inflight_summary(
+        &self,
+        callbacks: &RuntimeCallbacks,
+    ) -> Result<bool, String> {
+        let Some(recovery) = &self.context_overflow_recovery else {
+            return Ok(false);
+        };
+        let (Some(composer), Some(scope)) =
+            (self.memory_composer.as_ref(), self.memory_scope.as_ref())
+        else {
+            return Ok(false);
+        };
+        let initial = composer.get_active_summary_status(scope, None).await?;
+        if !initial.running {
+            return Ok(false);
+        }
+
+        notify_context_overflow_recovery(
+            callbacks,
+            "检测到当前会话正在压缩上下文，已暂停新的模型请求。",
+        );
+        notify_context_summary_callback(
+            callbacks.on_context_summarized_start.as_ref(),
+            context_summary_payload("wait", scope, &initial, None),
+        );
+        let status = composer
+            .wait_for_active_summary_completion(
+                scope,
+                initial,
+                recovery.poll_interval,
+                recovery.poll_timeout,
+            )
+            .await?;
+        notify_context_summary_callback(
+            callbacks.on_context_summarized_end.as_ref(),
+            context_summary_payload("end", scope, &status, None),
+        );
+        if status.failed {
+            return Ok(false);
+        }
+        let compacted = status.generated || status.compacted;
+        if compacted {
+            notify_context_overflow_recovery(callbacks, "上下文压缩完成，正在继续当前请求。");
+        }
+        Ok(compacted)
+    }
+
+    pub async fn compact_active_context(
+        &self,
+        callbacks: &RuntimeCallbacks,
+    ) -> Result<bool, String> {
+        let Some(recovery) = &self.context_overflow_recovery else {
+            return Ok(false);
+        };
+        let (Some(composer), Some(scope)) =
+            (self.memory_composer.as_ref(), self.memory_scope.as_ref())
+        else {
+            return Ok(false);
+        };
+
+        notify_context_overflow_recovery(
+            callbacks,
+            "当前上下文已达到主动压缩阈值，正在压缩后再继续模型请求。",
+        );
+        let initial = composer
+            .run_active_summary(scope, Some("active_context_budget"))
+            .await?;
+        notify_context_summary_callback(
+            callbacks.on_context_summarized_start.as_ref(),
+            context_summary_payload("start", scope, &initial, None),
+        );
+        let status = composer
+            .wait_for_active_summary_completion(
+                scope,
+                initial,
+                recovery.poll_interval,
+                recovery.poll_timeout,
+            )
+            .await?;
+        notify_context_summary_callback(
+            callbacks.on_context_summarized_end.as_ref(),
+            context_summary_payload("end", scope, &status, None),
+        );
+        if status.failed {
+            return Ok(false);
+        }
+        let compacted = status.generated || status.compacted;
+        if compacted {
+            notify_context_overflow_recovery(callbacks, "上下文压缩完成，正在继续当前请求。");
+        }
+        Ok(compacted)
+    }
+
     pub async fn try_recover_from_context_overflow(
         &self,
         callbacks: &RuntimeCallbacks,

@@ -86,16 +86,6 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
             ),
         ),
         tool_definition(
-            "summarize_task_memory",
-            "Trigger a Memory Engine repair summary job for one task thread.",
-            required_object_schema(
-                json!({
-                    "task_id": { "type": "string", "minLength": 1 }
-                }),
-                &["task_id"],
-            ),
-        ),
-        tool_definition(
             "cancel_run",
             "Request cancellation for a running or queued Task Runner run.",
             required_object_schema(

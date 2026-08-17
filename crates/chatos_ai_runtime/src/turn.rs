@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
 use crate::runtime::{
-    AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest,
+    AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest, IterativeContextRefresh,
     MemoryContextOverflowRecovery,
 };
 #[cfg(feature = "local-agent-loop")]
-use crate::runtime::{AiRuntimeResult, AiTurnReport, IterativeContextRefresh};
+use crate::runtime::{AiRuntimeResult, AiTurnReport};
 use crate::traits::{ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput};
 
 pub struct ContextualTurnRunner {
@@ -132,7 +132,7 @@ impl ContextualTurnRunner {
             current_input_items,
             user_record,
         } = request;
-        model_request.input = build_contextual_input(
+        let contextual_input = build_contextual_input(
             self.memory_composer.as_ref(),
             memory_scope.as_ref(),
             prefixed_input_items.as_slice(),
@@ -141,12 +141,21 @@ impl ContextualTurnRunner {
             runtime_options.conversation_turn_id.as_deref(),
         )
         .await?;
+        let iterative_context_refresh = self.build_iterative_context_refresh(
+            &runtime_options,
+            memory_scope.as_ref(),
+            prefixed_input_items.as_slice(),
+            current_input_items.as_slice(),
+            &model_request.input,
+        );
         if let Some(user_record) = user_record {
             self.runtime.save_record(user_record).await?;
         }
+        model_request.input = contextual_input;
         let single_step = AiSingleStepRequest {
             model_request,
-            runtime_options,
+            runtime_options: runtime_options
+                .with_iterative_context_refresh(iterative_context_refresh),
             iteration,
             reason: reason.into(),
             model_attempt,
@@ -166,7 +175,6 @@ impl ContextualTurnRunner {
 }
 
 impl ContextualTurnRunner {
-    #[cfg(feature = "local-agent-loop")]
     fn build_iterative_context_refresh(
         &self,
         runtime_options: &AiRuntimeOptions,

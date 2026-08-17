@@ -52,7 +52,7 @@ pub async fn compose_context(
     .await?;
 
     let recent_records = if policy.include_recent_records {
-        records::list_pending_records(
+        records::list_context_records(
             db,
             req.tenant_id.as_str(),
             req.source_id.as_str(),

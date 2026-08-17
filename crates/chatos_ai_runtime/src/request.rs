@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::model_config::normalize_provider;
+use crate::model_config::{
+    effective_responses_support, normalize_provider, supports_previous_response_id,
+};
 #[cfg(test)]
 use crate::request_payload::response_items_to_chat_messages;
 use crate::request_payload::{
@@ -42,6 +46,7 @@ use streaming::emit_finalized_stream_callbacks;
 pub struct AiRequestHandler {
     client: reqwest::Client,
     read_timeout: Option<Duration>,
+    input_token_count_capabilities: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 impl AiRequestHandler {
@@ -60,6 +65,7 @@ impl AiRequestHandler {
         Self {
             client,
             read_timeout: Some(read_timeout),
+            input_token_count_capabilities: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -67,11 +73,79 @@ impl AiRequestHandler {
         Self {
             client,
             read_timeout: None,
+            input_token_count_capabilities: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub fn read_timeout_seconds(&self) -> Option<u64> {
         self.read_timeout.map(|value| value.as_secs())
+    }
+
+    pub async fn count_responses_input_tokens(
+        &self,
+        base_url: &str,
+        api_key: &str,
+        payload: Value,
+        abort_token: Option<CancellationToken>,
+    ) -> Result<Option<usize>, String> {
+        let capability_key = base_url.trim().trim_end_matches('/').to_ascii_lowercase();
+        if self
+            .input_token_count_capabilities
+            .read()
+            .await
+            .get(capability_key.as_str())
+            .is_some_and(|supported| !supported)
+        {
+            return Ok(None);
+        }
+        let payload_body = serialize_request_payload(&payload)?;
+        let url = format!("{}/responses/input_tokens", base_url.trim_end_matches('/'));
+        let response = send_json_request(
+            &self.client,
+            url.as_str(),
+            api_key,
+            payload_body,
+            abort_token,
+            false,
+        )
+        .await?;
+        if matches!(response.status().as_u16(), 400 | 404 | 405 | 422 | 501) {
+            self.input_token_count_capabilities
+                .write()
+                .await
+                .insert(capability_key, false);
+            warn!(
+                url = url.as_str(),
+                status = response.status().as_u16(),
+                "provider does not support Responses input token counting; using local estimate"
+            );
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = read_error_response_text_limited(response).await;
+            return Err(format!(
+                "input token count request failed with status {status}: {body}"
+            ));
+        }
+        let value = response
+            .json::<Value>()
+            .await
+            .map_err(|err| format!("failed to decode input token count response: {err}"))?;
+        let tokens = value
+            .get("input_tokens")
+            .and_then(|value| {
+                value
+                    .as_u64()
+                    .or_else(|| value.as_i64().and_then(|v| u64::try_from(v).ok()))
+            })
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| "input token count response is missing input_tokens".to_string())?;
+        self.input_token_count_capabilities
+            .write()
+            .await
+            .insert(capability_key, true);
+        Ok(Some(tokens))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -126,9 +200,17 @@ impl AiRequestHandler {
         provider: Option<String>,
         thinking_level: Option<String>,
         on_before_send_model_request: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-        options: AiRequestOptions,
+        mut options: AiRequestOptions,
     ) -> Result<AiResponse, String> {
         let provider = effective_provider_for_request(base_url, provider);
+        let supports_responses = effective_responses_support(
+            provider.as_deref().unwrap_or("gpt"),
+            base_url,
+            supports_responses,
+        );
+        if !supports_previous_response_id(provider.as_deref().unwrap_or("gpt"), base_url) {
+            options.previous_response_id = None;
+        }
         let transport = if supports_responses {
             AiTransport::Responses
         } else {

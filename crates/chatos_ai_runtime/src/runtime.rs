@@ -7,13 +7,21 @@ use serde_json::Value;
 
 use chatos_mcp_runtime::ToolResult;
 #[cfg(feature = "local-agent-loop")]
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 #[cfg(feature = "local-agent-loop")]
 use crate::error_policy::is_missing_tool_call_error;
 #[cfg(feature = "local-agent-loop")]
 use crate::file_write_recovery::automatic_file_write_recovery_calls;
+use crate::model_config::supports_responses_input_token_count;
+#[cfg(feature = "local-agent-loop")]
+use crate::model_config::{effective_responses_support, supports_previous_response_id};
 use crate::request::AiRequestHandler;
+use crate::request_payload::{
+    build_chat_completions_request_payload, build_responses_request_payload,
+    responses_input_token_count_payload,
+};
 #[cfg(feature = "local-agent-loop")]
 use crate::request_retry::is_previous_response_id_unsupported_error;
 use crate::tool_call::tool_calls_value_has_items;
@@ -47,9 +55,9 @@ pub use self::single_step::{AiSingleStepOutcome, AiSingleStepRequest};
 use self::final_response::runtime_result_from_response;
 #[cfg(feature = "local-agent-loop")]
 use self::final_response::{handle_response_without_tool_calls, FinalResponseAction};
-use self::input_items::append_runtime_input_items;
 #[cfg(feature = "local-agent-loop")]
 use self::input_items::empty_final_response_followup_item;
+use self::input_items::{append_runtime_input_items, estimated_json_tokens};
 #[cfg(feature = "local-agent-loop")]
 use self::input_items::{
     input_item_count, json_value_size_bytes, merge_current_turn_tool_history_into_input,
@@ -82,6 +90,13 @@ const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回�
 const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
 #[cfg(feature = "local-agent-loop")]
 const MAX_CONSECUTIVE_FAILED_TOOL_BATCHES: usize = 8;
+const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS: usize = 250_000;
+const MODEL_CONTEXT_RESERVE_TOKENS: usize = 30_000;
+const ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS: usize =
+    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS - MODEL_CONTEXT_RESERVE_TOKENS;
+const OFFICIAL_TOKEN_COUNT_PREFLIGHT_TOKENS: usize =
+    ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS - 20_000;
+const MAX_ACTIVE_CONTEXT_COMPACTION_PASSES: usize = 8;
 
 impl AiRuntime {
     pub fn builder() -> crate::builder::AiRuntimeBuilder {
@@ -153,6 +168,14 @@ impl AiRuntime {
         mut request: ModelRequest,
         options: AiRuntimeOptions,
     ) -> Result<AiRuntimeResult, String> {
+        request.supports_responses = effective_responses_support(
+            request.provider.as_str(),
+            request.base_url.as_str(),
+            request.supports_responses,
+        );
+        if !supports_previous_response_id(request.provider.as_str(), request.base_url.as_str()) {
+            request.previous_response_id = None;
+        }
         let mut iteration = 0usize;
         let mut context_overflow_recovery_attempted = false;
         let mut missing_tool_turn_replay_attempted = false;
@@ -187,22 +210,47 @@ impl AiRuntime {
             iteration += 1;
 
             let mut input_rebuilt_for_iteration = false;
+            let mut context_compacted_before_iteration = false;
+            if let Some(refresh) = &options.iterative_context_refresh {
+                match refresh.wait_for_inflight_summary(&options.callbacks).await {
+                    Ok(compacted) => context_compacted_before_iteration = compacted,
+                    Err(error) => {
+                        warn!(
+                            conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                            conversation_turn_id =
+                                options.conversation_turn_id.as_deref().unwrap_or(""),
+                            iteration,
+                            error = error.as_str(),
+                            "ai runtime could not observe in-flight context summary"
+                        );
+                    }
+                }
+            }
             if iteration > 1 {
                 if let Some(refresh) = &options.iterative_context_refresh {
                     request.previous_response_id = None;
                     continuation_input = None;
                     request.input = refresh.compose_input().await?;
-                    request.input = merge_current_turn_tool_history_into_input(
-                        request.input,
-                        current_turn_tool_calls.as_slice(),
-                        current_turn_tool_outputs.as_slice(),
-                        options.tool_result_model_budget_limits,
-                    );
+                    if !refresh.has_memory_composer() {
+                        request.input = merge_current_turn_tool_history_into_input(
+                            request.input,
+                            current_turn_tool_calls.as_slice(),
+                            current_turn_tool_outputs.as_slice(),
+                            options.tool_result_model_budget_limits,
+                        );
+                    }
                     request.input = merge_pending_tool_turn_into_input(
                         request.input,
                         pending_tool_calls.as_deref(),
                         pending_tool_outputs.as_deref(),
                     );
+                    input_rebuilt_for_iteration = true;
+                }
+            } else if context_compacted_before_iteration {
+                if let Some(refresh) = &options.iterative_context_refresh {
+                    request.previous_response_id = None;
+                    continuation_input = None;
+                    request.input = refresh.compose_input().await?;
                     input_rebuilt_for_iteration = true;
                 }
             }
@@ -226,8 +274,85 @@ impl AiRuntime {
             let (mut iteration_request, lifecycle_before) =
                 prepare_iteration_request(&request, &options, iteration, iteration_reason.as_str())
                     .await?;
+            if let Some(refresh) = options
+                .iterative_context_refresh
+                .as_ref()
+                .filter(|refresh| refresh.has_memory_composer())
+            {
+                let mut remaining_input_tokens = None;
+                let mut count_source = "local_estimate";
+                for compaction_pass in 0..=MAX_ACTIVE_CONTEXT_COMPACTION_PASSES {
+                    let count = count_iteration_input_tokens(
+                        &self.request_handler,
+                        &iteration_request,
+                        &options,
+                    )
+                    .await;
+                    remaining_input_tokens = Some(count.tokens);
+                    count_source = count.source;
+                    info!(
+                        conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                        conversation_turn_id =
+                            options.conversation_turn_id.as_deref().unwrap_or(""),
+                        iteration,
+                        input_tokens = count.tokens,
+                        token_count_source = count.source,
+                        compaction_threshold = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
+                        "ai runtime measured model input context"
+                    );
+                    if count.tokens <= ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
+                        break;
+                    }
+                    if compaction_pass == MAX_ACTIVE_CONTEXT_COMPACTION_PASSES {
+                        break;
+                    }
+                    match refresh.compact_active_context(&options.callbacks).await {
+                        Ok(true) => {
+                            request.previous_response_id = None;
+                            continuation_input = None;
+                            request.input = refresh.compose_input().await?;
+                            if !runtime_followup_items.is_empty() {
+                                request.input = append_runtime_input_items(
+                                    request.input,
+                                    runtime_followup_items.as_slice(),
+                                );
+                                runtime_followup_appended_to_request = true;
+                            }
+                            iteration_request.input = append_runtime_input_items(
+                                request.input.clone(),
+                                lifecycle_before.input_items.as_slice(),
+                            );
+                            iteration_request.previous_response_id = None;
+                        }
+                        Ok(false) => break,
+                        Err(error) => {
+                            warn!(
+                                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                                conversation_turn_id =
+                                    options.conversation_turn_id.as_deref().unwrap_or(""),
+                                iteration,
+                                error = error.as_str(),
+                                "ai runtime proactive context compaction failed"
+                            );
+                            break;
+                        }
+                    }
+                }
+                let remaining_input_tokens = remaining_input_tokens
+                    .unwrap_or_else(|| estimated_iteration_input_tokens(&iteration_request));
+                if remaining_input_tokens > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
+                    return Err(format!(
+                        "主动上下文压缩后输入仍为 {} tokens（计数来源：{}），已停止本次模型请求以避免异常消耗",
+                        remaining_input_tokens, count_source
+                    ));
+                }
+            }
             let standalone_iteration_input = iteration_request.input.clone();
             if request.supports_responses
+                && supports_previous_response_id(
+                    request.provider.as_str(),
+                    request.base_url.as_str(),
+                )
                 && options.iterative_context_refresh.is_none()
                 && !continuation_disabled
             {
@@ -594,6 +719,16 @@ impl AiRuntime {
         let Some(conversation_id) = normalized_option(options.conversation_id.as_deref()) else {
             return Ok(());
         };
+        let metadata = merge_record_metadata(
+            merge_record_metadata(
+                options.record_options.assistant_metadata.clone(),
+                metadata_override,
+            ),
+            response
+                .usage
+                .clone()
+                .map(|usage| serde_json::json!({ "provider_usage": usage })),
+        );
         writer
             .save_assistant_record(SaveAssistantRecordInput {
                 conversation_id,
@@ -604,10 +739,7 @@ impl AiRuntime {
                 structured_payload: tool_calls
                     .clone()
                     .filter(|value| tool_calls_value_has_items(Some(value))),
-                metadata: merge_record_metadata(
-                    options.record_options.assistant_metadata.clone(),
-                    metadata_override,
-                ),
+                metadata,
                 tool_calls,
                 response_id: response.response_id.clone(),
                 response_status: response_status.or_else(|| response.finish_reason.clone()),
@@ -674,6 +806,7 @@ fn set_next_continuation(
 ) {
     let response_id = normalized_option(response_id);
     if request.supports_responses
+        && supports_previous_response_id(request.provider.as_str(), request.base_url.as_str())
         && options.iterative_context_refresh.is_none()
         && !continuation_disabled
         && response_id.is_some()
@@ -715,6 +848,112 @@ fn merge_record_metadata(base: Option<Value>, overlay: Option<Value>) -> Option<
         }
         (_, Some(overlay)) => Some(overlay),
     }
+}
+
+struct IterationInputTokenCount {
+    tokens: usize,
+    source: &'static str,
+}
+
+async fn count_iteration_input_tokens(
+    request_handler: &AiRequestHandler,
+    request: &ModelRequest,
+    options: &AiRuntimeOptions,
+) -> IterationInputTokenCount {
+    let estimated_tokens = estimated_iteration_input_tokens(request);
+    if !request.supports_responses
+        || !supports_responses_input_token_count(
+            request.provider.as_str(),
+            request.base_url.as_str(),
+        )
+        || estimated_tokens < OFFICIAL_TOKEN_COUNT_PREFLIGHT_TOKENS
+    {
+        return IterationInputTokenCount {
+            tokens: estimated_tokens,
+            source: "complete_payload_estimate",
+        };
+    }
+    if request.supports_responses {
+        let payload = build_responses_request_payload(
+            request.input.clone(),
+            request.model.clone(),
+            request.instructions.clone(),
+            request.prompt_cache_key.clone(),
+            request.previous_response_id.clone(),
+            Some(request.tools.clone()),
+            request.request_cwd.clone(),
+            request.temperature,
+            request.max_output_tokens,
+            Some(request.provider.clone()),
+            request.thinking_level.clone(),
+            false,
+            request.include_prompt_cache_retention,
+            request.output_format.clone(),
+        );
+        let count_payload = responses_input_token_count_payload(payload);
+        match request_handler
+            .count_responses_input_tokens(
+                request.base_url.as_str(),
+                request.api_key.as_str(),
+                count_payload,
+                options.abort_token.clone(),
+            )
+            .await
+        {
+            Ok(Some(tokens)) => {
+                return IterationInputTokenCount {
+                    tokens,
+                    source: "provider_input_tokens",
+                };
+            }
+            Ok(None) => {}
+            Err(error) => warn!(
+                conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
+                error = error.as_str(),
+                "ai runtime could not count provider input tokens; using local estimate"
+            ),
+        }
+    }
+    IterationInputTokenCount {
+        tokens: estimated_tokens,
+        source: "local_estimate",
+    }
+}
+
+fn estimated_iteration_input_tokens(request: &ModelRequest) -> usize {
+    let payload = if request.supports_responses {
+        responses_input_token_count_payload(build_responses_request_payload(
+            request.input.clone(),
+            request.model.clone(),
+            request.instructions.clone(),
+            request.prompt_cache_key.clone(),
+            request.previous_response_id.clone(),
+            Some(request.tools.clone()),
+            request.request_cwd.clone(),
+            request.temperature,
+            request.max_output_tokens,
+            Some(request.provider.clone()),
+            request.thinking_level.clone(),
+            false,
+            request.include_prompt_cache_retention,
+            request.output_format.clone(),
+        ))
+    } else {
+        build_chat_completions_request_payload(
+            request.input.clone(),
+            request.model.clone(),
+            request.instructions.clone(),
+            Some(request.tools.clone()),
+            request.temperature,
+            request.max_output_tokens,
+            Some(request.provider.clone()),
+            request.thinking_level.clone(),
+            false,
+            request.output_format.clone(),
+        )
+    };
+    estimated_json_tokens(&payload)
 }
 
 async fn prepare_iteration_request(

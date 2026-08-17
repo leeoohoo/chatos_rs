@@ -51,16 +51,27 @@ impl EditSessionStore {
         &mut self,
         run_id: &str,
         conversation_id: &str,
+        fresh: bool,
     ) -> EditSessionHandle {
         self.prune_expired();
-        let reusable_session_id = self
-            .sessions
-            .values()
-            .filter(|session| {
-                session.run_id == run_id && session.conversation_id == conversation_id
-            })
-            .max_by_key(|session| (session.staged_operation_count > 0, session.last_touched))
-            .map(|session| session.id.clone());
+        if fresh {
+            // A fresh rebaseline supersedes every older session for this run/conversation. Keeping
+            // the old staged snapshot selectable would let a later non-fresh open pick it again.
+            self.sessions.retain(|_, session| {
+                !(session.run_id == run_id && session.conversation_id == conversation_id)
+            });
+        }
+        let reusable_session_id = if fresh {
+            None
+        } else {
+            self.sessions
+                .values()
+                .filter(|session| {
+                    session.run_id == run_id && session.conversation_id == conversation_id
+                })
+                .max_by_key(|session| (session.staged_operation_count > 0, session.last_touched))
+                .map(|session| session.id.clone())
+        };
         if let Some(session_id) = reusable_session_id {
             let session = self
                 .sessions
@@ -280,23 +291,23 @@ mod tests {
         let first_session = first_store
             .lock()
             .expect("first lock")
-            .open_session("run-a", "conversation-a")
+            .open_session("run-a", "conversation-a", false)
             .id;
         drop(first_store);
 
         let second_store = store_for_workspace(root.as_path()).expect("second store");
         let mut store = second_store.lock().expect("second lock");
-        store.open_session("run-b", "conversation-b");
+        store.open_session("run-b", "conversation-b", false);
         assert!(store.get_mut(first_session.as_str(), "run-a").is_ok());
     }
 
     #[test]
     fn opening_again_reuses_the_active_session_for_the_same_run_and_conversation() {
         let mut store = EditSessionStore::default();
-        let first = store.open_session("run-a", "conversation-a");
+        let first = store.open_session("run-a", "conversation-a", false);
         assert!(!first.reused);
 
-        let repeated = store.open_session("run-a", "conversation-a");
+        let repeated = store.open_session("run-a", "conversation-a", false);
 
         assert!(repeated.reused);
         assert_eq!(repeated.id, first.id);
@@ -306,14 +317,27 @@ mod tests {
     #[test]
     fn opening_keeps_sessions_isolated_between_runs_and_conversations() {
         let mut store = EditSessionStore::default();
-        let first = store.open_session("run-a", "conversation-a");
-        let other_run = store.open_session("run-b", "conversation-a");
-        let other_conversation = store.open_session("run-a", "conversation-b");
+        let first = store.open_session("run-a", "conversation-a", false);
+        let other_run = store.open_session("run-b", "conversation-a", false);
+        let other_conversation = store.open_session("run-a", "conversation-b", false);
 
         assert_ne!(other_run.id, first.id);
         assert_ne!(other_conversation.id, first.id);
         assert!(!other_run.reused);
         assert!(!other_conversation.reused);
         assert_eq!(store.sessions.len(), 3);
+    }
+
+    #[test]
+    fn opening_fresh_session_does_not_reuse_the_active_baseline() {
+        let mut store = EditSessionStore::default();
+        let first = store.open_session("run-a", "conversation-a", false);
+        let fresh = store.open_session("run-a", "conversation-a", true);
+
+        assert_ne!(fresh.id, first.id);
+        assert!(!fresh.reused);
+        assert_eq!(store.sessions.len(), 1);
+        let reopened = store.open_session("run-a", "conversation-a", false);
+        assert_eq!(reopened.id, fresh.id);
     }
 }

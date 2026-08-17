@@ -128,6 +128,11 @@ const ToolCallCard: React.FC<{
         <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
           {formatTime(item.createdAt)}
         </span>
+        {item.status === 'pending' ? (
+          <span className="shrink-0 text-[11px] text-amber-700 dark:text-amber-300">
+            进行中
+          </span>
+        ) : null}
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
           {expanded ? '收起' : '展开'}
           <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />

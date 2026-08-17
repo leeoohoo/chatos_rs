@@ -55,6 +55,20 @@ fn context() -> ProjectExecutionContext {
     }
 }
 
+#[test]
+fn public_chat_context_has_no_project_workspace_or_sandbox() {
+    let context = public_chat_execution_context(" user-1 ");
+
+    assert_eq!(context.project_id, PUBLIC_PROJECT_ID);
+    assert_eq!(context.owner_user_id, "user-1");
+    assert_eq!(context.execution_plane, ExecutionPlane::Cloud);
+    assert_eq!(context.workspace_provider, WorkspaceProviderKind::None);
+    assert!(context.workspace.is_none());
+    assert_eq!(context.sandbox_provider, SandboxProviderKind::None);
+    assert_eq!(context.source_type.as_deref(), Some("public"));
+    assert_eq!(context.revision, PUBLIC_PROJECT_CONTEXT_REVISION);
+}
+
 fn resolved_mcp(resource_id: &str, required: bool) -> ResolvedMcp {
     ResolvedMcp {
         resource: McpRecord {
@@ -577,9 +591,9 @@ fn cloud_sandbox_route_pins_all_workspace_tools_to_the_same_lease() {
     };
     let route = RuntimeWorkspaceRouteTarget::CloudSandbox { target };
 
-    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route));
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context());
 
-    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route))
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context())
         .expect("cloud sandbox binding");
 
     assert!(routes.iter().all(|resolved| {
@@ -589,24 +603,30 @@ fn cloud_sandbox_route_pins_all_workspace_tools_to_the_same_lease() {
 }
 
 #[test]
-fn local_connector_route_pins_all_workspace_tools_without_exposing_runtime_mode() {
+fn local_connector_route_pins_all_workspace_tools_to_the_authorized_workspace() {
     let mut routes = vec![
         system_route(SystemMcpKey::CodeMaintainerRead),
         system_route(SystemMcpKey::CodeMaintainerWrite),
         system_route(SystemMcpKey::TerminalController),
     ];
+    let context = context();
     bind_runtime_workspace_routes(
         routes.as_mut_slice(),
         Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        &context,
     );
 
     for route in &routes {
         assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
-        assert_eq!(route.provider_ref, None);
+        assert_eq!(
+            route.provider_ref.as_deref(),
+            Some("device:device-1/workspace:workspace-1")
+        );
     }
     validate_runtime_workspace_route_binding(
         routes.as_slice(),
         Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        &context,
     )
     .expect("local connector binding");
 }
@@ -627,7 +647,7 @@ fn harness_route_binds_read_write_and_rejects_terminal() {
         },
     };
 
-    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route));
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context());
 
     assert_eq!(routes[0].provider_kind, McpProviderKind::Harness);
     assert_eq!(routes[1].provider_kind, McpProviderKind::Harness);
@@ -635,7 +655,7 @@ fn harness_route_binds_read_write_and_rejects_terminal() {
     assert!(routes[2]
         .reason
         .contains("requires a Task Runner cloud sandbox"));
-    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route))
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context())
         .expect("harness run binding");
 }
 
@@ -651,12 +671,12 @@ fn harness_default_branch_is_read_only() {
         },
     };
 
-    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route));
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context());
 
     assert_eq!(routes[0].provider_kind, McpProviderKind::Harness);
     assert_eq!(routes[1].provider_kind, McpProviderKind::Unavailable);
     assert!(routes[1].reason.contains("Task Run branch"));
-    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route))
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context())
         .expect("harness default binding");
 }
 
@@ -664,10 +684,28 @@ fn harness_default_branch_is_read_only() {
 fn workspace_route_binding_validation_rejects_provider_drift() {
     let route = RuntimeWorkspaceRouteTarget::LocalConnector;
     let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
-    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route));
+    let context = context();
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context);
     routes[0].provider_kind = McpProviderKind::Harness;
 
-    assert!(validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route)).is_err());
+    assert!(
+        validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context)
+            .is_err()
+    );
+}
+
+#[test]
+fn workspace_route_binding_validation_rejects_local_connector_identity_drift() {
+    let route = RuntimeWorkspaceRouteTarget::LocalConnector;
+    let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
+    let context = context();
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context);
+    routes[0].provider_ref = Some("device:other-device/workspace:workspace-1".to_string());
+
+    assert!(
+        validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context)
+            .is_err()
+    );
 }
 
 #[test]
@@ -741,6 +779,7 @@ fn workspace_route_binding_does_not_overwrite_sandbox_images() {
     bind_runtime_workspace_routes(
         routes.as_mut_slice(),
         Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        &context(),
     );
 
     assert_eq!(

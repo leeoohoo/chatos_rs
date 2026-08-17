@@ -6,8 +6,8 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_mcp_service::{
-    BUILTIN_KIND_CODE_MAINTAINER_READ, BUILTIN_KIND_CODE_MAINTAINER_WRITE,
-    BUILTIN_KIND_TERMINAL_CONTROLLER, LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+    BUILTIN_KIND_CODE_MAINTAINER_READ, BUILTIN_KIND_TERMINAL_CONTROLLER,
+    LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -61,7 +61,6 @@ const LOCAL_CONNECTOR_BINDING_MODE_TERMINAL: &str = "local_terminal";
 const LOCAL_CONNECTOR_DEVICE_ONLINE: &str = "online";
 const LOCAL_CONNECTOR_WORKSPACE_ACTIVE: &str = "active";
 pub(crate) const LOCAL_CONNECTOR_BUILTIN_CODE_READ: &str = BUILTIN_KIND_CODE_MAINTAINER_READ;
-pub(crate) const LOCAL_CONNECTOR_BUILTIN_CODE_WRITE: &str = BUILTIN_KIND_CODE_MAINTAINER_WRITE;
 pub(crate) const LOCAL_CONNECTOR_BUILTIN_TERMINAL: &str = BUILTIN_KIND_TERMINAL_CONTROLLER;
 pub fn router() -> Router {
     Router::new()
@@ -316,15 +315,8 @@ async fn list_directory(
         Ok(None) => ".".to_string(),
         Err(err) => return err,
     };
-    match call_local_mcp_tool_readonly(
-        device_id.as_str(),
-        workspace_id.as_str(),
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
-        "list_dir",
-        json!({ "path": path, "max_entries": 1000 }),
-    )
-    .await
+    match list_local_connector_directory(device_id.as_str(), workspace_id.as_str(), path.as_str())
+        .await
     {
         Ok(value) => (
             StatusCode::OK,
@@ -523,16 +515,9 @@ async fn validate_local_connector_directory(
     workspace_id: &str,
     path: &str,
 ) -> Result<(), (StatusCode, Json<Value>)> {
-    call_local_mcp_tool_readonly(
-        device_id,
-        workspace_id,
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
-        "list_dir",
-        json!({ "path": path, "max_entries": 1 }),
-    )
-    .await
-    .map(|_| ())
+    list_local_connector_directory(device_id, workspace_id, path)
+        .await
+        .map(|_| ())
 }
 
 pub(crate) async fn call_local_mcp_tool(
@@ -566,48 +551,6 @@ pub(crate) async fn call_local_mcp_tool(
     )
     .await?;
     extract_mcp_tool_result(response)
-}
-
-pub(crate) async fn call_local_mcp_tool_readonly(
-    device_id: &str,
-    workspace_id: &str,
-    cwd: Option<&str>,
-    enabled_builtin_kinds: &[&str],
-    name: &str,
-    arguments: Value,
-) -> Result<Value, (StatusCode, Json<Value>)> {
-    const RETRY_DELAYS: [Duration; 3] = [
-        Duration::from_secs(1),
-        Duration::from_secs(2),
-        Duration::from_secs(4),
-    ];
-    for delay in RETRY_DELAYS {
-        match call_local_mcp_tool(
-            device_id,
-            workspace_id,
-            cwd,
-            enabled_builtin_kinds,
-            name,
-            arguments.clone(),
-        )
-        .await
-        {
-            Ok(value) => return Ok(value),
-            Err((status, _)) if status == StatusCode::SERVICE_UNAVAILABLE => {
-                tokio::time::sleep(delay).await;
-            }
-            Err(err) => return Err(err),
-        }
-    }
-    call_local_mcp_tool(
-        device_id,
-        workspace_id,
-        cwd,
-        enabled_builtin_kinds,
-        name,
-        arguments,
-    )
-    .await
 }
 
 fn extract_mcp_tool_result(response: Value) -> Result<Value, (StatusCode, Json<Value>)> {
@@ -667,6 +610,32 @@ pub(crate) async fn create_local_connector_directory(
         &RelayWorkspaceDirectoryCreateRequest { path },
     )
     .await
+}
+
+pub(crate) async fn call_local_workspace_filesystem(
+    device_id: &str,
+    workspace_id: &str,
+    operation: Value,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let relay_path = format!(
+        "/api/local-connectors/relay/{}/workspaces/{}/filesystem",
+        urlencoding::encode(device_id),
+        urlencoding::encode(workspace_id)
+    );
+    connector_post_json(relay_path.as_str(), &operation).await
+}
+
+async fn list_local_connector_directory(
+    device_id: &str,
+    workspace_id: &str,
+    path: &str,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let relay_path = format!(
+        "/api/local-connectors/relay/{}/workspaces/{}/directories",
+        urlencoding::encode(device_id),
+        urlencoding::encode(workspace_id)
+    );
+    connector_get_json(relay_path.as_str(), &[("path", path.to_string())]).await
 }
 
 async fn create_project_binding(

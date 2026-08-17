@@ -30,7 +30,12 @@ pub(crate) fn provider_requires_unit_temperature(base_url: &str, model: &str) ->
 pub(crate) fn provider_requires_disabled_thinking(base_url: &str, model: &str) -> bool {
     let normalized_base_url = base_url.trim().to_lowercase();
     let normalized_model = model.trim().to_lowercase();
-    normalized_base_url.contains("moonshot.cn") && normalized_model.starts_with("kimi-")
+    let is_kimi_endpoint = normalized_base_url.contains("moonshot.cn")
+        || normalized_base_url.contains("moonshot.ai")
+        || normalized_base_url.contains("api.kimi.com");
+    is_kimi_endpoint
+        && (normalized_model.starts_with("kimi-k2.5")
+            || normalized_model.starts_with("kimi-k2.6"))
 }
 
 pub(crate) fn provider_supports_optional_thinking(base_url: &str, model: &str) -> bool {

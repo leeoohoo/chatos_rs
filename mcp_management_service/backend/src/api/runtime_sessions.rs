@@ -12,9 +12,10 @@ use chatos_agent::{
 };
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind, ResolvedMcpRoute,
-    RuntimeProviderFinalizationStatus, RuntimeSessionResponse, RuntimeSessionRoutesResponse,
-    SandboxExecutionTarget, SandboxProviderKind, WorkspaceProviderKind,
+    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, ExecutionPlane, McpProviderKind,
+    ProjectExecutionContext, ResolvedMcpRoute, RuntimeProviderFinalizationStatus,
+    RuntimeSessionResponse, RuntimeSessionRoutesResponse, SandboxExecutionTarget,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     PluginComponentKind, ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities,
@@ -35,6 +36,9 @@ use super::runtime_session_metadata::resolve_runtime_session_prompt_metadata;
 
 mod routing;
 use routing::*;
+
+const PUBLIC_PROJECT_ID: &str = "-1";
+const PUBLIC_PROJECT_CONTEXT_REVISION: &str = "public-chat-context-v1";
 
 pub(super) async fn resolve_runtime_session(
     State(state): State<AppState>,
@@ -64,11 +68,15 @@ pub(super) async fn resolve_runtime_session(
         .clone()
         .map(|items| normalized_unique_items(items, "requested_mcp_ids", 200))
         .transpose()?;
-    let project_context = state
-        .project_context_client
-        .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
-        .await
-        .map_err(ApiError::bad_gateway)?;
+    let project_context = if request.project_id.trim() == PUBLIC_PROJECT_ID {
+        public_chat_execution_context(request.owner_user_id.as_str())
+    } else {
+        state
+            .project_context_client
+            .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
+            .await
+            .map_err(ApiError::bad_gateway)?
+    };
     let execution_scope_run_id = normalized(request.run_id.clone());
     validate_context_overrides(&request, &project_context)?;
     let device_id = project_context
@@ -142,10 +150,12 @@ pub(super) async fn resolve_runtime_session(
     bind_runtime_workspace_routes(
         route_response.routes.as_mut_slice(),
         request.workspace_route.as_ref(),
+        &project_context,
     );
     validate_runtime_workspace_route_binding(
         route_response.routes.as_slice(),
         request.workspace_route.as_ref(),
+        &project_context,
     )?;
     let cloud_sandbox_target = sandbox_target
         .as_ref()
@@ -559,6 +569,20 @@ pub(super) async fn resolve_runtime_session(
         }
     }
     result
+}
+
+fn public_chat_execution_context(owner_user_id: &str) -> ProjectExecutionContext {
+    ProjectExecutionContext {
+        project_id: PUBLIC_PROJECT_ID.to_string(),
+        owner_user_id: owner_user_id.trim().to_string(),
+        execution_plane: ExecutionPlane::Cloud,
+        workspace_provider: WorkspaceProviderKind::None,
+        workspace: None,
+        sandbox_provider: SandboxProviderKind::None,
+        sandbox_pairing_id: None,
+        source_type: Some("public".to_string()),
+        revision: PUBLIC_PROJECT_CONTEXT_REVISION.to_string(),
+    }
 }
 
 fn plugin_instruction_items(

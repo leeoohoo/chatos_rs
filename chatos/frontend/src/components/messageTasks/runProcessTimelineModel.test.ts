@@ -120,6 +120,63 @@ describe('buildRunProcessTimelineItems', () => {
     });
   });
 
+  it('marks a background terminal start complete when the tool returns', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'tools_start', [{
+        id: 'call-background',
+        function: {
+          name: 'sandbox_terminal_controller_execute_command',
+          arguments: { command: 'npm run build:frontend', background: true },
+        },
+      }]),
+      event('2', 'tool_stream', {
+        tool_call_id: 'call-background',
+        name: 'sandbox_terminal_controller_execute_command',
+        success: true,
+        is_error: false,
+        is_stream: false,
+        result: {
+          background: true,
+          busy: true,
+          process_id: 'process-1',
+        },
+      }),
+    ]);
+
+    expect(items[0]).toMatchObject({
+      type: 'tool_call',
+      hasResult: true,
+      status: 'completed',
+    });
+  });
+
+  it('matches legacy results without call ids by the tool name', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'tools_start', [{
+        id: 'call-legacy',
+        function: {
+          name: 'code_maintainer_read_read_file_raw',
+          arguments: { path: 'README.md' },
+        },
+      }]),
+      event('2', 'tool_stream', {
+        name: 'code_maintainer_read_read_file_raw',
+        success: true,
+        is_error: false,
+        is_stream: false,
+        content: 'legacy result',
+      }),
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      type: 'tool_call',
+      hasResult: true,
+      result: 'legacy result',
+      status: 'completed',
+    });
+  });
+
   it('keeps an unpaired final tool result visible for diagnosis', () => {
     const items = buildRunProcessTimelineItems([
       event('1', 'tool_stream', {
@@ -176,6 +233,30 @@ describe('buildRunProcessTimelineItems', () => {
       type: 'tool_call',
       hasResult: true,
       result: 'visible content',
+    });
+  });
+
+  it('marks an empty terminal result complete instead of pending', () => {
+    const items = buildRunProcessTimelineItems([
+      event('1', 'tools_start', [{
+        id: 'call-empty',
+        function: { name: 'terminal_controller_process_wait', arguments: '{}' },
+      }]),
+      event('2', 'tool_stream', {
+        tool_call_id: 'call-empty',
+        name: 'terminal_controller_process_wait',
+        success: true,
+        is_error: false,
+        is_stream: false,
+        result: null,
+        content: '',
+      }),
+    ]);
+
+    expect(items[0]).toMatchObject({
+      type: 'tool_call',
+      hasResult: false,
+      status: 'completed',
     });
   });
 

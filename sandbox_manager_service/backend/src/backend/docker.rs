@@ -276,12 +276,18 @@ impl SandboxBackend for DockerSandboxBackend {
             return self.stop_with_api(sandbox_id).await;
         }
         let name = docker_name(sandbox_id);
-        let _ = Command::new("docker")
+        let output = Command::new("docker")
             .arg("stop")
             .arg(&name)
             .output()
             .await
             .map_err(|err| format!("docker stop failed: {err}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("No such container") && !stderr.contains("is not running") {
+                return Err(format!("docker stop failed: {stderr}"));
+            }
+        }
         Ok(())
     }
 
@@ -351,7 +357,7 @@ impl SandboxBackend for DockerSandboxBackend {
                 .map_err(|err| format!("docker stop environment service failed: {err}"))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                if !stderr.contains("No such container") {
+                if !stderr.contains("No such container") && !stderr.contains("is not running") {
                     return Err(format!("docker stop environment service failed: {stderr}"));
                 }
             }

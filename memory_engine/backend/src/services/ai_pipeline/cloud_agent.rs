@@ -291,9 +291,9 @@ fn continuation_outcome(reason: &str) -> AiSingleStepOutcome {
             finish_reason: Some(reason.to_string()),
             usage: None,
             response_id: None,
-        response_output_items: Vec::new(),
-        request_input_items: Vec::new(),
-},
+            response_output_items: Vec::new(),
+            request_input_items: Vec::new(),
+        },
         input_items: Vec::new(),
         reason: reason.to_string(),
     }
@@ -307,9 +307,9 @@ fn final_outcome(content: String) -> AiSingleStepOutcome {
         finish_reason: Some("stop".to_string()),
         usage: Some(json!({"pipeline": "memory_engine_summary"})),
         response_id: None,
-    response_output_items: Vec::new(),
-    request_input_items: Vec::new(),
-})
+        response_output_items: Vec::new(),
+        request_input_items: Vec::new(),
+    })
 }
 
 #[cfg(test)]

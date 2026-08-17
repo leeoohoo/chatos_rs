@@ -95,7 +95,20 @@ pub fn apply_edit_text(original: &str, req: EditRequest<'_>) -> Result<EditOutpu
         candidates.push(context_matches[0]);
     }
 
-    if let Some(expected) = req.expected_matches {
+    let expected = req.expected_matches.unwrap_or(1);
+    if candidates.is_empty()
+        && all_matches.len() == 1
+        && expected == 1
+        && (req.start_line.is_some() || req.end_line.is_some())
+        && match_line_range(&all_matches[0], req.start_line, req.end_line)
+    {
+        // A successful read/revision check plus a unique exact old_text is enough to recover from
+        // stale surrounding context emitted by an earlier operation or by a lockfile rewrite.
+        // Keep the positional window requirement so a distant context anchor remains fail-closed.
+        candidates.push(all_matches[0]);
+    }
+
+    if req.expected_matches.is_some() {
         if candidates.len() != expected {
             return Err(format!(
                 "expected_matches mismatch: expected {}, got {}",
@@ -548,6 +561,27 @@ mod tests {
         .expect("unique contextual match should survive a stale line hint");
 
         assert_eq!(out.content, "header\nanchor\nupdated\nfooter\n");
+        assert_eq!(out.info.start_line, 3);
+    }
+
+    #[test]
+    fn edit_uses_unique_exact_match_when_surrounding_context_is_stale() {
+        let source = "header\nfirst\ntarget\nfooter\n";
+        let out = apply_edit_text(
+            source,
+            EditRequest {
+                old_text: "target",
+                new_text: "updated",
+                start_line: Some(3),
+                end_line: Some(3),
+                before_context: Some("context from the previous file revision"),
+                after_context: Some("another stale anchor"),
+                expected_matches: Some(1),
+            },
+        )
+        .expect("unique exact text should survive stale surrounding context");
+
+        assert_eq!(out.content, "header\nfirst\nupdated\nfooter\n");
         assert_eq!(out.info.start_line, 3);
     }
 

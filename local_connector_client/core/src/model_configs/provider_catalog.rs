@@ -30,12 +30,11 @@ pub(super) fn default_base_url_for_provider(provider: &str) -> String {
 
 pub(super) fn runtime_provider_for_model(provider: &str, base_url: &str) -> String {
     let provider = normalize_provider(Some(provider.to_string()));
-    if provider == "glm"
-        || (provider == "gpt"
-            && !base_url
-                .trim()
-                .to_ascii_lowercase()
-                .contains("api.openai.com"))
+    if provider == "gpt"
+        && !base_url
+            .trim()
+            .to_ascii_lowercase()
+            .contains("api.openai.com")
     {
         "openai_compatible".to_string()
     } else {
@@ -48,7 +47,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn glm_aliases_use_the_glm_catalog_and_compatible_runtime() {
+    fn glm_aliases_keep_the_glm_parameter_dialect() {
         assert_eq!(normalize_provider(Some("zhipu".to_string())), "glm");
         assert_eq!(
             default_base_url_for_provider("glm"),
@@ -56,7 +55,7 @@ mod tests {
         );
         assert_eq!(
             runtime_provider_for_model("glm", "https://open.bigmodel.cn/api/paas/v4"),
-            "openai_compatible"
+            "glm"
         );
     }
 }

@@ -70,24 +70,34 @@ fn register_open_edit_session_tool(
     service.register_tool(
         "open_edit_session",
         &format!(
-            "Open a write session for the current project workspace. Use one session, stage one or more edit batches against its in-memory snapshot, then finish with commit_edit_session or abort_edit_session.\n{}.\n{}",
+            "Open a write session for the current project workspace. Use one session, stage one or more edit batches against its in-memory snapshot, then finish with commit_edit_session or abort_edit_session. Set fresh=true after a stale-context or expected-match recovery when the previous session must be discarded and rebased from the latest workspace state.\n{}.\n{}",
             writes_note, workspace_note
         ),
         json!({
             "type": "object",
             "properties": {
-                "purpose": { "type": "string" }
+                "purpose": { "type": "string" },
+                "fresh": {
+                    "type": "boolean",
+                    "description": "Discard the reusable session for this run/conversation and create a new baseline from the current workspace."
+                }
             },
             "additionalProperties": false
         }),
-        Arc::new(move |_args, ctx| {
+        Arc::new(move |args, ctx| {
             let invocation = (|| {
+                let fresh = args
+                    .get("fresh")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let handle = session_store
                     .lock()
                     .map_err(|_| "edit session store unavailable".to_string())?
-                    .open_session(ctx.run_id, ctx.conversation_id);
+                    .open_session(ctx.run_id, ctx.conversation_id, fresh);
                 let message = if handle.reused {
                     "An active edit session already exists for this run. Reuse the returned session_id; do not open another session. Stage any remaining batches, then call commit_edit_session or abort_edit_session."
+                } else if fresh {
+                    "Fresh edit session opened from the current workspace baseline. Rebuild and stage the batch against this session before committing."
                 } else {
                     "Edit session opened. Stage batches against this session before committing."
                 };
@@ -625,9 +635,11 @@ fn get_or_load_session_file<'a>(
         let matches = snapshot_matches_expected(&state.base, expected_sha256)
             || snapshot_matches_expected(&state.working, expected_sha256);
         if !matches {
-            return Err(format!(
-                "expected_sha256 for {} does not match the active session baseline or staged snapshot",
-                path
+            let latest = load_entry_snapshot(fs_ops, path)?;
+            mark_failed_modification(revision_guard, ctx, path);
+            return Err(session_baseline_mismatch_error(
+                path,
+                latest.sha256.as_deref(),
             ));
         }
     }
@@ -1141,10 +1153,26 @@ fn file_revision_error(
         "recovery": {
             "required_next_tool": recovery_tool,
             "recommended_args": recovery_args(path, recovery_tool),
-            "guidance": "Read the current workspace state again, open a fresh edit session, then rebuild the staged batch from the latest content."
+            "next_session": {
+                "tool": "open_edit_session",
+                "args": { "fresh": true }
+            },
+            "guidance": "Read the current workspace state again, then call open_edit_session with fresh=true before rebuilding the staged batch from the latest content."
         }
     }))
     .unwrap_or_else(|_| format!("{category}: {message}"))
+}
+
+fn session_baseline_mismatch_error(path: &str, latest_sha256: Option<&str>) -> String {
+    file_revision_error(
+        "stale_context",
+        "The expected revision does not match the active session baseline or staged snapshot",
+        path,
+        latest_sha256,
+        None,
+        None,
+        "read_file_raw",
+    )
 }
 
 fn recovery_args(path: &str, recovery_tool: &str) -> Value {
@@ -1164,7 +1192,11 @@ fn commit_conflict_error(conflicts: &[Value]) -> String {
         "conflicts": conflicts,
         "recovery": {
             "required_next_tool": "read_file_raw",
-            "guidance": "Re-read every conflicted path, open a new edit session, and restage the batch against the latest content."
+            "next_session": {
+                "tool": "open_edit_session",
+                "args": { "fresh": true }
+            },
+            "guidance": "Re-read every conflicted path, call open_edit_session with fresh=true, and restage the batch against the latest content."
         }
     }))
     .unwrap_or_else(|_| "stale_context: staged session conflict".to_string())

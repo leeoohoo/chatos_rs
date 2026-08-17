@@ -192,6 +192,18 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
             allowed_callers: &[CHATOS_CALLER],
         }),
+        (&Method::GET, ["api", "local-connectors", "relay", _, "workspaces", _, "directories"]) => {
+            Some(InternalAccess {
+                scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
+                allowed_callers: &[CHATOS_CALLER],
+            })
+        }
+        (&Method::POST, ["api", "local-connectors", "relay", _, "workspaces", _, "filesystem"]) => {
+            Some(InternalAccess {
+                scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
+                allowed_callers: &[CHATOS_CALLER],
+            })
+        }
         (
             &Method::POST,
             ["api", "local-connectors", "relay", _, "remote-connections", "test" | "command" | "sftp"],
@@ -608,6 +620,46 @@ mod tests {
             owner_user_id: None,
         };
         assert!(require_chatos_service_caller(&human).is_err());
+    }
+
+    #[test]
+    fn chatos_workspace_token_allows_directory_and_filesystem_relays_only() {
+        let mut config = test_config();
+        config
+            .internal_api_secrets
+            .insert(CHATOS_CALLER.to_string(), CHATOS_SECRET.to_string());
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            CHATOS_SECRET,
+            CHATOS_CALLER,
+            TOKEN_AUDIENCE,
+            WORKSPACE_DIRECTORY_WRITE_SCOPE,
+            60,
+            "user-1",
+        )
+        .expect("issue workspace directory token");
+        let headers = signed_headers(CHATOS_CALLER, token.as_str());
+        let path = "/api/local-connectors/relay/device-1/workspaces/workspace-1/directories";
+
+        for method in [Method::GET, Method::POST] {
+            internal_service_user_from_request(&config, &headers, &method, path)
+                .expect("matching workspace directory request")
+                .expect("service user");
+        }
+        internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/workspaces/workspace-1/filesystem",
+        )
+        .expect("matching workspace filesystem request")
+        .expect("service user");
+        assert!(internal_service_user_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp",
+        )
+        .is_err());
     }
 
     #[test]

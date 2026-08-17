@@ -471,6 +471,35 @@ impl CloudAgentRunStore for MongoCloudAgentRunStore {
         }
     }
 
+    async fn renew_short_claim(&self, claim: &CloudAgentClaim) -> Result<bool, String> {
+        claim.validate()?;
+        let result = self
+            .runs
+            .update_one(
+                doc! {
+                    "_id": claim.ordering.agent_run_id.as_str(),
+                    "record.ordering.ordering_lane_key": claim.ordering.ordering_lane_key.as_str(),
+                    "record.ordering.lane_seq": i64::try_from(claim.ordering.lane_seq).unwrap_or(i64::MAX),
+                    "record.ordering.generation": i64::try_from(claim.ordering.generation).unwrap_or(i64::MAX),
+                    "record.ordering.step_seq": i64::try_from(claim.ordering.step_seq).unwrap_or(i64::MAX),
+                    "record.status": bson::to_bson(&claim.expected_status).map_err(|error| error.to_string())?,
+                    "record.phase": bson::to_bson(&claim.expected_phase).map_err(|error| error.to_string())?,
+                    "record.version": i64::try_from(claim.expected_version).unwrap_or(i64::MAX),
+                    "claim_token": claim.claim_token.as_str(),
+                },
+                doc! {
+                    "$set": {
+                        "claim_until": DateTime::from_millis(claim.claim_until.timestamp_millis()),
+                        "record.updated_at": chrono::Utc::now().to_rfc3339(),
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|error| format!("renew Cloud Agent short claim failed: {error}"))?;
+        Ok(result.modified_count == 1)
+    }
+
     async fn commit_transition(
         &self,
         transition: CloudAgentAtomicTransition,

@@ -7,6 +7,7 @@ export type SandboxStatus =
   | 'starting'
   | 'ready'
   | 'running'
+  | 'stopped'
   | 'releasing'
   | 'destroying'
   | 'destroyed'

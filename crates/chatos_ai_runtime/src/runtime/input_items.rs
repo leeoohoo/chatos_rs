@@ -26,6 +26,10 @@ pub(super) fn json_value_size_bytes(value: &Value) -> usize {
         .unwrap_or_else(|_| value.to_string().len())
 }
 
+pub(super) fn estimated_json_tokens(value: &Value) -> usize {
+    json_value_size_bytes(value).saturating_add(3) / 4
+}
+
 pub(super) fn attach_runtime_debug(mut payload: Value, runtime_debug: &Value) -> Value {
     if let Some(map) = payload.as_object_mut() {
         map.insert("task_runner_debug".to_string(), runtime_debug.clone());

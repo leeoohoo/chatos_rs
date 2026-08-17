@@ -99,7 +99,6 @@ async fn main() -> Result<(), String> {
 
     if config.worker_enabled {
         cloud_agent_queue::start(state.clone());
-        summary_queue::start(state.clone());
         rollup_queue::start(state.clone());
         subject_memory_queue::start(state.clone());
         jobs::worker::start(state.clone());

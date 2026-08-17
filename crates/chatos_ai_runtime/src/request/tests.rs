@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use serde_json::{json, Value};
 
 use super::{
@@ -12,6 +14,79 @@ use super::{
     AiRequestOptions, StreamCallbacks,
 };
 use crate::stream_parse::FinalizedStreamState;
+
+async fn token_count_success(Json(payload): Json<Value>) -> Json<Value> {
+    assert!(payload.get("tools").is_some());
+    Json(json!({
+        "object": "response.input_tokens",
+        "input_tokens": 12_345
+    }))
+}
+
+async fn token_count_unsupported(
+    State(hits): State<Arc<AtomicUsize>>,
+) -> (StatusCode, Json<Value>) {
+    hits.fetch_add(1, Ordering::SeqCst);
+    (StatusCode::NOT_FOUND, Json(json!({"error": "unsupported"})))
+}
+
+async fn start_request_test_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind request test server");
+    let address = listener.local_addr().expect("request test address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{address}"), server)
+}
+
+#[tokio::test]
+async fn counts_responses_input_tokens_and_caches_unsupported_capability() {
+    let (supported_url, supported_server) = start_request_test_server(
+        Router::new().route("/responses/input_tokens", post(token_count_success)),
+    )
+    .await;
+    let handler = AiRequestHandler::new();
+    let count = handler
+        .count_responses_input_tokens(
+            supported_url.as_str(),
+            "test-key",
+            json!({
+                "model": "gpt-test",
+                "input": "hello",
+                "tools": [{"type": "function", "name": "lookup"}]
+            }),
+            None,
+        )
+        .await
+        .expect("count input tokens");
+    assert_eq!(count, Some(12_345));
+    supported_server.abort();
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let (unsupported_url, unsupported_server) = start_request_test_server(
+        Router::new()
+            .route("/responses/input_tokens", post(token_count_unsupported))
+            .with_state(Arc::clone(&hits)),
+    )
+    .await;
+    let handler = AiRequestHandler::new();
+    for _ in 0..2 {
+        let count = handler
+            .count_responses_input_tokens(
+                unsupported_url.as_str(),
+                "test-key",
+                json!({"model": "gpt-test", "input": "hello"}),
+                None,
+            )
+            .await
+            .expect("unsupported falls back");
+        assert_eq!(count, None);
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    unsupported_server.abort();
+}
 
 #[test]
 fn response_items_to_chat_messages_keeps_complete_tool_exchange() {
@@ -94,6 +169,110 @@ fn deepseek_thinking_chat_payload_skips_temperature() {
     assert_eq!(
         payload.get("reasoning_effort"),
         Some(&Value::String("high".to_string()))
+    );
+}
+
+#[test]
+fn kimi_uses_model_specific_thinking_and_output_token_parameters() {
+    let k3 = build_chat_completions_request_payload(
+        json!("hello"),
+        "kimi-k3".to_string(),
+        None,
+        None,
+        Some(0.6),
+        Some(4096),
+        Some("kimi".to_string()),
+        Some("high".to_string()),
+        true,
+        None,
+    );
+    assert_eq!(
+        k3.get("reasoning_effort").and_then(Value::as_str),
+        Some("high")
+    );
+    assert!(k3.get("thinking").is_none());
+    assert_eq!(
+        k3.get("max_completion_tokens").and_then(Value::as_i64),
+        Some(4096)
+    );
+    assert!(k3.get("max_tokens").is_none());
+
+    let k27 = build_chat_completions_request_payload(
+        json!("hello"),
+        "kimi-k2.7-code".to_string(),
+        None,
+        None,
+        None,
+        None,
+        Some("kimi".to_string()),
+        Some("none".to_string()),
+        true,
+        None,
+    );
+    assert_eq!(
+        k27.get("thinking").and_then(|value| value.get("type")),
+        Some(&Value::String("enabled".to_string()))
+    );
+    assert!(k27.get("reasoning_effort").is_none());
+
+    let k26 = build_chat_completions_request_payload(
+        json!("hello"),
+        "kimi-k2.6".to_string(),
+        None,
+        None,
+        None,
+        None,
+        Some("kimi".to_string()),
+        Some("none".to_string()),
+        true,
+        None,
+    );
+    assert_eq!(
+        k26.get("thinking").and_then(|value| value.get("type")),
+        Some(&Value::String("disabled".to_string()))
+    );
+}
+
+#[test]
+fn glm_uses_chat_thinking_dialect_without_openai_stream_options() {
+    let glm_45 = build_chat_completions_request_payload(
+        json!("hello"),
+        "glm-4.5-air".to_string(),
+        None,
+        None,
+        Some(0.6),
+        Some(4096),
+        Some("glm".to_string()),
+        Some("none".to_string()),
+        true,
+        None,
+    );
+    assert_eq!(
+        glm_45.get("thinking").and_then(|value| value.get("type")),
+        Some(&Value::String("disabled".to_string()))
+    );
+    assert!(glm_45.get("reasoning_effort").is_none());
+    assert!(glm_45.get("stream_options").is_none());
+
+    let glm_52 = build_chat_completions_request_payload(
+        json!("hello"),
+        "glm-5.2".to_string(),
+        None,
+        None,
+        None,
+        None,
+        Some("glm".to_string()),
+        Some("xhigh".to_string()),
+        true,
+        None,
+    );
+    assert_eq!(
+        glm_52.get("reasoning_effort").and_then(Value::as_str),
+        Some("xhigh")
+    );
+    assert_eq!(
+        glm_52.get("thinking").and_then(|value| value.get("type")),
+        Some(&Value::String("enabled".to_string()))
     );
 }
 

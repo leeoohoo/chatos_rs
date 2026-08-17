@@ -110,12 +110,6 @@ async fn rabbitmq_queue_stats(state: &AppState) -> RabbitMqQueueRuntimeStats {
     state
         .rabbitmq_queue_inspector
         .inspect(&[
-            RabbitMqQueueSpec::new("summary", state.config.summary_queue.as_str()),
-            RabbitMqQueueSpec::new("summary_retry", state.config.summary_retry_queue.as_str()),
-            RabbitMqQueueSpec::new(
-                "summary_dead_letter",
-                state.config.summary_dead_letter_queue.as_str(),
-            ),
             RabbitMqQueueSpec::new("rollup", state.config.rollup_queue.as_str()),
             RabbitMqQueueSpec::new("rollup_retry", state.config.rollup_retry_queue.as_str()),
             RabbitMqQueueSpec::new(

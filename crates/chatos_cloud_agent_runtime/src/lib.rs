@@ -170,6 +170,12 @@ pub trait CloudAgentRunStore: Send + Sync {
         claim: &CloudAgentClaim,
     ) -> Result<CloudAgentClaimResult, String>;
 
+    /// Extends an execution claim while the owner is still executing a model
+    /// step. A model request may legitimately outlive the initial short lease;
+    /// renewal must be conditional on the same ordering/version/token so a
+    /// stale worker can never revive a claim that another worker acquired.
+    async fn renew_short_claim(&self, claim: &CloudAgentClaim) -> Result<bool, String>;
+
     /// Must persist state and all outbox intents in the same database transaction.
     async fn commit_transition(
         &self,
@@ -392,6 +398,8 @@ pub fn cloud_agent_mcp_result_callback_payload(
         .zip(results)
         .enumerate()
         .map(|(index, (call, result))| {
+            let tool_call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
+                .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
             let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)
                 .ok_or_else(|| format!("pending tool call {index} has no name"))?;
             let completed = result.get("status").and_then(Value::as_str) == Some("completed");
@@ -408,14 +416,25 @@ pub fn cloud_agent_mcp_result_callback_payload(
                     .unwrap_or("MCP tool call failed")
                     .to_string()
             };
-            Ok(serde_json::json!({
+            let mut payload = serde_json::json!({
+                "tool_call_id": tool_call_id,
                 "name": name,
                 "success": completed,
                 "is_error": !completed,
+                "is_stream": false,
                 "content": content,
                 "result": result.get("result").cloned().unwrap_or(Value::Null),
                 "error": result.get("error").cloned().unwrap_or(Value::Null),
-            }))
+            });
+            if let Some(invocation_id) = call.get("invocation_id").and_then(Value::as_str) {
+                payload["invocation_id"] = Value::String(invocation_id.to_string());
+            }
+            if let Some(conversation_turn_id) =
+                call.get("conversation_turn_id").and_then(Value::as_str)
+            {
+                payload["conversation_turn_id"] = Value::String(conversation_turn_id.to_string());
+            }
+            Ok(payload)
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(serde_json::json!({ "tool_results": tool_results }))
@@ -629,13 +648,24 @@ where
             return Ok(CloudAgentConsumeDisposition::Conflict);
         }
     }
+    // The delivery may have waited in the queue long enough for its original
+    // timestamp to pass. Once the claim is acquired, always give this owner a
+    // fresh lease; otherwise the first heartbeat would itself race the
+    // expiration and permit a duplicate consumer.
+    let now = chrono::Utc::now();
+    let requested_lease = input.claim_until - now;
+    let claim_lease = if requested_lease > chrono::Duration::zero() {
+        requested_lease
+    } else {
+        chrono::Duration::seconds(30)
+    };
     let claim = CloudAgentClaim {
         ordering: run.ordering.clone(),
         expected_status: input.expected_status,
         expected_phase: input.expected_phase,
         expected_version: run.version,
         claim_token: input.claim_token,
-        claim_until: input.claim_until,
+        claim_until: now + claim_lease,
     };
     match store.acquire_short_claim(&claim).await? {
         CloudAgentClaimResult::Acquired => {}
@@ -644,6 +674,14 @@ where
         CloudAgentClaimResult::Conflict => return Ok(CloudAgentConsumeDisposition::Conflict),
         CloudAgentClaimResult::Terminal => return Ok(CloudAgentConsumeDisposition::Terminal),
     }
+    // A model request can take longer than the initial short claim (streaming
+    // gateways and MCP setup regularly do). Renew at one third of the lease so
+    // another consumer cannot start the same step while this owner is still
+    // executing. The original lease duration is derived from the delivery
+    // envelope, keeping custom runtimes and tests deterministic.
+    let heartbeat_interval = std::time::Duration::from_millis(
+        u64::try_from((claim_lease.num_milliseconds() / 3).max(1)).unwrap_or(1),
+    );
     let result = async {
         // An owner/profile error means this durable model step could not be
         // prepared or executed. Model-provider retries are represented by the
@@ -721,8 +759,28 @@ where
             }
         }
         store.commit_transition(transition).await.map(Some)
-    }
-    .await;
+    };
+    tokio::pin!(result);
+    let mut heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + heartbeat_interval,
+        heartbeat_interval,
+    );
+    let result = loop {
+        tokio::select! {
+            result = &mut result => break result,
+            _ = heartbeat.tick() => {
+                let mut renewal = claim.clone();
+                renewal.claim_until = chrono::Utc::now() + claim_lease;
+                match store.renew_short_claim(&renewal).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        break Err("Cloud Agent execution claim was lost before the model step completed".to_string());
+                    }
+                    Err(error) => break Err(error),
+                }
+            }
+        }
+    };
     match result {
         Ok(Some(true)) => Ok(CloudAgentConsumeDisposition::Committed),
         Ok(Some(false)) => {
@@ -1338,6 +1396,34 @@ mod tests {
         assert_eq!(items[4]["type"], "function_call_output");
         assert_eq!(items[4]["call_id"], "call-2");
         assert_eq!(items[4]["output"], "tests failed");
+    }
+
+    #[test]
+    fn mcp_result_callback_payload_preserves_call_identity() {
+        let calls = serde_json::json!([
+            {
+                "id": "call-1",
+                "invocation_id": "invocation-1",
+                "conversation_turn_id": "turn-1",
+                "function": {"name": "Terminal", "arguments": "{}"}
+            }
+        ]);
+        let results = serde_json::json!([
+            {"status": "completed", "result": {"background": true, "busy": true}}
+        ]);
+
+        let payload = cloud_agent_mcp_result_callback_payload(
+            calls.as_array().unwrap(),
+            results.as_array().unwrap(),
+        )
+        .unwrap();
+        let result = &payload["tool_results"][0];
+
+        assert_eq!(result["tool_call_id"], "call-1");
+        assert_eq!(result["invocation_id"], "invocation-1");
+        assert_eq!(result["conversation_turn_id"], "turn-1");
+        assert_eq!(result["is_stream"], false);
+        assert_eq!(result["success"], true);
     }
 
     #[test]
@@ -1973,10 +2059,76 @@ mod tests {
         assert_eq!(persisted.status, CloudAgentRunStatus::Succeeded);
     }
 
+    #[tokio::test]
+    async fn slow_model_step_renews_claim_and_blocks_duplicate_consumer() {
+        let store = inserted_ready_run().await;
+        let slow = SlowSingleStepExecutor {
+            delay: std::time::Duration::from_millis(120),
+        };
+        let mut input = consume_input();
+        input.claim_until = Utc::now() + chrono::Duration::milliseconds(45);
+
+        let competing_store = store.clone();
+        let competing = async move {
+            tokio::time::sleep(std::time::Duration::from_millis(70)).await;
+            competing_store
+                .acquire_short_claim(&CloudAgentClaim {
+                    ordering: ordering(),
+                    expected_status: CloudAgentRunStatus::ModelReady,
+                    expected_phase: CloudAgentRunPhase::Ready,
+                    expected_version: 1,
+                    claim_token: "duplicate-claim".to_string(),
+                    claim_until: Utc::now() + chrono::Duration::seconds(30),
+                })
+                .await
+                .unwrap()
+        };
+
+        let (consumed, competing_result) = tokio::join!(
+            consume_cloud_agent_single_step(&store, &slow, input),
+            competing,
+        );
+
+        assert_eq!(consumed.unwrap(), CloudAgentConsumeDisposition::Committed);
+        assert_eq!(competing_result, CloudAgentClaimResult::Conflict);
+        assert_eq!(
+            store.load_run("run-1").await.unwrap().unwrap().status,
+            CloudAgentRunStatus::Succeeded
+        );
+    }
+
     #[derive(Clone)]
     struct TestProfile {
         executions: Arc<Mutex<Vec<String>>>,
         finalizations: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[derive(Clone)]
+    struct SlowSingleStepExecutor {
+        delay: std::time::Duration,
+    }
+
+    #[async_trait]
+    impl CloudAgentSingleStepExecutor for SlowSingleStepExecutor {
+        async fn execute_single_step(
+            &self,
+            _run: &CloudAgentRunRecord,
+            _trigger: &CloudAgentModelTrigger,
+        ) -> Result<CloudAgentSingleStepExecution, String> {
+            tokio::time::sleep(self.delay).await;
+            Ok(CloudAgentSingleStepExecution::Apply(
+                CloudAgentSingleStepOutput::new(AiSingleStepOutcome::Final(AiRuntimeResult {
+                    content: "done".to_string(),
+                    reasoning: None,
+                    tool_calls: None,
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                    response_id: Some("response-slow".to_string()),
+                    response_output_items: Vec::new(),
+                    request_input_items: Vec::new(),
+                })),
+            ))
+        }
     }
 
     #[async_trait]

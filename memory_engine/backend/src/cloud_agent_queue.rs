@@ -43,7 +43,7 @@ impl CloudAgentProfile for MemoryCloudAgentProfile {
     ) -> Result<CloudAgentSingleStepExecution, String> {
         let input = serde_json::from_value::<MemoryCloudAgentInput>(run.input.clone())
             .map_err(|error| format!("decode Memory Cloud Agent input failed: {error}"))?;
-        refresh_subject_scope_slot(&self.state, &input.terminal_context).await?;
+        refresh_domain_slots(&self.state, &input.terminal_context).await?;
         let ai = crate::services::control_plane::build_ai_client_for_profile_id(
             &self.state.config,
             &self.state.pool,
@@ -87,6 +87,55 @@ impl CloudAgentProfile for MemoryCloudAgentProfile {
         }
         crate::services::memory_cloud_agent::finalize_terminal(&self.state, run).await
     }
+}
+
+async fn refresh_domain_slots(state: &AppState, terminal_context: &Value) -> Result<(), String> {
+    refresh_summary_slot(state, terminal_context).await?;
+    refresh_subject_scope_slot(state, terminal_context).await
+}
+
+async fn refresh_summary_slot(state: &AppState, terminal_context: &Value) -> Result<(), String> {
+    let is_summary = matches!(
+        terminal_context.get("resume_kind").and_then(Value::as_str),
+        Some("queue" | "summary_direct" | "scheduler" | "thread_direct")
+    );
+    if !is_summary {
+        return Ok(());
+    }
+    let tenant_id = terminal_context
+        .get("tenant_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "summary Cloud Agent tenant_id is missing".to_string())?;
+    let source_id = terminal_context
+        .get("source_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "summary Cloud Agent source_id is missing".to_string())?;
+    let thread_id = terminal_context
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "summary Cloud Agent thread_id is missing".to_string())?;
+    let job_run_id = terminal_context
+        .get("job_run_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "summary Cloud Agent job_run_id is missing".to_string())?;
+    let lock_timeout_secs = state
+        .config
+        .ai_request_timeout_secs
+        .saturating_mul(2)
+        .saturating_add(60);
+    let refreshed = crate::repositories::threads::refresh_summary_slot(
+        &state.pool,
+        tenant_id,
+        source_id,
+        thread_id,
+        job_run_id,
+        i64::try_from(lock_timeout_secs).unwrap_or(i64::MAX),
+    )
+    .await?;
+    if !refreshed {
+        return Err("summary slot ownership was lost before Cloud Agent execution".to_string());
+    }
+    Ok(())
 }
 
 async fn refresh_subject_scope_slot(

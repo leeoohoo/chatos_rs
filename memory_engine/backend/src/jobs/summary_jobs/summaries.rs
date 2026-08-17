@@ -44,7 +44,7 @@ pub async fn run_pending_thread_summaries(
         config,
         None,
         None,
-        policy.token_limit.unwrap_or(6000).max(128),
+        crate::services::summary::effective_thread_summary_token_limit(policy.token_limit),
         limit,
     )
     .await

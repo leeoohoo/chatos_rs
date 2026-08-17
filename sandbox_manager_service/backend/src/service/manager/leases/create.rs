@@ -266,14 +266,29 @@ impl SandboxManager {
         match create_result {
             Ok(instance) => {
                 if let Err(err) = self.backend.start(record.sandbox_id.as_str()).await {
+                    let cleanup_error = self
+                        .backend
+                        .destroy(record.sandbox_id.as_str(), instance.backend_id.as_deref())
+                        .await
+                        .err();
                     record.status = SandboxStatus::Failed;
-                    record.last_error = Some(err.clone());
+                    record.last_error = Some(match cleanup_error.as_deref() {
+                        Some(cleanup_error) => {
+                            format!("{err}; cleanup after start failure failed: {cleanup_error}")
+                        }
+                        None => err.clone(),
+                    });
                     record.idempotency_key = None;
                     record.updated_at = now_rfc3339();
                     let _ = self.store.replace_lease(&record).await;
                     let _ = self.store.release_active_slot(record.id.as_str()).await;
-                    self.event(&record, "sandbox_start_failed", Some(&err), None)
-                        .await;
+                    self.event(
+                        &record,
+                        "sandbox_start_failed",
+                        record.last_error.as_deref(),
+                        cleanup_error.map(|error| json!({ "cleanup_error": error })),
+                    )
+                    .await;
                     return Err(ApiError::with_code(
                         StatusCode::BAD_GATEWAY,
                         "sandbox_create_failed",

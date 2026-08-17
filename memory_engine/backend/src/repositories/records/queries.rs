@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
+
 use futures_util::{StreamExt, TryStreamExt};
 use mongodb::bson::{doc, Bson, Document};
 
@@ -245,6 +247,43 @@ pub async fn get_record_by_id(
         .map_err(|err| err.to_string())
 }
 
+pub(crate) async fn list_records_by_ids(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    record_ids: &[String],
+) -> Result<Vec<EngineRecord>, String> {
+    if record_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let records = record_collection(db)
+        .find(doc! {
+            "tenant_id": tenant_id,
+            "source_id": source_id,
+            "thread_id": thread_id,
+            "id": {"$in": record_ids.to_vec()},
+        })
+        .await
+        .map_err(|err| err.to_string())?
+        .try_collect::<Vec<EngineRecord>>()
+        .await
+        .map_err(|err| err.to_string())?;
+    let mut records_by_id = records
+        .into_iter()
+        .map(|record| (record.id.clone(), record))
+        .collect::<HashMap<_, _>>();
+    let mut ordered = Vec::with_capacity(record_ids.len());
+    for record_id in record_ids {
+        let record = records_by_id.remove(record_id).ok_or_else(|| {
+            format!("frozen summary record is missing from its original scope: {record_id}")
+        })?;
+        ordered.push(record);
+    }
+    Ok(ordered)
+}
+
 pub async fn list_pending_records(
     db: &Db,
     tenant_id: &str,
@@ -261,6 +300,34 @@ pub async fn list_pending_records(
             None,
             Some("pending"),
         ))
+        .sort(doc! {"created_at": 1})
+        .limit(limit)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    collect_records(cursor).await
+}
+
+pub async fn list_context_records(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    limit: i64,
+) -> Result<Vec<EngineRecord>, String> {
+    let cursor = record_collection(db)
+        .find(doc! {
+            "tenant_id": tenant_id,
+            "source_id": source_id,
+            "thread_id": thread_id,
+            "$or": [
+                {"summary_status": "pending"},
+                {"summary_status": "summarizing"},
+                {"summary_status": {"$exists": false}},
+                {"summary_status": Bson::Null},
+                {"summary_status": ""},
+            ],
+        })
         .sort(doc! {"created_at": 1})
         .limit(limit)
         .await
