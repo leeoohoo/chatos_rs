@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -120,6 +121,11 @@ impl AiRuntime {
 
     pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
         self.max_iterations = max_iterations;
+        self
+    }
+
+    pub fn with_request_read_timeout(mut self, read_timeout: Duration) -> Self {
+        self.request_handler = AiRequestHandler::new_with_read_timeout(read_timeout);
         self
     }
 

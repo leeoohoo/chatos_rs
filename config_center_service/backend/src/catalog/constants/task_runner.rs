@@ -1,4 +1,5 @@
 pub const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str = "task_runner.execution.timeout_ms";
+pub const TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY: &str = "task_runner.ai.read_timeout_ms";
 pub const TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY: &str =
     "task_runner.supply_chain.baseline_revision";
 pub const TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY: &str =

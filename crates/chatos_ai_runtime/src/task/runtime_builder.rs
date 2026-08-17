@@ -122,6 +122,11 @@ impl TaskRuntimeBuilder {
         self
     }
 
+    pub fn with_request_read_timeout(mut self, read_timeout: Duration) -> Self {
+        self.ai_builder = self.ai_builder.with_request_read_timeout(read_timeout);
+        self
+    }
+
     pub fn with_context_overflow_recovery(
         mut self,
         context_overflow_recovery: Option<MemoryContextOverflowRecovery>,

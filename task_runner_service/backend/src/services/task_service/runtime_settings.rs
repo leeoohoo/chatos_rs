@@ -34,6 +34,11 @@ impl TaskService {
         require_managed_u64(&snapshot, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY, 1)
     }
 
+    pub async fn effective_ai_read_timeout_ms(&self) -> Result<u64, String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        require_managed_u64(&snapshot, TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY, 1)
+    }
+
     pub async fn effective_tool_result_model_budget_limits(
         &self,
     ) -> Result<ToolResultModelBudgetLimits, String> {

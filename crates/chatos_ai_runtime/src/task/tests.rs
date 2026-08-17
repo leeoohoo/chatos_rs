@@ -267,7 +267,8 @@ fn task_runtime_config_serializes_runtime_shape() {
         .with_mcp_init_mode(TaskMcpInitMode::BuiltinOnly)
         .with_builtin_prompt_locale(chatos_mcp_runtime::BuiltinMcpPromptLocale::EnUs)
         .with_builtin_prompt_mode(TaskBuiltinMcpPromptMode::Configured)
-        .with_max_iterations(Some(7));
+        .with_max_iterations(Some(7))
+        .with_ai_read_timeout_ms(Some(300_000));
 
     let encoded = serde_json::to_string(&config).expect("serialize runtime config");
     let decoded: TaskRuntimeConfig =
@@ -284,6 +285,7 @@ fn task_runtime_config_serializes_runtime_shape() {
         TaskBuiltinMcpPromptMode::Configured
     );
     assert_eq!(decoded.max_iterations, Some(7));
+    assert_eq!(decoded.ai_read_timeout_ms, Some(300_000));
     assert_eq!(
         decoded.builtin_servers[0].name,
         chatos_mcp_runtime::ASK_USER_SERVER_NAME

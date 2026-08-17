@@ -51,9 +51,13 @@ pub struct AiRequestHandler {
 
 impl AiRequestHandler {
     pub fn new() -> Self {
+        let read_timeout = configured_timeout(AI_READ_TIMEOUT_SECS_ENV, DEFAULT_READ_TIMEOUT_SECS);
+        Self::new_with_read_timeout(read_timeout)
+    }
+
+    pub fn new_with_read_timeout(read_timeout: Duration) -> Self {
         let connect_timeout =
             configured_timeout(AI_CONNECT_TIMEOUT_SECS_ENV, DEFAULT_CONNECT_TIMEOUT_SECS);
-        let read_timeout = configured_timeout(AI_READ_TIMEOUT_SECS_ENV, DEFAULT_READ_TIMEOUT_SECS);
         let client = reqwest::Client::builder()
             .connect_timeout(connect_timeout)
             .read_timeout(read_timeout)

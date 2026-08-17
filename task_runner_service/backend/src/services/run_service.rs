@@ -68,6 +68,19 @@ impl RunService {
         chatos_agent::require_task_runner_runtime_settings(&snapshot)
     }
 
+    pub(super) async fn effective_run_timeouts_ms(&self) -> Result<(u64, u64), String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        Ok((
+            require_managed_u64(&snapshot, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY, 1)?,
+            require_managed_u64(&snapshot, TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY, 1)?,
+        ))
+    }
+
+    pub(super) async fn effective_ai_read_timeout_ms(&self) -> Result<u64, String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        require_managed_u64(&snapshot, TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY, 1)
+    }
+
     pub(super) async fn effective_node_supply_chain_policy(
         &self,
     ) -> Result<super::run_model_phase::supply_chain::NodeSupplyChainPolicy, String> {

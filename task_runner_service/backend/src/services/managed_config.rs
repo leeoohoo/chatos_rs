@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 
 pub(super) const TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY: &str =
     "task_runner.execution.timeout_ms";
+pub(super) const TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY: &str = "task_runner.ai.read_timeout_ms";
 pub(super) const TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY: &str =
     "task_runner.ai.tool_result_max_chars";
 pub(super) const TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY: &str =
@@ -86,6 +87,10 @@ pub(super) async fn load_managed_config_snapshot(
             (
                 TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY.to_string(),
                 json!(7_200_000),
+            ),
+            (
+                TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY.to_string(),
+                json!(300_000),
             ),
             (
                 TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string(),

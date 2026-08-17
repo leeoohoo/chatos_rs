@@ -301,8 +301,20 @@ async fn build_runtime_config(
         .map_err(|err| format!("加载运行时配置失败: {err}"))?;
     let max_iterations =
         bounded_plugin_max_iterations(configured_max_iterations, plugin_max_iterations);
+    let ai_read_timeout_ms = match run.input_snapshot.get("ai_read_timeout_ms") {
+        Some(value) => value
+            .as_u64()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| "Task Run 中冻结的 AI 流读取超时配置无效".to_string())?,
+        None => service
+            .effective_ai_read_timeout_ms()
+            .await
+            .map_err(|err| format!("加载 AI 流读取超时配置失败: {err}"))?,
+    };
 
-    let mut runtime_config = TaskRuntimeConfig::new().with_max_iterations(Some(max_iterations));
+    let mut runtime_config = TaskRuntimeConfig::new()
+        .with_max_iterations(Some(max_iterations))
+        .with_ai_read_timeout_ms(Some(ai_read_timeout_ms));
     if let Some(memory_engine_base_url) = service.config.memory_engine_base_url.clone() {
         runtime_config = runtime_config.with_memory_engine(Some(
             TaskMemoryRuntimeConfig::new(

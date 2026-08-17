@@ -689,7 +689,24 @@ where
         // owner error to the MQ consumer would release the claim and replay the
         // same delivery forever. Persist it as a terminal failure instead so
         // the run is finalized exactly once and the user can start a fresh run.
-        let execution = match executor.execute_single_step(&run, &input.trigger).await {
+        let execution_result = match run.deadline_at {
+            Some(deadline_at) => match deadline_at.signed_duration_since(Utc::now()).to_std() {
+                Ok(remaining) if !remaining.is_zero() => {
+                    match tokio::time::timeout(
+                        remaining,
+                        executor.execute_single_step(&run, &input.trigger),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err("Cloud Agent execution deadline exceeded".to_string()),
+                    }
+                }
+                _ => Err("Cloud Agent execution deadline exceeded".to_string()),
+            },
+            None => executor.execute_single_step(&run, &input.trigger).await,
+        };
+        let execution = match execution_result {
             Ok(execution) => execution,
             Err(error) => CloudAgentSingleStepExecution::Apply(CloudAgentSingleStepOutput::new(
                 AiSingleStepOutcome::Failed { error },
@@ -1971,6 +1988,41 @@ mod tests {
         let outbox = store.list_ready_outbox(10).await.unwrap();
         assert_eq!(outbox.len(), 1);
         assert_eq!(outbox[0].topic, "owner_lifecycle_terminal");
+    }
+
+    #[tokio::test]
+    async fn execution_deadline_stops_an_in_flight_model_step_and_commits_failure() {
+        let store = InMemoryCloudAgentRunStore::new();
+        store.allocate_lane_seq("task:task-1").await.unwrap();
+        let mut record = run();
+        record.status = CloudAgentRunStatus::ModelReady;
+        record.phase = CloudAgentRunPhase::Ready;
+        record.ordering.step_seq = 1;
+        record.iteration = 0;
+        record.version = 1;
+        record.deadline_at = Some(Utc::now() + chrono::Duration::milliseconds(30));
+        store.insert_run(record).await.unwrap();
+
+        let slow = SlowSingleStepExecutor {
+            delay: std::time::Duration::from_millis(200),
+        };
+        assert_eq!(
+            consume_cloud_agent_single_step(&store, &slow, consume_input())
+                .await
+                .unwrap(),
+            CloudAgentConsumeDisposition::Committed
+        );
+
+        let persisted = store.load_run("run-1").await.unwrap().unwrap();
+        assert_eq!(persisted.status, CloudAgentRunStatus::Failed);
+        assert_eq!(
+            persisted
+                .terminal_outcome
+                .as_ref()
+                .and_then(|value| value.get("error"))
+                .and_then(Value::as_str),
+            Some("Cloud Agent execution deadline exceeded")
+        );
     }
 
     #[tokio::test]

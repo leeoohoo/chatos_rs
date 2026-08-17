@@ -4,6 +4,7 @@
 use super::*;
 use crate::auth::CurrentUser;
 use chatos_agent::AgentIdentity;
+use chrono::Utc;
 
 impl RunService {
     pub async fn start_run(
@@ -190,6 +191,14 @@ impl RunService {
         )
         .await?;
         let run_id = Uuid::new_v4().to_string();
+        let (execution_timeout_ms, ai_read_timeout_ms) = self.effective_run_timeouts_ms().await?;
+        let execution_timeout =
+            chrono::Duration::milliseconds(i64::try_from(execution_timeout_ms).map_err(|_| {
+                "Task Runner execution timeout exceeds supported range".to_string()
+            })?);
+        let deadline_at = Utc::now()
+            .checked_add_signed(execution_timeout)
+            .ok_or_else(|| "Task Runner execution deadline exceeds supported range".to_string())?;
         let skill_snapshots = capability_policy
             .as_ref()
             .map(|policy| policy.skill_snapshots(&runtime_task))
@@ -212,6 +221,9 @@ impl RunService {
             "task_runtime_capability_fingerprint": task_runtime_capability_fingerprint,
             "retry_of_run_id": retry_of_run_id,
             "started_as_prerequisite": trigger == RunTriggerSource::Dependency,
+            "execution_timeout_ms": execution_timeout_ms,
+            "ai_read_timeout_ms": ai_read_timeout_ms,
+            "deadline_at": deadline_at,
         });
         let agent = chatos_agent::TaskRunnerAgent::new(agent_key);
         let agent_prompt =
@@ -255,7 +267,7 @@ impl RunService {
                 mcp_runtime_session_ref: None,
                 current_input_items_ref: format!("task_run:{run_id}:input_snapshot"),
                 max_iterations,
-                deadline_at: None,
+                deadline_at: Some(deadline_at),
                 runtime_routing_key: "cloud_agent.task_runner.runtime".to_string(),
                 start_causation_id: run_id.clone(),
                 start_payload: json!({"task_run_id": run_id}),

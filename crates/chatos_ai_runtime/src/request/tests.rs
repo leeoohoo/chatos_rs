@@ -41,6 +41,12 @@ async fn start_request_test_server(app: Router) -> (String, tokio::task::JoinHan
     (format!("http://{address}"), server)
 }
 
+#[test]
+fn explicit_read_timeout_overrides_the_environment_default() {
+    let handler = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_secs(123));
+    assert_eq!(handler.read_timeout_seconds(), Some(123));
+}
+
 #[tokio::test]
 async fn counts_responses_input_tokens_and_caches_unsupported_capability() {
     let (supported_url, supported_server) = start_request_test_server(

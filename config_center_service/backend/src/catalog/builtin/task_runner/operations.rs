@@ -3,6 +3,23 @@ use super::*;
 pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
     vec![
         definition(
+            TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY,
+            "AI 流读取超时",
+            "Task Runner 等待模型流式响应下一批数据的最长时间（毫秒）；超过后中止本次模型请求",
+            "Task Runner / AI",
+            "service",
+            Some("task-runner"),
+            "duration_ms",
+            json!(300_000),
+            Some(1_000),
+            Some(3_600_000),
+            &[],
+            "next_run",
+            &[],
+            225,
+            &now,
+        ),
+        definition(
             TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
             "单工具结果字符上限",
             "Task Runner 单个工具调用的通用文本预算，用于工具结果转换、进入模型上下文以及运行详情中的工具参数和结果展示",

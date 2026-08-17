@@ -104,7 +104,7 @@ use self::filter_sanitize::{sanitize_run_list_filters, sanitize_task_list_filter
 use self::managed_config::{
     load_managed_config_snapshot, require_managed_string, require_managed_string_map,
     require_managed_string_set, require_managed_u64, require_managed_usize,
-    TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
+    TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
     TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,

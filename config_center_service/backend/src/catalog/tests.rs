@@ -110,6 +110,7 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
 
     for key in [
         TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
+        TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY,
         TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
         TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
         TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
@@ -127,6 +128,14 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
             "{key} must be managed from configuration-center values, not env aliases"
         );
     }
+
+    let ai_read_timeout = definitions
+        .iter()
+        .find(|definition| definition.key == TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY)
+        .expect("task runner AI read timeout definition");
+    assert_eq!(ai_read_timeout.value_type, "duration_ms");
+    assert_eq!(ai_read_timeout.default_value, json!(300_000));
+    assert_eq!(ai_read_timeout.reload_mode, "next_run");
 
     let audit_level = definitions
         .iter()
