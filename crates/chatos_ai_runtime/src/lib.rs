@@ -99,5 +99,5 @@ pub use traits::{
 };
 pub use turn::{
     build_contextual_input, input_value_to_items, message_item, user_text_item,
-    ContextualTurnRequest, ContextualTurnRunner, RuntimeTurnSpec,
+    ContextualTurnExecutionOptions, ContextualTurnRequest, ContextualTurnRunner, RuntimeTurnSpec,
 };

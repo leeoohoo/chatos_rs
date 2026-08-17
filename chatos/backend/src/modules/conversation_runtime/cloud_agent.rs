@@ -7,14 +7,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chatos_agent::ChatosAgentProfile;
 use chatos_ai_runtime::{
-    AiRuntimeOptions, ContextualTurnRequest, ModelRuntimeConfig, RuntimeCallbacks,
-    RuntimeLifecycleHook,
+    AiRuntimeOptions, ContextualTurnExecutionOptions, ContextualTurnRequest, ModelRuntimeConfig,
+    RuntimeCallbacks, RuntimeLifecycleHook,
 };
 use chatos_cloud_agent_protocol::{CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_mcp_result_callback_payload, cloud_agent_trigger_execution_identity,
-    cloud_agent_trigger_input_items, create_cloud_agent_run, CloudAgentModelTrigger,
-    CloudAgentProfile, CloudAgentProfileRegistry, CloudAgentServiceRuntime,
+    cloud_agent_trigger_input_items, cloud_agent_trigger_retry_options, create_cloud_agent_run,
+    CloudAgentModelTrigger, CloudAgentProfile, CloudAgentProfileRegistry, CloudAgentServiceRuntime,
     CloudAgentSingleStepExecution, CloudAgentSingleStepOutput, NewCloudAgentRun,
 };
 use chatos_plugin_management_sdk::SystemAgentKey;
@@ -449,12 +449,18 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
             input.max_iterations,
         )?;
         let (reason, model_attempt) = cloud_agent_trigger_execution_identity(trigger);
+        let retry_options = cloud_agent_trigger_retry_options(trigger);
         let outcome = runner
-            .execute_once(
+            .execute_once_with_options(
                 request,
                 usize::try_from(run.iteration.saturating_add(1)).unwrap_or(usize::MAX),
                 reason,
                 model_attempt,
+                ContextualTurnExecutionOptions {
+                    force_non_stream: retry_options.force_non_stream,
+                    force_identity_encoding: retry_options.force_identity_encoding,
+                    thinking_level_override: retry_options.thinking_level_override,
+                },
             )
             .await?;
         input.lifecycle = lifecycle_state
@@ -535,6 +541,7 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
         }
     }
     if let Some(owner_context) = input.owner_context.clone() {
+        let owner_context = enrich_owner_context_with_terminal_outcome(owner_context, run);
         if let Err(error) =
             crate::api::projects::reconcile_requirement_planner_owner_context(owner_context).await
         {
@@ -608,6 +615,32 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
     .await;
     super::guidance::close_active_turn(input.session_id.as_str(), input.turn_id.as_str());
     Ok(())
+}
+
+fn enrich_owner_context_with_terminal_outcome(
+    mut owner_context: Value,
+    run: &CloudAgentRunRecord,
+) -> Value {
+    let Some(owner) = owner_context.as_object_mut() else {
+        return owner_context;
+    };
+    if let Ok(status) = serde_json::to_value(run.status) {
+        owner.insert("agent_run_status".to_string(), status);
+    }
+    if let Some(error) = run
+        .terminal_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.get("error"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        owner.insert(
+            "agent_run_error".to_string(),
+            Value::String(error.to_string()),
+        );
+    }
+    owner_context
 }
 
 fn task_runner_async_success_status_for_lifecycle(

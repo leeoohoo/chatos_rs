@@ -61,9 +61,9 @@ use plan_query::{get_requirement_execution_plan_inner, load_cloud_execution_sour
 use rerun_execution::rerun_requirement_execution_inner;
 #[cfg(test)]
 use rerun_support::{
-    build_planner_coverage_failure_message, replacement_link_scope,
-    resolve_old_cloud_execution_batch_state, validate_rerun_cloned_project_task_scope,
-    OldCloudExecutionBatchState,
+    build_planner_coverage_failure_message, build_planner_runtime_failure_message,
+    replacement_link_scope, resolve_old_cloud_execution_batch_state,
+    validate_rerun_cloned_project_task_scope, OldCloudExecutionBatchState,
 };
 use rerun_support::{
     expand_project_task_scope_to_actual_graph, expected_execution_project_task_ids,

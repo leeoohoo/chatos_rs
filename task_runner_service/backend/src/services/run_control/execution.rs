@@ -10,8 +10,8 @@ use chatos_ai_runtime::TaskRunReport;
 use chatos_cloud_agent_protocol::CloudAgentRunStatus;
 use chatos_cloud_agent_runtime::{
     cloud_agent_mcp_result_callback_payload, cloud_agent_trigger_execution_identity,
-    CloudAgentModelTrigger, CloudAgentProfile, CloudAgentRunStore, CloudAgentSingleStepExecution,
-    CloudAgentSingleStepOutput,
+    cloud_agent_trigger_retry_options, CloudAgentModelTrigger, CloudAgentProfile,
+    CloudAgentRunStore, CloudAgentSingleStepExecution, CloudAgentSingleStepOutput,
 };
 
 impl RunService {
@@ -235,6 +235,7 @@ struct TaskRunnerSingleStepExecutable {
     iteration: usize,
     reason: String,
     model_attempt: usize,
+    execution_options: chatos_ai_runtime::ContextualTurnExecutionOptions,
     automatic_recovery_calls: Vec<Value>,
 }
 
@@ -248,7 +249,12 @@ impl TaskRunnerSingleStepExecutable {
         let supply_chain_evidence = Arc::clone(&self.prepared.supply_chain_evidence);
         let outcome = if self.automatic_recovery_calls.is_empty() {
             self.prepared
-                .execute(self.iteration, self.reason, self.model_attempt)
+                .execute(
+                    self.iteration,
+                    self.reason,
+                    self.model_attempt,
+                    self.execution_options,
+                )
                 .await?
         } else {
             let response_output_items = self
@@ -451,6 +457,7 @@ impl TaskRunnerSingleStepResolver {
                 Vec::new()
             };
         let (reason, model_attempt) = cloud_agent_trigger_execution_identity(trigger);
+        let retry_options = cloud_agent_trigger_retry_options(trigger);
         Ok(TaskRunnerSingleStepExecutable {
             service: self.service.clone(),
             run_id: run.id.clone(),
@@ -459,6 +466,11 @@ impl TaskRunnerSingleStepResolver {
             iteration: usize::try_from(cloud_run.iteration.saturating_add(1)).unwrap_or(usize::MAX),
             reason,
             model_attempt,
+            execution_options: chatos_ai_runtime::ContextualTurnExecutionOptions {
+                force_non_stream: retry_options.force_non_stream,
+                force_identity_encoding: retry_options.force_identity_encoding,
+                thinking_level_override: retry_options.thinking_level_override,
+            },
             automatic_recovery_calls,
         })
     }

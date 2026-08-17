@@ -41,10 +41,15 @@ export const useRequirementExecutionPlannerTimeline = ({
 }): RequirementExecutionPlannerTimelineState => {
   const apiClient = useApiClient();
   const apiClientRef = useRef(apiClient);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const timelineIdentity = `${conversationId}\u0000${turnId}`;
+  const [messageSnapshot, setMessageSnapshot] = useState<{
+    identity: string;
+    messages: Message[];
+  }>({ identity: timelineIdentity, messages: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestSequenceRef = useRef(0);
+  const previousActiveRef = useRef(active);
 
   useEffect(() => {
     apiClientRef.current = apiClient;
@@ -63,7 +68,7 @@ export const useRequirementExecutionPlannerTimeline = ({
       const normalized = (Array.isArray(response) ? response : [])
         .map((rawMessage) => normalizePersistedMessage(rawMessage, conversationId))
         .filter((message): message is Message => message !== null);
-      setMessages(normalized);
+      setMessageSnapshot({ identity: timelineIdentity, messages: normalized });
       setError(null);
     } catch (err) {
       if (requestSequenceRef.current !== requestSequence) return;
@@ -73,15 +78,23 @@ export const useRequirementExecutionPlannerTimeline = ({
         setLoading(false);
       }
     }
-  }, [conversationId, turnId]);
+  }, [conversationId, timelineIdentity, turnId]);
 
   useEffect(() => {
     requestSequenceRef.current += 1;
-    setMessages([]);
+    setMessageSnapshot({ identity: timelineIdentity, messages: [] });
     setError(null);
     setLoading(true);
     void refresh(false);
-  }, [conversationId, refresh, turnId]);
+  }, [conversationId, refresh, timelineIdentity, turnId]);
+
+  useEffect(() => {
+    const wasActive = previousActiveRef.current;
+    previousActiveRef.current = active;
+    if (wasActive && !active) {
+      void refresh(true);
+    }
+  }, [active, refresh]);
 
   useEffect(() => {
     if (!active || !conversationId || !turnId || !userMessageId) return undefined;
@@ -91,6 +104,9 @@ export const useRequirementExecutionPlannerTimeline = ({
     return () => window.clearInterval(intervalId);
   }, [active, conversationId, refresh, turnId, userMessageId]);
 
+  const messages = messageSnapshot.identity === timelineIdentity
+    ? messageSnapshot.messages
+    : [];
   const processMessages = useMemo(
     () => messages.filter(isRequirementExecutionPlannerTimelineMessage),
     [messages],
@@ -101,9 +117,9 @@ export const useRequirementExecutionPlannerTimeline = ({
   );
 
   return {
-    error,
+    error: messageSnapshot.identity === timelineIdentity ? error : null,
     items,
-    loading,
+    loading: messageSnapshot.identity === timelineIdentity ? loading : true,
     processMessageCount: processMessages.length,
     refresh,
   };

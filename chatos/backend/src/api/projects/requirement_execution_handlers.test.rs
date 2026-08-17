@@ -409,6 +409,21 @@ mod tests {
     }
 
     #[test]
+    fn planner_transport_failure_is_exposed_without_raw_provider_details() {
+        let message = build_planner_runtime_failure_message(
+            Some(
+                "stream response body failed: error reading https://provider.invalid; unexpected EOF",
+            ),
+            0,
+            9,
+        );
+
+        assert!(message.contains("模型流式响应在传输过程中被中断"));
+        assert!(message.contains("仍缺少 9 个"));
+        assert!(!message.contains("provider.invalid"));
+    }
+
+    #[test]
     fn replanning_cleanup_keeps_completed_old_tasks_in_the_retirement_scope() {
         let selected = vec![WorkItemPlanItem {
             id: "task-new".to_string(),

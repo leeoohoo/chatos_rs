@@ -193,15 +193,17 @@ impl PreparedSingleModelStep {
         iteration: usize,
         reason: String,
         model_attempt: usize,
+        execution_options: chatos_ai_runtime::ContextualTurnExecutionOptions,
     ) -> Result<AiSingleStepOutcome, String> {
         self.agent
-            .execute_once_with_runtime_options(
+            .execute_once_with_runtime_and_execution_options(
                 self.run_spec,
                 &self.runtime,
                 self.runtime_options,
                 iteration,
                 reason,
                 model_attempt,
+                execution_options,
             )
             .await
     }
