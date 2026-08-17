@@ -600,29 +600,34 @@ async fn handle_connector_socket(
                             .await;
                         }
                     }
-                } else if let Ok(consumed) = state.relay.handle_inbound_text(text.as_str()).await {
-                    if !consumed {
-                        let _ = send_outbound_json(
-                            &outbound_tx,
-                            json!({
-                                "type": "ack",
-                                "message": "control channel message accepted",
-                                "timestamp": crate::models::now_rfc3339(),
-                            }),
-                        )
-                        .await;
-                    }
                 } else {
-                    let _ = send_outbound_json(
-                        &outbound_tx,
-                        json!({
-                            "type": "error",
-                            "code": "invalid_relay_response",
-                            "message": "invalid relay response message",
-                            "timestamp": crate::models::now_rfc3339(),
-                        }),
-                    )
-                    .await;
+                    match state.relay.handle_inbound_text(text.as_str()).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            let _ = send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "ack",
+                                    "message": "control channel message accepted",
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await;
+                        }
+                        Err(err) => {
+                            tracing::warn!(error = %err, "rejected invalid relay response");
+                            let _ = send_outbound_json(
+                                &outbound_tx,
+                                json!({
+                                    "type": "error",
+                                    "code": "invalid_relay_response",
+                                    "message": err,
+                                    "timestamp": crate::models::now_rfc3339(),
+                                }),
+                            )
+                            .await;
+                        }
+                    }
                 }
             }
             Ok(Message::Ping(bytes)) => {

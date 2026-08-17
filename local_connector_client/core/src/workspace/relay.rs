@@ -355,7 +355,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reads_files_without_an_agent_execution_scope() {
+    async fn supports_all_filesystem_operations_without_an_agent_execution_scope() {
         let root = std::env::temp_dir().join(format!(
             "chatos-local-workspace-fs-relay-{}",
             uuid::Uuid::new_v4()
@@ -374,24 +374,141 @@ mod tests {
             ..LocalState::default()
         };
 
-        let response = handle_workspace_filesystem_request(
-            json!({
-                "type": "workspace_filesystem_request",
-                "request_id": "request-2",
-                "workspace_id": "workspace-1",
-                "body": { "operation": "read", "path": "src/lib.rs" },
-            }),
+        async fn invoke(state: &LocalState, request_id: &str, body: Value) -> Value {
+            let response = handle_workspace_filesystem_request(
+                json!({
+                    "type": "workspace_filesystem_request",
+                    "request_id": request_id,
+                    "workspace_id": "workspace-1",
+                    "body": body,
+                }),
+                state,
+            )
+            .await;
+            assert_eq!(
+                response.get("type"),
+                Some(&json!("workspace_filesystem_response"))
+            );
+            assert_eq!(response.get("request_id"), Some(&json!(request_id)));
+            assert_eq!(response.get("status"), Some(&json!(200)));
+            response
+        }
+
+        let listing = invoke(
             &state,
+            "request-list",
+            json!({"operation": "list", "path": "src"}),
         )
         .await;
+        assert_eq!(listing.pointer("/body/path"), Some(&json!("src")));
+        assert_eq!(
+            listing.pointer("/body/entries/0/path"),
+            Some(&json!("src/lib.rs"))
+        );
 
-        assert_eq!(response.get("status"), Some(&json!(200)));
-        assert_eq!(response.pointer("/body/path"), Some(&json!("src/lib.rs")));
-        assert_eq!(response.pointer("/body/is_binary"), Some(&json!(false)));
-        assert!(response
+        let read = invoke(
+            &state,
+            "request-read",
+            json!({"operation": "read", "path": "src/lib.rs"}),
+        )
+        .await;
+        assert_eq!(read.pointer("/body/path"), Some(&json!("src/lib.rs")));
+        assert_eq!(read.pointer("/body/is_binary"), Some(&json!(false)));
+        assert!(read
             .pointer("/body/content")
             .and_then(Value::as_str)
             .is_some_and(|content| content.contains("ready")));
+
+        let entry_search = invoke(
+            &state,
+            "request-search-entries",
+            json!({"operation": "search_entries", "path": ".", "query": "lib", "limit": 10}),
+        )
+        .await;
+        assert_eq!(
+            entry_search.pointer("/body/matches/0/path"),
+            Some(&json!("src/lib.rs"))
+        );
+
+        let content_search = invoke(
+            &state,
+            "request-search-content",
+            json!({"operation": "search_content", "path": ".", "query": "ready", "limit": 10}),
+        )
+        .await;
+        assert_eq!(
+            content_search.pointer("/body/matches/0/path"),
+            Some(&json!("src/lib.rs"))
+        );
+
+        let directory = invoke(
+            &state,
+            "request-create-directory",
+            json!({"operation": "create_directory", "path": "notes"}),
+        )
+        .await;
+        assert_eq!(directory.pointer("/body/created"), Some(&json!(true)));
+        assert!(root.join("notes").is_dir());
+
+        let created = invoke(
+            &state,
+            "request-create-file",
+            json!({"operation": "create_file", "path": "notes/draft.txt", "content": "draft\n"}),
+        )
+        .await;
+        assert_eq!(created.pointer("/body/created"), Some(&json!(true)));
+        assert_eq!(
+            std::fs::read_to_string(root.join("notes/draft.txt")).unwrap(),
+            "draft\n"
+        );
+
+        let written = invoke(
+            &state,
+            "request-write-file",
+            json!({"operation": "write_file", "path": "notes/draft.txt", "content": "updated\n"}),
+        )
+        .await;
+        assert_eq!(written.pointer("/body/created"), Some(&json!(false)));
+        assert_eq!(
+            std::fs::read_to_string(root.join("notes/draft.txt")).unwrap(),
+            "updated\n"
+        );
+
+        let moved = invoke(
+            &state,
+            "request-move",
+            json!({
+                "operation": "move",
+                "source_path": "notes/draft.txt",
+                "target_path": "notes/final.txt",
+                "replace_existing": false
+            }),
+        )
+        .await;
+        assert_eq!(moved.pointer("/body/moved"), Some(&json!(true)));
+        assert!(!root.join("notes/draft.txt").exists());
+        assert!(root.join("notes/final.txt").is_file());
+
+        let deleted_file = invoke(
+            &state,
+            "request-delete-file",
+            json!({"operation": "delete", "path": "notes/final.txt", "recursive": false}),
+        )
+        .await;
+        assert_eq!(deleted_file.pointer("/body/deleted"), Some(&json!(true)));
+        assert!(!root.join("notes/final.txt").exists());
+
+        let deleted_directory = invoke(
+            &state,
+            "request-delete-directory",
+            json!({"operation": "delete", "path": "notes", "recursive": false}),
+        )
+        .await;
+        assert_eq!(
+            deleted_directory.pointer("/body/is_dir"),
+            Some(&json!(true))
+        );
+        assert!(!root.join("notes").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 }

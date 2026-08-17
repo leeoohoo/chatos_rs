@@ -183,8 +183,14 @@ impl ConnectorRelay {
                 | "plugin_artifact_update_response"
                 | "workspace_directory_list_response"
                 | "workspace_directory_create_response"
+                | "workspace_filesystem_response"
                 | "relay_response"
         ) {
+            if message_type.ends_with("_response")
+                && value.get("request_id").and_then(Value::as_str).is_some()
+            {
+                return Err(format!("unsupported relay response type `{message_type}`"));
+            }
             return Ok(false);
         }
         let inbound: InboundRelayResponse =
