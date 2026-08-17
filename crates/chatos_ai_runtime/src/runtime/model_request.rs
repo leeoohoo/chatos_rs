@@ -67,6 +67,18 @@ pub(super) async fn dispatch_model_request(
         "connection_mode": if force_identity_encoding { "isolated_retry" } else { "pooled" },
         "read_timeout_seconds": request_handler.read_timeout_seconds(),
     });
+    if let Some(callback) = &options.callbacks.on_turn_phase {
+        callback(build_model_request_phase_payload(
+            request,
+            iteration,
+            iteration_reason,
+            input_item_count,
+            tool_count,
+            request_attempt,
+            provider_stream,
+            request_handler.read_timeout_seconds(),
+        ));
+    }
     if let Some(callback) = &options.callbacks.on_before_model_input {
         callback(request.input.clone());
     }
@@ -160,6 +172,29 @@ pub(super) async fn dispatch_model_request(
         }
     }
     result
+}
+
+fn build_model_request_phase_payload(
+    request: &ModelRequest,
+    iteration: usize,
+    iteration_reason: &str,
+    input_item_count: usize,
+    tool_count: usize,
+    request_attempt: usize,
+    provider_stream: bool,
+    read_timeout_seconds: Option<u64>,
+) -> Value {
+    json!({
+        "phase": "model_request",
+        "reason": iteration_reason,
+        "iteration": iteration,
+        "request_attempt": request_attempt,
+        "stream": provider_stream,
+        "model": request.model,
+        "input_item_count": input_item_count,
+        "tool_count": tool_count,
+        "read_timeout_seconds": read_timeout_seconds,
+    })
 }
 
 fn failed_ai_response_error(response: &AiResponse) -> Option<String> {
@@ -339,5 +374,37 @@ mod tests {
             .expect("legacy value");
         assert_eq!(legacy["model"], payload["model"]);
         assert_eq!(legacy["task_runner_debug"]["iteration"], 2);
+    }
+
+    #[test]
+    fn model_request_phase_payload_is_streaming_and_does_not_expose_request_content() {
+        let request = ModelRequest::openai_compatible(
+            "https://example.com/v1",
+            "secret-key",
+            "gpt-5.5",
+            "openai_compatible",
+            json!([{"role": "user", "content": "secret prompt"}]),
+        );
+
+        let payload = build_model_request_phase_payload(
+            &request,
+            2,
+            "tool_results",
+            123,
+            10,
+            1,
+            true,
+            Some(300),
+        );
+
+        assert_eq!(payload["phase"], "model_request");
+        assert_eq!(payload["model"], "gpt-5.5");
+        assert_eq!(payload["iteration"], 2);
+        assert_eq!(payload["request_attempt"], 1);
+        assert_eq!(payload["stream"], true);
+        assert_eq!(payload["read_timeout_seconds"], 300);
+        assert!(payload.get("input").is_none());
+        assert!(payload.get("instructions").is_none());
+        assert!(payload.get("api_key").is_none());
     }
 }

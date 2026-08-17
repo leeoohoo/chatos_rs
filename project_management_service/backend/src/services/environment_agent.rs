@@ -20,6 +20,7 @@ mod source_snapshot;
 mod tool_provider;
 
 pub use self::progress::get_project_runtime_environment_progress;
+pub(crate) use self::progress::reconcile_stale_analysis;
 
 use self::agent_prompt::resolve_project_environment_agent_prompt;
 use self::mcp_management_gateway::{

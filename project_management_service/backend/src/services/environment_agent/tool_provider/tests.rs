@@ -395,6 +395,7 @@ fn technical_summary_is_generated_from_program_results() {
             &project,
             Some(true),
         );
+    environment.sandbox_provider = RuntimeEnvironmentProvider::CloudSandboxManager;
     environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
     environment.generated_config_files = vec![ProjectRuntimeEnvironmentConfigFileRecord {
         path: ".env.chatos".to_string(),

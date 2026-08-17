@@ -19,7 +19,8 @@ use crate::services::runtime_environment::{
     enforce_project_runtime_boundary, environment_variable_name_is_secret,
     normalize_environment_variable_name, normalize_environment_variable_records,
     program_generated_runtime_analysis_summary, refresh_environment_variable_record,
-    required_environment_variables_are_complete, runtime_image_is_execution_required,
+    required_environment_variables_are_complete, runtime_environment_requires_managed_images,
+    runtime_image_is_execution_required,
 };
 use crate::state::AppState;
 
@@ -393,10 +394,11 @@ impl ProjectEnvironmentToolProvider {
                 &mut environment,
                 image_records.as_slice(),
             )?;
-            if image_records
-                .iter()
-                .filter(|image| runtime_image_is_execution_required(image))
-                .any(|image| !image_is_real_and_ready(image))
+            if runtime_environment_requires_managed_images(&environment)
+                && image_records
+                    .iter()
+                    .filter(|image| runtime_image_is_execution_required(image))
+                    .any(|image| !image_is_real_and_ready(image))
             {
                 environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
             } else if !required_environment_variables_are_complete(

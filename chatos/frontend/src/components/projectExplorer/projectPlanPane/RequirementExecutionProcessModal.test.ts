@@ -10,6 +10,7 @@ import {
   isRequirementExecutionCancellationSettling,
   isRequirementExecutionRerunCancellationSettlingError,
   isPendingRequirementExecutionPlanError,
+  isRequirementExecutionRuntimeReady,
   REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
   resolveRequirementExecutionRecoveryActions,
   resolveRequirementExecutionProcessPhase,
@@ -38,6 +39,21 @@ const confirmationState = (
 });
 
 describe('requirement execution process phase', () => {
+  it('does not gate client-managed local projects on server image initialization', () => {
+    expect(isRequirementExecutionRuntimeReady({
+      clientManagedRuntime: true,
+      conversationId: 'conversation-1',
+      executionPlane: 'cloud',
+      status: 'analyzing',
+    })).toBe(true);
+    expect(isRequirementExecutionRuntimeReady({
+      clientManagedRuntime: false,
+      conversationId: 'conversation-1',
+      executionPlane: 'cloud',
+      status: 'analyzing',
+    })).toBe(false);
+  });
+
   it('polls every ten seconds and treats a not-yet-persisted plan as pending', () => {
     expect(REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS).toBe(10_000);
     expect(isPendingRequirementExecutionPlanError(new ApiRequestError(

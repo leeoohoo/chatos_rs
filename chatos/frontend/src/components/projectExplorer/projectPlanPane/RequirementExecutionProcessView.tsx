@@ -278,7 +278,7 @@ export const RequirementExecutionPlannerProcessModal: React.FC<{
             ) : null}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            已读取 {processMessageCount} 条 Memory Engine 过程记录；关闭窗口不会停止规划。
+            已显示 {processMessageCount} 条规划过程；实时输出会自动更新，结束后由 Memory Engine 固化。
           </p>
         </div>
         <button
@@ -310,7 +310,7 @@ export const RequirementExecutionPlannerProcessModal: React.FC<{
                 {active || loading ? '规划 Agent 正在运行，等待第一条过程记录' : '暂无规划运行记录'}
               </div>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                模型完成本轮分析或开始调用工具后，这里会自动显示工具状态与返回结果。
+                正在等待当前规划 turn 的实时事件；模型请求、思考、输出和工具状态都会显示在这里。
               </p>
             </div>
           </div>
@@ -393,7 +393,7 @@ export const RequirementExecutionProcessActions: React.FC<{
         : graphReady && !runtimeEnvironmentReady
         ? (
           isLocalExecution
-            ? '流程图已就绪，云端正在通过 Local Connector 准备本地执行环境，完成后自动开放执行。'
+            ? '流程图已就绪，正在通过 Local Connector 识别本地技术栈与运行条件。'
             : '流程图已就绪，执行环境正在初始化，完成后自动开放执行。'
         )
         : graphReady
@@ -516,7 +516,9 @@ export const RequirementExecutionProcessActions: React.FC<{
             : <Play className="h-3.5 w-3.5" />}
           {confirming
             ? '启动中'
-            : graphReady && !runtimeEnvironmentReady ? '初始化环境中' : '执行'}
+            : graphReady && !runtimeEnvironmentReady
+              ? (isLocalExecution ? '分析本地运行条件' : '初始化环境中')
+              : '执行'}
         </button>
       ) : null}
       <button

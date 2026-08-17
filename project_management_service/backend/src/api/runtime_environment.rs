@@ -12,13 +12,14 @@ use crate::models::*;
 use crate::services::environment_agent::{
     analyze_project_runtime_environment, generate_project_runtime_environment_image,
     get_project_runtime_environment_deployment, get_project_runtime_environment_progress,
-    refresh_project_runtime_compose_config, restart_project_runtime_environment,
-    start_project_runtime_environment, stop_project_runtime_environment,
+    reconcile_stale_analysis, refresh_project_runtime_compose_config,
+    restart_project_runtime_environment, start_project_runtime_environment,
+    stop_project_runtime_environment,
 };
 use crate::services::runtime_environment::{
     apply_environment_variable_overrides, default_runtime_environment_for_project,
     enforce_project_runtime_boundary, refresh_environment_variable_values,
-    replace_legacy_internal_routing_summary,
+    replace_legacy_internal_routing_summary, runtime_environment_requires_managed_images,
 };
 use crate::state::AppState;
 
@@ -38,13 +39,17 @@ pub(in crate::api) async fn get_project_runtime_environment(
         .await
         .map_err(ApiError::bad_request)?
         .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
+    let mut environment_changed = reconcile_stale_analysis(
+        &mut environment,
+        state.config.environment_analysis_stale_after,
+    );
     refresh_environment_variable_values(&mut environment);
     let mut images = state
         .store
         .list_project_runtime_environment_images(&project_id)
         .await
         .map_err(ApiError::bad_request)?;
-    let mut environment_changed =
+    environment_changed |=
         replace_legacy_internal_routing_summary(&mut environment, images.as_slice());
     if enforce_project_runtime_boundary(&project, &mut environment, &mut images) {
         environment_changed = true;
@@ -104,17 +109,18 @@ pub(in crate::api) async fn update_project_runtime_environment_variables(
         && crate::services::runtime_environment::required_environment_variables_are_complete(
             &environment.environment_variables,
         )
-        && images
-            .iter()
-            .filter(|image| {
-                crate::services::runtime_environment::runtime_image_is_execution_required(image)
-            })
-            .all(|image| {
-                matches!(
-                    image.status.trim().to_ascii_lowercase().as_str(),
-                    "ready" | "available" | "local" | "succeeded" | "running"
-                )
-            })
+        && (!runtime_environment_requires_managed_images(&environment)
+            || images
+                .iter()
+                .filter(|image| {
+                    crate::services::runtime_environment::runtime_image_is_execution_required(image)
+                })
+                .all(|image| {
+                    matches!(
+                        image.status.trim().to_ascii_lowercase().as_str(),
+                        "ready" | "available" | "local" | "succeeded" | "running"
+                    )
+                }))
     {
         environment.status = ProjectRuntimeEnvironmentStatus::Ready;
         environment.last_error = None;

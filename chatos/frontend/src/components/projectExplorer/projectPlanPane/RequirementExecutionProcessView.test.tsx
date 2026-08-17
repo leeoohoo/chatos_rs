@@ -223,7 +223,7 @@ describe('requirement execution process actions', () => {
     );
 
     expect(
-      screen.getByText('流程图已就绪，云端正在通过 Local Connector 准备本地执行环境，完成后自动开放执行。'),
+      screen.getByText('流程图已就绪，正在通过 Local Connector 识别本地技术栈与运行条件。'),
     ).toBeTruthy();
   });
 });
@@ -343,6 +343,6 @@ describe('requirement execution workspace surface', () => {
     );
 
     expect(screen.getByText('规划运行时间线内容')).toBeTruthy();
-    expect(screen.getByText(/已读取 3 条 Memory Engine 过程记录/)).toBeTruthy();
+    expect(screen.getByText(/已显示 3 条规划过程/)).toBeTruthy();
   });
 });

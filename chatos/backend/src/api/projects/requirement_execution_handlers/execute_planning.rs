@@ -225,15 +225,17 @@ pub(super) async fn execute_requirement_inner(
         &requirement_scope,
     )
     .await?;
-    ensure_project_runtime_environment_initialization(
-        cfg.project_service_base_url.as_str(),
-        access_token.as_str(),
-        project.id.as_str(),
-        &root_requirement,
-        &selected_work_items,
-        &requirement_documents,
-    )
-    .await?;
+    if project_requires_cloud_runtime_initialization(project.source_type.as_deref()) {
+        ensure_project_runtime_environment_initialization(
+            cfg.project_service_base_url.as_str(),
+            access_token.as_str(),
+            project.id.as_str(),
+            &root_requirement,
+            &selected_work_items,
+            &requirement_documents,
+        )
+        .await?;
+    }
     let planner_prompt = build_requirement_execution_planner_prompt(
         project.id.as_str(),
         &root_requirement,
@@ -426,6 +428,12 @@ enum RuntimeEnvironmentInitializationAction {
     None,
     Analyze,
     GenerateImage(String),
+}
+
+fn project_requires_cloud_runtime_initialization(source_type: Option<&str>) -> bool {
+    source_type
+        .map(str::trim)
+        .is_some_and(|source_type| source_type.eq_ignore_ascii_case("cloud"))
 }
 
 const RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS: usize = 4_000;
@@ -655,9 +663,9 @@ mod runtime_environment_tests {
     use serde_json::json;
 
     use super::{
-        execution_runtime_analysis_request, runtime_environment_initialization_action,
-        runtime_environment_initialization_action_at, RuntimeEnvironmentInitializationAction,
-        RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS,
+        execution_runtime_analysis_request, project_requires_cloud_runtime_initialization,
+        runtime_environment_initialization_action, runtime_environment_initialization_action_at,
+        RuntimeEnvironmentInitializationAction, RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS,
     };
     use chrono::{TimeZone, Utc};
 
@@ -738,6 +746,18 @@ mod runtime_environment_tests {
             ),
             RuntimeEnvironmentInitializationAction::None
         );
+    }
+
+    #[test]
+    fn only_cloud_projects_require_server_managed_runtime_initialization() {
+        assert!(project_requires_cloud_runtime_initialization(Some("cloud")));
+        assert!(!project_requires_cloud_runtime_initialization(Some(
+            "local"
+        )));
+        assert!(!project_requires_cloud_runtime_initialization(Some(
+            "local_connector"
+        )));
+        assert!(!project_requires_cloud_runtime_initialization(None));
     }
 
     #[test]

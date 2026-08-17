@@ -3,7 +3,10 @@
 
 use crate::models::*;
 
-use super::{apply_program_managed_image_policy, ensure_workspace_execution_record};
+use super::{
+    apply_program_managed_image_policy, ensure_workspace_execution_record,
+    program_generated_runtime_analysis_summary, required_environment_variables_are_complete,
+};
 
 pub fn enforce_project_runtime_boundary(
     project: &ProjectRecord,
@@ -142,15 +145,19 @@ pub fn enforce_project_runtime_boundary(
         return changed;
     }
 
-    let legacy_target = images
-        .iter()
-        .find(|image| {
-            image.service_role == RuntimeServiceRole::Application
-                && image.mcp_policy.attachment == RuntimeMcpAttachment::WorkspaceGatewayTarget
-        })
-        .cloned();
-    if ensure_workspace_execution_record(environment, images, legacy_target.as_ref()) {
-        changed = true;
+    let requires_managed_images =
+        desired_sandbox_provider == RuntimeEnvironmentProvider::CloudSandboxManager;
+    if requires_managed_images {
+        let legacy_target = images
+            .iter()
+            .find(|image| {
+                image.service_role == RuntimeServiceRole::Application
+                    && image.mcp_policy.attachment == RuntimeMcpAttachment::WorkspaceGatewayTarget
+            })
+            .cloned();
+        if ensure_workspace_execution_record(environment, images, legacy_target.as_ref()) {
+            changed = true;
+        }
     }
 
     let mut workspace_image_reset = false;
@@ -176,6 +183,28 @@ pub fn enforce_project_runtime_boundary(
             image.updated_at = now_rfc3339();
         }
     }
+    if !requires_managed_images {
+        let previous_len = images.len();
+        images.retain(|image| image.service_role != RuntimeServiceRole::Workspace);
+        if images.len() != previous_len {
+            changed = true;
+        }
+        if environment.status == ProjectRuntimeEnvironmentStatus::PendingImageBuild {
+            environment.status = if required_environment_variables_are_complete(
+                &environment.environment_variables,
+            ) {
+                ProjectRuntimeEnvironmentStatus::Ready
+            } else {
+                ProjectRuntimeEnvironmentStatus::PendingConfiguration
+            };
+            environment.last_error = None;
+            environment.analysis_summary = Some(program_generated_runtime_analysis_summary(
+                environment,
+                images.as_slice(),
+            ));
+            changed = true;
+        }
+    }
 
     let workspace_requires_build = images.iter().any(|image| {
         image.service_role == RuntimeServiceRole::Workspace
@@ -189,7 +218,8 @@ pub fn enforce_project_runtime_boundary(
                     "ready" | "available" | "local" | "succeeded" | "completed" | "running"
                 ))
     });
-    if workspace_requires_build
+    if requires_managed_images
+        && workspace_requires_build
         && !matches!(
             environment.status,
             ProjectRuntimeEnvironmentStatus::Disabled
@@ -228,7 +258,8 @@ pub fn enforce_project_runtime_boundary(
         }
     }
 
-    if workspace_image_reset
+    if requires_managed_images
+        && workspace_image_reset
         && !matches!(
             environment.status,
             ProjectRuntimeEnvironmentStatus::Disabled

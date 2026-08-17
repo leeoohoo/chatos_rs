@@ -75,10 +75,10 @@ export const TimelineDot: React.FC<{
   status?: TimelineStatus;
   type: TimelineItem['type'];
 }> = ({ status, type }) => {
-  const Icon = type === 'model'
-    ? Bot
-    : status === 'error'
+  const Icon = status === 'error'
       ? AlertTriangle
+    : type === 'model'
+      ? Bot
       : status === 'completed'
         ? CheckCircle2
         : Clock;
@@ -223,9 +223,19 @@ const ToolResultCard: React.FC<{
 const ModelCard: React.FC<{
   item: Extract<TimelineItem, { type: 'model' }>;
 }> = ({ item }) => (
-  <article className="rounded-md border border-border/80 bg-background px-3.5 py-3">
+  <article className={cn(
+    'rounded-md border bg-background px-3.5 py-3',
+    item.status === 'error' ? 'border-destructive/40' : 'border-border/80',
+  )}
+  >
     <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-      <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
+      <span className={cn(
+        'inline-flex items-center gap-1 rounded border bg-muted/40 px-2 py-0.5 font-medium',
+        item.status === 'error'
+          ? 'border-destructive/40 text-destructive'
+          : 'border-border text-foreground',
+      )}
+      >
         <Bot className="h-3 w-3" />
         {item.label}
         {(item.repeatCount || 1) > 1 ? `（重复 ${item.repeatCount} 次）` : ''}

@@ -24,11 +24,27 @@ import { useRequirementExecutionProcessModalState } from './useRequirementExecut
 
 export * from './requirementExecutionProcessPublic';
 
+export const isRequirementExecutionRuntimeReady = ({
+  clientManagedRuntime,
+  conversationId,
+  executionPlane,
+  status,
+}: {
+  clientManagedRuntime: boolean;
+  conversationId: string;
+  executionPlane?: string | null;
+  status: string;
+}): boolean => status === 'ready'
+  || clientManagedRuntime
+  || (executionPlane || '').toLowerCase() === 'local_connector'
+  || conversationId.startsWith('lc_');
+
 export const RequirementExecutionProcessModal: React.FC<{
   process: RequirementExecutionProcess;
+  clientManagedRuntime?: boolean;
   onClose: () => void;
   onProcessChange: (process: RequirementExecutionProcess) => void;
-}> = ({ process, onClose, onProcessChange }) => {
+}> = ({ process, clientManagedRuntime = false, onClose, onProcessChange }) => {
   const apiClient = useApiClient();
   const refreshSessionById = useChatStore((state) => state.refreshSessionById);
   const syncSessionMessagesInBackground = useChatStore(
@@ -147,7 +163,15 @@ export const RequirementExecutionProcessModal: React.FC<{
     && allTasks.length > 0
     && !actuallyStarted
     && phase !== 'stopped';
-  const runtimeEnvironmentReady = runtimeEnvironmentStatus === 'ready';
+  const isLocalExecution = clientManagedRuntime
+    || (liveProcess.executionPlane || '').toLowerCase() === 'local_connector'
+    || liveProcess.conversationId.startsWith('lc_');
+  const runtimeEnvironmentReady = isRequirementExecutionRuntimeReady({
+    clientManagedRuntime,
+    conversationId: liveProcess.conversationId,
+    executionPlane: liveProcess.executionPlane,
+    status: runtimeEnvironmentStatus,
+  });
   const recoveryActions = resolveRequirementExecutionRecoveryActions({
     actuallyStarted,
     hasActiveRuns,
@@ -205,8 +229,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     turnId: liveProcess.executionGroupId,
     userMessageId: liveProcess.messageId,
   });
-  const isLocalExecution = (liveProcess.executionPlane || '').toLowerCase() === 'local_connector'
-    || liveProcess.conversationId.startsWith('lc_');
   const phaseText = resolveRequirementExecutionPhaseCopy({
     cancellationSettling,
     phase,
