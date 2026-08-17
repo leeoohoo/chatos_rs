@@ -11,6 +11,7 @@ use chatos_project_execution::{
     select_unblocked_pending_work_items, sort_work_items_for_planning, ExecutionPlanIdentity,
     ExecutionPlane, NEXT_ACTION_PREVIEW_AND_CONFIRM, RECOVERY_ACTION_NONE, STATUS_PLANNING_STARTED,
 };
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::api::chat_stream_common::ChatStreamRequest;
@@ -428,10 +429,19 @@ enum RuntimeEnvironmentInitializationAction {
 }
 
 const RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS: usize = 4_000;
+const RUNTIME_ANALYSIS_STALE_AFTER_SECONDS: i64 = 15 * 60;
 
 fn runtime_environment_initialization_action(
     current: &Value,
     analysis_requirement: Option<&str>,
+) -> RuntimeEnvironmentInitializationAction {
+    runtime_environment_initialization_action_at(current, analysis_requirement, Utc::now())
+}
+
+fn runtime_environment_initialization_action_at(
+    current: &Value,
+    analysis_requirement: Option<&str>,
+    now: DateTime<Utc>,
 ) -> RuntimeEnvironmentInitializationAction {
     let status = current
         .get("environment")
@@ -444,7 +454,10 @@ fn runtime_environment_initialization_action(
             RuntimeEnvironmentInitializationAction::None
         }
         Some("ready") => RuntimeEnvironmentInitializationAction::Analyze,
-        Some("analyzing") => RuntimeEnvironmentInitializationAction::None,
+        Some("analyzing") if !runtime_environment_analysis_is_stale(current, now) => {
+            RuntimeEnvironmentInitializationAction::None
+        }
+        Some("analyzing") => RuntimeEnvironmentInitializationAction::Analyze,
         Some("pending_image_build") => current
             .get("images")
             .and_then(Value::as_array)
@@ -470,6 +483,30 @@ fn runtime_environment_initialization_action(
             .unwrap_or(RuntimeEnvironmentInitializationAction::None),
         _ => RuntimeEnvironmentInitializationAction::Analyze,
     }
+}
+
+fn runtime_environment_analysis_is_stale(current: &Value, now: DateTime<Utc>) -> bool {
+    let updated_at = current
+        .get("environment")
+        .and_then(|environment| environment.get("detected_stack"))
+        .and_then(|stack| stack.get("analysis_progress"))
+        .and_then(|progress| progress.get("updated_at"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            current
+                .get("environment")
+                .and_then(|environment| environment.get("updated_at"))
+                .and_then(Value::as_str)
+        });
+    let Some(updated_at) = updated_at else {
+        return true;
+    };
+    let Ok(updated_at) = DateTime::parse_from_rfc3339(updated_at) else {
+        return true;
+    };
+    now.signed_duration_since(updated_at.with_timezone(&Utc))
+        .num_seconds()
+        >= RUNTIME_ANALYSIS_STALE_AFTER_SECONDS
 }
 
 async fn ensure_project_runtime_environment_initialization(
@@ -619,8 +656,10 @@ mod runtime_environment_tests {
 
     use super::{
         execution_runtime_analysis_request, runtime_environment_initialization_action,
-        RuntimeEnvironmentInitializationAction, RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS,
+        runtime_environment_initialization_action_at, RuntimeEnvironmentInitializationAction,
+        RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS,
     };
+    use chrono::{TimeZone, Utc};
 
     #[test]
     fn execution_context_drives_runtime_analysis_request() {
@@ -676,7 +715,10 @@ mod runtime_environment_tests {
         assert_eq!(
             runtime_environment_initialization_action(
                 &json!({
-                    "environment": { "status": "ANALYZING" },
+                    "environment": {
+                        "status": "ANALYZING",
+                        "updated_at": Utc::now().to_rfc3339(),
+                    },
                 }),
                 Some("React and Rust")
             ),
@@ -696,6 +738,29 @@ mod runtime_environment_tests {
             ),
             RuntimeEnvironmentInitializationAction::None
         );
+    }
+
+    #[test]
+    fn stale_or_unverifiable_analyzing_environment_is_restarted() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 17, 8, 0, 0).unwrap();
+        for current in [
+            json!({ "environment": { "status": "analyzing" } }),
+            json!({
+                "environment": {
+                    "status": "analyzing",
+                    "detected_stack": {
+                        "analysis_progress": {
+                            "updated_at": "2026-08-17T07:30:00Z"
+                        }
+                    }
+                }
+            }),
+        ] {
+            assert_eq!(
+                runtime_environment_initialization_action_at(&current, Some("React and Rust"), now,),
+                RuntimeEnvironmentInitializationAction::Analyze
+            );
+        }
     }
 
     #[test]

@@ -263,6 +263,12 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
         {
             return;
         }
+        if task_runner_async_status_is_failure_locked(current_overall_status)
+            && !task_runner_async_status_is_failure_locked(requested_overall_status)
+            && !task_runner_async_status_is_stop_locked(requested_overall_status)
+        {
+            return;
+        }
         if task_runner_async_callback_is_terminal(task_runner_async_map)
             && !current_overall_status.eq_ignore_ascii_case(requested_overall_status)
         {
@@ -329,6 +335,13 @@ fn task_runner_async_status_is_stop_locked(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
         "stopping" | "stopped" | "cancelled" | "canceled"
+    )
+}
+
+fn task_runner_async_status_is_failure_locked(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "failed" | "error" | "blocked"
     )
 }
 
@@ -702,6 +715,30 @@ mod tests {
                 "created_task_ids": ["task-1"],
                 "terminal_task_ids": ["task-1"],
                 "failed_task_ids": ["task-1"]
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "completed");
+
+        assert_eq!(
+            message.metadata.as_ref().unwrap()["task_runner_async"]["overall_status"],
+            "failed"
+        );
+    }
+
+    #[test]
+    fn planner_finalize_does_not_overwrite_zero_task_failure() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "failed",
+                "confirmation_status": "failed",
+                "created_task_ids": [],
+                "terminal_task_ids": []
             }
         }));
 

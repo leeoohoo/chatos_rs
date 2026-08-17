@@ -18,7 +18,7 @@ use crate::services::{chatos_sessions, task_runner_api_client};
 
 use super::super::requirement_execution::{
     apply_task_runner_task_snapshot, create_execution_planner_failure_message,
-    mark_execution_messages_for_stop, sync_execution_link_status,
+    mark_execution_messages_for_stop, mark_execution_planner_failed, sync_execution_link_status,
     sync_execution_message_task_tracking, sync_requirement_execution_state,
     task_runner_callback_event_for_status, task_runner_status_is_active,
     task_runner_status_is_cancelled, value_string, ExecutionLink, HandlerError, WorkItemPlanItem,
@@ -489,19 +489,22 @@ pub(super) async fn reconcile_requirement_planner_outcome(
                     current_execution_links.as_slice(),
                 )
                 .await;
-                let _ = set_task_runner_async_overall_status_for_session(
+                let failure_reason = format!(
+                    "新的执行流程已经生成，但旧批次任务及临时资源清理失败，因此新流程没有切换为可执行状态。请检查 Task Runner、沙箱和 Git 分支清理状态后重试。详情：{}",
+                    error.error
+                );
+                mark_execution_planner_failed(
                     recovery.session_id.as_str(),
                     recovery.execution_group_id.as_str(),
-                    "failed",
+                    "replacement_cleanup_failed",
+                    failure_reason.as_str(),
                 )
-                .await;
+                .await?;
                 create_execution_planner_failure_message(
                     recovery.session_id.as_str(),
                     recovery.execution_group_id.as_str(),
-                    format!(
-                        "新的执行流程已经生成，但旧批次任务及临时资源清理失败，因此新流程没有切换为可执行状态。请检查 Task Runner、沙箱和 Git 分支清理状态后重试。详情：{}",
-                        error.error
-                    ),
+                    "replacement_cleanup_failed",
+                    failure_reason,
                 )
                 .await?;
                 return Err(error);
@@ -545,19 +548,22 @@ pub(super) async fn reconcile_requirement_planner_outcome(
         )
         .await?;
     }
-    let _ = set_task_runner_async_overall_status_for_session(
+    let failure_reason = build_planner_coverage_failure_message(
+        recovery.selected_work_items.as_slice(),
+        &linked_project_task_ids,
+    );
+    mark_execution_planner_failed(
         recovery.session_id.as_str(),
         recovery.execution_group_id.as_str(),
-        "failed",
+        "planner_created_no_tasks",
+        failure_reason.as_str(),
     )
-    .await;
+    .await?;
     create_execution_planner_failure_message(
         recovery.session_id.as_str(),
         recovery.execution_group_id.as_str(),
-        build_planner_coverage_failure_message(
-            recovery.selected_work_items.as_slice(),
-            &linked_project_task_ids,
-        ),
+        "planner_created_no_tasks",
+        failure_reason,
     )
     .await?;
     Ok(())

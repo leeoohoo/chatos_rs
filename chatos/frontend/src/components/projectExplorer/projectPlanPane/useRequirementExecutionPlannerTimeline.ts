@@ -22,6 +22,12 @@ export interface RequirementExecutionPlannerTimelineState {
   refresh: (silent?: boolean) => Promise<void>;
 }
 
+export const isRequirementExecutionPlannerTimelineMessage = (message: Message): boolean => (
+  isProcessMessage(message)
+  || message.role === 'assistant'
+  || message.role === 'tool'
+);
+
 export const useRequirementExecutionPlannerTimeline = ({
   active,
   conversationId,
@@ -86,7 +92,7 @@ export const useRequirementExecutionPlannerTimeline = ({
   }, [active, conversationId, refresh, turnId, userMessageId]);
 
   const processMessages = useMemo(
-    () => messages.filter(isProcessMessage),
+    () => messages.filter(isRequirementExecutionPlannerTimelineMessage),
     [messages],
   );
   const items = useMemo(

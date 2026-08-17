@@ -73,6 +73,30 @@ pub async fn list_all_messages(session_id: &str) -> Result<Vec<Message>, String>
     Ok(newest_first_messages)
 }
 
+pub async fn list_all_messages_including_hidden(session_id: &str) -> Result<Vec<Message>, String> {
+    let mut offset = 0i64;
+    let mut newest_first_messages: Vec<Message> = Vec::new();
+
+    loop {
+        let batch = chatos_sessions::list_messages_including_hidden(
+            session_id,
+            Some(FULL_SESSION_MESSAGES_PAGE_SIZE),
+            offset,
+            false,
+        )
+        .await?;
+        let batch_len = batch.len();
+        offset += batch_len as i64;
+        newest_first_messages.extend(batch);
+        if batch_len == 0 || batch_len < FULL_SESSION_MESSAGES_PAGE_SIZE as usize {
+            break;
+        }
+    }
+
+    newest_first_messages.reverse();
+    Ok(newest_first_messages)
+}
+
 fn append_visible_message_page(
     all_messages: &mut Vec<Message>,
     batch: Vec<Message>,

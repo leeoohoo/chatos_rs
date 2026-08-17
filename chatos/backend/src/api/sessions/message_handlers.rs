@@ -24,7 +24,6 @@ use super::history::{
     parse_bool_query_flag,
 };
 use super::history_process::find_user_index_by_turn_id;
-use super::support::list_all_session_messages;
 
 mod compact;
 
@@ -126,7 +125,7 @@ pub(super) async fn get_session_turn_display_messages(
     if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = list_all_session_messages(&conversation_id).await;
+    let result = conversation_messages::list_all_messages_including_hidden(&conversation_id).await;
 
     match result {
         Ok(messages) => {
@@ -178,7 +177,7 @@ pub(super) async fn get_session_turn_display_messages_by_turn(
     if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = list_all_session_messages(&conversation_id).await;
+    let result = conversation_messages::list_all_messages_including_hidden(&conversation_id).await;
 
     match result {
         Ok(messages) => {

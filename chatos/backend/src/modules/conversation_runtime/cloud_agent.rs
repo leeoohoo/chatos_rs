@@ -163,6 +163,9 @@ pub async fn start_chatos_cloud_agent(input: StartChatosCloudAgent<'_>) -> Resul
     let max_iterations =
         super::chat_execution::max_iterations_from_settings(&input.effective_settings);
     let lifecycle = CloudTaskTurnLifecycleState {
+        project_execution_planner_guard: input
+            .runtime_context
+            .project_requirement_execution_planner,
         project_planning_integrity_guard: agent_profile.plan_mode_header()
             && !input.runtime_context.project_requirement_execution_planner,
         ..CloudTaskTurnLifecycleState::default()

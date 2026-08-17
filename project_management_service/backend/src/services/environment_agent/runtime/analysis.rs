@@ -533,20 +533,50 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
         return response_for_project(state, environment).await;
     }
     let source_snapshot = environment.detected_stack.get("source_snapshot").cloned();
-    let agent_prompt = resolve_project_environment_agent_prompt(
+    let agent_prompt = match resolve_project_environment_agent_prompt(
         state,
         project,
         model_runtime.prompt_vendor.as_deref(),
         model_runtime.model_config.provider.as_str(),
     )
-    .await?;
-    let gateway = resolve_project_environment_mcp(
+    .await
+    {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            return Err(persist_analysis_start_failure(
+                state,
+                environment,
+                run_id.as_str(),
+                analysis_started_at.as_str(),
+                "agent_prompt_resolution_failed",
+                "读取项目运行环境 Agent 提示词失败。",
+                error,
+            )
+            .await);
+        }
+    };
+    let gateway = match resolve_project_environment_mcp(
         project,
         owner_user_id,
         run_id.as_str(),
         model_runtime.model_config_id.as_str(),
     )
-    .await?;
+    .await
+    {
+        Ok(gateway) => gateway,
+        Err(error) => {
+            return Err(persist_analysis_start_failure(
+                state,
+                environment,
+                run_id.as_str(),
+                analysis_started_at.as_str(),
+                "mcp_runtime_resolution_failed",
+                "项目运行环境 Agent 的 MCP 运行时初始化失败。",
+                error,
+            )
+            .await);
+        }
+    };
     let persist_result = async {
         let executor = McpExecutor::builder()
             .with_http_server(gateway.server().clone())
@@ -588,7 +618,7 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
             mcp_command_queue: gateway.command_queue().to_string(),
             file_provider: environment_plan.file_provider,
             sandbox_provider: environment_plan.sandbox_provider,
-            analysis_started_at,
+            analysis_started_at: analysis_started_at.clone(),
             created_at: now.clone(),
             updated_at: now,
         };
@@ -627,12 +657,56 @@ pub(in crate::services::environment_agent) async fn analyze_project_runtime_envi
     }
     .await;
     if let Err(error) = persist_result {
-        return Err(match gateway.close().await {
+        let error = match gateway.close().await {
             Ok(()) => error,
             Err(close_error) => format!("{error}; {close_error}"),
-        });
+        };
+        return Err(persist_analysis_start_failure(
+            state,
+            environment,
+            run_id.as_str(),
+            analysis_started_at.as_str(),
+            "cloud_agent_enqueue_failed",
+            "项目运行环境 Agent 启动失败。",
+            error,
+        )
+        .await);
     }
     response_for_project(state, environment).await
+}
+
+async fn persist_analysis_start_failure(
+    state: &AppState,
+    mut environment: ProjectRuntimeEnvironmentRecord,
+    run_id: &str,
+    analysis_started_at: &str,
+    stage: &str,
+    summary: &str,
+    error: String,
+) -> String {
+    environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+    environment.analysis_summary = Some(summary.to_string());
+    environment.last_error = Some(error.clone());
+    environment.updated_at = now_rfc3339();
+    set_analysis_progress(
+        &mut environment.detected_stack,
+        run_id,
+        stage,
+        analysis_started_at,
+        environment.updated_at.as_str(),
+        Some(environment.updated_at.as_str()),
+        Some(error.as_str()),
+    );
+    match state
+        .store
+        .upsert_project_runtime_environment(&environment)
+        .await
+    {
+        Ok(_) => error,
+        Err(persist_error) => {
+            format!("{error}; persist runtime environment failure state failed: {persist_error}")
+        }
+    }
 }
 
 fn pending_workspace_image_id(response: &ProjectRuntimeEnvironmentResponse) -> Option<String> {

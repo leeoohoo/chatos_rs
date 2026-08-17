@@ -46,7 +46,11 @@ pub(crate) struct TaskTurnLifecycleState {
     pub(crate) review_attempted: bool,
     pub(crate) review_last_outcome: Option<TaskTurnReviewOutcome>,
     pub(crate) continuation_history: Vec<Value>,
+    #[serde(default)]
+    pub(crate) project_execution_planner_guard: bool,
     pub(crate) project_execution_plan_materialized: bool,
+    #[serde(default)]
+    pub(crate) project_execution_planner_repair_rounds: usize,
     pub(crate) project_planning_integrity_guard: bool,
     #[serde(default)]
     pub(crate) project_planning_task_created: bool,
@@ -64,6 +68,7 @@ pub(crate) struct TaskTurnLifecycleState {
 }
 
 const MAX_PROJECT_PLANNING_REPAIR_ROUNDS: usize = 3;
+const MAX_PROJECT_EXECUTION_PLANNER_REPAIR_ROUNDS: usize = 2;
 const PROJECT_PLANNING_LOOP_FINALIZATION_PROMPT: &str = "[Project Planning Finalization]\nThe program detected that an identical project-task dependency mutation batch succeeded repeatedly and an authoritative dependency-graph read completed afterward. Do not call any more tools. Summarize the latest verified project state for the user. Do not claim work that is absent from the latest graph; if anything remains incomplete, state the concrete gap instead of attempting another identical write.";
 
 fn is_project_planning_mutation_tool(name: &str) -> bool {
@@ -487,6 +492,33 @@ impl ChatosRuntimeLifecycleHook {
             reason: "project_planning_delegation_repair".to_string(),
         }))
     }
+
+    fn require_project_execution_plan_materialization(
+        &self,
+        context: &RuntimeFinalResponseContext,
+    ) -> Result<Option<RuntimeFinalResponseAction>, String> {
+        let mut state = self.task_turn_state()?;
+        if !state.project_execution_planner_guard || state.project_execution_plan_materialized {
+            return Ok(None);
+        }
+        if state.project_execution_planner_repair_rounds
+            >= MAX_PROJECT_EXECUTION_PLANNER_REPAIR_ROUNDS
+        {
+            return Err(
+                "需求执行规划未创建任何执行任务，不能标记为完成；请重新生成执行流程".to_string(),
+            );
+        }
+
+        state.project_execution_planner_repair_rounds += 1;
+        let guidance = "[Execution Plan Materialization Guard]\n程序确认当前是需求执行规划，但尚未持久化任何执行任务。不要输出完成总结，也不要声称流程图已经生成。现在必须调用 task_runner_service_create_project_execution_tasks，完整覆盖输入中的全部项目任务及依赖关系；调用成功后程序会再次校验。";
+        let input_items = Self::continue_with_response(&mut state, &context.response, guidance);
+        drop(state);
+        self.emit_task_turn_thinking(TaskTurnFollowUpMode::ContinueExecution);
+        Ok(Some(RuntimeFinalResponseAction::Continue {
+            input_items,
+            reason: "project_execution_plan_materialization_repair".to_string(),
+        }))
+    }
 }
 
 #[async_trait]
@@ -546,6 +578,9 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
         if self.task_turn_state()?.project_execution_plan_materialized {
             self.task_turn_state()?.mode = None;
             return Ok(RuntimeFinalResponseAction::Accept);
+        }
+        if let Some(action) = self.require_project_execution_plan_materialization(&context)? {
+            return Ok(action);
         }
         let should_force_finalize = {
             let state = self.task_turn_state()?;

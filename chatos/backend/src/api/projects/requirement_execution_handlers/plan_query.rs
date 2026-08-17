@@ -269,11 +269,34 @@ pub(crate) fn execution_message_status(message: &crate::models::message::Message
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.get("task_runner_async"));
-    let status = value_string(task_runner.unwrap_or(&Value::Null), "overall_status")
-        .or_else(|| value_string(task_runner.unwrap_or(&Value::Null), "confirmation_status"))
-        .unwrap_or_else(|| STATUS_PLANNING_STARTED.to_string())
-        .trim()
-        .to_ascii_lowercase();
+    let overall_status = value_string(task_runner.unwrap_or(&Value::Null), "overall_status")
+        .map(|value| value.trim().to_ascii_lowercase());
+    let confirmation_status =
+        value_string(task_runner.unwrap_or(&Value::Null), "confirmation_status")
+            .map(|value| value.trim().to_ascii_lowercase());
+    let status = if overall_status
+        .as_deref()
+        .is_some_and(execution_status_is_stop_locked)
+    {
+        overall_status.unwrap_or_default()
+    } else if confirmation_status
+        .as_deref()
+        .is_some_and(execution_status_is_stop_locked)
+    {
+        confirmation_status.unwrap_or_default()
+    } else if overall_status
+        .as_deref()
+        .is_some_and(execution_status_is_failure_terminal)
+        || confirmation_status
+            .as_deref()
+            .is_some_and(execution_status_is_failure_terminal)
+    {
+        "failed".to_string()
+    } else {
+        overall_status
+            .or(confirmation_status)
+            .unwrap_or_else(|| STATUS_PLANNING_STARTED.to_string())
+    };
     if !execution_status_is_stop_locked(status.as_str())
         && task_runner_metadata_has_stop_marker(task_runner)
     {
@@ -281,6 +304,10 @@ pub(crate) fn execution_message_status(message: &crate::models::message::Message
     } else {
         status
     }
+}
+
+fn execution_status_is_failure_terminal(status: &str) -> bool {
+    matches!(status.trim(), "failed" | "error" | "blocked")
 }
 
 #[cfg(test)]

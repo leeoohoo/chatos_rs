@@ -1027,6 +1027,55 @@ async fn materialized_execution_plan_accepts_the_first_final_response() {
 }
 
 #[tokio::test]
+async fn execution_planner_without_materialized_tasks_is_forced_to_continue() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        project_execution_planner_guard: true,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let action = hook
+        .after_final_response(final_response_context(ai_response(
+            "执行任务图已经生成，可以确认执行。",
+        )))
+        .await
+        .expect("materialization repair continuation");
+
+    match action {
+        RuntimeFinalResponseAction::Continue {
+            input_items,
+            reason,
+        } => {
+            assert_eq!(reason, "project_execution_plan_materialization_repair");
+            assert!(input_items.iter().any(|item| {
+                item.get("role").and_then(Value::as_str) == Some("system")
+                    && item
+                        .to_string()
+                        .contains("task_runner_service_create_project_execution_tasks")
+            }));
+        }
+        _ => panic!("expected execution-plan materialization repair"),
+    }
+}
+
+#[tokio::test]
+async fn execution_planner_rejects_success_after_materialization_retries_are_exhausted() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        project_execution_planner_guard: true,
+        project_execution_planner_repair_rounds: 2,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let error = hook
+        .after_final_response(final_response_context(ai_response(
+            "执行任务图已经生成，可以确认执行。",
+        )))
+        .await
+        .expect_err("zero-task planner must fail");
+
+    assert!(error.contains("未创建任何执行任务"));
+}
+
+#[tokio::test]
 async fn review_iteration_disables_streaming_and_tools() {
     let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
         mode: Some(TaskTurnFollowUpMode::ReviewExecution),

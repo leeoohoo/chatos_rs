@@ -33,6 +33,7 @@ use self::mcp_servers::{
 };
 use self::memory::build_project_agent_memory;
 use self::routing::{
+    find_enabled_local_sandbox_pairing, parse_local_connector_project_root,
     resolve_runtime_environment_plan, RuntimeEnvironmentDecision, RuntimeEnvironmentPlan,
     StopDecision,
 };
@@ -41,6 +42,55 @@ pub(crate) use self::tool_provider::{
 };
 const LOCAL_SANDBOX_IMAGE_MCP_PATH: &str = "/api/local/sandbox/images/mcp";
 const PROJECT_COMPOSE_FILE_PATH: &str = ".chatos/runtime-environment/docker-compose.chatos.yml";
+
+pub(crate) async fn resolve_project_execution_sandbox_binding(
+    state: &AppState,
+    project: &ProjectRecord,
+    environment: Option<&ProjectRuntimeEnvironmentRecord>,
+    owner_user_id: &str,
+) -> Result<(RuntimeEnvironmentProvider, Option<String>), String> {
+    let Some(environment) = environment.filter(|environment| environment.sandbox_enabled) else {
+        return Ok((RuntimeEnvironmentProvider::None, None));
+    };
+    match environment.sandbox_provider {
+        RuntimeEnvironmentProvider::LocalConnector => {
+            let project_ref = project
+                .root_path
+                .as_deref()
+                .and_then(parse_local_connector_project_root)
+                .ok_or_else(|| {
+                    "Local Connector sandbox provider requires a normalized project workspace"
+                        .to_string()
+                })?;
+            let pairing = find_enabled_local_sandbox_pairing(
+                &state.config,
+                None,
+                Some(&project_ref),
+                Some(owner_user_id),
+            )
+            .await?
+            .ok_or_else(|| {
+                "Local Connector sandbox provider has no active workspace pairing".to_string()
+            })?;
+            let pairing_id = pairing
+                .id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "Local Connector sandbox pairing id is missing".to_string())?;
+            Ok((
+                RuntimeEnvironmentProvider::LocalConnector,
+                Some(pairing_id.to_string()),
+            ))
+        }
+        RuntimeEnvironmentProvider::CloudSandboxManager => {
+            Ok((RuntimeEnvironmentProvider::CloudSandboxManager, None))
+        }
+        RuntimeEnvironmentProvider::None | RuntimeEnvironmentProvider::Harness => {
+            Ok((RuntimeEnvironmentProvider::None, None))
+        }
+    }
+}
 
 pub(crate) fn refresh_project_runtime_compose_config(
     project_id: &str,

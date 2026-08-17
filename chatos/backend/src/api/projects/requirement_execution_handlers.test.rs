@@ -168,6 +168,28 @@ mod tests {
         assert!(execution_message_is_stopped_terminal(&message));
     }
 
+    #[test]
+    fn failed_confirmation_wins_over_inconsistent_completed_overall_status() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "completed",
+                "confirmation_status": "failed",
+                "created_task_ids": []
+            }
+        }));
+
+        assert_eq!(execution_message_status(&message), "failed");
+    }
+
     fn execution_link_with_status(status: &str) -> ExecutionLink {
         ExecutionLink {
             link_id: None,
