@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import {
   getMessageTaskRunnerRun,
@@ -13,7 +13,7 @@ import type {
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerTask,
 } from '../../lib/api/client/types';
-import { readString } from './utils';
+import { mergeTaskRunReport, readString } from './utils';
 
 interface UseMessageTasksArgs {
   open: boolean;
@@ -53,6 +53,7 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
   const [runDetail, setRunDetail] = useState<MessageTaskRunnerRunDetailResponse | null>(null);
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+  const detailRequestSequenceRef = useRef(0);
 
   const reloadTasks = useCallback(async () => {
     setLoading(true);
@@ -75,6 +76,8 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
   }, [apiClient, messageId, lookup]);
 
   const openDetail = useCallback(async (task: MessageTaskRunnerTask) => {
+    const requestSequence = detailRequestSequenceRef.current + 1;
+    detailRequestSequenceRef.current = requestSequence;
     setLoadingDetailId(task.id);
     setError(null);
     try {
@@ -82,11 +85,37 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
         ? { ...lookup, sourceUserMessageId }
         : lookup;
       const detail = await getMessageTaskRunnerTask(apiClient.getRequestFn(), messageId, task.id, detailLookup);
+      if (detailRequestSequenceRef.current !== requestSequence) {
+        return;
+      }
       setDetailTask(detail);
+      const runId = readString(detail.last_run_id) || readString(task.last_run_id);
+      if (!runId) {
+        return;
+      }
+      const runDetail = await getMessageTaskRunnerRun(
+        apiClient.getRequestFn(),
+        messageId,
+        runId,
+        {
+          ...detailLookup,
+          includeEvents: false,
+          eventLimit: 1,
+          eventOffset: 0,
+        },
+      );
+      if (detailRequestSequenceRef.current !== requestSequence) {
+        return;
+      }
+      setDetailTask(mergeTaskRunReport(detail, runDetail.run));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '读取任务详情失败');
+      if (detailRequestSequenceRef.current === requestSequence) {
+        setError(err instanceof Error ? err.message : '读取任务详情失败');
+      }
     } finally {
-      setLoadingDetailId(null);
+      if (detailRequestSequenceRef.current === requestSequence) {
+        setLoadingDetailId(null);
+      }
     }
   }, [apiClient, messageId, lookup, sourceUserMessageId]);
 
@@ -151,6 +180,7 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
 
   useEffect(() => {
     if (!open) {
+      detailRequestSequenceRef.current += 1;
       setDetailTask(null);
       setRunDetail(null);
       setError(null);
@@ -158,7 +188,9 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
   }, [open]);
 
   const closeDetail = useCallback(() => {
+    detailRequestSequenceRef.current += 1;
     setDetailTask(null);
+    setLoadingDetailId(null);
   }, []);
 
   const closeRun = useCallback(() => {

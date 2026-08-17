@@ -172,6 +172,50 @@ describe('buildTaskSourceLookup', () => {
 });
 
 describe('useMessageTaskGraph', () => {
+  it('loads the run report on demand when opening task details', async () => {
+    const task: MessageTaskRunnerTask = {
+      id: 'task-report',
+      title: '项目梳理',
+      status: 'succeeded',
+      last_run_id: 'run-report',
+      source_session_id: 'session-1',
+      source_turn_id: 'turn-1',
+      source_user_message_id: 'message-1',
+    };
+    const request = vi.fn((path: string) => {
+      if (path.includes('/task-runner/graph/runs/run-report')) {
+        return Promise.resolve({
+          ...runDetailForTask(task, 'run-report'),
+          run: {
+            id: 'run-report',
+            task_id: task.id,
+            status: 'succeeded',
+            report: { content: '# 完整项目报告' },
+          },
+        });
+      }
+      return Promise.resolve(graphWithTaskRecord(task));
+    });
+    const lookup = {
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sourceUserMessageId: 'message-1',
+    };
+    const { result } = renderHook(() => useMessageTaskGraph({
+      open: true,
+      messageId: 'message-1',
+      lookup,
+    }), { wrapper: createApiWrapper(request) });
+
+    await waitFor(() => expect(result.current.allTasks).toHaveLength(1));
+    act(() => result.current.openDetail(task));
+    await waitFor(() => expect(result.current.detailTask?.last_run?.report).toEqual({
+      content: '# 完整项目报告',
+    }));
+
+    expect(request).toHaveBeenCalledWith(expect.stringContaining('include_events=false'));
+  });
+
   it('suppresses a transient missing planning message while the new plan is being persisted', async () => {
     const request = vi.fn().mockRejectedValue(new Error('需求执行规划消息不存在'));
     const isTransientError = (error: unknown) => (

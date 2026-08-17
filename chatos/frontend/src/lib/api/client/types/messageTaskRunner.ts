@@ -69,6 +69,7 @@ export interface MessageTaskRunnerRunSummary {
   started_at?: string | null;
   finished_at?: string | null;
   result_summary?: string | null;
+  report?: unknown;
   error_message?: string | null;
   created_at?: string | null;
   updated_at?: string | null;

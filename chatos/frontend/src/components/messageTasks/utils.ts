@@ -86,5 +86,24 @@ export const extractReportContent = (report: unknown): string | null => {
   if (output) {
     return output;
   }
+  const preview = readString(report.preview);
+  if (preview) {
+    return preview;
+  }
   return null;
 };
+
+export const mergeTaskRunReport = <T extends {
+  last_run_id?: string | null;
+  last_run?: Record<string, unknown> | null;
+}>(
+  task: T,
+  run: Record<string, unknown>,
+): T => ({
+  ...task,
+  last_run: {
+    ...(task.last_run || {}),
+    ...run,
+    id: readString(run.id) || readString(task.last_run?.id) || readString(task.last_run_id) || '',
+  },
+});

@@ -10,7 +10,7 @@ import { CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, StatusBadge } from './parts';
 import { buildTaskProcessTimelineItems, TaskProcessTimeline } from './TaskProcessTimeline';
 import { useMessageTasks } from './useMessageTasks';
-import { formatDateTime, readString } from './utils';
+import { extractReportContent, formatDateTime, readString } from './utils';
 
 interface MessageTaskInlinePanelProps {
   message: Message;
@@ -135,6 +135,9 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
     : 0;
   const objective = readString(detailSourceTask?.objective || selectedTask?.objective);
   const description = readString(detailSourceTask?.description || selectedTask?.description);
+  const resultSummary = readString(detailSourceTask?.result_summary);
+  const modelOutput = readString(extractReportContent(detailSourceTask?.last_run?.report));
+  const hasDistinctSummary = Boolean(resultSummary && resultSummary !== modelOutput);
   const hasTaskState = useMemo(() => hasTaskRunnerTaskState(message), [message]);
   const shouldRenderPanel = hasTaskState || expandedView !== null || loading || tasks.length > 0 || Boolean(error);
 
@@ -317,10 +320,17 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
                 ]}
               />
 
-              {readString(detailSourceTask?.result_summary) ? (
+              {modelOutput ? (
                 <section>
-                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">执行结果</div>
-                  <MarkdownCard content={detailSourceTask?.result_summary} />
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">模型输出</div>
+                  <MarkdownCard content={modelOutput} />
+                </section>
+              ) : null}
+
+              {resultSummary && (!modelOutput || hasDistinctSummary) ? (
+                <section>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">执行结果摘要</div>
+                  <MarkdownCard content={resultSummary} />
                 </section>
               ) : null}
 

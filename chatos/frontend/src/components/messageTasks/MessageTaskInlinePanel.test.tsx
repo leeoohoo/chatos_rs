@@ -81,6 +81,12 @@ describe('MessageTaskInlinePanel', () => {
       detailTask: {
         ...baseTask,
         result_summary: '已经完成真实性检查。',
+        last_run: {
+          id: 'run-1',
+          report: {
+            content: '# 完整检查报告\n\n前后端、数据库与运行链路均已逐项核对。',
+          },
+        },
       },
       runDetail: processDetail,
       loadingDetailId: null,
@@ -111,13 +117,36 @@ describe('MessageTaskInlinePanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /查看详情/i }));
 
-    expect(screen.getByText('执行结果')).toBeInTheDocument();
+    expect(screen.getByText('模型输出')).toBeInTheDocument();
+    expect(screen.getByText(/# 完整检查报告/)).toBeInTheDocument();
+    expect(screen.getByText('执行结果摘要')).toBeInTheDocument();
     expect(screen.getByText('已经完成真实性检查。')).toBeInTheDocument();
     expect(screen.getByText('目标')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '收起' }).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: '展开' })).not.toBeInTheDocument();
     expect(useMessageTasksMock.mock.results[0]?.value.openDetail).toHaveBeenCalledWith(baseTask);
     expect(onRequestExpandMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not repeat the summary when it is identical to the full model output', () => {
+    useMessageTasksMock.mockReturnValue({
+      ...useMessageTasksMock(),
+      detailTask: {
+        ...baseTask,
+        result_summary: '完整输出与摘要相同。',
+        last_run: {
+          id: 'run-1',
+          report: { content: '完整输出与摘要相同。' },
+        },
+      },
+    });
+
+    render(<MessageTaskInlinePanel message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: /查看详情/i }));
+
+    expect(screen.getByText('模型输出')).toBeInTheDocument();
+    expect(screen.queryByText('执行结果摘要')).not.toBeInTheDocument();
+    expect(screen.getAllByText('完整输出与摘要相同。')).toHaveLength(1);
   });
 
   it('does not render action buttons when the message has no task state', () => {

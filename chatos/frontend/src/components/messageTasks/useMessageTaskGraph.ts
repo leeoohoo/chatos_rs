@@ -23,7 +23,7 @@ import type {
   MessageTaskRunnerRunDetailResponse,
   MessageTaskRunnerTask,
 } from '../../lib/api/client/types';
-import { isRecord, readString } from './utils';
+import { isRecord, mergeTaskRunReport, readString } from './utils';
 
 interface UseMessageTaskGraphArgs {
   open: boolean;
@@ -284,11 +284,71 @@ export function useMessageTaskGraph({
   );
 
   const openDetail = useCallback((task: MessageTaskRunnerTask) => {
-    nextOverlayRequestSequence();
+    const requestSequence = nextOverlayRequestSequence();
     clearSiblingOverlays('detail');
     setRetryError(null);
     setDetailTask(task);
-  }, [clearSiblingOverlays, nextOverlayRequestSequence]);
+    const taskId = readString(task.id);
+    if (!taskId) {
+      return;
+    }
+    void (async () => {
+      try {
+        const detailSource = buildTaskSourceLookup({
+          task,
+          graph,
+          fallbackMessageId: messageId,
+          fallbackLookup: lookup,
+        });
+        const runId = readString(task.last_run_id);
+        if (runId) {
+          const detail = await getMessageTaskRunnerGraphRun(
+            apiClient.getRequestFn(),
+            detailSource.messageId,
+            runId,
+            {
+              ...detailSource.lookup,
+              includeEvents: false,
+              eventLimit: 1,
+              eventOffset: 0,
+            },
+          );
+          if (!isCurrentOverlayRequest(requestSequence)) {
+            return;
+          }
+          if (detail.run) {
+            setDetailTask((current) => (
+              current?.id === task.id && readString(current.last_run_id) === runId
+                ? mergeTaskRunReport(current, detail.run)
+                : current
+            ));
+          }
+          return;
+        }
+        const detail = await getMessageTaskRunnerTask(
+          apiClient.getRequestFn(),
+          detailSource.messageId,
+          taskId,
+          detailSource.lookup,
+        );
+        if (isCurrentOverlayRequest(requestSequence)) {
+          setDetailTask(detail);
+        }
+      } catch (err) {
+        if (isCurrentOverlayRequest(requestSequence)) {
+          setError(err instanceof Error ? err.message : '读取任务详情失败');
+        }
+      }
+    })();
+  }, [
+    apiClient,
+    clearSiblingOverlays,
+    graph,
+    isCurrentOverlayRequest,
+    lookup,
+    messageId,
+    nextOverlayRequestSequence,
+  ]);
 
   const openProcessLog = useCallback(async (task: MessageTaskRunnerTask) => {
     const taskId = readString(task.id);

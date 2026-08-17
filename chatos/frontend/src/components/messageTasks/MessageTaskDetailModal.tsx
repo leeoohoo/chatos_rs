@@ -13,7 +13,13 @@ import type {
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, ModalShell, StatusBadge, valueOrDash } from './parts';
 import { buildTaskProcessTimelineItems, TaskProcessTimeline } from './TaskProcessTimeline';
-import { formatDateTime, isRecord, readString, readStringArray } from './utils';
+import {
+  extractReportContent,
+  formatDateTime,
+  isRecord,
+  readString,
+  readStringArray,
+} from './utils';
 
 interface MessageTaskDetailModalProps {
   task: MessageTaskRunnerTask | null;
@@ -172,6 +178,9 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
   const outcomeItems = Array.isArray(taskToolState.outcome_items)
     ? taskToolState.outcome_items
     : [];
+  const resultSummary = readString(task.result_summary);
+  const modelOutput = readString(extractReportContent(task.last_run?.report));
+  const hasDistinctSummary = Boolean(resultSummary && resultSummary !== modelOutput);
 
   return (
     <ModalShell
@@ -353,9 +362,15 @@ export const MessageTaskDetailModal: FC<MessageTaskDetailModalProps> = ({
         ]}
       />
 
-      {task.result_summary ? (
-        <CollapsibleSection title="执行结果" defaultOpen>
-          <MarkdownCard content={task.result_summary} />
+      {modelOutput ? (
+        <CollapsibleSection title="模型输出" defaultOpen>
+          <MarkdownCard content={modelOutput} />
+        </CollapsibleSection>
+      ) : null}
+
+      {resultSummary && (!modelOutput || hasDistinctSummary) ? (
+        <CollapsibleSection title="执行结果摘要" defaultOpen>
+          <MarkdownCard content={resultSummary} />
         </CollapsibleSection>
       ) : null}
 
