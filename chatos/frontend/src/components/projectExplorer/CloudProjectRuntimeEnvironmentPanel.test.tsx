@@ -583,6 +583,9 @@ describe('CloudProjectRuntimeEnvironmentPanel', () => {
     );
 
     expect(await screen.findByRole('button', { name: '分析中...' })).toBeDisabled();
+    await waitFor(() => {
+      expect(getProjectRuntimeEnvironmentProgress).toHaveBeenCalledWith('project-2');
+    });
     await act(async () => {
       resolveProgress?.(progressResponse);
     });

@@ -9,6 +9,7 @@ import {
 } from './terminalInstanceState';
 
 const createRef = <T,>(current: T) => ({ current });
+const OPEN_SOCKET_STATE = 1;
 
 describe('terminalInstanceState', () => {
   it('resets terminal session state to the cached baseline for the active terminal', () => {
@@ -113,7 +114,7 @@ describe('terminalInstanceState', () => {
     const fitRef = createRef({ fit: vi.fn() } as unknown as import('@xterm/addon-fit').FitAddon);
     const terminalRef = createRef({ dispose: disposeTerminal } as unknown as import('@xterm/xterm').Terminal);
     const socketRef = createRef({
-      readyState: WebSocket.OPEN,
+      readyState: OPEN_SOCKET_STATE,
       close,
     } as unknown as WebSocket);
     const resizeObserverRef = createRef({

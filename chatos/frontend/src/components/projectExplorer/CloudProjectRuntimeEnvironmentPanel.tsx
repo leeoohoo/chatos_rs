@@ -234,7 +234,9 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const settledEnvironment = ['ready', 'pending_configuration', 'not_runnable', 'disabled'].includes(
     status.toLowerCase(),
   );
-  const showProgress = backendBusy || progressActive || Boolean(progressError);
+  const showProgress = backendBusy
+    || (!settledEnvironment && progressActive)
+    || Boolean(progressError);
   const visibleNotice = status === 'pending_configuration'
     ? actionNotice || {
       tone: 'warning' as const,

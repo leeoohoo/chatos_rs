@@ -68,7 +68,7 @@ describe('ConversationAskUserPromptPanel', () => {
 
     const confirmChoice = await screen.findByLabelText('创建任务');
     fireEvent.click(confirmChoice);
-    expect(confirmChoice).toBeChecked();
+    await waitFor(() => expect(screen.getByLabelText('创建任务')).toBeChecked());
 
     const realtimeCalls = vi.mocked(useConversationAskUserPromptRealtime).mock.calls;
     const realtimeOptions = realtimeCalls[realtimeCalls.length - 1]?.[0];
@@ -81,7 +81,7 @@ describe('ConversationAskUserPromptPanel', () => {
     });
 
     await waitFor(() => expect(listAskUserPrompts).toHaveBeenCalledTimes(2));
-    expect(screen.getByLabelText('创建任务')).toBeChecked();
+    await waitFor(() => expect(screen.getByLabelText('创建任务')).toBeChecked());
   }, 10_000);
 
   it('refreshes stale cancelled task runner prompts without showing the raw backend error', async () => {

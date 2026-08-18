@@ -32,6 +32,10 @@ vi.mock('../../../lib/store', () => ({
   }),
 }));
 
+vi.mock('../../../lib/realtime/useConversationChatStreamRealtime', () => ({
+  useConversationChatStreamRealtime: vi.fn(),
+}));
+
 vi.mock('../../messageTasks/projectExecutionConfirmation', () => ({
   resolveProjectExecutionConfirmationState: () => ({
     isProjectExecution: true,
