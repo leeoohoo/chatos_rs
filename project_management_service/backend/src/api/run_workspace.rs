@@ -19,11 +19,13 @@ use crate::http_body::{
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
 use crate::models::{
-    ProjectImportStatus, ProjectRuntimeEnvironmentStatus, ProjectStatus,
+    ProjectImportStatus, ProjectRecord, ProjectRuntimeEnvironmentStatus, ProjectStatus,
     RuntimeEnvironmentProvider, RuntimeServiceRole,
 };
 use crate::services::cloud_import::git::{authenticated_git_url, run_git, run_git_output};
-use crate::services::harness_repo::fetch_harness_api_access;
+use crate::services::harness_repo::{
+    ensure_harness_repo_for_project_owner, fetch_harness_api_access, project_harness_metadata_ready,
+};
 use crate::state::AppState;
 use crate::trace_context::InternalTraceContextExt;
 
@@ -172,6 +174,20 @@ struct ReleaseSandboxResponse {
     output_error: Option<String>,
 }
 
+async fn ensure_project_harness_repo_metadata(
+    state: &AppState,
+    mut project: ProjectRecord,
+    owner_user_id: &str,
+) -> Result<ProjectRecord, ApiError> {
+    if project_harness_metadata_ready(&project) {
+        return Ok(project);
+    }
+    ensure_harness_repo_for_project_owner(state, owner_user_id, &mut project)
+        .await
+        .map_err(ApiError::bad_gateway)?;
+    Ok(project)
+}
+
 pub(in crate::api) async fn prepare_run_workspace(
     AxumPath((project_id, run_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,
@@ -203,6 +219,7 @@ pub(in crate::api) async fn prepare_run_workspace(
         .or(project.creator_user_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(str::to_string)
         .ok_or_else(|| ApiError::conflict("project owner user id is missing"))?;
     if project_owner != request.owner_user_id.trim() {
         return Err(ApiError::forbidden(
@@ -214,6 +231,8 @@ pub(in crate::api) async fn prepare_run_workspace(
             "cloud sandbox preparation requires a run branch",
         ));
     }
+    let project =
+        ensure_project_harness_repo_metadata(&state, project, project_owner.as_str()).await?;
     let git_url = required(&project.harness_git_url, "harness_git_url")?;
     let default_branch = project
         .harness_default_branch
@@ -222,7 +241,7 @@ pub(in crate::api) async fn prepare_run_workspace(
         .filter(|value| !value.is_empty())
         .unwrap_or("main")
         .to_string();
-    let access = fetch_harness_api_access(&state, project_owner)
+    let access = fetch_harness_api_access(&state, project_owner.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
     let authenticated_url = authenticated_git_url(
@@ -336,7 +355,7 @@ pub(in crate::api) async fn prepare_run_workspace(
                 project_id.as_str(),
                 run_id.as_str(),
                 request.tenant_id.trim(),
-                project_owner,
+                project_owner.as_str(),
                 workspace.as_path(),
                 workspace_image_id.as_str(),
             )
@@ -383,6 +402,7 @@ pub(in crate::api) async fn finalize_run_workspace(
         .or(project.creator_user_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(str::to_string)
         .ok_or_else(|| ApiError::conflict("project owner user id is missing"))?;
     if project_owner != request.owner_user_id.trim() {
         return Err(ApiError::forbidden(
@@ -397,8 +417,10 @@ pub(in crate::api) async fn finalize_run_workspace(
             sandbox_retained_for_diagnostics: false,
         }));
     };
+    let project =
+        ensure_project_harness_repo_metadata(&state, project, project_owner.as_str()).await?;
     let git_url = required(&project.harness_git_url, "harness_git_url")?;
-    let access = fetch_harness_api_access(&state, project_owner)
+    let access = fetch_harness_api_access(&state, project_owner.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
     let authenticated_url = authenticated_git_url(
@@ -481,14 +503,17 @@ pub(in crate::api) async fn get_run_workspace_changes(
         .or(project.creator_user_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(str::to_string)
         .ok_or_else(|| ApiError::conflict("project owner user id is missing"))?;
     if project_owner != request.owner_user_id.trim() {
         return Err(ApiError::forbidden(
             "represented user does not own the requested project",
         ));
     }
+    let project =
+        ensure_project_harness_repo_metadata(&state, project, project_owner.as_str()).await?;
     let git_url = required(&project.harness_git_url, "harness_git_url")?;
-    let access = fetch_harness_api_access(&state, project_owner)
+    let access = fetch_harness_api_access(&state, project_owner.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
     let authenticated_url = authenticated_git_url(
@@ -619,14 +644,17 @@ pub(in crate::api) async fn integrate_run_workspace(
         .or(project.creator_user_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(str::to_string)
         .ok_or_else(|| ApiError::conflict("project owner user id is missing"))?;
     if project_owner != request.owner_user_id.trim() {
         return Err(ApiError::forbidden(
             "represented user does not own the requested project",
         ));
     }
+    let project =
+        ensure_project_harness_repo_metadata(&state, project, project_owner.as_str()).await?;
     let git_url = required(&project.harness_git_url, "harness_git_url")?;
-    let access = fetch_harness_api_access(&state, project_owner)
+    let access = fetch_harness_api_access(&state, project_owner.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
     let authenticated_url = authenticated_git_url(
@@ -997,12 +1025,15 @@ pub(in crate::api) async fn promote_execution_workspace(
         .or(project.creator_user_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(str::to_string)
         .ok_or_else(|| ApiError::conflict("project owner user id is missing"))?;
     if project_owner != request.owner_user_id.trim() {
         return Err(ApiError::forbidden(
             "represented user does not own the requested project",
         ));
     }
+    let project =
+        ensure_project_harness_repo_metadata(&state, project, project_owner.as_str()).await?;
     let record = state
         .store
         .get_execution_integration(project_id.as_str(), execution_group_id.as_str())
@@ -1025,7 +1056,7 @@ pub(in crate::api) async fn promote_execution_workspace(
         }));
     }
     let git_url = required(&project.harness_git_url, "harness_git_url")?;
-    let access = fetch_harness_api_access(&state, project_owner)
+    let access = fetch_harness_api_access(&state, project_owner.as_str())
         .await
         .map_err(ApiError::bad_gateway)?;
     let authenticated_url = authenticated_git_url(

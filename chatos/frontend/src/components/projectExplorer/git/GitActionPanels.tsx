@@ -7,38 +7,59 @@ import { useI18n } from '../../../i18n/I18nProvider';
 
 export const GitActionRows: React.FC<{
   actionLoading: boolean;
+  canFetch: boolean;
+  canPull: boolean;
+  canPush: boolean;
+  remoteHint?: string | null;
   onFetch: () => Promise<void>;
   onPull: () => Promise<void>;
   onPush: () => Promise<void>;
   onOpenCommit: () => void;
-}> = ({ actionLoading, onFetch, onPull, onPush, onOpenCommit }) => {
+}> = ({
+  actionLoading,
+  canFetch,
+  canPull,
+  canPush,
+  remoteHint,
+  onFetch,
+  onPull,
+  onPush,
+  onOpenCommit,
+}) => {
   const actions = [
-    { label: 'Fetch', run: onFetch },
-    { label: 'Pull --ff-only', run: onPull },
-    { label: 'Push', run: onPush },
+    { label: 'Fetch', run: onFetch, enabled: canFetch },
+    { label: 'Pull --ff-only', run: onPull, enabled: canPull },
+    { label: 'Push', run: onPush, enabled: canPush },
   ];
   return (
-    <div className="mb-2 grid grid-cols-2 gap-2">
-      {actions.map((action) => (
+    <>
+      {remoteHint ? (
+        <div className="mb-2 rounded border border-amber-400/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700">
+          {remoteHint}
+        </div>
+      ) : null}
+      <div className="mb-2 grid grid-cols-2 gap-2">
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            onClick={() => { void action.run(); }}
+            disabled={actionLoading || !action.enabled}
+            className="h-8 rounded border border-border px-3 text-left text-xs hover:bg-accent disabled:opacity-50"
+          >
+            {action.label}
+          </button>
+        ))}
         <button
-          key={action.label}
           type="button"
-          onClick={() => { void action.run(); }}
+          onClick={onOpenCommit}
           disabled={actionLoading}
           className="h-8 rounded border border-border px-3 text-left text-xs hover:bg-accent disabled:opacity-50"
         >
-          {action.label}
+          Commit...
         </button>
-      ))}
-      <button
-        type="button"
-        onClick={onOpenCommit}
-        disabled={actionLoading}
-        className="h-8 rounded border border-border px-3 text-left text-xs hover:bg-accent disabled:opacity-50"
-      >
-        Commit...
-      </button>
-    </div>
+      </div>
+    </>
   );
 };
 

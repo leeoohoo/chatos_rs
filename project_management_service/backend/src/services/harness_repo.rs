@@ -10,7 +10,10 @@ use crate::state::AppState;
 use crate::trace_context::InternalTraceContextExt;
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
 
-use super::cloud_import::{create_harness_repo_for_project, HarnessProjectRepoResponse};
+use super::cloud_import::{
+    create_harness_repo_for_project, create_harness_repo_for_project_owner,
+    HarnessProjectRepoResponse,
+};
 
 pub const HARNESS_PROVISION_STATUS_PENDING: &str = "pending";
 pub const HARNESS_PROVISION_STATUS_READY: &str = "ready";
@@ -94,6 +97,57 @@ pub async fn ensure_harness_repo_for_project(
             Err(err)
         }
     }
+}
+
+pub async fn ensure_harness_repo_for_project_owner(
+    state: &AppState,
+    owner_user_id: &str,
+    project: &mut ProjectRecord,
+) -> Result<HarnessProjectRepoResponse, String> {
+    if project_harness_metadata_ready(project) {
+        return Ok(HarnessProjectRepoResponse {
+            space_identifier: project.harness_space_identifier.clone().unwrap_or_default(),
+            repo_identifier: project.harness_repo_identifier.clone().unwrap_or_default(),
+            repo_path: project.harness_repo_path.clone().unwrap_or_default(),
+            git_url: project.harness_git_url.clone().unwrap_or_default(),
+            git_ssh_url: project.harness_git_ssh_url.clone(),
+            default_branch: project
+                .harness_default_branch
+                .clone()
+                .unwrap_or_else(|| "main".to_string()),
+            push_username: String::new(),
+            push_token: String::new(),
+        });
+    }
+    project.harness_provision_status = Some(HARNESS_PROVISION_STATUS_PENDING.to_string());
+    project.harness_provision_error = None;
+    project.updated_at = now_rfc3339();
+    state.store.save_project_record(project).await?;
+
+    match create_harness_repo_for_project_owner(&state.config, owner_user_id, project).await {
+        Ok(repo) => {
+            apply_harness_repo_metadata(project, &repo);
+            state.store.save_project_record(project).await?;
+            Ok(repo)
+        }
+        Err(err) => {
+            project.harness_provision_status = Some(HARNESS_PROVISION_STATUS_FAILED.to_string());
+            project.harness_provision_error = Some(err.clone());
+            project.updated_at = now_rfc3339();
+            state.store.save_project_record(project).await?;
+            Err(err)
+        }
+    }
+}
+
+pub fn project_harness_metadata_ready(project: &ProjectRecord) -> bool {
+    [
+        project.harness_repo_path.as_deref(),
+        project.harness_git_url.as_deref(),
+        project.harness_space_identifier.as_deref(),
+    ]
+    .into_iter()
+    .all(|value| value.map(str::trim).is_some_and(|value| !value.is_empty()))
 }
 
 fn apply_harness_repo_metadata(project: &mut ProjectRecord, repo: &HarnessProjectRepoResponse) {

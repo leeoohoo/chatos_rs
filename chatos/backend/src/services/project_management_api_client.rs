@@ -370,6 +370,7 @@ pub async fn get_project_harness_git_branches(
     sync_secret: &str,
     project_id: &str,
     owner_user_id: &str,
+    user_access_token: Option<&str>,
 ) -> Result<ProjectHarnessGitBranchesResponse, String> {
     let config = crate::config::Config::try_get()?;
     let endpoint = format!(
@@ -380,15 +381,22 @@ pub async fn get_project_harness_git_branches(
             .trim_end_matches('/'),
         urlencoding::encode(project_id.trim())
     );
-    send_json(
-        signed_project_service_request(
-            config.project_service_internal_http_client.get(endpoint),
-            sync_secret,
-            PROJECT_HARNESS_SCOPE,
-        )?
-        .header("X-ChatOS-Owner-User-Id", owner_user_id.trim()),
-    )
-    .await
+    let mut request = signed_project_service_request(
+        config.project_service_internal_http_client.get(endpoint),
+        sync_secret,
+        PROJECT_HARNESS_SCOPE,
+    )?
+    .header("X-ChatOS-Owner-User-Id", owner_user_id.trim());
+    if let Some(user_access_token) = user_access_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        request = request.header(
+            "X-ChatOS-User-Authorization",
+            format!("Bearer {user_access_token}"),
+        );
+    }
+    send_json(request).await
 }
 
 fn parse_harness_tool_response(response: Value) -> Result<Value, String> {

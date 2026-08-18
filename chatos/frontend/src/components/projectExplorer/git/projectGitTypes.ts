@@ -54,6 +54,7 @@ export interface UseProjectGitResult {
   summary: GitSummary | null;
   activeRepoRoot: string | null;
   availableRepositories: GitRepositoryCandidate[];
+  hasOriginRemote: boolean;
   branches: GitBranchesResult | null;
   status: GitStatusResult | null;
   compareResult: GitCompareResult | null;

@@ -90,6 +90,61 @@ pub async fn create_harness_repo_for_project(
         .map_err(|err| format!("parse user_service harness repo response failed: {err}"))
 }
 
+pub async fn create_harness_repo_for_project_owner(
+    config: &AppConfig,
+    owner_user_id: &str,
+    project: &ProjectRecord,
+) -> Result<HarnessProjectRepoResponse, String> {
+    let secret = config
+        .user_service_internal_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET is not configured".to_string()
+        })?;
+    let owner_user_id = owner_user_id.trim();
+    if owner_user_id.is_empty() {
+        return Err("owner_user_id is required".to_string());
+    }
+    let endpoint = format!(
+        "{}/api/internal/harness/users/{}/repos",
+        config
+            .user_service_internal_base_url
+            .trim()
+            .trim_end_matches('/'),
+        urlencoding::encode(owner_user_id)
+    );
+    let body = HarnessProjectRepoCreateRequest {
+        project_id: project.id.as_str(),
+        project_name: project.name.as_str(),
+        description: project.description.as_deref(),
+    };
+    let response = crate::user_model_runtime_client::signed_user_service_request(
+        config
+            .user_service_internal_http_client
+            .request(Method::POST, endpoint),
+        secret,
+        crate::user_model_runtime_client::HARNESS_REPO_WRITE_SCOPE,
+    )?
+    .json(&body)
+    .with_internal_trace_context()
+    .send()
+    .await
+    .map_err(|err| format!("user_service harness repo owner request failed: {err}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let text =
+            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
+        return Err(format!(
+            "user_service harness repo owner request failed: {status} {text}"
+        ));
+    }
+    read_response_json_limited::<HarnessProjectRepoResponse>(response, JSON_BODY_LIMIT_BYTES)
+        .await
+        .map_err(|err| format!("parse user_service harness repo owner response failed: {err}"))
+}
+
 pub async fn import_git_url_to_harness(
     config: &AppConfig,
     source_git_url: &str,

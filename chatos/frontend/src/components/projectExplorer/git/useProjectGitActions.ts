@@ -17,7 +17,9 @@ interface UseProjectGitActionsParams {
     detached?: boolean;
     currentBranch?: string | null;
     operationState?: string | null;
+    upstream?: string | null;
   } | null;
+  hasOriginRemote: boolean;
   confirm: (options: {
     title: string;
     message: string;
@@ -37,6 +39,7 @@ export const useProjectGitActions = ({
   client,
   projectRoot,
   summary,
+  hasOriginRemote,
   confirm,
   runAction,
   setError,
@@ -45,28 +48,44 @@ export const useProjectGitActions = ({
 
   const fetchRemote = useCallback(async () => {
     if (!projectRoot) return;
+    if (!hasOriginRemote) {
+      setError(t('git.action.originRemoteRequired'));
+      return;
+    }
     await runAction(
       () => client.fetchGit({ root: projectRoot, remote: 'origin' }),
       t('git.action.fetchDone'),
     );
-  }, [client, projectRoot, runAction, t]);
+  }, [client, hasOriginRemote, projectRoot, runAction, setError, t]);
 
   const pullCurrent = useCallback(async () => {
     if (!projectRoot) return;
+    if (!summary?.upstream) {
+      setError(t('git.action.upstreamRequiredPull'));
+      return;
+    }
     await runAction(
       () => client.pullGit({ root: projectRoot, mode: 'ff-only' }),
       t('git.action.pullDone'),
       true,
     );
-  }, [client, projectRoot, runAction, t]);
+  }, [client, projectRoot, runAction, setError, summary?.upstream, t]);
 
   const pushCurrent = useCallback(async () => {
     if (!projectRoot) return;
+    if (summary?.detached) {
+      setError(t('git.action.pushDetached'));
+      return;
+    }
+    if (!hasOriginRemote) {
+      setError(t('git.action.originRemoteRequired'));
+      return;
+    }
     await runAction(
       () => client.pushGit({ root: projectRoot }),
       t('git.action.pushDone'),
     );
-  }, [client, projectRoot, runAction, t]);
+  }, [client, hasOriginRemote, projectRoot, runAction, setError, summary?.detached, t]);
 
   const checkoutBranch = useCallback(async (branch: GitBranchInfo) => {
     if (!projectRoot) return;

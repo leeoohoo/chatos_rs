@@ -11,9 +11,12 @@ use super::internal_auth::{
     require_project_internal_request, CHATOS_CALLER, PROJECT_HARNESS_SCOPE, TASK_RUNNER_CALLER,
 };
 use super::ApiError;
+use crate::auth::verify_token_via_user_service;
 use crate::models::ProjectRecord;
 use crate::services::cloud_import::git::{authenticated_git_url, run_git_output};
-use crate::services::harness_repo::fetch_harness_api_access;
+use crate::services::harness_repo::{
+    ensure_harness_repo_for_project, fetch_harness_api_access, project_harness_metadata_ready,
+};
 use crate::state::AppState;
 
 const CHATOS_OWNER_USER_ID_HEADER: &str = "x-chatos-owner-user-id";
@@ -61,13 +64,15 @@ pub(in crate::api) async fn sync_get_project_harness_git_access(
         .await
         .map_err(ApiError::bad_request)?
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {project_id}")))?;
+    let owner_user_id = project_owner_user_id(&project)?;
+    let project =
+        ensure_project_harness_metadata(&state, &headers, project, owner_user_id.as_str()).await?;
     let repo_path = required_project_value(&project.harness_repo_path, "harness_repo_path")?;
     let git_url = required_project_value(&project.harness_git_url, "harness_git_url")?;
     let project_space = required_project_value(
         &project.harness_space_identifier,
         "harness_space_identifier",
     )?;
-    let owner_user_id = project_owner_user_id(&project)?;
     let access = fetch_harness_api_access(&state, owner_user_id.as_str())
         .await
         .map_err(ApiError::bad_request)?;
@@ -115,6 +120,8 @@ pub(in crate::api) async fn sync_get_project_harness_git_branches(
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {project_id}")))?;
     let owner_user_id = project_owner_user_id(&project)?;
     require_matching_owner(represented_owner_user_id, owner_user_id.as_str())?;
+    let project =
+        ensure_project_harness_metadata(&state, &headers, project, owner_user_id.as_str()).await?;
 
     let git_url = required_project_value(&project.harness_git_url, "harness_git_url")?;
     let project_space = required_project_value(
@@ -181,6 +188,56 @@ fn require_matching_owner(represented_owner: &str, project_owner: &str) -> Resul
     Err(ApiError::forbidden(
         "represented user does not own the requested project",
     ))
+}
+
+async fn ensure_project_harness_metadata(
+    state: &AppState,
+    headers: &HeaderMap,
+    mut project: ProjectRecord,
+    owner_user_id: &str,
+) -> Result<ProjectRecord, ApiError> {
+    if project_harness_metadata_ready(&project) {
+        return Ok(project);
+    }
+    let user_access_token = user_access_token_from_headers(headers)?
+        .ok_or_else(|| ApiError::bad_request("project Harness repository is not ready"))?;
+    let user = verify_token_via_user_service(&state.config, user_access_token.as_str())
+        .await
+        .map_err(ApiError::forbidden)?;
+    if !user.can_access_owned_resource(Some(owner_user_id)) {
+        return Err(ApiError::forbidden(
+            "user token owner does not match project owner",
+        ));
+    }
+    ensure_harness_repo_for_project(state, user_access_token.as_str(), &mut project)
+        .await
+        .map_err(ApiError::bad_gateway)?;
+    Ok(project)
+}
+
+fn user_access_token_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    for key in [
+        "x-chatos-user-authorization",
+        "x-user-service-authorization",
+        "x-chatos-user-token",
+    ] {
+        let Some(value) = headers.get(key) else {
+            continue;
+        };
+        let value = value
+            .to_str()
+            .map_err(|_| ApiError::bad_request(format!("{key} header is invalid UTF-8")))?
+            .trim();
+        let token = value
+            .strip_prefix("Bearer ")
+            .or_else(|| value.strip_prefix("bearer "))
+            .map(str::trim)
+            .unwrap_or(value);
+        if !token.is_empty() {
+            return Ok(Some(token.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 fn parse_git_ls_remote(

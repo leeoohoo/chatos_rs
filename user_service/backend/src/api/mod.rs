@@ -142,6 +142,15 @@ pub fn build_internal_router(state: AppState) -> Router {
             post(harness::create_project_repo),
         )
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
+    let internal_harness_repo_write = Router::new()
+        .route(
+            "/api/internal/harness/users/{user_id}/repos",
+            post(harness::create_project_repo_for_user),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_harness_repo_write_internal,
+        ));
     apply_common_layers(
         Router::new()
             .route(
@@ -156,6 +165,7 @@ pub fn build_internal_router(state: AppState) -> Router {
                 "/api/internal/users/{user_id}/model-settings",
                 get(internal_models::get_user_model_settings),
             )
+            .merge(internal_harness_repo_write)
             .merge(protected_internal)
             .with_state(state),
         "internal",
@@ -223,6 +233,22 @@ pub async fn require_auth(
     ensure_principal_active(&state, &principal).await?;
 
     request.extensions_mut().insert(principal);
+    Ok(next.run(request).await)
+}
+
+async fn require_harness_repo_write_internal(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    if request.method() == Method::OPTIONS {
+        return Ok(next.run(request).await);
+    }
+    internal_auth::require_project_service_internal_request(
+        &state.config,
+        request.headers(),
+        internal_auth::HARNESS_REPO_WRITE_SCOPE,
+    )?;
     Ok(next.run(request).await)
 }
 
@@ -399,6 +425,10 @@ mod tests {
         for (method, path) in [
             (reqwest::Method::POST, "/api/internal/harness/repos"),
             (
+                reqwest::Method::POST,
+                "/api/internal/harness/users/user-1/repos",
+            ),
+            (
                 reqwest::Method::GET,
                 "/api/internal/harness/users/user-1/access",
             ),
@@ -446,6 +476,10 @@ mod tests {
         }
         for (method, path) in [
             (reqwest::Method::POST, "/api/internal/harness/repos"),
+            (
+                reqwest::Method::POST,
+                "/api/internal/harness/users/user-1/repos",
+            ),
             (
                 reqwest::Method::GET,
                 "/api/internal/harness/users/user-1/access",

@@ -84,6 +84,15 @@ export const GitBranchDropdown: React.FC<{
     selectRepository,
   } = model;
   const summaryViewState = resolveGitSummaryViewState(git.summary, git.error);
+  const hasUpstream = Boolean(git.summary?.upstream);
+  const canRunFetch = git.hasOriginRemote;
+  const canRunPull = git.hasOriginRemote && hasUpstream;
+  const canRunPush = git.hasOriginRemote && Boolean(git.summary?.currentBranch) && !git.summary?.detached;
+  const remoteHint = git.summary?.isRepo && !git.hasOriginRemote
+    ? t('git.remoteMissingHint')
+    : git.summary?.isRepo && git.hasOriginRemote && !hasUpstream
+      ? t('git.upstreamMissingHint')
+      : null;
 
   return (
     <div className="absolute right-0 top-10 z-50 flex max-h-[78vh] w-[min(720px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl">
@@ -190,6 +199,10 @@ export const GitBranchDropdown: React.FC<{
               <>
                 <GitActionRows
                   actionLoading={git.actionLoading}
+                  canFetch={canRunFetch}
+                  canPull={canRunPull}
+                  canPush={canRunPush}
+                  remoteHint={remoteHint}
                   onFetch={git.fetchRemote}
                   onPull={git.pullCurrent}
                   onPush={git.pushCurrent}

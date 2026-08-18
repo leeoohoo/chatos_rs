@@ -20,7 +20,7 @@ use crate::services::git::{
     GitDiffQuery, GitFetchRequest, GitMergeRequest, GitPathRequest, GitPullRequest, GitPushRequest,
     GitRepositoryCandidate, GitRootQuery, GitSummary,
 };
-use crate::services::project_management_api_client;
+use crate::services::{access_token_scope, project_management_api_client};
 
 pub fn router() -> Router {
     Router::new()
@@ -517,6 +517,7 @@ async fn load_harness_git_snapshot(
         sync_secret,
         project_id,
         auth.user_id.as_str(),
+        access_token_scope::get_current_access_token().as_deref(),
     )
     .await
     .map_err(|err| (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))))?;

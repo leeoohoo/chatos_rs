@@ -60,6 +60,18 @@ const resolveAvailableRepositories = (summary: GitSummary | null): GitRepository
   summary?.availableRepositories || []
 );
 
+const hasOriginRemote = (
+  summary: GitSummary | null,
+  branches: GitBranchesResult | null,
+): boolean => {
+  if (summary?.upstream?.startsWith('origin/')) {
+    return true;
+  }
+  return (branches?.remotes || []).some((branch) => (
+    branch.remote === 'origin' || branch.name.startsWith('origin/')
+  ));
+};
+
 const mergeSummaryContext = (
   nextSummary: GitSummary,
   previousSummary: GitSummary | null,
@@ -112,6 +124,7 @@ export const useProjectGit = ({
 
   const activeRepoRoot = resolveActiveRepoRoot(summary);
   const availableRepositories = resolveAvailableRepositories(summary);
+  const originRemoteAvailable = hasOriginRemote(summary, branches);
   activeRepoRootRef.current = activeRepoRoot;
 
   useEffect(() => {
@@ -478,6 +491,7 @@ export const useProjectGit = ({
     client,
     projectRoot: activeRepoRoot,
     summary,
+    hasOriginRemote: originRemoteAvailable,
     confirm,
     runAction,
     setError,
@@ -533,6 +547,7 @@ export const useProjectGit = ({
     summary,
     activeRepoRoot,
     availableRepositories,
+    hasOriginRemote: originRemoteAvailable,
     branches,
     status,
     compareResult,

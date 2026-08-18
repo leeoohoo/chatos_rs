@@ -76,6 +76,60 @@ pub async fn create_project_repo(
     result
 }
 
+pub async fn create_project_repo_for_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Json(input): Json<HarnessProjectRepoCreateRequest>,
+) -> ApiResult<HarnessProjectRepoResponse> {
+    let identity = require_project_service_internal_request(
+        &state.config,
+        &headers,
+        HARNESS_REPO_WRITE_SCOPE,
+    )?;
+    let owner_user_id = user_id.trim().to_string();
+    let project_id = input.project_id.trim().to_string();
+    let project_name = input.project_name.trim().to_string();
+    let audit_resource_id = if project_id.is_empty() {
+        "unknown"
+    } else {
+        project_id.as_str()
+    };
+    let result = async {
+        if owner_user_id.is_empty() {
+            return Err(bad_request("owner user id is required"));
+        }
+        if project_id.is_empty() {
+            return Err(bad_request("project_id is required"));
+        }
+        if project_name.is_empty() {
+            return Err(bad_request("project_name is required"));
+        }
+        create_harness_project_repo(&state, owner_user_id.as_str(), input)
+            .await
+            .map(Json)
+            .map_err(internal_error)
+    }
+    .await;
+    record_user_service_internal_resource_access(
+        &identity,
+        UserServiceInternalResourceAudit {
+            represented_user_id: (!owner_user_id.is_empty()).then_some(owner_user_id.as_str()),
+            project_id: (!project_id.is_empty()).then_some(project_id.as_str()),
+            resource_type: "harness_project_repository",
+            resource_id: audit_resource_id,
+            resource_name: None,
+            action: "create",
+            outcome: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        },
+    );
+    result
+}
+
 pub async fn get_user_harness_access(
     State(state): State<AppState>,
     headers: HeaderMap,
