@@ -18,11 +18,12 @@ use tokio::sync::Mutex as AsyncMutex;
 use chatos_mcp_runtime::{ToolCallContext, ToolCallerModelRuntime, ToolResult, ToolResultCallback};
 
 use super::{
-    append_runtime_input_items, empty_final_response_followup_item, estimated_json_tokens,
+    active_context_exceeds_hard_limit, append_runtime_input_items,
+    empty_final_response_followup_item, estimated_json_tokens,
     merge_current_turn_tool_history_into_input, merge_pending_tool_turn_into_input,
     merge_record_metadata, prepare_iteration_request, should_persist_tool_result,
     IterativeContextRefresh, ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
-    EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
+    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
 };
 use crate::{
     AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepRequest, AiTurnReport,
@@ -55,6 +56,16 @@ fn active_summary_budget_does_not_compact_a_176k_turn_but_catches_the_window_res
 
     assert!(estimated_json_tokens(&below) < ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
     assert!(estimated_json_tokens(&above) > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
+}
+
+#[test]
+fn active_summary_soft_budget_is_not_the_failure_limit() {
+    let just_over_soft_budget = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS + 3_262;
+    assert!(just_over_soft_budget < DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS);
+    assert!(!active_context_exceeds_hard_limit(just_over_soft_budget));
+    assert!(active_context_exceeds_hard_limit(
+        DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS + 1
+    ));
 }
 
 #[async_trait]

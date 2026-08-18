@@ -345,11 +345,24 @@ impl AiRuntime {
                 }
                 let remaining_input_tokens = remaining_input_tokens
                     .unwrap_or_else(|| estimated_iteration_input_tokens(&iteration_request));
-                if remaining_input_tokens > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
+                if active_context_exceeds_hard_limit(remaining_input_tokens) {
                     return Err(format!(
-                        "主动上下文压缩后输入仍为 {} tokens（计数来源：{}），已停止本次模型请求以避免异常消耗",
-                        remaining_input_tokens, count_source
+                        "主动上下文压缩后输入仍为 {} tokens（计数来源：{}），超过模型上下文硬限制 {} tokens，已停止本次模型请求以避免异常消耗",
+                        remaining_input_tokens, count_source, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
                     ));
+                }
+                if remaining_input_tokens > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
+                    warn!(
+                        conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+                        conversation_turn_id =
+                            options.conversation_turn_id.as_deref().unwrap_or(""),
+                        iteration,
+                        input_tokens = remaining_input_tokens,
+                        token_count_source = count_source,
+                        compaction_threshold = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
+                        hard_limit = DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
+                        "ai runtime continuing with input above active compaction threshold but within hard context limit"
+                    );
                 }
             }
             let standalone_iteration_input = iteration_request.input.clone();
@@ -927,6 +940,10 @@ fn estimated_iteration_input_tokens(request: &ModelRequest) -> usize {
         )
     };
     estimated_json_tokens(&payload)
+}
+
+fn active_context_exceeds_hard_limit(tokens: usize) -> bool {
+    tokens > DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
 }
 
 async fn prepare_iteration_request(

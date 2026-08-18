@@ -12,9 +12,10 @@ use crate::{RuntimeFinalResponseAction, RuntimeFinalResponseContext};
 use super::input_items::{append_runtime_input_items, input_item_count, json_value_size_bytes};
 use super::model_request::dispatch_model_request;
 use super::{
-    count_iteration_input_tokens, estimated_iteration_input_tokens, prepare_iteration_request,
-    runtime_result_from_response, AiRuntime, AiRuntimeOptions, AiRuntimeResult,
-    ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS, MAX_ACTIVE_CONTEXT_COMPACTION_PASSES,
+    active_context_exceeds_hard_limit, count_iteration_input_tokens,
+    estimated_iteration_input_tokens, prepare_iteration_request, runtime_result_from_response,
+    AiRuntime, AiRuntimeOptions, AiRuntimeResult, ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
+    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS, MAX_ACTIVE_CONTEXT_COMPACTION_PASSES,
 };
 
 #[derive(Clone)]
@@ -206,13 +207,28 @@ pub(super) async fn execute_once(
         }
         let remaining_input_tokens = remaining_input_tokens
             .unwrap_or_else(|| estimated_iteration_input_tokens(&iteration_request));
-        if remaining_input_tokens > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
+        if active_context_exceeds_hard_limit(remaining_input_tokens) {
             return Ok(AiSingleStepOutcome::Failed {
                 error: format!(
-                    "主动上下文压缩后输入仍为 {} tokens（计数来源：{}），已停止本次模型请求以避免异常消耗",
-                    remaining_input_tokens, count_source
+                    "主动上下文压缩后输入仍为 {} tokens（计数来源：{}），超过模型上下文硬限制 {} tokens，已停止本次模型请求以避免异常消耗",
+                    remaining_input_tokens, count_source, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
                 ),
             });
+        }
+        if remaining_input_tokens > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
+            tracing::warn!(
+                conversation_id = runtime_options.conversation_id.as_deref().unwrap_or(""),
+                conversation_turn_id = runtime_options
+                    .conversation_turn_id
+                    .as_deref()
+                    .unwrap_or(""),
+                iteration,
+                input_tokens = remaining_input_tokens,
+                token_count_source = count_source,
+                compaction_threshold = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
+                hard_limit = DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
+                "ai runtime continuing single-step input above active compaction threshold but within hard context limit"
+            );
         }
     }
     let request_input_items = crate::turn::input_value_to_items(iteration_request.input.clone());
