@@ -210,6 +210,31 @@ pub struct PluginInstallationRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginInstallationSyncPayload {
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub plugin_id: String,
+    pub release_id: String,
+    pub version: String,
+    pub artifact_sha256: String,
+    pub platform: String,
+    pub install_status: PluginInstallStatus,
+    pub availability_status: PluginAvailabilityStatus,
+    pub dependency_status: PluginRequirementStatus,
+    pub permission_status: PluginRequirementStatus,
+    pub auth_status: PluginRequirementStatus,
+    #[serde(default)]
+    pub component_statuses: Vec<PluginComponentStatus>,
+    pub active: bool,
+    #[serde(default)]
+    pub previous_release_id: Option<String>,
+    #[serde(default)]
+    pub installed_at: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserPluginPreferenceRecord {
     pub owner_user_id: String,
     pub plugin_id: String,
@@ -722,10 +747,6 @@ pub struct PluginAgentSelection {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskPluginConfig {
-    #[serde(default)]
-    pub device_id: Option<String>,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
     #[serde(default)]
     pub selected_plugins: Vec<SelectedPluginRef>,
     #[serde(default)]

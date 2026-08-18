@@ -62,6 +62,12 @@ impl DockerSandboxBackend {
                             let _ = self.destroy_environment(spec.environment_id.as_str()).await;
                             return Err(error);
                         }
+                        if let Err(error) =
+                            initialize_environment_dependency(container.as_str(), service).await
+                        {
+                            let _ = self.destroy_environment(spec.environment_id.as_str()).await;
+                            return Err(error);
+                        }
                     }
                     instances.push(instance)
                 }
@@ -145,7 +151,8 @@ impl DockerSandboxBackend {
             .arg(service.service_id.as_str())
             .arg("--security-opt")
             .arg("no-new-privileges");
-        for (name, value) in &service.environment {
+        let container_environment = dependency_container_environment(service)?;
+        for (name, value) in &container_environment {
             command.arg("-e").arg(format!("{name}={value}"));
         }
 
@@ -198,8 +205,12 @@ impl DockerSandboxBackend {
                 .arg("-e")
                 .arg(format!("CHATOS_AGENT_PORT={}", self.config.agent_port))
                 .arg("-e")
-                .arg("CHATOS_WORKSPACE=/workspace");
-            append_sandbox_runtime_environment(&mut command);
+                .arg("CHATOS_WORKSPACE=/workspace")
+                .arg("-e")
+                .arg(effective_permissions_environment_value(
+                    &environment.effective_permissions,
+                )?);
+            append_sandbox_runtime_environment(&mut command, &self.config);
             command.arg("-p").arg(format!(
                 "{}::{}",
                 self.config.docker_agent_bind_host, self.config.agent_port
@@ -461,13 +472,14 @@ impl DockerSandboxBackend {
             .arg("chatos.backend=docker");
         append_sandbox_create_runtime_args(
             &mut command,
+            &self.config,
             &spec,
             network,
             cpu.as_str(),
             memory.as_str(),
             pids.as_str(),
             disk_limit_bytes,
-        );
+        )?;
         if publish_agent {
             command.arg("-p").arg(format!(
                 "{}::{}",
@@ -543,8 +555,9 @@ impl DockerSandboxBackend {
             format!("CHATOS_SANDBOX_ID={}", spec.sandbox_id),
             "CHATOS_SANDBOX_PERMISSION_PROFILE=workspace_write".to_string(),
             format!("CHATOS_SANDBOX_DISK_LIMIT_BYTES={disk_limit_bytes}"),
+            effective_permissions_environment_value(&spec.effective_permissions)?,
         ];
-        env.extend(sandbox_runtime_environment_values());
+        env.extend(sandbox_runtime_environment_values(&self.config));
         if let Some(agent_token) = spec.agent_token.as_deref() {
             env.push(format!("CHATOS_SANDBOX_MCP_TOKEN={agent_token}"));
         }
@@ -572,9 +585,9 @@ impl DockerSandboxBackend {
                     "/home/sandbox": format!("rw,nosuid,nodev,size={home_tmpfs_size_mb}m,uid=1000,gid=1000,mode=0700")
                 },
                 "SecurityOpt": ["no-new-privileges"],
-                "Binds": [format!("{}:/workspace:rw", spec.run_workspace)],
             }
         });
+        apply_docker_api_workspace_mount(&mut payload, &self.config, spec.run_workspace.as_str())?;
         enable_docker_api_init(&mut payload);
         if publish_agent {
             payload["ExposedPorts"] = json!({port_key.clone(): {}});
@@ -755,5 +768,102 @@ impl DockerSandboxBackend {
             }
             DockerAgentEndpointMode::Published => None,
         }
+    }
+}
+
+fn apply_docker_api_workspace_mount(
+    payload: &mut Value,
+    config: &crate::config::AppConfig,
+    run_workspace: &str,
+) -> Result<(), String> {
+    let host_config = payload
+        .get_mut("HostConfig")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "Docker create payload is missing HostConfig".to_string())?;
+    if let Some(volume_name) = config
+        .docker_work_volume
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let subpath = Path::new(run_workspace)
+            .strip_prefix(config.work_root.as_path())
+            .map_err(|_| {
+                format!(
+                    "sandbox run workspace {run_workspace} is outside Docker work volume root {}",
+                    config.work_root.display()
+                )
+            })?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if subpath.is_empty() || subpath.starts_with("../") {
+            return Err("sandbox Docker volume subpath is invalid".to_string());
+        }
+        host_config.insert(
+            "Mounts".to_string(),
+            json!([{
+                "Type": "volume",
+                "Source": volume_name,
+                "Target": "/workspace",
+                "ReadOnly": false,
+                "VolumeOptions": { "Subpath": subpath }
+            }]),
+        );
+    } else {
+        host_config.insert(
+            "Binds".to_string(),
+            json!([format!("{run_workspace}:/workspace:rw")]),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod workspace_mount_tests {
+    use super::*;
+
+    #[test]
+    fn compose_mode_mounts_the_managed_volume_subpath_instead_of_a_container_path_bind() {
+        let mut config = crate::config::AppConfig::for_tests();
+        config.work_root = Path::new("/data/sandboxes").to_path_buf();
+        config.docker_work_volume = Some("chatos-sandbox-manager-data".to_string());
+        let mut payload = json!({ "HostConfig": {} });
+
+        apply_docker_api_workspace_mount(
+            &mut payload,
+            &config,
+            "/data/sandboxes/runs/run-1/input/workspace",
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload.pointer("/HostConfig/Mounts/0/Source"),
+            Some(&json!("chatos-sandbox-manager-data"))
+        );
+        assert_eq!(
+            payload.pointer("/HostConfig/Mounts/0/VolumeOptions/Subpath"),
+            Some(&json!("runs/run-1/input/workspace"))
+        );
+        assert!(payload.pointer("/HostConfig/Binds").is_none());
+    }
+
+    #[test]
+    fn local_host_mode_keeps_the_direct_workspace_bind() {
+        let config = crate::config::AppConfig::for_tests();
+        let mut payload = json!({ "HostConfig": {} });
+        let workspace = config.work_root.join("runs/run-1/input/workspace");
+
+        apply_docker_api_workspace_mount(
+            &mut payload,
+            &config,
+            workspace.to_string_lossy().as_ref(),
+        )
+        .unwrap();
+
+        assert!(payload.pointer("/HostConfig/Mounts").is_none());
+        assert_eq!(
+            payload.pointer("/HostConfig/Binds/0"),
+            Some(&json!(format!("{}:/workspace:rw", workspace.display())))
+        );
     }
 }

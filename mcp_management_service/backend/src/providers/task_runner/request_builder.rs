@@ -41,6 +41,9 @@ impl TaskRunnerProvider {
             .header("x-mcp-management-project-id", binding.project_id)
             .header("x-chatos-project-id", binding.project_id)
             .timeout(timeout);
+        if let Some(owner_role) = binding.owner_role {
+            request = request.header("x-mcp-management-owner-role", owner_role);
+        }
         for (header, value) in [
             ("x-mcp-management-run-id", binding.run_id),
             ("x-mcp-management-turn-id", binding.turn_id),

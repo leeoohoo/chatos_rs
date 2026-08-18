@@ -4008,7 +4008,7 @@ async fn stale_mcp_health_is_reprobed_and_fails_closed_before_tool_call() {
     invoker.fail_health_checks.store(true, Ordering::SeqCst);
 
     let error = prepared
-        .call_tool("invocation-health", "echo", json!({}))
+        .call_tool("invocation-health", "echo", json!({}), None)
         .await
         .expect_err("stale failed health probe must block tool call");
     assert!(error.to_string().contains("health probe failed"));

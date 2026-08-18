@@ -715,8 +715,6 @@ async function main(args) {
   assertRootDirectory(args.resources, 'Installed package resources root');
   assertNoObsoleteCriticalAliases(args.resources, args.platform);
   const tree = scanResourceTree(args.resources);
-  requireDirectory(args.resources, 'chatos-frontend', 'Bundled ChatOS frontend');
-  requireRegularFile(args.resources, 'chatos-frontend/index.html', 'Bundled ChatOS frontend entrypoint');
   const migrations = requireDirectory(args.resources, 'sqlite-migrations', 'SQLite migrations');
 
   const packageArchitecture = args.platform.endsWith('-arm64') ? 'arm64' : 'x64';

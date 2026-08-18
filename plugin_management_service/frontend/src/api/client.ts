@@ -298,28 +298,38 @@ export const api = {
     ),
   updateAgentProviderPromptDraft: (
     agentKey: string,
+    profile: string,
     vendor: string,
     content: string,
     expectedUpdatedAt?: string,
   ) =>
     request<AgentProviderPromptRecord>(
-      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/draft`,
+      withQuery(
+        `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/draft`,
+        { profile },
+      ),
       {
         method: 'PUT',
         body: JSON.stringify({ content, expected_updated_at: expectedUpdatedAt }),
       },
     ),
-  publishAgentProviderPrompt: (agentKey: string, vendor: string) =>
+  publishAgentProviderPrompt: (agentKey: string, profile: string, vendor: string) =>
     request<AgentProviderPromptRecord>(
-      `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/publish`,
+      withQuery(
+        `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/publish`,
+        { profile },
+      ),
       { method: 'POST', body: JSON.stringify({}) },
     ),
   generateAgentProviderPrompt: (
     agentKey: string,
+    profile: string,
     vendor: string,
     payload: { model_config_id: string; requirement: string; current_content: string },
-  ) => request<GenerateAgentPromptResponse>(
+  ) => request<GenerateAgentPromptResponse>(withQuery(
     `/api/system-agents/${encodeURIComponent(agentKey)}/provider-prompts/${encodeURIComponent(vendor)}/generate`,
+    { profile },
+  ),
     { method: 'POST', body: JSON.stringify(payload) },
   ),
   agentPromptCompleteness: () =>

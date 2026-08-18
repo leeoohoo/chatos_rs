@@ -3,6 +3,70 @@
 
 use super::*;
 
+#[test]
+fn chatos_model_catalog_item_exposes_runtime_metadata_without_api_key() {
+    let record = ModelConfigRecord {
+        id: "model-1".to_string(),
+        owner_user_id: Some("user-1".to_string()),
+        owner_username: Some("user".to_string()),
+        owner_display_name: Some("User".to_string()),
+        name: "Primary".to_string(),
+        provider: "openai".to_string(),
+        prompt_vendor: Some("gpt".to_string()),
+        base_url: "https://api.example.test/v1".to_string(),
+        api_key: "super-secret".to_string(),
+        model: "gpt-test".to_string(),
+        usage_scenario: Some("default".to_string()),
+        temperature: Some(0.2),
+        max_output_tokens: Some(4096),
+        model_request_max_retries: 5,
+        thinking_level: Some("high".to_string()),
+        supports_images: true,
+        supports_reasoning: true,
+        supports_responses: true,
+        instructions: None,
+        request_cwd: None,
+        include_prompt_cache_retention: false,
+        request_body_limit_bytes: None,
+        enabled: true,
+        created_at: "2026-08-11T00:00:00Z".to_string(),
+        updated_at: "2026-08-11T00:00:00Z".to_string(),
+    };
+    let runtime = ChatosModelRuntimeConfig::from(record.clone());
+    let item = ChatosModelConfigCatalogItem::from(record);
+
+    let value = serde_json::to_value(item).expect("serialize catalog item");
+    assert_eq!(
+        value.get("has_api_key").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(value.get("model").and_then(Value::as_str), Some("gpt-test"));
+    assert_eq!(
+        value.get("supports_images").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        value.get("supports_reasoning").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(value.get("api_key").is_none());
+    assert!(!value.to_string().contains("super-secret"));
+
+    let runtime_value = serde_json::to_value(runtime).expect("serialize runtime config");
+    assert_eq!(
+        runtime_value
+            .get("supports_images")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        runtime_value
+            .get("supports_reasoning")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+}
+
 mod retry_tests {
     use axum::http::StatusCode;
 
@@ -59,21 +123,8 @@ mod plugin_projection_tests {
                         "command_id": "review",
                         "arguments": command_arguments
                     }]
-                },
-                "plugin_snapshots": [{
-                    "plugin_id": "plugin-review",
-                    "release_id": "release-1",
-                    "component_snapshots": [{
-                        "component_key": "review",
-                        "kind": "command",
-                        "runtime": {
-                            "runtime_kind": "markdown_command",
-                            "arguments": command_arguments
-                        }
-                    }]
-                }]
+                }
             }),
-            Vec::new(),
             "2026-07-27T00:00:00Z".to_string(),
         );
 
@@ -89,12 +140,6 @@ mod plugin_projection_tests {
         assert_eq!(
             projected
                 .pointer("/plugin_config/command_invocations/0/arguments_sha256")
-                .and_then(Value::as_str),
-            Some(expected_sha256.as_str())
-        );
-        assert_eq!(
-            projected
-                .pointer("/plugin_snapshots/0/component_snapshots/0/runtime/arguments_sha256")
                 .and_then(Value::as_str),
             Some(expected_sha256.as_str())
         );
@@ -120,21 +165,8 @@ mod plugin_projection_tests {
                         "command_id": "review",
                         "arguments": "private-command-arguments"
                     }]
-                },
-                "plugin_snapshots": [{
-                    "plugin_id": "plugin-review",
-                    "release_id": "release-1",
-                    "version": "1.2.3",
-                    "device_id": "must-not-be-copied-to-summary",
-                    "component_snapshots": [{
-                        "component_key": "review",
-                        "kind": "command",
-                        "content_sha256": "a".repeat(64),
-                        "runtime": {"arguments": "private-command-arguments"}
-                    }]
-                }]
+                }
             }),
-            Vec::new(),
             "2026-07-27T00:00:00Z".to_string(),
         );
 
@@ -151,14 +183,7 @@ mod plugin_projection_tests {
                 .and_then(Value::as_str),
             Some("plugin-review")
         );
-        assert_eq!(
-            projected
-                .pointer("/plugin_snapshots/0/component_snapshots/0/component_key")
-                .and_then(Value::as_str),
-            Some("review")
-        );
         assert!(!serialized.contains("private-command-arguments"));
-        assert!(!serialized.contains("must-not-be-copied-to-summary"));
     }
 
     #[test]
@@ -274,7 +299,7 @@ mod plugin_projection_tests {
             ),
         ];
 
-        let (events, total, has_more) = paginate_run_events(events, 10, 0);
+        let (events, total, has_more) = paginate_run_events(events, 10, 0, 40_000);
         let serialized = serde_json::to_string(&events).expect("serialize projected events");
 
         assert_eq!(total, 4);
@@ -309,6 +334,121 @@ mod plugin_projection_tests {
                 .and_then(|payload| payload.pointer("/artifact/display_name"))
                 .and_then(Value::as_str),
             Some("report.docx")
+        );
+    }
+
+    #[test]
+    fn oversized_tool_results_keep_pairing_fields_and_a_visible_preview() {
+        let events = vec![
+            event(
+                "event-tools-start",
+                "tools_start",
+                json!([{
+                    "id": "call-large",
+                    "type": "function",
+                    "function": {
+                        "name": "code_maintainer_read_read_file_raw",
+                        "arguments": {"path": "src/large.rs"}
+                    }
+                }]),
+            ),
+            event(
+                "event-tool-result",
+                "tool_stream",
+                json!({
+                    "tool_call_id": "call-large",
+                    "name": "code_maintainer_read_read_file_raw",
+                    "success": true,
+                    "is_error": false,
+                    "is_stream": false,
+                    "content": "x".repeat(RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES * 2),
+                    "result": {
+                        "path": "src/large.rs",
+                        "content": "y".repeat(RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES * 2)
+                    }
+                }),
+            ),
+        ];
+
+        let (events, total, has_more) = paginate_run_events(events, 10, 0, 40_000);
+
+        assert_eq!(total, 2);
+        assert!(!has_more);
+        assert_eq!(
+            events[1]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("tool_call_id"))
+                .and_then(Value::as_str),
+            Some("call-large")
+        );
+        assert_eq!(
+            events[1]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.pointer("/result/truncated")),
+            Some(&Value::Bool(true))
+        );
+        assert!(events[1]
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.pointer("/result/preview"))
+            .and_then(Value::as_str)
+            .is_some_and(|preview| preview.contains("src/large.rs")));
+    }
+
+    #[test]
+    fn tool_arguments_and_results_use_the_managed_per_tool_limit() {
+        let arguments = json!({
+            "path": "",
+            "command": "x".repeat(700),
+        })
+        .to_string();
+        let events = vec![
+            event(
+                "event-tools-start",
+                "tools_start",
+                json!([{
+                    "id": "call-configured-limit",
+                    "type": "function",
+                    "function": {
+                        "name": "terminal_controller_execute_command",
+                        "arguments": arguments.clone()
+                    }
+                }]),
+            ),
+            event(
+                "event-tool-result",
+                "tool_stream",
+                json!({
+                    "tool_call_id": "call-configured-limit",
+                    "name": "terminal_controller_execute_command",
+                    "success": true,
+                    "is_error": false,
+                    "is_stream": false,
+                    "content": "y".repeat(700)
+                }),
+            ),
+        ];
+
+        let (events, _, _) = paginate_run_events(events, 10, 0, 1_000);
+
+        assert_eq!(
+            events[0]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.pointer("/0/function/arguments"))
+                .and_then(Value::as_str),
+            Some(arguments.as_str())
+        );
+        assert_eq!(
+            events[1]
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("content"))
+                .and_then(Value::as_str)
+                .map(str::len),
+            Some(700)
         );
     }
 

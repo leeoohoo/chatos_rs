@@ -21,10 +21,11 @@ pub use chatos_plugin_management_sdk::{
     PluginCatalogRecord, PluginCloudComponentBundle, PluginCloudCredentialMetadata,
     PluginCloudOAuthConnectionRecord, PluginComponentKind, PluginComponentOwnership,
     PluginComponentSnapshot, PluginComponentStatus, PluginExecutionHost, PluginInstallStatus,
-    PluginInstallationRecord, PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifest,
-    PluginManifestSource, PluginMarketplaceRecord, PluginOAuthConnectionRecord,
-    PluginOAuthStatusSyncPayload, PluginPublisher, PluginReleaseRecord, PluginReleaseSignature,
-    PluginRequirementStatus, ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
+    PluginInstallationRecord, PluginInstallationSyncPayload, PluginInterfaceMetadata,
+    PluginLicenseMetadata, PluginManifest, PluginManifestSource, PluginMarketplaceRecord,
+    PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload, PluginPublisher,
+    PluginReleaseRecord, PluginReleaseSignature, PluginRequirementStatus,
+    ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
     ResolvePluginMcpCloudCredentialsRequest,
     ResolvedAgentCapabilities as RuntimeCapabilitiesResponse, ResolvedMcp, ResolvedPlugin,
     ResolvedPluginComponent, ResolvedPluginMcpCloudCredentials, ResolvedSkill, ResourceCheckRecord,
@@ -198,6 +199,8 @@ pub struct SystemAgentPayload {
 pub struct AgentProviderPromptRecord {
     pub id: String,
     pub agent_key: String,
+    #[serde(default = "default_agent_prompt_profile")]
+    pub profile: String,
     pub vendor: AgentPromptVendor,
     pub draft_content: Option<String>,
     pub published_content: Option<String>,
@@ -227,6 +230,8 @@ pub struct AgentPromptBundleVersionRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentPromptVersionPrompt {
+    #[serde(default = "default_agent_prompt_profile")]
+    pub profile: String,
     pub vendor: AgentPromptVendor,
     #[serde(default)]
     pub content: String,
@@ -241,6 +246,8 @@ pub struct AgentPromptVersionRecord {
     pub agent_key: String,
     pub bundle_version: i64,
     pub changed_vendor: Option<AgentPromptVendor>,
+    #[serde(default)]
+    pub changed_profile: Option<String>,
     pub prompts: Vec<AgentPromptVersionPrompt>,
     pub published_by: String,
     pub published_at: String,
@@ -248,6 +255,7 @@ pub struct AgentPromptVersionRecord {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentPromptVersionVendorSummary {
+    pub profile: String,
     pub vendor: AgentPromptVendor,
     pub revision: i64,
     pub checksum: String,
@@ -259,6 +267,7 @@ pub struct AgentPromptVersionSummary {
     pub agent_key: String,
     pub bundle_version: i64,
     pub changed_vendor: Option<AgentPromptVendor>,
+    pub changed_profile: Option<String>,
     pub vendor_revisions: Vec<AgentPromptVersionVendorSummary>,
     pub published_by: String,
     pub published_at: String,
@@ -268,6 +277,10 @@ pub struct AgentPromptVersionSummary {
 pub struct UpdateAgentPromptDraftRequest {
     pub content: String,
     pub expected_updated_at: Option<String>,
+}
+
+fn default_agent_prompt_profile() -> String {
+    chatos_plugin_management_sdk::DEFAULT_AGENT_PROMPT_PROFILE.to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

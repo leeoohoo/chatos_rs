@@ -6,9 +6,10 @@ use serde_json::json;
 use super::actions::{
     browser_back_with_context, browser_click_with_context, browser_download_with_context,
     browser_get_images_with_context, browser_navigate_with_context, browser_press_with_context,
-    browser_scroll_with_context, browser_snapshot_with_context, browser_tab_close_with_context,
-    browser_tab_new_with_context, browser_tab_switch_with_context, browser_tabs_with_context,
-    browser_type_with_context, browser_upload_with_context, MAX_BROWSER_UPLOAD_FILES,
+    browser_scroll_with_context, browser_set_viewport_with_context, browser_snapshot_with_context,
+    browser_tab_close_with_context, browser_tab_new_with_context, browser_tab_switch_with_context,
+    browser_tabs_with_context, browser_type_with_context, browser_upload_with_context,
+    MAX_BROWSER_UPLOAD_FILES,
 };
 use super::context::{optional_bool, optional_trimmed_string, required_trimmed_string};
 use super::{async_browser_text_tool_handler, BoundContext, BrowserToolsService};
@@ -24,7 +25,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |_args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_tabs_with_context(ctx, browser_context.conversation_id.as_deref()).await
                 })
@@ -45,7 +46,7 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let url = optional_trimmed_string(&args, "url");
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_tab_new_with_context(
                         ctx,
@@ -72,7 +73,7 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let tab_id = required_trimmed_string(&args, "tab_id")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_tab_switch_with_context(
                         ctx,
@@ -99,7 +100,7 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let tab_id = required_trimmed_string(&args, "tab_id")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_tab_close_with_context(
                         ctx,
@@ -126,7 +127,7 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let url = required_trimmed_string(&args, "url")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_navigate_with_context(
                         ctx,
@@ -152,7 +153,7 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let full = optional_bool(&args, "full");
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_snapshot_with_context(
                         ctx,
@@ -179,7 +180,7 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let reference = required_trimmed_string(&args, "ref")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_click_with_context(
                         ctx,
@@ -208,7 +209,7 @@ impl BrowserToolsService {
             async_browser_text_tool_handler(move |args, browser_context| {
                 let reference = required_trimmed_string(&args, "ref")?;
                 let text = required_trimmed_string(&args, "text")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_type_with_context(
                         ctx,
@@ -236,7 +237,7 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let direction = required_trimmed_string(&args, "direction")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_scroll_with_context(
                         ctx,
@@ -259,7 +260,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |_args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_back_with_context(ctx, browser_context.conversation_id.as_deref()).await
                 })
@@ -281,10 +282,40 @@ impl BrowserToolsService {
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
                 let key = required_trimmed_string(&args, "key")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_press_with_context(ctx, browser_context.conversation_id.as_deref(), key)
                         .await
+                })
+            }),
+        );
+    }
+
+    pub(super) fn register_browser_set_viewport(&mut self, bound: BoundContext) {
+        self.register_tool(
+            "browser_set_viewport",
+            "Set the current managed browser viewport to bounded CSS-pixel dimensions and verify the resulting window.innerWidth/innerHeight. Use this for real responsive-layout testing instead of window.resizeTo or high-risk arbitrary CDP commands.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "width": { "type": "integer", "minimum": 240, "maximum": 3840 },
+                    "height": { "type": "integer", "minimum": 240, "maximum": 2160 }
+                },
+                "required": ["width", "height"],
+                "additionalProperties": false
+            }),
+            async_browser_text_tool_handler(move |args, browser_context| {
+                let width = required_viewport_dimension(&args, "width", 3840)?;
+                let height = required_viewport_dimension(&args, "height", 2160)?;
+                let ctx = bound.for_tool_call(&browser_context);
+                Ok(async move {
+                    browser_set_viewport_with_context(
+                        ctx,
+                        browser_context.conversation_id.as_deref(),
+                        width,
+                        height,
+                    )
+                    .await
                 })
             }),
         );
@@ -300,7 +331,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |_args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_get_images_with_context(
                         ctx,
@@ -344,7 +375,7 @@ impl BrowserToolsService {
                             .ok_or_else(|| "paths must contain only strings".to_string())
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_upload_with_context(
                         ctx,
@@ -374,7 +405,7 @@ impl BrowserToolsService {
             async_browser_text_tool_handler(move |args, browser_context| {
                 let reference = required_trimmed_string(&args, "ref")?;
                 let path = required_trimmed_string(&args, "path")?;
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_download_with_context(
                         ctx,
@@ -387,4 +418,20 @@ impl BrowserToolsService {
             }),
         );
     }
+}
+
+fn required_viewport_dimension(
+    args: &serde_json::Value,
+    field: &str,
+    maximum: u32,
+) -> Result<u32, String> {
+    let value = args
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| format!("{field} must be an integer"))?;
+    if !(240..=maximum).contains(&value) {
+        return Err(format!("{field} must be between 240 and {maximum}"));
+    }
+    Ok(value)
 }

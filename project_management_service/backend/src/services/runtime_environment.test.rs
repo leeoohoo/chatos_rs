@@ -539,7 +539,7 @@ mod tests {
         );
         let mut environment = ProjectRuntimeEnvironmentRecord {
             project_id: project.id.clone(),
-            status: ProjectRuntimeEnvironmentStatus::Ready,
+            status: ProjectRuntimeEnvironmentStatus::PendingImageBuild,
             sandbox_enabled: true,
             sandbox_provider: RuntimeEnvironmentProvider::LocalConnector,
             file_provider: RuntimeEnvironmentProvider::LocalConnector,
@@ -556,13 +556,13 @@ mod tests {
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
         };
-        let mut images = vec![runtime_image(
-            "workspace",
-            "workspace",
-            Some("FROM node:24"),
-            None,
-        )];
-        images[0].image_provider = RuntimeEnvironmentProvider::LocalConnector;
+        let mut images = vec![
+            runtime_image("api", "application", Some("FROM node:24"), None),
+            runtime_image("workspace", "workspace", Some("FROM node:24"), None),
+        ];
+        for image in &mut images {
+            image.image_provider = RuntimeEnvironmentProvider::LocalConnector;
+        }
 
         enforce_project_runtime_boundary(&project, &mut environment, &mut images);
 
@@ -574,9 +574,20 @@ mod tests {
             environment.file_provider,
             RuntimeEnvironmentProvider::LocalConnector
         );
+        assert_eq!(environment.status, ProjectRuntimeEnvironmentStatus::Ready);
+        assert!(environment.execution_service_id.is_none());
+        assert!(images
+            .iter()
+            .all(|image| image.service_role != RuntimeServiceRole::Workspace));
+        assert!(images
+            .iter()
+            .any(|image| image.service_role == RuntimeServiceRole::Application));
         assert!(images.iter().all(|image| {
             image.image_provider == RuntimeEnvironmentProvider::LocalConnector
         }));
+        let summary = program_generated_runtime_analysis_summary(&environment, &images);
+        assert!(summary.contains("记录本地启动条件"));
+        assert!(!summary.contains("执行镜像"));
     }
 
     #[test]
@@ -621,6 +632,46 @@ mod tests {
             RuntimeEnvironmentProvider::None
         );
         assert_eq!(environment.file_provider, RuntimeEnvironmentProvider::None);
+        assert!(environment.execution_service_id.is_none());
+        assert!(images.is_empty());
+    }
+
+    #[test]
+    fn disabled_cloud_sandbox_preserves_harness_file_provider() {
+        let project = project(ProjectSourceType::Cloud, None);
+        let mut environment = ProjectRuntimeEnvironmentRecord {
+            project_id: project.id.clone(),
+            status: ProjectRuntimeEnvironmentStatus::Disabled,
+            sandbox_enabled: false,
+            sandbox_provider: RuntimeEnvironmentProvider::CloudSandboxManager,
+            file_provider: RuntimeEnvironmentProvider::None,
+            analysis_summary: None,
+            not_runnable_reason: None,
+            execution_service_id: Some("workspace".to_string()),
+            detected_stack: empty_object(),
+            required_services: empty_array(),
+            env_vars: empty_object(),
+            environment_variables: Vec::new(),
+            generated_config_files: Vec::new(),
+            last_agent_run_id: None,
+            last_error: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let mut images = vec![runtime_image(
+            "workspace",
+            "workspace",
+            Some("FROM node:24"),
+            None,
+        )];
+
+        assert!(enforce_project_runtime_boundary(
+            &project,
+            &mut environment,
+            &mut images,
+        ));
+        assert_eq!(environment.sandbox_provider, RuntimeEnvironmentProvider::None);
+        assert_eq!(environment.file_provider, RuntimeEnvironmentProvider::Harness);
         assert!(environment.execution_service_id.is_none());
         assert!(images.is_empty());
     }

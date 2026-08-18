@@ -1,26 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
-
 use serde_json::json;
-use tracing::warn;
-use uuid::Uuid;
 
 use crate::models::{
-    now_rfc3339, StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskStatus,
+    StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatus,
 };
 
-use super::prerequisite_context::{
-    build_prerequisite_context, prerequisite_context_json, PrerequisiteTaskContext,
-};
+use super::prerequisite_context::{build_prerequisite_context, PrerequisiteTaskContext};
 use super::status_display::TaskStatusExt;
-use super::workspace_mcp::ensure_effective_task_workspace_dir;
-use super::{
-    is_terminal_run_status, normalized_optional, save_task_if_tenant_aligned, RunService,
-    TaskService,
-};
+use super::{is_terminal_run_status, save_task_if_tenant_aligned, RunService, TaskService};
 
-mod completion;
 mod dependency_runs;

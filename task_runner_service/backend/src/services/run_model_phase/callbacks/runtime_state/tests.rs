@@ -128,6 +128,72 @@ fn task_outcome_review_rejects_success_without_evidence() {
 }
 
 #[test]
+fn task_outcome_review_requires_one_to_one_runtime_backed_acceptance_evidence() {
+    let outcome = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["dashboard render test passed"],"acceptance_evidence":[{"criterion":"dashboard renders","evidence":["dashboard render test passed"],"referenced_paths":["src/Dashboard.tsx"],"commands":["npm test"]}],"referenced_paths":["src/Dashboard.tsx"],"referenced_endpoints":[]}"#,
+        &["dashboard renders".to_string()],
+        &["src/Dashboard.tsx".to_string()],
+        &["npm test".to_string()],
+        &[],
+        true,
+    )
+    .expect("runtime-backed acceptance evidence");
+    assert_eq!(outcome.acceptance_evidence.len(), 1);
+
+    let error = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"claimed","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["dashboard render test passed"],"acceptance_evidence":[{"criterion":"dashboard renders","evidence":["dashboard render test passed"],"referenced_paths":[],"commands":["npm test"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
+        &["dashboard renders".to_string()],
+        &[],
+        &["npm run build".to_string()],
+        &[],
+        true,
+    )
+    .expect_err("unrecorded command must fail closed");
+    assert!(error.contains("without successful runtime evidence"));
+}
+
+#[test]
+fn task_outcome_review_accepts_recorded_browser_evidence() {
+    let outcome = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"verified responsive layout","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["320px browser snapshot rendered without overflow"],"acceptance_evidence":[{"criterion":"works at 320px","evidence":["320px browser snapshot rendered without overflow"],"referenced_paths":[],"commands":[],"tool_names":["browser_tools_browser_snapshot"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
+        &["works at 320px".to_string()],
+        &[],
+        &[],
+        &["browser_tools_browser_snapshot".to_string()],
+        true,
+    )
+    .expect("recorded browser evidence");
+
+    assert_eq!(outcome.acceptance_evidence.len(), 1);
+}
+
+#[test]
+fn task_outcome_review_ignores_non_browser_tool_names_when_other_evidence_is_valid() {
+    let outcome = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["production build passed"],"acceptance_evidence":[{"criterion":"baseline exists","evidence":["production build passed"],"referenced_paths":["package.json"],"commands":["npm run build"],"tool_names":["code_maintainer_write_commit_edit_session","terminal_controller_execute_command"]}],"referenced_paths":["package.json"],"referenced_endpoints":[]}"#,
+        &["baseline exists".to_string()],
+        &["package.json".to_string()],
+        &["npm run build".to_string()],
+        &[],
+        true,
+    )
+    .expect("ordinary runtime tools must not invalidate path/command evidence");
+
+    assert_eq!(outcome.acceptance_evidence.len(), 1);
+
+    let error = parse_task_execution_outcome_with_evidence(
+        r#"{"status":"succeeded","summary":"claimed","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["claimed"],"acceptance_evidence":[{"criterion":"baseline exists","evidence":["claimed"],"referenced_paths":[],"commands":[],"tool_names":["terminal_controller_execute_command"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
+        &["baseline exists".to_string()],
+        &[],
+        &[],
+        &[],
+        true,
+    )
+    .expect_err("ordinary runtime tools alone are not acceptance evidence");
+    assert!(error.contains("no concrete runtime path, command, or browser evidence"));
+}
+
+#[test]
 fn task_outcome_review_rejects_markdown_wrapped_json() {
     let error = parse_task_execution_outcome("```json\n{\"status\":\"blocked\"}\n```")
         .expect_err("review response must be strict JSON");
@@ -136,9 +202,43 @@ fn task_outcome_review_rejects_markdown_wrapped_json() {
 }
 
 #[test]
+fn task_outcome_review_uses_strict_provider_json_schema() {
+    let format = task_execution_outcome_output_format();
+
+    assert_eq!(format.name, "task_execution_outcome");
+    assert!(format.strict);
+    assert_eq!(
+        format.schema.pointer("/additionalProperties"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        format.schema.pointer("/properties/status/enum"),
+        Some(&json!(["succeeded", "blocked"]))
+    );
+    assert!(format
+        .schema
+        .pointer("/required")
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.iter().any(|value| value == "acceptance_evidence")));
+}
+
+#[test]
+fn task_outcome_protocol_repair_is_bounded_and_actionable() {
+    let raw = "x".repeat(TASK_OUTCOME_RAW_RESPONSE_MAX_CHARS + 10);
+    let bounded = bounded_task_outcome_raw_response(raw.as_str());
+    assert!(bounded.ends_with("...[truncated]"));
+    assert!(bounded.chars().count() < raw.chars().count());
+
+    let repair = task_execution_outcome_repair_message("expected value").to_string();
+    assert!(repair.contains("expected value"));
+    assert!(repair.contains("schema-constrained JSON object"));
+    assert!(repair.contains("Do not change the underlying task conclusion"));
+}
+
+#[test]
 fn task_outcome_review_distinguishes_execution_and_planning_evidence() {
-    let execution = task_execution_outcome_review_message(true).to_string();
-    let planning = task_execution_outcome_review_message(false).to_string();
+    let execution = task_execution_outcome_review_message(true, &[]).to_string();
+    let planning = task_execution_outcome_review_message(false, &[]).to_string();
 
     assert!(execution.contains("actual tool results"));
     assert!(execution.contains("changed project files"));

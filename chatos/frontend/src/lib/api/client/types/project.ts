@@ -525,6 +525,8 @@ export interface AnalyzeProjectRuntimeEnvironmentPayload {
   analysisRequirement?: string;
   selected_dependencies?: string[];
   selectedDependencies?: string[];
+  prefer_china_mirrors?: boolean;
+  preferChinaMirrors?: boolean;
 }
 
 export interface ProjectContactLinkResponse {

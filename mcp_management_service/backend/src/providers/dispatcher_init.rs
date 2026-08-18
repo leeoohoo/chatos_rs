@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use super::{
     ChatosProvider, ChatosProviderConfig, CloudSandboxProvider, CloudStdioProvider,
-    EmbeddedProvider, ExternalHttpProvider, LocalConnectorProvider, LocalSandboxProvider,
-    PluginCloudProvider, PluginComponentProvider, PluginLocalProvider, PluginRouteDispatcher,
-    ProjectServiceProvider, ProviderDispatcher, ProviderRuntimeConfig, SandboxImagesProvider,
-    TaskRunnerProvider, TaskRunnerProviderConfig,
+    EmbeddedProvider, ExternalHttpProvider, LocalConnectorProvider, PluginCloudProvider,
+    PluginComponentProvider, PluginLocalProvider, PluginRouteDispatcher, ProjectServiceProvider,
+    ProviderDispatcher, ProviderRuntimeConfig, SandboxImagesProvider, TaskRunnerProvider,
+    TaskRunnerProviderConfig,
 };
 
 impl ProviderDispatcher {
@@ -16,6 +16,7 @@ impl ProviderDispatcher {
         project_service_http: reqwest::Client,
         project_service_base_url: impl Into<String>,
         project_service_internal_secret: Option<String>,
+        project_service_tool_timeout: Duration,
         task_runner: TaskRunnerProviderConfig,
         chatos: ChatosProviderConfig,
         local_connector_http: reqwest::Client,
@@ -71,18 +72,12 @@ impl ProviderDispatcher {
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
-            local_sandbox: LocalSandboxProvider::new(
-                local_connector_http.clone(),
-                local_connector_service_base_url.clone(),
-                runtime.downstream_request_timeout,
-                local_connector_internal_secret.clone(),
-                runtime.response_limit_bytes,
-            )?,
             plugins: PluginRouteDispatcher::new(plugin_local, plugin_cloud, plugin_components),
             project_service: ProjectServiceProvider::new(
                 project_service_http,
                 project_service_base_url,
                 project_service_internal_secret,
+                project_service_tool_timeout,
                 runtime.response_limit_bytes,
             )?,
             task_runner: TaskRunnerProvider::new(

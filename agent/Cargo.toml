@@ -14,6 +14,7 @@ runtime = [
   "dep:chatos_mcp_runtime",
   "dep:serde_json",
 ]
+local-agent-loop = ["runtime", "chatos_ai_runtime/local-agent-loop"]
 managed-config = ["dep:chatos_config_sdk", "dep:serde"]
 
 [dependencies]

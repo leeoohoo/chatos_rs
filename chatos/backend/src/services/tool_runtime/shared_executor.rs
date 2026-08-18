@@ -112,6 +112,7 @@ impl SharedMcpToolExecute {
         conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
         caller_model_runtime: Option<&ToolCallerModelRuntime>,
+        tool_result_max_chars: Option<usize>,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
         if let Some(shared) = &self.shared_core {
@@ -124,6 +125,7 @@ impl SharedMcpToolExecute {
                         caller_model.map(ToOwned::to_owned),
                     )
                     .with_caller_model_runtime(caller_model_runtime.cloned())
+                    .with_tool_result_max_chars(tool_result_max_chars)
                     .with_abort_checker(std::sync::Arc::new(|session_id| {
                         crate::utils::abort_registry::is_aborted(session_id)
                     })),
@@ -139,6 +141,7 @@ impl SharedMcpToolExecute {
                 conversation_turn_id,
                 caller_model,
                 caller_model_runtime,
+                tool_result_max_chars,
                 on_tool_result,
             )
             .await

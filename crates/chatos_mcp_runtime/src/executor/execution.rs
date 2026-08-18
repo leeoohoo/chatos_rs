@@ -8,7 +8,10 @@ use sha2::{Digest, Sha256};
 
 use crate::naming::{canonical_prefixed_tool_name, legacy_prefixed_tool_name};
 use crate::rpc::{jsonrpc_http_tool_call_cancellable_with_client, jsonrpc_stdio_call};
-use crate::text::{inject_agent_builder_args, to_text_and_structured_result_with_transient};
+use crate::text::{
+    inject_agent_builder_args, to_text_and_structured_result_with_transient,
+    to_text_and_structured_result_with_transient_limit,
+};
 use crate::types::{
     ToolCallContext, ToolCallError, ToolInfo, ToolLifecycleEvent, ToolLifecycleOutcome, ToolResult,
     ToolResultCallback, ToolStreamChunkCallback,
@@ -17,6 +20,7 @@ use crate::types::{
 use super::McpExecutor;
 
 const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
+const MCP_MANAGEMENT_SERVER_NAME: &str = "mcp_management";
 
 impl McpExecutor {
     pub async fn execute_tools_stream(
@@ -25,6 +29,11 @@ impl McpExecutor {
         context: ToolCallContext,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
+        if self.is_mcp_management_command(tool_calls) {
+            return self
+                .execute_mcp_management_batch(tool_calls, context, on_tool_result)
+                .await;
+        }
         if self.tool_lifecycle_hook.is_none() && self.should_parallelize_tool_batch(tool_calls) {
             return self
                 .execute_tools_parallel(tool_calls, context, on_tool_result)
@@ -56,6 +65,48 @@ impl McpExecutor {
             },
         )
         .await
+    }
+
+    fn is_mcp_management_command(&self, tool_calls: &[Value]) -> bool {
+        if tool_calls.is_empty() {
+            return false;
+        }
+        let mut has_mcp_management_tool = false;
+        for tool_call in tool_calls {
+            let Some(name) = crate::tool_call::extract_tool_call_name(tool_call) else {
+                continue;
+            };
+            let Some(name) = self.resolve_tool_name(name) else {
+                continue;
+            };
+            let Some(info) = self.tool_metadata.get(name) else {
+                continue;
+            };
+            if info.server_name != MCP_MANAGEMENT_SERVER_NAME
+                || info.server_type != "http"
+                || info.server_async_result_transport
+                    != crate::types::McpAsyncResultTransport::RabbitMq
+            {
+                return false;
+            }
+            has_mcp_management_tool = true;
+        }
+        has_mcp_management_tool
+    }
+
+    async fn execute_mcp_management_batch(
+        &self,
+        tool_calls: &[Value],
+        context: ToolCallContext,
+        on_tool_result: Option<ToolResultCallback>,
+    ) -> Vec<ToolResult> {
+        batch_error_results(
+            tool_calls,
+            &context,
+            on_tool_result.as_ref(),
+            "Managed MCP tool calls must be produced by the Cloud Agent event consumer",
+            true,
+        )
     }
     async fn execute_tools_parallel(
         &self,
@@ -98,6 +149,7 @@ impl McpExecutor {
         context: ToolCallContext,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<(String, Option<Value>), ToolCallError> {
+        let tool_result_max_chars = context.tool_result_max_chars.or(self.tool_result_max_chars);
         let info = self
             .tool_metadata
             .get(tool_name)
@@ -135,7 +187,7 @@ impl McpExecutor {
                     )
                     .await
                     .map_err(classify_remote_tool_call_error)?;
-                    Ok(to_text_and_structured_result_with_transient(&result))
+                    Ok(self.normalize_tool_result(&result, tool_result_max_chars))
                 }
                 "stdio" => {
                     let config = info.server_config.clone().ok_or("missing server config")?;
@@ -146,7 +198,7 @@ impl McpExecutor {
                         context.conversation_id.as_deref(),
                     )
                     .await?;
-                    Ok(to_text_and_structured_result_with_transient(&result))
+                    Ok(self.normalize_tool_result(&result, tool_result_max_chars))
                 }
                 "builtin" => {
                     let provider = self
@@ -161,7 +213,7 @@ impl McpExecutor {
                     let result = provider
                         .call_tool(info.original_name.as_str(), args, context, on_stream_chunk)
                         .await?;
-                    Ok(to_text_and_structured_result_with_transient(&result))
+                    Ok(self.normalize_tool_result(&result, tool_result_max_chars))
                 }
                 other => Err(ToolCallError::non_fatal(format!(
                     "unsupported server type: {other}"
@@ -190,6 +242,47 @@ impl McpExecutor {
         }
         result
     }
+
+    fn normalize_tool_result(
+        &self,
+        result: &Value,
+        max_chars: Option<usize>,
+    ) -> (String, Option<Value>) {
+        max_chars
+            .map(|max_chars| to_text_and_structured_result_with_transient_limit(result, max_chars))
+            .unwrap_or_else(|| to_text_and_structured_result_with_transient(result))
+    }
+}
+
+fn batch_error_results(
+    tool_calls: &[Value],
+    context: &ToolCallContext,
+    on_tool_result: Option<&ToolResultCallback>,
+    message: &str,
+    fatal_error: bool,
+) -> Vec<ToolResult> {
+    tool_calls
+        .iter()
+        .map(|tool_call| {
+            let result = crate::execution::tool_result_error(
+                crate::tool_call::extract_tool_call_id(tool_call)
+                    .unwrap_or("")
+                    .to_string(),
+                crate::tool_call::extract_tool_call_name(tool_call)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                context.conversation_turn_id.clone(),
+                format!("工具执行失败: {message}"),
+                fatal_error,
+            );
+            if let Some(callback) = on_tool_result {
+                if context.is_active() {
+                    callback(&result);
+                }
+            }
+            result
+        })
+        .collect()
 }
 
 fn sha256_json(value: &impl serde::Serialize) -> Result<String, ToolCallError> {
@@ -265,7 +358,10 @@ fn normalized_context_value(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_remote_tool_call_error;
+    use super::{classify_remote_tool_call_error, McpExecutor};
+    use crate::registry::BuiltinToolRegistry;
+    use crate::types::{McpAsyncResultTransport, ParsedToolDefinition};
+    use serde_json::json;
 
     #[test]
     fn destroyed_or_expired_sandbox_lease_is_fatal() {
@@ -281,5 +377,42 @@ mod tests {
     fn ordinary_remote_tool_failure_remains_non_fatal() {
         let error = classify_remote_tool_call_error("No such file or directory".to_string());
         assert!(!error.is_fatal());
+    }
+
+    #[test]
+    fn single_and_multiple_mcp_management_calls_use_the_same_command_path() {
+        let mut executor = McpExecutor::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            BuiltinToolRegistry::new(),
+        );
+        executor.register_available_tool(
+            "mcp_management",
+            "mcp_management",
+            "http",
+            Some("http://127.0.0.1/mcp".to_string()),
+            None,
+            None,
+            None,
+            McpAsyncResultTransport::RabbitMq,
+            None,
+            None,
+            true,
+            ParsedToolDefinition {
+                name: "read_file".to_string(),
+                description: "read".to_string(),
+                parameters: json!({"type": "object"}),
+            },
+            json!({"name": "read_file"}),
+        );
+        assert!(executor.is_mcp_management_command(&[json!({
+            "id": "call-1",
+            "function": {"name": "read_file", "arguments": {}}
+        })]));
+        assert!(executor.is_mcp_management_command(&[
+            json!({"id": "call-1", "function": {"name": "read_file", "arguments": {}}}),
+            json!({"id": "call-2", "function": {"name": "missing_tool", "arguments": {}}}),
+        ]));
     }
 }

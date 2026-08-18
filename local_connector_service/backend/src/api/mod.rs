@@ -36,6 +36,7 @@ mod managed_requirements_admin;
 mod managed_runtime_config;
 mod plugin_artifact_relay;
 mod plugin_management_capabilities;
+mod plugin_management_installations;
 mod plugin_management_mcps;
 mod plugin_management_oauth;
 mod plugin_management_plugins;
@@ -97,7 +98,9 @@ use self::terminal_relay::{
     drop_terminal_subscription, terminal_close_relay, terminal_event_to_ws_payload,
     terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
 };
-use self::workspace_directory_relay::workspace_directory_create_relay;
+use self::workspace_directory_relay::{
+    workspace_directory_create_relay, workspace_directory_list_relay, workspace_filesystem_relay,
+};
 use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };

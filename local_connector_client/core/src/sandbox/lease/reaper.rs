@@ -3,13 +3,11 @@
 
 use std::time::Duration;
 
-use chatos_sandbox_contract::SandboxBackendKind;
 use chrono::{DateTime, Utc};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use crate::approval::clear_session_approvals;
-use crate::sandbox::docker::destroy_local_sandbox_container;
 use crate::sandbox::process::destroy_native_sandbox_process;
 use crate::sandbox::types::{LocalSandboxLease, LocalSandboxRuntime};
 use crate::{local_now_rfc3339, tracing_stdout, LOCAL_SANDBOX_STATUS_DESTROYED};
@@ -49,14 +47,8 @@ async fn reap_expired_local_sandboxes(sandbox_runtime: &LocalSandboxRuntime) {
 
     for lease in expired {
         let sandbox_id = lease.sandbox_id.clone();
-        let cleanup_result = match lease.effective_policy.sandbox_mode {
-            SandboxBackendKind::Docker => {
-                destroy_local_sandbox_container(sandbox_id.as_str()).await
-            }
-            SandboxBackendKind::LocalProcess => {
-                destroy_native_sandbox_process(sandbox_runtime, sandbox_id.as_str()).await
-            }
-        };
+        let cleanup_result =
+            destroy_native_sandbox_process(sandbox_runtime, sandbox_id.as_str()).await;
         clear_session_approvals(sandbox_id.as_str()).await;
 
         let mut leases = sandbox_runtime.leases.write().await;

@@ -2,9 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_ai_runtime::{
-    AiRuntimeOptions, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput, TaskRunExecution,
-    TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeConfig,
+    AiRuntimeOptions, AiSingleStepOutcome, ModelRuntimeConfig, RuntimeRecordOptions,
+    SaveRecordInput, TaskRunSpec, TaskRuntime,
 };
+#[cfg(feature = "local-agent-loop")]
+use chatos_ai_runtime::{TaskRunExecution, TaskRunReport, TaskRuntimeConfig};
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
@@ -12,12 +14,8 @@ use crate::{agent_descriptor, AgentDescriptor, AgentIdentity};
 
 pub const TASK_RUNNER_PLAN_AGENT: TaskRunnerAgent =
     TaskRunnerAgent::new(SystemAgentKey::TaskRunnerPlanPhase);
-pub const TASK_RUNNER_LOCAL_PLAN_AGENT: TaskRunnerAgent =
-    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerLocalPlanPhase);
 pub const TASK_RUNNER_AGENT: TaskRunnerAgent =
     TaskRunnerAgent::new(SystemAgentKey::TaskRunnerRunPhase);
-pub const TASK_RUNNER_LOCAL_AGENT: TaskRunnerAgent =
-    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerLocalRunPhase);
 
 #[derive(Debug, Clone, Copy)]
 pub struct TaskRunnerAgent {
@@ -27,15 +25,6 @@ pub struct TaskRunnerAgent {
 impl TaskRunnerAgent {
     pub const fn new(key: SystemAgentKey) -> Self {
         Self { key }
-    }
-
-    pub const fn for_project_locality(planning: bool, local_project: bool) -> Self {
-        match (planning, local_project) {
-            (true, true) => TASK_RUNNER_LOCAL_PLAN_AGENT,
-            (true, false) => TASK_RUNNER_PLAN_AGENT,
-            (false, true) => TASK_RUNNER_LOCAL_AGENT,
-            (false, false) => TASK_RUNNER_AGENT,
-        }
     }
 
     pub const fn key(self) -> SystemAgentKey {
@@ -113,6 +102,7 @@ impl TaskRunnerAgent {
         spec
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_report_with_runtime_options(
         &self,
         runtime_config: TaskRuntimeConfig,
@@ -122,6 +112,20 @@ impl TaskRunnerAgent {
     ) -> TaskRunReport {
         TaskRunExecution::new(runtime_config, run_spec)
             .run_report_with_runtime_options(runtime, runtime_options)
+            .await
+    }
+
+    pub async fn execute_once_with_runtime_options(
+        &self,
+        run_spec: TaskRunSpec,
+        runtime: &TaskRuntime,
+        runtime_options: AiRuntimeOptions,
+        iteration: usize,
+        reason: impl Into<String>,
+        model_attempt: usize,
+    ) -> Result<AiSingleStepOutcome, String> {
+        runtime
+            .execute_task_once(run_spec, runtime_options, iteration, reason, model_attempt)
             .await
     }
 
@@ -214,22 +218,6 @@ mod tests {
         assert_eq!(
             TASK_RUNNER_AGENT.descriptor().key,
             SystemAgentKey::TaskRunnerRunPhase
-        );
-    }
-
-    #[test]
-    fn local_projects_receive_distinct_task_runner_identities() {
-        assert_eq!(
-            TaskRunnerAgent::for_project_locality(true, true)
-                .descriptor()
-                .key,
-            SystemAgentKey::TaskRunnerLocalPlanPhase
-        );
-        assert_eq!(
-            TaskRunnerAgent::for_project_locality(false, true)
-                .descriptor()
-                .key,
-            SystemAgentKey::TaskRunnerLocalRunPhase
         );
     }
 }

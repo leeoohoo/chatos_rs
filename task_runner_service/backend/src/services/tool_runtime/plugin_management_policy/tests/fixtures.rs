@@ -15,9 +15,7 @@ mod component_plugins;
 mod core;
 
 pub(super) use base_plugin::resolved_plugin;
-pub(super) use component_plugins::{
-    resolved_agent_plugin, resolved_command_plugin, resolved_hook_plugin, resolved_ui_plugin,
-};
+pub(super) use component_plugins::{resolved_agent_plugin, resolved_command_plugin};
 pub(super) use core::{resolved_mcp, resolved_skill};
 
 pub(super) fn policy() -> TaskRunnerCapabilityPolicy {

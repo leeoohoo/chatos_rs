@@ -15,8 +15,8 @@ use crate::config::{AppConfig, StoreMode};
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::models::ModelConfigRecord;
 use crate::services::{
-    McpCatalogService, ModelConfigService, RemoteServerService, RunService, TaskProjectService,
-    TaskService, ToolingStateService,
+    McpCatalogService, ModelConfigService, RunService, TaskProjectService, TaskService,
+    ToolingStateService,
 };
 use crate::store::AppStore;
 
@@ -133,7 +133,6 @@ async fn system_stats_returns_queue_run_and_runtime_counters() {
         "model-owner".to_string(),
         "thread-queued".to_string(),
         serde_json::json!({}),
-        Vec::new(),
         now_rfc3339(),
     );
     state
@@ -202,7 +201,6 @@ async fn system_stats_returns_queue_run_and_runtime_counters() {
     assert_eq!(response.runs.active, 1);
     assert_eq!(response.runs.queued, 1);
     assert_eq!(response.runs.dispatch_outbox_pending, 1);
-    assert_eq!(response.queue.run_dispatch_mode, "inline");
     assert!(!response.queue.rabbitmq_queues.enabled);
     assert!(response.queue.rabbitmq_queues.queues.is_empty());
 }
@@ -338,7 +336,6 @@ async fn test_state() -> AppState {
     let auth_service = AuthService::new(config.clone(), store.clone());
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
-    let remote_server_service = RemoteServerService::new(config.clone(), store.clone());
     let task_project_service = TaskProjectService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(
@@ -363,7 +360,6 @@ async fn test_state() -> AppState {
         task_queue_topology,
         task_service,
         model_config_service,
-        remote_server_service,
         task_project_service,
         run_service,
         ask_user_prompt_service,
@@ -409,25 +405,12 @@ fn test_config() -> AppConfig {
         default_task_execution_max_iterations: 1,
         default_tool_result_model_max_chars: 1_000,
         default_tool_results_model_total_max_chars: 2_000,
-        default_execution_environment_mode: "local".to_string(),
-        default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-        sandbox_manager_http_client: reqwest::Client::new(),
-        sandbox_manager_client_id: None,
-        sandbox_manager_client_key: None,
-        default_sandbox_lease_ttl_seconds: 7_200,
         chatos_callback_url: String::new(),
         chatos_callback_http_client: reqwest::Client::new(),
         internal_api_secret: Some("internal-secret".to_string()),
         chatos_internal_api_secret: Some("chatos-internal-secret".to_string()),
         mcp_management_internal_api_secret: Some("internal-secret".to_string()),
         user_service_internal_api_secret: Some("user-service-internal-secret".to_string()),
-        local_connector_internal_api_secret: None,
-        local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-        local_connector_http_client: reqwest::Client::new(),
-        local_connector_service_request_timeout: Duration::from_millis(5_000),
-        plugin_relay_request_timeout: Duration::from_millis(60_000),
-        plugin_hook_relay_timeout: Duration::from_millis(330_000),
-        plugin_connector_discovery_timeout: Duration::from_millis(10_000),
         callback_timeout: Duration::from_millis(1_000),
         admin_username: "admin".to_string(),
         admin_password: "admin".to_string(),
@@ -459,6 +442,8 @@ fn model_config(id: &str, owner_user_id: Option<&str>, enabled: bool) -> ModelCo
         max_output_tokens: None,
         model_request_max_retries: 5,
         thinking_level: None,
+        supports_images: false,
+        supports_reasoning: false,
         supports_responses: true,
         instructions: None,
         request_cwd: None,

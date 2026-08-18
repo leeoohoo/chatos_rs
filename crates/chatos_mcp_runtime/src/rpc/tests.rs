@@ -93,7 +93,7 @@ async fn dropping_http_tool_call_sends_cancel_with_the_same_request_id_and_heade
 }
 
 #[tokio::test]
-async fn internal_mcp_tool_call_requires_initialized_result_queue() {
+async fn rabbitmq_tool_call_cannot_use_the_http_execution_path() {
     let headers = HashMap::from([(
         "authorization".to_string(),
         "Bearer runtime-token".to_string(),
@@ -107,8 +107,8 @@ async fn internal_mcp_tool_call_requires_initialized_result_queue() {
         McpAsyncResultTransport::RabbitMq,
     )
     .await
-    .expect_err("missing MQ result consumer must fail closed");
-    assert!(error.contains("result queue is not initialized"));
+    .expect_err("RabbitMQ MCP tools must not execute over HTTP");
+    assert!(error.contains("unified tool call command channel"));
 }
 
 #[test]

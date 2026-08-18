@@ -4,7 +4,7 @@
 use super::*;
 use crate::catalog::{
     DEFAULT_LOCAL_RABBITMQ_URL, TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY, TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
+    TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
     TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
 };
 
@@ -229,9 +229,6 @@ impl AppState {
         for mut draft in self.store.list_drafts().await? {
             let changed = migrate_task_runner_queue_mode_draft(
                 &mut draft.changes,
-                TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
-            ) | migrate_task_runner_queue_mode_draft(
-                &mut draft.changes,
                 TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
             ) | migrate_task_runner_queue_mode_draft(
                 &mut draft.changes,
@@ -258,14 +255,6 @@ impl AppState {
                     .ok_or_else(|| {
                         "Task Runner Project Service HTTPS default is missing".to_string()
                     })?,
-            ) | migrate_https_url_draft(
-                &mut draft.changes,
-                TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
-                task_runner_defaults
-                    .get(TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| {
-                        "Task Runner Sandbox Manager HTTPS default is missing".to_string()
-                    })?,
             );
             if changed {
                 draft.validation_status = "pending".to_string();
@@ -284,8 +273,6 @@ impl AppState {
         tracing::info!(
             key = TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
             fallback_key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
-            environment_mode_key = TASK_RUNNER_EXECUTION_ENVIRONMENT_MODE_CONFIG_KEY,
-            run_dispatch_mode_key = TASK_RUNNER_QUEUE_RUN_DISPATCH_MODE_CONFIG_KEY,
             callback_delivery_mode_key = TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
             "Task Runner runtime configuration is present in configuration center releases and snapshots"
         );
@@ -787,7 +774,7 @@ impl AppState {
     pub(super) async fn migrate_internal_request_security_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = internal_request_security_default_values(&definitions);
-        if defaults.len() != 65 {
+        if defaults.len() != 61 {
             return Err(
                 "internal request security configuration definitions are incomplete".to_string(),
             );

@@ -150,6 +150,7 @@ fn application_image_plan_without_catalog_match_is_program_managed_and_planned()
         },
         0,
         RuntimeEnvironmentProvider::CloudSandboxManager,
+        false,
         None,
     )
     .expect("planned application image");
@@ -176,6 +177,7 @@ fn dependency_image_plan_uses_platform_image_without_manual_build() {
         },
         1,
         RuntimeEnvironmentProvider::CloudSandboxManager,
+        false,
         None,
     )
     .expect("platform dependency image");
@@ -188,6 +190,32 @@ fn dependency_image_plan_uses_platform_image_without_manual_build() {
     assert_eq!(record.status, "ready");
     assert_eq!(record.service_role, RuntimeServiceRole::Dependency);
     assert_eq!(record.mcp_policy, ProgramManagedMcpPolicy::default());
+}
+
+#[test]
+fn prefer_china_mirrors_rewrites_debian_family_application_dockerfiles() {
+    let record = image_input_to_record(
+        "project-1",
+        ProjectRuntimeEnvironmentImageInput {
+            environment_key: Some("application_runtime".to_string()),
+            environment_type: Some("runtime".to_string()),
+            dockerfile: Some(
+                "FROM node:24-bookworm\nRUN apt-get update && apt-get install -y curl\n"
+                    .to_string(),
+            ),
+            ..ProjectRuntimeEnvironmentImageInput::default()
+        },
+        0,
+        RuntimeEnvironmentProvider::CloudSandboxManager,
+        true,
+        None,
+    )
+    .expect("planned application image with mirror preference");
+
+    let dockerfile = record.dockerfile.as_deref().unwrap_or_default();
+    assert!(dockerfile.contains("# chatos: prefer china mirrors"));
+    assert!(dockerfile.contains("mirrors.aliyun.com/debian"));
+    assert!(dockerfile.contains("mirrors.aliyun.com/ubuntu-ports"));
 }
 
 #[test]
@@ -367,6 +395,7 @@ fn technical_summary_is_generated_from_program_results() {
             &project,
             Some(true),
         );
+    environment.sandbox_provider = RuntimeEnvironmentProvider::CloudSandboxManager;
     environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
     environment.generated_config_files = vec![ProjectRuntimeEnvironmentConfigFileRecord {
         path: ".env.chatos".to_string(),

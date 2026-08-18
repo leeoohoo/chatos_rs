@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::services::ask_user_prompt_manager::create_ask_user_prompt_record;
 use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
@@ -411,5 +412,96 @@ pub(super) async fn dispatch_bound_ask_user(
     match service.call_tool(name, arguments, Some(conversation_id), Some(turn_id), None) {
         Ok(result) => jsonrpc_ok(id, result),
         Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    }
+}
+
+pub(super) async fn dispatch_bound_ask_user_start(
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    if !is_chatos_agent(binding.agent_key) {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_AUTH_REQUIRED,
+            "configured Agent is not allowed to use ChatOS Ask User MCP",
+        );
+    }
+    let conversation_id = match binding.source_session_id.as_deref() {
+        Some(value) => value,
+        None => {
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INVALID_PARAMS,
+                "ChatOS Ask User requires bound source_session_id",
+            )
+        }
+    };
+    let turn_id = match binding.turn_id.as_deref() {
+        Some(value) => value,
+        None => {
+            return jsonrpc_error(
+                id,
+                MCP_ERROR_INVALID_PARAMS,
+                "ChatOS Ask User requires bound turn_id",
+            )
+        }
+    };
+    let prompt_timeout_ms = match bound_ask_user_prompt_timeout_ms(binding) {
+        Ok(timeout_ms) => timeout_ms,
+        Err(message) => return jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message),
+    };
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "Ask User tool name is required",
+        );
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let mut payload = match chatos_mcp::prepare_prompt(
+        name,
+        arguments,
+        conversation_id,
+        turn_id,
+        prompt_timeout_ms,
+    ) {
+        Ok(payload) => payload,
+        Err(error) => return jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    };
+    if let Value::String(invocation_id) = &id {
+        payload.prompt_id = invocation_id.clone();
+        payload.tool_call_id = Some(invocation_id.clone());
+    }
+    match create_ask_user_prompt_record(&shared_payload_into_chatos(payload)).await {
+        Ok(prompt) => jsonrpc_ok(id, serde_json::json!({"prompt_id": prompt.id})),
+        Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
+    }
+}
+
+fn shared_payload_into_chatos(
+    payload: chatos_mcp::AskUserPromptPayload,
+) -> crate::services::ask_user_prompt_manager::AskUserPromptPayload {
+    crate::services::ask_user_prompt_manager::AskUserPromptPayload {
+        prompt_id: payload.prompt_id,
+        conversation_id: payload.conversation_id,
+        conversation_turn_id: payload.conversation_turn_id,
+        tool_call_id: payload.tool_call_id,
+        kind: payload.kind,
+        title: payload.title,
+        message: payload.message,
+        allow_cancel: payload.allow_cancel,
+        timeout_ms: payload.timeout_ms,
+        payload: payload.payload,
     }
 }

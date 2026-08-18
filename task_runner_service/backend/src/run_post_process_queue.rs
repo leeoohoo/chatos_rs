@@ -22,6 +22,10 @@ use crate::services::RunService;
 
 const RUN_POST_PROCESS_CONSUMER_TAG: &str = "task-runner-run-post-process";
 
+fn run_post_process_error_consumes_failure_budget(error: &str) -> bool {
+    error != crate::services::RUN_POST_PROCESS_MODEL_PHASE_PENDING_ERROR
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RunPostProcessEnvelope {
     pub(crate) run_id: String,
@@ -349,6 +353,33 @@ pub fn spawn_run_post_process_consumer(
                                 }
                             }
                             Err(err) => {
+                                if !run_post_process_error_consumes_failure_budget(err.as_str()) {
+                                    if let Err(publish_err) = defer_run_post_process(
+                                        &channel,
+                                        &topology,
+                                        delivery.data.as_slice(),
+                                        envelope.run_id.as_str(),
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            run_id = envelope.run_id.as_str(),
+                                            error = publish_err.as_str(),
+                                            "failed to defer early Run post-process event"
+                                        );
+                                        break;
+                                    }
+                                    warn!(
+                                        run_id = envelope.run_id.as_str(),
+                                        retry_delay_ms =
+                                            topology.run_post_process_retry_delay.as_millis(),
+                                        "Run post-process event arrived before the model phase terminal state and was deferred without consuming the failure budget"
+                                    );
+                                    if delivery.ack(BasicAckOptions::default()).await.is_err() {
+                                        break;
+                                    }
+                                    continue;
+                                }
                                 let attempt = match run_service
                                     .record_run_post_process_failure(
                                         envelope.run_id.as_str(),
@@ -366,7 +397,14 @@ pub fn spawn_run_post_process_consumer(
                                         0
                                     }
                                 };
-                                if attempt >= topology.run_post_process_max_delivery_attempts {
+                                let lifecycle_retry = err.starts_with(
+                                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX,
+                                ) || err.starts_with(
+                                    crate::services::WORKSPACE_INTEGRATION_RETRY_PREFIX,
+                                );
+                                if attempt >= topology.run_post_process_max_delivery_attempts
+                                    && !lifecycle_retry
+                                {
                                     if let Err(publish_err) = dead_letter_run_post_process(
                                         &channel,
                                         &topology,
@@ -510,22 +548,6 @@ pub fn spawn_run_post_process_outbox_reconciler(
                     "task runner failed to reconcile pending Run post-process events"
                 ),
             }
-            match run_service
-                .publish_pending_terminal_cleanup_events(
-                    topology.run_post_process_outbox_batch_size,
-                )
-                .await
-            {
-                Ok(count) if count > 0 => info!(
-                    published_count = count,
-                    "task runner reconciled pending terminal cleanup events"
-                ),
-                Ok(_) => {}
-                Err(err) => warn!(
-                    error = err.as_str(),
-                    "task runner failed to reconcile pending terminal cleanup events"
-                ),
-            }
         }
     })
 }
@@ -551,5 +573,15 @@ mod tests {
             Confirmation::NotRequested,
         )
         .is_err());
+    }
+
+    #[test]
+    fn model_phase_waiting_does_not_consume_post_process_failure_budget() {
+        assert!(!run_post_process_error_consumes_failure_budget(
+            crate::services::RUN_POST_PROCESS_MODEL_PHASE_PENDING_ERROR,
+        ));
+        assert!(run_post_process_error_consumes_failure_budget(
+            "workspace integration retry: temporary failure",
+        ));
     }
 }

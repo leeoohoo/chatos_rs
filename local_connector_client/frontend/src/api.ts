@@ -10,13 +10,9 @@ import type {
   CommandExecutionApprovalDecision,
   CommandHistoryResponse,
   ConnectorStatus,
-  DockerStatus,
   FsListResponse,
   LocalMcpConfig,
   LocalMcpConfigDraft,
-  LocalModelCatalogResponse,
-  LocalModelConfig,
-  LocalModelConfigDraft,
   LocalModelConfigListResponse,
   LocalModelSettings,
   LocalRuntimeSettings,
@@ -34,8 +30,6 @@ import type {
   LocalSkillInstallation,
   PendingApprovalsResponse,
   SandboxCapabilities,
-  SandboxImageCatalog,
-  SandboxImageJob,
   SandboxLease,
   SandboxSettings,
   SandboxSettingsUpdate,
@@ -106,7 +100,6 @@ export const api = {
         body: JSON.stringify(payload),
       },
     ),
-  dockerStatus: () => request<DockerStatus>('/api/local/docker/status'),
   setSandboxEnabled: (payload: { enabled: boolean }) =>
     request<ConnectorStatus>('/api/local/sandbox/toggle', {
       method: 'POST',
@@ -119,24 +112,7 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
-  sandboxImages: () => request<SandboxImageCatalog>('/api/local/sandbox/images'),
-  sandboxImageJobs: () => request<SandboxImageJob[]>('/api/local/sandbox/images/jobs'),
   sandboxLeases: () => request<SandboxLease[]>('/api/local/sandbox/leases'),
-  initializeSandboxImage: (payload: { features: string[]; custom_build_script?: string }) =>
-    request<SandboxImageJob>('/api/local/sandbox/images/initialize', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  deleteSandboxImage: (imageId: string) =>
-    request<{ ok: boolean; image_id: string; image_ref: string }>(
-      `/api/local/sandbox/images/${encodeURIComponent(imageId)}`,
-      { method: 'DELETE' },
-    ),
-  reinitializeSandboxImage: (imageId: string) =>
-    request<SandboxImageJob>(
-      `/api/local/sandbox/images/${encodeURIComponent(imageId)}/reinitialize`,
-      { method: 'POST' },
-    ),
   terminalExec: (payload: {
     workspace_id: string;
     command: string;
@@ -244,33 +220,21 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   modelConfigs: () => request<LocalModelConfigListResponse>('/api/local/model-configs'),
-  previewModelCatalog: (draft: LocalModelConfigDraft) =>
-    request<LocalModelCatalogResponse>('/api/local/model-configs/catalog/preview', {
-      method: 'POST',
-      body: JSON.stringify(draft),
-    }),
-  saveModelConfig: (draft: LocalModelConfigDraft, sync = true) =>
-    request<LocalModelConfig>('/api/local/model-configs', {
-      method: 'POST',
-      body: JSON.stringify({ ...draft, sync }),
-    }),
-  updateModelConfig: (id: string, draft: LocalModelConfigDraft, sync = true) =>
-    request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}`, {
-      method: 'POST',
-      body: JSON.stringify({ ...draft, sync }),
-    }),
-  deleteModelConfig: (id: string) =>
-    request<{ ok: boolean }>(`/api/local/model-configs/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
-  syncModelConfig: (id: string) =>
-    request<LocalModelConfig>(`/api/local/model-configs/${encodeURIComponent(id)}/sync`, {
+  refreshModelConfigs: () =>
+    request<LocalModelConfigListResponse>('/api/local/model-configs/refresh', {
       method: 'POST',
     }),
-  saveModelSettings: (payload: LocalModelSettings, sync = false) =>
+  saveModelSettings: (
+    payload: Pick<
+      LocalModelSettings,
+      | 'model_request_max_retries'
+      | 'command_approval_model_config_id'
+      | 'command_approval_thinking_level'
+    >,
+  ) =>
     request<LocalModelSettings>('/api/local/model-settings', {
       method: 'POST',
-      body: JSON.stringify({ ...payload, sync }),
+      body: JSON.stringify(payload),
     }),
   mcpConfigs: () => request<LocalMcpConfig[]>('/api/local/mcp-configs'),
   plugins: () => request<LocalPluginStoreSnapshot>('/api/local/plugins/catalog'),

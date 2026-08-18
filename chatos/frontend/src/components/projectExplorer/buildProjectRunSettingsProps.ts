@@ -30,11 +30,6 @@ export const buildProjectRunSettingsProps = (
   envPreview: run.envPreview,
   environmentHints: run.environmentHints,
   envVarsPlaceholder: run.envVarsPlaceholder,
-  sandboxToggleVisible: run.sandboxToggleVisible,
-  sandboxEnabled: run.sandboxEnabled,
-  sandboxLoading: run.sandboxLoading,
-  sandboxSaving: run.sandboxSaving,
-  sandboxError: run.sandboxError,
   showTerminalUi: run.terminalUiEnabled,
   selectedRunTargetId: run.selectedRunTargetId,
   starting: run.starting,
@@ -77,9 +72,6 @@ export const buildProjectRunSettingsProps = (
   onEnvVarsDraftChange: run.setEnvVarsDraft,
   onSaveEnvVarsDraft: () => {
     void run.saveEnvVarsDraft();
-  },
-  onSandboxEnabledChange: (enabled: boolean) => {
-    void run.updateSandboxEnabled(enabled);
   },
   onRunnerStart: run.handleRunnerStart,
   onRunnerStop: run.handleRunnerStop,

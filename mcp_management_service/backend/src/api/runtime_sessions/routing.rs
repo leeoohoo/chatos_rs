@@ -107,16 +107,9 @@ pub(super) fn normalize_sandbox_target(
     }
     match target.provider {
         SandboxProviderKind::LocalConnector => {
-            if target.pairing_id.is_none() {
-                return Err(ApiError::bad_request(
-                    "Local Connector sandbox target requires pairing_id",
-                ));
-            }
-            if target.is_environment {
-                return Err(ApiError::bad_request(
-                    "Local Connector sandbox target does not support cloud environment services",
-                ));
-            }
+            return Err(ApiError::bad_request(
+                "Local Connector sandbox targets are not supported; use the Local Connector workspace route",
+            ));
         }
         SandboxProviderKind::Cloud => {
             if target.pairing_id.is_some() {
@@ -134,9 +127,75 @@ pub(super) fn normalize_sandbox_target(
     Ok(Some(target))
 }
 
-pub(super) fn bind_runtime_sandbox_routes(
+pub(super) fn normalize_runtime_workspace_route(
+    route: Option<chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>,
+) -> Result<Option<chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>, ApiError> {
+    use chatos_mcp_management_sdk::{HarnessBranchTarget, RuntimeWorkspaceRouteTarget};
+
+    let Some(route) = route else {
+        return Ok(None);
+    };
+    let route = match route {
+        RuntimeWorkspaceRouteTarget::LocalConnector => RuntimeWorkspaceRouteTarget::LocalConnector,
+        RuntimeWorkspaceRouteTarget::Harness { branch } => {
+            let branch = match branch {
+                HarnessBranchTarget::Default { branch_ref } => {
+                    let branch_ref = branch_ref.trim().to_string();
+                    if branch_ref.is_empty() {
+                        return Err(ApiError::bad_request(
+                            "Harness default branch target requires branch_ref",
+                        ));
+                    }
+                    HarnessBranchTarget::Default { branch_ref }
+                }
+                HarnessBranchTarget::Run {
+                    branch_id,
+                    branch_ref,
+                    base_branch,
+                    base_commit,
+                } => {
+                    let branch_id = branch_id.trim().to_string();
+                    let branch_ref = branch_ref.trim().to_string();
+                    let base_branch = base_branch.trim().to_string();
+                    let base_commit = base_commit.trim().to_string();
+                    if branch_id.is_empty()
+                        || branch_ref.is_empty()
+                        || base_branch.is_empty()
+                        || base_commit.is_empty()
+                    {
+                        return Err(ApiError::bad_request(
+                            "Harness run branch target requires branch_id, branch_ref, base_branch and base_commit",
+                        ));
+                    }
+                    HarnessBranchTarget::Run {
+                        branch_id,
+                        branch_ref,
+                        base_branch,
+                        base_commit,
+                    }
+                }
+            };
+            RuntimeWorkspaceRouteTarget::Harness { branch }
+        }
+        RuntimeWorkspaceRouteTarget::CloudSandbox { target } => {
+            let target = normalize_sandbox_target(Some(target))?.ok_or_else(|| {
+                ApiError::bad_request("Cloud Sandbox runtime route requires sandbox target")
+            })?;
+            if target.provider != SandboxProviderKind::Cloud {
+                return Err(ApiError::bad_request(
+                    "Cloud Sandbox runtime route requires a cloud sandbox target",
+                ));
+            }
+            RuntimeWorkspaceRouteTarget::CloudSandbox { target }
+        }
+    };
+    Ok(Some(route))
+}
+
+pub(super) fn bind_runtime_workspace_routes(
     routes: &mut [ResolvedMcpRoute],
-    target: Option<&SandboxExecutionTarget>,
+    workspace_route: Option<&chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>,
+    project_context: &chatos_mcp_management_sdk::ProjectExecutionContext,
 ) {
     let runtime_resource_ids = [
         SystemMcpKey::CodeMaintainerRead,
@@ -148,28 +207,138 @@ pub(super) fn bind_runtime_sandbox_routes(
         .iter_mut()
         .filter(|route| runtime_resource_ids.contains(&route.resource_id.as_str()))
     {
-        if let Some(target) = target {
-            route.provider_kind = match target.provider {
-                SandboxProviderKind::LocalConnector => McpProviderKind::LocalConnector,
-                SandboxProviderKind::Cloud => McpProviderKind::CloudSandbox,
-                SandboxProviderKind::None => McpProviderKind::Unavailable,
-            };
-            route.provider_ref = Some(target.provider_ref());
-            route.reason = match target.provider {
-                SandboxProviderKind::LocalConnector => {
-                    "runtime workspace is pinned to the Local Connector sandbox lease".to_string()
+        match workspace_route {
+            Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
+                if let Some(provider_ref) = local_connector_workspace_provider_ref(project_context)
+                {
+                    route.provider_kind = McpProviderKind::LocalConnector;
+                    route.provider_ref = Some(provider_ref);
+                    route.reason = "runtime workspace is pinned to the Local Connector".to_string();
+                } else {
+                    route.provider_kind = McpProviderKind::Unavailable;
+                    route.provider_ref = None;
+                    route.reason = "Local Connector runtime workspace is missing its device or workspace identity"
+                        .to_string();
                 }
-                SandboxProviderKind::Cloud => {
-                    "runtime workspace is pinned to the cloud Sandbox lease".to_string()
+            }
+            Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::Harness { branch }) => {
+                let system_key =
+                    chatos_mcp::system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+                        .map(|descriptor| descriptor.key);
+                if system_key == Some(SystemMcpKey::TerminalController) {
+                    route.provider_kind = McpProviderKind::Unavailable;
+                    route.provider_ref = None;
+                    route.reason =
+                        "TerminalController requires a Task Runner cloud sandbox route".to_string();
+                } else if system_key == Some(SystemMcpKey::CodeMaintainerWrite)
+                    && matches!(
+                        branch,
+                        chatos_mcp_management_sdk::HarnessBranchTarget::Default { .. }
+                    )
+                {
+                    route.provider_kind = McpProviderKind::Unavailable;
+                    route.provider_ref = None;
+                    route.reason = "CodeMaintainerWrite requires a Task Run branch".to_string();
+                } else {
+                    route.provider_kind = McpProviderKind::Harness;
+                    route.provider_ref = None;
+                    route.reason = "runtime workspace is pinned to the Harness branch".to_string();
                 }
-                SandboxProviderKind::None => "sandbox target provider is unresolved".to_string(),
-            };
-        } else if route.provider_kind == McpProviderKind::CloudSandbox {
-            route.provider_kind = McpProviderKind::Unavailable;
-            route.provider_ref = None;
-            route.reason = "Cloud Sandbox route requires a runtime sandbox lease".to_string();
+            }
+            Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox {
+                target,
+            }) => {
+                route.provider_kind = McpProviderKind::CloudSandbox;
+                route.provider_ref = Some(target.provider_ref());
+                route.reason = "runtime workspace is pinned to the cloud Sandbox lease".to_string();
+            }
+            None => {
+                if route.provider_kind == McpProviderKind::CloudSandbox {
+                    route.provider_kind = McpProviderKind::Unavailable;
+                    route.provider_ref = None;
+                    route.reason =
+                        "Cloud Sandbox route requires an explicit runtime workspace target"
+                            .to_string();
+                }
+            }
         }
     }
+}
+
+pub(super) fn validate_runtime_workspace_route_binding(
+    routes: &[ResolvedMcpRoute],
+    workspace_route: Option<&chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>,
+    project_context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+) -> Result<(), ApiError> {
+    use chatos_mcp_management_sdk::{HarnessBranchTarget, RuntimeWorkspaceRouteTarget};
+
+    let Some(workspace_route) = workspace_route else {
+        return Ok(());
+    };
+    for route in routes {
+        let Some(system_key) =
+            chatos_mcp::system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+                .map(|descriptor| descriptor.key)
+        else {
+            continue;
+        };
+        if !matches!(
+            system_key,
+            SystemMcpKey::CodeMaintainerRead
+                | SystemMcpKey::CodeMaintainerWrite
+                | SystemMcpKey::TerminalController
+        ) {
+            continue;
+        }
+
+        let valid = match workspace_route {
+            RuntimeWorkspaceRouteTarget::LocalConnector => {
+                route.provider_kind == McpProviderKind::LocalConnector
+                    && local_connector_workspace_provider_ref(project_context)
+                        .as_deref()
+                        .is_some_and(|expected| route.provider_ref.as_deref() == Some(expected))
+            }
+            RuntimeWorkspaceRouteTarget::Harness { branch } => match system_key {
+                SystemMcpKey::TerminalController => {
+                    route.provider_kind == McpProviderKind::Unavailable
+                        && route.provider_ref.is_none()
+                }
+                SystemMcpKey::CodeMaintainerWrite
+                    if matches!(branch, HarnessBranchTarget::Default { .. }) =>
+                {
+                    route.provider_kind == McpProviderKind::Unavailable
+                        && route.provider_ref.is_none()
+                }
+                SystemMcpKey::CodeMaintainerRead | SystemMcpKey::CodeMaintainerWrite => {
+                    route.provider_kind == McpProviderKind::Harness && route.provider_ref.is_none()
+                }
+                _ => false,
+            },
+            RuntimeWorkspaceRouteTarget::CloudSandbox { target } => {
+                route.provider_kind == McpProviderKind::CloudSandbox
+                    && route.provider_ref.as_deref() == Some(target.provider_ref().as_str())
+            }
+        };
+        if !valid {
+            return Err(ApiError::conflict(format!(
+                "runtime workspace route binding is inconsistent for {}: provider={:?}, provider_ref={:?}",
+                route.resource_id, route.provider_kind, route.provider_ref
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn local_connector_workspace_provider_ref(
+    context: &chatos_mcp_management_sdk::ProjectExecutionContext,
+) -> Option<String> {
+    let workspace = context.workspace.as_ref()?;
+    let device_id = workspace.device_id.as_deref()?.trim();
+    let workspace_id = workspace.workspace_id.trim();
+    if device_id.is_empty() || workspace_id.is_empty() {
+        return None;
+    }
+    Some(format!("device:{device_id}/workspace:{workspace_id}"))
 }
 
 pub(super) fn bind_sandbox_image_routes(
@@ -265,49 +434,53 @@ pub(super) fn validate_context_overrides(
             "project execution context identity does not match the request",
         ));
     }
-    if let Some(requested_device_id) = normalized(request.requested_device_id.clone()) {
-        let context_device_id = context
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.device_id.as_deref());
-        if context_device_id != Some(requested_device_id.as_str()) {
-            return Err(ApiError::conflict(
-                "requested device is not the Project Context device",
-            ));
-        }
-    }
-    if let Some(requested) = request.requested_sandbox_provider {
-        let workspace_authorizes_cloud = requested == SandboxProviderKind::Cloud
-            && context.workspace_provider == WorkspaceProviderKind::CloudSandbox;
-        if requested != context.sandbox_provider && !workspace_authorizes_cloud {
-            return Err(ApiError::conflict(
-                "sandbox provider override is not authorized by Project Context",
-            ));
-        }
-    }
-    if let Some(target) = request.sandbox_target.as_ref() {
-        if request.requested_sandbox_provider != Some(target.provider) {
-            return Err(ApiError::conflict(
-                "sandbox target provider does not match the program-resolved provider",
-            ));
-        }
-        let authorized = match target.provider {
-            SandboxProviderKind::LocalConnector => {
-                context.sandbox_provider == SandboxProviderKind::LocalConnector
-                    && context.sandbox_pairing_id.as_deref().map(str::trim)
-                        == target.pairing_id.as_deref().map(str::trim)
+    match request.workspace_route.as_ref() {
+        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
+            if context.workspace_provider != WorkspaceProviderKind::LocalConnector
+                || context.workspace.is_none()
+            {
+                return Err(ApiError::conflict(
+                    "Local Connector runtime route is not authorized by Project Context",
+                ));
             }
-            SandboxProviderKind::Cloud => {
-                context.sandbox_provider == SandboxProviderKind::Cloud
-                    || context.workspace_provider == WorkspaceProviderKind::CloudSandbox
-            }
-            SandboxProviderKind::None => false,
-        };
-        if !authorized {
-            return Err(ApiError::conflict(
-                "sandbox target is not authorized by Project Context",
-            ));
         }
+        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::Harness { branch }) => {
+            if context.workspace_provider == WorkspaceProviderKind::LocalConnector
+                || !context
+                    .source_type
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case("cloud"))
+            {
+                return Err(ApiError::conflict(
+                    "Harness runtime route is not authorized by Project Context",
+                ));
+            }
+            if branch.branch_ref().trim().is_empty() {
+                return Err(ApiError::bad_request(
+                    "Harness runtime route requires a non-empty branch_ref",
+                ));
+            }
+        }
+        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox { target }) => {
+            if target.provider != SandboxProviderKind::Cloud {
+                return Err(ApiError::conflict(
+                    "Cloud Sandbox runtime route requires a cloud sandbox target",
+                ));
+            }
+            let authorized = context.sandbox_provider == SandboxProviderKind::Cloud
+                || context.workspace_provider == WorkspaceProviderKind::CloudSandbox;
+            if !authorized
+                || !context
+                    .source_type
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case("cloud"))
+            {
+                return Err(ApiError::conflict(
+                    "Cloud Sandbox runtime route is not authorized by Project Context",
+                ));
+            }
+        }
+        None => {}
     }
     Ok(())
 }

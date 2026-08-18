@@ -3,7 +3,6 @@
 
 use futures_util::{stream, StreamExt};
 use tracing::info;
-use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::db::Db;
@@ -17,6 +16,7 @@ use super::job::{run_subject_memory_job_internal, subject_memory_job_has_work};
 
 enum ScopeExecutionOutcome {
     Success(RunSubjectMemoryJobResponse),
+    Deferred,
     Failed {
         tenant_id: String,
         source_id: String,
@@ -122,6 +122,12 @@ async fn run_registered_subject_memory_scopes_internal(
                         completed_result: Some(result),
                     },
                 },
+                Err(error)
+                    if error
+                        == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED =>
+                {
+                    ScopeExecutionOutcome::Deferred
+                }
                 Err(error) => ScopeExecutionOutcome::Failed {
                     tenant_id,
                     source_id,
@@ -138,6 +144,7 @@ async fn run_registered_subject_memory_scopes_internal(
 
     for outcome in execution_results {
         match outcome {
+            ScopeExecutionOutcome::Deferred => {}
             ScopeExecutionOutcome::Success(result) => {
                 if result.generated_memories > 0 {
                     out.generated_scopes += 1;
@@ -178,44 +185,14 @@ pub(crate) async fn run_scope_once(
     db: &Db,
     scope: &EngineSubjectMemoryScope,
 ) -> Result<RunSubjectMemoryJobResponse, String> {
-    let lock_owner = format!("subject-memory:{}", Uuid::new_v4());
-    let acquired = subject_memory_scopes::try_acquire_subject_memory_scope_slot(
+    subject_memory_scopes::touch_subject_memory_scope_run(
         db,
         scope.tenant_id.as_str(),
         scope.source_id.as_str(),
         scope.scope_key.as_str(),
-        lock_owner.as_str(),
-        config.subject_memory_lock_timeout_secs,
     )
     .await?;
-    if !acquired {
-        return Err("subject memory scope slot already occupied".to_string());
-    }
-
-    let result = async {
-        subject_memory_scopes::touch_subject_memory_scope_run(
-            db,
-            scope.tenant_id.as_str(),
-            scope.source_id.as_str(),
-            scope.scope_key.as_str(),
-        )
-        .await?;
-        run_subject_memory_job_internal(config, db, scope_job_request(scope), true).await
-    }
-    .await;
-    let release_result = subject_memory_scopes::release_subject_memory_scope_slot(
-        db,
-        scope.tenant_id.as_str(),
-        scope.source_id.as_str(),
-        scope.scope_key.as_str(),
-        lock_owner.as_str(),
-    )
-    .await;
-    match (result, release_result) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(err), _) => Err(err),
-        (Ok(_), Err(err)) => Err(format!("release subject memory scope slot failed: {err}")),
-    }
+    run_subject_memory_job_internal(config, db, scope_job_request(scope), true).await
 }
 
 pub(crate) async fn scope_has_pending_work(

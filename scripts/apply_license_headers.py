@@ -35,6 +35,7 @@ SOURCE_EXTENSIONS = {
 SPECIAL_SOURCE_NAMES = {
     ".dockerignore",
     ".env.example",
+    "bootstrap.conf.example",
     "Dockerfile",
     "Makefile",
 }

@@ -24,12 +24,12 @@ impl McpCatalogService {
             builtin_prompt_locale: Some(task.mcp_config.builtin_prompt_locale),
             enabled_builtin_kinds: Some(enabled_builtin_kinds),
             workspace_dir: task.mcp_config.workspace_dir,
-            default_remote_server_id: task.mcp_config.default_remote_server_id,
         })
+        .await
         .map(Some)
     }
 
-    pub fn preview_prompt(
+    pub async fn preview_prompt(
         &self,
         request: McpPromptPreviewRequest,
     ) -> Result<McpPromptPreviewResponse, String> {
@@ -60,17 +60,9 @@ impl McpCatalogService {
             builtin_prompt_locale: builtin_prompt_locale.clone(),
             enabled_builtin_kinds: selected_kind_names,
             workspace_dir: normalized_optional(request.workspace_dir),
-            sandbox_enabled: None,
-            sandbox_manager_base_url: None,
-            sandbox_mode: None,
-            permission_profile_id: None,
-            approval_policy: None,
-            approval_reviewer: None,
-            policy_revision: None,
-            additional_writable_roots: Vec::new(),
             requires_execution: true,
+            workspace_changes_required: true,
             execution_service_id: None,
-            default_remote_server_id: normalized_optional(request.default_remote_server_id),
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),
             skill_policy_revision: None,
@@ -82,20 +74,23 @@ impl McpCatalogService {
             Vec::new()
         };
 
-        let mut server_options = BuiltinMcpServerOptions::new(resolve_workspace_dir_with_base(
+        let server_options = BuiltinMcpServerOptions::new(resolve_workspace_dir_with_base(
             self.task_service.config.default_workspace_dir.as_str(),
             mcp_config.workspace_dir.as_deref(),
         ))
         .with_auto_create_task(true);
-        if let Some(remote_server_id) = mcp_config.default_remote_server_id.clone() {
-            server_options = server_options.with_remote_connection_id(remote_server_id);
-        }
         let builtin_servers =
             builtin_servers_from_kinds(selected_builtin_kinds.clone(), &server_options);
+        let tool_result_max_chars = self
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await?
+            .per_result_max_chars;
         let (builtin_registry, builtin_init_errors) = build_builtin_registry(
             &builtin_servers,
             self.task_service.clone(),
             self.ask_user_prompt_service.clone(),
+            tool_result_max_chars,
         );
         if !builtin_init_errors.is_empty() {
             return Err(format!(
@@ -106,6 +101,7 @@ impl McpCatalogService {
         let executor = McpExecutorBuilder::new()
             .with_builtin_servers(builtin_servers)
             .with_builtin_registry(builtin_registry)
+            .with_tool_result_max_chars(tool_result_max_chars)
             .build_builtin_only()?;
         let locale = BuiltinMcpPromptLocale::from_key(Some(&builtin_prompt_locale));
         let build = match builtin_prompt_mode {
@@ -181,25 +177,12 @@ mod tests {
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1_000,
             default_tool_results_model_total_max_chars: 2_000,
-            default_execution_environment_mode: "local".to_string(),
-            default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_client_id: None,
-            sandbox_manager_client_key: None,
-            default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
-            local_connector_internal_api_secret: None,
-            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-            local_connector_http_client: reqwest::Client::new(),
-            local_connector_service_request_timeout: Duration::from_millis(5_000),
-            plugin_relay_request_timeout: Duration::from_millis(60_000),
-            plugin_hook_relay_timeout: Duration::from_millis(330_000),
-            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1_000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -237,8 +220,8 @@ mod tests {
                 builtin_prompt_locale: Some(BuiltinMcpPromptLocale::DEFAULT_KEY.to_string()),
                 enabled_builtin_kinds: None,
                 workspace_dir: None,
-                default_remote_server_id: None,
             })
+            .await
             .expect("preview prompt");
 
         assert!(!preview

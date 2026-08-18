@@ -9,11 +9,13 @@ const ASSISTANT_BUBBLE_COLLAPSED_HEIGHT = 520;
 
 interface AssistantMessageBubbleProps {
   children: React.ReactNode;
+  expandSignal?: number;
   messageId: string;
 }
 
 export const AssistantMessageBubble: React.FC<AssistantMessageBubbleProps> = ({
   children,
+  expandSignal = 0,
   messageId,
 }) => {
   const { t } = useI18n();
@@ -24,6 +26,12 @@ export const AssistantMessageBubble: React.FC<AssistantMessageBubbleProps> = ({
   useEffect(() => {
     setExpanded(false);
   }, [messageId]);
+
+  useEffect(() => {
+    if (expandSignal > 0) {
+      setExpanded(true);
+    }
+  }, [expandSignal]);
 
   useEffect(() => {
     const node = contentRef.current;

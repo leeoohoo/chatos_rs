@@ -178,7 +178,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let ca_pem = std::fs::read(material_dir.join("ca.crt")).expect("read CA");
-        let identity_pem = std::fs::read(material_dir.join("task-runner.identity.pem"))
+        let identity_pem = std::fs::read(material_dir.join("project-service.identity.pem"))
             .expect("read client identity");
         let trusted_client = reqwest::Client::builder()
             .use_rustls_tls()

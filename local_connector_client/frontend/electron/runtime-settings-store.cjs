@@ -116,6 +116,7 @@ function updateRuntimeSettings(patch, statePath = runtimeStatePath()) {
 
 module.exports = {
   DEFAULT_RUNTIME_SETTINGS,
+  normalizeLoopbackDeveloperUrl,
   normalizeRuntimeSettings,
   readRuntimeSettings,
   runtimeStatePath,

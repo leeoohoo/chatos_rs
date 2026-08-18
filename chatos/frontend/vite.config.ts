@@ -191,7 +191,9 @@ export default defineConfig({
       ),
     },
     sourcemap: false,
-    chunkSizeWarningLimit: 600,
+    // Mermaid parsers and the main application shell are intentionally split into
+    // stable cacheable chunks; keep the warning budget aligned with that layout.
+    chunkSizeWarningLimit: 1_100,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -287,6 +289,12 @@ export default defineConfig({
     strictPort: true,
     open: true,
     proxy: {
+      '/api/chatos': {
+        target: 'http://localhost:3997',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (path) => path.replace(/^\/api\/chatos/, '/api'),
+      },
       '/api': {
         target: 'http://localhost:3997',
         changeOrigin: true,

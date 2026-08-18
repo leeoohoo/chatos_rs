@@ -69,7 +69,6 @@ impl TaskRunnerCapabilityPolicy {
                     })
                     .collect::<BTreeMap<_, _>>();
                 let execution_type = plugin_execution_type(component_hosts.values().copied());
-                let local_portable_execution = self.portable_uses_local;
                 let components = plugin
                     .components
                     .iter()
@@ -78,11 +77,6 @@ impl TaskRunnerCapabilityPolicy {
                         let snapshot = plugin.component_snapshots.iter().find(|snapshot| {
                             snapshot.component.component_key == component.component.component_key
                         });
-                        let uses_local = component.component.execution_host
-                            == PluginExecutionHost::Local
-                            || (component.component.execution_host
-                                == PluginExecutionHost::Portable
-                                && local_portable_execution);
                         SelectablePluginComponentView {
                             component_key: component.component.component_key.clone(),
                             kind: component.component.kind,
@@ -92,11 +86,7 @@ impl TaskRunnerCapabilityPolicy {
                             reason: component.reason.clone(),
                             content_sha256: snapshot
                                 .map(|snapshot| snapshot.content_sha256.clone()),
-                            prepare_provider: if uses_local {
-                                "local_connector".to_string()
-                            } else {
-                                "task_runner_cloud".to_string()
-                            },
+                            prepare_provider: "mcp_management".to_string(),
                             requires_workspace: component
                                 .component
                                 .permissions
@@ -117,10 +107,7 @@ impl TaskRunnerCapabilityPolicy {
                         .installation
                         .as_ref()
                         .map(|installation| installation.device_id.clone()),
-                    requires_device: component_hosts.values().any(|host| {
-                        *host == PluginExecutionHost::Local
-                            || (*host == PluginExecutionHost::Portable && local_portable_execution)
-                    }),
+                    requires_device: false,
                     execution_type,
                     component_hosts,
                     component_keys: plugin

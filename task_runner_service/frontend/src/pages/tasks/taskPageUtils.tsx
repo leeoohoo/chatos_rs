@@ -6,9 +6,7 @@ import { Typography } from 'antd';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  RemoteServerRecord,
   TaskRecord,
-  TaskRunEventRecord,
   TaskRunRecord,
   TaskProfile,
   TaskScheduleConfig,
@@ -17,16 +15,6 @@ import type {
   AskUserPromptStatus,
   UpdateTaskPayload,
 } from '../../types';
-import {
-  isRemoteToolName,
-  payloadAsOptionalNumber,
-  payloadAsOptionalString,
-  payloadAsRecord,
-  summarizeRemoteOperationStats,
-  type RemoteOperationStats,
-} from '../shared/remoteOperationUtils';
-
-export { formatRemoteEndpoint as formatTaskRemoteEndpoint } from '../shared/remoteOperationUtils';
 
 export type TaskFormValues = {
   title: string;
@@ -250,64 +238,6 @@ export function JsonBlock({ title, value }: { title: string; value: unknown }) {
       </Typography.Paragraph>
     </div>
   );
-}
-
-export type TaskRemoteOperationView = {
-  name: string;
-  success: boolean;
-  connectionId?: string;
-  connectionName?: string;
-  username?: string;
-  host?: string;
-  port?: number;
-  command?: string;
-  path?: string;
-  remoteHost?: string;
-  content?: string;
-  summary?: string;
-};
-
-export type TaskRemoteOperationStats = RemoteOperationStats;
-
-export function collectTaskRemoteOperations(
-  events: TaskRunEventRecord[],
-  remoteServerMap: Map<string, RemoteServerRecord>,
-): TaskRemoteOperationView[] {
-  return events
-    .filter((event) => event.event_type === 'tool_stream')
-    .map((event) => payloadAsRecord(event.payload))
-    .filter((payload): payload is Record<string, unknown> => Boolean(payload))
-    .filter((payload) => isRemoteToolName(payloadAsOptionalString(payload.name) || ''))
-    .map((payload) => {
-      const result = payloadAsRecord(payload.result);
-      const nestedResult = payloadAsRecord(result?.result);
-      const connectionId = payloadAsOptionalString(result?.connection_id);
-      const remoteServer = connectionId ? remoteServerMap.get(connectionId) : undefined;
-      const command = payloadAsOptionalString(result?.command);
-      const path = payloadAsOptionalString(result?.path);
-      const connectionName = payloadAsOptionalString(result?.name) || remoteServer?.name;
-
-      return {
-        name: payloadAsOptionalString(payload.name) || 'unknown_tool',
-        success: Boolean(payload.success) && !Boolean(payload.is_error),
-        connectionId,
-        connectionName,
-        username: payloadAsOptionalString(result?.username) || remoteServer?.username,
-        host: payloadAsOptionalString(result?.host) || remoteServer?.host,
-        port: payloadAsOptionalNumber(result?.port) || remoteServer?.port,
-        command,
-        path,
-        remoteHost: payloadAsOptionalString(nestedResult?.remote_host),
-        content: payloadAsOptionalString(payload.content),
-        summary: command || path || payloadAsOptionalString(payload.content),
-      };
-    });
-}
-
-export function summarizeTaskRemoteOperations(
-  items: TaskRemoteOperationView[],
-): TaskRemoteOperationStats {
-  return summarizeRemoteOperationStats(items);
 }
 
 export function buildSchedulePayload(values: TaskFormValues): TaskScheduleConfig | null {

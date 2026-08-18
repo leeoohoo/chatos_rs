@@ -10,7 +10,7 @@ import { getUserVisiblePath } from '../../lib/domain/filesystem';
 import { useTheme } from '../../hooks/useTheme';
 import EmbeddedTerminalView from '../terminal/EmbeddedTerminalView';
 import { RunEnvironmentDetails } from './projectRunSettingsPanel/RunEnvironmentDetails';
-import { formatRunTargetOptionHint, formatRunTargetSource, getRunStatusLabel, getRunStatusTone, getSandboxStatusText, resolveConfigKindsForTarget } from './projectRunSettingsPanel/model';
+import { formatRunTargetOptionHint, formatRunTargetSource, getRunStatusLabel, getRunStatusTone, resolveConfigKindsForTarget } from './projectRunSettingsPanel/model';
 import type { ProjectRunSettingsPanelProps } from './projectRunSettingsPanel/types';
 
 export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = ({
@@ -33,11 +33,6 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   envPreview,
   environmentHints,
   envVarsPlaceholder,
-  sandboxToggleVisible,
-  sandboxEnabled,
-  sandboxLoading,
-  sandboxSaving,
-  sandboxError,
   showTerminalUi,
   selectedRunTargetId,
   starting,
@@ -61,7 +56,6 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   onSaveCustomToolchain,
   onEnvVarsDraftChange,
   onSaveEnvVarsDraft,
-  onSandboxEnabledChange,
   onRunnerStart,
   onRunnerStop,
   onRunnerRestart,
@@ -97,8 +91,6 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
   const visibleSelectedTargetManifest = selectedTarget?.manifestPath
     ? getUserVisiblePath(selectedTarget.manifestPath, projectRootPath)
     : '';
-  const sandboxToggleDisabled = sandboxLoading || sandboxSaving;
-  const sandboxStatusText = getSandboxStatusText(sandboxLoading, sandboxSaving, sandboxEnabled, t);
 
   return (
     <div className="rounded-lg border border-border bg-card">
@@ -146,50 +138,6 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
       </div>
 
       <div className="space-y-4 p-4">
-        {sandboxToggleVisible && (
-          <div className="rounded border border-border/70 bg-background/50 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground">
-                  {t('runSettings.sandboxExecution')}
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {t('runSettings.sandboxExecutionDescription')}
-                </div>
-              </div>
-              <label
-                className={[
-                  'inline-flex shrink-0 items-center gap-2 text-xs text-muted-foreground',
-                  sandboxToggleDisabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer',
-                ].join(' ')}
-              >
-                <span>{sandboxStatusText}</span>
-                <input
-                  type="checkbox"
-                  className="peer sr-only"
-                  checked={sandboxEnabled === true}
-                  disabled={sandboxToggleDisabled}
-                  aria-label={t('runSettings.sandboxExecution')}
-                  onChange={(event) => onSandboxEnabledChange(event.target.checked)}
-                />
-                <span
-                  className={[
-                    'relative h-6 w-11 rounded-full border transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-background after:shadow after:transition-transform peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-primary/40',
-                    sandboxEnabled
-                      ? 'border-primary bg-primary after:translate-x-5'
-                      : 'border-border bg-muted',
-                  ].join(' ')}
-                />
-              </label>
-            </div>
-            {sandboxError && (
-              <div className="mt-2 text-xs text-destructive">
-                {sandboxError}
-              </div>
-            )}
-          </div>
-        )}
-
         {runnerDiagnosis && (
           <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3">
             <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.latestRunDiagnosis')}</div>

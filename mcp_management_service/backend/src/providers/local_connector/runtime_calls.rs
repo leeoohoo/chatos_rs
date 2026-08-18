@@ -11,6 +11,7 @@ use crate::runtime::RuntimeSessionSnapshot;
 
 use super::super::project_service::decode_jsonrpc_response;
 use super::{LocalConnectorProvider, ProviderCallError};
+use crate::providers::managed_tool_call_params;
 use chatos_mcp_management_sdk::ResolvedMcpRoute;
 
 impl LocalConnectorProvider {
@@ -28,10 +29,11 @@ impl LocalConnectorProvider {
                 "jsonrpc": "2.0",
                 "id": invocation_id,
                 "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
+                "params": managed_tool_call_params(
+                    original_tool_name,
+                    arguments,
+                    snapshot.tool_result_max_chars,
+                )
             }))
             .timeout(self.request_timeout)
             .send()

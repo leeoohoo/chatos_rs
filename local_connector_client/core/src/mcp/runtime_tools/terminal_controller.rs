@@ -30,6 +30,7 @@ pub(crate) async fn call_local_terminal_controller_tool(
     workspace: &WorkspaceState,
     tool_name: &str,
     mut arguments: Value,
+    tool_result_max_chars: Option<usize>,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Value> {
     let timeout_ms = arguments
@@ -101,7 +102,7 @@ pub(crate) async fn call_local_terminal_controller_tool(
     let service =
         local_terminal_controller_service_for_root(project_root.as_path(), request, timeout_ms)?;
     let result = service
-        .call_tool(tool_name, arguments, None)
+        .call_tool_with_max_output_chars(tool_name, arguments, None, tool_result_max_chars)
         .map_err(|err| anyhow!(err))?;
     if tool_name != "execute_command" {
         return Ok(result);

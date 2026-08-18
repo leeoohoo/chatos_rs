@@ -29,6 +29,7 @@ pub struct McpExecutor {
     allowed_tool_names: Option<BTreeSet<String>>,
     declared_allowed_tool_names: BTreeSet<String>,
     tool_lifecycle_hook: Option<Arc<dyn ToolLifecycleHook>>,
+    tool_result_max_chars: Option<usize>,
 }
 
 mod execution;
@@ -53,6 +54,7 @@ impl McpExecutor {
             None,
             BTreeSet::new(),
             None,
+            None,
         )
     }
 
@@ -64,6 +66,7 @@ impl McpExecutor {
         allowed_tool_names: Option<BTreeSet<String>>,
         declared_allowed_tool_names: BTreeSet<String>,
         tool_lifecycle_hook: Option<Arc<dyn ToolLifecycleHook>>,
+        tool_result_max_chars: Option<usize>,
     ) -> Self {
         Self {
             http_servers,
@@ -77,6 +80,7 @@ impl McpExecutor {
             allowed_tool_names,
             declared_allowed_tool_names,
             tool_lifecycle_hook,
+            tool_result_max_chars,
         }
     }
 
@@ -562,6 +566,7 @@ mod tests {
             BuiltinToolRegistry::new(),
             Some(BTreeSet::from(["remote_read".to_string()])),
             BTreeSet::from(["remote_read".to_string()]),
+            None,
             None,
         );
         executor.tool_metadata.insert(

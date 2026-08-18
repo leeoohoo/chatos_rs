@@ -225,6 +225,7 @@ export interface SystemAgentRecord extends PluginComponentOwnership {
 export interface AgentProviderPromptRecord {
   id: string;
   agent_key: string;
+  profile: string;
   vendor: AgentPromptVendor;
   draft_content?: string | null;
   published_content?: string | null;
@@ -242,6 +243,7 @@ export interface AgentProviderPromptRecord {
 }
 
 export interface AgentPromptVersionPrompt {
+  profile: string;
   vendor: AgentPromptVendor;
   content: string;
   revision: number;
@@ -254,12 +256,14 @@ export interface AgentPromptVersionRecord {
   agent_key: string;
   bundle_version: number;
   changed_vendor?: AgentPromptVendor | null;
+  changed_profile?: string | null;
   prompts: AgentPromptVersionPrompt[];
   published_by: string;
   published_at: string;
 }
 
 export interface AgentPromptVersionVendorSummary {
+  profile: string;
   vendor: AgentPromptVendor;
   revision: number;
   checksum: string;
@@ -270,6 +274,7 @@ export interface AgentPromptVersionSummary {
   agent_key: string;
   bundle_version: number;
   changed_vendor?: AgentPromptVendor | null;
+  changed_profile?: string | null;
   vendor_revisions: AgentPromptVersionVendorSummary[];
   published_by: string;
   published_at: string;
@@ -277,6 +282,7 @@ export interface AgentPromptVersionSummary {
 
 export interface GenerateAgentPromptResponse {
   agent_key: string;
+  profile: string;
   vendor: AgentPromptVendor;
   model_config_id: string;
   provider: string;
@@ -289,6 +295,9 @@ export interface AgentPromptCompleteness {
   required_vendors: AgentPromptVendor[];
   published_vendors: AgentPromptVendor[];
   missing_vendors: AgentPromptVendor[];
+  required_profiles: string[];
+  published_prompt_count: number;
+  required_prompt_count: number;
   ready: boolean;
 }
 

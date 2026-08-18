@@ -5,21 +5,14 @@ use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Context, Result};
 use chatos_sandbox_contract::{
-    EffectiveSandboxPolicy, NetworkPermissionPolicy, PermissionProfileId, SandboxBackendKind,
-    SandboxBackendReadinessStatus,
+    EffectiveSandboxPolicy, PermissionProfileId, SandboxBackendKind, SandboxBackendReadinessStatus,
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::Method;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::config::optional_env;
 use crate::relay::RelayRequest;
-use crate::sandbox::docker::{
-    destroy_local_sandbox_container, ensure_docker_running, published_local_sandbox_agent_endpoint,
-    start_local_sandbox_container, wait_for_local_sandbox_agent,
-};
-use crate::sandbox::images::local_sandbox_image_ref_for_id;
 use crate::sandbox::process::{native_process_sandbox_capability, start_native_sandbox_process};
 use crate::sandbox::project_permissions::load_trusted_project_permission_document;
 use crate::sandbox::types::{
@@ -30,9 +23,7 @@ use crate::sandbox::workspace::{
     local_sandbox_request_body, local_sandbox_run_workspace, prepare_local_sandbox_workspace,
 };
 use crate::workspace::paths::{resolve_request_workspace_dir, workspace_for_request};
-use crate::{
-    local_now_rfc3339, LocalState, DEFAULT_LOCAL_SANDBOX_IMAGE, LOCAL_SANDBOX_STATUS_READY,
-};
+use crate::{local_now_rfc3339, LocalState, LOCAL_SANDBOX_STATUS_READY};
 
 const DEFAULT_LOCAL_SANDBOX_LEASE_TTL_SECONDS: u64 = 7_200;
 const MIN_LOCAL_SANDBOX_LEASE_TTL_SECONDS: u64 = 60;
@@ -41,7 +32,6 @@ const MAX_LOCAL_SANDBOX_LEASE_TTL_SECONDS: u64 = 24 * 60 * 60;
 pub(crate) async fn create_local_sandbox_lease(
     request: &RelayRequest,
     state: &LocalState,
-    http_client: &reqwest::Client,
     sandbox_runtime: &LocalSandboxRuntime,
 ) -> Result<(u16, BTreeMap<String, String>, Value)> {
     if !state.sandbox.enabled {
@@ -63,7 +53,6 @@ pub(crate) async fn create_local_sandbox_lease(
     let effective_policy = selection.policy;
     let lease_id = format!("lease-{}", Uuid::new_v4());
     let sandbox_id = format!("sandbox-{}", Uuid::new_v4());
-    let agent_token = format!("sat-{lease_id}");
     let run_workspace = local_sandbox_run_workspace(workspace, input.run_id.as_str())?;
     let response_seed = json!({ "run_workspace": run_workspace.to_string_lossy() });
     prepare_local_sandbox_workspace(request, state, &response_seed)?;
@@ -79,79 +68,33 @@ pub(crate) async fn create_local_sandbox_lease(
     resource_limits.disk_mb = resource_limits.disk_mb.max(128);
     resource_limits.max_processes = resource_limits.max_processes.max(16);
     let requested_network = input.network.unwrap_or_default();
-    let (backend_id, agent_endpoint, image_id, image_ref, network) = match effective_policy
-        .sandbox_mode
-    {
-        SandboxBackendKind::Docker => {
-            ensure_docker_running().await?;
-            let network = normalized_local_docker_network(
-                &requested_network,
-                &effective_permissions.network,
-            )?;
-            let image_ref =
-                select_local_sandbox_image_ref(state, sandbox_runtime, input.image_id.as_deref())
-                    .await;
-            let backend_id = start_local_sandbox_container(
-                sandbox_id.as_str(),
-                run_workspace.as_path(),
-                image_ref.as_str(),
-                agent_token.as_str(),
-                &resource_limits,
-                &network,
-                effective_policy.permission_profile_id,
-            )
-            .await?;
-            let Some(agent_endpoint) =
-                published_local_sandbox_agent_endpoint(sandbox_id.as_str()).await
-            else {
-                let _ = destroy_local_sandbox_container(sandbox_id.as_str()).await;
-                return Err(anyhow!("local sandbox agent port was not published"));
-            };
-            if let Err(err) =
-                wait_for_local_sandbox_agent(http_client, agent_endpoint.as_str()).await
-            {
-                let _ = destroy_local_sandbox_container(sandbox_id.as_str()).await;
-                return Err(err);
-            }
-            (
-                backend_id,
-                Some(agent_endpoint),
-                input.image_id.clone(),
-                Some(image_ref),
-                network,
-            )
-        }
-        SandboxBackendKind::LocalProcess => {
-            let capability = native_process_sandbox_capability().await;
-            if capability.status != SandboxBackendReadinessStatus::Ready {
-                return Ok((
-                    409,
-                    BTreeMap::new(),
-                    json!({
-                        "error": capability.message,
-                        "code": "sandbox_backend_not_ready",
-                        "requested_backend": effective_policy.sandbox_mode,
-                    }),
-                ));
-            }
-            let network = normalized_native_process_network(
-                &requested_network,
-                effective_policy.permission_profile_id,
-            )?;
-            let backend_id = start_native_sandbox_process(
-                sandbox_runtime,
-                sandbox_id.as_str(),
-                run_workspace.as_path(),
-                &effective_policy,
-                &effective_permissions,
-                &resource_limits,
-                input.project_id.as_str(),
-                input.user_id.as_str(),
-            )
-            .await?;
-            (backend_id, None, None, None, network)
-        }
-    };
+    let capability = native_process_sandbox_capability().await;
+    if capability.status != SandboxBackendReadinessStatus::Ready {
+        return Ok((
+            409,
+            BTreeMap::new(),
+            json!({
+                "error": capability.message,
+                "code": "sandbox_backend_not_ready",
+                "requested_backend": SandboxBackendKind::LocalProcess,
+            }),
+        ));
+    }
+    let network = normalized_native_process_network(
+        &requested_network,
+        effective_policy.permission_profile_id,
+    )?;
+    let backend_id = start_native_sandbox_process(
+        sandbox_runtime,
+        sandbox_id.as_str(),
+        run_workspace.as_path(),
+        &effective_policy,
+        &effective_permissions,
+        &resource_limits,
+        input.project_id.as_str(),
+        input.user_id.as_str(),
+    )
+    .await?;
     let now = local_now_rfc3339();
     let ttl_seconds = normalized_local_sandbox_lease_ttl_seconds(input.ttl_seconds);
     let expires_at = (Utc::now() + ChronoDuration::seconds(ttl_seconds as i64)).to_rfc3339();
@@ -166,11 +109,7 @@ pub(crate) async fn create_local_sandbox_lease(
         run_workspace: run_workspace.to_string_lossy().to_string(),
         backend: effective_policy.sandbox_mode.as_str().to_string(),
         backend_id: Some(backend_id),
-        image_id,
-        image_ref,
         status: LOCAL_SANDBOX_STATUS_READY.to_string(),
-        agent_endpoint,
-        agent_token: agent_token.clone(),
         resource_limits,
         network,
         tools: if input.tools.is_empty() {
@@ -204,33 +143,6 @@ fn normalized_local_sandbox_lease_ttl_seconds(requested: Option<u64>) -> u64 {
         )
 }
 
-async fn select_local_sandbox_image_ref(
-    state: &LocalState,
-    sandbox_runtime: &LocalSandboxRuntime,
-    image_id: Option<&str>,
-) -> String {
-    if let Some(image_id) = image_id.filter(|value| *value != "default") {
-        if let Some(job) = sandbox_runtime
-            .jobs
-            .read()
-            .await
-            .iter()
-            .find(|job| job.image_id == image_id && job.status == "succeeded")
-        {
-            return job.image_ref.clone();
-        }
-        if let Some(image_ref) = local_sandbox_image_ref_for_id(state, image_id) {
-            return image_ref;
-        }
-    }
-    state
-        .sandbox
-        .selected_image_ref
-        .clone()
-        .or_else(|| optional_env("LOCAL_CONNECTOR_SANDBOX_DOCKER_IMAGE"))
-        .unwrap_or_else(|| DEFAULT_LOCAL_SANDBOX_IMAGE.to_string())
-}
-
 fn local_sandbox_lease_response(lease: &LocalSandboxLease) -> Value {
     super::cloud_safe_local_sandbox_lease(lease)
 }
@@ -250,23 +162,10 @@ fn local_effective_policy(
         .effective_permission_profile_configuration_with_project(project)
         .map_err(anyhow::Error::msg)?;
     let mut maximum = sandbox.effective_policy_defaults_with_project(project);
-    let mut maximum_profile_name = effective_configuration.default_profile_name;
-    let requested_backend = request.sandbox_mode.unwrap_or(maximum.sandbox_mode);
-    if requested_backend == SandboxBackendKind::Docker {
-        if !maximum_profile_name.starts_with(':') {
-            return Err(anyhow!(
-                "custom permission profile {maximum_profile_name:?} requires the native local-process sandbox and cannot be projected onto Docker without widening or dropping filesystem rules"
-            ));
-        }
-        if !maximum
-            .permission_profile_id
-            .is_no_broader_than(PermissionProfileId::WorkspaceWrite)
-        {
-            maximum.permission_profile_id = PermissionProfileId::WorkspaceWrite;
-            maximum_profile_name = PermissionProfileId::WorkspaceWrite.codex_name().to_string();
-        }
-    }
+    maximum.sandbox_mode = SandboxBackendKind::LocalProcess;
+    let maximum_profile_name = effective_configuration.default_profile_name;
     let mut constrained_request = request.clone();
+    constrained_request.sandbox_mode = Some(SandboxBackendKind::LocalProcess);
     if let Some(requested_profile) = request.permission_profile_id {
         if !effective_configuration
             .configuration
@@ -307,40 +206,6 @@ fn local_effective_policy(
     })
 }
 
-fn normalized_local_docker_network(
-    network: &LocalSandboxNetworkPolicy,
-    permissions: &NetworkPermissionPolicy,
-) -> Result<LocalSandboxNetworkPolicy> {
-    let mode = network.mode.trim();
-    if !mode.is_empty()
-        && !mode.eq_ignore_ascii_case("bridge")
-        && !mode.eq_ignore_ascii_case("none")
-    {
-        return Err(anyhow!(
-            "local Docker sandbox only supports bridge or isolated networking; requested network mode {mode:?} is not allowed"
-        ));
-    }
-    match permissions {
-        NetworkPermissionPolicy::Unrestricted => Ok(LocalSandboxNetworkPolicy {
-            mode: if mode.eq_ignore_ascii_case("none") {
-                "none".to_string()
-            } else {
-                "bridge".to_string()
-            },
-        }),
-        NetworkPermissionPolicy::Restricted { requirements }
-            if requirements.enabled == Some(true) =>
-        {
-            Err(anyhow!(
-                "restricted domain network profiles require the native local-process sandbox; Docker cannot enforce a domain allowlist"
-            ))
-        }
-        NetworkPermissionPolicy::Restricted { .. } => Ok(LocalSandboxNetworkPolicy {
-            mode: "none".to_string(),
-        }),
-    }
-}
-
 fn normalized_native_process_network(
     network: &LocalSandboxNetworkPolicy,
     permission_profile: PermissionProfileId,
@@ -373,8 +238,7 @@ fn normalized_native_process_network(
 mod tests {
     use super::*;
     use chatos_sandbox_contract::{
-        ApprovalPolicy, ApprovalReviewer, CustomPermissionProfile, PermissionProfileId,
-        SandboxBackendKind,
+        ApprovalPolicy, ApprovalReviewer, PermissionProfileId, SandboxBackendKind,
     };
 
     #[test]
@@ -400,7 +264,7 @@ mod tests {
             ..Default::default()
         };
         let request = chatos_sandbox_contract::SandboxLeasePolicyRequest {
-            sandbox_mode: Some(SandboxBackendKind::Docker),
+            sandbox_mode: Some(SandboxBackendKind::LocalProcess),
             permission_profile_id: Some(PermissionProfileId::FullAccess),
             approval_policy: Some(ApprovalPolicy::Never),
             approval_reviewer: Some(ApprovalReviewer::AutoReview),
@@ -412,7 +276,7 @@ mod tests {
             .expect("effective policy")
             .policy;
 
-        assert_eq!(effective.sandbox_mode, SandboxBackendKind::Docker);
+        assert_eq!(effective.sandbox_mode, SandboxBackendKind::LocalProcess);
         assert_eq!(
             effective.permission_profile_id,
             PermissionProfileId::WorkspaceWrite
@@ -426,7 +290,7 @@ mod tests {
     #[test]
     fn local_effective_policy_allows_task_to_request_narrower_limits() {
         let request = chatos_sandbox_contract::SandboxLeasePolicyRequest {
-            sandbox_mode: Some(SandboxBackendKind::Docker),
+            sandbox_mode: Some(SandboxBackendKind::LocalProcess),
             permission_profile_id: Some(PermissionProfileId::ReadOnly),
             approval_policy: Some(ApprovalPolicy::OnRequest),
             approval_reviewer: Some(ApprovalReviewer::User),
@@ -448,99 +312,6 @@ mod tests {
         );
         assert_eq!(effective.approval_policy, ApprovalPolicy::OnRequest);
         assert_eq!(effective.approval_reviewer, ApprovalReviewer::User);
-    }
-
-    #[test]
-    fn local_docker_effective_policy_does_not_claim_full_access() {
-        let state = crate::sandbox::types::LocalSandboxState {
-            default_permission_profile_id: PermissionProfileId::FullAccess,
-            policy_revision: Some("local-revision".to_string()),
-            ..Default::default()
-        };
-        let request = chatos_sandbox_contract::SandboxLeasePolicyRequest {
-            sandbox_mode: Some(SandboxBackendKind::Docker),
-            permission_profile_id: Some(PermissionProfileId::FullAccess),
-            approval_policy: None,
-            approval_reviewer: None,
-            policy_revision: None,
-            additional_writable_roots: Vec::new(),
-        };
-
-        let effective = local_effective_policy(&request, &state, None)
-            .expect("effective policy")
-            .policy;
-
-        assert_eq!(
-            effective.permission_profile_id,
-            PermissionProfileId::WorkspaceWrite
-        );
-        assert_eq!(effective.policy_revision.as_deref(), Some("local-revision"));
-    }
-
-    #[test]
-    fn local_docker_rejects_custom_profile_projection_fail_closed() {
-        let state = crate::sandbox::types::LocalSandboxState {
-            default_backend: SandboxBackendKind::LocalProcess,
-            default_permission_profile_name: Some("project-edit".to_string()),
-            permission_profiles: BTreeMap::from([(
-                "project-edit".to_string(),
-                CustomPermissionProfile {
-                    extends: Some(":workspace".to_string()),
-                    ..Default::default()
-                },
-            )]),
-            ..Default::default()
-        };
-        let request = chatos_sandbox_contract::SandboxLeasePolicyRequest {
-            sandbox_mode: Some(SandboxBackendKind::Docker),
-            ..Default::default()
-        };
-
-        let error = local_effective_policy(&request, &state, None)
-            .expect_err("Docker must not drop custom filesystem rules");
-        assert!(error
-            .to_string()
-            .contains("cannot be projected onto Docker"));
-    }
-
-    #[test]
-    fn local_docker_network_policy_fails_closed_for_restricted_profiles() {
-        let restricted = NetworkPermissionPolicy::Restricted {
-            requirements: Default::default(),
-        };
-        let network = normalized_local_docker_network(
-            &LocalSandboxNetworkPolicy {
-                mode: "bridge".to_string(),
-            },
-            &restricted,
-        )
-        .expect("restricted Docker network");
-        assert_eq!(network.mode, "none");
-
-        let unrestricted = NetworkPermissionPolicy::Unrestricted;
-        let network = normalized_local_docker_network(
-            &LocalSandboxNetworkPolicy {
-                mode: "bridge".to_string(),
-            },
-            &unrestricted,
-        )
-        .expect("unrestricted Docker network");
-        assert_eq!(network.mode, "bridge");
-
-        assert!(normalized_local_docker_network(
-            &LocalSandboxNetworkPolicy {
-                mode: "host".to_string(),
-            },
-            &unrestricted,
-        )
-        .is_err());
-        assert!(normalized_local_docker_network(
-            &LocalSandboxNetworkPolicy {
-                mode: "container:other".to_string(),
-            },
-            &unrestricted,
-        )
-        .is_err());
     }
 
     #[test]

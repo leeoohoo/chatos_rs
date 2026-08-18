@@ -108,6 +108,7 @@ pub(super) async fn create_project_task(
                 due_at: args.due_at,
                 sort_order: args.sort_order,
                 tags: args.tags,
+                owned_paths: normalize_owned_paths(args.owned_paths)?,
                 is_planning_task: args.is_planning_task,
             },
             current_user,
@@ -149,7 +150,10 @@ pub(super) async fn update_project_task(
         }
         None => None,
     };
-    let patch = UpdateProjectWorkItemRequest::from(args.patch);
+    let mut patch = UpdateProjectWorkItemRequest::from(args.patch);
+    if let Some(owned_paths) = patch.owned_paths.take() {
+        patch.owned_paths = Some(normalize_owned_paths(owned_paths)?);
+    }
     ensure_project_task_user_update_status(patch.status)?;
     if let Some(requirement_id) = normalized_optional(patch.requirement_id.clone()) {
         let target_requirement =
@@ -196,6 +200,34 @@ pub(super) async fn update_project_task(
         "project_task": agent_views::project_task(&item),
         "dependencies": dependencies
     })))
+}
+
+fn normalize_owned_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    let mut normalized = paths
+        .into_iter()
+        .map(|path| {
+            let original = path.clone();
+            let path = path.trim().replace('\\', "/");
+            if path.is_empty() || path.starts_with('/') {
+                return Err(format!("owned_paths 必须是仓库相对路径: `{original}`"));
+            }
+            let components = path
+                .split('/')
+                .filter(|component| !component.is_empty())
+                .collect::<Vec<_>>();
+            if components.is_empty()
+                || components
+                    .iter()
+                    .any(|component| matches!(*component, "." | ".."))
+            {
+                return Err(format!("owned_paths 包含非法路径段: `{original}`"));
+            }
+            Ok(components.join("/"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
 }
 
 pub(super) async fn delete_project_task(

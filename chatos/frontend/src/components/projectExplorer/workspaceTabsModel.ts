@@ -3,14 +3,9 @@
 
 import type { WorkspaceTab } from './WorkspaceTabs';
 
-export const resolveVisibleWorkspaceTabs = (
-  isCloudProject: boolean,
-  sandboxEnabled: boolean,
-): WorkspaceTab[] => {
+export const resolveVisibleWorkspaceTabs = (isCloudProject: boolean): WorkspaceTab[] => {
   if (isCloudProject) {
     return ['files', 'team', 'plan', 'sandbox'];
   }
-  return sandboxEnabled
-    ? ['files', 'team', 'plan', 'settings', 'sandbox']
-    : ['files', 'team', 'plan', 'settings'];
+  return ['files', 'team', 'plan', 'settings'];
 };

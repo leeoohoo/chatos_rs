@@ -9,9 +9,40 @@ use serde_json::Value;
 
 use crate::catalog::{contains_tool_name, sort_tools_by_name, tool_name};
 
+pub const TOOL_RESULT_MAX_CHARS_META_KEY: &str = "chatos/toolResultMaxChars";
+pub const TOOL_RESULT_MAX_CHARS_UPPER_BOUND: usize = 10_000_000;
+
 #[derive(Debug, Clone, Default)]
 pub struct McpRequestContext {
     pub metadata: BTreeMap<String, String>,
+}
+
+impl McpRequestContext {
+    pub fn with_tool_call_params(mut self, params: &Value) -> Self {
+        if let Some(max_chars) = tool_result_max_chars_from_params(params) {
+            self.metadata.insert(
+                TOOL_RESULT_MAX_CHARS_META_KEY.to_string(),
+                max_chars.to_string(),
+            );
+        }
+        self
+    }
+
+    pub fn tool_result_max_chars(&self) -> Option<usize> {
+        self.metadata
+            .get(TOOL_RESULT_MAX_CHARS_META_KEY)
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| (1..=TOOL_RESULT_MAX_CHARS_UPPER_BOUND).contains(value))
+    }
+}
+
+pub fn tool_result_max_chars_from_params(params: &Value) -> Option<usize> {
+    params
+        .get("_meta")
+        .and_then(|value| value.get(TOOL_RESULT_MAX_CHARS_META_KEY))
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=TOOL_RESULT_MAX_CHARS_UPPER_BOUND).contains(value))
 }
 
 #[async_trait]

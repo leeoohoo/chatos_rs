@@ -4,10 +4,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::models::TaskScheduleConfig;
-use tracing::warn;
-
 use super::*;
+use crate::models::TaskScheduleConfig;
 
 impl RunService {
     pub(crate) async fn set_project_execution_paused(
@@ -36,16 +34,6 @@ impl RunService {
         if paused {
             return Ok(Vec::new());
         }
-        if let Err(err) = self
-            .enqueue_queued_runs_for_tasks(task_ids.as_slice())
-            .await
-        {
-            warn!(
-                task_count = task_ids.len(),
-                error = err.as_str(),
-                "failed to enqueue resumed queued runs for rabbitmq dispatch"
-            );
-        }
         let mut refreshed_tasks = Vec::with_capacity(task_ids.len());
         for task_id in &task_ids {
             if let Some(task) = self.store.get_task(task_id.as_str()).await? {
@@ -61,12 +49,6 @@ impl RunService {
         tasks: &'a [TaskRecord],
     ) -> Pin<Box<dyn Future<Output = Result<Vec<TaskRunRecord>, String>> + Send + 'a>> {
         Box::pin(async move {
-            for task in tasks
-                .iter()
-                .filter(|task| task.mcp_config.requires_execution)
-            {
-                self.validate_sandbox_route_for_task(task).await?;
-            }
             let activated_at = now_rfc3339();
             let mut activated_tasks = Vec::with_capacity(tasks.len());
             for task in tasks {
@@ -218,6 +200,18 @@ impl RunService {
             if task.status != TaskStatus::Succeeded {
                 return Ok(false);
             }
+            if let Some(last_run_id) = task.last_run_id.as_deref() {
+                let Some(run) = self.store.get_run(last_run_id).await? else {
+                    return Ok(false);
+                };
+                if run
+                    .workspace_execution
+                    .as_ref()
+                    .is_some_and(|execution| !execution.integration_satisfied())
+                {
+                    return Ok(false);
+                }
+            }
         }
         Ok(true)
     }
@@ -249,6 +243,7 @@ impl RunService {
         let Some(mut task) = self.store.get_task(task_id).await? else {
             return Ok(());
         };
+        task.schedule = advance_task_schedule_after_dispatch(&task.schedule, Utc::now())?;
         task.result_summary = normalized_optional(Some(format!("scheduler error: {error}")));
         task.updated_at = now_rfc3339();
         self.store.save_task(task).await?;
@@ -269,6 +264,7 @@ mod tests {
     use crate::store::AppStore;
     use chatos_plugin_management_sdk::TaskPluginConfig;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
 
     fn test_config() -> AppConfig {
         AppConfig {
@@ -297,25 +293,12 @@ mod tests {
             default_task_execution_max_iterations: 2,
             default_tool_result_model_max_chars: 1_000,
             default_tool_results_model_total_max_chars: 2_000,
-            default_execution_environment_mode: "local".to_string(),
-            default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_client_id: None,
-            sandbox_manager_client_key: None,
-            default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
-            local_connector_internal_api_secret: None,
-            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-            local_connector_http_client: reqwest::Client::new(),
-            local_connector_service_request_timeout: Duration::from_millis(5_000),
-            plugin_relay_request_timeout: Duration::from_millis(60_000),
-            plugin_hook_relay_timeout: Duration::from_millis(330_000),
-            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_secs(1),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -348,6 +331,8 @@ mod tests {
             max_output_tokens: None,
             model_request_max_retries: 0,
             thinking_level: None,
+            supports_images: false,
+            supports_reasoning: false,
             supports_responses: true,
             instructions: None,
             request_cwd: None,
@@ -471,5 +456,37 @@ mod tests {
 
         assert!(runs.is_empty());
         assert!(store.list_runs(None).await.expect("runs").is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_contact_async_dispatch_consumes_the_one_shot_schedule() {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        let mut task = ready_task("failed-dispatch");
+        task.schedule.run_at = Some("2026-08-13T16:00:00Z".to_string());
+        task.schedule.next_run_at = task.schedule.run_at.clone();
+        store.save_task(task).await.expect("save task");
+        let service = RunService::new(
+            config,
+            store.clone(),
+            AskUserPromptService::new(store.clone()),
+        );
+
+        service
+            .mark_chatos_async_schedule_failed("failed-dispatch", "missing model")
+            .await
+            .expect("mark dispatch failed");
+
+        let task = store
+            .get_task("failed-dispatch")
+            .await
+            .expect("get task")
+            .expect("task");
+        assert!(task.schedule.next_run_at.is_none());
+        assert!(task.schedule.last_scheduled_at.is_some());
+        assert_eq!(
+            task.result_summary.as_deref(),
+            Some("scheduler error: missing model")
+        );
     }
 }

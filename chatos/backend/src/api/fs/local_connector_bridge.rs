@@ -6,9 +6,8 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::api::local_connectors::{
-    call_local_mcp_tool, call_local_mcp_tool_readonly, create_local_connector_directory,
-    local_connector_root_path, parse_local_connector_root_path, LocalConnectorRootRef,
-    LOCAL_CONNECTOR_BUILTIN_CODE_READ, LOCAL_CONNECTOR_BUILTIN_CODE_WRITE,
+    call_local_workspace_filesystem, local_connector_root_path, parse_local_connector_root_path,
+    LocalConnectorRootRef,
 };
 
 pub(super) async fn list_entries(
@@ -18,13 +17,10 @@ pub(super) async fn list_entries(
     let root_ref = parse_local_connector_root_path(raw_path)?;
     let relative_path = local_relative_arg(&root_ref);
     Some(
-        match call_local_mcp_tool_readonly(
+        match call_local_workspace_filesystem(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
-            "list_dir",
-            json!({ "path": relative_path, "max_entries": 1000 }),
+            json!({ "operation": "list", "path": relative_path }),
         )
         .await
         {
@@ -40,23 +36,33 @@ pub(super) async fn search_entries(
     limit: usize,
 ) -> Option<(StatusCode, Json<Value>)> {
     let root_ref = parse_local_connector_root_path(raw_path)?;
-    Some(match find_local_entries(&root_ref, query, limit).await {
-        Ok(value) => local_search_entries_response(&root_ref, value, query),
-        Err(err) => err,
-    })
+    Some(
+        match call_local_workspace_filesystem(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
+            json!({
+                "operation": "search_entries",
+                "path": local_relative_arg(&root_ref),
+                "query": query,
+                "limit": limit,
+            }),
+        )
+        .await
+        {
+            Ok(value) => local_search_entries_response(&root_ref, value, query),
+            Err(err) => err,
+        },
+    )
 }
 
 pub(super) async fn read_file(raw_path: &str) -> Option<(StatusCode, Json<Value>)> {
     let root_ref = parse_local_connector_root_path(raw_path)?;
     let relative_path = local_relative_arg(&root_ref);
     Some(
-        match call_local_mcp_tool_readonly(
+        match call_local_workspace_filesystem(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
-            "read_file_raw",
-            json!({ "path": relative_path, "with_line_numbers": false }),
+            json!({ "operation": "read", "path": relative_path }),
         )
         .await
         {
@@ -74,16 +80,14 @@ pub(super) async fn search_content(
     let root_ref = parse_local_connector_root_path(raw_path)?;
     let relative_path = local_relative_arg(&root_ref);
     Some(
-        match call_local_mcp_tool_readonly(
+        match call_local_workspace_filesystem(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
-            "search_text",
             json!({
+                "operation": "search_content",
                 "path": relative_path,
-                "pattern": query,
-                "max_results": limit,
+                "query": query,
+                "limit": limit,
             }),
         )
         .await
@@ -98,10 +102,10 @@ pub(super) async fn create_dir(parent_path: &str, name: &str) -> Option<(StatusC
     let target = local_child_relative_path(parent_path, name)?;
     let root_ref = parse_local_connector_root_path(parent_path)?;
     Some(
-        match create_local_connector_directory(
+        match call_local_workspace_filesystem(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
-            target.as_str(),
+            json!({ "operation": "create_directory", "path": target }),
         )
         .await
         {
@@ -119,13 +123,13 @@ pub(super) async fn create_file(
     let target = local_child_relative_path(parent_path, name)?;
     let root_ref = parse_local_connector_root_path(parent_path)?;
     Some(
-        match commit_local_connector_edit(
-            &root_ref,
+        match call_local_workspace_filesystem(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
             json!({
-                "kind": "write",
+                "operation": "create_file",
                 "path": target,
                 "content": content,
-                "expected_sha256": null,
             }),
         )
         .await
@@ -144,10 +148,11 @@ pub(super) async fn write_file(raw_path: &str, content: &str) -> Option<(StatusC
         .find(|part| !part.trim().is_empty())
         .unwrap_or("");
     Some(
-        match commit_local_connector_edit(
-            &root_ref,
+        match call_local_workspace_filesystem(
+            root_ref.device_id.as_str(),
+            root_ref.workspace_id.as_str(),
             json!({
-                "kind": "write",
+                "operation": "write_file",
                 "path": relative_path,
                 "content": content,
             }),
@@ -160,118 +165,93 @@ pub(super) async fn write_file(raw_path: &str, content: &str) -> Option<(StatusC
     )
 }
 
-async fn commit_local_connector_edit(
-    root_ref: &LocalConnectorRootRef,
-    mut operation: Value,
-) -> Result<Value, (StatusCode, Json<Value>)> {
-    let target_path = operation
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "path is required" })),
-            )
-        })?
-        .to_string();
-    if operation.get("expected_sha256").is_none() {
-        let expected_sha256 =
-            current_local_connector_revision(root_ref, target_path.as_str()).await?;
-        operation["expected_sha256"] = expected_sha256.map(Value::String).unwrap_or(Value::Null);
-    }
-
-    let opened = call_local_mcp_tool(
-        root_ref.device_id.as_str(),
-        root_ref.workspace_id.as_str(),
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
-        "open_edit_session",
-        json!({}),
-    )
-    .await?;
-    let session_id = opened
-        .pointer("/result/session_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": "Local Connector MCP did not return an edit session id" })),
-            )
-        })?
-        .to_string();
-    let staged = call_local_mcp_tool(
-        root_ref.device_id.as_str(),
-        root_ref.workspace_id.as_str(),
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
-        "stage_edit_batch",
-        json!({
-            "session_id": session_id,
-            "operations": [operation.clone()],
-        }),
-    )
-    .await;
-    if let Err(error) = staged {
-        let _ = call_local_mcp_tool(
+pub(super) async fn delete_entry(
+    raw_path: &str,
+    recursive: bool,
+) -> Option<(StatusCode, Json<Value>)> {
+    let root_ref = parse_local_connector_root_path(raw_path)?;
+    let relative_path = local_relative_arg(&root_ref);
+    Some(
+        match call_local_workspace_filesystem(
             root_ref.device_id.as_str(),
             root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
-            "abort_edit_session",
-            json!({ "session_id": session_id }),
+            json!({
+                "operation": "delete",
+                "path": relative_path,
+                "recursive": recursive,
+            }),
         )
-        .await;
-        return Err(error);
-    }
-    let mut committed = call_local_mcp_tool(
-        root_ref.device_id.as_str(),
-        root_ref.workspace_id.as_str(),
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_CODE_WRITE],
-        "commit_edit_session",
-        json!({ "session_id": session_id }),
+        .await
+        {
+            Ok(value) => local_delete_response(&root_ref, value),
+            Err(err) => err,
+        },
     )
-    .await?;
-    if let Some(result) = committed
-        .as_object_mut()
-        .and_then(|payload| payload.get_mut("result"))
-        .and_then(Value::as_object_mut)
-    {
-        result.insert("path".to_string(), Value::String(target_path));
-        if let Some(content) = operation.get("content").and_then(Value::as_str) {
-            result.insert("bytes".to_string(), json!(content.len()));
-        }
-    }
-    Ok(committed)
 }
 
-async fn current_local_connector_revision(
-    root_ref: &LocalConnectorRootRef,
-    target_path: &str,
-) -> Result<Option<String>, (StatusCode, Json<Value>)> {
-    match call_local_mcp_tool_readonly(
-        root_ref.device_id.as_str(),
-        root_ref.workspace_id.as_str(),
-        None,
-        &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
-        "read_file_raw",
-        json!({ "path": target_path, "with_line_numbers": false }),
-    )
-    .await
-    {
-        Ok(value) if value.get("status").and_then(Value::as_str) == Some("not_found") => Ok(None),
-        Ok(value) => value
-            .get("sha256")
-            .and_then(Value::as_str)
-            .map(|sha| Some(sha.to_string()))
-            .ok_or_else(|| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": "Local Connector MCP read did not return sha256" })),
-                )
-            }),
-        Err(error) => Err(error),
+pub(super) async fn move_entry(
+    source_path: &str,
+    target_parent_path: &str,
+    requested_target_name: Option<&str>,
+    replace_existing: bool,
+) -> Option<(StatusCode, Json<Value>)> {
+    let source_ref = parse_local_connector_root_path(source_path);
+    let target_ref = parse_local_connector_root_path(target_parent_path);
+    if source_ref.is_none() && target_ref.is_none() {
+        return None;
     }
+    let (Some(source_ref), Some(target_ref)) = (source_ref, target_ref) else {
+        return Some((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Local Connector 条目只能在同一工作区内移动" })),
+        ));
+    };
+    if source_ref.device_id != target_ref.device_id
+        || source_ref.workspace_id != target_ref.workspace_id
+    {
+        return Some((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Local Connector 条目只能在同一工作区内移动" })),
+        ));
+    }
+    let source_relative = local_relative_arg(&source_ref);
+    let source_name = source_relative
+        .rsplit('/')
+        .find(|part| !part.trim().is_empty())
+        .unwrap_or_default();
+    let target_name = requested_target_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(source_name);
+    if target_name.is_empty()
+        || target_name == "."
+        || target_name == ".."
+        || target_name.contains('/')
+        || target_name.contains('\\')
+    {
+        return Some((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "目标名称不合法" })),
+        ));
+    }
+    let target_relative = local_child_relative_path(target_parent_path, target_name)?;
+    Some(
+        match call_local_workspace_filesystem(
+            source_ref.device_id.as_str(),
+            source_ref.workspace_id.as_str(),
+            json!({
+                "operation": "move",
+                "source_path": source_relative,
+                "target_path": target_relative,
+                "replace_existing": replace_existing,
+            }),
+        )
+        .await
+        {
+            Ok(value) => local_move_response(&source_ref, value),
+            Err(err) => err,
+        },
+    )
 }
 
 fn local_list_response(
@@ -316,12 +296,16 @@ fn local_list_response(
         left_name.cmp(&right_name)
     });
 
+    let parent = value
+        .get("parent")
+        .and_then(Value::as_str)
+        .map(|parent| logical_path(root_ref, parent));
     (
         StatusCode::OK,
         Json(json!({
             "path": path,
             "display_path": path,
-            "parent": Value::Null,
+            "parent": parent,
             "writable": true,
             "entries": entries,
             "roots": Vec::<Value>::new(),
@@ -390,6 +374,10 @@ fn local_read_response(
         .first_or_text_plain()
         .essence_str()
         .to_string();
+    let is_binary = value
+        .get("is_binary")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     (
         StatusCode::OK,
         Json(json!({
@@ -398,9 +386,9 @@ fn local_read_response(
             "name": name,
             "size": size,
             "content_type": content_type,
-            "is_binary": false,
+            "is_binary": is_binary,
             "writable": true,
-            "modified_at": Value::Null,
+            "modified_at": value.get("modified_at").cloned().unwrap_or(Value::Null),
             "content": content,
             "local_connector": true,
         })),
@@ -603,84 +591,55 @@ fn local_created_dir_response(
     )
 }
 
-async fn find_local_entries(
+fn local_delete_response(
     root_ref: &LocalConnectorRootRef,
-    query: &str,
-    limit: usize,
-) -> Result<Value, (StatusCode, Json<Value>)> {
-    let max_results = limit.max(1);
-    let query_lower = query.trim().to_lowercase();
-    let mut stack = vec![local_relative_arg(root_ref)];
-    let mut matches = Vec::new();
-    let mut visited_dirs = 0usize;
+    value: Value,
+) -> (StatusCode, Json<Value>) {
+    let relative = value
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| root_ref.relative_path.as_deref().unwrap_or("."));
+    let path = logical_path(root_ref, relative);
+    (
+        StatusCode::OK,
+        Json(json!({
+            "path": path,
+            "display_path": path,
+            "is_dir": value.get("is_dir").and_then(Value::as_bool).unwrap_or(false),
+            "recursive": value.get("recursive").and_then(Value::as_bool).unwrap_or(false),
+            "deleted": value.get("deleted").and_then(Value::as_bool).unwrap_or(true),
+            "local_connector": true,
+        })),
+    )
+}
 
-    while let Some(path) = stack.pop() {
-        if matches.len() >= max_results {
-            break;
-        }
-        let value = call_local_mcp_tool_readonly(
-            root_ref.device_id.as_str(),
-            root_ref.workspace_id.as_str(),
-            None,
-            &[LOCAL_CONNECTOR_BUILTIN_CODE_READ],
-            "list_dir",
-            json!({ "path": path, "max_entries": 1000 }),
-        )
-        .await?;
-        visited_dirs += 1;
-        let entries = value
-            .get("entries")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        for entry in entries {
-            let name = entry
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let raw_path = entry
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let path_lower = raw_path.to_lowercase();
-            let name_lower = name.to_lowercase();
-            let is_dir = entry
-                .get("is_dir")
-                .and_then(Value::as_bool)
-                .unwrap_or_else(|| entry.get("type").and_then(Value::as_str) == Some("dir"));
-            if name_lower.contains(query_lower.as_str())
-                || path_lower.contains(query_lower.as_str())
-            {
-                matches.push(entry.clone());
-                if matches.len() >= max_results {
-                    break;
-                }
-            }
-            if is_dir {
-                stack.push(raw_path.to_string());
-            }
-        }
-    }
-
-    matches.sort_by(|left, right| {
-        let left_path = left
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_lowercase();
-        let right_path = right
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_lowercase();
-        left_path.cmp(&right_path)
-    });
-    Ok(json!({
-        "query": query,
-        "matches": matches,
-        "visited_dirs": visited_dirs,
-        "truncated": matches.len() >= max_results,
-    }))
+fn local_move_response(
+    root_ref: &LocalConnectorRootRef,
+    value: Value,
+) -> (StatusCode, Json<Value>) {
+    let from_relative = value
+        .get("from_path")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| root_ref.relative_path.as_deref().unwrap_or("."));
+    let to_relative = value
+        .get("to_path")
+        .and_then(Value::as_str)
+        .unwrap_or(from_relative);
+    let from_path = logical_path(root_ref, from_relative);
+    let to_path = logical_path(root_ref, to_relative);
+    (
+        StatusCode::OK,
+        Json(json!({
+            "from_path": from_path,
+            "to_path": to_path,
+            "display_path": to_path,
+            "name": value.get("name").cloned().unwrap_or(Value::Null),
+            "replaced": value.get("replaced").and_then(Value::as_bool).unwrap_or(false),
+            "is_dir": value.get("is_dir").and_then(Value::as_bool).unwrap_or(false),
+            "moved": value.get("moved").and_then(Value::as_bool).unwrap_or(true),
+            "local_connector": true,
+        })),
+    )
 }
 
 fn local_child_relative_path(parent_path: &str, name: &str) -> Option<String> {

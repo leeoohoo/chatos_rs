@@ -64,24 +64,6 @@ impl AppConfig {
         let default_task_execution_max_iterations = DEFAULT_TASK_RUN_MAX_ITERATIONS;
         let default_tool_result_model_max_chars = DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS;
         let default_tool_results_model_total_max_chars = DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS;
-        let default_execution_environment_mode =
-            crate::models::default_execution_environment_mode();
-        let default_sandbox_manager_base_url =
-            require_config_center_secret("TASK_RUNNER_SANDBOX_MANAGER_BASE_URL")?;
-        require_https_base_url(
-            "TASK_RUNNER_SANDBOX_MANAGER_BASE_URL",
-            default_sandbox_manager_base_url.as_str(),
-        )?;
-        let sandbox_manager_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_secs(1_800)),
-            required_bootstrap_path("SANDBOX_MANAGER_MTLS_CA_CERT_PATH")?.as_path(),
-            required_bootstrap_path("SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
-        let sandbox_manager_client_id = "task-runner".to_string();
-        let sandbox_manager_client_key =
-            require_config_center_secret("TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET")?;
-        let default_sandbox_lease_ttl_seconds =
-            require_config_center_u64("TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS")?.max(60);
         let callback_timeout_ms =
             require_config_center_u64("TASK_RUNNER_CALLBACK_TIMEOUT_MS")?.max(1_000);
         let chatos_callback_url = require_config_center_secret("TASK_RUNNER_CHATOS_CALLBACK_URL")?;
@@ -96,33 +78,6 @@ impl AppConfig {
             required_bootstrap_path("CHATOS_MTLS_CA_CERT_PATH")?.as_path(),
             required_bootstrap_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
-        let local_connector_service_base_url = Some(require_config_center_secret(
-            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-        )?);
-        require_https_base_url(
-            "TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-            local_connector_service_base_url
-                .as_deref()
-                .expect("Local Connector base URL was just initialized"),
-        )?;
-        let local_connector_service_request_timeout_ms =
-            require_config_center_u64("TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")?
-                .max(300);
-        let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
-                local_connector_service_request_timeout_ms,
-            )),
-            required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
-            required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
-        let plugin_relay_timeout_ms =
-            require_config_center_u64("TASK_RUNNER_PLUGIN_RELAY_TIMEOUT_MS")?.clamp(1_000, 120_000);
-        let plugin_hook_relay_timeout_ms =
-            require_config_center_u64("TASK_RUNNER_PLUGIN_HOOK_RELAY_TIMEOUT_MS")?
-                .clamp(45_000, 10 * 60 * 1_000);
-        let plugin_connector_discovery_timeout_ms =
-            require_config_center_u64("TASK_RUNNER_PLUGIN_CONNECTOR_DISCOVERY_TIMEOUT_MS")?
-                .clamp(1_000, 30_000);
         let admin_username = require_config_center_text("TASK_RUNNER_ADMIN_USERNAME")?;
         let admin_password = require_config_center_secret("TASK_RUNNER_ADMIN_PASSWORD")?;
         let user_service_base_url =
@@ -167,10 +122,6 @@ impl AppConfig {
         let user_service_internal_api_secret = Some(require_config_center_secret(
             "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
         )?);
-        let local_connector_internal_api_secret = Some(require_config_center_secret(
-            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        )?);
-
         let config = Self {
             host,
             port,
@@ -207,29 +158,12 @@ impl AppConfig {
             default_task_execution_max_iterations,
             default_tool_result_model_max_chars,
             default_tool_results_model_total_max_chars,
-            default_execution_environment_mode,
-            default_sandbox_manager_base_url,
-            sandbox_manager_http_client,
-            sandbox_manager_client_id: Some(sandbox_manager_client_id),
-            sandbox_manager_client_key: Some(sandbox_manager_client_key),
-            default_sandbox_lease_ttl_seconds,
             chatos_callback_url,
             chatos_callback_http_client,
             internal_api_secret,
             chatos_internal_api_secret,
             mcp_management_internal_api_secret,
             user_service_internal_api_secret,
-            local_connector_internal_api_secret,
-            local_connector_service_base_url,
-            local_connector_http_client,
-            local_connector_service_request_timeout: Duration::from_millis(
-                local_connector_service_request_timeout_ms,
-            ),
-            plugin_relay_request_timeout: Duration::from_millis(plugin_relay_timeout_ms),
-            plugin_hook_relay_timeout: Duration::from_millis(plugin_hook_relay_timeout_ms),
-            plugin_connector_discovery_timeout: Duration::from_millis(
-                plugin_connector_discovery_timeout_ms,
-            ),
             callback_timeout: Duration::from_millis(callback_timeout_ms),
             admin_username,
             admin_password,
@@ -249,11 +183,6 @@ impl AppConfig {
             "TASK_RUNNER_ADMIN_PASSWORD",
             Some(config.admin_password.as_str()),
             &["admin123456"],
-        )?;
-        validate_production_secret(
-            "TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-            config.sandbox_manager_client_key.as_deref(),
-            &["change_me_task_runner_sandbox_manager_secret"],
         )?;
         validate_production_secret(
             "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
@@ -286,15 +215,6 @@ impl AppConfig {
             config.user_service_internal_api_secret.as_deref(),
             &["change_me_user_service_task_runner_secret"],
         )?;
-        validate_production_secret(
-            "TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-            config.local_connector_internal_api_secret.as_deref(),
-            &[
-                "chatos-local-connector-dev-secret",
-                "change_me_task_runner_local_connector_secret",
-            ],
-        )?;
-
         Ok(config)
     }
 }
@@ -359,18 +279,6 @@ fn require_config_center_bool(key: &str) -> Result<bool, String> {
         "0" | "false" | "no" | "off" => Ok(false),
         value => Err(format!("{key} must be a valid boolean, got {value}")),
     }
-}
-
-pub(crate) fn configured_sandbox_base_image_id() -> String {
-    sandbox_base_image_id_from_value(normalized_env("TASK_RUNNER_SANDBOX_BASE_IMAGE_ID").as_deref())
-}
-
-fn sandbox_base_image_id_from_value(value: Option<&str>) -> String {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("default")
-        .to_string()
 }
 
 fn default_worker_id() -> String {

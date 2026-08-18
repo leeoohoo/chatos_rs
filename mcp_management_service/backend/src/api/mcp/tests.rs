@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,17 +12,21 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp_management_sdk::{
     ExecutionPlane, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    RuntimeToolDescriptor, SandboxProviderKind, WorkspaceProviderKind,
+    RuntimeToolDescriptor, RuntimeWorkspaceRouteTarget, SandboxExecutionTarget,
+    SandboxProviderKind, WorkspaceProviderKind,
 };
+use chatos_mcp_service::{McpToolCallCommandItem, METHOD_TOOLS_CALL};
 use tokio::sync::{mpsc, Notify};
 
 fn snapshot() -> RuntimeSessionSnapshot {
+    let expires_at_unix = chrono::Utc::now().timestamp() + 3_600;
     RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
         caller_service: "task-runner".to_string(),
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
             .as_str()
             .to_string(),
@@ -29,14 +34,17 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: Some("device-1".to_string()),
         run_id: Some("run-1".to_string()),
+        execution_group_id: Some("group-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
         source_session_id: Some("source-session-1".to_string()),
         source_user_message_id: Some("source-message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
+        tool_result_max_chars: Some(40_000),
         expected_project_task_ids: vec!["project-task-1".to_string()],
-        sandbox_target: None,
+        workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
@@ -74,8 +82,10 @@ fn snapshot() -> RuntimeSessionSnapshot {
         plugin_cloud_tool_component_bindings: Default::default(),
         external_http_bindings: Default::default(),
         cloud_stdio_bindings: Default::default(),
-        expires_at: "2099-01-01T00:00:00Z".to_string(),
-        expires_at_unix: i64::MAX,
+        expires_at: chrono::DateTime::from_timestamp(expires_at_unix, 0)
+            .unwrap()
+            .to_rfc3339(),
+        expires_at_unix,
     }
 }
 
@@ -103,6 +113,30 @@ fn ask_user_snapshot() -> RuntimeSessionSnapshot {
         }),
     }];
     snapshot
+}
+
+#[test]
+fn explicit_workspace_route_is_the_execution_scope_provider_authority() {
+    let mut snapshot = snapshot();
+    assert_eq!(
+        snapshot.execution_scope_provider(),
+        WorkspaceProviderKind::Harness
+    );
+    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::CloudSandbox {
+        target: SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        },
+    });
+
+    assert_eq!(
+        snapshot.execution_scope_provider(),
+        WorkspaceProviderKind::CloudSandbox
+    );
 }
 
 fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGrantClaims {
@@ -139,11 +173,91 @@ fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGra
 }
 
 async fn persist_runtime_session(state: &AppState, snapshot: &RuntimeSessionSnapshot) {
+    if let Some(run_id) = snapshot.run_id.as_deref() {
+        state
+            .runtime_execution_scopes
+            .attach_session(
+                snapshot.owner_user_id.as_str(),
+                snapshot.project_id.as_str(),
+                run_id,
+                snapshot.execution_scope_provider(),
+                snapshot.session_id.as_str(),
+                snapshot.expires_at_unix,
+            )
+            .await
+            .expect("attach test Runtime Session execution scope");
+    }
     state
         .runtime_sessions
         .insert(snapshot.clone())
         .await
         .expect("persist test Runtime Session");
+}
+
+fn tool_call_command(
+    _state: &AppState,
+    snapshot: &RuntimeSessionSnapshot,
+    calls: Vec<McpToolCallCommandItem>,
+) -> McpToolCallCommand {
+    McpToolCallCommand {
+        owner_service: snapshot.caller_service.clone(),
+        agent_run_id: snapshot
+            .run_id
+            .clone()
+            .unwrap_or_else(|| "run-1".to_string()),
+        agent_key: snapshot.agent_key.clone(),
+        ordering_lane_key: "task:task-1".to_string(),
+        lane_seq: 1,
+        generation: 1,
+        source_step_seq: 1,
+        batch_id: "batch-1".to_string(),
+        mcp_runtime_session_ref: snapshot.session_id.clone(),
+        result_routing_key: "test.mcp.results".to_string(),
+        calls,
+        delivery_attempt: 1,
+    }
+}
+
+#[tokio::test]
+async fn cloud_sandbox_route_and_harness_project_share_one_execution_scope_authority() {
+    let state = AppState::new(crate::config::AppConfig::test())
+        .await
+        .unwrap();
+    let mut snapshot = snapshot();
+    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::CloudSandbox {
+        target: SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        },
+    });
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "sandbox-invocation".to_string(),
+            tool_call_id: "sandbox-call".to_string(),
+            call_index: 0,
+            name: "demo_search".to_string(),
+            arguments: json!({}),
+            preflight_error: None,
+        }],
+    );
+
+    let batch = register_tool_call_command(&state, &command)
+        .await
+        .expect("Cloud Sandbox batch must enqueue through the explicit route scope")
+        .record;
+
+    assert_eq!(batch.status, RuntimeToolBatchStatus::Active);
+    assert_eq!(
+        state.runtime_execution_scopes.queued_invocation_ids().await,
+        vec!["sandbox-invocation".to_string()]
+    );
 }
 
 #[tokio::test]
@@ -160,7 +274,6 @@ async fn tools_list_returns_only_session_namespaced_tools() {
         },
         &snapshot(),
         &state,
-        Ok(None),
     )
     .await;
     assert_eq!(
@@ -174,40 +287,7 @@ async fn tools_list_returns_only_session_namespaced_tools() {
 }
 
 #[tokio::test]
-async fn tool_call_rejects_a_closed_session_before_provider_execution() {
-    let state = AppState::new(crate::config::AppConfig::test())
-        .await
-        .unwrap();
-    let snapshot = snapshot();
-
-    let response = handle_session_request(
-        JsonRpcRequest {
-            jsonrpc: Some("2.0".to_string()),
-            id: Some(json!("closed-session-request")),
-            method: METHOD_TOOLS_CALL.to_string(),
-            params: json!({"name": "demo_search", "arguments": {}}),
-        },
-        &snapshot,
-        &state,
-        Ok(None),
-    )
-    .await;
-
-    assert_eq!(
-        response.error.as_ref().map(|error| error.code),
-        Some(MCP_ERROR_AUTH_REQUIRED)
-    );
-    assert_eq!(
-        response.error.as_ref().map(|error| error.message.as_str()),
-        Some("runtime session was closed or has expired")
-    );
-    let stats = state.runtime_invocations.stats().await.unwrap();
-    assert_eq!(stats.registration.session_closed, 1);
-    assert_eq!(stats.total_active, 0);
-}
-
-#[tokio::test]
-async fn tools_call_dispatches_the_original_name_to_project_service() {
+async fn single_tool_command_dispatches_and_returns_one_result() {
     async fn provider(Json(request): Json<Value>) -> Json<Value> {
         Json(json!({
             "jsonrpc": "2.0",
@@ -251,23 +331,28 @@ async fn tools_call_dispatches_the_original_name_to_project_service() {
         }),
     }];
     persist_runtime_session(&state, &snapshot).await;
-    let response = handle_session_request(
-        JsonRpcRequest {
-            jsonrpc: Some("2.0".to_string()),
-            id: Some(json!(2)),
-            method: METHOD_TOOLS_CALL.to_string(),
-            params: json!({
-                "name": "project_management_service_list_requirements",
-                "arguments": {"status": "draft"}
-            }),
-        },
-        &snapshot,
+    let command = tool_call_command(
         &state,
-        Ok(None),
-    )
-    .await;
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "invocation-1".to_string(),
+            tool_call_id: "call-1".to_string(),
+            call_index: 0,
+            name: "project_management_service_list_requirements".to_string(),
+            arguments: json!({"status": "draft"}),
+            preflight_error: None,
+        }],
+    );
+    let response = execute_tool_call_command(&state, &command).await.unwrap();
+    assert_eq!(response.items.len(), 1);
     assert_eq!(
-        response.result,
+        response.items[0].status,
+        McpToolCallResultStatus::Completed,
+        "{:?}",
+        response.items[0]
+    );
+    assert_eq!(
+        response.items[0].result,
         Some(json!({
             "called": "list_requirements",
             "arguments": {"status": "draft"}
@@ -277,26 +362,39 @@ async fn tools_call_dispatches_the_original_name_to_project_service() {
 }
 
 #[tokio::test]
-async fn long_running_tool_returns_accepted_and_persists_async_result() {
-    async fn provider(Json(request): Json<Value>) -> Json<Value> {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+async fn duplicate_ready_delivery_returns_the_durable_result_without_executing_twice() {
+    #[derive(Clone)]
+    struct ProviderState {
+        calls: Arc<AtomicUsize>,
+    }
+
+    async fn provider(
+        State(state): State<ProviderState>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        state.calls.fetch_add(1, Ordering::SeqCst);
         Json(json!({
             "jsonrpc": "2.0",
             "id": request.get("id").cloned().unwrap_or(Value::Null),
-            "result": {
-                "called": request.pointer("/params/name"),
-                "arguments": request.pointer("/params/arguments"),
-                "async": true,
-            }
+            "result": {"durable": true}
         }))
     }
 
+    let calls = Arc::new(AtomicUsize::new(0));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let server_calls = Arc::clone(&calls);
     let server = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/mcp", post(provider)))
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/mcp", post(provider))
+                .with_state(ProviderState {
+                    calls: server_calls,
+                }),
+        )
+        .await
+        .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
     config.project_service_base_url = format!("http://{address}");
@@ -319,66 +417,403 @@ async fn long_running_tool_returns_accepted_and_persists_async_result() {
         resource_id: "builtin_project_management".to_string(),
         definition: json!({
             "name": "project_management_service_list_requirements",
-            "inputSchema": {"type": "object"},
-            "annotations": {"x-chatos-preferAsync": true}
+            "inputSchema": {"type": "object"}
         }),
     }];
     persist_runtime_session(&state, &snapshot).await;
-    let response = handle_session_request(
-        JsonRpcRequest {
-            jsonrpc: Some("2.0".to_string()),
-            id: Some(json!("async-call-1")),
-            method: METHOD_TOOLS_CALL.to_string(),
-            params: json!({
-                "name": "project_management_service_list_requirements",
-                "arguments": {"status": "draft"}
-            }),
-        },
-        &snapshot,
+    let command = tool_call_command(
         &state,
-        Ok(Some("test.mcp.results".to_string())),
-    )
-    .await;
-    let invocation_id = response
-        .result
-        .as_ref()
-        .and_then(|value| value.get("invocation_id"))
-        .and_then(Value::as_str)
-        .unwrap()
-        .to_string();
-    assert_eq!(
-        response.result,
-        Some(json!({
-            "status": "accepted",
-            "invocation_id": invocation_id,
-            "queued": true,
-        }))
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "invocation-duplicate-ready".to_string(),
+            tool_call_id: "call-duplicate-ready".to_string(),
+            call_index: 0,
+            name: "project_management_service_list_requirements".to_string(),
+            arguments: json!({"status": "draft"}),
+            preflight_error: None,
+        }],
     );
-    let completed = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if let Some(record) = state
-                .runtime_invocations
-                .get_for_caller(invocation_id.as_str(), snapshot.caller_service.as_str())
-                .await
-                .unwrap()
-            {
-                if record.status == RuntimeInvocationStatus::Completed {
-                    break record;
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let first = execute_tool_call_command(&state, &command).await.unwrap();
+    let duplicate = execute_tool_call_command(&state, &command).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(first.items, duplicate.items);
+    assert_eq!(
+        duplicate.items[0].status,
+        McpToolCallResultStatus::Completed
+    );
+    assert_eq!(duplicate.items[0].result, Some(json!({"durable": true})));
+    server.abort();
+}
+
+#[tokio::test]
+async fn tool_batch_executes_one_run_in_model_order() {
+    #[derive(Clone)]
+    struct Capture {
+        started: mpsc::UnboundedSender<String>,
+        release_first: Arc<Notify>,
+    }
+
+    async fn provider(State(capture): State<Capture>, Json(request): Json<Value>) -> Json<Value> {
+        let label = request
+            .pointer("/params/arguments/label")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        capture.started.send(label.clone()).unwrap();
+        if label == "first" {
+            capture.release_first.notified().await;
         }
-    })
-    .await
-    .unwrap();
-    assert_eq!(
-        completed.terminal_result,
-        Some(json!({
-            "called": "list_requirements",
-            "arguments": {"status": "draft"},
-            "async": true,
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"label": label}
         }))
+    }
+
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let release_first = Arc::new(Notify::new());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_release = Arc::clone(&release_first);
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/mcp", post(provider))
+                .with_state(Capture {
+                    started: started_tx,
+                    release_first: server_release,
+                }),
+        )
+        .await
+        .unwrap();
+    });
+    let mut config = crate::config::AppConfig::test();
+    config.project_service_base_url = format!("http://{address}");
+    let state = AppState::new(config).await.unwrap();
+    let mut snapshot = snapshot();
+    snapshot.routes = vec![ResolvedMcpRoute {
+        resource_id: "builtin_project_management".to_string(),
+        server_name: "project_management_service".to_string(),
+        provider_kind: McpProviderKind::InternalService,
+        provider_ref: Some("project_management_service".to_string()),
+        tool_namespace: "project_management_service".to_string(),
+        allow_writes: false,
+        retry_class: McpRetryClass::IdempotentRead,
+        cancel_supported: true,
+        reason: "test".to_string(),
+    }];
+    snapshot.tools = vec![RuntimeToolDescriptor {
+        exposed_name: "project_management_service_list_requirements".to_string(),
+        original_name: "list_requirements".to_string(),
+        resource_id: "builtin_project_management".to_string(),
+        definition: json!({
+            "name": "project_management_service_list_requirements",
+            "inputSchema": {"type": "object"}
+        }),
+    }];
+    persist_runtime_session(&state, &snapshot).await;
+
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![
+            McpToolCallCommandItem {
+                invocation_id: "invocation-1".to_string(),
+                tool_call_id: "call-1".to_string(),
+                call_index: 0,
+                name: "project_management_service_list_requirements".to_string(),
+                arguments: json!({"label": "first"}),
+                preflight_error: None,
+            },
+            McpToolCallCommandItem {
+                invocation_id: "invocation-2".to_string(),
+                tool_call_id: "call-2".to_string(),
+                call_index: 1,
+                name: "project_management_service_list_requirements".to_string(),
+                arguments: json!({"label": "second"}),
+                preflight_error: None,
+            },
+        ],
     );
+    let call_state = state.clone();
+    let execution =
+        tokio::spawn(async move { execute_tool_call_command(&call_state, &command).await });
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), started_rx.recv())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("first")
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), started_rx.recv())
+            .await
+            .is_err()
+    );
+    release_first.notify_one();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), started_rx.recv())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("second")
+    );
+    let response = execution.await.unwrap().unwrap();
+    assert_eq!(response.items.len(), 2);
+    assert_eq!(response.items[0].tool_call_id, "call-1");
+    assert_eq!(response.items[1].tool_call_id, "call-2");
+    server.abort();
+}
+
+#[tokio::test]
+async fn missing_invocation_becomes_a_structured_batch_error() {
+    let state = AppState::new(crate::config::AppConfig::test())
+        .await
+        .unwrap();
+    let snapshot = snapshot();
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "missing-invocation".to_string(),
+            tool_call_id: "missing-call".to_string(),
+            call_index: 0,
+            name: "demo_search".to_string(),
+            arguments: json!({}),
+            preflight_error: None,
+        }],
+    );
+    let batch = register_tool_call_command(&state, &command)
+        .await
+        .unwrap()
+        .record;
+    assert!(state
+        .runtime_invocations
+        .discard_queued_registration("missing-invocation", snapshot.session_id.as_str())
+        .await
+        .unwrap());
+
+    let batch = execute_tool_batch_invocation(&state, batch.batch_id.as_str(), 0)
+        .await
+        .expect("missing invocation must be terminalized");
+
+    assert_eq!(batch.status, RuntimeToolBatchStatus::Completed);
+    let item = batch.items[0].as_ref().expect("structured failed item");
+    assert_eq!(item.status, McpToolCallResultStatus::Failed);
+    assert!(item
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("was not executed")));
+    assert!(state
+        .runtime_execution_scopes
+        .queued_invocation_ids()
+        .await
+        .is_empty());
+}
+
+#[tokio::test]
+async fn unknown_tool_fails_only_its_item_and_valid_call_still_executes() {
+    async fn provider(Json(request): Json<Value>) -> Json<Value> {
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"ok": true}
+        }))
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/mcp", post(provider)))
+            .await
+            .unwrap();
+    });
+    let mut config = crate::config::AppConfig::test();
+    config.project_service_base_url = format!("http://{address}");
+    let state = AppState::new(config).await.unwrap();
+    let mut snapshot = snapshot();
+    snapshot.routes[0].resource_id = "builtin_project_management".to_string();
+    snapshot.routes[0].server_name = "project_management_service".to_string();
+    snapshot.routes[0].provider_kind = McpProviderKind::InternalService;
+    snapshot.routes[0].provider_ref = Some("project_management_service".to_string());
+    snapshot.routes[0].allow_writes = true;
+    snapshot.tools[0].resource_id = "builtin_project_management".to_string();
+    snapshot.tools[0].original_name = "search".to_string();
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![
+            McpToolCallCommandItem {
+                invocation_id: "invocation-valid".to_string(),
+                tool_call_id: "call-valid".to_string(),
+                call_index: 0,
+                name: "demo_search".to_string(),
+                arguments: json!({}),
+                preflight_error: None,
+            },
+            McpToolCallCommandItem {
+                invocation_id: "invocation-missing".to_string(),
+                tool_call_id: "call-missing".to_string(),
+                call_index: 1,
+                name: "missing_tool".to_string(),
+                arguments: json!({}),
+                preflight_error: None,
+            },
+        ],
+    );
+    let response = execute_tool_call_command(&state, &command).await.unwrap();
+    assert_eq!(
+        response.items[0].status,
+        McpToolCallResultStatus::Completed,
+        "{:?}",
+        response.items[0]
+    );
+    assert_eq!(response.items[1].status, McpToolCallResultStatus::Failed);
+    assert!(response.items[1]
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("tool not found")));
+    server.abort();
+}
+
+#[tokio::test]
+async fn invalid_arguments_fail_only_their_item_and_valid_call_still_executes() {
+    async fn provider(Json(request): Json<Value>) -> Json<Value> {
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"ok": true}
+        }))
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/mcp", post(provider)))
+            .await
+            .unwrap();
+    });
+    let mut config = crate::config::AppConfig::test();
+    config.project_service_base_url = format!("http://{address}");
+    let state = AppState::new(config).await.unwrap();
+    let mut snapshot = snapshot();
+    snapshot.routes[0].resource_id = "builtin_project_management".to_string();
+    snapshot.routes[0].server_name = "project_management_service".to_string();
+    snapshot.routes[0].provider_kind = McpProviderKind::InternalService;
+    snapshot.routes[0].provider_ref = Some("project_management_service".to_string());
+    snapshot.routes[0].allow_writes = true;
+    snapshot.tools[0].resource_id = "builtin_project_management".to_string();
+    snapshot.tools[0].original_name = "search".to_string();
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![
+            McpToolCallCommandItem {
+                invocation_id: "invocation-invalid".to_string(),
+                tool_call_id: "call-invalid".to_string(),
+                call_index: 0,
+                name: "demo_search".to_string(),
+                arguments: json!({}),
+                preflight_error: Some("invalid tool arguments: expected object".to_string()),
+            },
+            McpToolCallCommandItem {
+                invocation_id: "invocation-valid".to_string(),
+                tool_call_id: "call-valid".to_string(),
+                call_index: 1,
+                name: "demo_search".to_string(),
+                arguments: json!({}),
+                preflight_error: None,
+            },
+        ],
+    );
+
+    let response = execute_tool_call_command(&state, &command).await.unwrap();
+    assert_eq!(response.items[0].status, McpToolCallResultStatus::Failed);
+    assert_eq!(
+        response.items[1].status,
+        McpToolCallResultStatus::Completed,
+        "{:?}",
+        response.items[1]
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn provider_failure_does_not_prevent_the_next_call_from_executing() {
+    async fn provider(Json(request): Json<Value>) -> Json<Value> {
+        let label = request
+            .pointer("/params/arguments/label")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if label == "fail" {
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": request.get("id").cloned().unwrap_or(Value::Null),
+                "error": {"code": -32000, "message": "forced provider failure"}
+            }))
+        } else {
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": request.get("id").cloned().unwrap_or(Value::Null),
+                "result": {"label": label}
+            }))
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/mcp", post(provider)))
+            .await
+            .unwrap();
+    });
+    let mut config = crate::config::AppConfig::test();
+    config.project_service_base_url = format!("http://{address}");
+    let state = AppState::new(config).await.unwrap();
+    let mut snapshot = snapshot();
+    snapshot.routes[0].resource_id = "builtin_project_management".to_string();
+    snapshot.routes[0].server_name = "project_management_service".to_string();
+    snapshot.routes[0].provider_kind = McpProviderKind::InternalService;
+    snapshot.routes[0].provider_ref = Some("project_management_service".to_string());
+    snapshot.routes[0].allow_writes = true;
+    snapshot.tools[0].resource_id = "builtin_project_management".to_string();
+    snapshot.tools[0].original_name = "search".to_string();
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![
+            McpToolCallCommandItem {
+                invocation_id: "invocation-fail".to_string(),
+                tool_call_id: "call-fail".to_string(),
+                call_index: 0,
+                name: "demo_search".to_string(),
+                arguments: json!({"label": "fail"}),
+                preflight_error: None,
+            },
+            McpToolCallCommandItem {
+                invocation_id: "invocation-success".to_string(),
+                tool_call_id: "call-success".to_string(),
+                call_index: 1,
+                name: "demo_search".to_string(),
+                arguments: json!({"label": "success"}),
+                preflight_error: None,
+            },
+        ],
+    );
+
+    let response = execute_tool_call_command(&state, &command).await.unwrap();
+    assert_eq!(response.items[0].status, McpToolCallResultStatus::Failed);
+    assert_eq!(
+        response.items[1].status,
+        McpToolCallResultStatus::Completed,
+        "{:?}",
+        response.items[1]
+    );
+    assert_eq!(response.items[1].result, Some(json!({"label": "success"})));
     server.abort();
 }
 
@@ -432,27 +867,22 @@ async fn ask_user_invocation_waits_for_user_and_completes_with_the_answer() {
     let snapshot = Arc::new(ask_user_snapshot());
     persist_runtime_session(&state, &snapshot).await;
     let call_state = state.clone();
-    let call_snapshot = Arc::clone(&snapshot);
-    let call = tokio::spawn(async move {
-        handle_session_request(
-            JsonRpcRequest {
-                jsonrpc: Some("2.0".to_string()),
-                id: Some(json!("ask-user-call-1")),
-                method: METHOD_TOOLS_CALL.to_string(),
-                params: json!({
-                    "name": "ask_user_prompt_choices",
-                    "arguments": {
-                        "title": "Continue?",
-                        "options": [{"label": "Yes", "value": "yes"}]
-                    }
-                }),
-            },
-            &call_snapshot,
-            &call_state,
-            Ok(None),
-        )
-        .await
-    });
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "ask-user-invocation-1".to_string(),
+            tool_call_id: "ask-user-call-1".to_string(),
+            call_index: 0,
+            name: "ask_user_prompt_choices".to_string(),
+            arguments: json!({
+                "title": "Continue?",
+                "options": [{"label": "Yes", "value": "yes"}]
+            }),
+            preflight_error: None,
+        }],
+    );
+    let call = tokio::spawn(async move { execute_tool_call_command(&call_state, &command).await });
 
     let invocation_id = tokio::time::timeout(Duration::from_secs(2), started_rx.recv())
         .await
@@ -479,8 +909,9 @@ async fn ask_user_invocation_waits_for_user_and_completes_with_the_answer() {
     let response = tokio::time::timeout(Duration::from_secs(2), call)
         .await
         .unwrap()
+        .unwrap()
         .unwrap();
-    assert_eq!(response.result, Some(json!({"answer": "yes"})));
+    assert_eq!(response.items[0].result, Some(json!({"answer": "yes"})));
     let completed = state
         .runtime_invocations
         .get_for_caller(invocation_id.as_str(), snapshot.caller_service.as_str())
@@ -581,25 +1012,20 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
     }];
     persist_runtime_session(&state, &snapshot).await;
     let snapshot = Arc::new(snapshot);
-    let call_snapshot = Arc::clone(&snapshot);
     let call_state = state.clone();
-    let call = tokio::spawn(async move {
-        handle_session_request(
-            JsonRpcRequest {
-                jsonrpc: Some("2.0".to_string()),
-                id: Some(json!("upstream-call-1")),
-                method: METHOD_TOOLS_CALL.to_string(),
-                params: json!({
-                    "name": "project_management_service_list_requirements",
-                    "arguments": {}
-                }),
-            },
-            &call_snapshot,
-            &call_state,
-            Ok(Some("test.mcp.results".to_string())),
-        )
-        .await
-    });
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "cancel-invocation-1".to_string(),
+            tool_call_id: "upstream-call-1".to_string(),
+            call_index: 0,
+            name: "project_management_service_list_requirements".to_string(),
+            arguments: json!({}),
+            preflight_error: None,
+        }],
+    );
+    let call = tokio::spawn(async move { execute_tool_call_command(&call_state, &command).await });
     let internal_invocation_id = tokio::time::timeout(Duration::from_secs(2), started_rx.recv())
         .await
         .unwrap()
@@ -626,7 +1052,6 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
         },
         &snapshot,
         &state,
-        Ok(None),
     )
     .await;
     assert_eq!(
@@ -648,16 +1073,10 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
         .await
         .unwrap()
         .unwrap();
+    let call_response = call_response.unwrap();
     assert_eq!(
-        call_response.error.as_ref().map(|error| error.code),
-        Some(MCP_ERROR_INVOCATION_CANCELLED)
-    );
-    assert_eq!(
-        call_response
-            .error
-            .as_ref()
-            .map(|error| error.message.as_str()),
-        Some("invocation_cancelled")
+        call_response.items[0].status,
+        McpToolCallResultStatus::Cancelled
     );
     server.abort();
 }
@@ -689,7 +1108,6 @@ async fn unconfirmed_mutation_cancellation_returns_unknown_execution_state() {
             mutation_may_have_started: true,
             cancel_supported: false,
             status: RuntimeInvocationStatus::Running,
-            async_execution: false,
             created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
             started_at_unix_ms: Some(chrono::Utc::now().timestamp_millis()),
             completed_at_unix_ms: None,
@@ -697,9 +1115,6 @@ async fn unconfirmed_mutation_cancellation_returns_unknown_execution_state() {
             terminal_error_code: None,
             terminal_error_message: None,
             file_modification_outcome: None,
-            result_reply_to: None,
-            result_event_id: None,
-            result_event_pending: false,
             expires_at: DateTime::from_millis(
                 (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
             ),
@@ -830,25 +1245,4 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
         .allowed_resource_ids
         .push("unconfigured-mcp".to_string());
     assert!(!grant_matches_snapshot(&extra_resource, &snapshot));
-}
-
-#[test]
-fn async_enqueue_errors_expose_stable_business_semantics() {
-    assert_eq!(
-        public_async_enqueue_error(&AsyncToolEnqueueError::CapacityExhausted),
-        (
-            MCP_ERROR_CAPACITY_EXHAUSTED,
-            "MCP async execution capacity is currently full",
-        )
-    );
-    let unavailable = AsyncToolEnqueueError::Unavailable(
-        "amqp://secret@example.internal connection failed".to_string(),
-    );
-    assert_eq!(
-        public_async_enqueue_error(&unavailable),
-        (
-            MCP_ERROR_INTERNAL,
-            "async tool dispatch queue is unavailable",
-        )
-    );
 }

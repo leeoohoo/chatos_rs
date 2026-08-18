@@ -169,25 +169,12 @@ fn test_config() -> AppConfig {
         default_task_execution_max_iterations: 1,
         default_tool_result_model_max_chars: 1000,
         default_tool_results_model_total_max_chars: 2000,
-        default_execution_environment_mode: "local".to_string(),
-        default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-        sandbox_manager_http_client: reqwest::Client::new(),
-        sandbox_manager_client_id: None,
-        sandbox_manager_client_key: None,
-        default_sandbox_lease_ttl_seconds: 7_200,
         chatos_callback_url: String::new(),
         chatos_callback_http_client: reqwest::Client::new(),
         internal_api_secret: None,
         chatos_internal_api_secret: None,
         mcp_management_internal_api_secret: None,
         user_service_internal_api_secret: None,
-        local_connector_internal_api_secret: None,
-        local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-        local_connector_http_client: reqwest::Client::new(),
-        local_connector_service_request_timeout: Duration::from_millis(5_000),
-        plugin_relay_request_timeout: Duration::from_millis(60_000),
-        plugin_hook_relay_timeout: Duration::from_millis(330_000),
-        plugin_connector_discovery_timeout: Duration::from_millis(10_000),
         callback_timeout: Duration::from_millis(1000),
         admin_username: "admin".to_string(),
         admin_password: "admin".to_string(),
@@ -251,23 +238,6 @@ async fn runtime_abort_registration_observes_early_cancel_signal() {
     assert!(token.is_cancelled());
 }
 
-#[tokio::test]
-async fn dependency_terminal_signal_wakes_all_local_waiters_for_run() {
-    let (_, run_service) = test_services().await;
-    let first = tokio_util::sync::CancellationToken::new();
-    let second = tokio_util::sync::CancellationToken::new();
-    let unrelated = tokio_util::sync::CancellationToken::new();
-    run_service.register_run_terminal_waiter("dependency-run", "parent-1", first.clone());
-    run_service.register_run_terminal_waiter("dependency-run", "parent-2", second.clone());
-    run_service.register_run_terminal_waiter("other-run", "parent-3", unrelated.clone());
-
-    run_service.signal_run_terminal("dependency-run");
-
-    assert!(first.is_cancelled());
-    assert!(second.is_cancelled());
-    assert!(!unrelated.is_cancelled());
-}
-
 async fn create_task(service: &TaskService, title: &str, status: TaskStatus) -> TaskRecord {
     service
         .create_task(
@@ -301,14 +271,20 @@ fn run_record(task: &TaskRecord) -> TaskRunRecord {
     TaskRunRecord {
         id: "run-1".to_string(),
         task_id: task.id.clone(),
+        agent_run_id: None,
+        agent_ordering_lane_key: None,
+        agent_lane_seq: None,
         execution_lane_key: None,
         model_config_id: "model-1".to_string(),
         memory_thread_id: task.memory_thread_id.clone(),
         status: TaskRunStatus::Running,
+        model_phase_status: crate::models::ModelPhaseStatus::Running,
         started_at: Some(now.clone()),
         finished_at: None,
         input_snapshot: json!({}),
-        plugin_snapshots: Vec::new(),
+        effective_tools: Default::default(),
+        workspace_execution: None,
+        mcp_runtime_session_ref: None,
         context_snapshot: None,
         result_summary: None,
         error_message: None,
@@ -326,11 +302,6 @@ fn run_record(task: &TaskRecord) -> TaskRunRecord {
         post_process_last_error: None,
         memory_summary_processed: false,
         chatos_followup_processed: false,
-        terminal_cleanup_event_pending: false,
-        terminal_cleanup_event_enqueued: false,
-        terminal_cleanup_completed: false,
-        terminal_cleanup_attempt_count: 0,
-        terminal_cleanup_last_error: None,
         summary_job_run_id: None,
         worker_id: None,
         claim_token: None,
@@ -374,7 +345,7 @@ async fn completed_run_persists_success_when_report_completed() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -391,6 +362,84 @@ async fn completed_run_persists_success_when_report_completed() {
         .expect("get parent")
         .expect("parent");
     assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+}
+
+#[tokio::test]
+async fn successful_write_run_waits_for_workspace_integration_before_business_success() {
+    let (task_service, run_service) = test_services().await;
+    let task = create_task(&task_service, "write task", TaskStatus::Ready).await;
+    let mut run = run_record(&task);
+    run.workspace_execution = Some(
+        serde_json::from_value(json!({
+            "status": "ready",
+            "branch_target": {
+                "kind": "run",
+                "branch_id": "project:run-1",
+                "branch_ref": "chatos/runs/run-1",
+                "base_branch": "chatos/executions/group-1",
+                "base_commit": "1111111111111111111111111111111111111111"
+            },
+            "execution_group_id": "group-1",
+            "execution_branch_ref": "chatos/executions/group-1",
+            "execution_base_commit": "1111111111111111111111111111111111111111",
+            "integration_status": "pending"
+        }))
+        .expect("workspace execution"),
+    );
+    run_service
+        .store
+        .save_run(run.clone())
+        .await
+        .expect("save run");
+    let report = TaskRunReport {
+        task_id: task.id.clone(),
+        run_id: run.id.clone(),
+        model_config_id: Some(run.model_config_id.clone()),
+        status: AiTurnStatus::Completed,
+        execution_outcome: Some(TaskExecutionOutcome::succeeded(
+            "done",
+            vec!["write verified".to_string()],
+        )),
+        content: Some("done".to_string()),
+        reasoning: None,
+        error: None,
+        tool_calls: None,
+        finish_reason: Some("stop".to_string()),
+        usage: None,
+        response_id: None,
+        completed_at: now_rfc3339(),
+    };
+
+    run_service
+        .finalize_model_phase(&task, &mut run, report, ".")
+        .await;
+
+    let saved_run = run_service
+        .store
+        .get_run(run.id.as_str())
+        .await
+        .expect("get run")
+        .expect("run");
+    assert_eq!(saved_run.status, TaskRunStatus::Running);
+    assert_eq!(
+        saved_run.model_phase_status,
+        crate::models::ModelPhaseStatus::Succeeded
+    );
+    assert_eq!(
+        saved_run
+            .workspace_execution
+            .as_ref()
+            .map(|workspace| workspace.integration_status),
+        Some(crate::models::WorkspaceIntegrationStatus::Pending)
+    );
+    assert!(saved_run.post_process_event_pending || saved_run.post_process_event_enqueued);
+    assert!(saved_run.chatos_callback_delivery.is_none());
+    let saved_task = task_service
+        .get_task(task.id.as_str())
+        .await
+        .expect("get task")
+        .expect("task");
+    assert_eq!(saved_task.status, TaskStatus::Running);
 }
 
 #[tokio::test]
@@ -420,7 +469,7 @@ async fn completed_runtime_without_structured_outcome_fails_closed() {
     };
 
     run_service
-        .finalize_model_phase(&task, &mut run, report, ".", None, None)
+        .finalize_model_phase(&task, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -467,6 +516,7 @@ async fn structured_blocked_outcome_persists_blocked_terminal_state() {
             blocking_reason: Some("required upstream service is unavailable".to_string()),
             unmet_acceptance_criteria: vec!["integration verification passes".to_string()],
             verification_evidence: vec!["health request returned connection refused".to_string()],
+            acceptance_evidence: Vec::new(),
             referenced_paths: Vec::new(),
             referenced_endpoints: Vec::new(),
         }),
@@ -481,7 +531,7 @@ async fn structured_blocked_outcome_persists_blocked_terminal_state() {
     };
 
     run_service
-        .finalize_model_phase(&task, &mut run, report, ".", None, None)
+        .finalize_model_phase(&task, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -501,71 +551,6 @@ async fn structured_blocked_outcome_persists_blocked_terminal_state() {
         .expect("get task")
         .expect("task");
     assert_eq!(saved_task.status, TaskStatus::Blocked);
-}
-
-#[tokio::test]
-async fn harness_promotion_failure_fails_completed_model_run() {
-    let (task_service, run_service) = test_services().await;
-    let task = create_task(&task_service, "harness failure", TaskStatus::Ready).await;
-    let mut run = run_record(&task);
-    run_service
-        .store
-        .save_run(run.clone())
-        .await
-        .expect("save run");
-    let report = TaskRunReport {
-        task_id: task.id.clone(),
-        run_id: run.id.clone(),
-        model_config_id: Some(run.model_config_id.clone()),
-        status: AiTurnStatus::Completed,
-        execution_outcome: Some(TaskExecutionOutcome::succeeded(
-            "model completed",
-            vec!["model phase completed".to_string()],
-        )),
-        content: Some("model completed".to_string()),
-        reasoning: None,
-        error: None,
-        tool_calls: None,
-        finish_reason: Some("stop".to_string()),
-        usage: None,
-        response_id: None,
-        completed_at: now_rfc3339(),
-    };
-    let harness_output = HarnessRunOutputReport {
-        enabled: true,
-        project_id: "project-1".to_string(),
-        repo_path: "owner/repo".to_string(),
-        git_url: "https://example.invalid/repo.git".to_string(),
-        base_branch: "main".to_string(),
-        run_branch: "chatos/runs/run-1".to_string(),
-        base_commit: "base".to_string(),
-        result_commit: None,
-        promoted_commit: None,
-        status: "failed".to_string(),
-        message: Some("concurrent base update".to_string()),
-    };
-
-    run_service
-        .finalize_model_phase(&task, &mut run, report, ".", None, Some(harness_output))
-        .await;
-
-    let saved_run = run_service
-        .store
-        .get_run(run.id.as_str())
-        .await
-        .expect("get run")
-        .expect("run");
-    assert_eq!(saved_run.status, TaskRunStatus::Failed);
-    assert!(saved_run
-        .error_message
-        .as_deref()
-        .is_some_and(|error| error.contains("concurrent base update")));
-    let saved_task = task_service
-        .get_task(task.id.as_str())
-        .await
-        .expect("get task")
-        .expect("task");
-    assert_eq!(saved_task.status, TaskStatus::Failed);
 }
 
 #[tokio::test]
@@ -621,7 +606,7 @@ async fn completed_report_ignores_legacy_terminal_checklist_blocker() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -702,7 +687,7 @@ async fn completed_report_ignores_legacy_required_open_checklist() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_child = task_service
@@ -783,7 +768,7 @@ async fn successful_run_preserves_legacy_optional_open_checklist() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_child = task_service
@@ -839,7 +824,7 @@ async fn aborted_report_does_not_downgrade_already_succeeded_task() {
     };
 
     run_service
-        .finalize_model_phase(&parent, &mut run, report, ".", None, None)
+        .finalize_model_phase(&parent, &mut run, report, ".")
         .await;
 
     let saved_run = run_service
@@ -875,39 +860,26 @@ fn execution_outcome_reference_validation_accepts_real_workspace_evidence() {
     outcome.referenced_paths = vec!["apps/api".to_string(), "apps/api/package.json".to_string()];
     outcome.referenced_endpoints = vec!["http://127.0.0.1:4000/health".to_string()];
 
-    validate_task_execution_outcome_references(
-        &outcome,
-        workspace.to_string_lossy().as_ref(),
-        true,
-    )
-    .expect("valid references");
+    validate_task_execution_outcome_references(&mut outcome).expect("valid references");
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }
 
 #[test]
-fn execution_outcome_reference_validation_rejects_missing_or_escaping_paths() {
+fn execution_outcome_reference_validation_defers_existence_to_provider_but_rejects_escaping_paths()
+{
     let workspace = temporary_reference_workspace("invalid-path");
     let mut outcome = TaskExecutionOutcome::succeeded(
         "implementation verified",
         vec!["cargo test passed".to_string()],
     );
     outcome.referenced_paths = vec!["missing.txt".to_string()];
-    let missing = validate_task_execution_outcome_references(
-        &outcome,
-        workspace.to_string_lossy().as_ref(),
-        true,
-    )
-    .expect_err("missing path must fail");
-    assert!(missing.contains("does not exist"));
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("MCP provider owns path existence validation");
 
     outcome.referenced_paths = vec!["../outside.txt".to_string()];
-    let escaping = validate_task_execution_outcome_references(
-        &outcome,
-        workspace.to_string_lossy().as_ref(),
-        false,
-    )
-    .expect_err("planning references must not escape the workspace");
+    let escaping = validate_task_execution_outcome_references(&mut outcome)
+        .expect_err("planning references must not escape the workspace");
     assert!(escaping.contains("must stay inside the workspace"));
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
@@ -922,13 +894,63 @@ fn execution_outcome_reference_validation_rejects_endpoint_credentials() {
     );
     outcome.referenced_endpoints = vec!["https://admin:secret@example.com/health".to_string()];
 
-    let error = validate_task_execution_outcome_references(
-        &outcome,
-        workspace.to_string_lossy().as_ref(),
-        false,
-    )
-    .expect_err("endpoint credentials must fail");
+    let error = validate_task_execution_outcome_references(&mut outcome)
+        .expect_err("endpoint credentials must fail");
     assert!(error.contains("must not contain credentials"));
+
+    std::fs::remove_dir_all(workspace).expect("remove workspace");
+}
+
+#[test]
+fn execution_outcome_reference_validation_preserves_provider_verified_path() {
+    let workspace = temporary_reference_workspace("single-character-typo");
+    let migrations = workspace.join("src/server/database/migrations");
+    std::fs::create_dir_all(&migrations).expect("create migrations directory");
+    std::fs::write(migrations.join("0000_baseline.sql"), "select 1;").expect("write migration");
+    let mut outcome = TaskExecutionOutcome::succeeded(
+        "migration verified",
+        vec!["migration command passed".to_string()],
+    );
+    outcome.referenced_paths = vec!["src/server/database/migrations/000_baseline.sql".to_string()];
+
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("Task Runner must not rewrite MCP provider paths");
+    assert_eq!(
+        outcome.referenced_paths,
+        vec!["src/server/database/migrations/000_baseline.sql"]
+    );
+
+    std::fs::remove_dir_all(workspace).expect("remove workspace");
+}
+
+#[test]
+fn execution_outcome_reference_validation_does_not_rewrite_provider_directories() {
+    let workspace = temporary_reference_workspace("single-character-directory-typo");
+    let seeds = workspace.join("db/seeds");
+    std::fs::create_dir_all(&seeds).expect("create seeds directory");
+    std::fs::write(seeds.join("tasks.sql"), "select 1;").expect("write seed file");
+    let mut outcome =
+        TaskExecutionOutcome::succeeded("seed verified", vec!["seed command passed".to_string()]);
+    outcome.referenced_paths = vec!["db/seds/tasks.sql".to_string()];
+
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("Task Runner must not inspect provider directories");
+    assert_eq!(outcome.referenced_paths, vec!["db/seds/tasks.sql"]);
+
+    std::fs::remove_dir_all(workspace).expect("remove workspace");
+}
+
+#[test]
+fn execution_outcome_reference_validation_does_not_inspect_ambiguous_provider_directories() {
+    let workspace = temporary_reference_workspace("ambiguous-directory-typo");
+    std::fs::create_dir_all(workspace.join("db/seeds")).expect("create seeds directory");
+    std::fs::create_dir_all(workspace.join("db/sods")).expect("create sods directory");
+    let mut outcome =
+        TaskExecutionOutcome::succeeded("seed verified", vec!["seed command passed".to_string()]);
+    outcome.referenced_paths = vec!["db/seds/tasks.sql".to_string()];
+
+    validate_task_execution_outcome_references(&mut outcome)
+        .expect("MCP provider owns path existence validation");
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
 }

@@ -102,6 +102,60 @@ impl SandboxExecutionTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HarnessBranchTarget {
+    Default {
+        branch_ref: String,
+    },
+    Run {
+        branch_id: String,
+        branch_ref: String,
+        base_branch: String,
+        base_commit: String,
+    },
+}
+
+impl HarnessBranchTarget {
+    pub fn branch_ref(&self) -> &str {
+        match self {
+            Self::Default { branch_ref } | Self::Run { branch_ref, .. } => branch_ref.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeWorkspaceRouteTarget {
+    LocalConnector,
+    Harness { branch: HarnessBranchTarget },
+    CloudSandbox { target: SandboxExecutionTarget },
+}
+
+impl RuntimeWorkspaceRouteTarget {
+    pub const fn provider_kind(&self) -> WorkspaceProviderKind {
+        match self {
+            Self::LocalConnector => WorkspaceProviderKind::LocalConnector,
+            Self::Harness { .. } => WorkspaceProviderKind::Harness,
+            Self::CloudSandbox { .. } => WorkspaceProviderKind::CloudSandbox,
+        }
+    }
+
+    pub fn sandbox_target(&self) -> Option<&SandboxExecutionTarget> {
+        match self {
+            Self::CloudSandbox { target } => Some(target),
+            Self::LocalConnector | Self::Harness { .. } => None,
+        }
+    }
+
+    pub fn harness_branch(&self) -> Option<&HarnessBranchTarget> {
+        match self {
+            Self::Harness { branch } => Some(branch),
+            Self::LocalConnector | Self::CloudSandbox { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectExecutionContext {
     pub project_id: String,
     pub owner_user_id: String,
@@ -254,10 +308,14 @@ pub struct McpCatalogResponse {
 pub struct CreateRuntimeSessionRequest {
     pub tenant_id: String,
     pub owner_user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_role: Option<String>,
     pub agent_key: String,
     pub project_id: String,
     #[serde(default)]
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_group_id: Option<String>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
     pub task_profile: Option<String>,
@@ -266,16 +324,62 @@ pub struct CreateRuntimeSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_result_max_chars: Option<usize>,
     #[serde(default)]
     pub expected_project_task_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_mcp_ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_plugins: Vec<chatos_plugin_management_sdk::SelectedPluginRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_command_invocations: Vec<chatos_plugin_management_sdk::PluginCommandInvocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
-    pub requested_device_id: Option<String>,
-    pub requested_sandbox_provider: Option<SandboxProviderKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub workspace_route: Option<RuntimeWorkspaceRouteTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProviderFinalizationStatus {
+    Succeeded,
+    NoChanges,
+    Conflict,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeProviderChangedFile {
+    pub status: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeProviderFinalization {
+    pub provider_kind: McpProviderKind,
+    pub status: RuntimeProviderFinalizationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_branch_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrated_commit: Option<String>,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    #[serde(default)]
+    pub files: Vec<RuntimeProviderChangedFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
+    #[serde(default)]
+    pub patch_truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +389,7 @@ pub struct RuntimeSessionResponse {
     pub route_revision: String,
     pub expires_at: String,
     pub mcp_server_url: String,
+    pub mcp_command_queue: String,
     pub runtime_token: String,
     pub configured_mcp_count: usize,
     #[serde(default)]
@@ -293,6 +398,8 @@ pub struct RuntimeSessionResponse {
     pub effective_mcp_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_skills_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_instruction_items: Vec<serde_json::Value>,
     #[serde(default)]
     pub unavailable_required_mcps: Vec<String>,
 }
@@ -301,6 +408,8 @@ pub struct RuntimeSessionResponse {
 pub struct CloseRuntimeSessionResponse {
     pub session_id: String,
     pub closed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_finalization: Option<RuntimeProviderFinalization>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,8 +435,6 @@ pub struct RuntimeInvocationResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_tool_name: Option<String>,
     pub status: RuntimeInvocationStatus,
-    #[serde(default)]
-    pub async_execution: bool,
     pub created_at_unix_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_unix_ms: Option<i64>,
@@ -341,25 +448,6 @@ pub struct RuntimeInvocationResponse {
     pub terminal_error_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_modification_outcome: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeInvocationResultEvent {
-    pub event_id: String,
-    pub correlation_id: String,
-    pub invocation_id: String,
-    pub session_id: String,
-    pub caller_service: String,
-    pub resource_id: String,
-    pub exposed_tool_name: String,
-    pub status: RuntimeInvocationStatus,
-    pub occurred_at_unix_ms: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_result: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_error_code: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,6 +472,12 @@ pub struct RuntimeSessionRoutesResponse {
     pub expires_at: String,
     pub routes: Vec<ResolvedMcpRoute>,
     pub tools: Vec<RuntimeToolDescriptor>,
+    #[serde(default)]
+    pub mcp_command_queue: String,
+    #[serde(default)]
+    pub mcp_server_url: String,
+    #[serde(default)]
+    pub runtime_token: String,
 }
 
 #[cfg(test)]
@@ -445,8 +539,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_runtime_session_response_defaults_management_prompt_metadata() {
-        let response: RuntimeSessionResponse = serde_json::from_value(serde_json::json!({
+    fn runtime_session_response_requires_event_queue_and_defaults_optional_prompt_metadata() {
+        let incomplete = serde_json::json!({
             "session_id": "session-1",
             "policy_revision": "policy-1",
             "route_revision": "route-1",
@@ -454,9 +548,14 @@ mod tests {
             "mcp_server_url": "http://mcp-management/mcp",
             "runtime_token": "token",
             "configured_mcp_count": 1
-        }))
-        .expect("legacy response");
+        });
+        assert!(serde_json::from_value::<RuntimeSessionResponse>(incomplete.clone()).is_err());
+        let mut complete = incomplete;
+        complete["mcp_command_queue"] = serde_json::json!("mcp.commands");
+        let response: RuntimeSessionResponse =
+            serde_json::from_value(complete).expect("current runtime session response");
         assert!(response.effective_mcp_ids.is_empty());
         assert!(response.provider_skills_prompt.is_none());
+        assert!(response.plugin_instruction_items.is_empty());
     }
 }

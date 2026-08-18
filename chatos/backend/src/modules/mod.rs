@@ -3,6 +3,7 @@
 
 pub mod app_api;
 pub mod app_startup;
+pub mod cloud_agent_runtime;
 pub mod conversation_runtime;
 pub mod memory;
 pub mod platform_admin;

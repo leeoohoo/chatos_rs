@@ -3,21 +3,23 @@
 
 use super::*;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, ProjectExecutionContext, SandboxProviderKind, WorkspaceExecutionTarget,
-    WorkspaceProviderKind,
+    ExecutionPlane, HarnessBranchTarget, ProjectExecutionContext, RuntimeWorkspaceRouteTarget,
+    SandboxProviderKind, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
-    ResolvedMcp, ResourceMetadata, ResourceSecurity,
+    ResolvedMcp, ResourceMetadata, ResourceSecurity, SelectedPluginRef,
 };
 
 fn request() -> CreateRuntimeSessionRequest {
     CreateRuntimeSessionRequest {
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         project_id: "project-1".to_string(),
         run_id: Some("run-1".to_string()),
+        execution_group_id: None,
         turn_id: None,
         task_id: Some("task-1".to_string()),
         task_profile: Some("implementation".to_string()),
@@ -25,12 +27,13 @@ fn request() -> CreateRuntimeSessionRequest {
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: Some(40_000),
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
+        selected_plugins: Vec::new(),
+        plugin_command_invocations: Vec::new(),
         locale: None,
-        requested_device_id: Some("device-1".to_string()),
-        requested_sandbox_provider: None,
-        sandbox_target: None,
+        workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector),
     }
 }
 
@@ -50,6 +53,20 @@ fn context() -> ProjectExecutionContext {
         source_type: Some("local_connector".to_string()),
         revision: "revision-1".to_string(),
     }
+}
+
+#[test]
+fn public_chat_context_has_no_project_workspace_or_sandbox() {
+    let context = public_chat_execution_context(" user-1 ");
+
+    assert_eq!(context.project_id, PUBLIC_PROJECT_ID);
+    assert_eq!(context.owner_user_id, "user-1");
+    assert_eq!(context.execution_plane, ExecutionPlane::Cloud);
+    assert_eq!(context.workspace_provider, WorkspaceProviderKind::None);
+    assert!(context.workspace.is_none());
+    assert_eq!(context.sandbox_provider, SandboxProviderKind::None);
+    assert_eq!(context.source_type.as_deref(), Some("public"));
+    assert_eq!(context.revision, PUBLIC_PROJECT_CONTEXT_REVISION);
 }
 
 fn resolved_mcp(resource_id: &str, required: bool) -> ResolvedMcp {
@@ -182,50 +199,52 @@ fn capability_runtime_provider_uses_project_execution_locality_not_backend_name(
 }
 
 #[test]
-fn context_override_must_match_authoritative_device() {
+fn local_connector_route_requires_authoritative_local_workspace() {
     validate_context_overrides(&request(), &context()).unwrap();
-    let mut invalid = request();
-    invalid.requested_device_id = Some("another-device".to_string());
-    assert!(validate_context_overrides(&invalid, &context()).is_err());
+    let mut invalid_context = context();
+    invalid_context.workspace_provider = WorkspaceProviderKind::Harness;
+    assert!(validate_context_overrides(&request(), &invalid_context).is_err());
 }
 
 #[test]
 fn cloud_sandbox_workspace_authorizes_runtime_sandbox_target() {
     let mut request = request();
-    request.requested_device_id = None;
-    request.requested_sandbox_provider = Some(SandboxProviderKind::Cloud);
-    request.sandbox_target = Some(SandboxExecutionTarget {
-        provider: SandboxProviderKind::Cloud,
-        pairing_id: None,
-        sandbox_id: "sandbox-1".to_string(),
-        lease_id: "lease-1".to_string(),
-        is_environment: false,
-        service_id: None,
+    request.workspace_route = Some(RuntimeWorkspaceRouteTarget::CloudSandbox {
+        target: SandboxExecutionTarget {
+            provider: SandboxProviderKind::Cloud,
+            pairing_id: None,
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        },
     });
     let mut context = context();
     context.workspace_provider = WorkspaceProviderKind::CloudSandbox;
     context.workspace = None;
+    context.sandbox_provider = SandboxProviderKind::Cloud;
+    context.source_type = Some("cloud".to_string());
     validate_context_overrides(&request, &context).unwrap();
 }
 
 #[test]
-fn local_sandbox_target_requires_the_authoritative_pairing() {
+fn harness_route_requires_a_cloud_project() {
     let mut request = request();
-    request.requested_sandbox_provider = Some(SandboxProviderKind::LocalConnector);
-    request.sandbox_target = Some(SandboxExecutionTarget {
-        provider: SandboxProviderKind::LocalConnector,
-        pairing_id: Some("pairing-1".to_string()),
-        sandbox_id: "sandbox-1".to_string(),
-        lease_id: "lease-1".to_string(),
-        is_environment: false,
-        service_id: None,
+    request.workspace_route = Some(RuntimeWorkspaceRouteTarget::Harness {
+        branch: HarnessBranchTarget::Run {
+            branch_id: "branch-1".to_string(),
+            branch_ref: "chatos/runs/run-1".to_string(),
+            base_branch: "main".to_string(),
+            base_commit: "base-commit".to_string(),
+        },
     });
     let mut context = context();
-    context.sandbox_provider = SandboxProviderKind::LocalConnector;
-    context.sandbox_pairing_id = Some("pairing-1".to_string());
-    validate_context_overrides(&request, &context).expect("the exact pairing must be accepted");
+    context.workspace_provider = WorkspaceProviderKind::Harness;
+    context.workspace = None;
+    context.source_type = Some("cloud".to_string());
+    validate_context_overrides(&request, &context).expect("cloud Harness route must be accepted");
 
-    context.sandbox_pairing_id = Some("pairing-2".to_string());
+    context.source_type = Some("local_connector".to_string());
     assert!(validate_context_overrides(&request, &context).is_err());
 }
 
@@ -267,12 +286,6 @@ fn local_only_agents_cannot_create_managed_runtime_sessions() {
         .expect_err("local-only Agent must never enter MCP Management");
 
     assert!(format!("{error:?}").contains("does not use the managed MCP Tool Plane"));
-}
-
-#[test]
-fn retired_local_task_runner_agents_cannot_create_runtime_sessions() {
-    assert!(parse_agent_key("task_runner_local_plan_phase").is_err());
-    assert!(parse_agent_key("task_runner_local_run_phase").is_err());
 }
 
 #[test]
@@ -494,18 +507,80 @@ fn required_route_without_registered_provider_adapter_is_blocked() {
 }
 
 #[test]
-fn cloud_sandbox_routes_are_bound_to_opaque_runtime_target() {
-    let mut routes = vec![chatos_mcp_management_sdk::ResolvedMcpRoute {
-        resource_id: "builtin_code_maintainer_read".to_string(),
-        server_name: "code_maintainer_read".to_string(),
-        provider_kind: McpProviderKind::CloudSandbox,
-        provider_ref: Some("project:project-1".to_string()),
-        tool_namespace: "code_maintainer_read".to_string(),
-        allow_writes: false,
-        retry_class: chatos_mcp_management_sdk::McpRetryClass::IdempotentRead,
-        cancel_supported: true,
-        reason: "test".to_string(),
+fn selected_plugin_scope_rejects_empty_duplicate_unknown_and_agent_selection() {
+    let mut capabilities = capabilities_for_scope_test();
+    let empty = SelectedPluginRef {
+        plugin_id: " ".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: Vec::new(),
+        selected_agent_ids: Vec::new(),
+    };
+    assert!(apply_selected_plugin_scope(&mut capabilities, &[empty]).is_err());
+
+    let selected = SelectedPluginRef {
+        plugin_id: "missing-plugin".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: Vec::new(),
+        selected_agent_ids: Vec::new(),
+    };
+    assert!(apply_selected_plugin_scope(
+        &mut capabilities_for_scope_test(),
+        &[selected.clone(), selected.clone()],
+    )
+    .is_err());
+    assert!(apply_selected_plugin_scope(&mut capabilities_for_scope_test(), &[selected]).is_err());
+
+    let agent = SelectedPluginRef {
+        plugin_id: "missing-plugin".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: Vec::new(),
+        selected_agent_ids: vec!["reviewer".to_string()],
+    };
+    assert!(apply_selected_plugin_scope(&mut capabilities_for_scope_test(), &[agent]).is_err());
+}
+
+#[test]
+fn plugin_command_invocations_are_selected_unique_and_size_bounded() {
+    let selected = vec![SelectedPluginRef {
+        plugin_id: "plugin-review".to_string(),
+        selected_skill_ids: Vec::new(),
+        selected_command_ids: vec!["review".to_string()],
+        selected_agent_ids: Vec::new(),
     }];
+    let valid = chatos_plugin_management_sdk::PluginCommandInvocation {
+        plugin_id: " plugin-review ".to_string(),
+        command_id: " review ".to_string(),
+        arguments: Some(" src/lib.rs ".to_string()),
+    };
+    let normalized = validate_plugin_command_invocations(&selected, std::slice::from_ref(&valid))
+        .expect("selected command invocation");
+    assert_eq!(
+        normalized.get(&("plugin-review".to_string(), "review".to_string())),
+        Some(&Some("src/lib.rs".to_string()))
+    );
+    assert!(validate_plugin_command_invocations(&selected, &[valid.clone(), valid]).is_err());
+
+    let unknown = chatos_plugin_management_sdk::PluginCommandInvocation {
+        plugin_id: "plugin-review".to_string(),
+        command_id: "unknown".to_string(),
+        arguments: None,
+    };
+    assert!(validate_plugin_command_invocations(&selected, &[unknown]).is_err());
+    let oversized = chatos_plugin_management_sdk::PluginCommandInvocation {
+        plugin_id: "plugin-review".to_string(),
+        command_id: "review".to_string(),
+        arguments: Some("x".repeat(16 * 1024 + 1)),
+    };
+    assert!(validate_plugin_command_invocations(&selected, &[oversized]).is_err());
+}
+
+#[test]
+fn cloud_sandbox_route_pins_all_workspace_tools_to_the_same_lease() {
+    let mut routes = vec![
+        system_route(SystemMcpKey::CodeMaintainerRead),
+        system_route(SystemMcpKey::CodeMaintainerWrite),
+        system_route(SystemMcpKey::TerminalController),
+    ];
     let target = SandboxExecutionTarget {
         provider: SandboxProviderKind::Cloud,
         pairing_id: None,
@@ -514,62 +589,139 @@ fn cloud_sandbox_routes_are_bound_to_opaque_runtime_target() {
         is_environment: false,
         service_id: None,
     };
-    bind_runtime_sandbox_routes(routes.as_mut_slice(), Some(&target));
-    assert_eq!(
-        routes[0].provider_ref.as_deref(),
-        Some("sandbox:sandbox-1/lease:lease-1")
-    );
+    let route = RuntimeWorkspaceRouteTarget::CloudSandbox { target };
+
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context());
+
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context())
+        .expect("cloud sandbox binding");
+
+    assert!(routes.iter().all(|resolved| {
+        resolved.provider_kind == McpProviderKind::CloudSandbox
+            && resolved.provider_ref.as_deref() == Some("sandbox:sandbox-1/lease:lease-1")
+    }));
 }
 
 #[test]
-fn local_runtime_sandbox_rebinds_only_workspace_tools_to_the_exact_lease() {
+fn local_connector_route_pins_all_workspace_tools_to_the_authorized_workspace() {
     let mut routes = vec![
         system_route(SystemMcpKey::CodeMaintainerRead),
         system_route(SystemMcpKey::CodeMaintainerWrite),
         system_route(SystemMcpKey::TerminalController),
-        system_route(SystemMcpKey::BrowserTools),
     ];
-    for route in routes.iter_mut() {
-        route.provider_kind = McpProviderKind::LocalConnector;
-        route.provider_ref = Some("device:device-1/workspace:workspace-1".to_string());
-    }
-    let target = SandboxExecutionTarget {
-        provider: SandboxProviderKind::LocalConnector,
-        pairing_id: Some("pairing-1".to_string()),
-        sandbox_id: "sandbox-1".to_string(),
-        lease_id: "lease-1".to_string(),
-        is_environment: false,
-        service_id: None,
-    };
+    let context = context();
+    bind_runtime_workspace_routes(
+        routes.as_mut_slice(),
+        Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        &context,
+    );
 
-    bind_runtime_sandbox_routes(routes.as_mut_slice(), Some(&target));
-
-    for route in &routes[..3] {
+    for route in &routes {
         assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
         assert_eq!(
             route.provider_ref.as_deref(),
-            Some("sandbox-pairing:pairing-1/sandbox:sandbox-1/lease:lease-1")
+            Some("device:device-1/workspace:workspace-1")
         );
     }
-    assert_eq!(
-        routes[3].provider_ref.as_deref(),
-        Some("device:device-1/workspace:workspace-1")
+    validate_runtime_workspace_route_binding(
+        routes.as_slice(),
+        Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        &context,
+    )
+    .expect("local connector binding");
+}
+
+#[test]
+fn harness_route_binds_read_write_and_rejects_terminal() {
+    let mut routes = vec![
+        system_route(SystemMcpKey::CodeMaintainerRead),
+        system_route(SystemMcpKey::CodeMaintainerWrite),
+        system_route(SystemMcpKey::TerminalController),
+    ];
+    let route = RuntimeWorkspaceRouteTarget::Harness {
+        branch: HarnessBranchTarget::Run {
+            branch_id: "branch-1".to_string(),
+            branch_ref: "chatos/runs/run-1".to_string(),
+            base_branch: "main".to_string(),
+            base_commit: "base-commit".to_string(),
+        },
+    };
+
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context());
+
+    assert_eq!(routes[0].provider_kind, McpProviderKind::Harness);
+    assert_eq!(routes[1].provider_kind, McpProviderKind::Harness);
+    assert_eq!(routes[2].provider_kind, McpProviderKind::Unavailable);
+    assert!(routes[2]
+        .reason
+        .contains("requires a Task Runner cloud sandbox"));
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context())
+        .expect("harness run binding");
+}
+
+#[test]
+fn harness_default_branch_is_read_only() {
+    let mut routes = vec![
+        system_route(SystemMcpKey::CodeMaintainerRead),
+        system_route(SystemMcpKey::CodeMaintainerWrite),
+    ];
+    let route = RuntimeWorkspaceRouteTarget::Harness {
+        branch: HarnessBranchTarget::Default {
+            branch_ref: "main".to_string(),
+        },
+    };
+
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context());
+
+    assert_eq!(routes[0].provider_kind, McpProviderKind::Harness);
+    assert_eq!(routes[1].provider_kind, McpProviderKind::Unavailable);
+    assert!(routes[1].reason.contains("Task Run branch"));
+    validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context())
+        .expect("harness default binding");
+}
+
+#[test]
+fn workspace_route_binding_validation_rejects_provider_drift() {
+    let route = RuntimeWorkspaceRouteTarget::LocalConnector;
+    let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
+    let context = context();
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context);
+    routes[0].provider_kind = McpProviderKind::Harness;
+
+    assert!(
+        validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context)
+            .is_err()
     );
 }
 
 #[test]
-fn local_workspace_routes_remain_device_bound_without_a_sandbox_target() {
+fn workspace_route_binding_validation_rejects_local_connector_identity_drift() {
+    let route = RuntimeWorkspaceRouteTarget::LocalConnector;
     let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
-    routes[0].provider_kind = McpProviderKind::LocalConnector;
-    routes[0].provider_ref = Some("device:device-1/workspace:workspace-1".to_string());
+    let context = context();
+    bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context);
+    routes[0].provider_ref = Some("device:other-device/workspace:workspace-1".to_string());
 
-    bind_runtime_sandbox_routes(routes.as_mut_slice(), None);
-
-    assert_eq!(routes[0].provider_kind, McpProviderKind::LocalConnector);
-    assert_eq!(
-        routes[0].provider_ref.as_deref(),
-        Some("device:device-1/workspace:workspace-1")
+    assert!(
+        validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context)
+            .is_err()
     );
+}
+
+#[test]
+fn cloud_sandbox_route_rejects_local_connector_targets_during_normalization() {
+    let route = RuntimeWorkspaceRouteTarget::CloudSandbox {
+        target: SandboxExecutionTarget {
+            provider: SandboxProviderKind::LocalConnector,
+            pairing_id: Some("pairing-1".to_string()),
+            sandbox_id: "sandbox-1".to_string(),
+            lease_id: "lease-1".to_string(),
+            is_environment: false,
+            service_id: None,
+        },
+    };
+
+    assert!(normalize_runtime_workspace_route(Some(route)).is_err());
 }
 
 #[test]
@@ -578,7 +730,6 @@ fn cloud_sandbox_images_are_bound_without_a_runtime_sandbox_target() {
     let mut context = context();
     context.sandbox_provider = SandboxProviderKind::Cloud;
 
-    bind_runtime_sandbox_routes(routes.as_mut_slice(), None);
     bind_sandbox_image_routes(routes.as_mut_slice(), &context);
 
     assert_eq!(routes[0].provider_kind, McpProviderKind::CloudSandbox);
@@ -621,20 +772,15 @@ fn local_sandbox_images_are_unavailable_without_a_pairing() {
 }
 
 #[test]
-fn cloud_sandbox_binding_does_not_overwrite_sandbox_images() {
+fn workspace_route_binding_does_not_overwrite_sandbox_images() {
     let mut routes = vec![sandbox_images_route(McpProviderKind::CloudSandbox)];
     routes[0].provider_ref =
         Some(crate::providers::sandbox_images_cloud_provider_ref().to_string());
-    let target = SandboxExecutionTarget {
-        provider: SandboxProviderKind::Cloud,
-        pairing_id: None,
-        sandbox_id: "sandbox-1".to_string(),
-        lease_id: "lease-1".to_string(),
-        is_environment: false,
-        service_id: None,
-    };
-
-    bind_runtime_sandbox_routes(routes.as_mut_slice(), Some(&target));
+    bind_runtime_workspace_routes(
+        routes.as_mut_slice(),
+        Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        &context(),
+    );
 
     assert_eq!(
         routes[0].provider_ref.as_deref(),

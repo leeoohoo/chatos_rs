@@ -338,6 +338,33 @@ impl ConnectorRelay {
         }
     }
 
+    pub async fn has_active_session(
+        &self,
+        owner_user_id: &str,
+        device_id: &str,
+    ) -> Result<bool, RelayError> {
+        if self
+            .local_session_outbound(device_id, owner_user_id)
+            .await
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let Some(distributed) = self.distributed.as_ref() else {
+            return Ok(false);
+        };
+        let Some(presence) = distributed
+            .coordinator
+            .device_presence(device_id)
+            .await
+            .map_err(RelayError::Coordination)?
+        else {
+            return Ok(false);
+        };
+        Ok(presence.owner_user_id == owner_user_id
+            && presence.instance_id != distributed.instance_id)
+    }
+
     pub async fn dispatch(
         &self,
         request: RelayRequest,

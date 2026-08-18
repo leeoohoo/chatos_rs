@@ -16,7 +16,6 @@ import dayjs from 'dayjs';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   PaginatedResponse,
-  RemoteServerRecord,
   TaskRecord,
   TaskRunRecord,
   TaskStatus,
@@ -31,14 +30,11 @@ import {
   taskCreatorLabel,
   taskProfileColorMap,
   taskProfileLabel,
-  type TaskRemoteOperationStats,
-  type TaskRemoteOperationView,
 } from './taskPageUtils';
 import {
   RecentRunsSection,
   RelatedPromptsSection,
   RelatedTasksSection,
-  RemoteOperationsSection,
   TextSection,
 } from './TaskDetailSections';
 
@@ -48,14 +44,8 @@ type TaskDetailDrawerProps = {
   task: TaskRecord | null;
   loading: boolean;
   detailLastRunId?: string | null;
-  detailLastRun?: TaskRunRecord;
   detailLastRunLoading: boolean;
   detailResultSummary?: string | null;
-  remoteOperations: TaskRemoteOperationView[];
-  remoteOperationStats: TaskRemoteOperationStats;
-  latestRemoteOperation: TaskRemoteOperationView | null;
-  recentRemoteOperations: TaskRemoteOperationView[];
-  remoteOperationsLoading: boolean;
   recentRuns?: TaskRunRecord[];
   recentRunsLoading: boolean;
   prompts?: PaginatedResponse<AskUserPromptRecord>;
@@ -69,7 +59,6 @@ type TaskDetailDrawerProps = {
   modelLabelMap: Map<string, string>;
   projectNameMap: Map<string, string>;
   taskSummaryMap: Map<string, string>;
-  remoteServerMap: Map<string, RemoteServerRecord>;
   taskStatusLabel: (status: TaskStatus) => string;
   onClose: () => void;
   onEditTask: (task: TaskRecord) => void;
@@ -79,7 +68,6 @@ type TaskDetailDrawerProps = {
   onOpenRunHistory: (taskId: string, runId?: string) => void;
   onOpenPrompts: (taskId: string, promptId?: string) => void;
   onOpenModel: (modelId: string) => void;
-  onOpenServers: (serverId?: string) => void;
   onOpenDetail: (task: TaskRecord) => void;
 };
 
@@ -89,14 +77,8 @@ export function TaskDetailDrawer({
   task,
   loading,
   detailLastRunId,
-  detailLastRun,
   detailLastRunLoading,
   detailResultSummary,
-  remoteOperations,
-  remoteOperationStats,
-  latestRemoteOperation,
-  recentRemoteOperations,
-  remoteOperationsLoading,
   recentRuns,
   recentRunsLoading,
   prompts,
@@ -110,7 +92,6 @@ export function TaskDetailDrawer({
   modelLabelMap,
   projectNameMap,
   taskSummaryMap,
-  remoteServerMap,
   taskStatusLabel,
   onClose,
   onEditTask,
@@ -120,11 +101,8 @@ export function TaskDetailDrawer({
   onOpenRunHistory,
   onOpenPrompts,
   onOpenModel,
-  onOpenServers,
   onOpenDetail,
 }: TaskDetailDrawerProps) {
-  const pluginCloudRuntimeLabel = t('tasks.detail.pluginCloudRuntime');
-  const formatPluginTarget = (deviceId?: string | null) => deviceId || pluginCloudRuntimeLabel;
 
   return (
     <Drawer
@@ -238,57 +216,12 @@ export function TaskDetailDrawer({
             <Descriptions.Item label={t('tasks.detail.recentRun')}>
               {task.last_run_id || '-'}
             </Descriptions.Item>
-            <Descriptions.Item label={t('tasks.detail.defaultServer')}>
-              {task.mcp_config.default_remote_server_id
-                ? remoteServerMap.get(task.mcp_config.default_remote_server_id)?.name ||
-                  task.mcp_config.default_remote_server_id
-                : t('tasks.modelUnbound')}
-            </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.mcpManagement')}>
               <Tag color="processing">{t('tasks.mcpProgramManaged')}</Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label={t('tasks.detail.pluginTarget')}>
-              {detailLastRunLoading && detailLastRunId ? (
-                t('common.loading')
-              ) : detailLastRun?.plugin_snapshots?.length ? (
-                <Space wrap>
-                  {Array.from(new Set(detailLastRun.plugin_snapshots.map((plugin) => (
-                    formatPluginTarget(plugin.device_id)
-                  )))).map((target) => (
-                    <Tag key={target} color={target === pluginCloudRuntimeLabel ? 'blue' : 'cyan'}>
-                      {target}
-                    </Tag>
-                  ))}
-                </Space>
-              ) : task.project_id === '-1' ? (
-                <Tag color="blue">{pluginCloudRuntimeLabel}</Tag>
-              ) : (
-                t('tasks.detail.pluginProjectRuntimePending')
-              )}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.plugins')}>
               {detailLastRunLoading && detailLastRunId ? (
                 t('common.loading')
-              ) : detailLastRun?.plugin_snapshots?.length ? (
-                <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                  {detailLastRun.plugin_snapshots.map((plugin) => (
-                    <Space
-                      key={`${plugin.plugin_id}:${plugin.release_id}`}
-                      direction="vertical"
-                      size={0}
-                      style={{ width: '100%' }}
-                    >
-                      <Tag color="purple">{plugin.plugin_id}</Tag>
-                      <Typography.Text type="secondary">
-                        {t('tasks.detail.pluginSnapshotSummary', {
-                          version: `v${plugin.version}`,
-                          target: formatPluginTarget(plugin.device_id),
-                          componentCount: plugin.component_snapshots.length,
-                        })}
-                      </Typography.Text>
-                    </Space>
-                  ))}
-                </Space>
               ) : task.plugin_config?.selected_plugins?.length ? (
                 <Space direction="vertical" size="small" style={{ width: '100%' }}>
                   {task.plugin_config.selected_plugins.map((plugin) => (
@@ -438,21 +371,6 @@ export function TaskDetailDrawer({
                 )}
               />
             </div>
-          ) : null}
-
-          {detailLastRunId ? (
-            <RemoteOperationsSection
-              t={t}
-              task={task}
-              detailLastRunId={detailLastRunId}
-              operations={remoteOperations}
-              stats={remoteOperationStats}
-              latest={latestRemoteOperation}
-              recent={recentRemoteOperations}
-              loading={remoteOperationsLoading}
-              onOpenRunHistory={onOpenRunHistory}
-              onOpenServers={onOpenServers}
-            />
           ) : null}
 
           <RecentRunsSection

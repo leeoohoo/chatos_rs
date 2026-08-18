@@ -45,9 +45,7 @@ impl RunService {
             return;
         };
         if let Err(err) = self
-            .publish_pending_run_terminal_events(
-                self.task_queue_topology.run_dispatch_outbox_batch_size,
-            )
+            .publish_pending_run_terminal_events(self.task_queue_topology.event_outbox_batch_size)
             .await
         {
             warn!(

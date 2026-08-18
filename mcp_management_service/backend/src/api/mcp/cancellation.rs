@@ -17,6 +17,8 @@ use super::{record_tool_access_audit, request_id_key};
 
 pub(super) enum DispatchResult {
     Completed(Result<crate::providers::ProviderCallOutcome, crate::providers::ProviderCallError>),
+    AlreadyRunning,
+    CancelledBeforeStart,
     CancelRequested,
     RegistryFailed(String),
 }

@@ -6,20 +6,18 @@ import { describe, expect, it } from 'vitest';
 import { resolveWorkspaceResourceVisibility } from './resourceVisibility';
 
 describe('workspace resource visibility', () => {
-  it('hides terminal and remote resources in the browser cloud surface', () => {
+  it('keeps remote resources visible on the cloud surface', () => {
     expect(resolveWorkspaceResourceVisibility({
-      desktopBridgeAvailable: false,
       terminalUiEnabled: true,
       terminalUiResolved: true,
     })).toEqual({
-      showTerminalSection: false,
-      showRemoteSection: false,
+      showTerminalSection: true,
+      showRemoteSection: true,
     });
   });
 
-  it('shows desktop resources while respecting the terminal UI setting', () => {
+  it('respects the terminal UI setting without depending on the desktop bridge', () => {
     expect(resolveWorkspaceResourceVisibility({
-      desktopBridgeAvailable: true,
       terminalUiEnabled: true,
       terminalUiResolved: true,
     })).toEqual({
@@ -27,7 +25,6 @@ describe('workspace resource visibility', () => {
       showRemoteSection: true,
     });
     expect(resolveWorkspaceResourceVisibility({
-      desktopBridgeAvailable: true,
       terminalUiEnabled: false,
       terminalUiResolved: true,
     })).toEqual({

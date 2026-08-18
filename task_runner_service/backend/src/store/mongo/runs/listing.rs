@@ -37,10 +37,22 @@ impl MongoStore {
                     "$eq": ["$cancel_event_pending", true]
                 }),
                 "post_process_outbox_pending": count_when(doc! {
-                    "$eq": ["$post_process_event_pending", true]
+                    "$and": [
+                        { "$eq": ["$post_process_event_pending", true] },
+                        { "$in": ["$model_phase_status", ["succeeded", "failed", "cancelled", "blocked"]] },
+                    ]
                 }),
-                "terminal_cleanup_outbox_pending": count_when(doc! {
-                    "$eq": ["$terminal_cleanup_event_pending", true]
+                "integration_pending": count_when(doc! {
+                    "$eq": ["$workspace_execution.integration_status", "pending"]
+                }),
+                "integration_active": count_when(doc! {
+                    "$eq": ["$workspace_execution.integration_status", "integrating"]
+                }),
+                "integration_conflicts": count_when(doc! {
+                    "$eq": ["$workspace_execution.integration_status", "conflict"]
+                }),
+                "integration_failed": count_when(doc! {
+                    "$eq": ["$workspace_execution.integration_status", "failed"]
                 }),
             }
         }];
@@ -177,6 +189,66 @@ impl MongoStore {
     ) -> Result<Option<TaskRunRecord>, String> {
         self.find_by_id(&self.runs, id).await
     }
+
+    pub(in crate::store) async fn get_running_run_for_execution_lane(
+        &self,
+        execution_lane_key: &str,
+        exclude_run_id: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.runs
+            .find_one(
+                doc! {
+                    "execution_lane_key": execution_lane_key,
+                    "status": "running",
+                    "id": { "$ne": exclude_run_id },
+                },
+                FindOneOptions::builder()
+                    .sort(doc! { "started_at": 1, "id": 1 })
+                    .build(),
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub(in crate::store) async fn get_prior_pending_integration_run(
+        &self,
+        execution_group_id: &str,
+        integration_ready_at: &str,
+        created_at: &str,
+        run_id: &str,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        self.runs
+            .find_one(
+                doc! {
+                    "id": { "$ne": run_id },
+                    "workspace_execution.execution_group_id": execution_group_id,
+                    "workspace_execution.integration_status": {
+                        "$in": ["pending", "integrating", "failed", "conflict"]
+                    },
+                    "$or": [
+                        { "workspace_execution.integration_ready_at": { "$lt": integration_ready_at } },
+                        {
+                            "workspace_execution.integration_ready_at": integration_ready_at,
+                            "created_at": { "$lt": created_at },
+                        },
+                        {
+                            "workspace_execution.integration_ready_at": integration_ready_at,
+                            "created_at": created_at,
+                            "id": { "$lt": run_id },
+                        },
+                    ],
+                },
+                FindOneOptions::builder()
+                    .sort(doc! {
+                        "workspace_execution.integration_ready_at": 1,
+                        "created_at": 1,
+                        "id": 1,
+                    })
+                    .build(),
+            )
+            .await
+            .map_err(|err| err.to_string())
+    }
 }
 
 fn decode_run_execution_stats_document(
@@ -209,13 +281,15 @@ mod tests {
             "dispatch_outbox_pending": 1,
             "cancellation_outbox_pending": 1,
             "post_process_outbox_pending": 1,
-            "terminal_cleanup_outbox_pending": 1,
+            "integration_pending": 1,
+            "integration_active": 0,
+            "integration_conflicts": 0,
+            "integration_failed": 0,
         })
         .expect("decode Mongo aggregation counts");
 
         assert_eq!(stats.total, 3);
         assert_eq!(stats.active, 2);
         assert_eq!(stats.dispatch_outbox_pending, 1);
-        assert_eq!(stats.terminal_cleanup_outbox_pending, 1);
     }
 }

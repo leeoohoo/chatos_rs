@@ -107,7 +107,7 @@ describe('loadProjects', () => {
     expect(state.projects[0]?.gitUrl).toBe('git@github.com:org/kept.git');
   });
 
-  it('filters local projects from the browser project list', async () => {
+  it('keeps local connector projects visible in the cloud project list', async () => {
     const state = {
       projects: [],
       currentProjectId: 'cloud-project',
@@ -145,7 +145,10 @@ describe('loadProjects', () => {
 
     await actions.loadProjects({ force: true });
 
-    expect(state.projects.map((project) => project.id)).toEqual(['cloud-project']);
+    expect(state.projects.map((project) => project.id)).toEqual([
+      'cloud-project',
+      'local-project',
+    ]);
   });
 });
 

@@ -114,72 +114,35 @@ pub(super) async fn seed_agent_bindings(
         )
         .await?;
     }
-    for agent_key in [TASK_RUNNER_PLAN_AGENT_KEY, TASK_RUNNER_LOCAL_PLAN_AGENT_KEY] {
-        let conditions = if agent_key == TASK_RUNNER_LOCAL_PLAN_AGENT_KEY {
-            Some(local_runtime_binding_conditions())
-        } else {
-            None
-        };
+    for agent_key in [TASK_RUNNER_PLAN_AGENT_KEY] {
         let kinds = task_runner_cloud_plan_phase_builtin_kinds();
         for (index, kind) in kinds.into_iter().enumerate() {
             let required = task_runner_cloud_plan_phase_required(kind);
             let resource_id = builtin_resource_id(kind);
-            if let Some(conditions) = conditions.clone() {
-                seed_agent_mcp_binding_with_conditions(
-                    store,
-                    admin_user_id,
-                    agent_key,
-                    resource_id.as_str(),
-                    required,
-                    10 + index as i64 * 10,
-                    conditions,
-                )
-                .await?;
-            } else {
-                seed_agent_mcp_binding(
-                    store,
-                    admin_user_id,
-                    agent_key,
-                    resource_id.as_str(),
-                    required,
-                    10 + index as i64 * 10,
-                )
-                .await?;
-            }
-        }
-    }
-    for (agent_key, kind, required, priority) in [
-        (TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20),
-        (
-            TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
-            BuiltinMcpKind::AskUser,
-            true,
-            20,
-        ),
-    ] {
-        let resource_id = builtin_resource_id(kind);
-        if agent_key == TASK_RUNNER_LOCAL_RUN_AGENT_KEY {
-            seed_agent_mcp_binding_with_conditions(
-                store,
-                admin_user_id,
-                agent_key,
-                resource_id.as_str(),
-                required,
-                priority,
-                local_runtime_binding_conditions(),
-            )
-            .await?;
-        } else {
             seed_agent_mcp_binding(
                 store,
                 admin_user_id,
                 agent_key,
                 resource_id.as_str(),
                 required,
-                priority,
+                10 + index as i64 * 10,
             )
             .await?;
         }
+    }
+    for (agent_key, kind, required, priority) in
+        [(TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20)]
+    {
+        let resource_id = builtin_resource_id(kind);
+        seed_agent_mcp_binding(
+            store,
+            admin_user_id,
+            agent_key,
+            resource_id.as_str(),
+            required,
+            priority,
+        )
+        .await?;
     }
     for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
         seed_agent_mcp_binding(
@@ -198,43 +161,18 @@ pub(super) async fn seed_agent_bindings(
         builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
     )
     .await?;
-    remove_seed_binding_for_all_system_scopes(
-        store,
-        TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
-        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
-    )
-    .await?;
-    for (agent_key, conditions) in [
-        (TASK_RUNNER_RUN_AGENT_KEY, None),
-        (
-            TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
-            Some(local_runtime_binding_conditions()),
-        ),
-    ] {
+    for agent_key in [TASK_RUNNER_RUN_AGENT_KEY] {
         for (kind, priority) in task_runner_cloud_run_phase_optional_builtin_kinds() {
             let resource_id = builtin_resource_id(kind);
-            if let Some(conditions) = conditions.clone() {
-                seed_agent_mcp_binding_with_conditions(
-                    store,
-                    admin_user_id,
-                    agent_key,
-                    resource_id.as_str(),
-                    false,
-                    priority,
-                    conditions,
-                )
-                .await?;
-            } else {
-                seed_agent_mcp_binding(
-                    store,
-                    admin_user_id,
-                    agent_key,
-                    resource_id.as_str(),
-                    false,
-                    priority,
-                )
-                .await?;
-            }
+            seed_agent_mcp_binding(
+                store,
+                admin_user_id,
+                agent_key,
+                resource_id.as_str(),
+                false,
+                priority,
+            )
+            .await?;
         }
     }
     for agent_key in BUNDLED_PONYTAIL_AGENT_KEYS {
@@ -250,18 +188,13 @@ pub(super) async fn seed_agent_bindings(
         .await?;
     }
     for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
-        seed_agent_mcp_binding_with_conditions(
+        seed_agent_mcp_binding(
             store,
             admin_user_id,
             agent_key,
             PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
             true,
             30,
-            BindingConditions {
-                project_source_type: Some("cloud".to_string()),
-                runtime_provider: Some("cloud".to_string()),
-                ..BindingConditions::default()
-            },
         )
         .await?;
     }

@@ -291,7 +291,7 @@ impl PluginRuntimeHost {
             }
             NATIVE_SKILL_TOOL_CALL_OPERATION => {
                 let tool_name = required_body_text(&request.body, "tool_name")?;
-                let arguments = request
+                let mut arguments = request
                     .body
                     .get("arguments")
                     .cloned()
@@ -320,6 +320,20 @@ impl PluginRuntimeHost {
                 self.skill_loader
                     .validate_bundled_native_binding(&native_skill.binding)
                     .map_err(|error| (409, error.to_string()))?;
+                let tool_result_max_chars = request
+                    .body
+                    .get("tool_result_max_chars")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .filter(|value| {
+                        (1..=chatos_mcp_service::TOOL_RESULT_MAX_CHARS_UPPER_BOUND).contains(value)
+                    });
+                crate::skills::native::apply_managed_tool_result_limit(
+                    native_skill.binding.skill_id.as_str(),
+                    tool_name.as_str(),
+                    &mut arguments,
+                    tool_result_max_chars,
+                );
                 let requires_interactive_approval =
                     crate::skills::native::requires_interactive_approval(
                         native_skill.binding.skill_id.as_str(),
@@ -530,7 +544,16 @@ impl PluginRuntimeHost {
                 mcp.validate_active()
                     .map_err(|error| (409, error.to_string()))?;
                 let result = mcp
-                    .call_tool(invocation_id.as_str(), tool_name.as_str(), arguments)
+                    .call_tool(
+                        invocation_id.as_str(),
+                        tool_name.as_str(),
+                        arguments,
+                        request
+                            .body
+                            .get("tool_result_max_chars")
+                            .and_then(Value::as_u64)
+                            .and_then(|value| usize::try_from(value).ok()),
+                    )
                     .await
                     .map_err(|error| (502, error.to_string()))?;
                 let health = mcp.health_snapshot().map_err(internal_error)?;

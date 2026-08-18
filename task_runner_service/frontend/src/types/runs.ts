@@ -17,6 +17,58 @@ export type TaskRunAttemptStatus =
   | 'blocked'
   | 'interrupted';
 
+export type ModelPhaseStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked';
+
+export type WorkspaceIntegrationStatus =
+  | 'not_required'
+  | 'pending'
+  | 'integrating'
+  | 'integrated'
+  | 'waived'
+  | 'conflict'
+  | 'failed';
+
+export interface TaskRunWorkspaceExecution {
+  execution_group_id?: string | null;
+  execution_branch_ref?: string | null;
+  integration_status: WorkspaceIntegrationStatus;
+  result_commit?: string | null;
+  integrated_commit?: string | null;
+  promoted_commit?: string | null;
+  waived_at?: string | null;
+  waiver_reason?: string | null;
+  local_changed_files?: RunWorkspaceChangedFile[];
+  local_patch?: string | null;
+  local_patch_truncated?: boolean;
+  conflict_files?: string[];
+  conflict_message?: string | null;
+  integration_last_error?: string | null;
+  integration_attempt_count?: number;
+}
+
+export interface RunWorkspaceChangedFile {
+  status: string;
+  path: string;
+  old_path?: string | null;
+}
+
+export interface RunWorkspaceChanges {
+  project_id: string;
+  run_id: string;
+  branch_ref: string;
+  base_commit: string;
+  result_commit: string;
+  files: RunWorkspaceChangedFile[];
+  patch: string;
+  patch_truncated: boolean;
+}
+
 export interface TaskRunAttemptRecord {
   attempt_id: string;
   sequence: number;
@@ -24,29 +76,7 @@ export interface TaskRunAttemptRecord {
   started_at: string;
   finished_at?: string | null;
   recovery_reason?: string | null;
-  sandbox_id?: string | null;
-  lease_id?: string | null;
   model_response_id?: string | null;
-}
-
-export interface RunPluginComponentSnapshot {
-  component_key: string;
-  kind: string;
-  execution_host: 'cloud' | 'local' | 'portable';
-  content_sha256: string;
-  runtime: Record<string, unknown>;
-}
-
-export interface RunPluginSnapshot {
-  plugin_id: string;
-  release_id: string;
-  version: string;
-  artifact_sha256: string;
-  device_id?: string | null;
-  workspace_id?: string | null;
-  component_snapshots: RunPluginComponentSnapshot[];
-  permission_snapshot: string[];
-  auth_connection_ids: string[];
 }
 
 export interface TaskRunRecord {
@@ -55,10 +85,11 @@ export interface TaskRunRecord {
   model_config_id: string;
   memory_thread_id: string;
   status: TaskRunStatus;
+  model_phase_status: ModelPhaseStatus;
+  workspace_execution?: TaskRunWorkspaceExecution | null;
   started_at?: string | null;
   finished_at?: string | null;
   input_snapshot: unknown;
-  plugin_snapshots: RunPluginSnapshot[];
   context_snapshot?: unknown;
   result_summary?: string | null;
   error_message?: string | null;

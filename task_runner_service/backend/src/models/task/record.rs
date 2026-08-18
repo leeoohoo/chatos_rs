@@ -61,16 +61,6 @@ pub struct TaskRecord {
     pub deleted_at: Option<String>,
 }
 
-impl TaskRecord {
-    pub fn execution_lane_key(&self) -> Option<String> {
-        if !self.mcp_config.requires_execution {
-            return None;
-        }
-        let project_id = crate::models::normalize_project_id(Some(self.project_id.clone()));
-        (project_id != crate::models::PUBLIC_PROJECT_ID).then(|| format!("project:{project_id}"))
-    }
-}
-
 fn default_task_project_id() -> String {
     crate::models::PUBLIC_PROJECT_ID.to_string()
 }

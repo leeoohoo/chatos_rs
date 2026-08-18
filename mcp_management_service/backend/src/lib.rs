@@ -11,7 +11,6 @@ mod internal_tls;
 pub mod pressure;
 pub mod project_context;
 pub mod providers;
-pub mod result_events;
 pub mod routing;
 pub mod runtime;
 pub mod state;

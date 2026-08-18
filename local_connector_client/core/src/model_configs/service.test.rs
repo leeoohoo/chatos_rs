@@ -6,6 +6,7 @@ mod tests {
     use super::*;
     use crate::model_configs::ModelConfigState;
     use crate::AuthState;
+    use serde_json::json;
 
     fn authenticated_state_with_model(
         provider: &str,
@@ -82,19 +83,19 @@ mod tests {
     }
 
     #[test]
-    fn glm_provider_uses_glm_prompt_over_the_compatible_transport() {
+    fn glm_provider_keeps_glm_runtime_and_prompt_dialect() {
         let state =
             authenticated_state_with_model("glm", None, "https://open.bigmodel.cn/api/paas/v4");
 
         let runtime =
             resolve_local_model_runtime(&state, "user-1", "model-1").expect("model runtime");
 
-        assert_eq!(runtime.provider, "openai_compatible");
+        assert_eq!(runtime.provider, "glm");
         assert_eq!(runtime.prompt_vendor.as_deref(), Some("glm"));
     }
 
     #[test]
-    fn deleting_command_approval_model_clears_local_agent_defaults() {
+    fn deleting_command_approval_model_clears_local_selection() {
         let mut settings = LocalModelSettings {
             command_approval_model_config_id: Some("approval-model".to_string()),
             command_approval_thinking_level: Some("high".to_string()),
@@ -117,15 +118,6 @@ mod tests {
             ..Default::default()
         };
         assert!(save_local_model_settings(&mut state, settings).is_err());
-    }
-
-    #[test]
-    fn optional_text_update_can_clear_existing_value() {
-        assert_eq!(optional_text_update(Some(""), Some("task planning")), None);
-        assert_eq!(
-            optional_text_update(None, Some("task planning")).as_deref(),
-            Some("task planning")
-        );
     }
 
     #[tokio::test]
@@ -252,5 +244,32 @@ mod tests {
                 .as_deref(),
             Some("replacement-model")
         );
+    }
+
+    #[test]
+    fn reconciliation_removes_local_models_missing_from_cloud() {
+        let mut state =
+            authenticated_state_with_model("gpt", Some("gpt"), "https://old.example.invalid/v1");
+        state.model_configs.configs[0].id = "legacy-local-model".to_string();
+        state.model_configs.settings.command_approval_model_config_id =
+            Some("legacy-local-model".to_string());
+
+        let mut cloud_model = state.model_configs.configs[0].clone();
+        cloud_model.id = "cloud-model".to_string();
+        cloud_model.server_model_config_id = Some("cloud-model".to_string());
+        state.model_configs.configs.push(cloud_model);
+
+        let authoritative_ids = HashSet::from(["cloud-model".to_string()]);
+        assert_eq!(
+            remove_non_authoritative_model_configs(&mut state, &authoritative_ids),
+            1
+        );
+        assert_eq!(state.model_configs.configs.len(), 1);
+        assert_eq!(state.model_configs.configs[0].id, "cloud-model");
+        assert!(state
+            .model_configs
+            .settings
+            .command_approval_model_config_id
+            .is_none());
     }
 }

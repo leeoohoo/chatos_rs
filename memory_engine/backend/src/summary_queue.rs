@@ -258,6 +258,12 @@ async fn handle_delivery(
             .ack(BasicAckOptions::default())
             .await
             .map_err(|err| err.to_string()),
+        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
+            delivery
+                .ack(BasicAckOptions::default())
+                .await
+                .map_err(|err| err.to_string())
+        }
         Err(error) => {
             let event = envelope.as_outbox();
             let _ =
@@ -335,7 +341,7 @@ async fn process_summary_event(
         return Ok(());
     }
 
-    let token_threshold = policy.token_limit.unwrap_or(6000).max(128);
+    let token_threshold = summary::effective_thread_summary_token_limit(policy.token_limit);
     let Some(thread) = threads::get_thread_by_id(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -346,18 +352,31 @@ async fn process_summary_event(
     else {
         return Ok(());
     };
+    if summary_slot_is_active(&thread, now_rfc3339().as_str()) {
+        threads::defer_summary_dispatch_until_unlock(&state.pool, &event).await?;
+        return Ok(());
+    }
     if thread.pending_summary_tokens < token_threshold {
         threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     }
 
-    summary::run_thread_summary_with_thread(
+    let run_result = summary::run_thread_summary_with_thread(
         &state.config,
         &state.pool,
         thread,
         SUMMARY_QUEUE_TRIGGER,
     )
-    .await?;
+    .await;
+    match run_result {
+        Ok(_) => {}
+        Err(error) if error.contains("summary slot already occupied") => {
+            return Err(
+                crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED.to_string(),
+            );
+        }
+        Err(error) => return Err(error),
+    }
     threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
     let _ = threads::rearm_summary_dispatch_if_eligible(
         &state.pool,
@@ -382,6 +401,14 @@ async fn process_summary_event(
         );
     }
     Ok(())
+}
+
+fn summary_slot_is_active(thread: &crate::models::EngineThread, now: &str) -> bool {
+    thread.summary_status == "running"
+        && thread
+            .summary_lock_expires_at
+            .as_deref()
+            .is_some_and(|expires_at| expires_at > now)
 }
 
 async fn publish_outbox_event(
@@ -631,7 +658,11 @@ async fn publish_pending_outbox_batch(state: &AppState) -> Result<usize, String>
 mod tests {
     use std::time::Duration;
 
-    use super::{summary_consumer_enabled, wait_until_consumer_enabled, SummaryRequestedEnvelope};
+    use super::{
+        summary_consumer_enabled, summary_slot_is_active, wait_until_consumer_enabled,
+        SummaryRequestedEnvelope,
+    };
+    use crate::models::EngineThread;
     use crate::pressure::{MemoryEnginePressurePolicy, PlatformPressureLevel};
     use crate::repositories::threads::SummaryDispatchOutbox;
 
@@ -651,6 +682,47 @@ mod tests {
         assert_eq!(envelope.thread_id, "thread-1");
         assert_eq!(envelope.version, 7);
         assert_eq!(envelope.attempt, 0);
+    }
+
+    fn thread_with_summary_lock(expires_at: Option<&str>) -> EngineThread {
+        EngineThread {
+            id: "thread-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "source-1".to_string(),
+            subject_id: "subject-1".to_string(),
+            thread_type: "conversation".to_string(),
+            external_thread_id: None,
+            title: None,
+            labels: None,
+            metadata: None,
+            status: "active".to_string(),
+            summary_status: "running".to_string(),
+            summary_job_run_id: Some("job-1".to_string()),
+            summary_locked_at: Some("2026-01-01T00:00:00Z".to_string()),
+            summary_lock_expires_at: expires_at.map(ToOwned::to_owned),
+            pending_record_count: 1,
+            pending_summary_tokens: 1_000,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            archived_at: None,
+        }
+    }
+
+    #[test]
+    fn queue_defers_only_for_a_live_summary_slot() {
+        let now = "2026-01-01T00:05:00Z";
+        assert!(summary_slot_is_active(
+            &thread_with_summary_lock(Some("2026-01-01T00:10:00Z")),
+            now,
+        ));
+        assert!(!summary_slot_is_active(
+            &thread_with_summary_lock(Some("2026-01-01T00:04:59Z")),
+            now,
+        ));
+        assert!(!summary_slot_is_active(
+            &thread_with_summary_lock(None),
+            now,
+        ));
     }
 
     #[test]

@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::fs;
-
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::workspace::directory_ops::create_workspace_directory;
-use crate::workspace::paths::{relative_to_workspace, resolve_workspace_dir};
+use crate::workspace::directory_ops::{
+    create_workspace_directory, list_workspace_directory, WorkspaceDirectoryListing,
+};
 use crate::{LocalRuntime, WorkspaceState};
 
 use super::context::owner_context;
@@ -28,20 +27,6 @@ pub(super) struct LocalWorkspaceResponse {
     display_name: String,
     local_path_alias: String,
     status: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct LocalDirectoryEntryResponse {
-    name: String,
-    path: String,
-    is_dir: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct LocalDirectoryListResponse {
-    path: String,
-    parent: Option<String>,
-    entries: Vec<LocalDirectoryEntryResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,10 +88,10 @@ pub(super) async fn list_directory(
     Path(workspace_id): Path<String>,
     Query(query): Query<LocalDirectoryQuery>,
     State(runtime): State<LocalRuntime>,
-) -> Result<Json<LocalDirectoryListResponse>, LocalRuntimeApiError> {
+) -> Result<Json<WorkspaceDirectoryListing>, LocalRuntimeApiError> {
     owner_context(&runtime).await?;
     let workspace = workspace(&runtime, workspace_id.as_str()).await?;
-    list_workspace_directory(&workspace, query.path.as_deref().unwrap_or("."))
+    list_workspace_directory(&workspace, query.path.as_deref().unwrap_or("."), false)
         .map(Json)
         .map_err(workspace_error)
 }
@@ -142,78 +127,4 @@ async fn workspace(
 
 fn workspace_error(error: anyhow::Error) -> LocalRuntimeApiError {
     LocalRuntimeApiError::bad_request("local_runtime_workspace_path_invalid", error.to_string())
-}
-
-fn list_workspace_directory(
-    workspace: &WorkspaceState,
-    requested_path: &str,
-) -> anyhow::Result<LocalDirectoryListResponse> {
-    let directory = resolve_workspace_dir(workspace, requested_path)?;
-    let path = relative_to_workspace(workspace, directory.as_path());
-    let parent = directory
-        .parent()
-        .filter(|parent| parent.starts_with(workspace.absolute_root.as_path()))
-        .map(|parent| relative_to_workspace(workspace, parent))
-        .filter(|parent| parent != &path);
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(directory.as_path())? {
-        let entry = entry?;
-        let metadata = entry.file_type()?;
-        if !metadata.is_dir() || metadata.is_symlink() {
-            continue;
-        }
-        entries.push(LocalDirectoryEntryResponse {
-            name: entry.file_name().to_string_lossy().to_string(),
-            path: relative_to_workspace(workspace, entry.path().as_path()),
-            is_dir: true,
-        });
-    }
-    entries.sort_by_key(|entry| entry.name.to_lowercase());
-    Ok(LocalDirectoryListResponse {
-        path,
-        parent,
-        entries,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::list_workspace_directory;
-    use crate::workspace::directory_ops::create_workspace_directory;
-    use crate::WorkspaceState;
-    use std::path::PathBuf;
-
-    fn workspace(root: PathBuf) -> WorkspaceState {
-        WorkspaceState {
-            id: "workspace-1".to_string(),
-            absolute_root: root,
-            alias: "work".to_string(),
-            fingerprint: "fingerprint".to_string(),
-            project_config_trust: None,
-        }
-    }
-
-    #[test]
-    fn lists_and_creates_directories_relative_to_the_authorized_workspace() {
-        let root = std::env::temp_dir().join(format!(
-            "chatos-local-workspace-api-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(root.join("apps/backend")).expect("create test directories");
-        let workspace = workspace(root.canonicalize().expect("canonical workspace"));
-
-        let listing = list_workspace_directory(&workspace, "apps").expect("list workspace");
-        assert_eq!(listing.path, "apps");
-        assert_eq!(listing.parent.as_deref(), Some("."));
-        assert_eq!(listing.entries.len(), 1);
-        assert_eq!(listing.entries[0].path, "apps/backend");
-
-        let created =
-            create_workspace_directory(&workspace, "apps/frontend/src").expect("create directory");
-        assert_eq!(created, "apps/frontend/src");
-        assert!(root.join("apps/frontend/src").is_dir());
-        assert!(create_workspace_directory(&workspace, "../outside").is_err());
-
-        let _ = std::fs::remove_dir_all(root);
-    }
 }

@@ -5,21 +5,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${CHATOS_DOCKER_ENV_FILE:-$SCRIPT_DIR/.env}"
-ENV_EXAMPLE_FILE="$SCRIPT_DIR/.env.example"
+BOOTSTRAP_FILE="${CHATOS_DOCKER_BOOTSTRAP_FILE:-$SCRIPT_DIR/bootstrap.conf}"
+BOOTSTRAP_EXAMPLE_FILE="$SCRIPT_DIR/bootstrap.conf.example"
 IMAGE_NAMESPACE="${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}"
 IMAGE_TAG="${CHATOS_IMAGE_TAG:-harness-ci}"
 PUBLIC_HOST="${CHATOS_PUBLIC_HOST:-8.155.171.124}"
 DOCKER_SOCKET_PROXY_IMAGE="${DOCKER_SOCKET_PROXY_IMAGE:-ghcr.io/tecnativa/docker-socket-proxy:latest}"
 
-ensure_env_file() {
-  if [[ -f "$ENV_FILE" ]]; then
+ensure_bootstrap_file() {
+  if [[ -f "$BOOTSTRAP_FILE" ]]; then
     return 0
   fi
-  cp "$ENV_EXAMPLE_FILE" "$ENV_FILE"
+  cp "$BOOTSTRAP_EXAMPLE_FILE" "$BOOTSTRAP_FILE"
 }
 
-set_env() {
+set_bootstrap_value() {
   local key="$1"
   local value="$2"
   local tmp
@@ -37,8 +37,8 @@ set_env() {
         print key "=" value
       }
     }
-  ' "$ENV_FILE" >"$tmp"
-  mv "$tmp" "$ENV_FILE"
+  ' "$BOOTSTRAP_FILE" >"$tmp"
+  mv "$tmp" "$BOOTSTRAP_FILE"
 }
 
 require_local_image() {
@@ -172,18 +172,18 @@ require_harness_ci_images() {
   done
 }
 
-ensure_env_file
-set_env CHATOS_IMAGE_NAMESPACE "$IMAGE_NAMESPACE"
-set_env CHATOS_IMAGE_TAG "$IMAGE_TAG"
-set_env SANDBOX_MANAGER_DOCKER_IMAGE "$IMAGE_NAMESPACE/chatos-rs-sandbox-agent:$IMAGE_TAG"
-set_env DOCKER_SOCKET_PROXY_IMAGE "$DOCKER_SOCKET_PROXY_IMAGE"
-set_env CHATOS_DOCKER_EXTRA_COMPOSE_FILES ""
-set_env HARNESS_PORT "3000"
-set_env HARNESS_SSH_PORT "3022"
-set_env HARNESS_PUBLIC_BASE_URL "http://$PUBLIC_HOST:3000"
-set_env HARNESS_GIT_BASE_URL "http://$PUBLIC_HOST:3000/git"
-set_env HARNESS_SSH_PUBLIC_HOST "$PUBLIC_HOST"
-set_env HARNESS_BASE_URL "http://harness:3000"
+ensure_bootstrap_file
+set_bootstrap_value CHATOS_IMAGE_NAMESPACE "$IMAGE_NAMESPACE"
+set_bootstrap_value CHATOS_IMAGE_TAG "$IMAGE_TAG"
+set_bootstrap_value SANDBOX_MANAGER_DOCKER_IMAGE "$IMAGE_NAMESPACE/chatos-rs-sandbox-agent:$IMAGE_TAG"
+set_bootstrap_value DOCKER_SOCKET_PROXY_IMAGE "$DOCKER_SOCKET_PROXY_IMAGE"
+set_bootstrap_value CHATOS_DOCKER_EXTRA_COMPOSE_FILES ""
+set_bootstrap_value HARNESS_PORT "3000"
+set_bootstrap_value HARNESS_SSH_PORT "3022"
+set_bootstrap_value HARNESS_PUBLIC_BASE_URL "http://$PUBLIC_HOST:3000"
+set_bootstrap_value HARNESS_GIT_BASE_URL "http://$PUBLIC_HOST:3000/git"
+set_bootstrap_value HARNESS_SSH_PUBLIC_HOST "$PUBLIC_HOST"
+set_bootstrap_value HARNESS_BASE_URL "http://harness:3000"
 
 case "${1:-}" in
   check-images|verify-images)

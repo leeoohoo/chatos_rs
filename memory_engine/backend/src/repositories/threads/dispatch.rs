@@ -32,12 +32,14 @@ pub async fn get_pending_summary_dispatch(
     source_id: &str,
     thread_id: &str,
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
+    let now = now_rfc3339();
     collection(db)
         .find_one(doc! {
             "tenant_id": tenant_id,
             "source_id": source_id,
             "id": thread_id,
             "summary_dispatch_pending": true,
+            "$or": unlocked_summary_thread_filter(now.as_str()),
         })
         .await
         .map_err(|err| err.to_string())
@@ -63,8 +65,12 @@ pub async fn list_pending_summary_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<SummaryDispatchOutbox>, String> {
+    let now = now_rfc3339();
     collection(db)
-        .find(doc! { "summary_dispatch_pending": true })
+        .find(doc! {
+            "summary_dispatch_pending": true,
+            "$or": unlocked_summary_thread_filter(now.as_str()),
+        })
         .sort(doc! {"summary_dispatch_requested_at": 1, "updated_at": 1})
         .limit(limit.clamp(1, 10_000))
         .await
@@ -72,6 +78,25 @@ pub async fn list_pending_summary_dispatches(
         .try_collect()
         .await
         .map_err(|err| err.to_string())
+}
+
+pub async fn defer_summary_dispatch_until_unlock(
+    db: &Db,
+    event: &SummaryDispatchOutbox,
+) -> Result<bool, String> {
+    let result = collection(db)
+        .update_one(
+            dispatch_identity_filter(event),
+            doc! {
+                "$set": {
+                    "summary_dispatch_pending": true,
+                    "summary_dispatch_last_error": Bson::Null,
+                }
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(result.matched_count > 0)
 }
 
 pub async fn mark_summary_dispatch_published(
@@ -279,4 +304,16 @@ fn dispatch_identity_filter(event: &SummaryDispatchOutbox) -> mongodb::bson::Doc
         "id": &event.thread_id,
         "summary_dispatch_version": { "$gte": event.summary_dispatch_version },
     }
+}
+
+fn unlocked_summary_thread_filter(now: &str) -> Vec<mongodb::bson::Document> {
+    vec![
+        doc! {"summary_status": {"$ne": "running"}},
+        doc! {"summary_status": {"$exists": false}},
+        doc! {"summary_status": Bson::Null},
+        doc! {"summary_status": ""},
+        doc! {"summary_lock_expires_at": {"$exists": false}},
+        doc! {"summary_lock_expires_at": Bson::Null},
+        doc! {"summary_lock_expires_at": {"$lte": now}},
+    ]
 }

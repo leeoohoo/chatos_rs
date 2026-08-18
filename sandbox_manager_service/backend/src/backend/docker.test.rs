@@ -114,6 +114,140 @@ mod tests {
         assert_eq!(payload["HostConfig"]["Init"], json!(true));
     }
 
+    fn postgres_service(environment: BTreeMap<String, String>) -> SandboxEnvironmentServiceSpec {
+        SandboxEnvironmentServiceSpec {
+            service_id: "postgresql".to_string(),
+            service_role: "dependency".to_string(),
+            image: "postgres:16-alpine".to_string(),
+            dockerfile: None,
+            environment,
+            mcp_enabled: false,
+        }
+    }
+
+    #[test]
+    fn postgres_dependency_boots_with_migration_role_and_preserves_app_role() {
+        let service = postgres_service(BTreeMap::from([
+            ("POSTGRES_USER".to_string(), "game_app".to_string()),
+            ("POSTGRES_PASSWORD".to_string(), "app-secret".to_string()),
+            (
+                "POSTGRES_MIGRATION_USER".to_string(),
+                "game_migration".to_string(),
+            ),
+            (
+                "POSTGRES_MIGRATION_PASSWORD".to_string(),
+                "migration-secret".to_string(),
+            ),
+        ]));
+        let bootstrap = postgres_role_bootstrap(&service)
+            .expect("valid roles")
+            .expect("separate roles");
+        assert_eq!(bootstrap.app_user, "game_app");
+        assert_eq!(bootstrap.migration_user, "game_migration");
+        let container_environment =
+            dependency_container_environment(&service).expect("container environment");
+        assert_eq!(
+            container_environment
+                .get("POSTGRES_USER")
+                .map(String::as_str),
+            Some("game_migration")
+        );
+        assert_eq!(
+            container_environment
+                .get("POSTGRES_PASSWORD")
+                .map(String::as_str),
+            Some("migration-secret")
+        );
+    }
+
+    #[test]
+    fn postgres_dependency_rejects_one_username_with_two_passwords() {
+        let service = postgres_service(BTreeMap::from([
+            ("POSTGRES_USER".to_string(), "game".to_string()),
+            ("POSTGRES_PASSWORD".to_string(), "app-secret".to_string()),
+            ("POSTGRES_MIGRATION_USER".to_string(), "game".to_string()),
+            (
+                "POSTGRES_MIGRATION_PASSWORD".to_string(),
+                "migration-secret".to_string(),
+            ),
+        ]));
+        assert!(postgres_role_bootstrap(&service)
+            .expect_err("conflicting credentials")
+            .contains("share a username"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker and the postgres:16-alpine image"]
+    async fn docker_postgres_dependency_provisions_migration_and_app_roles() {
+        let mut config = AppConfig::for_tests();
+        let environment_id = format!("postgres-smoke-{}", uuid::Uuid::new_v4().simple());
+        let work_root = std::env::temp_dir().join(format!("chatos-{environment_id}"));
+        let workspace = work_root.join("workspace");
+        std::fs::create_dir_all(workspace.as_path()).expect("workspace");
+        config.work_root = work_root.clone();
+        let backend = DockerSandboxBackend::new(config);
+        let service = postgres_service(BTreeMap::from([
+            ("POSTGRES_DB".to_string(), "role_smoke".to_string()),
+            ("POSTGRES_USER".to_string(), "role_app".to_string()),
+            ("POSTGRES_PASSWORD".to_string(), "app-secret".to_string()),
+            (
+                "POSTGRES_MIGRATION_USER".to_string(),
+                "role_migration".to_string(),
+            ),
+            (
+                "POSTGRES_MIGRATION_PASSWORD".to_string(),
+                "migration-secret".to_string(),
+            ),
+        ]));
+        let result: Result<(), String> = async {
+            backend
+                .create_environment(SandboxEnvironmentCreateSpec {
+                    environment_id: environment_id.clone(),
+                    run_workspace: workspace.to_string_lossy().to_string(),
+                    services: vec![service],
+                    agent_token: "unused-dependency-token".to_string(),
+                    resource_limits: ResourceLimits {
+                        cpu: 1.0,
+                        memory_mb: 512,
+                        disk_mb: 1024,
+                        max_processes: 64,
+                    },
+                    network: NetworkPolicy::default(),
+                    effective_permissions:
+                        chatos_sandbox_contract::legacy_policy_permission_snapshot(
+                            &chatos_sandbox_contract::EffectiveSandboxPolicy::default(),
+                            vec![workspace.to_string_lossy().to_string()],
+                        ),
+                })
+                .await?;
+            for command in [
+                "PGPASSWORD=migration-secret psql -v ON_ERROR_STOP=1 -U role_migration -d role_smoke -c 'CREATE TABLE role_probe (id integer primary key)'",
+                "PGPASSWORD=app-secret psql -v ON_ERROR_STOP=1 -U role_app -d role_smoke -c 'INSERT INTO role_probe VALUES (1)'",
+                "PGPASSWORD=app-secret psql -v ON_ERROR_STOP=1 -U role_app -d role_smoke -tAc 'SELECT count(*) FROM role_probe' | grep -qx 1",
+            ] {
+                let exec = backend
+                    .exec_environment_service(
+                        environment_id.as_str(),
+                        "postgresql",
+                        &["sh".to_string(), "-ec".to_string(), command.to_string()],
+                    )
+                    .await?;
+                if exec.exit_code != 0 {
+                    return Err(format!(
+                        "PostgreSQL role smoke command failed: {}",
+                        exec.stderr
+                    ));
+                }
+            }
+            Ok(())
+        }
+        .await;
+        let cleanup = backend.destroy_environment(environment_id.as_str()).await;
+        let _ = std::fs::remove_dir_all(work_root);
+        result.expect("PostgreSQL role smoke result");
+        cleanup.expect("PostgreSQL role smoke cleanup");
+    }
+
     #[cfg(unix)]
     #[test]
     fn prepares_project_local_playwright_path_for_managed_agent_images() {
@@ -213,6 +347,11 @@ mod tests {
                         max_processes: 64,
                     },
                     network: NetworkPolicy::default(),
+                    effective_permissions:
+                        chatos_sandbox_contract::legacy_policy_permission_snapshot(
+                            &chatos_sandbox_contract::EffectiveSandboxPolicy::default(),
+                            vec![workspace.to_string_lossy().to_string()],
+                        ),
                 })
                 .await?;
             let dependency = instance

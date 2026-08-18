@@ -17,6 +17,9 @@ use super::model_runtime_resolver::resolve_model_runtime_for_profile;
 pub struct ManagedMemoryAgentRuntime {
     pub ai: AiClient,
     pub prompt: String,
+    pub model_profile_id: String,
+    pub prompt_revision: i64,
+    pub prompt_checksum: String,
 }
 
 pub async fn get_effective_model_profile_for_job(
@@ -41,6 +44,40 @@ pub async fn build_ai_client_for_job(
         None => None,
     };
     AiClient::new_with_profile(config, runtime_profile.as_ref())
+}
+
+pub(crate) async fn build_ai_client_for_profile_id(
+    config: &AppConfig,
+    db: &Db,
+    profile_id: &str,
+    owner_user_id: Option<&str>,
+) -> Result<AiClient, String> {
+    if profile_id == "memory_engine_default" {
+        return AiClient::new_with_profile(config, None);
+    }
+    let profile = control_plane::get_model_profile_by_id(db, profile_id)
+        .await?
+        .ok_or_else(|| format!("Memory Engine model profile not found: {profile_id}"))?;
+    if !profile.enabled {
+        return Err(format!(
+            "Memory Engine model profile is disabled: {profile_id}"
+        ));
+    }
+    if let Some(owner_user_id) = owner_user_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if profile
+            .owner_user_id
+            .as_deref()
+            .is_some_and(|owner| owner != owner_user_id)
+        {
+            return Err("Memory Engine model profile owner changed during run".to_string());
+        }
+    }
+    let runtime_profile =
+        resolve_model_runtime_for_profile(config, &profile, owner_user_id).await?;
+    AiClient::new_with_profile(config, Some(&runtime_profile))
 }
 
 pub async fn build_managed_memory_agent_runtime(
@@ -76,6 +113,12 @@ pub async fn build_managed_memory_agent_runtime(
     Ok(ManagedMemoryAgentRuntime {
         ai,
         prompt: prompt.content,
+        model_profile_id: profile
+            .as_ref()
+            .map(|profile| profile.id.clone())
+            .unwrap_or_else(|| "memory_engine_default".to_string()),
+        prompt_revision: prompt.revision,
+        prompt_checksum: prompt.checksum,
     })
 }
 
@@ -86,6 +129,9 @@ pub fn build_rollup_settings_from_policy(policy: &EngineJobPolicy) -> RollupSett
         count_limit: policy.count_limit.unwrap_or(0).max(0),
         keep_level0_count: policy.keep_level0_count.unwrap_or(5).max(0),
         max_level: policy.max_level.unwrap_or(4).max(1),
+        cloud_owner_entity_id: None,
+        cloud_source_id: None,
+        cloud_thread_id: None,
     }
 }
 

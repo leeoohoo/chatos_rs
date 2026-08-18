@@ -48,17 +48,11 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) requires_execution: Option<bool>,
     #[serde(default)]
-    pub(in crate::mcp_server) is_planning_task: Option<bool>,
-    #[serde(default)]
     pub(in crate::mcp_server) schedule: Option<TaskScheduleConfig>,
     #[serde(default)]
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub(in crate::mcp_server) plugin_device_id: Option<String>,
-    #[serde(default)]
-    pub(in crate::mcp_server) plugin_workspace_id: Option<String>,
     #[serde(default)]
     pub(in crate::mcp_server) selected_plugins: Option<Vec<SelectedPluginRef>>,
     #[serde(default)]
@@ -69,11 +63,7 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
 
 impl CreateTaskArgs {
     pub(in crate::mcp_server) fn into_request(self) -> Result<CreateTaskRequest, String> {
-        if self.plugin_device_id.is_some()
-            || self.plugin_workspace_id.is_some()
-            || self.selected_plugins.is_some()
-            || self.mcp_config.is_some()
-        {
+        if self.selected_plugins.is_some() || self.mcp_config.is_some() {
             return Err(
                 "Plugin selection and runtime routing are controlled by the program through Agent bindings and project context and cannot be selected by AI"
                     .to_string(),
@@ -81,11 +71,17 @@ impl CreateTaskArgs {
         }
         let enabled_builtin_kinds = self.enabled_builtin_kinds.unwrap_or_default();
         let external_mcp_config_ids = self.external_mcp_config_ids.unwrap_or_default();
-        let mcp_config = (self.requires_execution.is_some()
+        let requires_execution = self.requires_execution.or_else(|| {
+            (external_mcp_config_ids.is_empty()
+                && only_code_maintainer_read_selected(&enabled_builtin_kinds))
+            .then_some(false)
+        });
+        let mcp_config = (requires_execution.is_some()
             || !enabled_builtin_kinds.is_empty()
             || !external_mcp_config_ids.is_empty())
         .then_some(TaskMcpRequestConfig {
-            requires_execution: self.requires_execution,
+            requires_execution,
+            workspace_changes_required: None,
             enabled_builtin_kinds,
             external_mcp_config_ids,
         });
@@ -108,6 +104,13 @@ impl CreateTaskArgs {
             prerequisite_task_ids: self.prerequisite_task_ids,
         })
     }
+}
+
+fn only_code_maintainer_read_selected(enabled_builtin_kinds: &[String]) -> bool {
+    !enabled_builtin_kinds.is_empty()
+        && enabled_builtin_kinds
+            .iter()
+            .all(|kind| kind.trim().eq_ignore_ascii_case("CodeMaintainerRead"))
 }
 
 pub(in crate::mcp_server) fn reject_ai_runtime_config(
@@ -172,11 +175,14 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTasksArgs {
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) client_ref: String,
-    pub(in crate::mcp_server) project_task_id: String,
+    pub(in crate::mcp_server) project_task_ref: String,
     pub(in crate::mcp_server) title: String,
     #[serde(default)]
     pub(in crate::mcp_server) description: Option<String>,
     pub(in crate::mcp_server) objective: String,
+    #[serde(default)]
+    pub(in crate::mcp_server) acceptance_criteria: Vec<String>,
+    pub(in crate::mcp_server) task_role: String,
     #[serde(default)]
     pub(in crate::mcp_server) input_payload: Option<Value>,
     #[serde(default)]
@@ -186,10 +192,13 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     #[serde(default)]
     pub(in crate::mcp_server) default_model_config_id: Option<String>,
     #[serde(default)]
-    // Rejected if present; retained for explicit fail-closed compatibility.
+    pub(in crate::mcp_server) requires_execution: Option<bool>,
+    #[serde(default)]
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::mcp_server) owned_paths: Vec<String>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
     #[serde(default)]

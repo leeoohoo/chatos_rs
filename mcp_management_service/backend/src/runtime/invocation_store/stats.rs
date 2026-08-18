@@ -16,7 +16,6 @@ impl RuntimeInvocationStore {
                     invocations.values().map(|record| {
                         (
                             record.status,
-                            record.result_event_pending,
                             record.file_modification_outcome,
                             record
                                 .started_at_unix_ms
@@ -51,7 +50,6 @@ pub(super) fn summarize_runtime_invocations(
     records: impl IntoIterator<
         Item = (
             RuntimeInvocationStatus,
-            bool,
             Option<FileModificationOutcome>,
             Option<i64>,
             Option<i64>,
@@ -67,7 +65,6 @@ pub(super) fn summarize_runtime_invocations(
         waiting_for_user: 0,
         cancel_requested: 0,
         terminal: 0,
-        pending_result_events: 0,
         registration: RuntimeInvocationRegistrationStats::default(),
         session_closed_reclaimed_total: 0,
         quota_release_failures_total: 0,
@@ -75,12 +72,7 @@ pub(super) fn summarize_runtime_invocations(
         duration: RuntimeInvocationDurationStats::default(),
         file_modifications: FileModificationOutcomeStats::default(),
     };
-    for (status, result_event_pending, file_modification_outcome, started_at, completed_at) in
-        records
-    {
-        if result_event_pending {
-            stats.pending_result_events = stats.pending_result_events.saturating_add(1);
-        }
+    for (status, file_modification_outcome, started_at, completed_at) in records {
         match status {
             RuntimeInvocationStatus::Queued => {
                 stats.queued = stats.queued.saturating_add(1);
@@ -197,13 +189,6 @@ pub(super) async fn aggregate_runtime_invocation_stats(
                                 0,
                             ] }
                         },
-                        "pending_result_events": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$result_event_pending", true] },
-                                1,
-                                0,
-                            ] }
-                        },
                         "duration_completed_count": {
                             "$sum": { "$cond": [
                                 { "$eq": [{ "$type": "$completed_at_unix_ms" }, "long"] },
@@ -303,7 +288,6 @@ pub(super) async fn aggregate_runtime_invocation_stats(
             waiting_for_user: 0,
             cancel_requested: 0,
             terminal: 0,
-            pending_result_events: 0,
             registration: RuntimeInvocationRegistrationStats::default(),
             session_closed_reclaimed_total: 0,
             quota_release_failures_total: 0,
@@ -321,7 +305,6 @@ pub(super) async fn aggregate_runtime_invocation_stats(
         waiting_for_user: runtime_stat_count(&document, "waiting_for_user"),
         cancel_requested: runtime_stat_count(&document, "cancel_requested"),
         terminal: runtime_stat_count(&document, "terminal"),
-        pending_result_events: runtime_stat_count(&document, "pending_result_events"),
         registration: RuntimeInvocationRegistrationStats::default(),
         session_closed_reclaimed_total: 0,
         quota_release_failures_total: 0,

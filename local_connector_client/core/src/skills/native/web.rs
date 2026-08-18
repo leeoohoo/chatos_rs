@@ -78,8 +78,23 @@ fn execute_browser_tool(
     }
     let service = browser_service(state, request)?;
     let conversation_id = local_browser_conversation_id(request);
+    let tool_result_max_chars = request
+        .body
+        .get("tool_result_max_chars")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| {
+            (1..=chatos_mcp_service::TOOL_RESULT_MAX_CHARS_UPPER_BOUND).contains(value)
+        });
     service
-        .call_tool(operation, arguments.clone(), Some(conversation_id.as_str()))
+        .call_tool_with_context(
+            operation,
+            arguments.clone(),
+            chatos_mcp::BrowserToolCallContext::from_conversation_id(Some(
+                conversation_id.as_str(),
+            ))
+            .with_tool_result_max_chars(tool_result_max_chars),
+        )
         .map_err(|err| anyhow!(err))
 }
 

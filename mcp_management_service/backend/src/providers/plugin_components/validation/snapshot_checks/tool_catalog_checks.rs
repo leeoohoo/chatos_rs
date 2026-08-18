@@ -76,6 +76,22 @@ pub(in crate::providers::plugin_components) fn command_tool_definition(
     })
 }
 
+pub(in crate::providers::plugin_components) fn skill_tool_definition(
+    binding: &PluginToolComponentRuntimeBinding,
+) -> Value {
+    let description = component_metadata_text(binding, "description")
+        .unwrap_or("Apply the signed Plugin Skill to the current task");
+    json!({
+        "name": "apply",
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }
+    })
+}
+
 pub(in crate::providers::plugin_components) fn agent_tool_definition(
     binding: &PluginToolComponentRuntimeBinding,
 ) -> Value {

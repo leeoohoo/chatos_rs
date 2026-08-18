@@ -22,8 +22,9 @@ use super::internal_auth::{
     PROJECTS_SYNC_SCOPE, USER_SERVICE_CALLER,
 };
 use super::mcp::{
-    get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog, list_plugin_connectors,
-    list_task_capability_catalog, mcp_entrypoint, mcp_management_entrypoint, preview_mcp_prompt,
+    get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog,
+    list_task_capability_catalog, mcp_entrypoint, mcp_management_ask_user_prompt,
+    mcp_management_ask_user_start, mcp_management_entrypoint, preview_mcp_prompt,
 };
 use super::models::{
     create_model_config, delete_model_config, get_model_config, list_model_catalog,
@@ -31,22 +32,18 @@ use super::models::{
     update_model_config,
 };
 use super::projects::{
-    create_project, delete_project, get_project, get_project_runtime_environment,
-    import_chatos_project, list_project_tasks, list_projects, sync_get_project, sync_list_projects,
-    update_project,
+    create_project, delete_project, get_project, import_chatos_project, list_project_tasks,
+    list_projects, sync_get_project, sync_list_projects, update_project,
 };
 use super::prompts::{
     cancel_prompt, get_prompt, list_prompt_task_counts, list_prompts, list_prompts_page,
     list_run_prompts, submit_prompt,
 };
-use super::remote_servers::{
-    create_remote_server, delete_remote_server, get_remote_server, list_remote_servers,
-    test_remote_server_draft, test_remote_server_saved, update_remote_server,
-};
 use super::runs::{
-    cancel_run, get_run, get_run_output_changes, get_run_output_diff, list_run_events,
+    cancel_run, get_run, get_run_workspace_changes, get_run_workspace_integration, list_run_events,
     list_run_index, list_run_summaries, list_runs, list_runs_page, list_task_runs, retry_run,
-    start_task_run, stream_run_events,
+    retry_run_workspace_integration, start_task_run, stream_run_events,
+    waive_run_workspace_integration,
 };
 use super::tasks::{
     batch_delete_tasks, batch_start_task_runs, batch_update_task_status, cancel_task, create_task,
@@ -82,10 +79,6 @@ pub fn build_public_router(state: AppState) -> Router {
                 .delete(delete_project),
         )
         .route("/api/projects/{id}/tasks", get(list_project_tasks))
-        .route(
-            "/api/projects/{id}/runtime-environment",
-            get(get_project_runtime_environment),
-        )
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/summaries", get(list_task_summaries))
         .route("/api/tasks/page", get(list_tasks_page))
@@ -149,33 +142,29 @@ pub fn build_public_router(state: AppState) -> Router {
         .route("/api/model-configs/{id}/models", get(list_model_catalog))
         .route("/api/model-configs/{id}/test", post(test_model_config))
         .route("/api/model-configs/usage", get(list_model_config_usage))
-        .route(
-            "/api/remote-servers",
-            get(list_remote_servers).post(create_remote_server),
-        )
-        .route("/api/remote-servers/test", post(test_remote_server_draft))
-        .route(
-            "/api/remote-servers/{id}",
-            get(get_remote_server)
-                .patch(update_remote_server)
-                .delete(delete_remote_server),
-        )
-        .route(
-            "/api/remote-servers/{id}/test",
-            post(test_remote_server_saved),
-        )
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))
         .route("/api/runs/page", get(list_runs_page))
         .route("/api/runs/index", get(list_run_index))
         .route("/api/runs/{id}", get(get_run))
+        .route(
+            "/api/runs/{id}/integration",
+            get(get_run_workspace_integration),
+        )
+        .route("/api/runs/{id}/changes", get(get_run_workspace_changes))
         .route("/api/runs/{id}/events", get(list_run_events))
-        .route("/api/runs/{id}/output/changes", get(get_run_output_changes))
-        .route("/api/runs/{id}/output/diff", get(get_run_output_diff))
         .route("/api/runs/{id}/prompts", get(list_run_prompts))
         .route("/api/runs/{id}/stream", get(stream_run_events))
         .route("/api/runs/{id}/cancel", post(cancel_run))
         .route("/api/runs/{id}/retry", post(retry_run))
+        .route(
+            "/api/runs/{id}/integration/retry",
+            post(retry_run_workspace_integration),
+        )
+        .route(
+            "/api/runs/{id}/integration/waive",
+            post(waive_run_workspace_integration),
+        )
         .route(
             "/api/queue-operations/run-post-process/replay",
             post(replay_run_post_process),
@@ -212,7 +201,6 @@ pub fn build_public_router(state: AppState) -> Router {
             "/api/tasks/capabilities/catalog",
             get(list_task_capability_catalog),
         )
-        .route("/api/tasks/plugin-connectors", get(list_plugin_connectors))
         .route("/api/mcp/prompt-preview", post(preview_mcp_prompt))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
@@ -274,6 +262,14 @@ pub fn build_internal_router(state: AppState) -> Router {
         .route(
             "/internal/mcp-management/mcp/{system_key}",
             post(mcp_management_entrypoint),
+        )
+        .route(
+            "/internal/mcp-management/mcp/{system_key}/start",
+            post(mcp_management_ask_user_start),
+        )
+        .route(
+            "/internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}",
+            post(mcp_management_ask_user_prompt),
         )
         .merge(chatos_internal::router())
         .with_state(state)

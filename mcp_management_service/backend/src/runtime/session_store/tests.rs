@@ -51,6 +51,7 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "owner-1".to_string(),
+        owner_role: None,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
             .as_str()
             .to_string(),
@@ -58,21 +59,28 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_group_id: Some("group-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
         source_session_id: Some("conversation-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
+        tool_result_max_chars: Some(40_000),
         expected_project_task_ids: vec!["task-1".to_string()],
-        sandbox_target: Some(SandboxExecutionTarget {
-            provider: SandboxProviderKind::Cloud,
-            pairing_id: None,
-            sandbox_id: "sandbox-1".to_string(),
-            lease_id: "lease-1".to_string(),
-            is_environment: false,
-            service_id: None,
-        }),
+        workspace_route: Some(
+            chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox {
+                target: SandboxExecutionTarget {
+                    provider: SandboxProviderKind::Cloud,
+                    pairing_id: None,
+                    sandbox_id: "sandbox-1".to_string(),
+                    lease_id: "lease-1".to_string(),
+                    is_environment: false,
+                    service_id: None,
+                },
+            },
+        ),
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "owner-1".to_string(),
@@ -182,6 +190,7 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
 
     let restored = cipher.decrypt(document, Duration::from_secs(60)).unwrap();
     assert_eq!(restored.trace_id, "00000000-0000-4000-8000-000000000001");
+    assert_eq!(restored.tool_result_max_chars, Some(40_000));
     let external = restored.external_http_bindings.get("external-1").unwrap();
     assert_eq!(
         external

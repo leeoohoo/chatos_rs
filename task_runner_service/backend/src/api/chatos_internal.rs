@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    models::{TaskRunRecord, TaskRunStatus, TaskStatus},
+    models::{ModelConfigRecord, TaskRunRecord, TaskRunStatus, TaskStatus},
     services::{
         ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskRun,
         ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
@@ -26,7 +26,7 @@ use crate::{
 use super::internal_auth::{
     require_task_runner_internal_request, TaskRunnerInternalAuditGuard,
     TaskRunnerInternalRequestIdentity, CHATOS_CALLER, CHATOS_EXECUTION_START_SCOPE,
-    CHATOS_MESSAGES_READ_SCOPE,
+    CHATOS_MESSAGES_READ_SCOPE, CHATOS_MODELS_READ_SCOPE, CHATOS_MODELS_RUNTIME_SCOPE,
 };
 mod project_execution;
 mod projection;
@@ -37,7 +37,7 @@ use project_execution::{
 };
 use projection::{
     paginate_run_events, redact_workspace_paths_internal, run_event_page,
-    trim_run_for_chatos_detail,
+    trim_event_for_chatos_detail, trim_run_for_chatos_detail,
 };
 
 const DEFAULT_RUN_EVENT_LIMIT: usize = 40;
@@ -69,16 +69,20 @@ pub fn router() -> Router<AppState> {
             post(retry_chatos_message_run),
         )
         .route(
+            "/internal/chatos/message-runs/{run_id}/changes",
+            get(get_chatos_message_run_changes),
+        )
+        .route(
+            "/internal/chatos/message-runs/{run_id}/integration/retry",
+            post(retry_chatos_message_run_integration),
+        )
+        .route(
+            "/internal/chatos/message-runs/{run_id}/integration/waive",
+            post(waive_chatos_message_run_integration),
+        )
+        .route(
             "/internal/chatos/message-runs/{run_id}/events/{event_id}",
             get(get_chatos_message_run_event),
-        )
-        .route(
-            "/internal/chatos/message-runs/{run_id}/output/changes",
-            get(get_chatos_message_run_output_changes),
-        )
-        .route(
-            "/internal/chatos/message-runs/{run_id}/output/diff",
-            get(get_chatos_message_run_output_diff),
         )
         .route(
             "/internal/chatos/message-graph/runs/{run_id}",
@@ -108,6 +112,225 @@ pub fn router() -> Router<AppState> {
             "/internal/chatos/project-execution/retire",
             post(retire_chatos_project_execution),
         )
+        .route(
+            "/internal/chatos/users/{owner_user_id}/model-configs",
+            get(list_chatos_user_model_configs),
+        )
+        .route(
+            "/internal/chatos/users/{owner_user_id}/model-configs/{model_config_id}/runtime",
+            get(get_chatos_model_runtime_config),
+        )
+}
+
+#[derive(Debug, Serialize)]
+struct ChatosModelConfigCatalogItem {
+    id: String,
+    name: String,
+    provider: String,
+    prompt_vendor: Option<String>,
+    base_url: String,
+    model: String,
+    thinking_level: Option<String>,
+    task_usage_scenario: Option<String>,
+    task_thinking_level: Option<String>,
+    temperature: Option<f64>,
+    max_output_tokens: Option<i64>,
+    has_api_key: bool,
+    enabled: bool,
+    supports_images: bool,
+    supports_reasoning: bool,
+    supports_responses: bool,
+    sync_warnings: Vec<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ChatosModelConfigCatalogQuery {
+    include_all: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatosModelRuntimeConfig {
+    id: String,
+    owner_user_id: Option<String>,
+    name: String,
+    provider: String,
+    prompt_vendor: Option<String>,
+    base_url: String,
+    api_key: String,
+    model: String,
+    usage_scenario: Option<String>,
+    temperature: Option<f64>,
+    max_output_tokens: Option<i64>,
+    model_request_max_retries: usize,
+    thinking_level: Option<String>,
+    supports_images: bool,
+    supports_reasoning: bool,
+    supports_responses: bool,
+    enabled: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<ModelConfigRecord> for ChatosModelRuntimeConfig {
+    fn from(model: ModelConfigRecord) -> Self {
+        Self {
+            id: model.id,
+            owner_user_id: model.owner_user_id,
+            name: model.name,
+            provider: model.provider,
+            prompt_vendor: model.prompt_vendor,
+            base_url: model.base_url,
+            api_key: model.api_key,
+            model: model.model,
+            usage_scenario: model.usage_scenario,
+            temperature: model.temperature,
+            max_output_tokens: model.max_output_tokens,
+            model_request_max_retries: model.model_request_max_retries,
+            thinking_level: model.thinking_level,
+            supports_images: model.supports_images,
+            supports_reasoning: model.supports_reasoning,
+            supports_responses: model.supports_responses,
+            enabled: model.enabled,
+            created_at: model.created_at,
+            updated_at: model.updated_at,
+        }
+    }
+}
+
+impl From<ModelConfigRecord> for ChatosModelConfigCatalogItem {
+    fn from(model: ModelConfigRecord) -> Self {
+        Self {
+            id: model.id,
+            name: model.name,
+            provider: model.provider,
+            prompt_vendor: model.prompt_vendor,
+            base_url: model.base_url,
+            model: model.model,
+            thinking_level: model.thinking_level,
+            task_usage_scenario: model.usage_scenario,
+            task_thinking_level: None,
+            temperature: model.temperature,
+            max_output_tokens: model.max_output_tokens,
+            has_api_key: !model.api_key.trim().is_empty(),
+            enabled: model.enabled,
+            supports_images: model.supports_images,
+            supports_reasoning: model.supports_reasoning,
+            supports_responses: model.supports_responses,
+            sync_warnings: Vec::new(),
+            created_at: model.created_at,
+            updated_at: model.updated_at,
+        }
+    }
+}
+
+async fn list_chatos_user_model_configs(
+    Path(owner_user_id): Path<String>,
+    Query(query): Query<ChatosModelConfigCatalogQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ChatosModelConfigCatalogItem>>, InternalApiError> {
+    let identity = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER],
+        CHATOS_MODELS_READ_SCOPE,
+    )
+    .map_err(|err| InternalApiError {
+        status: err.status,
+        message: err.message,
+    })?;
+    let owner_user_id = owner_user_id.trim();
+    if owner_user_id.is_empty() {
+        return Err(InternalApiError::bad_request("owner_user_id is required"));
+    }
+
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        None,
+        "model_config_catalog",
+        owner_user_id,
+        "list",
+    );
+    audit.represented_user_id(Some(owner_user_id));
+
+    let models = state
+        .model_config_service
+        .list_model_configs()
+        .await
+        .map_err(InternalApiError::internal)?
+        .into_iter()
+        .filter(|model| {
+            query.include_all.unwrap_or(false)
+                || model
+                    .owner_user_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    == Some(owner_user_id)
+        })
+        .map(ChatosModelConfigCatalogItem::from)
+        .collect::<Vec<_>>();
+
+    audit.succeeded();
+    Ok(Json(models))
+}
+
+async fn get_chatos_model_runtime_config(
+    Path((owner_user_id, model_config_id)): Path<(String, String)>,
+    Query(query): Query<ChatosModelConfigCatalogQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ChatosModelRuntimeConfig>, InternalApiError> {
+    let identity = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER],
+        CHATOS_MODELS_RUNTIME_SCOPE,
+    )
+    .map_err(|err| InternalApiError {
+        status: err.status,
+        message: err.message,
+    })?;
+    let owner_user_id = owner_user_id.trim();
+    let model_config_id = model_config_id.trim();
+    if owner_user_id.is_empty() || model_config_id.is_empty() {
+        return Err(InternalApiError::bad_request(
+            "owner_user_id and model_config_id are required",
+        ));
+    }
+
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        None,
+        "model_config_runtime",
+        model_config_id,
+        "read",
+    );
+    audit.represented_user_id(Some(owner_user_id));
+
+    let model = state
+        .model_config_service
+        .get_model_config(model_config_id)
+        .await
+        .map_err(InternalApiError::internal)?
+        .ok_or_else(|| InternalApiError::not_found("model config not found"))?;
+    let owns_model = model
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        == Some(owner_user_id);
+    if !owns_model && !query.include_all.unwrap_or(false) {
+        return Err(InternalApiError {
+            status: StatusCode::FORBIDDEN,
+            message: "forbidden model config access".to_string(),
+        });
+    }
+
+    audit.succeeded();
+    Ok(Json(ChatosModelRuntimeConfig::from(model)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,26 +349,25 @@ struct RetryChatosMessageRunRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct RetryChatosMessageRunIntegrationRequest {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+}
+
+#[derive(Debug, Deserialize)]
+struct WaiveChatosMessageRunIntegrationRequest {
+    #[serde(flatten)]
+    source: ChatosMessageTaskQuery,
+    reason: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChatosMessageRunQuery {
     #[serde(flatten)]
     source: ChatosMessageTaskQuery,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatosMessageRunOutputChangesQuery {
-    #[serde(flatten)]
-    source: ChatosMessageTaskQuery,
-    limit: Option<usize>,
-    offset: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatosMessageRunOutputDiffQuery {
-    #[serde(flatten)]
-    source: ChatosMessageTaskQuery,
-    path: String,
+    include_events: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -230,6 +452,13 @@ impl InternalApiError {
     fn conflict(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
+
+    fn bad_gateway(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
             message: message.into(),
         }
     }
@@ -425,13 +654,22 @@ async fn get_chatos_message_run(
         .await
         .map_err(InternalApiError::internal)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    let events = state
-        .run_service
-        .list_run_events(run.id.as_str())
-        .await
-        .map_err(InternalApiError::internal)?;
-    let (events, events_total, events_has_more) =
-        paginate_run_events(events, event_limit, event_offset);
+    let (events, events_total, events_has_more) = if query.include_events.unwrap_or(true) {
+        let events = state
+            .run_service
+            .list_run_events(run.id.as_str())
+            .await
+            .map_err(InternalApiError::internal)?;
+        let tool_text_limit_chars = state
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await
+            .map_err(InternalApiError::internal)?
+            .per_result_max_chars;
+        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars)
+    } else {
+        (Vec::new(), 0, false)
+    };
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())
@@ -525,6 +763,135 @@ async fn retry_chatos_message_run(
     Ok(response)
 }
 
+async fn retry_chatos_message_run_integration(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RetryChatosMessageRunIntegrationRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    let identity = require_chatos_execution_mutation(&state, &headers)?;
+    let run_id = required_internal_text(run_id, "run_id")?;
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        None,
+        "task_run_integration",
+        run_id.as_str(),
+        "retry",
+    );
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&request.source)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.as_str(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    if let Ok(Some(task)) = state.task_service.get_task(run.task_id.as_str()).await {
+        audit.represented_user_id(
+            task.owner_user_id
+                .as_deref()
+                .or(task.creator_user_id.as_deref()),
+        );
+        audit.tenant_id(Some(task.tenant_id.as_str()));
+        audit.project_id(Some(task.project_id.as_str()));
+        audit.resource_name(Some(task.title.as_str()));
+    }
+    let retried = state
+        .run_service
+        .retry_run_workspace_integration(run.id.as_str())
+        .await
+        .map_err(InternalApiError::bad_request)?
+        .ok_or_else(|| {
+            InternalApiError::conflict("run does not have a retryable code integration conflict")
+        })?;
+    audit.succeeded();
+    Ok(Json(json!({
+        "success": true,
+        "run": ChatosMessageTaskRun::from(retried),
+    })))
+}
+
+async fn waive_chatos_message_run_integration(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WaiveChatosMessageRunIntegrationRequest>,
+) -> Result<Json<Value>, InternalApiError> {
+    let identity = require_chatos_execution_mutation(&state, &headers)?;
+    let run_id = required_internal_text(run_id, "run_id")?;
+    let mut audit = TaskRunnerInternalAuditGuard::new(
+        &identity,
+        None,
+        "task_run_integration",
+        run_id.as_str(),
+        "waive",
+    );
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&request.source)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.as_str(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    if let Ok(Some(task)) = state.task_service.get_task(run.task_id.as_str()).await {
+        audit.represented_user_id(
+            task.owner_user_id
+                .as_deref()
+                .or(task.creator_user_id.as_deref()),
+        );
+        audit.tenant_id(Some(task.tenant_id.as_str()));
+        audit.project_id(Some(task.project_id.as_str()));
+        audit.resource_name(Some(task.title.as_str()));
+    }
+    let waived = state
+        .run_service
+        .waive_run_workspace_integration(run.id.as_str(), request.reason.as_str())
+        .await
+        .map_err(InternalApiError::bad_request)?
+        .ok_or_else(|| {
+            InternalApiError::conflict("run does not have a waivable code integration conflict")
+        })?;
+    audit.succeeded();
+    Ok(Json(json!({
+        "success": true,
+        "run": ChatosMessageTaskRun::from(waived),
+    })))
+}
+
+async fn get_chatos_message_run_changes(
+    Path(run_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ChatosMessageTaskQuery>,
+) -> Result<Json<Value>, InternalApiError> {
+    require_chatos_internal_auth(&state, &headers)?;
+    let (source_session_id, source_user_message_id, source_turn_id) =
+        validate_chatos_message_query(&query)?;
+    let run = require_chatos_message_run(
+        &state,
+        run_id.trim(),
+        source_session_id,
+        source_user_message_id,
+        source_turn_id,
+    )
+    .await?;
+    let task = state
+        .task_service
+        .get_task(run.task_id.as_str())
+        .await
+        .map_err(InternalApiError::internal)?
+        .ok_or_else(|| InternalApiError::not_found("task not found for message"))?;
+    let changes = crate::services::load_task_run_workspace_changes(&state.run_service, &task, &run)
+        .await
+        .map_err(InternalApiError::bad_gateway)?;
+    Ok(Json(redact_workspace_paths_internal(&state, changes)?))
+}
+
 fn require_retryable_message_run(status: &TaskRunStatus) -> Result<(), InternalApiError> {
     if matches!(status, TaskRunStatus::Failed | TaskRunStatus::Blocked) {
         return Ok(());
@@ -563,62 +930,16 @@ async fn get_chatos_message_run_event(
         .into_iter()
         .find(|event| event.id == event_id && event.run_id == run.id)
         .ok_or_else(|| InternalApiError::not_found("run event not found for message"))?;
-    Ok(Json(redact_workspace_paths_internal(
-        &state,
-        ChatosMessageTaskRunEvent::from(event),
-    )?))
-}
-
-async fn get_chatos_message_run_output_changes(
-    Path(run_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ChatosMessageRunOutputChangesQuery>,
-) -> Result<Json<Value>, InternalApiError> {
-    require_chatos_internal_auth(&state, &headers)?;
-    let (source_session_id, source_user_message_id, source_turn_id) =
-        validate_chatos_message_query(&query.source)?;
-    let run = require_chatos_message_run(
-        &state,
-        run_id.trim(),
-        source_session_id,
-        source_user_message_id,
-        source_turn_id,
-    )
-    .await?;
-    let response = state
-        .run_service
-        .get_run_output_changes(run.id.as_str(), query.limit, query.offset)
+    let tool_text_limit_chars = state
+        .task_service
+        .effective_tool_result_model_budget_limits()
         .await
         .map_err(InternalApiError::internal)?
-        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    Ok(Json(redact_workspace_paths_internal(&state, response)?))
-}
-
-async fn get_chatos_message_run_output_diff(
-    Path(run_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ChatosMessageRunOutputDiffQuery>,
-) -> Result<Json<Value>, InternalApiError> {
-    require_chatos_internal_auth(&state, &headers)?;
-    let (source_session_id, source_user_message_id, source_turn_id) =
-        validate_chatos_message_query(&query.source)?;
-    let run = require_chatos_message_run(
+        .per_result_max_chars;
+    Ok(Json(redact_workspace_paths_internal(
         &state,
-        run_id.trim(),
-        source_session_id,
-        source_user_message_id,
-        source_turn_id,
-    )
-    .await?;
-    let response = state
-        .run_service
-        .get_run_output_diff(run.id.as_str(), query.path.as_str())
-        .await
-        .map_err(InternalApiError::bad_request)?
-        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    Ok(Json(redact_workspace_paths_internal(&state, response)?))
+        ChatosMessageTaskRunEvent::from(trim_event_for_chatos_detail(event, tool_text_limit_chars)),
+    )?))
 }
 
 async fn require_chatos_message_run(
@@ -679,13 +1000,22 @@ async fn get_chatos_message_graph_run(
         .find(|node| node.task.id == run.task_id)
         .map(|node| node.task)
         .ok_or_else(|| InternalApiError::not_found("run not found for graph"))?;
-    let events = state
-        .run_service
-        .list_run_events(run.id.as_str())
-        .await
-        .map_err(InternalApiError::internal)?;
-    let (events, events_total, events_has_more) =
-        paginate_run_events(events, event_limit, event_offset);
+    let (events, events_total, events_has_more) = if query.include_events.unwrap_or(true) {
+        let events = state
+            .run_service
+            .list_run_events(run.id.as_str())
+            .await
+            .map_err(InternalApiError::internal)?;
+        let tool_text_limit_chars = state
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await
+            .map_err(InternalApiError::internal)?
+            .per_result_max_chars;
+        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars)
+    } else {
+        (Vec::new(), 0, false)
+    };
     let model_config = state
         .model_config_service
         .get_model_config(run.model_config_id.as_str())

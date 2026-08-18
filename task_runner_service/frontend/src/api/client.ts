@@ -19,7 +19,6 @@ import type {
   McpPromptPreviewPayload,
   McpPromptPreviewResponse,
   McpServerInfo,
-  CreateRemoteServerPayload,
   ModelCatalogResponse,
   ModelConfigRecord,
   ModelConfigTestResponse,
@@ -28,11 +27,10 @@ import type {
   PreviewModelCatalogPayload,
   PromptListFilters,
   RecordTaskProcessPayload,
-  RemoteServerRecord,
-  RemoteServerTestResponse,
   StartTaskRunPayload,
   SubmitAskUserPromptPayload,
   RunSummaryRecord,
+  RunWorkspaceChanges,
   RunListFilters,
   TaskStatsResponse,
   TaskIndexResponse,
@@ -47,13 +45,10 @@ import type {
   TaskSummaryRecord,
   TaskListFilters,
   TaskProjectRecord,
-  TaskProjectRuntimeEnvironmentResponse,
-  TaskPluginConnectorsResponse,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
   TestModelConfigPayload,
-  TestRemoteServerPayload,
   ToolingNotepadFoldersResponse,
   ToolingNotepadNoteResponse,
   ToolingNotepadNotesResponse,
@@ -66,7 +61,6 @@ import type {
   AskUserPromptStatus,
   AskUserPromptTaskCountRecord,
   UpdateModelConfigPayload,
-  UpdateRemoteServerPayload,
   UpdateRuntimeSettingsPayload,
   UpdateTaskPayload,
   UpdateUserPayload,
@@ -179,8 +173,6 @@ export const api = {
         project_id: options?.project_id,
       }),
     ),
-  listTaskPluginConnectors: () =>
-    request<TaskPluginConnectorsResponse>('/api/tasks/plugin-connectors'),
   listTaskSummaries: (filters?: {
     ids?: string[];
     keyword?: string;
@@ -204,10 +196,6 @@ export const api = {
       }),
     ),
   getProject: (id: string) => request<TaskProjectRecord>(`/api/projects/${id}`),
-  getProjectRuntimeEnvironment: (id: string) =>
-    request<TaskProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${encodeURIComponent(id)}/runtime-environment`,
-    ),
   listProjectTasks: (id: string) =>
     request<TaskRecord[]>(`/api/projects/${encodeURIComponent(id)}/tasks`),
   getTask: (id: string) => request<TaskRecord>(`/api/tasks/${id}`),
@@ -277,31 +265,6 @@ export const api = {
   deleteModelConfig: (id: string) =>
     request<void>(`/api/model-configs/${id}`, {
       method: 'DELETE',
-    }),
-  listRemoteServers: () => request<RemoteServerRecord[]>('/api/remote-servers'),
-  getRemoteServer: (id: string) => request<RemoteServerRecord>(`/api/remote-servers/${id}`),
-  createRemoteServer: (payload: CreateRemoteServerPayload) =>
-    request<RemoteServerRecord>('/api/remote-servers', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateRemoteServer: (id: string, payload: UpdateRemoteServerPayload) =>
-    request<RemoteServerRecord>(`/api/remote-servers/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-  deleteRemoteServer: (id: string) =>
-    request<void>(`/api/remote-servers/${id}`, {
-      method: 'DELETE',
-    }),
-  testRemoteServerDraft: (payload: TestRemoteServerPayload) =>
-    request<RemoteServerTestResponse>('/api/remote-servers/test', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  testRemoteServer: (id: string) =>
-    request<RemoteServerTestResponse>(`/api/remote-servers/${id}/test`, {
-      method: 'POST',
     }),
   listRuns: (filters?: RunListFilters) =>
     request<TaskRunRecord[]>(
@@ -441,6 +404,17 @@ export const api = {
     request<TaskRunRecord>(`/api/runs/${runId}/retry`, {
       method: 'POST',
     }),
+  retryRunIntegration: (runId: string) =>
+    request<TaskRunRecord>(`/api/runs/${runId}/integration/retry`, {
+      method: 'POST',
+    }),
+  waiveRunIntegration: (runId: string, reason: string) =>
+    request<TaskRunRecord>(`/api/runs/${runId}/integration/waive`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason.trim() }),
+    }),
+  getRunChanges: (runId: string) =>
+    request<RunWorkspaceChanges>(`/api/runs/${runId}/changes`),
   listPrompts: (filters?: PromptListFilters) =>
     request<AskUserPromptRecord[]>(
       withQuery('/api/prompts', {

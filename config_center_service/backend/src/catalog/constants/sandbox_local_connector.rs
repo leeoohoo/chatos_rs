@@ -22,8 +22,6 @@ pub const SANDBOX_MANAGER_MONGODB_DATABASE_CONFIG_KEY: &str =
 pub const SANDBOX_MANAGER_AGENT_PORT_CONFIG_KEY: &str = "sandbox_manager.runtime.agent_port";
 pub const SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "sandbox_manager.security.require_signed_internal_requests";
-pub const SANDBOX_MANAGER_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "sandbox_manager.security.task_runner_internal_api_secret";
 pub const SANDBOX_MANAGER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "sandbox_manager.security.project_service_internal_api_secret";
 pub const SANDBOX_MANAGER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
@@ -45,8 +43,6 @@ pub const LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "local_connector.security.require_signed_internal_requests";
 pub const LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "local_connector.security.chatos_internal_api_secret";
-pub const LOCAL_CONNECTOR_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "local_connector.security.task_runner_internal_api_secret";
 pub const LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "local_connector.security.project_service_internal_api_secret";
 pub const LOCAL_CONNECTOR_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =

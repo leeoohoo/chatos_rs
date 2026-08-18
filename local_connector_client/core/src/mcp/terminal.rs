@@ -74,17 +74,10 @@ pub(crate) async fn handle_local_mcp_terminal_cleanup(
         request,
         DEFAULT_TERMINAL_EXEC_TIMEOUT_MS,
     );
-    let mut payload = LocalConnectorTerminalControllerStore
+    let payload = LocalConnectorTerminalControllerStore
         .kill_sessions_for_context(context)
         .await
         .map_err(|err| anyhow!(err))?;
-    let docker_maintenance = crate::sandbox::docker::maintain_workspace_docker_artifacts(
-        workspace.absolute_root.as_path(),
-    )
-    .await;
-    if let Some(payload) = payload.as_object_mut() {
-        payload.insert("docker_maintenance".to_string(), docker_maintenance);
-    }
     Ok(json!({
         "jsonrpc": "2.0",
         "id": body.get("id").cloned().unwrap_or(Value::Null),

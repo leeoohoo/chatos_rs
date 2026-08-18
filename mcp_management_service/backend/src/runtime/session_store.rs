@@ -11,9 +11,10 @@ use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use chatos_mcp_management_sdk::{
     ProjectExecutionContext, ResolvedMcpRoute, RuntimeSessionRoutesResponse, RuntimeToolDescriptor,
-    SandboxExecutionTarget,
+    RuntimeWorkspaceRouteTarget, SandboxExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
+use futures_util::TryStreamExt;
 use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
 use mongodb::options::{IndexOptions, ReplaceOptions};
 use mongodb::{Client, Collection, IndexModel};
@@ -45,7 +46,7 @@ use self::external_http::{
     PersistedExternalHttpProviderBinding,
 };
 
-const SNAPSHOT_SCHEMA_VERSION: i32 = 5;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 8;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_HEADERS: usize = 64;
 const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
@@ -137,19 +138,23 @@ pub struct RuntimeSessionSnapshot {
     pub trace_id: String,
     pub tenant_id: String,
     pub owner_user_id: String,
+    pub owner_role: Option<String>,
     pub agent_key: String,
     pub task_profile: Option<String>,
     pub project_id: String,
     pub device_id: Option<String>,
     pub run_id: Option<String>,
+    pub execution_group_id: Option<String>,
+    pub execution_scope_generation: Option<i64>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
     pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
+    pub tool_result_max_chars: Option<usize>,
     pub expected_project_task_ids: Vec<String>,
-    pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub workspace_route: Option<RuntimeWorkspaceRouteTarget>,
     pub project_context: ProjectExecutionContext,
     pub policy_revision: String,
     pub route_revision: String,
@@ -167,6 +172,19 @@ pub struct RuntimeSessionSnapshot {
 }
 
 impl RuntimeSessionSnapshot {
+    pub fn execution_scope_provider(&self) -> WorkspaceProviderKind {
+        self.workspace_route
+            .as_ref()
+            .map(RuntimeWorkspaceRouteTarget::provider_kind)
+            .unwrap_or(self.project_context.workspace_provider)
+    }
+
+    pub fn sandbox_target(&self) -> Option<&SandboxExecutionTarget> {
+        self.workspace_route
+            .as_ref()
+            .and_then(RuntimeWorkspaceRouteTarget::sandbox_target)
+    }
+
     pub fn routes_response(&self) -> RuntimeSessionRoutesResponse {
         RuntimeSessionRoutesResponse {
             session_id: self.session_id.clone(),
@@ -181,6 +199,9 @@ impl RuntimeSessionSnapshot {
             expires_at: self.expires_at.clone(),
             routes: self.routes.clone(),
             tools: self.tools.clone(),
+            mcp_command_queue: String::new(),
+            mcp_server_url: String::new(),
+            runtime_token: String::new(),
         }
     }
 }
@@ -227,6 +248,8 @@ struct StoredRuntimeSessionDocument {
     schema_version: i32,
     expires_at: DateTime,
     expires_at_unix: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    execution_scope_hash: Option<String>,
     nonce: Binary,
     encrypted_snapshot: Binary,
 }
@@ -238,20 +261,27 @@ struct PersistedRuntimeSessionSnapshot {
     trace_id: String,
     tenant_id: String,
     owner_user_id: String,
+    #[serde(default)]
+    owner_role: Option<String>,
     agent_key: String,
     #[serde(default)]
     task_profile: Option<String>,
     project_id: String,
     device_id: Option<String>,
     run_id: Option<String>,
+    #[serde(default)]
+    execution_group_id: Option<String>,
+    execution_scope_generation: Option<i64>,
     turn_id: Option<String>,
     task_id: Option<String>,
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
     contact_agent_id: Option<String>,
     default_model_config_id: Option<String>,
+    #[serde(default)]
+    tool_result_max_chars: Option<usize>,
     expected_project_task_ids: Vec<String>,
-    sandbox_target: Option<SandboxExecutionTarget>,
+    workspace_route: Option<RuntimeWorkspaceRouteTarget>,
     project_context: ProjectExecutionContext,
     policy_revision: String,
     route_revision: String,
@@ -450,6 +480,51 @@ impl RuntimeSessionStore {
         }
     }
 
+    pub async fn remove_run_sessions(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: &str,
+    ) -> Result<Vec<Arc<RuntimeSessionSnapshot>>, String> {
+        let candidates = match self.backend.as_ref() {
+            RuntimeSessionStoreBackend::Memory(sessions) => sessions
+                .read()
+                .await
+                .values()
+                .filter(|snapshot| {
+                    snapshot.owner_user_id == owner_user_id
+                        && snapshot.project_id == project_id
+                        && snapshot.run_id.as_deref() == Some(run_id)
+                })
+                .map(|snapshot| snapshot.session_id.clone())
+                .collect::<Vec<_>>(),
+            RuntimeSessionStoreBackend::Mongo(store) => store
+                .collection
+                .find(
+                    doc! {
+                        "execution_scope_hash": execution_scope_hash(owner_user_id, project_id, run_id),
+                        "expires_at_unix": { "$gt": chrono::Utc::now().timestamp() },
+                    },
+                    None,
+                )
+                .await
+                .map_err(|error| format!("find Runtime Sessions for terminal run failed: {error}"))?
+                .map_ok(|document| document.session_id)
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| {
+                    format!("read Runtime Sessions for terminal run failed: {error}")
+                })?,
+        };
+        let mut removed = Vec::new();
+        for session_id in candidates {
+            if let Some(snapshot) = self.remove(session_id.as_str()).await? {
+                removed.push(snapshot);
+            }
+        }
+        Ok(removed)
+    }
+
     pub async fn stats(&self) -> Result<RuntimeSessionStoreStats, String> {
         let now = chrono::Utc::now().timestamp();
         match self.backend.as_ref() {
@@ -517,6 +592,9 @@ impl StoredRuntimeSessionDocument {
         let mut hasher = Sha256::new();
         hasher.update(self.schema_version.to_be_bytes());
         hasher.update(self.expires_at_unix.to_be_bytes());
+        if let Some(scope_hash) = self.execution_scope_hash.as_deref() {
+            hasher.update(scope_hash.as_bytes());
+        }
         hasher.update(self.nonce.bytes.as_slice());
         hasher.update(self.encrypted_snapshot.bytes.as_slice());
         hasher.finalize().into()
@@ -569,6 +647,13 @@ impl SnapshotCipher {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
             expires_at_unix: snapshot.expires_at_unix,
+            execution_scope_hash: snapshot.run_id.as_deref().map(|run_id| {
+                execution_scope_hash(
+                    snapshot.owner_user_id.as_str(),
+                    snapshot.project_id.as_str(),
+                    run_id,
+                )
+            }),
             nonce: Binary {
                 subtype: BinarySubtype::Generic,
                 bytes: nonce.to_vec(),
@@ -623,6 +708,16 @@ impl SnapshotCipher {
     }
 }
 
+fn execution_scope_hash(owner_user_id: &str, project_id: &str, run_id: &str) -> String {
+    let identity = format!(
+        "{}\u{1f}{}\u{1f}{}",
+        owner_user_id.trim(),
+        project_id.trim(),
+        run_id.trim()
+    );
+    hex::encode(Sha256::digest(identity.as_bytes()))
+}
+
 impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
     type Error = String;
 
@@ -641,19 +736,23 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             trace_id: snapshot.trace_id.clone(),
             tenant_id: snapshot.tenant_id.clone(),
             owner_user_id: snapshot.owner_user_id.clone(),
+            owner_role: snapshot.owner_role.clone(),
             agent_key: snapshot.agent_key.clone(),
             task_profile: snapshot.task_profile.clone(),
             project_id: snapshot.project_id.clone(),
             device_id: snapshot.device_id.clone(),
             run_id: snapshot.run_id.clone(),
+            execution_group_id: snapshot.execution_group_id.clone(),
+            execution_scope_generation: snapshot.execution_scope_generation,
             turn_id: snapshot.turn_id.clone(),
             task_id: snapshot.task_id.clone(),
             source_session_id: snapshot.source_session_id.clone(),
             source_user_message_id: snapshot.source_user_message_id.clone(),
             contact_agent_id: snapshot.contact_agent_id.clone(),
             default_model_config_id: snapshot.default_model_config_id.clone(),
+            tool_result_max_chars: snapshot.tool_result_max_chars,
             expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
-            sandbox_target: snapshot.sandbox_target.clone(),
+            workspace_route: snapshot.workspace_route.clone(),
             project_context: snapshot.project_context.clone(),
             policy_revision: snapshot.policy_revision.clone(),
             route_revision: snapshot.route_revision.clone(),
@@ -695,19 +794,23 @@ impl PersistedRuntimeSessionSnapshot {
             trace_id: self.trace_id,
             tenant_id: self.tenant_id,
             owner_user_id: self.owner_user_id,
+            owner_role: self.owner_role,
             agent_key: self.agent_key,
             task_profile: self.task_profile,
             project_id: self.project_id,
             device_id: self.device_id,
             run_id: self.run_id,
+            execution_group_id: self.execution_group_id,
+            execution_scope_generation: self.execution_scope_generation,
             turn_id: self.turn_id,
             task_id: self.task_id,
             source_session_id: self.source_session_id,
             source_user_message_id: self.source_user_message_id,
             contact_agent_id: self.contact_agent_id,
             default_model_config_id: self.default_model_config_id,
+            tool_result_max_chars: self.tool_result_max_chars,
             expected_project_task_ids: self.expected_project_task_ids,
-            sandbox_target: self.sandbox_target,
+            workspace_route: self.workspace_route,
             project_context: self.project_context,
             policy_revision: self.policy_revision,
             route_revision: self.route_revision,

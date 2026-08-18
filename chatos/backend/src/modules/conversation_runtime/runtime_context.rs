@@ -16,11 +16,15 @@ use std::sync::{Arc, Mutex};
 
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
-use chatos_plugin_management_sdk::PluginCommandInvocation;
+use chatos_plugin_management_sdk::{PluginCommandInvocation, SelectedPluginRef};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
-use self::mcp_management_gateway::{resolve_mcp_management_gateway, McpManagementGatewayRequest};
+use self::mcp_management_gateway::{
+    resolve_existing_mcp_management_gateway, resolve_mcp_management_gateway,
+    McpManagementGatewayRequest,
+};
 use self::policy::merge_optional_system_prompts;
 use self::support::{is_concrete_project_id, normalize_optional_text};
 use self::task_runner::{normalize_plugin_command_invocations, normalize_selected_plugin_ids};
@@ -45,6 +49,7 @@ use crate::services::{
 #[derive(Debug, Clone)]
 pub struct ConversationRuntimeRequest {
     pub effective_user_id: Option<String>,
+    pub owner_role: Option<String>,
     pub contact_agent_id: Option<String>,
     pub project_id: Option<String>,
     pub project_root: Option<String>,
@@ -72,6 +77,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub agent_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
+    pub plugin_instruction_items: Vec<Value>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub plugin_command_invocations_for_snapshot: Vec<TurnRuntimeSnapshotPluginCommandInvocationDto>,
     pub resolved_project_id: Option<String>,
@@ -83,6 +89,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub enabled_mcp_ids_for_snapshot: Vec<String>,
     pub mcp_server_bundle: McpServerBundle,
     pub mcp_management_runtime_session: Option<McpManagementRuntimeSessionHandle>,
+    pub mcp_command_queue: Option<String>,
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
     pub runtime_error: Option<String>,
@@ -90,6 +97,26 @@ pub struct ResolvedConversationRuntimeContext {
 }
 
 pub type ToolMetadataMap = std::collections::HashMap<String, ToolInfo>;
+
+pub struct ResumedMcpManagementGateway {
+    pub server: crate::services::mcp_loader::McpHttpServer,
+    pub command_queue: String,
+    pub runtime_session: McpManagementRuntimeSessionHandle,
+}
+
+pub async fn resume_mcp_management_gateway(
+    session_id: &str,
+) -> Result<ResumedMcpManagementGateway, String> {
+    let (server, _, _, _, command_queue, runtime_session) =
+        resolve_existing_mcp_management_gateway(session_id)
+            .await?
+            .into_parts();
+    Ok(ResumedMcpManagementGateway {
+        server,
+        command_queue,
+        runtime_session,
+    })
+}
 
 pub async fn resolve_runtime_context(
     session_id: &str,
@@ -207,7 +234,9 @@ pub async fn resolve_runtime_context(
     let mut runtime_error = None;
     let mut effective_mcp_resource_ids = Vec::new();
     let mut gateway_provider_skills_prompt = None;
+    let mut gateway_plugin_instruction_items = Vec::new();
     let mut mcp_management_runtime_session = None;
+    let mut mcp_command_queue = None;
     let agent_profile = ChatosAgentProfile::from_project_locality(
         req.plan_mode,
         req.project_requirement_execution_planner,
@@ -231,11 +260,25 @@ pub async fn resolve_runtime_context(
                 .map(|arguments| hex::encode(Sha256::digest(arguments.as_bytes()))),
         })
         .collect::<Vec<_>>();
+    let selected_plugins_for_runtime = normalized_selected_plugin_ids
+        .iter()
+        .map(|plugin_id| SelectedPluginRef {
+            plugin_id: plugin_id.clone(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: normalized_plugin_command_invocations
+                .iter()
+                .filter(|invocation| invocation.plugin_id == *plugin_id)
+                .map(|invocation| invocation.command_id.clone())
+                .collect(),
+            selected_agent_ids: Vec::new(),
+        })
+        .collect::<Vec<_>>();
 
     let agent_system_prompt = match plugin_management_prompts::resolve_for_model(
         agent_profile.key(),
         req.prompt_vendor.as_deref(),
         req.model_provider.as_str(),
+        agent_profile.task_runner_task_profile(),
     )
     .await
     {
@@ -262,6 +305,7 @@ pub async fn resolve_runtime_context(
         match resolve_mcp_management_gateway(McpManagementGatewayRequest {
             tenant_id: effective_user_id.as_deref(),
             owner_user_id: effective_user_id.as_deref(),
+            owner_role: req.owner_role.as_deref(),
             agent_profile,
             project_id: task_runner_project_id,
             source_session_id: Some(session_id),
@@ -270,6 +314,8 @@ pub async fn resolve_runtime_context(
             contact_agent_id: contact_agent_id.as_deref(),
             default_model_config_id: req.model_config_id.as_deref(),
             expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
+            selected_plugins: selected_plugins_for_runtime,
+            plugin_command_invocations: normalized_plugin_command_invocations.clone(),
             locale: Some(if user_output_locale.is_english() {
                 InternalContextLocale::ENGLISH_KEY
             } else {
@@ -289,11 +335,19 @@ pub async fn resolve_runtime_context(
     };
 
     if let Some(gateway) = mcp_management_gateway {
-        let (server, effective_mcp_ids, provider_skills_prompt, runtime_session) =
-            gateway.into_parts();
+        let (
+            server,
+            effective_mcp_ids,
+            provider_skills_prompt,
+            plugin_instruction_items,
+            command_queue,
+            runtime_session,
+        ) = gateway.into_parts();
         http_servers.push(server);
         effective_mcp_resource_ids = effective_mcp_ids;
         gateway_provider_skills_prompt = provider_skills_prompt;
+        gateway_plugin_instruction_items = plugin_instruction_items;
+        mcp_command_queue = Some(command_queue);
         mcp_management_runtime_session = Some(runtime_session);
     }
 
@@ -325,6 +379,7 @@ pub async fn resolve_runtime_context(
         agent_system_prompt,
         contact_system_prompt,
         builtin_mcp_system_prompt,
+        plugin_instruction_items: gateway_plugin_instruction_items,
         selected_commands_for_snapshot,
         plugin_command_invocations_for_snapshot,
         resolved_project_id,
@@ -336,6 +391,7 @@ pub async fn resolve_runtime_context(
         enabled_mcp_ids_for_snapshot,
         mcp_server_bundle: (http_servers, stdio_servers, builtin_servers),
         mcp_management_runtime_session,
+        mcp_command_queue,
         use_tools,
         memory_summary_prompt,
         runtime_error,

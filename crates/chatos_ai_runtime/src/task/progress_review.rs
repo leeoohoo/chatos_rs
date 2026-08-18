@@ -5,11 +5,14 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_CONFIRMED_PROJECT_PATHS: usize = 128;
+const MAX_CONFIRMED_VALIDATION_COMMANDS: usize = 128;
+const MAX_CONFIRMED_ACCEPTANCE_TOOLS: usize = 128;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionReviewPolicy {
     pub read_only_iterations: usize,
     pub missing_read_failures: usize,
@@ -36,7 +39,8 @@ impl Default for TaskExecutionReviewPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskExecutionReviewTrigger {
     ReadOnlyLoop,
     MissingTargetedReads,
@@ -55,7 +59,7 @@ impl TaskExecutionReviewTrigger {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionReviewCheckpoint {
     pub iteration: usize,
     pub trigger: TaskExecutionReviewTrigger,
@@ -77,6 +81,27 @@ pub struct TaskExecutionProgressState {
     placeholder_progress_write_iteration: AtomicUsize,
     stale_project_write_failure_iteration: AtomicUsize,
     confirmed_project_paths: Mutex<BTreeSet<String>>,
+    confirmed_validation_commands: Mutex<BTreeSet<String>>,
+    confirmed_acceptance_tools: Mutex<BTreeSet<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskExecutionProgressSnapshot {
+    pub policy: TaskExecutionReviewPolicy,
+    pub current_iteration: usize,
+    pub last_meaningful_action_iteration: usize,
+    pub last_review_iteration: usize,
+    pub checkpoints_since_action: usize,
+    pub project_mutation_generation: usize,
+    pub last_validated_generation: Option<usize>,
+    pub missing_targeted_read_failures_after_action: usize,
+    pub placeholder_progress_write_iteration: usize,
+    pub stale_project_write_failure_iteration: usize,
+    pub confirmed_project_paths: Vec<String>,
+    #[serde(default)]
+    pub confirmed_validation_commands: Vec<String>,
+    #[serde(default)]
+    pub confirmed_acceptance_tools: Vec<String>,
 }
 
 impl Default for TaskExecutionProgressState {
@@ -99,11 +124,102 @@ impl TaskExecutionProgressState {
             placeholder_progress_write_iteration: AtomicUsize::new(0),
             stale_project_write_failure_iteration: AtomicUsize::new(0),
             confirmed_project_paths: Mutex::new(BTreeSet::new()),
+            confirmed_validation_commands: Mutex::new(BTreeSet::new()),
+            confirmed_acceptance_tools: Mutex::new(BTreeSet::new()),
         }
     }
 
     pub fn policy(&self) -> TaskExecutionReviewPolicy {
         self.policy
+    }
+
+    pub fn snapshot(&self) -> TaskExecutionProgressSnapshot {
+        TaskExecutionProgressSnapshot {
+            policy: self.policy,
+            current_iteration: self.current_iteration.load(Ordering::Relaxed),
+            last_meaningful_action_iteration: self
+                .last_meaningful_action_iteration
+                .load(Ordering::Relaxed),
+            last_review_iteration: self.last_review_iteration.load(Ordering::Relaxed),
+            checkpoints_since_action: self.checkpoints_since_action.load(Ordering::Relaxed),
+            project_mutation_generation: self.project_mutation_generation.load(Ordering::Relaxed),
+            last_validated_generation: match self.last_validated_generation.load(Ordering::Relaxed)
+            {
+                usize::MAX => None,
+                generation => Some(generation),
+            },
+            missing_targeted_read_failures_after_action: self
+                .missing_targeted_read_failures_after_action
+                .load(Ordering::Relaxed),
+            placeholder_progress_write_iteration: self
+                .placeholder_progress_write_iteration
+                .load(Ordering::Relaxed),
+            stale_project_write_failure_iteration: self
+                .stale_project_write_failure_iteration
+                .load(Ordering::Relaxed),
+            confirmed_project_paths: self.confirmed_project_paths(),
+            confirmed_validation_commands: self.confirmed_validation_commands(),
+            confirmed_acceptance_tools: self.confirmed_acceptance_tools(),
+        }
+    }
+
+    pub fn restore_snapshot(&self, snapshot: &TaskExecutionProgressSnapshot) {
+        self.current_iteration
+            .store(snapshot.current_iteration, Ordering::Relaxed);
+        self.last_meaningful_action_iteration
+            .store(snapshot.last_meaningful_action_iteration, Ordering::Relaxed);
+        self.last_review_iteration
+            .store(snapshot.last_review_iteration, Ordering::Relaxed);
+        self.checkpoints_since_action
+            .store(snapshot.checkpoints_since_action, Ordering::Relaxed);
+        self.project_mutation_generation
+            .store(snapshot.project_mutation_generation, Ordering::Relaxed);
+        self.last_validated_generation.store(
+            snapshot.last_validated_generation.unwrap_or(usize::MAX),
+            Ordering::Relaxed,
+        );
+        self.missing_targeted_read_failures_after_action.store(
+            snapshot.missing_targeted_read_failures_after_action,
+            Ordering::Relaxed,
+        );
+        self.placeholder_progress_write_iteration.store(
+            snapshot.placeholder_progress_write_iteration,
+            Ordering::Relaxed,
+        );
+        self.stale_project_write_failure_iteration.store(
+            snapshot.stale_project_write_failure_iteration,
+            Ordering::Relaxed,
+        );
+        if let Ok(mut paths) = self.confirmed_project_paths.lock() {
+            paths.clear();
+            paths.extend(
+                snapshot
+                    .confirmed_project_paths
+                    .iter()
+                    .take(MAX_CONFIRMED_PROJECT_PATHS)
+                    .cloned(),
+            );
+        }
+        if let Ok(mut commands) = self.confirmed_validation_commands.lock() {
+            commands.clear();
+            commands.extend(
+                snapshot
+                    .confirmed_validation_commands
+                    .iter()
+                    .take(MAX_CONFIRMED_VALIDATION_COMMANDS)
+                    .cloned(),
+            );
+        }
+        if let Ok(mut tools) = self.confirmed_acceptance_tools.lock() {
+            tools.clear();
+            tools.extend(
+                snapshot
+                    .confirmed_acceptance_tools
+                    .iter()
+                    .take(MAX_CONFIRMED_ACCEPTANCE_TOOLS)
+                    .cloned(),
+            );
+        }
     }
 
     pub fn begin_iteration(&self, iteration: usize) {
@@ -112,6 +228,7 @@ impl TaskExecutionProgressState {
 
     pub fn observe_tool_result(&self, payload: &Value) {
         self.record_confirmed_project_paths(payload);
+        self.record_confirmed_acceptance_tool(payload);
         let iteration = self.current_iteration.load(Ordering::Relaxed);
         if tool_result_is_project_mutation(payload) {
             self.project_mutation_generation
@@ -119,8 +236,18 @@ impl TaskExecutionProgressState {
             self.record_meaningful_action(iteration);
             return;
         }
-        if tool_result_is_validation(payload) && self.record_validation_for_current_generation() {
-            self.record_meaningful_action(iteration);
+        if tool_result_is_validation(payload) {
+            let command = terminal_result_command(payload);
+            if !command.is_empty() {
+                if let Ok(mut commands) = self.confirmed_validation_commands.lock() {
+                    if commands.len() < MAX_CONFIRMED_VALIDATION_COMMANDS {
+                        commands.insert(command);
+                    }
+                }
+            }
+            if self.record_validation_for_current_generation() {
+                self.record_meaningful_action(iteration);
+            }
             return;
         }
 
@@ -145,6 +272,20 @@ impl TaskExecutionProgressState {
             .unwrap_or_default()
     }
 
+    pub fn confirmed_validation_commands(&self) -> Vec<String> {
+        self.confirmed_validation_commands
+            .lock()
+            .map(|commands| commands.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn confirmed_acceptance_tools(&self) -> Vec<String> {
+        self.confirmed_acceptance_tools
+            .lock()
+            .map(|tools| tools.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     fn record_confirmed_project_paths(&self, payload: &Value) {
         let paths = confirmed_project_paths_from_tool_result(payload);
         if paths.is_empty() {
@@ -158,6 +299,25 @@ impl TaskExecutionProgressState {
                 break;
             }
             confirmed.insert(path);
+        }
+    }
+
+    fn record_confirmed_acceptance_tool(&self, payload: &Value) {
+        if payload.get("success").and_then(Value::as_bool) != Some(true)
+            || payload.get("is_error").and_then(Value::as_bool) == Some(true)
+        {
+            return;
+        }
+        let Some(name) = payload.get("name").and_then(Value::as_str) else {
+            return;
+        };
+        if !name.contains("browser_tools") {
+            return;
+        }
+        if let Ok(mut tools) = self.confirmed_acceptance_tools.lock() {
+            if tools.len() < MAX_CONFIRMED_ACCEPTANCE_TOOLS {
+                tools.insert(name.to_string());
+            }
         }
     }
 
@@ -360,6 +520,27 @@ fn confirmed_project_paths_from_tool_result(payload: &Value) -> Vec<String> {
     let Some(name) = payload.get("name").and_then(Value::as_str) else {
         return Vec::new();
     };
+    if name.ends_with("terminal_controller_execute_command") {
+        if !terminal_result_exit_succeeded(payload) {
+            return Vec::new();
+        }
+        let command = terminal_result_command(payload);
+        let mut paths = BTreeSet::new();
+        if command.starts_with("npm ") || command == "npm" {
+            paths.insert("package.json".to_string());
+            if command.contains(" ci") || command.contains(" install") || command.contains(" audit")
+            {
+                // npm resolves these files from the current workspace. A successful install,
+                // ci, or audit therefore proves the package baseline exists even when the model
+                // did not issue a separate read/list call for package-lock.json.
+                paths.insert("package-lock.json".to_string());
+            }
+        }
+        return paths
+            .into_iter()
+            .filter(|path| project_path_is_meaningful_progress(path))
+            .collect();
+    }
     if !tool_name_ends_with_any(
         name,
         &[
@@ -610,11 +791,13 @@ fn terminal_result_command(payload: &Value) -> String {
     let parsed = serde_json::from_str::<Value>(content).ok();
     parsed
         .as_ref()
+        .map(chatos_mcp_runtime::structured_result_payload)
         .and_then(|value| value.get("common"))
         .and_then(Value::as_str)
         .or_else(|| {
             payload
                 .get("result")
+                .map(chatos_mcp_runtime::structured_result_payload)
                 .and_then(|value| value.get("common"))
                 .and_then(Value::as_str)
         })
@@ -625,12 +808,14 @@ fn terminal_result_command(payload: &Value) -> String {
 fn terminal_result_exit_succeeded(payload: &Value) -> bool {
     let direct_exit_code = payload
         .get("result")
+        .map(chatos_mcp_runtime::structured_result_payload)
         .and_then(|result| result.get("exit_code"))
         .and_then(Value::as_i64);
     let content_exit_code = payload
         .get("content")
         .and_then(Value::as_str)
         .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .map(|content| chatos_mcp_runtime::structured_result_payload(&content).clone())
         .and_then(|content| content.get("exit_code").and_then(Value::as_i64));
     direct_exit_code.or(content_exit_code) == Some(0)
 }
@@ -645,11 +830,23 @@ fn terminal_result_has_validation_command(payload: &Value) -> bool {
         "python -m unittest",
         "npm test",
         "npm run test",
+        "npm run typecheck",
         "npm run build",
+        "npm ci",
+        "npm install",
+        "npm audit",
         "pnpm test",
+        "pnpm run test",
+        "pnpm run typecheck",
         "pnpm build",
+        "pnpm install",
+        "pnpm audit",
         "yarn test",
+        "yarn run test",
+        "yarn run typecheck",
         "yarn build",
+        "yarn install",
+        "yarn audit",
         "go test",
         "mvn test",
         "gradle test",
@@ -941,6 +1138,110 @@ mod tests {
             .should_trigger_review(9)
             .expect("repeated validation must not reset progress");
         assert_eq!(checkpoint.read_only_iterations, 8);
+    }
+
+    #[test]
+    fn all_successful_validation_commands_are_kept_for_acceptance_evidence() {
+        let progress = TaskExecutionProgressState::default();
+        for command in ["npm test", "npm run build"] {
+            progress.observe_tool_result(&json!({
+                "name": "terminal_controller_execute_command",
+                "success": true,
+                "is_error": false,
+                "content": serde_json::to_string(&json!({
+                    "common": command,
+                    "exit_code": 0,
+                })).expect("content"),
+                "result": { "exit_code": 0 },
+            }));
+        }
+
+        assert_eq!(
+            progress.confirmed_validation_commands(),
+            vec!["npm run build".to_string(), "npm test".to_string()]
+        );
+    }
+
+    #[test]
+    fn common_node_dependency_and_typecheck_commands_are_kept_for_acceptance_evidence() {
+        let progress = TaskExecutionProgressState::default();
+        for command in [
+            "npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org",
+            "npm ci --ignore-scripts --registry=https://registry.npmjs.org",
+            "npm run typecheck",
+            "npm audit --audit-level=high --json --registry=https://registry.npmjs.org",
+        ] {
+            progress.observe_tool_result(&json!({
+                "name": "terminal_controller_execute_command",
+                "success": true,
+                "is_error": false,
+                "content": serde_json::to_string(&json!({
+                    "common": command,
+                    "exit_code": 0,
+                })).expect("content"),
+                "result": { "exit_code": 0 },
+            }));
+        }
+
+        assert_eq!(
+            progress.confirmed_validation_commands(),
+            vec![
+                "npm audit --audit-level=high --json --registry=https://registry.npmjs.org".to_string(),
+                "npm ci --ignore-scripts --registry=https://registry.npmjs.org".to_string(),
+                "npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org".to_string(),
+                "npm run typecheck".to_string(),
+            ]
+        );
+        assert_eq!(
+            progress.confirmed_project_paths(),
+            vec!["package-lock.json".to_string(), "package.json".to_string()]
+        );
+    }
+
+    #[test]
+    fn nested_structured_validation_result_is_kept_for_acceptance_evidence() {
+        let progress = TaskExecutionProgressState::default();
+        progress.observe_tool_result(&json!({
+            "name": "terminal_controller_execute_command",
+            "success": true,
+            "is_error": false,
+            "content": serde_json::to_string(&json!({
+                "_structured_result": {
+                    "_structured_result": {
+                        "common": "cargo test -p example",
+                        "exit_code": 0
+                    }
+                }
+            })).expect("content"),
+            "result": {
+                "_structured_result": {
+                    "_structured_result": {
+                        "exit_code": 0
+                    }
+                }
+            },
+        }));
+
+        assert_eq!(
+            progress.confirmed_validation_commands(),
+            vec!["cargo test -p example".to_string()]
+        );
+    }
+
+    #[test]
+    fn successful_browser_tools_are_kept_for_acceptance_evidence() {
+        let progress = TaskExecutionProgressState::default();
+        progress.observe_tool_result(&json!({
+            "name": "browser_tools_browser_snapshot",
+            "success": true,
+            "is_error": false,
+            "result": { "url": "http://127.0.0.1:4173" },
+        }));
+
+        assert_eq!(
+            progress.confirmed_acceptance_tools(),
+            vec!["browser_tools_browser_snapshot".to_string()]
+        );
     }
 
     #[test]

@@ -181,7 +181,7 @@ pub(super) fn cloud_execution_message_is_newer(
         > (current.created_at.as_str(), current.id.as_str())
 }
 
-async fn find_latest_cloud_execution_source_message(
+pub(super) async fn find_latest_cloud_execution_source_message(
     auth: &AuthUser,
     project_id: &str,
     requirement_id: &str,
@@ -269,11 +269,34 @@ pub(crate) fn execution_message_status(message: &crate::models::message::Message
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.get("task_runner_async"));
-    let status = value_string(task_runner.unwrap_or(&Value::Null), "overall_status")
-        .or_else(|| value_string(task_runner.unwrap_or(&Value::Null), "confirmation_status"))
-        .unwrap_or_else(|| STATUS_PLANNING_STARTED.to_string())
-        .trim()
-        .to_ascii_lowercase();
+    let overall_status = value_string(task_runner.unwrap_or(&Value::Null), "overall_status")
+        .map(|value| value.trim().to_ascii_lowercase());
+    let confirmation_status =
+        value_string(task_runner.unwrap_or(&Value::Null), "confirmation_status")
+            .map(|value| value.trim().to_ascii_lowercase());
+    let status = if overall_status
+        .as_deref()
+        .is_some_and(execution_status_is_stop_locked)
+    {
+        overall_status.unwrap_or_default()
+    } else if confirmation_status
+        .as_deref()
+        .is_some_and(execution_status_is_stop_locked)
+    {
+        confirmation_status.unwrap_or_default()
+    } else if overall_status
+        .as_deref()
+        .is_some_and(execution_status_is_failure_terminal)
+        || confirmation_status
+            .as_deref()
+            .is_some_and(execution_status_is_failure_terminal)
+    {
+        "failed".to_string()
+    } else {
+        overall_status
+            .or(confirmation_status)
+            .unwrap_or_else(|| STATUS_PLANNING_STARTED.to_string())
+    };
     if !execution_status_is_stop_locked(status.as_str())
         && task_runner_metadata_has_stop_marker(task_runner)
     {
@@ -281,6 +304,10 @@ pub(crate) fn execution_message_status(message: &crate::models::message::Message
     } else {
         status
     }
+}
+
+fn execution_status_is_failure_terminal(status: &str) -> bool {
+    matches!(status.trim(), "failed" | "error" | "blocked")
 }
 
 #[cfg(test)]
@@ -390,7 +417,7 @@ pub(super) const STALE_PLANNER_NO_TASK_TIMEOUT_SECONDS: i64 = 10 * 60;
 const STALE_PLANNER_FAILURE_KIND: &str = "stale_planning_agent";
 const STALE_PLANNER_FAILURE_REASON: &str = "规划 Agent 已中断：后端重启或运行进程丢失后，执行计划长时间没有创建任何 Task Runner 任务。请重新生成执行计划。";
 
-fn is_cloud_execution_planner_status_pending(status: &str) -> bool {
+pub(super) fn is_cloud_execution_planner_status_pending(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
         STATUS_PLANNING | STATUS_PLANNING_STARTED | "pending" | "processing"

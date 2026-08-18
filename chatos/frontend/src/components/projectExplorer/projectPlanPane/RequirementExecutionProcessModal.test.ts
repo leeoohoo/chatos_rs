@@ -10,6 +10,7 @@ import {
   isRequirementExecutionCancellationSettling,
   isRequirementExecutionRerunCancellationSettlingError,
   isPendingRequirementExecutionPlanError,
+  isRequirementExecutionRuntimeReady,
   REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
   resolveRequirementExecutionRecoveryActions,
   resolveRequirementExecutionProcessPhase,
@@ -38,6 +39,21 @@ const confirmationState = (
 });
 
 describe('requirement execution process phase', () => {
+  it('does not gate client-managed local projects on server image initialization', () => {
+    expect(isRequirementExecutionRuntimeReady({
+      clientManagedRuntime: true,
+      conversationId: 'conversation-1',
+      executionPlane: 'cloud',
+      status: 'analyzing',
+    })).toBe(true);
+    expect(isRequirementExecutionRuntimeReady({
+      clientManagedRuntime: false,
+      conversationId: 'conversation-1',
+      executionPlane: 'cloud',
+      status: 'analyzing',
+    })).toBe(false);
+  });
+
   it('polls every ten seconds and treats a not-yet-persisted plan as pending', () => {
     expect(REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS).toBe(10_000);
     expect(isPendingRequirementExecutionPlanError(new ApiRequestError(
@@ -157,7 +173,7 @@ describe('requirement execution process phase', () => {
       hasActiveRuns: false,
       phase: 'stopped',
       recoveryAction: 'rerun',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: true });
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: true });
 
     expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
@@ -181,6 +197,20 @@ describe('requirement execution process phase', () => {
     })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
 
     expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: false,
+      hasActiveRuns: false,
+      phase: 'awaiting_confirmation',
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
+
+    expect(resolveRequirementExecutionRecoveryActions({
+      actuallyStarted: false,
+      hasActiveRuns: true,
+      phase: 'awaiting_confirmation',
+      recoveryAction: 'none',
+    })).toEqual({ canRegenerate: false, canRevise: false, canRerun: false });
+
+    expect(resolveRequirementExecutionRecoveryActions({
       actuallyStarted: true,
       hasActiveRuns: true,
       phase: 'running',
@@ -201,11 +231,23 @@ describe('requirement execution process phase', () => {
       replacePreviousBatch: true,
     })).toBe(false);
     expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'planning_context',
+      replacePreviousBatch: true,
+    })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'building_graph',
+      replacePreviousBatch: true,
+    })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
       phase: 'awaiting_confirmation',
       replacePreviousBatch: true,
     })).toBe(true);
     expect(shouldStopRequirementExecutionBeforeReplacement({
       phase: 'running',
+      replacePreviousBatch: true,
+    })).toBe(true);
+    expect(shouldStopRequirementExecutionBeforeReplacement({
+      phase: 'stopped',
       replacePreviousBatch: true,
     })).toBe(false);
   });
@@ -258,7 +300,7 @@ describe('requirement execution process phase', () => {
       hasActiveRuns: false,
       phase: 'stopped',
       recoveryAction: 'none',
-    })).toEqual({ canRegenerate: false, canRevise: true, canRerun: false });
+    })).toEqual({ canRegenerate: true, canRevise: true, canRerun: false });
 
     const process = buildRequirementExecutionProcess({
       projectId: 'project-1',

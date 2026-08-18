@@ -20,7 +20,7 @@ import type {
   CurrentUser,
 } from '../../types';
 import { AgentPromptDetailPage, type PromptVersionSelection } from './AgentPromptDetailPage';
-import { AGENT_PROMPT_VENDORS, agentPromptVendorLabel } from './support';
+import { agentPromptVendorLabel } from './support';
 
 export function AgentPromptVersionsPage({
   user,
@@ -83,14 +83,13 @@ export function AgentPromptVersionsPage({
         title: t('agent.promptVersionRevisions'),
         key: 'vendor_revisions',
         render: (_, record) => {
-          const revisions = new Map(
-            record.vendor_revisions.map((item) => [item.vendor, item.revision]),
-          );
           return (
             <Space wrap size={[6, 6]}>
-              {AGENT_PROMPT_VENDORS.map((vendor) => (
-                <Tag key={vendor} color={revisions.has(vendor) ? 'default' : 'warning'}>
-                  {agentPromptVendorLabel(vendor)} · r{revisions.get(vendor) || 0}
+              {record.vendor_revisions.map((item) => (
+                <Tag key={`${item.profile}:${item.vendor}`}>
+                  {item.profile === 'chatos_plan'
+                    ? t('agent.promptProfilePlanning')
+                    : t('agent.promptProfileDefault')} · {agentPromptVendorLabel(item.vendor)} · r{item.revision}
                 </Tag>
               ))}
             </Space>
@@ -115,9 +114,16 @@ export function AgentPromptVersionsPage({
               </Tag>
               {record.changed_vendor ? (
                 <Typography.Text type="secondary" className="prompt-version-change">
-                  {t('agent.promptVersionChangedVendor', {
-                    vendor: agentPromptVendorLabel(record.changed_vendor),
-                  })}
+                  {record.changed_profile
+                    ? t('agent.promptVersionChangedProfileVendor', {
+                      profile: record.changed_profile === 'chatos_plan'
+                        ? t('agent.promptProfilePlanning')
+                        : t('agent.promptProfileDefault'),
+                      vendor: agentPromptVendorLabel(record.changed_vendor),
+                    })
+                    : t('agent.promptVersionChangedVendor', {
+                      vendor: agentPromptVendorLabel(record.changed_vendor),
+                    })}
                 </Typography.Text>
               ) : null}
             </Space>

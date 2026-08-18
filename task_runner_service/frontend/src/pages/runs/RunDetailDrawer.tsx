@@ -4,21 +4,21 @@
 import {
   Drawer,
   Empty,
+  Modal,
   Space,
 } from 'antd';
 
 import type { TranslateFn } from '../../i18n/I18nProvider';
-import type { RemoteOperationStats } from '../shared/remoteOperationUtils';
 import type {
   TaskRunEventRecord,
   TaskRunRecord,
   TaskSummaryRecord,
   AskUserPromptRecord,
   AskUserPromptStatus,
+  RunWorkspaceChanges,
 } from '../../types';
 import { JsonBlock } from './payloadView';
 import type {
-  RemoteOperationView,
   ToolCallView,
   ToolResultView,
 } from './runEventUtils';
@@ -27,7 +27,6 @@ import { RunEventsTimeline } from './RunEventsTimeline';
 import { RunAttemptsTimeline } from './RunAttemptsTimeline';
 import { RunModelRequestsSection } from './RunModelRequestsSection';
 import { RunPromptsSection } from './RunPromptsSection';
-import { RunRemoteOperationsSection } from './RunRemoteOperationsSection';
 import {
   RunToolCallsSection,
   RunToolResultsSection,
@@ -56,8 +55,6 @@ type RunDetailDrawerProps = {
   toolResults: ToolResultView[];
   modelRequests: TaskRunEventRecord[];
   streamStats: RunStreamStats;
-  remoteOperations: RemoteOperationView[];
-  remoteOperationStats: RemoteOperationStats;
   promptsPage?: RunPromptsPage;
   promptsLoading: boolean;
   promptPage: number;
@@ -66,13 +63,19 @@ type RunDetailDrawerProps = {
   eventsLoading: boolean;
   canceling: boolean;
   retrying: boolean;
+  integrationRetrying: boolean;
+  integrationWaiving: boolean;
+  changes: RunWorkspaceChanges | null;
+  changesLoading: boolean;
   onClose: () => void;
   onOpenTask: (taskId: string) => void;
   onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
-  onManageServers: () => void;
-  onOpenServer: (serverId: string) => void;
+  onRetryIntegration: (runId: string) => void;
+  onWaiveIntegration: (runId: string, reason: string) => Promise<void>;
+  onOpenChanges: (runId: string) => void;
+  onCloseChanges: () => void;
   onOpenPrompt: (promptId: string, runId: string) => void;
   onPromptPageChange: (page: number, pageSize: number) => void;
 };
@@ -88,8 +91,6 @@ export function RunDetailDrawer({
   toolResults,
   modelRequests,
   streamStats,
-  remoteOperations,
-  remoteOperationStats,
   promptsPage,
   promptsLoading,
   promptPage,
@@ -98,20 +99,27 @@ export function RunDetailDrawer({
   eventsLoading,
   canceling,
   retrying,
+  integrationRetrying,
+  integrationWaiving,
+  changes,
+  changesLoading,
   onClose,
   onOpenTask,
   onOpenModel,
   onCancel,
   onRetry,
-  onManageServers,
-  onOpenServer,
+  onRetryIntegration,
+  onWaiveIntegration,
+  onOpenChanges,
+  onCloseChanges,
   onOpenPrompt,
   onPromptPageChange,
 }: RunDetailDrawerProps) {
   const promptStatusLabel = (status: AskUserPromptStatus) => t(`prompts.status.${status}`);
 
   return (
-    <Drawer
+    <>
+      <Drawer
       title={t('runs.detail.title')}
       open={open}
       width={760}
@@ -130,34 +138,25 @@ export function RunDetailDrawer({
             streamStats={streamStats}
             canceling={canceling}
             retrying={retrying}
+            integrationRetrying={integrationRetrying}
+            integrationWaiving={integrationWaiving}
+            changesLoading={changesLoading}
             onOpenTask={onOpenTask}
             onOpenModel={onOpenModel}
             onCancel={onCancel}
             onRetry={onRetry}
+            onRetryIntegration={onRetryIntegration}
+            onWaiveIntegration={onWaiveIntegration}
+            onOpenChanges={onOpenChanges}
           />
 
           <RunAttemptsTimeline t={t} attempts={run.attempts || []} />
-
-          <RunRemoteOperationsSection
-            t={t}
-            operations={remoteOperations}
-            stats={remoteOperationStats}
-            onManageServers={onManageServers}
-            onOpenServer={onOpenServer}
-          />
 
           <RunToolCallsSection t={t} toolCalls={toolCalls} />
           <RunToolResultsSection t={t} toolResults={toolResults} />
           <RunModelRequestsSection t={t} modelRequests={modelRequests} />
 
           <JsonBlock title={t('runs.snapshot.input')} value={run.input_snapshot} t={t} />
-          <JsonBlock
-            title={t('runs.snapshot.plugins')}
-            value={run.plugin_snapshots}
-            collapsible
-            defaultOpen={false}
-            t={t}
-          />
           <JsonBlock
             title={t('runs.snapshot.context')}
             value={run.context_snapshot}
@@ -189,6 +188,37 @@ export function RunDetailDrawer({
       ) : loading ? null : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
       )}
-    </Drawer>
+      </Drawer>
+      <Modal
+        title={t('runs.changes.title')}
+        open={Boolean(changes)}
+        footer={null}
+        width={920}
+        onCancel={onCloseChanges}
+      >
+        {changes ? (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <div>
+              {t('runs.changes.summary', {
+                count: changes.files.length,
+                branch: changes.branch_ref,
+              })}
+            </div>
+            <JsonBlock
+              title={t('runs.changes.files')}
+              value={changes.files}
+              t={t}
+            />
+            <JsonBlock
+              title={changes.patch_truncated
+                ? t('runs.changes.patchTruncated')
+                : t('runs.changes.patch')}
+              value={changes.patch || t('runs.changes.empty')}
+              t={t}
+            />
+          </Space>
+        ) : null}
+      </Modal>
+    </>
   );
 }

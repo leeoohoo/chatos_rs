@@ -14,11 +14,12 @@ describe('useSessionListBootstrap', () => {
     const loadProjects = vi.fn();
     const loadContacts = vi.fn();
     const loadSessions = vi.fn();
+    const loadAgents = vi.fn();
 
     renderHook(() => useSessionListBootstrap({
       loadSessions,
       loadProjects,
-      loadAgents: vi.fn(),
+      loadAgents,
       loadContacts,
       loadTerminals: vi.fn(),
       loadRemoteConnections: vi.fn(),
@@ -36,6 +37,7 @@ describe('useSessionListBootstrap', () => {
     await waitFor(() => {
       expect(loadProjects).toHaveBeenCalledTimes(1);
       expect(loadContacts).toHaveBeenCalledTimes(1);
+      expect(loadAgents).toHaveBeenCalledTimes(1);
       expect(loadSessions).toHaveBeenCalledWith({ silent: true });
     });
   });

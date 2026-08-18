@@ -8,6 +8,36 @@ use chatos_mcp_runtime::ToolCallerModelRuntime;
 
 pub const DEFAULT_MODEL_REQUEST_MAX_RETRIES: usize = 5;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JsonSchemaOutputFormat {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub schema: Value,
+    #[serde(default = "default_strict_json_schema")]
+    pub strict: bool,
+}
+
+const fn default_strict_json_schema() -> bool {
+    true
+}
+
+impl JsonSchemaOutputFormat {
+    pub fn strict(name: impl Into<String>, schema: Value) -> Self {
+        Self {
+            name: name.into(),
+            description: None,
+            schema,
+            strict: true,
+        }
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeMessage {
     pub role: String,
@@ -27,10 +57,13 @@ pub struct ModelRuntimeConfig {
     pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
     pub prompt_cache_key: Option<String>,
+    pub previous_response_id: Option<String>,
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
     pub max_transient_retries: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<JsonSchemaOutputFormat>,
 }
 
 impl ModelRuntimeConfig {
@@ -84,6 +117,11 @@ impl ModelRuntimeConfig {
         self
     }
 
+    pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
+        self.previous_response_id = previous_response_id;
+        self
+    }
+
     pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
         self.request_cwd = request_cwd;
         self
@@ -107,35 +145,52 @@ impl ModelRuntimeConfig {
         self
     }
 
+    pub fn with_output_format(mut self, output_format: Option<JsonSchemaOutputFormat>) -> Self {
+        self.output_format = output_format;
+        self
+    }
+
     pub fn to_model_request(&self, input: Value, tools: Vec<Value>) -> ModelRequest {
+        let supports_responses = crate::model_config::effective_responses_support(
+            self.provider.as_str(),
+            self.base_url.as_str(),
+            self.supports_responses,
+        );
         ModelRequest {
             input,
             model: self.model.clone(),
             provider: self.provider.clone(),
             base_url: self.base_url.clone(),
             api_key: self.api_key.clone(),
-            supports_responses: self.supports_responses,
+            supports_responses,
             instructions: self.instructions.clone(),
             tools,
             temperature: self.temperature,
             max_output_tokens: self.max_output_tokens,
             thinking_level: self.thinking_level.clone(),
             prompt_cache_key: self.prompt_cache_key.clone(),
+            previous_response_id: self.previous_response_id.clone(),
             request_cwd: self.request_cwd.clone(),
             include_prompt_cache_retention: self.include_prompt_cache_retention,
             request_body_limit_bytes: self.request_body_limit_bytes,
             max_transient_retries: self.max_transient_retries,
+            output_format: self.output_format.clone(),
         }
     }
 
     pub fn to_tool_caller_model_runtime(&self) -> ToolCallerModelRuntime {
+        let supports_responses = crate::model_config::effective_responses_support(
+            self.provider.as_str(),
+            self.base_url.as_str(),
+            self.supports_responses,
+        );
         ToolCallerModelRuntime::openai_compatible(
             self.base_url.clone(),
             self.api_key.clone(),
             self.model.clone(),
             self.provider.clone(),
         )
-        .with_responses_support(self.supports_responses)
+        .with_responses_support(supports_responses)
         .with_images_support(self.supports_images)
         .with_thinking_level(self.thinking_level.clone())
         .with_temperature(self.temperature)
@@ -160,10 +215,12 @@ pub struct ModelRequest {
     pub max_output_tokens: Option<i64>,
     pub thinking_level: Option<String>,
     pub prompt_cache_key: Option<String>,
+    pub previous_response_id: Option<String>,
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
     pub max_transient_retries: Option<usize>,
+    pub output_format: Option<JsonSchemaOutputFormat>,
 }
 
 impl ModelRequest {
@@ -195,10 +252,12 @@ impl ModelRequest {
             max_output_tokens: None,
             thinking_level: None,
             prompt_cache_key: None,
+            previous_response_id: None,
             request_cwd: None,
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             max_transient_retries: None,
+            output_format: None,
         }
     }
 
@@ -237,6 +296,11 @@ impl ModelRequest {
         self
     }
 
+    pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
+        self.previous_response_id = previous_response_id;
+        self
+    }
+
     pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
         self.request_cwd = request_cwd;
         self
@@ -257,6 +321,11 @@ impl ModelRequest {
 
     pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
         self.max_transient_retries = max_transient_retries;
+        self
+    }
+
+    pub fn with_output_format(mut self, output_format: Option<JsonSchemaOutputFormat>) -> Self {
+        self.output_format = output_format;
         self
     }
 }

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chatos_mcp_service::MCP_ERROR_INTERNAL;
 
 fn record() -> RuntimeInvocationRecord {
     RuntimeInvocationRecord {
@@ -19,7 +20,6 @@ fn record() -> RuntimeInvocationRecord {
         mutation_may_have_started: false,
         cancel_supported: true,
         status: RuntimeInvocationStatus::Running,
-        async_execution: false,
         created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
         started_at_unix_ms: Some(chrono::Utc::now().timestamp_millis()),
         completed_at_unix_ms: None,
@@ -27,9 +27,6 @@ fn record() -> RuntimeInvocationRecord {
         terminal_error_code: None,
         terminal_error_message: None,
         file_modification_outcome: None,
-        result_reply_to: None,
-        result_event_id: None,
-        result_event_pending: false,
         expires_at: DateTime::from_millis((chrono::Utc::now().timestamp() + 60) * 1_000),
         expires_at_unix: chrono::Utc::now().timestamp() + 60,
     }
@@ -77,35 +74,6 @@ async fn cancellation_waiter_is_released_by_event_signal_without_polling() {
 }
 
 #[tokio::test]
-async fn async_terminal_transition_creates_acknowledgeable_result_event() {
-    let store = RuntimeInvocationStore::memory();
-    let mut invocation = record();
-    invocation.async_execution = true;
-    invocation.result_reply_to = Some("task_runner.mcp.results.worker-1".to_string());
-    store.register(invocation).await.unwrap();
-
-    assert!(store
-        .complete("invocation-1", serde_json::json!({"ok": true}))
-        .await
-        .unwrap());
-    let pending = store.pending_result_events(10).await.unwrap();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].event.correlation_id, "\"request-1\"");
-    assert_eq!(
-        pending[0].event.terminal_result,
-        Some(serde_json::json!({"ok": true}))
-    );
-    assert!(store
-        .acknowledge_result_event(
-            pending[0].event.invocation_id.as_str(),
-            pending[0].event.event_id.as_str(),
-        )
-        .await
-        .unwrap());
-    assert!(store.pending_result_events(10).await.unwrap().is_empty());
-}
-
-#[tokio::test]
 async fn completed_invocation_cannot_be_changed_to_cancel_requested() {
     let store = RuntimeInvocationStore::memory();
     store.register(record()).await.unwrap();
@@ -119,6 +87,67 @@ async fn completed_invocation_cannot_be_changed_to_cancel_requested() {
         .unwrap()
         .unwrap();
     assert_eq!(completed.status, RuntimeInvocationStatus::Completed);
+}
+
+#[tokio::test]
+async fn terminal_process_wait_timeout_is_recorded_as_failed_with_result_preserved() {
+    let store = RuntimeInvocationStore::memory();
+    let mut invocation = record();
+    invocation.exposed_tool_name = "sandbox_process_wait".to_string();
+    invocation.original_tool_name = "process_wait".to_string();
+    store.register(invocation).await.unwrap();
+
+    let result = serde_json::json!({
+        "_structured_result": {
+            "terminal_id": "terminal-1",
+            "wait_status": "timeout",
+            "completed": false,
+            "timed_out": true,
+            "waited_ms": 600_000
+        }
+    });
+    assert!(store
+        .complete("invocation-1", result.clone())
+        .await
+        .unwrap());
+
+    let failed = store
+        .get_for_caller("invocation-1", "task-runner")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed.status, RuntimeInvocationStatus::Failed);
+    assert_eq!(failed.terminal_result, Some(result));
+    assert_eq!(
+        failed.terminal_error_code,
+        Some(chatos_mcp_service::MCP_ERROR_INTERNAL)
+    );
+    assert_eq!(
+        failed.terminal_error_message.as_deref(),
+        Some("terminal process wait timed out")
+    );
+}
+
+#[tokio::test]
+async fn unrelated_timed_out_result_is_not_reclassified_as_process_wait_failure() {
+    let store = RuntimeInvocationStore::memory();
+    store.register(record()).await.unwrap();
+
+    assert!(store
+        .complete(
+            "invocation-1",
+            serde_json::json!({"timed_out": true, "completed": false})
+        )
+        .await
+        .unwrap());
+
+    let completed = store
+        .get_for_caller("invocation-1", "task-runner")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(completed.status, RuntimeInvocationStatus::Completed);
+    assert_eq!(completed.terminal_error_code, None);
 }
 
 #[tokio::test]
@@ -190,7 +219,6 @@ async fn closing_session_terminalizes_active_calls_and_releases_quota() {
     queued_mutation.request_id_key = "\"request-queued-mutation\"".to_string();
     queued_mutation.status = RuntimeInvocationStatus::Queued;
     queued_mutation.started_at_unix_ms = None;
-    queued_mutation.async_execution = true;
     queued_mutation.mutation_may_have_started = true;
     store.register(queued_mutation.clone()).await.unwrap();
 
@@ -372,7 +400,6 @@ async fn queued_invocation_can_be_marked_running_and_failed_with_queryable_error
     let mut queued = record();
     queued.invocation_id = "invocation-queued".to_string();
     queued.status = RuntimeInvocationStatus::Queued;
-    queued.async_execution = true;
     queued.started_at_unix_ms = None;
     store.register(queued).await.unwrap();
     assert!(store.mark_running("invocation-queued").await.unwrap());
@@ -400,7 +427,6 @@ async fn queued_invocation_can_fail_before_provider_execution_starts() {
     queued.invocation_id = "invocation-queued-dispatch-failure".to_string();
     queued.status = RuntimeInvocationStatus::Queued;
     queued.started_at_unix_ms = None;
-    queued.async_execution = true;
     store.register(queued).await.unwrap();
 
     assert!(store
@@ -421,45 +447,6 @@ async fn queued_invocation_can_fail_before_provider_execution_starts() {
         record.terminal_error_message.as_deref(),
         Some("dispatch retries exhausted")
     );
-}
-
-#[tokio::test]
-async fn only_confirmed_dispatch_failure_is_eligible_for_dlq_archive() {
-    let store = RuntimeInvocationStore::memory();
-    let mut queued = record();
-    queued.invocation_id = "invocation-dlq-archive".to_string();
-    queued.status = RuntimeInvocationStatus::Queued;
-    queued.async_execution = true;
-    queued.started_at_unix_ms = None;
-    queued.result_reply_to = Some("mcp.results.test".to_string());
-    store.register(queued).await.unwrap();
-    store
-        .fail(
-            "invocation-dlq-archive",
-            -32603,
-            "async tool dispatch failed after 5 attempts: unavailable",
-        )
-        .await
-        .unwrap();
-
-    assert!(store
-        .dead_letter_archive_candidate("invocation-dlq-archive")
-        .await
-        .unwrap()
-        .is_none());
-    let pending = store.pending_result_events(1).await.unwrap();
-    store
-        .acknowledge_result_event(
-            pending[0].event.invocation_id.as_str(),
-            pending[0].event.event_id.as_str(),
-        )
-        .await
-        .unwrap();
-    assert!(store
-        .dead_letter_archive_candidate("invocation-dlq-archive")
-        .await
-        .unwrap()
-        .is_some());
 }
 
 #[tokio::test]
@@ -558,7 +545,6 @@ async fn stats_summarize_memory_store_by_status() {
         session_id: "session-stats-queued".to_string(),
         request_id_key: "\"request-stats-queued\"".to_string(),
         status: RuntimeInvocationStatus::Queued,
-        async_execution: true,
         started_at_unix_ms: None,
         ..record()
     };
@@ -609,6 +595,93 @@ async fn stats_summarize_memory_store_by_status() {
     assert_eq!(stats.waiting_for_user, 1);
     assert_eq!(stats.cancel_requested, 0);
     assert_eq!(stats.terminal, 1);
-    assert_eq!(stats.pending_result_events, 0);
     assert_eq!(stats.duration.completed_count, 1);
+}
+
+#[tokio::test]
+async fn restart_recovery_requeues_queued_and_preserves_waiting_user_invocations() {
+    let store = RuntimeInvocationStore::memory();
+    let mut queued = record();
+    queued.invocation_id = "invocation-recovery-queued".to_string();
+    queued.request_id_key = "\"request-recovery-queued\"".to_string();
+    queued.status = RuntimeInvocationStatus::Queued;
+    queued.started_at_unix_ms = None;
+    store.register(queued.clone()).await.unwrap();
+
+    let mut waiting = record();
+    waiting.invocation_id = "invocation-recovery-waiting".to_string();
+    waiting.request_id_key = "\"request-recovery-waiting\"".to_string();
+    store.register(waiting.clone()).await.unwrap();
+    store
+        .mark_waiting_for_user(waiting.invocation_id.as_str())
+        .await
+        .unwrap();
+    waiting.status = RuntimeInvocationStatus::WaitingForUser;
+
+    assert!(!store.recover_after_restart(&queued, true).await.unwrap());
+    assert!(!store.recover_after_restart(&waiting, true).await.unwrap());
+    let active = store.list_active(10).await.unwrap();
+    assert_eq!(active.len(), 2);
+}
+
+#[tokio::test]
+async fn restart_recovery_fails_read_only_but_marks_started_mutation_unknown() {
+    let store = RuntimeInvocationStore::memory();
+    let read = record();
+    store.register(read.clone()).await.unwrap();
+    assert!(store.recover_after_restart(&read, true).await.unwrap());
+    let read = store
+        .get_for_caller(read.invocation_id.as_str(), read.caller_service.as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(read.status, RuntimeInvocationStatus::Failed);
+    assert_eq!(read.terminal_error_code, Some(MCP_ERROR_INTERNAL));
+
+    let mut mutation = record();
+    mutation.invocation_id = "invocation-recovery-mutation".to_string();
+    mutation.request_id_key = "\"request-recovery-mutation\"".to_string();
+    mutation.mutation_may_have_started = true;
+    store.register(mutation.clone()).await.unwrap();
+    assert!(store.recover_after_restart(&mutation, true).await.unwrap());
+    let mutation = store
+        .get_for_caller(
+            mutation.invocation_id.as_str(),
+            mutation.caller_service.as_str(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        mutation.status,
+        RuntimeInvocationStatus::UnknownExecutionState
+    );
+    assert_eq!(
+        mutation.terminal_error_code,
+        Some(chatos_mcp_service::MCP_ERROR_UNKNOWN_EXECUTION_STATE)
+    );
+}
+
+#[tokio::test]
+async fn restart_recovery_closes_invocation_whose_batch_is_missing() {
+    let store = RuntimeInvocationStore::memory();
+    let mut queued = record();
+    queued.status = RuntimeInvocationStatus::Queued;
+    queued.started_at_unix_ms = None;
+    store.register(queued.clone()).await.unwrap();
+
+    assert!(store.recover_after_restart(&queued, false).await.unwrap());
+    let recovered = store
+        .get_for_caller(
+            queued.invocation_id.as_str(),
+            queued.caller_service.as_str(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.status, RuntimeInvocationStatus::Failed);
+    assert!(recovered
+        .terminal_error_message
+        .as_deref()
+        .is_some_and(|message| message.contains("durable tool batch")));
 }

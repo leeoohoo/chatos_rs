@@ -3,6 +3,38 @@
 
 type UnknownRecord = Record<string, unknown>;
 
+export interface MessageTaskRunnerWorkspaceExecution {
+  execution_group_id?: string | null;
+  execution_branch_ref?: string | null;
+  integration_status?: string | null;
+  result_commit?: string | null;
+  integrated_commit?: string | null;
+  promoted_commit?: string | null;
+  waived_at?: string | null;
+  waiver_reason?: string | null;
+  conflict_files?: string[];
+  conflict_message?: string | null;
+  integration_last_error?: string | null;
+  integration_attempt_count?: number;
+}
+
+export interface MessageTaskRunnerRunChangedFile {
+  status: string;
+  path: string;
+  old_path?: string | null;
+}
+
+export interface MessageTaskRunnerRunChanges {
+  project_id: string;
+  run_id: string;
+  branch_ref: string;
+  base_commit: string;
+  result_commit: string;
+  files: MessageTaskRunnerRunChangedFile[];
+  patch: string;
+  patch_truncated: boolean;
+}
+
 export interface MessageTaskRunnerTaskSummary {
   id: string;
   title?: string | null;
@@ -32,9 +64,12 @@ export interface MessageTaskRunnerRunSummary {
   task_id?: string | null;
   model_config_id?: string | null;
   status?: string | null;
+  model_phase_status?: string | null;
+  workspace_execution?: MessageTaskRunnerWorkspaceExecution | null;
   started_at?: string | null;
   finished_at?: string | null;
   result_summary?: string | null;
+  report?: unknown;
   error_message?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -115,6 +150,8 @@ export interface MessageTaskRunnerRun {
   model_config_id?: string | null;
   memory_thread_id?: string | null;
   status?: string | null;
+  model_phase_status?: string | null;
+  workspace_execution?: MessageTaskRunnerWorkspaceExecution | null;
   started_at?: string | null;
   finished_at?: string | null;
   input_snapshot?: unknown;
@@ -242,54 +279,4 @@ export interface PluginArtifactWriteResponse {
   access: PluginArtifactUiAccess;
   operation: PluginArtifactWriteOperation;
   artifact: PluginArtifactDescriptor;
-}
-
-export interface MessageTaskRunnerFileChangeCounts {
-  added?: number;
-  modified?: number;
-  deleted?: number;
-  binary?: number;
-  diff_available?: number;
-  total?: number;
-  [key: string]: unknown;
-}
-
-export interface MessageTaskRunnerFileChange {
-  path: string;
-  status: 'added' | 'modified' | 'deleted' | string;
-  old_size?: number | null;
-  new_size?: number | null;
-  old_sha256?: string | null;
-  new_sha256?: string | null;
-  added_lines?: number;
-  deleted_lines?: number;
-  binary?: boolean;
-  diff_available?: boolean;
-  diff_truncated?: boolean;
-  diff_ref?: string | null;
-  [key: string]: unknown;
-}
-
-export interface MessageTaskRunnerRunOutputChangesResponse {
-  run_id: string;
-  base_commit?: string | null;
-  result_commit?: string | null;
-  comparison_scope: 'run_incremental' | string;
-  counts: MessageTaskRunnerFileChangeCounts;
-  files: MessageTaskRunnerFileChange[];
-  total: number;
-  limit: number;
-  offset: number;
-  has_more: boolean;
-}
-
-export interface MessageTaskRunnerRunOutputDiffResponse {
-  run_id: string;
-  path: string;
-  status: string;
-  patch?: string | null;
-  binary?: boolean;
-  diff_available?: boolean;
-  diff_truncated?: boolean;
-  message?: string | null;
 }

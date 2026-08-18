@@ -17,7 +17,7 @@ pub use implementations::builtin::{
     build_builtin_tool_service_with_dependencies, build_shared_builtin_provider,
     build_shared_builtin_registry, build_shared_builtin_tool_service, builtin_tool_catalog,
     bundled_tool_path, coerce_process_identifier, configure_child_process_group,
-    discover_bundled_tool_dirs, normalize_kv_fields, path_with_bundled_tools,
+    discover_bundled_tool_dirs, normalize_kv_fields, path_with_bundled_tools, prepare_prompt,
     resolve_wait_timeout_ms, terminal_process_list_entry, terminal_process_list_response,
     terminal_process_log_response, terminal_process_poll_response, terminal_process_wait_response,
     terminal_recent_logs_entry, terminal_recent_logs_response, terminal_result_scope,
@@ -70,7 +70,7 @@ pub use chatos_plugin_management_sdk::{
 };
 pub use definition::{CatalogSystemMcpDefinition, SystemMcpDefinition};
 pub use implementations::{system_mcp_definition, system_mcp_definitions};
-pub use skills::{system_mcp_provider_skills, SystemMcpProviderSkill};
+pub use skills::{system_mcp_provider_skills, task_runner_provider_skill, SystemMcpProviderSkill};
 pub use system_tool_catalog::{
     local_command_approval_decision_tool_definition, task_process_log_tool_definitions,
 };

@@ -19,6 +19,160 @@ pub const MCP_ERROR_INVOCATION_CANCELLED: i32 = -32010;
 pub const MCP_ERROR_UNKNOWN_EXECUTION_STATE: i32 = -32011;
 pub const MCP_ERROR_CAPACITY_EXHAUSTED: i32 = -32012;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallCommand {
+    pub owner_service: String,
+    pub agent_run_id: String,
+    pub agent_key: String,
+    pub ordering_lane_key: String,
+    pub lane_seq: u64,
+    pub generation: u64,
+    pub source_step_seq: u64,
+    pub batch_id: String,
+    pub mcp_runtime_session_ref: String,
+    pub result_routing_key: String,
+    pub calls: Vec<McpToolCallCommandItem>,
+    #[serde(default = "initial_delivery_attempt")]
+    pub delivery_attempt: u32,
+}
+
+impl McpToolCallCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("owner_service", self.owner_service.as_str()),
+            ("agent_run_id", self.agent_run_id.as_str()),
+            ("agent_key", self.agent_key.as_str()),
+            ("ordering_lane_key", self.ordering_lane_key.as_str()),
+            ("batch_id", self.batch_id.as_str()),
+            (
+                "mcp_runtime_session_ref",
+                self.mcp_runtime_session_ref.as_str(),
+            ),
+            ("result_routing_key", self.result_routing_key.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("MCP tool call command {name} must not be empty"));
+            }
+        }
+        if self.lane_seq == 0 || self.generation == 0 || self.source_step_seq == 0 {
+            return Err(
+                "MCP tool call command lane_seq, generation and source_step_seq must be positive"
+                    .to_string(),
+            );
+        }
+        if self.calls.is_empty() || self.calls.len() > 128 {
+            return Err("MCP tool call command must contain between 1 and 128 calls".to_string());
+        }
+        for (index, call) in self.calls.iter().enumerate() {
+            if call.call_index != index {
+                return Err("MCP tool call command call_index must match array order".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn normalize_delivery_attempt(mut self) -> Self {
+        self.delivery_attempt = self.delivery_attempt.max(1);
+        self
+    }
+
+    pub fn next_retry(&self, max_delivery_attempts: u32) -> Option<Self> {
+        if self.delivery_attempt.max(1) >= max_delivery_attempts {
+            return None;
+        }
+        let mut retry = self.clone();
+        retry.delivery_attempt = self.delivery_attempt.max(1).saturating_add(1);
+        Some(retry)
+    }
+}
+
+fn initial_delivery_attempt() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallCommandItem {
+    pub invocation_id: String,
+    pub tool_call_id: String,
+    pub call_index: usize,
+    pub name: String,
+    pub arguments: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallResult {
+    pub event_id: String,
+    pub owner_service: String,
+    pub agent_run_id: String,
+    pub agent_key: String,
+    pub ordering_lane_key: String,
+    pub lane_seq: u64,
+    pub generation: u64,
+    pub source_step_seq: u64,
+    pub batch_id: String,
+    pub session_id: String,
+    pub items: Vec<McpToolCallResultItem>,
+}
+
+impl McpToolCallResult {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("event_id", self.event_id.as_str()),
+            ("owner_service", self.owner_service.as_str()),
+            ("agent_run_id", self.agent_run_id.as_str()),
+            ("agent_key", self.agent_key.as_str()),
+            ("ordering_lane_key", self.ordering_lane_key.as_str()),
+            ("batch_id", self.batch_id.as_str()),
+            ("session_id", self.session_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("MCP tool call result {name} must not be empty"));
+            }
+        }
+        if self.lane_seq == 0 || self.generation == 0 || self.source_step_seq == 0 {
+            return Err(
+                "MCP tool call result lane_seq, generation and source_step_seq must be positive"
+                    .to_string(),
+            );
+        }
+        if self.items.is_empty() || self.items.len() > 128 {
+            return Err("MCP tool call result must contain between 1 and 128 items".to_string());
+        }
+        for (index, item) in self.items.iter().enumerate() {
+            if item.call_index != index {
+                return Err("MCP tool call result call_index must match array order".to_string());
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolCallResultStatus {
+    Completed,
+    Failed,
+    Cancelled,
+    UnknownExecutionState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpToolCallResultItem {
+    pub invocation_id: String,
+    pub tool_call_id: String,
+    pub call_index: usize,
+    pub name: String,
+    pub status: McpToolCallResultStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct CancelledNotificationParams {
     #[serde(rename = "requestId")]

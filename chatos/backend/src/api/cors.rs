@@ -11,8 +11,7 @@ use axum::http::{
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::core::project_execution::{
-    CHATOS_CLIENT_SURFACE_COMPAT_HEADER, CHATOS_CLIENT_SURFACE_HEADER,
-    LOCAL_CONNECTOR_DESKTOP_SURFACE,
+    CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
 };
 
 pub(super) fn layer(configured_origins: &[String], exposed_header: HeaderName) -> CorsLayer {
@@ -35,7 +34,6 @@ fn allowed_headers() -> Vec<HeaderName> {
         AUTHORIZATION,
         CONTENT_TYPE,
         ORIGIN,
-        HeaderName::from_static(CHATOS_CLIENT_SURFACE_COMPAT_HEADER),
         HeaderName::from_static("x-api-key"),
         HeaderName::from_static("x-openai-key"),
         HeaderName::from_static("x-user-id"),
@@ -86,10 +84,7 @@ fn is_bundled_desktop_origin(origin: &HeaderValue) -> bool {
 }
 
 fn request_has_desktop_surface(request: &Parts) -> bool {
-    let surface_headers = [
-        CHATOS_CLIENT_SURFACE_HEADER,
-        CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-    ];
+    let surface_headers = [CHATOS_CLIENT_SURFACE_HEADER];
     let has_actual_header = surface_headers.iter().any(|header| {
         request
             .headers
@@ -123,8 +118,7 @@ mod tests {
         allowed_headers, is_bundled_desktop_origin, origin_is_allowed, request_has_desktop_surface,
     };
     use crate::core::project_execution::{
-        CHATOS_CLIENT_SURFACE_COMPAT_HEADER, CHATOS_CLIENT_SURFACE_HEADER,
-        LOCAL_CONNECTOR_DESKTOP_SURFACE,
+        CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
     };
 
     fn request_parts() -> axum::http::request::Parts {
@@ -151,38 +145,27 @@ mod tests {
 
     #[test]
     fn desktop_surface_is_recognized_on_actual_and_preflight_requests() {
-        for (header, requested_header) in [
-            (CHATOS_CLIENT_SURFACE_HEADER, "X-Chatos-Client-Surface"),
-            (CHATOS_CLIENT_SURFACE_COMPAT_HEADER, "X-Requested-With"),
-        ] {
-            let mut actual = request_parts();
-            actual.headers.insert(
-                header,
-                HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
-            );
-            assert!(request_has_desktop_surface(&actual));
+        let mut actual = request_parts();
+        actual.headers.insert(
+            CHATOS_CLIENT_SURFACE_HEADER,
+            HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
+        );
+        assert!(request_has_desktop_surface(&actual));
 
-            let mut preflight = request_parts();
-            preflight.headers.insert(
-                axum::http::header::ACCESS_CONTROL_REQUEST_HEADERS,
-                HeaderValue::from_str(&format!("authorization, {requested_header}"))
-                    .expect("valid preflight headers"),
-            );
-            assert!(request_has_desktop_surface(&preflight));
-        }
+        let mut preflight = request_parts();
+        preflight.headers.insert(
+            axum::http::header::ACCESS_CONTROL_REQUEST_HEADERS,
+            HeaderValue::from_static("authorization, X-Chatos-Client-Surface"),
+        );
+        assert!(request_has_desktop_surface(&preflight));
         assert!(!request_has_desktop_surface(&request_parts()));
     }
 
     #[test]
     fn desktop_header_is_part_of_the_cors_allowlist() {
-        for expected in [
-            CHATOS_CLIENT_SURFACE_HEADER,
-            CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-        ] {
-            assert!(allowed_headers()
-                .iter()
-                .any(|header| header.as_str() == expected));
-        }
+        assert!(allowed_headers()
+            .iter()
+            .any(|header| header.as_str() == CHATOS_CLIENT_SURFACE_HEADER));
     }
 
     #[test]
@@ -209,25 +192,20 @@ mod tests {
             &plain_request
         ));
 
-        for header in [
+        let mut desktop_request = request_parts();
+        desktop_request.headers.insert(
             CHATOS_CLIENT_SURFACE_HEADER,
-            CHATOS_CLIENT_SURFACE_COMPAT_HEADER,
-        ] {
-            let mut desktop_request = request_parts();
-            desktop_request.headers.insert(
-                header,
-                HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
-            );
-            assert!(origin_is_allowed(
-                &configured_origins,
-                &loopback,
-                &desktop_request
-            ));
-            assert!(!origin_is_allowed(
-                &configured_origins,
-                &unrelated,
-                &desktop_request
-            ));
-        }
+            HeaderValue::from_static(LOCAL_CONNECTOR_DESKTOP_SURFACE),
+        );
+        assert!(origin_is_allowed(
+            &configured_origins,
+            &loopback,
+            &desktop_request
+        ));
+        assert!(!origin_is_allowed(
+            &configured_origins,
+            &unrelated,
+            &desktop_request
+        ));
     }
 }

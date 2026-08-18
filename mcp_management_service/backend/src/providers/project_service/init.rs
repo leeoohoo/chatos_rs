@@ -11,6 +11,7 @@ impl ProjectServiceProvider {
         http: reqwest::Client,
         base_url: impl Into<String>,
         internal_secret: Option<String>,
+        request_timeout: std::time::Duration,
         response_limit_bytes: usize,
     ) -> Result<Self, String> {
         let base_url = base_url.into();
@@ -25,6 +26,7 @@ impl ProjectServiceProvider {
             internal_secret: internal_secret
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
+            request_timeout,
             response_limit_bytes,
         })
     }
@@ -40,7 +42,9 @@ impl ProjectServiceProvider {
         match route.provider_kind {
             McpProviderKind::Harness => matches!(
                 descriptor.key,
-                SystemMcpKey::CodeMaintainerRead | SystemMcpKey::CodeMaintainerWrite
+                SystemMcpKey::CodeMaintainerRead
+                    | SystemMcpKey::CodeMaintainerWrite
+                    | SystemMcpKey::TerminalController
             ),
             McpProviderKind::InternalService
                 if route.provider_ref.as_deref() == Some(PROJECT_MANAGEMENT_OWNER_SERVICE) =>

@@ -129,6 +129,8 @@ pub struct CreateProjectTaskArgs {
     pub sort_order: Option<i64>,
     pub tags: Option<Vec<String>>,
     #[serde(default)]
+    pub owned_paths: Vec<String>,
+    #[serde(default)]
     pub is_planning_task: bool,
     pub prerequisite_project_task_ids: Option<Vec<String>>,
 }
@@ -151,6 +153,7 @@ pub struct UpdateProjectTaskPatch {
     pub due_at: Option<String>,
     pub sort_order: Option<i64>,
     pub tags: Option<Vec<String>>,
+    pub owned_paths: Option<Vec<String>>,
     pub is_planning_task: Option<bool>,
 }
 

@@ -8,7 +8,13 @@ import type { TimelineItem, TimelineStatus } from '../userMessages/ConversationP
 type UnknownRecord = Record<string, unknown>;
 
 type ToolResultState = {
+  eventId: string;
   payload: UnknownRecord;
+};
+
+type ToolResultIndex = {
+  byCallId: Map<string, ToolResultState>;
+  legacyByName: Map<string, ToolResultState[]>;
 };
 
 const readRecord = (value: unknown): UnknownRecord | null => (
@@ -24,6 +30,20 @@ const readString = (value: unknown): string => (
 const hasOwn = (record: UnknownRecord, key: string): boolean => (
   Object.prototype.hasOwnProperty.call(record, key)
 );
+
+const hasDisplayValue = (value: unknown): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  const record = readRecord(value);
+  return record ? Object.keys(record).length > 0 : true;
+};
 
 const eventType = (event: MessageTaskRunnerRunEvent): string => (
   readString(event.event_type).toLowerCase()
@@ -115,8 +135,9 @@ const isFinalToolResult = (payload: UnknownRecord): boolean => payload.is_stream
 
 const buildToolResults = (
   events: MessageTaskRunnerRunEvent[],
-): Map<string, ToolResultState> => {
-  const results = new Map<string, ToolResultState>();
+): ToolResultIndex => {
+  const byCallId = new Map<string, ToolResultState>();
+  const legacyByName = new Map<string, ToolResultState[]>();
   events.forEach((event) => {
     if (eventType(event) !== 'tool_stream') {
       return;
@@ -126,11 +147,19 @@ const buildToolResults = (
       return;
     }
     const callId = readToolResultCallId(payload);
+    const state = { eventId: event.id, payload };
     if (callId) {
-      results.set(callId, { payload });
+      byCallId.set(callId, state);
+      return;
+    }
+    const name = readString(payload.name);
+    if (name) {
+      const results = legacyByName.get(name) || [];
+      results.push(state);
+      legacyByName.set(name, results);
     }
   });
-  return results;
+  return { byCallId, legacyByName };
 };
 
 const buildKnownToolCallIds = (events: MessageTaskRunnerRunEvent[]): Set<string> => {
@@ -150,10 +179,13 @@ const buildKnownToolCallIds = (events: MessageTaskRunnerRunEvent[]): Set<string>
 };
 
 const toolResultValue = (payload: UnknownRecord): unknown => {
-  if (hasOwn(payload, 'result') && payload.result !== null) {
+  if (hasOwn(payload, 'result') && hasDisplayValue(payload.result)) {
     return payload.result;
   }
-  return payload.content;
+  if (hasDisplayValue(payload.content)) {
+    return payload.content;
+  }
+  return payload.preview;
 };
 
 const stringifyError = (value: unknown): string => {
@@ -189,10 +221,11 @@ const buildToolCallItem = (
     return null;
   }
   const error = result ? toolResultError(result.payload) : '';
-  const hasResult = Boolean(result);
+  const resultValue = result ? toolResultValue(result.payload) : undefined;
+  const hasResult = hasDisplayValue(resultValue);
   const status: TimelineStatus = error
     ? 'error'
-    : hasResult
+    : result
       ? 'completed'
       : 'pending';
   const createdAt = eventDate(event);
@@ -209,7 +242,7 @@ const buildToolCallItem = (
     error,
     hasResult,
     id: `run-tool-${event.id}-${callId || index}`,
-    result: result ? toolResultValue(result.payload) : undefined,
+    result: resultValue,
     status,
     toolCall,
     type: 'tool_call',
@@ -226,6 +259,28 @@ const extractEventText = (event: MessageTaskRunnerRunEvent): string => {
   }
   return '';
 };
+
+const stableValueKey = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableValueKey).join(',')}]`;
+  }
+  const record = readRecord(value);
+  if (record) {
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableValueKey(record[key])}`)
+      .join(',')}}`;
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const repeatedLifecycleKey = (event: MessageTaskRunnerRunEvent): string => (
+  `${eventType(event)}\u0000${extractEventText(event)}\u0000${stableValueKey(event.payload)}`
+);
 
 const buildModelItem = (
   event: MessageTaskRunnerRunEvent,
@@ -252,22 +307,62 @@ const buildLifecycleModelItem = (
       extractEventText(event) || `即将发起第 ${modelRequestIndex} 次模型请求`,
     );
   }
+  const labelByType: Record<string, string> = {
+    queued: '任务入队',
+    running: '任务开始执行',
+    mcp_runtime: 'MCP 会话已准备',
+    tools_end: '工具批次已完成',
+    execution_review_checkpoint: '执行检查点',
+    completed: '任务已完成',
+    succeeded: '任务已完成',
+    success: '任务已完成',
+    cancelled: '任务已取消',
+    canceled: '任务已取消',
+  };
+  const label = labelByType[type];
+  if (label) {
+    return buildModelItem(event, label, extractEventText(event) || label);
+  }
   return null;
+};
+
+const buildLifecycleErrorItem = (
+  event: MessageTaskRunnerRunEvent,
+): Extract<TimelineItem, { type: 'tool_result' }> | null => {
+  const type = eventType(event);
+  if (!type.includes('failed') && type !== 'error') {
+    return null;
+  }
+  const error = extractEventText(event) || type.replace(/_/g, ' ');
+  return {
+    callId: '',
+    createdAt: eventDate(event),
+    error,
+    hasResult: true,
+    id: `run-lifecycle-error-${event.id}`,
+    result: event.payload,
+    status: 'error',
+    type: 'tool_result',
+  };
 };
 
 const buildUnmatchedToolResultItem = (
   event: MessageTaskRunnerRunEvent,
   payload: UnknownRecord,
-): Extract<TimelineItem, { type: 'tool_result' }> => {
+): Extract<TimelineItem, { type: 'tool_result' }> | null => {
   const callId = readToolResultCallId(payload);
   const error = toolResultError(payload);
+  const result = toolResultValue(payload);
+  if (!error && !hasDisplayValue(result)) {
+    return null;
+  }
   return {
     callId,
     createdAt: eventDate(event),
     error,
     hasResult: true,
     id: `run-tool-result-${event.id}`,
-    result: toolResultValue(payload),
+    result,
     status: error ? 'error' : 'completed',
     type: 'tool_result',
   };
@@ -278,7 +373,9 @@ export const buildRunProcessTimelineItems = (
 ): TimelineItem[] => {
   const toolResults = buildToolResults(events);
   const knownToolCallIds = buildKnownToolCallIds(events);
+  const consumedLegacyResultEventIds = new Set<string>();
   const items: TimelineItem[] = [];
+  const repeatedLifecycleItems = new Map<string, TimelineItem>();
   let modelRequestIndex = 0;
 
   for (let index = 0; index < events.length;) {
@@ -307,11 +404,19 @@ export const buildRunProcessTimelineItems = (
     if (type === 'tools_start') {
       readToolCalls(event.payload).forEach((call, callIndex) => {
         const callId = toolCallId(call);
+        const name = toolCallName(call);
+        const legacyResults = name ? toolResults.legacyByName.get(name) : undefined;
+        const legacyResult = legacyResults?.find(
+          (result) => !consumedLegacyResultEventIds.has(result.eventId),
+        );
+        if (legacyResult) {
+          consumedLegacyResultEventIds.add(legacyResult.eventId);
+        }
         const item = buildToolCallItem(
           event,
           call,
           callIndex,
-          callId ? toolResults.get(callId) : undefined,
+          (callId ? toolResults.byCallId.get(callId) : undefined) || legacyResult,
         );
         if (item) {
           items.push(item);
@@ -324,8 +429,16 @@ export const buildRunProcessTimelineItems = (
     if (type === 'tool_stream') {
       const payload = readRecord(event.payload);
       const callId = payload ? readToolResultCallId(payload) : '';
-      if (payload && isFinalToolResult(payload) && (!callId || !knownToolCallIds.has(callId))) {
-        items.push(buildUnmatchedToolResultItem(event, payload));
+      if (
+        payload
+        && isFinalToolResult(payload)
+        && (!callId || !knownToolCallIds.has(callId))
+        && !consumedLegacyResultEventIds.has(event.id)
+      ) {
+        const item = buildUnmatchedToolResultItem(event, payload);
+        if (item) {
+          items.push(item);
+        }
       }
       index += 1;
       continue;
@@ -334,9 +447,29 @@ export const buildRunProcessTimelineItems = (
     if (type === 'model_request') {
       modelRequestIndex += 1;
     }
+    const lifecycleErrorItem = buildLifecycleErrorItem(event);
+    if (lifecycleErrorItem) {
+      const key = repeatedLifecycleKey(event);
+      const existing = repeatedLifecycleItems.get(key);
+      if (existing && existing.type === 'tool_result') {
+        existing.repeatCount = (existing.repeatCount || 1) + 1;
+      } else {
+        items.push(lifecycleErrorItem);
+        repeatedLifecycleItems.set(key, lifecycleErrorItem);
+      }
+      index += 1;
+      continue;
+    }
     const lifecycleItem = buildLifecycleModelItem(event, modelRequestIndex);
     if (lifecycleItem) {
-      items.push(lifecycleItem);
+      const key = repeatedLifecycleKey(event);
+      const existing = repeatedLifecycleItems.get(key);
+      if (existing && existing.type === 'model') {
+        existing.repeatCount = (existing.repeatCount || 1) + 1;
+      } else {
+        items.push(lifecycleItem);
+        repeatedLifecycleItems.set(key, lifecycleItem);
+      }
     }
     index += 1;
   }

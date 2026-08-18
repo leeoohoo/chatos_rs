@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
-use chatos_plugin_management_sdk::RunPluginSnapshot;
+use chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -44,10 +44,6 @@ pub struct TaskRunAttemptRecord {
     #[serde(default)]
     pub recovery_reason: Option<String>,
     #[serde(default)]
-    pub sandbox_id: Option<String>,
-    #[serde(default)]
-    pub lease_id: Option<String>,
-    #[serde(default)]
     pub model_response_id: Option<String>,
 }
 
@@ -73,6 +69,171 @@ pub struct ChatosCallbackDeliveryState {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EffectiveTaskToolSnapshot {
+    #[serde(default)]
+    pub requested_mcp_resource_ids: Vec<String>,
+    #[serde(default)]
+    pub workspace_read: bool,
+    #[serde(default)]
+    pub workspace_write: bool,
+    #[serde(default)]
+    pub terminal: bool,
+}
+
+impl EffectiveTaskToolSnapshot {
+    pub fn mutates_workspace(&self) -> bool {
+        self.workspace_write || self.terminal
+    }
+
+    pub fn uses_workspace(&self) -> bool {
+        self.workspace_read || self.workspace_write || self.terminal
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePreparationStatus {
+    Pending,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelPhaseStatus {
+    #[default]
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Blocked,
+}
+
+impl ModelPhaseStatus {
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Cancelled | Self::Blocked
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIntegrationStatus {
+    #[default]
+    NotRequired,
+    Pending,
+    Integrating,
+    Integrated,
+    Waived,
+    Conflict,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskRunBranchTarget {
+    Local,
+    Default {
+        branch_ref: String,
+    },
+    Run {
+        branch_id: String,
+        branch_ref: String,
+        base_branch: String,
+        base_commit: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunWorkspaceChangedFile {
+    pub status: String,
+    pub path: String,
+    pub old_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunWorkspaceExecution {
+    pub status: WorkspacePreparationStatus,
+    #[serde(default)]
+    pub route: Option<RuntimeWorkspaceRouteTarget>,
+    #[serde(default)]
+    pub branch_target: Option<TaskRunBranchTarget>,
+    #[serde(default)]
+    pub execution_group_id: Option<String>,
+    #[serde(default)]
+    pub execution_branch_ref: Option<String>,
+    #[serde(default)]
+    pub execution_base_commit: Option<String>,
+    #[serde(default)]
+    pub integration_status: WorkspaceIntegrationStatus,
+    #[serde(default)]
+    pub integration_ready_at: Option<String>,
+    #[serde(default)]
+    pub integration_started_at: Option<String>,
+    #[serde(default)]
+    pub integrated_at: Option<String>,
+    #[serde(default)]
+    pub integration_attempt_count: u32,
+    #[serde(default)]
+    pub integration_base_commit: Option<String>,
+    #[serde(default)]
+    pub result_commit: Option<String>,
+    #[serde(default)]
+    pub integrated_commit: Option<String>,
+    #[serde(default)]
+    pub promoted_commit: Option<String>,
+    #[serde(default)]
+    pub waived_at: Option<String>,
+    #[serde(default)]
+    pub waiver_reason: Option<String>,
+    #[serde(default)]
+    pub local_changed_files: Vec<TaskRunWorkspaceChangedFile>,
+    #[serde(default)]
+    pub local_patch: Option<String>,
+    #[serde(default)]
+    pub local_patch_truncated: bool,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    #[serde(default)]
+    pub conflict_message: Option<String>,
+    #[serde(default)]
+    pub integration_last_error: Option<String>,
+    #[serde(default)]
+    pub prepared_at: Option<String>,
+    #[serde(default)]
+    pub finalized_at: Option<String>,
+    #[serde(default)]
+    pub sandbox_retained_for_diagnostics: bool,
+    #[serde(default)]
+    pub finalization_error: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl TaskRunWorkspaceExecution {
+    pub fn integration_requires_post_process(&self) -> bool {
+        matches!(
+            self.integration_status,
+            WorkspaceIntegrationStatus::Pending
+                | WorkspaceIntegrationStatus::Integrating
+                | WorkspaceIntegrationStatus::Failed
+        )
+    }
+
+    pub fn integration_satisfied(&self) -> bool {
+        matches!(
+            self.integration_status,
+            WorkspaceIntegrationStatus::NotRequired
+                | WorkspaceIntegrationStatus::Integrated
+                | WorkspaceIntegrationStatus::Waived
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -90,15 +251,27 @@ pub struct TaskRunRecord {
     pub id: String,
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_ordering_lane_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_lane_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_lane_key: Option<String>,
     pub model_config_id: String,
     pub memory_thread_id: String,
     pub status: TaskRunStatus,
+    #[serde(default)]
+    pub model_phase_status: ModelPhaseStatus,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
     #[serde(default)]
-    pub plugin_snapshots: Vec<RunPluginSnapshot>,
+    pub effective_tools: EffectiveTaskToolSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_execution: Option<TaskRunWorkspaceExecution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_runtime_session_ref: Option<String>,
     pub context_snapshot: Option<Value>,
     pub result_summary: Option<String>,
     pub error_message: Option<String>,
@@ -127,16 +300,6 @@ pub struct TaskRunRecord {
     pub memory_summary_processed: bool,
     #[serde(default)]
     pub chatos_followup_processed: bool,
-    #[serde(default)]
-    pub terminal_cleanup_event_pending: bool,
-    #[serde(default)]
-    pub terminal_cleanup_event_enqueued: bool,
-    #[serde(default)]
-    pub terminal_cleanup_completed: bool,
-    #[serde(default)]
-    pub terminal_cleanup_attempt_count: u32,
-    #[serde(default)]
-    pub terminal_cleanup_last_error: Option<String>,
     pub summary_job_run_id: Option<String>,
     #[serde(default)]
     pub worker_id: Option<String>,
@@ -155,13 +318,26 @@ pub struct TaskRunRecord {
 }
 
 impl TaskRunRecord {
+    pub fn requires_post_process(&self) -> bool {
+        self.model_phase_status.is_terminal()
+            && (matches!(
+                self.status,
+                TaskRunStatus::Succeeded
+                    | TaskRunStatus::Failed
+                    | TaskRunStatus::Cancelled
+                    | TaskRunStatus::Blocked
+            ) || self
+                .workspace_execution
+                .as_ref()
+                .is_some_and(TaskRunWorkspaceExecution::integration_requires_post_process))
+    }
+
     pub fn queued(
         id: String,
         task_id: String,
         model_config_id: String,
         task_memory_thread_id: String,
         input_snapshot: Value,
-        plugin_snapshots: Vec<RunPluginSnapshot>,
         now: String,
     ) -> Self {
         let memory_thread_id =
@@ -169,14 +345,20 @@ impl TaskRunRecord {
         Self {
             id,
             task_id,
+            agent_run_id: None,
+            agent_ordering_lane_key: None,
+            agent_lane_seq: None,
             execution_lane_key: None,
             model_config_id,
             memory_thread_id,
             status: TaskRunStatus::Queued,
+            model_phase_status: ModelPhaseStatus::Pending,
             started_at: None,
             finished_at: None,
             input_snapshot,
-            plugin_snapshots,
+            effective_tools: EffectiveTaskToolSnapshot::default(),
+            workspace_execution: None,
+            mcp_runtime_session_ref: None,
             context_snapshot: None,
             result_summary: None,
             error_message: None,
@@ -194,11 +376,6 @@ impl TaskRunRecord {
             post_process_last_error: None,
             memory_summary_processed: false,
             chatos_followup_processed: false,
-            terminal_cleanup_event_pending: false,
-            terminal_cleanup_event_enqueued: false,
-            terminal_cleanup_completed: false,
-            terminal_cleanup_attempt_count: 0,
-            terminal_cleanup_last_error: None,
             summary_job_run_id: None,
             worker_id: None,
             claim_token: None,
@@ -234,22 +411,8 @@ impl TaskRunRecord {
             started_at: started_at.to_string(),
             finished_at: None,
             recovery_reason: (self.attempt > 1).then(|| "worker_claim_expired".to_string()),
-            sandbox_id: None,
-            lease_id: None,
             model_response_id: None,
         });
-    }
-
-    pub fn bind_current_attempt_environment(&mut self, sandbox_id: &str, lease_id: &str) {
-        if let Some(attempt) = self
-            .attempts
-            .iter_mut()
-            .rev()
-            .find(|attempt| attempt.status == TaskRunAttemptStatus::Running)
-        {
-            attempt.sandbox_id = Some(sandbox_id.to_string());
-            attempt.lease_id = Some(lease_id.to_string());
-        }
     }
 
     pub fn bind_current_attempt_model_response(&mut self, response_id: Option<&str>) {
@@ -292,7 +455,10 @@ pub fn task_run_memory_thread_id(task_memory_thread_id: &str, run_id: &str) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::{task_run_memory_thread_id, TaskRunAttemptStatus, TaskRunRecord};
+    use super::{
+        task_run_memory_thread_id, EffectiveTaskToolSnapshot, TaskRunAttemptStatus, TaskRunRecord,
+    };
+    use mongodb::bson;
     use serde_json::json;
 
     #[test]
@@ -316,29 +482,47 @@ mod tests {
     }
 
     #[test]
-    fn run_attempt_records_environment_response_and_terminal_state() {
+    fn run_attempt_records_model_response_and_terminal_state() {
         let mut run = TaskRunRecord::queued(
             "run-1".to_string(),
             "task-1".to_string(),
             "model-1".to_string(),
             "thread-1".to_string(),
             json!({}),
-            Vec::new(),
             "2026-08-07T00:00:00Z".to_string(),
         );
         run.attempt = 1;
         run.begin_attempt("claim-1", "2026-08-07T00:01:00Z");
-        run.bind_current_attempt_environment("sandbox-1", "lease-1");
         run.bind_current_attempt_model_response(Some("response-1"));
         run.finish_current_attempt(TaskRunAttemptStatus::Succeeded, "2026-08-07T00:02:00Z");
 
         assert_eq!(run.attempts.len(), 1);
         let attempt = &run.attempts[0];
-        assert_eq!(attempt.sandbox_id.as_deref(), Some("sandbox-1"));
-        assert_eq!(attempt.lease_id.as_deref(), Some("lease-1"));
         assert_eq!(attempt.model_response_id.as_deref(), Some("response-1"));
         assert_eq!(attempt.status, TaskRunAttemptStatus::Succeeded);
         assert_eq!(attempt.finished_at.as_deref(), Some("2026-08-07T00:02:00Z"));
+    }
+
+    #[test]
+    fn legacy_run_without_effective_tools_uses_empty_snapshot() {
+        let run = TaskRunRecord::queued(
+            "run-legacy".to_string(),
+            "task-legacy".to_string(),
+            "model-1".to_string(),
+            "thread-1".to_string(),
+            json!({}),
+            "2026-08-07T00:00:00Z".to_string(),
+        );
+        let mut document = bson::to_document(&run).expect("serialize run as Mongo document");
+        document.remove("effective_tools");
+
+        let decoded: TaskRunRecord =
+            bson::from_document(document).expect("decode legacy run without effective_tools");
+
+        assert_eq!(
+            decoded.effective_tools,
+            EffectiveTaskToolSnapshot::default()
+        );
     }
 }
 
@@ -495,96 +679,4 @@ pub struct SubmitAskUserPromptRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CancelAskUserPromptRequest {
     pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct RunOutputFileChangeCounts {
-    #[serde(default)]
-    pub added: usize,
-    #[serde(default)]
-    pub modified: usize,
-    #[serde(default)]
-    pub deleted: usize,
-    #[serde(default)]
-    pub binary: usize,
-    #[serde(default)]
-    pub diff_available: usize,
-    #[serde(default)]
-    pub total: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputFileChange {
-    pub path: String,
-    pub status: String,
-    #[serde(default)]
-    pub old_size: Option<u64>,
-    #[serde(default)]
-    pub new_size: Option<u64>,
-    #[serde(default)]
-    pub old_sha256: Option<String>,
-    #[serde(default)]
-    pub new_sha256: Option<String>,
-    #[serde(default)]
-    pub added_lines: usize,
-    #[serde(default)]
-    pub deleted_lines: usize,
-    #[serde(default)]
-    pub binary: bool,
-    #[serde(default)]
-    pub diff_available: bool,
-    #[serde(default)]
-    pub diff_truncated: bool,
-    #[serde(default)]
-    pub diff_ref: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputChangeManifest {
-    pub schema_version: u32,
-    pub run_id: String,
-    pub sandbox_id: String,
-    pub lease_id: String,
-    pub generated_at: String,
-    #[serde(default)]
-    pub output_workspace: Option<String>,
-    #[serde(default)]
-    pub manifest_path: Option<String>,
-    #[serde(default)]
-    pub counts: RunOutputFileChangeCounts,
-    #[serde(default)]
-    pub files: Vec<RunOutputFileChange>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputChangesResponse {
-    pub run_id: String,
-    #[serde(default)]
-    pub base_commit: Option<String>,
-    #[serde(default)]
-    pub result_commit: Option<String>,
-    pub comparison_scope: String,
-    pub counts: RunOutputFileChangeCounts,
-    pub files: Vec<RunOutputFileChange>,
-    pub total: usize,
-    pub limit: usize,
-    pub offset: usize,
-    pub has_more: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunOutputDiffResponse {
-    pub run_id: String,
-    pub path: String,
-    pub status: String,
-    #[serde(default)]
-    pub patch: Option<String>,
-    #[serde(default)]
-    pub binary: bool,
-    #[serde(default)]
-    pub diff_available: bool,
-    #[serde(default)]
-    pub diff_truncated: bool,
-    #[serde(default)]
-    pub message: Option<String>,
 }

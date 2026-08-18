@@ -168,6 +168,28 @@ mod tests {
         assert!(execution_message_is_stopped_terminal(&message));
     }
 
+    #[test]
+    fn failed_confirmation_wins_over_inconsistent_completed_overall_status() {
+        let mut message = crate::models::message::Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "execution".to_string(),
+        );
+        message.metadata = Some(json!({
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            },
+            "task_runner_async": {
+                "overall_status": "completed",
+                "confirmation_status": "failed",
+                "created_task_ids": []
+            }
+        }));
+
+        assert_eq!(execution_message_status(&message), "failed");
+    }
+
     fn execution_link_with_status(status: &str) -> ExecutionLink {
         ExecutionLink {
             link_id: None,
@@ -315,7 +337,8 @@ mod tests {
 
         assert!(prompt.contains("must_call_tool"));
         assert!(prompt.contains("create_project_execution_tasks"));
-        assert!(prompt.contains("project-task-1"));
+        assert!(prompt.contains("project_task_001"));
+        assert!(!prompt.contains("project-task-1"));
         assert!(prompt.contains("model-selected"));
         assert!(!prompt.contains("execution_plane"));
         assert!(!prompt.contains("local_connector"));
@@ -383,6 +406,21 @@ mod tests {
         );
         assert!(message.contains("补充测试"));
         assert!(message.contains("未完整覆盖"));
+    }
+
+    #[test]
+    fn planner_transport_failure_is_exposed_without_raw_provider_details() {
+        let message = build_planner_runtime_failure_message(
+            Some(
+                "stream response body failed: error reading https://provider.invalid; unexpected EOF",
+            ),
+            0,
+            9,
+        );
+
+        assert!(message.contains("模型流式响应在传输过程中被中断"));
+        assert!(message.contains("仍缺少 9 个"));
+        assert!(!message.contains("provider.invalid"));
     }
 
     #[test]

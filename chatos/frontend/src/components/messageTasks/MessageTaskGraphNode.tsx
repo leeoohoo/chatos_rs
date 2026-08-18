@@ -8,7 +8,7 @@ import {
   useState,
   type MouseEvent,
 } from 'react';
-import { Activity, CircleAlert, FileDiff, FileText, ScrollText } from 'lucide-react';
+import { Activity, CircleAlert, FileText, ScrollText } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
 import { StatusBadge } from './parts';
@@ -58,6 +58,20 @@ const displayStatusForTask = (
   prerequisiteCount: number,
 ): string | null | undefined => {
   const status = readString(task.status)?.toLowerCase();
+  const integrationStatus = readString(task.last_run?.workspace_execution?.integration_status)
+    ?.toLowerCase();
+  if (integrationStatus === 'pending') {
+    return 'integration_pending';
+  }
+  if (integrationStatus === 'integrating') {
+    return 'integrating';
+  }
+  if (integrationStatus === 'conflict') {
+    return 'integration_conflict';
+  }
+  if (integrationStatus === 'failed') {
+    return 'integration_failed';
+  }
   const hasIncompletePrerequisite = prerequisiteCount > 0
     && (task.prerequisite_tasks || []).some(
       (prerequisite) => readString(prerequisite.status)?.toLowerCase() !== 'succeeded',
@@ -85,11 +99,9 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
     isActive,
     isFocusEmphasized,
     isDimmed,
-    loadingChanges,
     loadingProcessLog,
     loadingRun,
     onOpenDetail,
-    onOpenChanges,
     onOpenProcessLog,
     onOpenRun,
     onSelectTask,
@@ -227,19 +239,6 @@ export const MessageTaskCardNode = memo(({ node }: { node: PositionedTaskNode })
             >
               <ScrollText className="h-3.5 w-3.5" />
               {loadingProcessLog ? '加载中' : '执行过程'}
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={loadingChanges || !actionTask.last_run_id}
-              onMouseDown={stopNodeControlEvent}
-              onClick={(event) => {
-                stopNodeControlEvent(event);
-                void onOpenChanges(actionTask);
-              }}
-            >
-              <FileDiff className="h-3.5 w-3.5" />
-              {loadingChanges ? '加载中' : '变更'}
             </button>
             <button
               type="button"

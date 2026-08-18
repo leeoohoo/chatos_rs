@@ -23,6 +23,7 @@ interface UseChatInterfaceDerivedStateParams {
   currentSession: Session | null;
   contacts: ContactRecord[];
   selectedModelId: string | null;
+  selectedThinkingLevel: string | null;
   aiModelConfigs: AiModelConfig[];
   activePanel: string;
   currentProject: Project | null;
@@ -35,6 +36,7 @@ export const useChatInterfaceDerivedState = ({
   currentSession,
   contacts,
   selectedModelId,
+  selectedThinkingLevel,
   aiModelConfigs,
   activePanel,
   currentProject,
@@ -43,8 +45,8 @@ export const useChatInterfaceDerivedState = ({
   sessionChatState,
 }: UseChatInterfaceDerivedStateParams) => {
   const { supportsImages, supportsReasoning } = useMemo(
-    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
-    [aiModelConfigs, selectedModelId],
+    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs, selectedThinkingLevel),
+    [aiModelConfigs, selectedModelId, selectedThinkingLevel],
   );
   const supportedFileTypes = useMemo(
     () => buildSupportedFileTypes(supportsImages),

@@ -57,7 +57,7 @@ expect_origin_rejected() {
   local parent="$2"
   local resource="$3"
   if CHATOS_ENV=production \
-    CHATOS_DOCKER_ENV_FILE=/dev/null \
+    CHATOS_DOCKER_BOOTSTRAP_FILE=/dev/null \
     CHATOS_PLUGIN_UI_PARENT_ORIGIN="$parent" \
     CHATOS_PLUGIN_UI_RESOURCE_ORIGIN="$resource" \
       "$SCRIPT_DIR/deploy.sh" validate-plugin-ui-origin >/dev/null 2>&1; then

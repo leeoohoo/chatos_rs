@@ -17,9 +17,9 @@ use crate::dto::{
 use crate::error::PluginManagementClientError;
 use crate::plugin_runtime::{
     PluginCloudComponentBundle, PluginInstallSource, PluginInstallSourceList,
-    PluginMcpCloudRuntimeBundle, ResolvePluginMcpCloudCredentialsRequest,
-    ResolvedPluginMcpCloudCredentials, UpdateUserPluginPreferenceRequest,
-    UpdateUserPluginPreferenceResponse,
+    PluginInstallationRecord, PluginInstallationSyncPayload, PluginMcpCloudRuntimeBundle,
+    ResolvePluginMcpCloudCredentialsRequest, ResolvedPluginMcpCloudCredentials,
+    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
 };
 use crate::plugin_runtime::{PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload};
 
@@ -353,6 +353,22 @@ impl PluginManagementClient {
         );
         let response = self
             .internal_request(Method::PUT, url, PLUGIN_OAUTH_MANAGE_SCOPE)?
+            .json(request)
+            .send()
+            .await?;
+        parse_response(response).await
+    }
+
+    pub async fn sync_plugin_installation(
+        &self,
+        request: &PluginInstallationSyncPayload,
+    ) -> Result<PluginInstallationRecord, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/plugins/installations",
+            self.config.internal_base_url
+        );
+        let response = self
+            .internal_request(Method::PUT, url, PLUGIN_INSTALL_MANAGE_SCOPE)?
             .json(request)
             .send()
             .await?;

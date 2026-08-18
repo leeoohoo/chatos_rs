@@ -10,7 +10,9 @@ use crate::approval::{
     CommandApprovalService,
 };
 use crate::history::CommandHistoryRecorder;
+use crate::local_runtime::LocalDatabase;
 use crate::relay::RelayRequest;
+use crate::sandbox::types::LocalSandboxRuntime;
 use crate::terminal::controller::local_mcp_terminal_project_id;
 use crate::workspace::paths::{relative_to_workspace, workspace_for_request};
 use crate::LocalState;
@@ -30,6 +32,8 @@ use crate::terminal::controller::local_terminal_controller_service_for_root;
 pub(crate) struct LocalConnectorMcpToolProvider {
     pub(crate) request: RelayRequest,
     pub(crate) state: LocalState,
+    pub(crate) execution_runtime: Option<(reqwest::Client, LocalSandboxRuntime)>,
+    pub(crate) database: Option<LocalDatabase>,
     pub(crate) history_recorder: CommandHistoryRecorder,
 }
 
@@ -47,13 +51,18 @@ impl McpToolProvider for LocalConnectorMcpToolProvider {
         &self,
         name: &str,
         args: Value,
-        _context: McpRequestContext,
+        context: McpRequestContext,
     ) -> std::result::Result<Value, String> {
-        call_builtin_compatible_local_tool(
+        call_builtin_compatible_local_tool_with_limit(
             &self.request,
             &self.state,
             name,
             args,
+            context.tool_result_max_chars(),
+            self.execution_runtime
+                .as_ref()
+                .map(|(http_client, sandbox_runtime)| (http_client, sandbox_runtime)),
+            self.database.as_ref(),
             &self.history_recorder,
         )
         .await
@@ -99,11 +108,35 @@ pub(crate) fn local_mcp_builtin_compatible_tools(
     Ok(tools)
 }
 
+#[cfg(test)]
 pub(crate) async fn call_builtin_compatible_local_tool(
     request: &RelayRequest,
     state: &LocalState,
     name: &str,
     arguments: Value,
+    history_recorder: &CommandHistoryRecorder,
+) -> Result<Option<Value>> {
+    call_builtin_compatible_local_tool_with_limit(
+        request,
+        state,
+        name,
+        arguments,
+        None,
+        None,
+        None,
+        history_recorder,
+    )
+    .await
+}
+
+async fn call_builtin_compatible_local_tool_with_limit(
+    request: &RelayRequest,
+    state: &LocalState,
+    name: &str,
+    arguments: Value,
+    tool_result_max_chars: Option<usize>,
+    execution_runtime: Option<(&reqwest::Client, &LocalSandboxRuntime)>,
+    database: Option<&LocalDatabase>,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Option<Value>> {
     let workspace = workspace_for_request(state, request.workspace_id.as_str())?;
@@ -129,6 +162,23 @@ pub(crate) async fn call_builtin_compatible_local_tool(
             selection.code_write,
         )?;
         let arguments = normalize_code_maintainer_arguments(workspace, request, name, arguments)?;
+        if let Some((http_client, sandbox_runtime)) = execution_runtime {
+            return crate::mcp::execution_scope::call_local_execution_scope_tool(
+                request,
+                state,
+                http_client,
+                sandbox_runtime,
+                database.ok_or_else(|| {
+                    anyhow::anyhow!("local execution scope database is unavailable")
+                })?,
+                project_root.as_path(),
+                name,
+                arguments,
+                tool_result_max_chars,
+            )
+            .await
+            .map(Some);
+        }
         let result = service
             .call_tool(name, arguments, None)
             .map_err(anyhow::Error::msg)?;
@@ -138,15 +188,34 @@ pub(crate) async fn call_builtin_compatible_local_tool(
         if !selection.terminal {
             return Ok(None);
         }
-        let result = call_local_terminal_controller_tool(
-            request,
-            state,
-            workspace,
-            name,
-            arguments,
-            history_recorder,
-        )
-        .await?;
+        let result = if let Some((http_client, sandbox_runtime)) = execution_runtime {
+            crate::mcp::execution_scope::call_local_execution_scope_terminal_tool(
+                request,
+                state,
+                http_client,
+                sandbox_runtime,
+                database.ok_or_else(|| {
+                    anyhow::anyhow!("local execution scope database is unavailable")
+                })?,
+                workspace,
+                name,
+                arguments,
+                tool_result_max_chars,
+                history_recorder,
+            )
+            .await?
+        } else {
+            call_local_terminal_controller_tool(
+                request,
+                state,
+                workspace,
+                name,
+                arguments,
+                tool_result_max_chars,
+                history_recorder,
+            )
+            .await?
+        };
         return Ok(Some(result));
     }
     if is_browser_tool(name) {
@@ -199,10 +268,13 @@ pub(crate) async fn call_builtin_compatible_local_tool(
             state.runtime_settings.browser_full_cdp_access_enabled,
         )?;
         let mut result = service
-            .call_tool(
+            .call_tool_with_context(
                 name,
                 arguments,
-                Some(local_browser_conversation_id(request).as_str()),
+                chatos_mcp::BrowserToolCallContext::from_conversation_id(Some(
+                    local_browser_conversation_id(request).as_str(),
+                ))
+                .with_tool_result_max_chars(tool_result_max_chars),
             )
             .map_err(anyhow::Error::msg)?;
         annotate_browser_session_context(

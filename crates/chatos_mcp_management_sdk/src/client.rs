@@ -23,7 +23,9 @@ const ROUTES_RESOLVE_SCOPE: &str = "routes.resolve";
 const RUNTIME_SESSIONS_RESOLVE_SCOPE: &str = "runtime.sessions.resolve";
 const RUNTIME_SESSIONS_READ_SCOPE: &str = "runtime.sessions.read";
 const RUNTIME_SESSIONS_CLOSE_SCOPE: &str = "runtime.sessions.close";
+const RUNTIME_SESSION_TERMINAL_STATUS_HEADER: &str = "x-mcp-management-terminal-status";
 const RUNTIME_INVOCATIONS_READ_SCOPE: &str = "runtime.invocations.read";
+const RUNTIME_INVOCATIONS_RESOLVE_USER_SCOPE: &str = "runtime.invocations.resolve_user";
 
 #[derive(Clone)]
 pub struct McpManagementClient {
@@ -170,6 +172,15 @@ impl McpManagementClient {
         &self,
         session_id: &str,
     ) -> Result<CloseRuntimeSessionResponse, McpManagementClientError> {
+        self.close_runtime_session_with_status(session_id, "closed")
+            .await
+    }
+
+    pub async fn close_runtime_session_with_status(
+        &self,
+        session_id: &str,
+        terminal_status: &str,
+    ) -> Result<CloseRuntimeSessionResponse, McpManagementClientError> {
         let url = format!(
             "{}/api/internal/runtime/sessions/{}/close",
             self.config.base_url,
@@ -177,6 +188,10 @@ impl McpManagementClient {
         );
         let response = self
             .internal_request(Method::POST, url, RUNTIME_SESSIONS_CLOSE_SCOPE)?
+            .header(
+                RUNTIME_SESSION_TERMINAL_STATUS_HEADER,
+                terminal_status.trim(),
+            )
             .send()
             .await?;
         parse_response(response).await
@@ -196,6 +211,28 @@ impl McpManagementClient {
             .send()
             .await?;
         parse_response(response).await
+    }
+
+    pub async fn notify_waiting_user_resolved(
+        &self,
+        prompt_id: &str,
+    ) -> Result<(), McpManagementClientError> {
+        let url = format!(
+            "{}/api/internal/runtime/invocations/waiting-user/{}/resolved",
+            self.config.base_url,
+            urlencoding::encode(prompt_id.trim())
+        );
+        let response = self
+            .internal_request(Method::POST, url, RUNTIME_INVOCATIONS_RESOLVE_USER_SCOPE)?
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            parse_response::<serde_json::Value>(response)
+                .await
+                .map(|_| ())
+        }
     }
 
     fn internal_request(

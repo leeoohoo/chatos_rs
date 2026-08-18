@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { ApiRequestError } from './client/shared';
 import {
@@ -27,24 +26,34 @@ interface BackendErrorCodes {
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
-const backendDirPath = path.resolve(currentDirPath, '../../../../backend');
-const backendCodesDocPath = path.resolve(
-  backendDirPath,
-  'docs/remote_connection_error_codes.json',
+const backendCodesSourcePath = path.resolve(
+  currentDirPath,
+  '../../../../backend/src/core/remote_connection_error_codes.rs',
 );
-let backendErrorCodes: BackendErrorCodes;
+
+const readBackendModuleCodes = (source: string, moduleName: string): string[] => {
+  const moduleMatch = source.match(new RegExp(`pub mod ${moduleName} \\{([\\s\\S]*?)\\n\\}`));
+  if (!moduleMatch) {
+    throw new Error(`backend error-code module was not found: ${moduleName}`);
+  }
+  const codes = [...moduleMatch[1].matchAll(/pub const [A-Z0-9_]+: &str = "([^"]+)";/g)]
+    .map((match) => match[1]);
+  if (codes.length === 0) {
+    throw new Error(`backend error-code module is empty: ${moduleName}`);
+  }
+  return codes;
+};
+
+const backendCodesSource = readFileSync(backendCodesSourcePath, 'utf8');
+const backendErrorCodes: BackendErrorCodes = {
+  remote_connection_codes: readBackendModuleCodes(
+    backendCodesSource,
+    'remote_connection_codes',
+  ),
+  remote_sftp_codes: readBackendModuleCodes(backendCodesSource, 'remote_sftp_codes'),
+};
 
 describe('remoteConnectionErrors mapping', () => {
-  beforeAll(() => {
-    execSync('cargo run -q --bin export_remote_connection_error_codes', {
-      cwd: backendDirPath,
-      stdio: 'pipe',
-    });
-    backendErrorCodes = JSON.parse(
-      readFileSync(backendCodesDocPath, 'utf8'),
-    ) as BackendErrorCodes;
-  }, 180_000);
-
   it('maps ApiRequestError code to message and action', () => {
     const error = new ApiRequestError('permission denied', {
       code: 'auth_failed',

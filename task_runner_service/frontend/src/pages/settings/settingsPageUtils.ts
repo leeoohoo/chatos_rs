@@ -6,9 +6,6 @@ export type RuntimeSettingsFormValues = {
   execution_timeout_seconds?: number;
   tool_result_model_max_chars?: number;
   tool_results_model_total_max_chars?: number;
-  sandbox_enabled?: boolean;
-  sandbox_manager_base_url?: string;
-  sandbox_lease_ttl_seconds?: number;
 };
 
 export type SettingsTabKey = 'overview' | 'internal-prompts';

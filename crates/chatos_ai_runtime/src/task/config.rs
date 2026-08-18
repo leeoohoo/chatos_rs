@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use chatos_mcp_runtime::{
     builtin_servers_from_kinds, BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions,
@@ -38,6 +39,8 @@ pub struct TaskRuntimeConfig {
     pub builtin_prompt_mode: TaskBuiltinMcpPromptMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_iterations: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_read_timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_engine: Option<TaskMemoryRuntimeConfig>,
 }
@@ -98,6 +101,11 @@ impl TaskRuntimeConfig {
         self
     }
 
+    pub fn with_ai_read_timeout_ms(mut self, ai_read_timeout_ms: Option<u64>) -> Self {
+        self.ai_read_timeout_ms = ai_read_timeout_ms;
+        self
+    }
+
     pub fn with_memory_engine(mut self, memory_engine: Option<TaskMemoryRuntimeConfig>) -> Self {
         self.memory_engine = memory_engine;
         self
@@ -116,6 +124,9 @@ impl TaskRuntimeConfig {
             .with_builtin_prompt_mode(self.builtin_prompt_mode);
         if let Some(max_iterations) = self.max_iterations {
             builder = builder.with_max_iterations(max_iterations);
+        }
+        if let Some(ai_read_timeout_ms) = self.ai_read_timeout_ms {
+            builder = builder.with_request_read_timeout(Duration::from_millis(ai_read_timeout_ms));
         }
         builder
     }

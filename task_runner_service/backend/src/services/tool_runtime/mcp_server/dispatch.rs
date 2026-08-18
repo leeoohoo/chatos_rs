@@ -49,7 +49,6 @@ impl TaskRunnerMcpService {
             | "batch_start_task_runs"
             | "get_task_memory_context"
             | "list_task_memory_records"
-            | "summarize_task_memory"
             | "cancel_run"
             | "retry_run"
             | "list_run_events" => {

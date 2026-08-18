@@ -4,8 +4,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
-import type { TaskRunnerSelectablePluginResponse } from '../../lib/api/client/types';
-import type { PluginCommandInvocationPayload } from '../../types';
+import type {
+  LocalConnectorDeviceResponse,
+  TaskRunnerSelectablePluginResponse,
+} from '../../lib/api/client/types';
+import { PUBLIC_PROJECT_ID } from '../../lib/domain/contactSessions';
+import { normalizeProject } from '../../lib/domain/projects';
+import type { PluginCommandInvocationPayload, Project } from '../../types';
 import {
   filterPluginCommandOptions,
   MAX_PLUGIN_COMMAND_ARGUMENT_BYTES,
@@ -16,7 +21,10 @@ import {
   utf8ByteLength,
 } from './pluginCommands';
 import { filterPluginMentionOptions } from './pluginMentions';
-import { taskPluginPickerEnabled } from './pluginRuntimeScope';
+import {
+  filterPluginsForProjectRuntime,
+  resolveTaskPluginRuntimeScope,
+} from './pluginRuntimeScope';
 import { useDismissiblePopover } from './useDismissiblePopover';
 
 const normalizeError = (error: unknown): string => (
@@ -58,20 +66,31 @@ export interface SelectedTaskPluginCommand extends TaskPluginCommandOption {
 export const useTaskPluginPicker = ({
   client,
   conversationId,
+  project,
   projectId,
   disabled,
   planMode,
 }: {
   client: ApiClient;
   conversationId?: string | null;
+  project?: Project | null;
   projectId?: string | null;
   disabled: boolean;
   planMode: boolean;
 }) => {
-  const normalizedProjectId = String(projectId || '').trim();
-  const enabled = taskPluginPickerEnabled(conversationId, normalizedProjectId);
+  const normalizedProjectId = String(projectId || project?.id || '').trim();
+  const suppliedProject = project?.id === normalizedProjectId ? project : null;
+  const [loadedProject, setLoadedProject] = useState<Project | null>(null);
+  const resolvedProject = suppliedProject
+    || (loadedProject?.id === normalizedProjectId ? loadedProject : null);
+  const runtimeScope = useMemo(
+    () => resolveTaskPluginRuntimeScope(conversationId, resolvedProject),
+    [conversationId, resolvedProject],
+  );
+  const enabled = Boolean(runtimeScope);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [catalogResolved, setCatalogResolved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [availablePlugins, setAvailablePlugins] = useState<TaskRunnerSelectablePluginResponse[]>([]);
   const [selectedPluginIds, setSelectedPluginIds] = useState<string[]>([]);
@@ -80,22 +99,79 @@ export const useTaskPluginPicker = ({
   >([]);
   const [search, setSearch] = useState('');
   const hydratedSelectionScopeRef = useRef<string | null>(null);
+  const activeRuntimeScopeRef = useRef<string | null>(null);
+  const runtimeScopeKey = runtimeScope
+    ? `${runtimeScope.projectId}:${runtimeScope.sourceKind}:${runtimeScope.localDeviceId || ''}:${planMode ? 'plan' : 'run'}`
+    : null;
+  activeRuntimeScopeRef.current = runtimeScopeKey;
   const selectionStorageKey = useMemo(() => (
-    conversationId && normalizedProjectId
-      ? `${PLUGIN_SELECTION_STORAGE_PREFIX}:${conversationId}:${normalizedProjectId}:${planMode ? 'plan' : 'run'}`
+    conversationId && runtimeScope?.projectId
+      ? `${PLUGIN_SELECTION_STORAGE_PREFIX}:${conversationId}:${runtimeScope.projectId}:${planMode ? 'plan' : 'run'}`
       : null
-  ), [conversationId, normalizedProjectId, planMode]);
+  ), [conversationId, planMode, runtimeScope?.projectId]);
 
   const pickerRef = useDismissiblePopover<HTMLDivElement>(open, () => setOpen(false));
 
-  const loadPlugins = useCallback(async () => {
-    if (!enabled) {
-      setAvailablePlugins([]);
-      return;
+  useEffect(() => {
+    if (
+      suppliedProject
+      || !conversationId
+      || !normalizedProjectId
+      || normalizedProjectId === '0'
+      || normalizedProjectId === PUBLIC_PROJECT_ID
+    ) {
+      setLoadedProject(null);
+      return undefined;
     }
-    const response = await client.listTaskRunnerAvailablePlugins(normalizedProjectId, planMode);
+
+    let active = true;
+    setLoadedProject(null);
+    void client.getProject(normalizedProjectId)
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        const nextProject = normalizeProject(response);
+        setLoadedProject(nextProject.id === normalizedProjectId ? nextProject : null);
+      })
+      .catch(() => {
+        if (active) {
+          setLoadedProject(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [client, conversationId, normalizedProjectId, suppliedProject]);
+
+  const loadPlugins = useCallback(async (): Promise<boolean> => {
+    if (!runtimeScope) {
+      setAvailablePlugins([]);
+      return false;
+    }
+    const requestedScopeKey = runtimeScopeKey;
+    if (runtimeScope.sourceKind === 'local_connector') {
+      const devices = await client.listLocalConnectorDevices();
+      if (activeRuntimeScopeRef.current !== requestedScopeKey) {
+        return false;
+      }
+      const localDeviceOnline = (Array.isArray(devices) ? devices : []).some((device) => (
+        String(device.id || '').trim() === runtimeScope.localDeviceId
+        && String((device as LocalConnectorDeviceResponse).status || '').trim().toLowerCase() === 'online'
+      ));
+      if (!localDeviceOnline) {
+        setAvailablePlugins([]);
+        setSelectedPluginIds([]);
+        setSelectedCommandInvocations([]);
+        return true;
+      }
+    }
+    const response = await client.listTaskRunnerAvailablePlugins(runtimeScope.projectId, planMode);
+    if (activeRuntimeScopeRef.current !== requestedScopeKey) {
+      return false;
+    }
     const plugins = Array.isArray(response?.selectable_plugins)
-      ? response.selectable_plugins
+      ? filterPluginsForProjectRuntime(response.selectable_plugins, runtimeScope.sourceKind)
       : [];
     setAvailablePlugins(plugins);
     setSelectedPluginIds((current) => current.filter((pluginId) => (
@@ -109,7 +185,8 @@ export const useTaskPluginPicker = ({
         ))
       ))
     )));
-  }, [client, enabled, normalizedProjectId, planMode]);
+    return true;
+  }, [client, planMode, runtimeScope, runtimeScopeKey]);
 
   const loadPicker = useCallback(async () => {
     if (!enabled || disabled) {
@@ -117,14 +194,24 @@ export const useTaskPluginPicker = ({
     }
     setLoading(true);
     setError(null);
+    const requestedScopeKey = runtimeScopeKey;
     try {
-      await loadPlugins();
+      const current = await loadPlugins();
+      if (!current) {
+        return;
+      }
     } catch (loadError) {
+      if (activeRuntimeScopeRef.current !== requestedScopeKey) {
+        return;
+      }
       setError(normalizeError(loadError));
     } finally {
-      setLoading(false);
+      if (activeRuntimeScopeRef.current === requestedScopeKey) {
+        setLoading(false);
+        setCatalogResolved(true);
+      }
     }
-  }, [disabled, enabled, loadPlugins]);
+  }, [disabled, enabled, loadPlugins, runtimeScopeKey]);
 
   const toggleOpen = useCallback(() => {
     if (!enabled || disabled) {
@@ -232,6 +319,7 @@ export const useTaskPluginPicker = ({
   useEffect(() => {
     hydratedSelectionScopeRef.current = null;
     setOpen(false);
+    setCatalogResolved(false);
     setAvailablePlugins([]);
     setSelectedPluginIds([]);
     setSelectedCommandInvocations([]);
@@ -244,10 +332,20 @@ export const useTaskPluginPicker = ({
     hydratedSelectionScopeRef.current = selectionStorageKey;
     setLoading(true);
     setError(null);
+    const requestedScopeKey = runtimeScopeKey;
     void loadPlugins()
-      .catch((loadError) => setError(normalizeError(loadError)))
-      .finally(() => setLoading(false));
-  }, [enabled, loadPlugins, selectionStorageKey]);
+      .catch((loadError) => {
+        if (activeRuntimeScopeRef.current === requestedScopeKey) {
+          setError(normalizeError(loadError));
+        }
+      })
+      .finally(() => {
+        if (activeRuntimeScopeRef.current === requestedScopeKey) {
+          setLoading(false);
+          setCatalogResolved(true);
+        }
+      });
+  }, [enabled, loadPlugins, runtimeScopeKey, selectionStorageKey]);
 
   useEffect(() => {
     if (!selectionStorageKey
@@ -286,10 +384,11 @@ export const useTaskPluginPicker = ({
         .includes(keyword)
     ));
   }, [availablePlugins, search]);
-  const selectedPlugins = useMemo(() => selectedPluginIds.flatMap((pluginId) => {
+  const effectiveSelectedPluginIds = catalogResolved && !error ? selectedPluginIds : [];
+  const selectedPlugins = useMemo(() => effectiveSelectedPluginIds.flatMap((pluginId) => {
     const plugin = availablePlugins.find((item) => item.id === pluginId);
     return plugin ? [plugin] : [];
-  }), [availablePlugins, selectedPluginIds]);
+  }), [availablePlugins, effectiveSelectedPluginIds]);
   const availableCommands = useMemo(
     () => pluginCommandOptions(availablePlugins),
     [availablePlugins],
@@ -326,12 +425,13 @@ export const useTaskPluginPicker = ({
 
   return {
     enabled,
+    visible: enabled && catalogResolved && !error && availablePlugins.length > 0,
     open,
     pickerRef,
     loading,
     error,
     filteredPlugins,
-    selectedPluginIds,
+    selectedPluginIds: effectiveSelectedPluginIds,
     selectedPlugins,
     availableCommands,
     selectedCommands,

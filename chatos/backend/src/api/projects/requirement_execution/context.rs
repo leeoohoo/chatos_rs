@@ -317,6 +317,7 @@ pub(in crate::api::projects) async fn create_execution_message(
 pub(in crate::api::projects) async fn create_execution_planner_failure_message(
     session_id: &str,
     execution_group_id: &str,
+    failure_kind: &str,
     content: String,
 ) -> Result<Message, HandlerError> {
     let message = build_message(
@@ -332,7 +333,7 @@ pub(in crate::api::projects) async fn create_execution_planner_failure_message(
                 "project_requirement_execution": {
                     "execution_group_id": execution_group_id,
                     "status": "failed",
-                    "failure_kind": "planner_created_no_tasks"
+                    "failure_kind": failure_kind
                 }
             })),
             ..NewMessageFields::default()

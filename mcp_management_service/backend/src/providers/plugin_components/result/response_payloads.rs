@@ -40,6 +40,33 @@ pub(in crate::providers::plugin_components) fn plugin_command_result_from_bundle
     ))
 }
 
+pub(in crate::providers::plugin_components) fn plugin_skill_result_from_bundle(
+    immutable: &PluginToolComponentRuntimeBinding,
+    bundle: &chatos_plugin_management_sdk::PluginCloudComponentBundle,
+) -> Result<Value, ProviderCallError> {
+    Ok(plugin_instruction_result(
+        immutable,
+        "Plugin Skill",
+        bundle.primary_text.as_str(),
+        None,
+        None,
+    ))
+}
+
+pub(in crate::providers::plugin_components) fn plugin_skill_result_from_local_snapshot(
+    immutable: &PluginToolComponentRuntimeBinding,
+    skill: &Value,
+) -> Result<Value, ProviderCallError> {
+    let instructions = required_value_text(skill, "instructions")?;
+    Ok(plugin_instruction_result(
+        immutable,
+        "Plugin Skill",
+        instructions,
+        None,
+        Some(skill),
+    ))
+}
+
 pub(in crate::providers::plugin_components) fn plugin_agent_result(
     immutable: &PluginToolComponentRuntimeBinding,
     agent: &Value,
@@ -105,9 +132,14 @@ fn plugin_instruction_result(
             lines.push(format!("Maximum iterations: {max_iterations}"));
         }
         lines.push("Apply this profile only as additional instructions for the current Agent invocation. It grants no tools or permissions beyond the active MCP Runtime Session.".to_string());
-    } else {
+    } else if immutable.component.kind == PluginComponentKind::Command {
         lines.push(
             "Follow this signed Plugin Command for the current Agent invocation:".to_string(),
+        );
+    } else {
+        lines.push(
+            "Apply this signed Plugin Skill as additional guidance for the current Agent invocation. It grants no tools or permissions beyond the active MCP Runtime Session."
+                .to_string(),
         );
     }
     lines.push(prompt.to_string());

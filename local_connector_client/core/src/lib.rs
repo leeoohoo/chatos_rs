@@ -65,9 +65,6 @@ pub fn run_computer_use_helper() -> Result<()> {
     skills::native::run_computer_use_helper()
 }
 
-pub(crate) const DEFAULT_LOCAL_SANDBOX_IMAGE: &str = "chatos-sandbox-agent:latest";
-pub(crate) const DEFAULT_LOCAL_SANDBOX_IMAGE_TAG_PREFIX: &str = "chatos-sandbox-agent";
-pub(crate) const LOCAL_SANDBOX_BACKEND: &str = "docker";
 pub(crate) const LOCAL_SANDBOX_STATUS_READY: &str = "ready";
 pub(crate) const LOCAL_SANDBOX_STATUS_DESTROYED: &str = "destroyed";
 const DEFAULT_TERMINAL_EXEC_TIMEOUT_MS: u64 = 30_000;
@@ -166,21 +163,10 @@ pub async fn run_local_connector() -> Result<()> {
                 .as_str(),
         ),
     }
-    if let Err(err) = sandbox::docker::destroy_all_local_sandbox_containers().await {
-        tracing_stdout(format!("stale local sandbox cleanup skipped: {err}").as_str());
-    }
-    tokio::spawn(async {
-        let report = sandbox::docker::enforce_docker_build_cache_limit().await;
-        tracing_stdout(
-            format!(
-                "startup {}",
-                sandbox::docker::docker_maintenance_report_message(&report)
-            )
-            .as_str(),
-        );
-    });
     let _sandbox_lease_reaper =
         sandbox::lease::spawn_local_sandbox_lease_reaper(runtime.sandbox_runtime.clone());
+    let _execution_scope_reaper =
+        mcp::execution_scope::spawn_local_execution_scope_reaper(runtime.sandbox_runtime.clone());
     if let Some(refresh) = managed_requirements.background_refresh {
         refresh.spawn(runtime.http_client.clone());
     }

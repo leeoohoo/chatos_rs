@@ -53,7 +53,7 @@ impl RemoteConnectionControllerService {
             max_command_timeout_seconds: opts
                 .max_command_timeout_seconds
                 .max(MAX_COMMAND_TIMEOUT_SECONDS),
-            max_output_chars: opts.max_output_chars.max(DEFAULT_MAX_OUTPUT_CHARS),
+            max_output_chars: opts.max_output_chars.max(1),
             max_read_file_bytes: opts.max_read_file_bytes.max(DEFAULT_MAX_READ_FILE_BYTES),
         };
 

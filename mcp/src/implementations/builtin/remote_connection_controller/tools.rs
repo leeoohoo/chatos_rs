@@ -78,6 +78,7 @@ impl RemoteConnectionControllerService {
         store: RemoteConnectionControllerStoreRef,
         require_connection_id: bool,
     ) {
+        let max_output_chars_limit = bound.max_output_chars;
         let required = if require_connection_id {
             json!(["connection_id", "command"])
         } else {
@@ -98,7 +99,7 @@ impl RemoteConnectionControllerService {
                     "command": { "type": "string" },
                     "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 120 },
                     "allow_dangerous": { "type": "boolean" },
-                    "max_output_chars": { "type": "integer", "minimum": 128, "maximum": 20000 }
+                    "max_output_chars": { "type": "integer", "minimum": 1, "maximum": max_output_chars_limit }
                 },
                 "required": required,
                 "additionalProperties": false

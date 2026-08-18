@@ -17,19 +17,16 @@ import type {
   ConversationMessagePayload,
   WebSocketTicketResponse,
 } from './client/types';
-import { LocalRuntimeClient } from './localRuntime';
 import * as workspaceApi from './client/workspace';
 
-// Dev 环境默认直连后端，避免本地代理异常导致 /api 404。
+// 统一通过 ChatOS 网关入口访问 API，便于桌面端、浏览器端与部署环境保持一致。
 // 可通过 VITE_API_BASE_URL 显式覆盖（例如 https://your.domain/api/chatos）。
 const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const API_BASE_URL =
-  ENV_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:3997/api' : '/api/chatos');
+const API_BASE_URL = ENV_API_BASE_URL || '/api/chatos';
 
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
-  private readonly localRuntime = new LocalRuntimeClient();
   private tokenRefreshListeners = new Set<(token: string) => void>();
   private authenticationFailureListeners = new Set<() => void>();
   private readonly requestFn: workspaceApi.ApiRequestFn = (endpoint, options) => this.request(endpoint, options);
@@ -44,10 +41,6 @@ class ApiClient {
 
   getRequestFn(): workspaceApi.ApiRequestFn {
     return this.requestFn;
-  }
-
-  getLocalRuntimeClient(): LocalRuntimeClient {
-    return this.localRuntime;
   }
 
   setAccessToken(token?: string | null): void {

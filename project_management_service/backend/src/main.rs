@@ -12,7 +12,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use project_management_service_backend::{
     build_internal_router, build_public_router,
     internal_tls::{load_internal_mtls_config, ProjectServiceInternalTlsConfig},
-    load_project_service_dotenv, AppConfig, AppState,
+    load_project_service_dotenv, spawn_cloud_agent_consumer, spawn_cloud_agent_outbox_reconciler,
+    AppConfig, AppState,
 };
 
 #[tokio::main]
@@ -25,22 +26,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = AppConfig::from_env()?;
     let _telemetry = init_tracing(&config)?;
     resolve_downstream_services(&mut config).await;
-    chatos_mcp_runtime::initialize_mcp_invocation_result_queue(
-        chatos_mcp_runtime::McpInvocationResultQueueConfig {
-            rabbitmq_url: config.mcp_result_rabbitmq_url.clone(),
-            queue_name: format!(
-                "{}.{}",
-                config.mcp_result_queue_prefix,
-                mcp_result_queue_instance_component(config.host, config.port)
-            ),
-        },
-    )
-    .await
-    .map_err(|error| format!("initialize Project Service MCP result queue failed: {error}"))?;
     let bind_addr = config.bind_addr();
     let internal_tls = ProjectServiceInternalTlsConfig::from_env(config.host, config.port)?;
     let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let state = AppState::new(config.clone()).await?;
+    let _cloud_agent_outbox = spawn_cloud_agent_outbox_reconciler(state.clone());
+    let _cloud_agent_consumer = spawn_cloud_agent_consumer(state.clone());
     let public_app = build_public_router(state.clone());
     let internal_app = build_internal_router(state);
     let _service_runtime = chatos_service_runtime::register_current_service(
@@ -72,19 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
-}
-
-fn mcp_result_queue_instance_component(host: std::net::IpAddr, port: u16) -> String {
-    format!("{host}-{port}")
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 async fn resolve_downstream_services(config: &mut AppConfig) {

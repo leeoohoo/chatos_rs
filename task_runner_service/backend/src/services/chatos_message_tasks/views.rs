@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::{ModelPhaseStatus, TaskRunWorkspaceExecution};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatosMessageTaskSummary {
@@ -78,6 +79,8 @@ pub struct ChatosMessageTaskRunSummary {
     pub task_id: String,
     pub model_config_id: String,
     pub status: super::TaskRunStatus,
+    pub model_phase_status: ModelPhaseStatus,
+    pub workspace_execution: Option<TaskRunWorkspaceExecution>,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub result_summary: Option<String>,
@@ -92,6 +95,8 @@ pub struct ChatosMessageTaskRun {
     pub task_id: String,
     pub model_config_id: String,
     pub status: super::TaskRunStatus,
+    pub model_phase_status: ModelPhaseStatus,
+    pub workspace_execution: Option<TaskRunWorkspaceExecution>,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub input_snapshot: Value,
@@ -249,6 +254,8 @@ impl From<TaskRunRecord> for ChatosMessageTaskRunSummary {
             task_id: run.task_id,
             model_config_id: run.model_config_id,
             status: run.status,
+            model_phase_status: run.model_phase_status,
+            workspace_execution: run.workspace_execution,
             started_at: run.started_at,
             finished_at: run.finished_at,
             result_summary: run.result_summary,
@@ -266,6 +273,8 @@ impl From<TaskRunRecord> for ChatosMessageTaskRun {
             task_id: run.task_id,
             model_config_id: run.model_config_id,
             status: run.status,
+            model_phase_status: run.model_phase_status,
+            workspace_execution: run.workspace_execution,
             started_at: run.started_at,
             finished_at: run.finished_at,
             input_snapshot: run.input_snapshot,

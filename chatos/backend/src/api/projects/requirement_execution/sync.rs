@@ -91,6 +91,7 @@ pub(in crate::api::projects) async fn sync_execution_link_status(
             last_error_message: None,
             source_session_id: link.source_session_id.clone(),
             source_user_message_id: link.source_user_message_id.clone(),
+            supersedes_task_runner_task_ids: Vec::new(),
         },
     )
     .await
@@ -148,6 +149,45 @@ pub(in crate::api::projects) async fn sync_execution_message_task_tracking(
         .await
         .map(|_| ())
         .map_err(|err| HandlerError::internal("更新需求执行任务跟踪失败", err))
+}
+
+pub(in crate::api::projects) async fn mark_execution_planner_failed(
+    session_id: &str,
+    message_id: &str,
+    failure_kind: &str,
+    failure_reason: &str,
+) -> Result<(), HandlerError> {
+    let session = chatos_sessions::get_session_by_id(session_id)
+        .await
+        .map_err(|err| HandlerError::internal("读取需求执行会话失败", err))?
+        .ok_or_else(|| HandlerError::not_found("需求执行会话不存在"))?;
+    let mut message =
+        conversation_messages::get_message_by_id_in_session_including_hidden(&session, message_id)
+            .await
+            .map_err(|err| HandlerError::internal("读取需求执行消息失败", err))?
+            .ok_or_else(|| HandlerError::not_found("需求执行消息不存在"))?;
+    let failed_at = now_rfc3339();
+    let metadata = ensure_message_metadata_object(&mut message);
+    for key in ["task_runner_async", "project_requirement_execution"] {
+        let target = metadata.entry(key.to_string()).or_insert_with(|| json!({}));
+        if !target.is_object() {
+            *target = json!({});
+        }
+        if let Some(target) = target.as_object_mut() {
+            target.insert("status".to_string(), json!("failed"));
+            target.insert("failure_kind".to_string(), json!(failure_kind));
+            target.insert("failure_reason".to_string(), json!(failure_reason));
+            target.insert("failed_at".to_string(), json!(failed_at.clone()));
+            if key == "task_runner_async" {
+                target.insert("overall_status".to_string(), json!("failed"));
+                target.insert("confirmation_status".to_string(), json!("failed"));
+            }
+        }
+    }
+    conversation_messages::upsert_message_in_session(&session, &message)
+        .await
+        .map(|_| ())
+        .map_err(|err| HandlerError::internal("更新需求执行规划失败状态失败", err))
 }
 
 pub(in crate::api::projects) async fn set_execution_turn_hidden(

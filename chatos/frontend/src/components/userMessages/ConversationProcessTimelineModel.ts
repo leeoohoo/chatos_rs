@@ -155,6 +155,8 @@ export type TimelineItem =
     createdAt: Date;
     id: string;
     label: string;
+    repeatCount?: number;
+    status?: TimelineStatus;
     type: 'model';
   }
   | {
@@ -162,6 +164,7 @@ export type TimelineItem =
     error: string;
     hasResult: boolean;
     id: string;
+    repeatCount?: number;
     result: unknown;
     resultMessage?: Message;
     status: TimelineStatus;
@@ -174,6 +177,7 @@ export type TimelineItem =
     error: string;
     hasResult: boolean;
     id: string;
+    repeatCount?: number;
     result: unknown;
     status: TimelineStatus;
     type: 'tool_result';
@@ -241,6 +245,7 @@ export const buildTimelineItems = (processMessages: Message[]): TimelineItem[] =
         createdAt: message.createdAt,
         id: `model-${message.id}-${index}`,
         label: contentItem.label,
+        status: message.status === 'error' ? 'error' : undefined,
         type: 'model',
       });
     });

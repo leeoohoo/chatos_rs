@@ -808,6 +808,26 @@ pub fn sort_work_items_for_planning(work_items: &mut [WorkItemPlanItem]) {
     });
 }
 
+pub fn build_project_task_scope_refs<'a, I>(project_task_ids: I) -> BTreeMap<String, String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    project_task_ids
+        .into_iter()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .enumerate()
+        .map(|(index, project_task_id)| {
+            (
+                project_task_id.to_string(),
+                format!("project_task_{:03}", index.saturating_add(1)),
+            )
+        })
+        .collect()
+}
+
 pub fn executing_requirement_ids(
     root_requirement_id: &str,
     selected_work_items: &[WorkItemPlanItem],
@@ -883,6 +903,8 @@ pub fn build_requirement_execution_planner_prompt(
         .iter()
         .map(|item| item.id.clone())
         .collect::<BTreeSet<_>>();
+    let project_task_refs =
+        build_project_task_scope_refs(selected_project_task_ids.iter().map(String::as_str));
     let all_work_items_by_id = all_work_items
         .iter()
         .map(|item| (item.id.as_str(), item))
@@ -916,7 +938,6 @@ pub fn build_requirement_execution_planner_prompt(
                 .entry(item.id.clone())
                 .or_default()
                 .push(json!({
-                    "id": prerequisite.id,
                     "title": prerequisite.title,
                     "status": prerequisite.status,
                 }));
@@ -927,8 +948,12 @@ pub fn build_requirement_execution_planner_prompt(
     let work_items = selected_work_items
         .iter()
         .map(|item| {
+            let project_task_ref = project_task_refs
+                .get(item.id.as_str())
+                .cloned()
+                .unwrap_or_default();
             json!({
-                "id": item.id,
+                "project_task_ref": project_task_ref,
                 "requirement_id": item.requirement_id,
                 "title": item.title,
                 "description": item.description,
@@ -936,14 +961,20 @@ pub fn build_requirement_execution_planner_prompt(
                 "priority": item.priority,
                 "tags": item.tags,
                 "is_planning_task": item.is_planning_task,
-                "pending_prerequisite_project_task_ids": dependency_reduction.dependencies
+                "pending_prerequisite_project_task_refs": dependency_reduction.dependencies
                     .get(item.id.as_str())
                     .cloned()
-                    .unwrap_or_default(),
-                "context_prerequisite_project_task_ids": pending_dependency_map
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|project_task_id| project_task_refs.get(&project_task_id).cloned())
+                    .collect::<Vec<_>>(),
+                "context_prerequisite_project_task_refs": pending_dependency_map
                     .get(item.id.as_str())
                     .cloned()
-                    .unwrap_or_default(),
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|project_task_id| project_task_refs.get(&project_task_id).cloned())
+                    .collect::<Vec<_>>(),
                 "satisfied_prerequisite_project_tasks": satisfied_dependencies
                     .get(item.id.as_str())
                     .cloned()
@@ -951,9 +982,13 @@ pub fn build_requirement_execution_planner_prompt(
             })
         })
         .collect::<Vec<_>>();
-    let selected_project_task_ids = selected_work_items
+    let selected_project_task_refs = selected_work_items
         .iter()
-        .map(|item| item.id.clone())
+        .filter_map(|item| project_task_refs.get(item.id.as_str()).cloned())
+        .collect::<Vec<_>>();
+    let recommended_project_task_creation_order = creation_order
+        .iter()
+        .filter_map(|project_task_id| project_task_refs.get(project_task_id).cloned())
         .collect::<Vec<_>>();
     let payload = json!({
         "mode": "project_requirement_execution_planning",
@@ -962,10 +997,10 @@ pub fn build_requirement_execution_planner_prompt(
             "must_call_tool": "create_project_execution_tasks",
             "must_cover_every_selected_project_task": true,
             "must_not_cover_unselected_project_tasks": true,
-            "selected_project_task_ids": selected_project_task_ids,
+            "selected_project_task_refs": selected_project_task_refs,
             "default_model_config_id": default_model_config_id,
             "model_binding_policy": "When default_model_config_id is present, bind it unchanged to every generated execution task.",
-            "dependency_policy": "Only pending_prerequisite_project_task_ids are hard blockers. Connect terminal(previous) to entry(next), keep direct blockers only, and never add an edge already implied by another hard path. context_prerequisite_project_task_ids preserve the complete project relationship for explanation and context_refs, but context_refs must not block scheduling. satisfied_prerequisite_project_tasks are completed context and must never be regenerated or emitted as Task Runner dependencies.",
+            "dependency_policy": "Only pending_prerequisite_project_task_refs are hard blockers. Connect terminal(previous) to entry(next), keep direct blockers only, and never add an edge already implied by another hard path. context_prerequisite_project_task_refs preserve the complete project relationship for explanation and context_refs, but context_refs must not block scheduling. satisfied_prerequisite_project_tasks are completed context and must never be regenerated or emitted as Task Runner dependencies.",
             "decomposition_policy": "Use project-task descriptions and technical documents to create concrete, independently verifiable execution tasks. Split only when it materially improves ownership, ordering, safety, or verification.",
             "planning_task_policy": "is_planning_task=true still requires at least one bound execution task; mark the generated task as planning when appropriate.",
             "forbidden_terminal_response": "Do not return a completion summary before create_project_execution_tasks succeeds and covers every selected project task."
@@ -978,7 +1013,7 @@ pub fn build_requirement_execution_planner_prompt(
         },
         "requirements_in_execution_scope": scoped_requirements,
         "selected_project_tasks": work_items,
-        "recommended_project_task_creation_order": creation_order,
+        "recommended_project_task_creation_order": recommended_project_task_creation_order,
         "dependency_diagnostics": {
             "removed_redundant_project_task_edges": dependency_reduction.removed_edges,
         },

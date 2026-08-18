@@ -5,47 +5,59 @@ use super::*;
 use crate::services::run_model_phase::supply_chain::SupplyChainEvidenceState;
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    AiResponse, RuntimeBeforeModelRequest, RuntimeFinalResponseAction, RuntimeFinalResponseContext,
-    RuntimeIterationContext, RuntimeLifecycleHook, TaskExecutionOutcome,
-    TaskExecutionOutcomeStatus, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
-    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+    AiResponse, JsonSchemaOutputFormat, RuntimeBeforeModelRequest, RuntimeFinalResponseAction,
+    RuntimeFinalResponseContext, RuntimeIterationContext, RuntimeLifecycleHook,
+    TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskExecutionProgressState,
+    TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
 };
 #[cfg(test)]
 #[path = "runtime_state/tests.rs"]
 mod tests;
 
 const TASK_OUTCOME_REVIEW_REASON: &str = "task_execution_outcome_review";
+const TASK_OUTCOME_REPAIR_REASON: &str = "task_execution_outcome_repair";
 const TASK_EXECUTION_OUTCOME_METADATA_KEY: &str = "task_execution_outcome";
+const MAX_TASK_OUTCOME_REPAIR_ATTEMPTS: u8 = 2;
+const TASK_OUTCOME_RAW_RESPONSE_MAX_CHARS: usize = 8_000;
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(in crate::services) struct TaskRunnerLifecycleState {
+    pub(in crate::services) visible_response: Option<AiResponse>,
+    pub(in crate::services) execution_outcome: Option<TaskExecutionOutcome>,
+    #[serde(default)]
+    pub(in crate::services) outcome_repair_attempts: u8,
+}
 
 struct TaskRunnerLifecycleHook {
     finalization: TaskFinalizationLifecycleHook,
     progress: Arc<TaskExecutionProgressState>,
     active_review: parking_lot::Mutex<Option<TaskExecutionReviewCheckpoint>>,
-    visible_response: parking_lot::Mutex<Option<AiResponse>>,
-    execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+    state: Arc<parking_lot::Mutex<TaskRunnerLifecycleState>>,
     requires_execution: bool,
     store: crate::store::AppStore,
     run_id: String,
+    expected_acceptance_criteria: Vec<String>,
 }
 
 impl TaskRunnerLifecycleHook {
     fn new(
         max_iterations: usize,
         progress: Arc<TaskExecutionProgressState>,
-        execution_outcome: Arc<parking_lot::Mutex<Option<TaskExecutionOutcome>>>,
+        state: Arc<parking_lot::Mutex<TaskRunnerLifecycleState>>,
         requires_execution: bool,
         store: crate::store::AppStore,
         run_id: String,
+        expected_acceptance_criteria: Vec<String>,
     ) -> Self {
         Self {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
             progress,
             active_review: parking_lot::Mutex::new(None),
-            visible_response: parking_lot::Mutex::new(None),
-            execution_outcome,
+            state,
             requires_execution,
             store,
             run_id,
+            expected_acceptance_criteria,
         }
     }
 
@@ -86,10 +98,11 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
         self.progress.begin_iteration(context.iteration);
-        if context.reason == TASK_OUTCOME_REVIEW_REASON {
+        if is_task_outcome_protocol_reason(context.reason.as_str()) {
             return Ok(RuntimeBeforeModelRequest::unchanged()
                 .with_stream_output(false)
-                .with_tools_enabled(false));
+                .with_tools_enabled(false)
+                .with_output_format(task_execution_outcome_output_format()));
         }
         let iteration = context.iteration;
         let mut before = self.finalization.before_model_request(context).await?;
@@ -119,19 +132,37 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         &self,
         context: RuntimeFinalResponseContext,
     ) -> Result<RuntimeFinalResponseAction, String> {
-        if context.reason == TASK_OUTCOME_REVIEW_REASON {
-            let outcome = parse_task_execution_outcome(context.response.content.as_str())?;
-            *self.execution_outcome.lock() = Some(outcome);
-            let visible_response =
-                self.visible_response.lock().take().ok_or_else(|| {
-                    "task execution outcome review lost visible response".to_string()
-                })?;
+        if is_task_outcome_protocol_reason(context.reason.as_str()) {
+            let parsed = parse_task_execution_outcome_with_evidence(
+                context.response.content.as_str(),
+                self.expected_acceptance_criteria.as_slice(),
+                self.progress.confirmed_project_paths().as_slice(),
+                self.progress.confirmed_validation_commands().as_slice(),
+                self.progress.confirmed_acceptance_tools().as_slice(),
+                self.requires_execution,
+            );
+            let outcome = match parsed {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    return self.repair_invalid_task_outcome(
+                        context.response.content.as_str(),
+                        error.as_str(),
+                    );
+                }
+            };
+            let mut state = self.state.lock();
+            state.execution_outcome = Some(outcome);
+            state.outcome_repair_attempts = 0;
+            let visible_response = state
+                .visible_response
+                .take()
+                .ok_or_else(|| "task execution outcome review lost visible response".to_string())?;
             return Ok(RuntimeFinalResponseAction::Replace(Box::new(
                 visible_response,
             )));
         }
 
-        *self.visible_response.lock() = Some(context.response.clone());
+        self.state.lock().visible_response = Some(context.response.clone());
         Ok(RuntimeFinalResponseAction::Continue {
             input_items: vec![
                 json!({
@@ -142,7 +173,10 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
                         "text": context.response.content
                     }]
                 }),
-                task_execution_outcome_review_message(self.requires_execution),
+                task_execution_outcome_review_message(
+                    self.requires_execution,
+                    self.expected_acceptance_criteria.as_slice(),
+                ),
             ],
             reason: TASK_OUTCOME_REVIEW_REASON.to_string(),
         })
@@ -152,8 +186,9 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         &self,
         _context: RuntimeFinalResponseContext,
     ) -> Result<Option<Value>, String> {
-        self.execution_outcome
+        self.state
             .lock()
+            .execution_outcome
             .clone()
             .map(|outcome| {
                 serde_json::to_value(outcome)
@@ -164,23 +199,179 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
     }
 }
 
-fn task_execution_outcome_review_message(requires_execution: bool) -> Value {
-    let evidence_rule = if requires_execution {
-        "This task requires execution. Success evidence must cite actual tool results, changed project files, and necessary command or test results; prose claims are not evidence."
+impl TaskRunnerLifecycleHook {
+    fn repair_invalid_task_outcome(
+        &self,
+        raw_response: &str,
+        error: &str,
+    ) -> Result<RuntimeFinalResponseAction, String> {
+        let (attempt, exhausted) = {
+            let mut state = self.state.lock();
+            state.outcome_repair_attempts = state.outcome_repair_attempts.saturating_add(1);
+            (
+                state.outcome_repair_attempts,
+                state.outcome_repair_attempts > MAX_TASK_OUTCOME_REPAIR_ATTEMPTS,
+            )
+        };
+        self.store.append_run_event_sync(TaskRunEventRecord::new(
+            self.run_id.clone(),
+            "task_execution_outcome_protocol_error",
+            Some(if exhausted {
+                "任务结果协议修复失败".to_string()
+            } else {
+                format!(
+                    "任务结果协议格式无效，正在执行第 {attempt}/{} 次自动修复",
+                    MAX_TASK_OUTCOME_REPAIR_ATTEMPTS
+                )
+            }),
+            Some(json!({
+                "attempt": attempt,
+                "max_repair_attempts": MAX_TASK_OUTCOME_REPAIR_ATTEMPTS,
+                "exhausted": exhausted,
+                "parse_error": error,
+                "raw_response": bounded_task_outcome_raw_response(raw_response),
+            })),
+        ));
+        if exhausted {
+            return Err(format!(
+                "task execution outcome protocol repair exhausted after {} attempts: {error}",
+                MAX_TASK_OUTCOME_REPAIR_ATTEMPTS
+            ));
+        }
+        Ok(RuntimeFinalResponseAction::Continue {
+            input_items: vec![
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": raw_response
+                    }]
+                }),
+                task_execution_outcome_repair_message(error),
+            ],
+            reason: TASK_OUTCOME_REPAIR_REASON.to_string(),
+        })
+    }
+}
+
+fn is_task_outcome_protocol_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        TASK_OUTCOME_REVIEW_REASON | TASK_OUTCOME_REPAIR_REASON
+    )
+}
+
+fn bounded_task_outcome_raw_response(value: &str) -> String {
+    const TRUNCATED_SUFFIX: &str = "\n...[truncated]";
+    let mut chars = value.chars();
+    let preview = chars
+        .by_ref()
+        .take(TASK_OUTCOME_RAW_RESPONSE_MAX_CHARS.saturating_sub(TRUNCATED_SUFFIX.chars().count()))
+        .collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}{TRUNCATED_SUFFIX}")
     } else {
-        "This is a non-execution planning task. Success evidence may cite concrete sections of the delivered planning response that satisfy the requested artifacts; do not require file changes, a sandbox, or command execution unless the task explicitly requested them."
-    };
+        preview
+    }
+}
+
+fn task_execution_outcome_repair_message(error: &str) -> Value {
     json!({
         "type": "message",
         "role": "system",
         "content": [{
             "type": "input_text",
-            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule} Return exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result without paths, ports, or URLs\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"],\"referenced_paths\":[\"workspace-relative/path\"],\"referenced_endpoints\":[\"http://127.0.0.1:4000/health\"]}}\nSet status to succeeded only when every required acceptance criterion has concrete evidence and all necessary verification has passed. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Put every user-facing file or directory reference in referenced_paths using workspace-relative paths only. Put every user-facing URL or port-bearing address in referenced_endpoints as an absolute HTTP/HTTPS URL without credentials. Keep summary free of paths, ports, and URLs because the platform builds those receipt sections from validated references. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
+            "text": format!("[Task Execution Outcome Protocol Repair]\nThe previous hidden outcome review did not satisfy the required JSON schema: {error}\nRebuild the result from the already recorded task evidence. Return only the schema-constrained JSON object. Do not add markdown, comments, trailing commas, undefined values, or explanatory text. Do not change the underlying task conclusion merely to repair syntax.")
         }]
     })
 }
 
+fn task_execution_outcome_output_format() -> JsonSchemaOutputFormat {
+    JsonSchemaOutputFormat::strict(
+        "task_execution_outcome",
+        json!({
+            "type": "object",
+            "properties": {
+                "status": { "type": "string", "enum": ["succeeded", "blocked"] },
+                "summary": { "type": "string" },
+                "blocking_reason": { "type": ["string", "null"] },
+                "unmet_acceptance_criteria": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "verification_evidence": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "acceptance_evidence": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "criterion": { "type": "string" },
+                            "evidence": { "type": "array", "items": { "type": "string" } },
+                            "referenced_paths": { "type": "array", "items": { "type": "string" } },
+                            "commands": { "type": "array", "items": { "type": "string" } },
+                            "tool_names": { "type": "array", "items": { "type": "string" } }
+                        },
+                        "required": ["criterion", "evidence", "referenced_paths", "commands", "tool_names"],
+                        "additionalProperties": false
+                    }
+                },
+                "referenced_paths": { "type": "array", "items": { "type": "string" } },
+                "referenced_endpoints": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": [
+                "status",
+                "summary",
+                "blocking_reason",
+                "unmet_acceptance_criteria",
+                "verification_evidence",
+                "acceptance_evidence",
+                "referenced_paths",
+                "referenced_endpoints"
+            ],
+            "additionalProperties": false
+        }),
+    )
+    .with_description("Validated terminal outcome for one Task Runner execution")
+}
+
+fn task_execution_outcome_review_message(
+    requires_execution: bool,
+    expected_acceptance_criteria: &[String],
+) -> Value {
+    let evidence_rule = if requires_execution {
+        "This task requires execution. Success evidence must cite actual tool results, changed project files, and necessary command or test results; prose claims are not evidence."
+    } else {
+        "This is a non-execution planning task. Success evidence may cite concrete sections of the delivered planning response that satisfy the requested artifacts; do not require file changes, a sandbox, or command execution unless the task explicitly requested them."
+    };
+    let acceptance_criteria =
+        serde_json::to_string(expected_acceptance_criteria).unwrap_or_else(|_| "[]".to_string());
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": format!("[Task Execution Outcome Review]\nReview the task objective, acceptance criteria, tool results, command exit codes, file changes, and the assistant's proposed final response. {evidence_rule}\nAuthoritative hard acceptance criteria: {acceptance_criteria}\nReturn exactly one JSON object and no markdown or explanatory text:\n{{\"status\":\"succeeded|blocked\",\"summary\":\"concise user-facing result without paths, ports, or URLs\",\"blocking_reason\":null,\"unmet_acceptance_criteria\":[],\"verification_evidence\":[\"specific evidence\"],\"acceptance_evidence\":[{{\"criterion\":\"exact criterion text\",\"evidence\":[\"exact item copied from verification_evidence\"],\"referenced_paths\":[\"workspace-relative/path\"],\"commands\":[\"exact successful validation command\"],\"tool_names\":[\"exact successful BrowserTools tool name\"]}}],\"referenced_paths\":[\"workspace-relative/path\"],\"referenced_endpoints\":[\"http://127.0.0.1:4000/health\"]}}\nSet status to succeeded only when every required acceptance criterion has exactly one acceptance_evidence item backed by recorded runtime paths, successful validation commands, or successful BrowserTools calls, and all necessary verification has passed. Use tool_names only for successful BrowserTools calls; omit ordinary runtime tools such as terminal or CodeMaintainer from that field. For succeeded, blocking_reason must be null, unmet_acceptance_criteria must be empty, and verification_evidence must be non-empty. Put every user-facing file or directory reference in referenced_paths using workspace-relative paths only. Put every user-facing URL or port-bearing address in referenced_endpoints as an absolute HTTP/HTTPS URL without credentials. Keep summary free of paths, ports, and URLs because the platform builds those receipt sections from validated references. Otherwise set status to blocked, provide the concrete blocker, list every unmet acceptance criterion, and include the failed or missing verification evidence. Do not use failed or cancelled; transport failures and cancellation are determined by the runtime.")
+        }]
+    })
+}
+
+#[cfg(test)]
 fn parse_task_execution_outcome(content: &str) -> Result<TaskExecutionOutcome, String> {
+    parse_task_execution_outcome_with_evidence(content, &[], &[], &[], &[], false)
+}
+
+fn parse_task_execution_outcome_with_evidence(
+    content: &str,
+    expected_acceptance_criteria: &[String],
+    confirmed_project_paths: &[String],
+    confirmed_validation_commands: &[String],
+    confirmed_acceptance_tools: &[String],
+    requires_execution: bool,
+) -> Result<TaskExecutionOutcome, String> {
     let outcome = serde_json::from_str::<TaskExecutionOutcome>(content.trim())
         .map_err(|err| format!("invalid task execution outcome JSON: {err}"))?;
     if !matches!(
@@ -192,7 +383,122 @@ fn parse_task_execution_outcome(content: &str) -> Result<TaskExecutionOutcome, S
         );
     }
     outcome.validate()?;
+    validate_acceptance_evidence(
+        &outcome,
+        expected_acceptance_criteria,
+        confirmed_project_paths,
+        confirmed_validation_commands,
+        confirmed_acceptance_tools,
+        requires_execution,
+    )?;
     Ok(outcome)
+}
+
+fn validate_acceptance_evidence(
+    outcome: &TaskExecutionOutcome,
+    expected_acceptance_criteria: &[String],
+    confirmed_project_paths: &[String],
+    confirmed_validation_commands: &[String],
+    confirmed_acceptance_tools: &[String],
+    requires_execution: bool,
+) -> Result<(), String> {
+    if outcome.status != TaskExecutionOutcomeStatus::Succeeded {
+        return Ok(());
+    }
+    let expected = expected_acceptance_criteria
+        .iter()
+        .map(|criterion| criterion.trim())
+        .filter(|criterion| !criterion.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let mut mapped = std::collections::BTreeSet::new();
+    let confirmed_paths = confirmed_project_paths
+        .iter()
+        .map(|path| path.trim())
+        .collect::<std::collections::BTreeSet<_>>();
+    let confirmed_commands = confirmed_validation_commands
+        .iter()
+        .map(|command| command.trim().to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    let confirmed_tools = confirmed_acceptance_tools
+        .iter()
+        .map(|name| name.trim())
+        .collect::<std::collections::BTreeSet<_>>();
+    for item in &outcome.acceptance_evidence {
+        let criterion = item.criterion.trim();
+        if !expected.contains(criterion) || !mapped.insert(criterion) {
+            return Err(format!(
+                "acceptance evidence criterion is unknown or duplicated: {criterion}"
+            ));
+        }
+        if item.evidence.is_empty()
+            || item.evidence.iter().any(|evidence| {
+                !outcome
+                    .verification_evidence
+                    .iter()
+                    .any(|recorded| recorded == evidence)
+            })
+        {
+            return Err(format!(
+                "acceptance criterion lacks recorded verification evidence: {criterion}"
+            ));
+        }
+        if item.referenced_paths.iter().any(|path| {
+            !outcome
+                .referenced_paths
+                .iter()
+                .any(|recorded| recorded == path)
+                || (requires_execution && !confirmed_paths.contains(path.trim()))
+        }) {
+            return Err(format!(
+                "acceptance criterion references an unconfirmed project path: {criterion}"
+            ));
+        }
+        if item.commands.iter().any(|command| {
+            !confirmed_commands.contains(command.trim().to_ascii_lowercase().as_str())
+        }) {
+            return Err(format!(
+                "acceptance criterion references a command without successful runtime evidence: {criterion}"
+            ));
+        }
+        // `tool_names` is an optional browser-evidence field. Models occasionally include
+        // ordinary runtime tools (for example CodeMaintainer or terminal) alongside paths and
+        // commands. Those tools are already validated by their own evidence indexes and must not
+        // invalidate an otherwise complete acceptance record. Keep the fail-closed check for
+        // actual BrowserTools names, which are the only tools this field is intended to attest.
+        if item
+            .tool_names
+            .iter()
+            .any(|name| name.contains("browser_tools") && !confirmed_tools.contains(name.trim()))
+        {
+            return Err(format!(
+                "acceptance criterion references a tool without successful runtime evidence: {criterion}"
+            ));
+        }
+        let has_confirmed_browser_tool = item
+            .tool_names
+            .iter()
+            .any(|name| name.contains("browser_tools") && confirmed_tools.contains(name.trim()));
+        if requires_execution
+            && item.referenced_paths.is_empty()
+            && item.commands.is_empty()
+            && !has_confirmed_browser_tool
+        {
+            return Err(format!(
+                "acceptance criterion has no concrete runtime path, command, or browser evidence: {criterion}"
+            ));
+        }
+    }
+    if mapped != expected {
+        let missing = expected.difference(&mapped).copied().collect::<Vec<_>>();
+        return Err(format!(
+            "acceptance evidence does not cover every hard criterion: {}",
+            missing.join("; ")
+        ));
+    }
+    Ok(())
 }
 
 fn persistent_review_checkpoint(
@@ -265,6 +571,7 @@ impl RunService {
         review_policy: TaskExecutionReviewPolicy,
         requires_execution: bool,
         effective_workspace_dir: &str,
+        expected_acceptance_criteria: Vec<String>,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
             self.config.default_workspace_dir.as_str(),
@@ -274,7 +581,8 @@ impl RunService {
             Arc::new(parking_lot::Mutex::new(PendingRunStreamEvent::default()));
         let abort_token = tokio_util::sync::CancellationToken::new();
         let progress = Arc::new(TaskExecutionProgressState::new(review_policy));
-        let execution_outcome = Arc::new(parking_lot::Mutex::new(None));
+        let lifecycle_state =
+            Arc::new(parking_lot::Mutex::new(TaskRunnerLifecycleState::default()));
         let supply_chain_evidence =
             Arc::new(parking_lot::Mutex::new(SupplyChainEvidenceState::default()));
         let callbacks = self.build_runtime_callbacks(
@@ -295,11 +603,12 @@ impl RunService {
             .with_tool_result_model_budget_limits(Some(tool_result_model_budget_limits))
             .with_lifecycle_hook(Some(Arc::new(TaskRunnerLifecycleHook::new(
                 max_iterations,
-                progress,
-                Arc::clone(&execution_outcome),
+                Arc::clone(&progress),
+                Arc::clone(&lifecycle_state),
                 requires_execution,
                 self.store.clone(),
                 run.id.clone(),
+                expected_acceptance_criteria,
             ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))
@@ -311,7 +620,8 @@ impl RunService {
         RuntimeExecutionState {
             runtime_options,
             pending_stream_event,
-            execution_outcome,
+            lifecycle_state,
+            progress,
             supply_chain_evidence,
         }
     }

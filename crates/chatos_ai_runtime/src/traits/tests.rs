@@ -51,6 +51,32 @@ fn model_runtime_config_builds_model_request() {
 }
 
 #[test]
+fn direct_vendor_runtime_configs_do_not_select_missing_responses_routes() {
+    for (provider, base_url, model) in [
+        ("kimi", "https://api.moonshot.ai/v1", "kimi-k2.6"),
+        ("glm", "https://open.bigmodel.cn/api/paas/v4", "glm-5.2"),
+    ] {
+        let request = ModelRuntimeConfig::openai_compatible(base_url, "secret", model, provider)
+            .with_responses_support(true)
+            .to_model_request(json!("hello"), Vec::new());
+        assert!(
+            !request.supports_responses,
+            "{provider} must use chat completions"
+        );
+    }
+
+    let deepseek = ModelRuntimeConfig::openai_compatible(
+        "https://api.deepseek.com",
+        "secret",
+        "deepseek-chat",
+        "deepseek",
+    )
+    .with_responses_support(true)
+    .to_model_request(json!("hello"), Vec::new());
+    assert!(deepseek.supports_responses);
+}
+
+#[test]
 fn save_record_input_builders_pack_runtime_metadata() {
     let input = SaveRecordInput::user_message("task_1", "hello")
         .with_conversation_turn_id("run_1")
@@ -75,6 +101,8 @@ fn runtime_record_options_builders_configure_persistence() {
     let options = RuntimeRecordOptions::default()
         .with_persist_assistant_records(true)
         .with_persist_tool_records(true)
+        .with_assistant_message_id("cloud-run:1:assistant")
+        .with_tool_message_id_prefix("cloud-run:1:tool")
         .with_assistant_message_mode("task_assistant")
         .with_assistant_message_source("task_runner")
         .with_assistant_metadata(json!({"kind": "assistant"}))
@@ -84,6 +112,14 @@ fn runtime_record_options_builders_configure_persistence() {
 
     assert!(options.persist_assistant_records);
     assert!(options.persist_tool_records);
+    assert_eq!(
+        options.assistant_message_id.as_deref(),
+        Some("cloud-run:1:assistant")
+    );
+    assert_eq!(
+        options.tool_message_id_prefix.as_deref(),
+        Some("cloud-run:1:tool")
+    );
     assert_eq!(
         options.assistant_message_mode.as_deref(),
         Some("task_assistant")

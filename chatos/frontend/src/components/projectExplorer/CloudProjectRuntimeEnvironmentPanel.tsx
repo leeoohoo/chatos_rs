@@ -10,7 +10,7 @@ import type {
   ProjectRuntimeEnvironmentProgressResponse,
   ProjectRuntimeEnvironmentResponse,
 } from '../../lib/api/client/types';
-import { isCloudProjectSource } from '../../lib/domain/projectSource';
+import { resolveProjectSourceKind } from '../../lib/domain/projectSource';
 import { cn } from '../../lib/utils';
 import {
   actionNoticeForRuntimeStatus,
@@ -30,7 +30,9 @@ import {
   statusTone,
 } from './cloudRuntimeEnvironmentView';
 import CloudRuntimeImagePlans from './CloudRuntimeImagePlans';
-import RuntimeAnalysisRequirementDialog from './RuntimeAnalysisRequirementDialog';
+import RuntimeAnalysisRequirementDialog, {
+  MAX_ANALYSIS_REQUIREMENT_LENGTH,
+} from './RuntimeAnalysisRequirementDialog';
 
 interface CloudProjectRuntimeEnvironmentPanelProps {
   projectId: string;
@@ -48,10 +50,11 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
 }) => {
   const { t } = useI18n();
   const client = useApiClient();
-  const cloudProjectSource = isCloudProjectSource({
+  const projectSourceKind = resolveProjectSourceKind({
     sourceType: projectSourceType,
     rootPath: projectRootPath || '',
   });
+  const cloudProjectSource = projectSourceKind === 'cloud';
   const ProjectSourceIcon = cloudProjectSource ? Cloud : HardDrive;
   const [response, setResponse] = useState<ProjectRuntimeEnvironmentResponse | null>(null);
   const [progress, setProgress] = useState<ProjectRuntimeEnvironmentProgressResponse | null>(null);
@@ -63,6 +66,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
   const [analysisRequirement, setAnalysisRequirement] = useState('');
   const [selectedDependencies, setSelectedDependencies] = useState<string[]>([]);
+  const [preferChinaMirrors, setPreferChinaMirrors] = useState(false);
   const [analysisRequirementError, setAnalysisRequirementError] = useState<string | null>(null);
 
   const loadEnvironment = useCallback(async () => {
@@ -85,6 +89,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const analyzeEnvironment = useCallback(async (
     requirement: string,
     dependencies: string[],
+    preferChinaMirrors: boolean,
   ) => {
     setAnalyzing(true);
     setError(null);
@@ -94,6 +99,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
       const nextResponse = await client.analyzeProjectRuntimeEnvironment(projectId, {
         analysis_requirement: requirement || undefined,
         selected_dependencies: dependencies,
+        prefer_china_mirrors: preferChinaMirrors,
       });
       const nextEnvironment = asRecord(environmentRecord(nextResponse));
       const nextStatus = readString(nextEnvironment, ['status'], 'pending');
@@ -109,6 +115,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
 
   const openAnalysisDialog = useCallback(() => {
     setAnalysisRequirementError(null);
+    setPreferChinaMirrors(false);
     setAnalysisDialogOpen(true);
   }, []);
 
@@ -119,14 +126,18 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
 
   const submitAnalysisRequirement = useCallback(() => {
     const requirement = analysisRequirement.trim();
-    if (!requirement && selectedDependencies.length === 0) {
+    if (requirement.length > MAX_ANALYSIS_REQUIREMENT_LENGTH) {
+      setAnalysisRequirementError(t('cloudRuntime.requirementTooLong'));
+      return;
+    }
+    if (!requirement && selectedDependencies.length === 0 && !preferChinaMirrors) {
       setAnalysisRequirementError(t('cloudRuntime.requirementRequired'));
       return;
     }
     setAnalysisRequirementError(null);
     setAnalysisDialogOpen(false);
-    void analyzeEnvironment(requirement, selectedDependencies);
-  }, [analysisRequirement, analyzeEnvironment, selectedDependencies, t]);
+    void analyzeEnvironment(requirement, selectedDependencies, preferChinaMirrors);
+  }, [analysisRequirement, analyzeEnvironment, preferChinaMirrors, selectedDependencies, t]);
 
   const generateRuntimeImage = useCallback(async (imageId: string) => {
     setBuildingImageId(imageId);
@@ -220,13 +231,27 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
   const progressActive = ['pending', 'queued', 'running', 'building'].includes(
     progressStatus.toLowerCase(),
   );
-  const showProgress = backendBusy || progressActive || Boolean(progressError);
+  const settledEnvironment = ['ready', 'pending_configuration', 'not_runnable', 'disabled'].includes(
+    status.toLowerCase(),
+  );
+  const showProgress = backendBusy
+    || (!settledEnvironment && progressActive)
+    || Boolean(progressError);
   const visibleNotice = status === 'pending_configuration'
     ? actionNotice || {
       tone: 'warning' as const,
       message: analysisSummary || t('cloudRuntime.configurationRequired'),
     }
     : actionNotice;
+
+  useEffect(() => {
+    if (!progress) {
+      return;
+    }
+    if (!backendBusy && settledEnvironment && progressStatus.toLowerCase() !== 'failed') {
+      setProgress(null);
+    }
+  }, [backendBusy, progress, progressStatus, settledEnvironment]);
 
   useEffect(() => {
     if (!backendBusy) {
@@ -312,11 +337,19 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
             <h2 className="truncate text-base font-semibold text-foreground">
               {projectName || t('cloudRuntime.title')}
             </h2>
+            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+              {t(cloudProjectSource ? 'cloudRuntime.source.cloud' : 'cloudRuntime.source.localConnector')}
+            </span>
             <span className={cn('border px-2 py-0.5 text-[11px]', statusTone(status))}>
               {t(`cloudRuntime.status.${status}`)}
             </span>
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">{t('cloudRuntime.title')}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t(cloudProjectSource ? 'cloudRuntime.cloudManagedSubtitle' : 'cloudRuntime.localConnectorManagedSubtitle')}
+          </div>
+          <div className="mt-1 max-w-3xl text-[11px] leading-5 text-muted-foreground">
+            {t(cloudProjectSource ? 'cloudRuntime.cloudGatewayHint' : 'cloudRuntime.localConnectorGatewayHint')}
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
@@ -374,6 +407,7 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
         <RuntimeAnalysisRequirementDialog
           requirement={analysisRequirement}
           selectedDependencies={selectedDependencies}
+          preferChinaMirrors={preferChinaMirrors}
           error={analysisRequirementError}
           onRequirementChange={(value) => {
             setAnalysisRequirement(value);
@@ -381,6 +415,10 @@ export const CloudProjectRuntimeEnvironmentPanel: React.FC<CloudProjectRuntimeEn
           }}
           onSelectedDependenciesChange={(dependencies) => {
             setSelectedDependencies(dependencies);
+            setAnalysisRequirementError(null);
+          }}
+          onPreferChinaMirrorsChange={(value) => {
+            setPreferChinaMirrors(value);
             setAnalysisRequirementError(null);
           }}
           onCancel={closeAnalysisDialog}

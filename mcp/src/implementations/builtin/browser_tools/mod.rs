@@ -36,7 +36,7 @@ const BROWSER_SESSION_SCREENSHOT_MAX_BYTES: usize = 5 * 1024 * 1024;
 pub(super) const DEFAULT_BROWSER_RESEARCH_LIMIT: usize = 5;
 pub(super) const MAX_BROWSER_RESEARCH_LIMIT: usize = 20;
 pub(super) const MAX_BROWSER_RESEARCH_EXTRACT_URLS: usize = 5;
-const BROWSER_TOOL_NAMES: [&str; 30] = [
+const BROWSER_TOOL_NAMES: [&str; 31] = [
     "browser_tabs",
     "browser_tab_new",
     "browser_tab_switch",
@@ -48,6 +48,7 @@ const BROWSER_TOOL_NAMES: [&str; 30] = [
     "browser_scroll",
     "browser_back",
     "browser_press",
+    "browser_set_viewport",
     "browser_upload",
     "browser_download",
     "browser_console",
@@ -118,6 +119,7 @@ type ToolHandler =
 pub struct BrowserToolCallContext {
     pub conversation_id: Option<String>,
     pub caller_model_runtime: Option<ToolCallerModelRuntime>,
+    pub tool_result_max_chars: Option<usize>,
 }
 
 impl BrowserToolCallContext {
@@ -128,6 +130,7 @@ impl BrowserToolCallContext {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
             caller_model_runtime: None,
+            tool_result_max_chars: None,
         }
     }
 
@@ -135,7 +138,13 @@ impl BrowserToolCallContext {
         Self {
             conversation_id: context.conversation_id.clone(),
             caller_model_runtime: context.caller_model_runtime.clone(),
+            tool_result_max_chars: context.tool_result_max_chars,
         }
+    }
+
+    pub fn with_tool_result_max_chars(mut self, max_chars: Option<usize>) -> Self {
+        self.tool_result_max_chars = max_chars.map(|value| value.max(1));
+        self
     }
 }
 
@@ -149,6 +158,16 @@ pub(super) struct BoundContext {
     pub(super) routes: Arc<Mutex<HashMap<String, Vec<actions::BrowserRouteRecord>>>>,
     pub(super) route_mutation_lock: Arc<tokio::sync::Mutex<()>>,
     pub(super) vision_adapter: Option<BrowserVisionAdapterRef>,
+}
+
+impl BoundContext {
+    fn for_tool_call(&self, context: &BrowserToolCallContext) -> Self {
+        let mut bound = self.clone();
+        if let Some(max_chars) = context.tool_result_max_chars {
+            bound.max_snapshot_chars = max_chars.max(1);
+        }
+        bound
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -219,7 +238,7 @@ impl BrowserToolsService {
             command_timeout_seconds: opts
                 .command_timeout_seconds
                 .max(DEFAULT_COMMAND_TIMEOUT_SECONDS),
-            max_snapshot_chars: opts.max_snapshot_chars.clamp(1, DEFAULT_MAX_SNAPSHOT_CHARS),
+            max_snapshot_chars: opts.max_snapshot_chars.max(1),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             routes: Arc::new(Mutex::new(HashMap::new())),
             route_mutation_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -425,6 +444,7 @@ impl BrowserToolsService {
         self.register_browser_scroll(bound.clone());
         self.register_browser_back(bound.clone());
         self.register_browser_press(bound.clone());
+        self.register_browser_set_viewport(bound.clone());
         self.register_browser_upload(bound.clone());
         self.register_browser_download(bound.clone());
         self.register_browser_get_images(bound);
@@ -526,5 +546,23 @@ mod managed_session_tests {
         assert!(service
             .attach_managed_session("ui", "h_valid_session")
             .is_ok());
+    }
+
+    #[test]
+    fn explicit_tool_result_budget_overrides_the_host_snapshot_default() {
+        let service = BrowserToolsService::new(BrowserToolsOptions {
+            workspace_dir: std::env::temp_dir(),
+            max_snapshot_chars: 8_000,
+            schema_catalog_only: true,
+            ..BrowserToolsOptions::default()
+        })
+        .expect("browser service");
+        let context = BrowserToolCallContext::from_conversation_id(None)
+            .with_tool_result_max_chars(Some(40_000));
+
+        assert_eq!(
+            service.bound.for_tool_call(&context).max_snapshot_chars,
+            40_000
+        );
     }
 }

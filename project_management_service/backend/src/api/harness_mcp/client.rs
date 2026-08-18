@@ -214,12 +214,15 @@ pub(super) async fn fetch_harness_content(
     ctx: &HarnessMcpContext,
     path: &str,
 ) -> Result<HarnessContentResponse, HarnessRequestError> {
-    let endpoint = harness_repo_url(
-        ctx.access.base_url.as_str(),
-        ctx.repo_path.as_str(),
-        "content",
-        Some(path),
-    );
+    let endpoint = with_git_ref(
+        harness_repo_url(
+            ctx.access.base_url.as_str(),
+            ctx.repo_path.as_str(),
+            "content",
+            Some(path),
+        ),
+        ctx.branch_ref.as_str(),
+    )?;
     harness_request_json::<HarnessContentResponse, ()>(
         &ctx.client,
         Method::GET,
@@ -234,9 +237,10 @@ pub(super) async fn list_harness_paths(
     ctx: &HarnessMcpContext,
 ) -> Result<HarnessListPathsResponse, String> {
     let endpoint = format!(
-        "{}/api/v1/repos/{}/+/paths?include_directories=true",
+        "{}/api/v1/repos/{}/+/paths?include_directories=true&git_ref={}",
         ctx.access.base_url.trim().trim_end_matches('/'),
-        encode_path_segments(ctx.repo_path.as_str())
+        encode_path_segments(ctx.repo_path.as_str()),
+        urlencoding::encode(ctx.branch_ref.as_str()),
     );
     harness_request_json::<HarnessListPathsResponse, ()>(
         &ctx.client,
@@ -261,7 +265,7 @@ pub(super) async fn commit_file_actions(
             "Applied by Chatos Project Service for project {}",
             ctx.project_id
         ),
-        branch: None,
+        branch: Some(ctx.branch_ref.clone()),
         actions,
     };
     let endpoint = format!(
@@ -346,6 +350,15 @@ fn harness_repo_url(
     url
 }
 
+fn with_git_ref(endpoint: String, branch_ref: &str) -> Result<String, HarnessRequestError> {
+    let mut url = reqwest::Url::parse(endpoint.as_str()).map_err(|error| {
+        HarnessRequestError::from_message(format!("invalid Harness endpoint: {error}"))
+    })?;
+    url.query_pairs_mut()
+        .append_pair("git_ref", branch_ref.trim());
+    Ok(url.to_string())
+}
+
 fn encode_path_segments(path: &str) -> String {
     path.trim()
         .trim_matches('/')
@@ -380,11 +393,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn harness_commit_request_omits_branch_to_use_repo_default() {
+    fn harness_commit_request_pins_the_frozen_branch() {
         let body = HarnessCommitRequest {
             title: "test".to_string(),
             message: "message".to_string(),
-            branch: None,
+            branch: Some("chatos/runs/run-1".to_string()),
             actions: vec![HarnessCommitAction {
                 action: "CREATE".to_string(),
                 path: "README.md".to_string(),
@@ -396,6 +409,9 @@ mod tests {
 
         let value = serde_json::to_value(body).expect("serialize body");
 
-        assert!(value.get("branch").is_none());
+        assert_eq!(
+            value.get("branch").and_then(Value::as_str),
+            Some("chatos/runs/run-1")
+        );
     }
 }

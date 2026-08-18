@@ -9,12 +9,11 @@ use chatos_mcp::code_maintainer::{classify_file_modification_error, FileModifica
 use futures_util::TryStreamExt;
 use mongodb::bson::{self, doc, DateTime};
 use mongodb::error::{ErrorKind as MongoErrorKind, WriteFailure};
-use mongodb::options::{FindOneAndUpdateOptions, FindOptions, IndexOptions, ReturnDocument};
+use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{Notify, RwLock};
-use uuid::Uuid;
 
 use super::{
     RuntimeInvocationQuota, RuntimeInvocationQuotaLimits, RuntimeInvocationQuotaReserveError,
@@ -68,8 +67,6 @@ pub struct RuntimeInvocationRecord {
     pub mutation_may_have_started: bool,
     pub cancel_supported: bool,
     pub status: RuntimeInvocationStatus,
-    #[serde(default)]
-    pub async_execution: bool,
     pub created_at_unix_ms: i64,
     #[serde(default)]
     pub started_at_unix_ms: Option<i64>,
@@ -83,12 +80,6 @@ pub struct RuntimeInvocationRecord {
     pub terminal_error_message: Option<String>,
     #[serde(default)]
     pub file_modification_outcome: Option<FileModificationOutcome>,
-    #[serde(default)]
-    pub result_reply_to: Option<String>,
-    #[serde(default)]
-    pub result_event_id: Option<String>,
-    #[serde(default)]
-    pub result_event_pending: bool,
     pub expires_at: DateTime,
     pub expires_at_unix: i64,
 }
@@ -98,7 +89,6 @@ pub struct RuntimeInvocationStore {
     backend: Arc<RuntimeInvocationStoreBackend>,
     quota: RuntimeInvocationQuota,
     diagnostics: Arc<RuntimeInvocationDiagnostics>,
-    result_event_notify: Arc<Notify>,
     cancellation_waiters: Arc<StdMutex<HashMap<String, Weak<Notify>>>>,
 }
 
@@ -141,12 +131,6 @@ impl RuntimeInvocationRegisterError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PendingRuntimeInvocationResultEvent {
-    pub reply_to: String,
-    pub event: chatos_mcp_management_sdk::RuntimeInvocationResultEvent,
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RuntimeInvocationStoreStats {
     pub backend: &'static str,
@@ -157,7 +141,6 @@ pub struct RuntimeInvocationStoreStats {
     pub waiting_for_user: usize,
     pub cancel_requested: usize,
     pub terminal: usize,
-    pub pending_result_events: usize,
     pub registration: RuntimeInvocationRegistrationStats,
     pub session_closed_reclaimed_total: u64,
     pub quota_release_failures_total: u64,
@@ -240,7 +223,6 @@ impl RuntimeInvocationStore {
             ))),
             quota: RuntimeInvocationQuota::memory(limits),
             diagnostics: Arc::new(RuntimeInvocationDiagnostics::default()),
-            result_event_notify: Arc::new(Notify::new()),
             cancellation_waiters: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
@@ -295,14 +277,6 @@ impl RuntimeInvocationStore {
                 doc! { "expires_at": 1, "status": 1 },
             ),
             (
-                "runtime_invocation_result_outbox",
-                doc! {
-                    "result_event_pending": 1,
-                    "expires_at": 1,
-                    "completed_at_unix_ms": 1,
-                },
-            ),
-            (
                 "runtime_invocation_tenant_status",
                 doc! { "tenant_id": 1, "status": 1, "expires_at": 1 },
             ),
@@ -340,7 +314,6 @@ impl RuntimeInvocationStore {
             backend: Arc::new(RuntimeInvocationStoreBackend::Mongo(collection)),
             quota,
             diagnostics: Arc::new(RuntimeInvocationDiagnostics::default()),
-            result_event_notify: Arc::new(Notify::new()),
             cancellation_waiters: Arc::new(StdMutex::new(HashMap::new())),
         })
     }
@@ -584,52 +557,6 @@ impl RuntimeInvocationStore {
                 )
                 .await
                 .map_err(|error| format!("load Runtime Invocation failed: {error}")),
-        }
-    }
-
-    pub async fn dead_letter_archive_candidate(
-        &self,
-        invocation_id: &str,
-    ) -> Result<Option<RuntimeInvocationRecord>, String> {
-        let now = chrono::Utc::now().timestamp();
-        let eligible = |record: &RuntimeInvocationRecord| {
-            record.invocation_id == invocation_id
-                && record.expires_at_unix > now
-                && record.async_execution
-                && record.status == RuntimeInvocationStatus::Failed
-                && !record.result_event_pending
-                && record.completed_at_unix_ms.is_some()
-                && record
-                    .terminal_error_message
-                    .as_deref()
-                    .is_some_and(|message| message.starts_with("async tool dispatch failed after "))
-        };
-        match self.backend.as_ref() {
-            RuntimeInvocationStoreBackend::Memory(invocations) => {
-                let mut invocations = invocations.write().await;
-                invocations.retain(|_, record| record.expires_at_unix > now);
-                Ok(invocations
-                    .get(invocation_id)
-                    .filter(|record| eligible(record))
-                    .cloned())
-            }
-            RuntimeInvocationStoreBackend::Mongo(collection) => collection
-                .find_one(
-                    doc! {
-                        "_id": invocation_id,
-                        "expires_at_unix": { "$gt": now },
-                        "async_execution": true,
-                        "status": RuntimeInvocationStatus::Failed.as_str(),
-                        "result_event_pending": false,
-                        "completed_at_unix_ms": { "$type": "number" },
-                        "terminal_error_message": {
-                            "$regex": "^async tool dispatch failed after "
-                        },
-                    },
-                    None,
-                )
-                .await
-                .map_err(|error| format!("load dead-lettered Runtime Invocation failed: {error}")),
         }
     }
 }

@@ -3,6 +3,7 @@
 
 import React from 'react';
 import {
+  Activity,
   Check,
   CheckCircle2,
   GitBranch,
@@ -19,6 +20,8 @@ import {
 
 import { cn } from '../../../lib/utils';
 import { MessageTaskGraphPanel } from '../../messageTasks/MessageTaskGraphPanel';
+import { RunProcessTimeline } from '../../messageTasks/RunProcessTimeline';
+import type { TimelineItem } from '../../userMessages/ConversationProcessTimelineModel';
 import type {
   ProcessEntry,
   RequirementExecutionProcessPhase,
@@ -33,9 +36,12 @@ export const RequirementExecutionProcessSidebar: React.FC<{
   cancellationSettling: boolean;
   feedback: string;
   onFeedbackChange: (value: string) => void;
+  onOpenPlannerProcess: () => void;
   onSubmitFeedback: () => void;
   phase: RequirementExecutionProcessPhase;
   phaseText: { title: string; detail: string };
+  plannerActive: boolean;
+  plannerProcessMessageCount: number;
   processEntries: ProcessEntry[];
   revising: boolean;
   taskCount: number;
@@ -45,9 +51,12 @@ export const RequirementExecutionProcessSidebar: React.FC<{
   cancellationSettling,
   feedback,
   onFeedbackChange,
+  onOpenPlannerProcess,
   onSubmitFeedback,
   phase,
   phaseText,
+  plannerActive,
+  plannerProcessMessageCount,
   processEntries,
   revising,
   taskCount,
@@ -83,8 +92,19 @@ export const RequirementExecutionProcessSidebar: React.FC<{
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-xs font-semibold text-foreground">规划过程</div>
-        <span className="text-[11px] text-muted-foreground">{taskCount} 个任务</span>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={onOpenPlannerProcess}
+        >
+          <Activity className="h-3 w-3" />
+          详细过程 {plannerProcessMessageCount}
+          {plannerActive ? (
+            <span className="h-1.5 w-1.5 rounded-full bg-sky-500 motion-safe:animate-pulse" />
+          ) : null}
+        </button>
       </div>
+      <div className="mb-3 text-[11px] text-muted-foreground">已生成 {taskCount} 个任务</div>
       <ol className="space-y-3">
         {processEntries.map((entry, index) => (
           <li key={entry.id} className="relative flex gap-3">
@@ -229,6 +249,77 @@ export const RequirementExecutionGraphSurface: React.FC<{
   </>
 );
 
+export const RequirementExecutionPlannerProcessModal: React.FC<{
+  active: boolean;
+  error?: string | null;
+  items: TimelineItem[];
+  loading: boolean;
+  onClose: () => void;
+  processMessageCount: number;
+}> = ({ active, error, items, loading, onClose, processMessageCount }) => (
+  <div className="fixed inset-0 z-[70]">
+    <button
+      type="button"
+      aria-label="关闭规划运行过程"
+      className="absolute inset-0 bg-black/45"
+      onClick={onClose}
+    />
+    <section className="absolute left-1/2 top-1/2 flex max-h-[86vh] w-[calc(100vw-32px)] max-w-5xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
+      <header className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Activity className="h-4 w-4" />
+            规划运行过程
+            {active ? (
+              <span className="inline-flex items-center gap-1 text-xs font-normal text-sky-600">
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                实时更新
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            已显示 {processMessageCount} 条规划过程；实时输出会自动更新，结束后由 Memory Engine 固化。
+          </p>
+        </div>
+        <button
+          type="button"
+          aria-label="关闭规划运行过程"
+          className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {error ? (
+          <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+        {items.length > 0 ? (
+          <RunProcessTimeline items={items} />
+        ) : (
+          <div className="flex min-h-[320px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/10 px-6 py-10 text-center">
+            <div className="max-w-md">
+              {active || loading ? (
+                <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-sky-500" />
+              ) : (
+                <Activity className="mx-auto h-7 w-7 text-muted-foreground" />
+              )}
+              <div className="mt-3 text-sm font-medium text-foreground">
+                {active || loading ? '规划 Agent 正在运行，等待第一条过程记录' : '暂无规划运行记录'}
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                正在等待当前规划 turn 的实时事件；模型请求、思考、输出和工具状态都会显示在这里。
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  </div>
+);
+
 export const RequirementExecutionProcessActions: React.FC<{
   actuallyStarted: boolean;
   canRegenerate: boolean;
@@ -251,6 +342,7 @@ export const RequirementExecutionProcessActions: React.FC<{
   onTogglePause: () => void;
   pausing: boolean;
   phase: RequirementExecutionProcessPhase;
+  isLocalExecution: boolean;
   queuedTaskCount: number;
   rerunSettling: boolean;
   rerunning: boolean;
@@ -280,6 +372,7 @@ export const RequirementExecutionProcessActions: React.FC<{
   onTogglePause,
   pausing,
   phase,
+  isLocalExecution,
   queuedTaskCount,
   rerunSettling,
   rerunning,
@@ -298,7 +391,11 @@ export const RequirementExecutionProcessActions: React.FC<{
             ? `正在取消本次执行，等待 ${queuedTaskCount} 个排队任务回写取消状态。`
             : '正在取消本次执行，等待任务回写取消状态。')
         : graphReady && !runtimeEnvironmentReady
-        ? '流程图已就绪，执行环境正在初始化，完成后自动开放执行。'
+        ? (
+          isLocalExecution
+            ? '流程图已就绪，正在通过 Local Connector 识别本地技术栈与运行条件。'
+            : '流程图已就绪，执行环境正在初始化，完成后自动开放执行。'
+        )
         : graphReady
         ? '流程图和执行环境均已就绪，当前还没有任务开始运行。'
         : phase === 'paused'
@@ -310,7 +407,11 @@ export const RequirementExecutionProcessActions: React.FC<{
         : phase === 'failed'
           ? '当前批次存在失败或阻塞任务，可查看详情、重试或重新规划。'
         : actuallyStarted
-          ? '执行确认已收到，任务正在按依赖顺序启动。'
+          ? (
+            isLocalExecution
+              ? '执行确认已收到，云端正在按依赖顺序通过 Local Connector 调度本机任务。'
+              : '执行确认已收到，任务正在按依赖顺序启动。'
+          )
           : '完整任务依赖图生成前，执行按钮保持禁用。'}
     </div>
     <div className="flex flex-wrap items-center gap-2">
@@ -415,7 +516,9 @@ export const RequirementExecutionProcessActions: React.FC<{
             : <Play className="h-3.5 w-3.5" />}
           {confirming
             ? '启动中'
-            : graphReady && !runtimeEnvironmentReady ? '初始化环境中' : '执行'}
+            : graphReady && !runtimeEnvironmentReady
+              ? (isLocalExecution ? '分析本地运行条件' : '初始化环境中')
+              : '执行'}
         </button>
       ) : null}
       <button

@@ -66,37 +66,6 @@ impl AppStore {
         }
     }
 
-    pub async fn list_remote_servers(&self) -> Result<Vec<RemoteServerRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.list_remote_servers()),
-            Self::Mongo(store) => store.list_remote_servers().await,
-        }
-    }
-
-    pub async fn get_remote_server(&self, id: &str) -> Result<Option<RemoteServerRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.get_remote_server(id)),
-            Self::Mongo(store) => store.get_remote_server(id).await,
-        }
-    }
-
-    pub async fn save_remote_server(
-        &self,
-        server: RemoteServerRecord,
-    ) -> Result<RemoteServerRecord, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.save_remote_server(server)),
-            Self::Mongo(store) => store.save_remote_server(server).await,
-        }
-    }
-
-    pub async fn delete_remote_server(&self, id: &str) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.delete_remote_server(id)),
-            Self::Mongo(store) => store.delete_remote_server(id).await,
-        }
-    }
-
     pub async fn list_model_config_usage(&self) -> Result<Vec<ModelConfigUsageRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_model_config_usage()),

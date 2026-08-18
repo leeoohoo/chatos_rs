@@ -50,7 +50,7 @@ fn sandbox_settings_treats_never_as_fail_closed_but_auto_review_as_elevated() {
 }
 
 #[test]
-fn restricted_network_requires_native_backend_and_risk_acknowledgement() {
+fn restricted_network_requires_risk_acknowledgement() {
     let state = crate::sandbox::types::LocalSandboxState {
         default_backend: SandboxBackendKind::LocalProcess,
         ..Default::default()
@@ -69,14 +69,6 @@ fn restricted_network_requires_native_backend_and_risk_acknowledgement() {
     req.risk_acknowledged = true;
     validate_sandbox_settings_update(&req, &state)
         .expect("native proxy network with acknowledgement");
-
-    req.default_backend = Some(SandboxBackendKind::Docker);
-    let err = validate_sandbox_settings_update(&req, &state)
-        .expect_err("Docker cannot enforce restricted egress");
-    assert_eq!(
-        err.message(),
-        "restricted domain networking requires the native local-process sandbox backend"
-    );
 }
 
 #[test]
@@ -233,7 +225,7 @@ extends = "shared-base"
 }
 
 #[test]
-fn custom_permission_profile_requires_native_backend_and_can_be_selected() {
+fn custom_permission_profile_can_be_selected() {
     let state = crate::sandbox::types::LocalSandboxState {
         default_backend: SandboxBackendKind::LocalProcess,
         ..Default::default()
@@ -266,11 +258,6 @@ fn custom_permission_profile_requires_native_backend_and_can_be_selected() {
     )]));
     req.default_permission_profile_name = Some("project-edit".to_string());
     validate_sandbox_settings_update(&req, &state).expect("valid native custom profile");
-
-    req.default_backend = Some(SandboxBackendKind::Docker);
-    let err = validate_sandbox_settings_update(&req, &state)
-        .expect_err("Docker cannot execute custom filesystem profiles");
-    assert!(err.message().contains("native local-process"));
 }
 
 #[test]
@@ -398,21 +385,4 @@ fn sandbox_policy_revision_changes_only_for_policy_fields() {
     let mut reviewer = update_request();
     reviewer.default_approval_reviewer = Some(ApprovalReviewer::AutoReview);
     assert!(sandbox_policy_fields_changed(&reviewer, &state));
-}
-
-#[test]
-fn docker_backend_capability_reports_restricted_network_support() {
-    let capability = docker_backend_capability_from_status(&json!({
-        "installed": true,
-        "running": true,
-        "version": "Docker 27"
-    }));
-
-    assert_eq!(capability.backend, SandboxBackendKind::Docker);
-    assert_eq!(capability.status, SandboxBackendReadinessStatus::Ready);
-    assert!(capability.selectable);
-    assert!(capability.filesystem_isolation);
-    assert!(capability.network_isolation);
-    assert!(capability.process_tree_control);
-    assert!(capability.message.contains("bridge networking"));
 }

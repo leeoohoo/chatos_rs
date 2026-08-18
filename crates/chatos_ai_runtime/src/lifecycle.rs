@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::AiResponse;
+use crate::{AiResponse, JsonSchemaOutputFormat};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeIterationContext {
@@ -21,6 +21,7 @@ pub struct RuntimeBeforeModelRequest {
     pub stream_output: bool,
     pub tools_enabled: bool,
     pub disabled_tool_names: Vec<String>,
+    pub output_format: Option<JsonSchemaOutputFormat>,
 }
 
 impl RuntimeBeforeModelRequest {
@@ -30,6 +31,7 @@ impl RuntimeBeforeModelRequest {
             stream_output: true,
             tools_enabled: true,
             disabled_tool_names: Vec::new(),
+            output_format: None,
         }
     }
 
@@ -55,6 +57,11 @@ impl RuntimeBeforeModelRequest {
     {
         self.disabled_tool_names
             .extend(names.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_output_format(mut self, output_format: JsonSchemaOutputFormat) -> Self {
+        self.output_format = Some(output_format);
         self
     }
 }

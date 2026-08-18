@@ -38,6 +38,7 @@ impl TaskRunnerProvider {
         let mut tool_snapshots = HashMap::new();
         let binding = TaskRunnerRequestBinding {
             owner_user_id,
+            owner_role: None,
             agent_key: agent_key.as_str(),
             session_id: runtime_session_id,
             expires_at_unix,

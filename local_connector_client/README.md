@@ -127,8 +127,9 @@ local_connector_client/dist/electron-linux/
 ```
 
 Linux currently ships the explicit `linux-browser` runtime profile. It contains the desktop app,
-Local Connector Core, sandbox MCP server, bundled `rg`, Plugin/Skill catalogs, ChatOS frontend,
-SQLite migrations, the fixed-identity Chrome extension, and the Linux native messaging host. The
+Local Connector Core, sandbox MCP server, bundled `rg`, Plugin/Skill catalogs, SQLite migrations,
+the fixed-identity Chrome extension, and the Linux native messaging host. The desktop shell loads
+the hosted ChatOS web application at runtime instead of packaging a local ChatOS frontend bundle. The
 client registers user-scoped manifests for both Google Chrome and Chromium when the user explicitly
 enables Chrome integration. When Ubuntu's Snap Chromium is installed, the client also writes the
 Snap profile manifest, copies the Native Host into the Snap-accessible user directory, and publishes
@@ -155,7 +156,19 @@ powershell -ExecutionPolicy Bypass `
 
 The publishing script computes SHA-256, uploads the ZIP through a short-lived presigned URL, and publishes the website download manifest only after the artifact upload succeeds.
 
-The Electron desktop app starts `local_connector_client_core` as a bundled local process, loads the React UI in a desktop window, and points the UI at `http://127.0.0.1:39232` for local APIs.
+The Electron desktop app starts `local_connector_client_core` as a bundled local process and keeps
+two UI surfaces separate:
+
+1. A minimal local React shell for pairing status, settings, approvals, permissions, and other
+   device-owned controls.
+2. A dedicated `WebContentsView` that loads the hosted ChatOS web application at runtime instead of
+   packaging a local ChatOS frontend bundle.
+
+The hosted ChatOS page is treated as a remote application inside a managed desktop web container,
+not as the owner of desktop state. Its Electron bridge is intentionally narrow: desktop ticket
+authentication, opening the local settings surface, and restricted Local Connector runtime calls
+for browser sessions and workspace selection. Local approvals, permission policy, and device
+administration remain in the local shell and core.
 
 The UI supports:
 
@@ -163,13 +176,12 @@ The UI supports:
 2. Device registration with `local_connector_service`.
 3. Local directory browsing and multi-directory grants.
 4. Terminal relay testing through `local_connector_service`.
-5. Local sandbox toggle with Docker availability/running checks.
-6. Sandbox image creation and sandbox lease handling in the Local Connector core through local Docker.
-7. A dedicated Skills page where Admin-provided internal Skills are visible to every user but remain disabled until the user enables them.
-8. A persistent developer-mode switch. It uses local ChatOS (`127.0.0.1:8088`), Local Connector Service (`127.0.0.1:39230`), and User Service (`127.0.0.1:39190`) with a separate Electron cookie partition; the local development stack continues to use the configured online MinIO endpoint by default.
-9. Settings render inside the main Electron window instead of a second macOS Space-aware window. Main/settings views are restored and repainted when the app becomes active, and a failed ChatOS renderer is recreated automatically.
-10. The system-permissions panel derives workspace, process, browser, network, Accessibility, Screen Recording, and Office Automation mappings from the signed Skill catalog. A Skill cannot be enabled while one of its mapped capabilities is not ready; on macOS, Office Automation remains enableable because its consent prompt is issued on first use.
-11. The signed macOS app declares Apple Events automation and user-selected Desktop/Documents/Downloads/network-volume/removable-volume usage descriptions. Accessibility is requested through Electron, while Screen Recording and other privacy categories link to the matching macOS settings pages.
+5. Native local-process sandbox readiness, policy controls, and lease handling in the Local Connector core.
+6. A dedicated Skills page where Admin-provided internal Skills are visible to every user but remain disabled until the user enables them.
+7. A persistent developer-mode switch. It uses local ChatOS (`127.0.0.1:8088`), Local Connector Service (`127.0.0.1:39230`), and User Service (`127.0.0.1:39190`) with a separate Electron cookie partition; the local development stack continues to use the configured online MinIO endpoint by default.
+8. Settings render inside the main Electron window instead of a second macOS Space-aware window. The hosted ChatOS surface continues to live in its own `WebContentsView`; main/settings views are restored and repainted when the app becomes active, and a failed ChatOS renderer is recreated automatically.
+9. The system-permissions panel derives workspace, process, browser, network, Accessibility, Screen Recording, and Office Automation mappings from the signed Skill catalog. A Skill cannot be enabled while one of its mapped capabilities is not ready; on macOS, Office Automation remains enableable because its consent prompt is issued on first use.
+10. The signed macOS app declares Apple Events automation and user-selected Desktop/Documents/Downloads/network-volume/removable-volume usage descriptions. Accessibility is requested through Electron, while Screen Recording and other privacy categories link to the matching macOS settings pages.
 
 Legacy env-driven mode is still supported:
 
@@ -182,27 +194,12 @@ LOCAL_CONNECTOR_PUBLIC_KEY
 LOCAL_CONNECTOR_WORKSPACE_ALIAS
 LOCAL_CONNECTOR_STATE_PATH
 LOCAL_CONNECTOR_CORE_API_PORT
-LOCAL_CONNECTOR_SANDBOX_DOCKER_IMAGE
-LOCAL_CONNECTOR_SANDBOX_IMAGE_BUILD_CONTEXT
-LOCAL_CONNECTOR_SANDBOX_IMAGE_DOCKERFILE
-LOCAL_CONNECTOR_DOCKER_MAINTENANCE_ENABLED
-LOCAL_CONNECTOR_DOCKER_BUILD_CACHE_MAX_USED_SPACE
-LOCAL_CONNECTOR_DOCKER_BUILD_CACHE_RESERVED_SPACE
-LOCAL_CONNECTOR_DOCKER_BUILD_CACHE_TIMEOUT_SECS
 ```
 
 Signed remote-control trust is managed by configuration center and delivered to the desktop client
 through `GET /api/local-connectors/config/runtime`. The client rejects MCP/terminal/plugin/sandbox
 commands unless they carry a trusted Ed25519 platform signature from that managed control-plane
 bundle.
-
-Local Docker maintenance is program-managed and enabled by default. Managed Compose services are
-tracked even when they rely on Compose's implicit `<project>-<service>:latest` image name. After a
-task terminal is released, the Connector removes unused dangling Compose images only for Compose
-projects whose working/config paths belong to that authorized workspace. BuildKit garbage
-collection is serialized and keeps cache usage at or below `32gb` by default while reserving
-`8gb`; the limits can be overridden with the variables above. No Prompt instruction or Agent-side
-cleanup command is required.
 
 Command Approval Agent 完整保留在客户端本地：模型循环只使用本地只读项目工具和本地 `approval_decision`，风险判断、人工确认、白名单、Session Approval 与审批历史也都在设备侧完成。它不会创建云端 MCP Runtime Session，也不会调用云端 MCP 工具。Agent Prompt、能力策略和 Memory 可继续通过普通受认证 REST 获取，但这些控制面请求不会成为工具调用链。
 
@@ -223,4 +220,4 @@ Terminal exec remains available for MCP tools and relay diagnostics:
 4. Optional `cwd` must still resolve inside the authorized workspace.
 5. The response includes `exit_code`, `success`, `stdout`, `stderr`, timeout state, and truncation flags.
 
-Sandbox support is implemented locally by the Connector core. Task Runner calls the Local Connector relay facade, the facade sends `sandbox_request` messages over the outbound Connector WebSocket, and the client creates Docker-backed leases on the user's machine. The core rewrites `workspace_root` to the authorized local workspace's `.chatos/task-runner` directory, copies the authorized workspace into the local sandbox baseline/run workspace, starts a local Docker container that runs the sandbox MCP agent, proxies MCP calls to that local container, and exports the output manifest on release. The relay facade does not create cloud sandboxes, does not call cloud Sandbox Manager, and never calls a user-machine localhost address.
+Sandbox support is implemented locally by the Connector core. Task Runner calls the Local Connector relay facade, the facade sends `sandbox_request` messages over the outbound Connector WebSocket, and the client creates native local-process leases on the user's machine. The core rewrites `workspace_root` to the authorized local workspace's `.chatos/task-runner` directory, copies the authorized workspace into the local sandbox baseline/run workspace, starts the native sandbox MCP agent under the operating-system sandbox, proxies MCP calls to that process, and exports the output manifest on release. The relay facade does not create cloud sandboxes, does not call cloud Sandbox Manager, and never calls a user-machine localhost address.

@@ -70,28 +70,43 @@ fn register_open_edit_session_tool(
     service.register_tool(
         "open_edit_session",
         &format!(
-            "Open a write session for the current project workspace. Use one session, stage one or more edit batches against its in-memory snapshot, then finish with commit_edit_session or abort_edit_session.\n{}.\n{}",
+            "Open a write session for the current project workspace. Use one session, stage one or more edit batches against its in-memory snapshot, then finish with commit_edit_session or abort_edit_session. Set fresh=true after a stale-context or expected-match recovery when the previous session must be discarded and rebased from the latest workspace state.\n{}.\n{}",
             writes_note, workspace_note
         ),
         json!({
             "type": "object",
             "properties": {
-                "purpose": { "type": "string" }
+                "purpose": { "type": "string" },
+                "fresh": {
+                    "type": "boolean",
+                    "description": "Discard the reusable session for this run/conversation and create a new baseline from the current workspace."
+                }
             },
             "additionalProperties": false
         }),
-        Arc::new(move |_args, ctx| {
+        Arc::new(move |args, ctx| {
             let invocation = (|| {
+                let fresh = args
+                    .get("fresh")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let handle = session_store
                     .lock()
                     .map_err(|_| "edit session store unavailable".to_string())?
-                    .open_session(ctx.run_id, ctx.conversation_id);
+                    .open_session(ctx.run_id, ctx.conversation_id, fresh);
+                let message = if handle.reused {
+                    "An active edit session already exists for this run. Reuse the returned session_id; do not open another session. Stage any remaining batches, then call commit_edit_session or abort_edit_session."
+                } else if fresh {
+                    "Fresh edit session opened from the current workspace baseline. Rebuild and stage the batch against this session before committing."
+                } else {
+                    "Edit session opened. Stage batches against this session before committing."
+                };
                 Ok(text_result(json!({
                     "outcome": FileModificationOutcome::AlreadyApplied,
                     "changed": false,
                     "changed_target_count": 0,
                     "result": handle.to_json(),
-                    "message": "Edit session opened. Stage batches against this session before committing."
+                    "message": message
                 })))
             })();
             record_file_modification_outcome("open_edit_session", ctx, &invocation);
@@ -132,10 +147,24 @@ fn register_stage_edit_batch_tool(
                             "content": { "type": "string" },
                             "old_text": { "type": "string" },
                             "new_text": { "type": "string" },
-                            "start_line": { "type": "integer", "minimum": 1 },
-                            "end_line": { "type": "integer", "minimum": 1 },
-                            "before_context": { "type": "string" },
-                            "after_context": { "type": "string" },
+                            "start_line": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "Optional inclusive lower bound for the first line where old_text may start."
+                            },
+                            "end_line": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "Optional inclusive upper bound for the first line where old_text may start; multi-line old_text may extend beyond it."
+                            },
+                            "before_context": {
+                                "type": "string",
+                                "description": "Optional exact anchor expected immediately before old_text or within the preceding 12 lines."
+                            },
+                            "after_context": {
+                                "type": "string",
+                                "description": "Optional exact anchor expected immediately after old_text or within the following 12 lines."
+                            },
                             "expected_matches": { "type": "integer", "minimum": 1 },
                             "expected_sha256": {
                                 "type": ["string", "null"],
@@ -380,6 +409,31 @@ fn stage_write(
 ) -> Result<StageOutcome, String> {
     let content = required_string(operation, "content")?.to_string();
     enforce_write_size(&content, max_write_bytes)?;
+    if let Some(state) = session.files.get_mut(path) {
+        if state.working.kind == EntryKind::File
+            && state.working.content.as_deref() == Some(content.as_str())
+        {
+            state.staged_operations += 1;
+            return Ok(StageOutcome {
+                path: state.path.clone(),
+                changed: false,
+                match_info: None,
+            });
+        }
+    } else {
+        let snapshot = load_entry_snapshot(fs_ops, path)?;
+        if snapshot.kind == EntryKind::File && snapshot.content.as_deref() == Some(content.as_str())
+        {
+            let mut state = SessionFileState::new(path, snapshot);
+            state.staged_operations += 1;
+            session.files.insert(path.to_string(), state);
+            return Ok(StageOutcome {
+                path: path.to_string(),
+                changed: false,
+                match_info: None,
+            });
+        }
+    }
     let expected = expected_revision(operation, "expected_sha256")?;
     let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
     if state.working.kind == EntryKind::Directory {
@@ -410,30 +464,61 @@ fn stage_replace_text(
         .get("new_text")
         .and_then(Value::as_str)
         .ok_or("new_text is required".to_string())?;
-    let expected = expected_revision(operation, "expected_sha256")?;
-    let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
-    if state.working.kind != EntryKind::File {
-        return Err("Target is not a file.".to_string());
-    }
     let start_line = optional_usize(operation, "start_line");
     let end_line = optional_usize(operation, "end_line");
     let before_context = operation.get("before_context").and_then(Value::as_str);
     let after_context = operation.get("after_context").and_then(Value::as_str);
     let expected_matches = optional_usize(operation, "expected_matches");
+    let request = EditRequest {
+        old_text,
+        new_text,
+        start_line,
+        end_line,
+        before_context,
+        after_context,
+        expected_matches,
+    };
+
+    if let Some(state) = session.files.get_mut(path) {
+        if state.working.kind == EntryKind::File {
+            let current = state.working.content.clone().unwrap_or_default();
+            if let Ok(edit_result) = apply_edit_text(current.as_str(), request) {
+                if !edit_result.changed {
+                    state.staged_operations += 1;
+                    return Ok(StageOutcome {
+                        path: state.path.clone(),
+                        changed: false,
+                        match_info: Some(edit_result.info),
+                    });
+                }
+            }
+        }
+    } else {
+        let snapshot = load_entry_snapshot(fs_ops, path)?;
+        if snapshot.kind == EntryKind::File {
+            let current = snapshot.content.clone().unwrap_or_default();
+            if let Ok(edit_result) = apply_edit_text(current.as_str(), request) {
+                if !edit_result.changed {
+                    let mut state = SessionFileState::new(path, snapshot);
+                    state.staged_operations += 1;
+                    session.files.insert(path.to_string(), state);
+                    return Ok(StageOutcome {
+                        path: path.to_string(),
+                        changed: false,
+                        match_info: Some(edit_result.info),
+                    });
+                }
+            }
+        }
+    }
+
+    let expected = expected_revision(operation, "expected_sha256")?;
+    let state = get_or_load_session_file(session, path, expected, fs_ops, revision_guard, ctx)?;
+    if state.working.kind != EntryKind::File {
+        return Err("Target is not a file.".to_string());
+    }
     let current = state.working.content.clone().unwrap_or_default();
-    let edit_result = apply_edit_text(
-        current.as_str(),
-        EditRequest {
-            old_text,
-            new_text,
-            start_line,
-            end_line,
-            before_context,
-            after_context,
-            expected_matches,
-        },
-    )
-    .map_err(|err| {
+    let edit_result = apply_edit_text(current.as_str(), request).map_err(|err| {
         let outcome = classify_file_modification_error(err.as_str());
         if matches!(
             outcome,
@@ -547,14 +632,14 @@ fn get_or_load_session_file<'a>(
             .files
             .get(path)
             .ok_or_else(|| format!("session path unexpectedly missing: {path}"))?;
-        let matches = match state.base.kind {
-            EntryKind::File => state.base.sha256.as_deref() == expected_sha256,
-            EntryKind::Missing | EntryKind::Directory => expected_sha256.is_none(),
-        };
+        let matches = snapshot_matches_expected(&state.base, expected_sha256)
+            || snapshot_matches_expected(&state.working, expected_sha256);
         if !matches {
-            return Err(format!(
-                "expected_sha256 for {} does not match the active session baseline",
-                path
+            let latest = load_entry_snapshot(fs_ops, path)?;
+            mark_failed_modification(revision_guard, ctx, path);
+            return Err(session_baseline_mismatch_error(
+                path,
+                latest.sha256.as_deref(),
             ));
         }
     }
@@ -562,6 +647,13 @@ fn get_or_load_session_file<'a>(
         .files
         .get_mut(path)
         .ok_or_else(|| format!("session path unexpectedly missing: {path}"))
+}
+
+fn snapshot_matches_expected(snapshot: &EntrySnapshot, expected_sha256: Option<&str>) -> bool {
+    match snapshot.kind {
+        EntryKind::File => snapshot.sha256.as_deref() == expected_sha256,
+        EntryKind::Missing | EntryKind::Directory => expected_sha256.is_none(),
+    }
 }
 
 fn commit_session(
@@ -983,6 +1075,11 @@ fn verify_session_baseline(
             if expected == current.sha256.as_deref() {
                 return Ok(());
             }
+            if expected.is_some()
+                && guard.latest_read_matches(ctx.run_id, path, current.sha256.as_deref())
+            {
+                return Ok(());
+            }
             guard.require_reread(ctx.run_id, path);
             Err(file_revision_error(
                 "stale_context",
@@ -1056,10 +1153,26 @@ fn file_revision_error(
         "recovery": {
             "required_next_tool": recovery_tool,
             "recommended_args": recovery_args(path, recovery_tool),
-            "guidance": "Read the current workspace state again, open a fresh edit session, then rebuild the staged batch from the latest content."
+            "next_session": {
+                "tool": "open_edit_session",
+                "args": { "fresh": true }
+            },
+            "guidance": "Read the current workspace state again, then call open_edit_session with fresh=true before rebuilding the staged batch from the latest content."
         }
     }))
     .unwrap_or_else(|_| format!("{category}: {message}"))
+}
+
+fn session_baseline_mismatch_error(path: &str, latest_sha256: Option<&str>) -> String {
+    file_revision_error(
+        "stale_context",
+        "The expected revision does not match the active session baseline or staged snapshot",
+        path,
+        latest_sha256,
+        None,
+        None,
+        "read_file_raw",
+    )
 }
 
 fn recovery_args(path: &str, recovery_tool: &str) -> Value {
@@ -1079,7 +1192,11 @@ fn commit_conflict_error(conflicts: &[Value]) -> String {
         "conflicts": conflicts,
         "recovery": {
             "required_next_tool": "read_file_raw",
-            "guidance": "Re-read every conflicted path, open a new edit session, and restage the batch against the latest content."
+            "next_session": {
+                "tool": "open_edit_session",
+                "args": { "fresh": true }
+            },
+            "guidance": "Re-read every conflicted path, call open_edit_session with fresh=true, and restage the batch against the latest content."
         }
     }))
     .unwrap_or_else(|_| "stale_context: staged session conflict".to_string())
@@ -1259,7 +1376,7 @@ fn record_file_modification_outcome(
 ) {
     let (outcome, success, changed, changed_target_count) = match invocation {
         Ok(value) => {
-            let payload = value.get("_structured_result").unwrap_or(value);
+            let payload = chatos_mcp_runtime::structured_result_payload(value);
             let changed = payload
                 .get("changed")
                 .and_then(Value::as_bool)

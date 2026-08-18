@@ -2,13 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use chatos_sandbox_contract::{
-    ApprovalPolicy, ApprovalReviewer, PermissionProfileId, SandboxBackendKind,
-    SandboxLeasePolicyRequest,
-};
 use std::collections::BTreeMap;
 
-pub const TASK_MCP_HTTP_AUTH_LOCAL_CONNECTOR_INTERNAL: &str = "local_connector_internal";
 pub const TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC: &str = "project_service_sync";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,28 +75,12 @@ pub struct TaskMcpConfig {
     pub enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
     pub workspace_dir: Option<String>,
-    #[serde(default)]
-    pub sandbox_enabled: Option<bool>,
-    #[serde(default)]
-    pub sandbox_manager_base_url: Option<String>,
-    #[serde(default)]
-    pub sandbox_mode: Option<SandboxBackendKind>,
-    #[serde(default)]
-    pub permission_profile_id: Option<PermissionProfileId>,
-    #[serde(default)]
-    pub approval_policy: Option<ApprovalPolicy>,
-    #[serde(default)]
-    pub approval_reviewer: Option<ApprovalReviewer>,
-    #[serde(default)]
-    pub policy_revision: Option<String>,
-    #[serde(default)]
-    pub additional_writable_roots: Vec<String>,
     #[serde(default = "task_requires_execution_default")]
     pub requires_execution: bool,
+    #[serde(default = "task_workspace_changes_required_default")]
+    pub workspace_changes_required: bool,
     #[serde(default)]
     pub execution_service_id: Option<String>,
-    #[serde(default)]
-    pub default_remote_server_id: Option<String>,
     #[serde(default)]
     pub external_mcp_config_ids: Vec<String>,
     #[serde(default)]
@@ -121,17 +100,9 @@ impl Default for TaskMcpConfig {
             builtin_prompt_locale: task_mcp_locale_default(),
             enabled_builtin_kinds: task_mcp_builtin_kinds_default(),
             workspace_dir: None,
-            sandbox_enabled: None,
-            sandbox_manager_base_url: None,
-            sandbox_mode: None,
-            permission_profile_id: None,
-            approval_policy: None,
-            approval_reviewer: None,
-            policy_revision: None,
-            additional_writable_roots: Vec::new(),
             requires_execution: task_requires_execution_default(),
+            workspace_changes_required: task_workspace_changes_required_default(),
             execution_service_id: None,
-            default_remote_server_id: None,
             external_mcp_config_ids: Vec::new(),
             selected_skill_ids: Vec::new(),
             skill_policy_revision: None,
@@ -144,17 +115,6 @@ impl TaskMcpConfig {
     pub fn locale(&self) -> BuiltinMcpPromptLocale {
         BuiltinMcpPromptLocale::from_key(Some(&self.builtin_prompt_locale))
     }
-
-    pub fn sandbox_policy_request(&self) -> SandboxLeasePolicyRequest {
-        SandboxLeasePolicyRequest {
-            sandbox_mode: self.sandbox_mode,
-            permission_profile_id: self.permission_profile_id,
-            approval_policy: self.approval_policy,
-            approval_reviewer: self.approval_reviewer,
-            policy_revision: self.policy_revision.clone(),
-            additional_writable_roots: self.additional_writable_roots.clone(),
-        }
-    }
 }
 
 fn task_mcp_enabled_default() -> bool {
@@ -162,6 +122,10 @@ fn task_mcp_enabled_default() -> bool {
 }
 
 fn task_requires_execution_default() -> bool {
+    true
+}
+
+fn task_workspace_changes_required_default() -> bool {
     true
 }
 
@@ -182,10 +146,6 @@ mod task_mcp_config_tests {
         let config = serde_json::from_value::<TaskMcpConfig>(serde_json::json!({}))
             .expect("legacy task config");
         assert!(config.requires_execution);
-        assert_eq!(
-            config.sandbox_policy_request(),
-            SandboxLeasePolicyRequest::default()
-        );
     }
 }
 
@@ -274,6 +234,12 @@ pub struct TaskToolState {
     pub closure_reason: Option<String>,
     #[serde(default)]
     pub superseded_by_run_id: Option<String>,
+    #[serde(default)]
+    pub superseded_by_task_id: Option<String>,
+    #[serde(default)]
+    pub repair_origin_verification_run_id: Option<String>,
+    #[serde(default)]
+    pub repair_attempt: u32,
     #[serde(default)]
     pub idempotency_key: Option<String>,
     #[serde(default)]

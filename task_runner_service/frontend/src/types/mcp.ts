@@ -56,7 +56,6 @@ export interface McpPromptPreviewPayload {
   builtin_prompt_locale?: string;
   enabled_builtin_kinds?: string[];
   workspace_dir?: string;
-  default_remote_server_id?: string;
 }
 
 export interface McpPromptBuildResult {

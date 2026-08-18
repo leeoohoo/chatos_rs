@@ -127,7 +127,7 @@ const PYTHON_VERSIONS: [RuntimeVersionSpec; 5] = [
     },
 ];
 
-const RUST_VERSIONS: [RuntimeVersionSpec; 7] = [
+const RUST_VERSIONS: [RuntimeVersionSpec; 8] = [
     RuntimeVersionSpec {
         id: "1.85.1",
         label: "Rust 1.85.1",
@@ -144,6 +144,12 @@ const RUST_VERSIONS: [RuntimeVersionSpec; 7] = [
         id: "1.92.0",
         label: "Rust 1.92.0",
         description: "Pinned Rust 1.92.0 toolchain",
+        default: false,
+    },
+    RuntimeVersionSpec {
+        id: "1.94.0",
+        label: "Rust 1.94.0",
+        description: "Pinned Rust 1.94.0 toolchain",
         default: false,
     },
     RuntimeVersionSpec {
@@ -658,7 +664,11 @@ fn runtime_index(runtime_id: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_features, parse_generated_image_id, selection_feature_token};
+    use super::{
+        canonical_features, parse_generated_image_id, selection_feature_token, RUST_VERSIONS,
+    };
+
+    const SANDBOX_AGENT_DOCKERFILE: &str = include_str!("../../../sandbox_agent/Dockerfile");
 
     #[test]
     fn build_tool_aliases_resolve_to_supported_language_runtimes() {
@@ -714,6 +724,34 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["rust@1.85.1"]
         );
+    }
+
+    #[test]
+    fn repository_rust_toolchain_resolves_to_supported_image_version() {
+        let selections = canonical_features(&["rust@1.94".to_string()])
+            .expect("repository Rust toolchain must be image-buildable");
+        assert_eq!(
+            selections
+                .iter()
+                .map(selection_feature_token)
+                .collect::<Vec<_>>(),
+            vec!["rust@1.94.0"]
+        );
+    }
+
+    #[test]
+    fn rust_catalog_and_sandbox_dockerfile_whitelists_stay_in_sync() {
+        let rust_case = SANDBOX_AGENT_DOCKERFILE
+            .lines()
+            .find(|line| line.contains("case \"$rust_channel\" in"))
+            .expect("sandbox Dockerfile Rust whitelist");
+        for version in RUST_VERSIONS {
+            assert!(
+                rust_case.contains(version.id),
+                "sandbox Dockerfile is missing catalog Rust version {}",
+                version.id
+            );
+        }
     }
 
     #[test]

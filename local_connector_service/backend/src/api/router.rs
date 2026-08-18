@@ -34,7 +34,7 @@ use super::{
     update_managed_requirements_policy, update_plugin_preference, update_project_binding,
     update_sandbox_pairing, update_user_skill_preference, update_workspace,
     user_service_protected_proxy, user_service_public_proxy, workspace_directory_create_relay,
-    AuthState,
+    workspace_directory_list_relay, workspace_filesystem_relay, AuthState,
 };
 
 fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
@@ -150,7 +150,11 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
         )
         .route(
             "/api/local-connectors/relay/{device_id}/workspaces/{workspace_id}/directories",
-            post(workspace_directory_create_relay),
+            get(workspace_directory_list_relay).post(workspace_directory_create_relay),
+        )
+        .route(
+            "/api/local-connectors/relay/{device_id}/workspaces/{workspace_id}/filesystem",
+            post(workspace_filesystem_relay),
         )
         .merge(plugin_artifact_routes())
         .route(

@@ -78,12 +78,17 @@ impl RunService {
         }
         if matches!(run.status, TaskRunStatus::Queued) {
             run.status = TaskRunStatus::Cancelled;
+            run.model_phase_status = crate::models::ModelPhaseStatus::Cancelled;
             run.cancel_requested = true;
             run.claim_token = None;
             run.claim_until = None;
             run.finished_at = Some(now_rfc3339());
             run.updated_at = now_rfc3339();
             self.store.save_run(run.clone()).await?;
+            if let Some(task_record) = self.store.get_task(&run.task_id).await? {
+                self.notify_mcp_management_run_finalized(&task_record, &run)
+                    .await;
+            }
             self.store
                 .append_run_event(TaskRunEventRecord::new(
                     run_id.to_string(),
@@ -106,14 +111,6 @@ impl RunService {
 
     pub async fn retry_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
         self.retry_run_with_user(run_id, None, None, None).await
-    }
-
-    pub(crate) async fn retry_run_automatically(
-        &self,
-        run_id: &str,
-    ) -> Result<Option<TaskRunRecord>, String> {
-        self.retry_run_from_source(run_id, None, None, None, true)
-            .await
     }
 
     pub async fn retry_run_with_instruction(
@@ -186,23 +183,24 @@ impl RunService {
             return Err("run is still active and cannot be retried yet".to_string());
         }
 
+        let Some(mut task) = self.store.get_task(run.task_id.as_str()).await? else {
+            return Err("task not found for retry run".to_string());
+        };
         if let Some(execution_service_id) = execution_service_id
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
         {
-            let Some(mut task) = self.store.get_task(run.task_id.as_str()).await? else {
-                return Err("task not found for retry run".to_string());
-            };
             if !task.mcp_config.requires_execution {
                 return Err(
                     "execution_service_id can only be selected for an execution task".to_string(),
                 );
             }
             task.mcp_config.execution_service_id = Some(execution_service_id);
-            self.validate_sandbox_route_for_task(&task).await?;
             task.updated_at = now_rfc3339();
-            self.store.save_task(task).await?;
+            self.store.save_task(task.clone()).await?;
         }
+        self.ensure_project_execution_retry_configuration_changed(&run, &task)
+            .await?;
 
         let prompt_override = run
             .input_snapshot
@@ -219,6 +217,63 @@ impl RunService {
         };
         Ok(Some(restarted))
     }
+
+    async fn ensure_project_execution_retry_configuration_changed(
+        &self,
+        run: &TaskRunRecord,
+        task: &TaskRecord,
+    ) -> Result<(), String> {
+        if !matches!(run.status, TaskRunStatus::Blocked | TaskRunStatus::Failed)
+            || task
+                .input_payload
+                .as_ref()
+                .and_then(|payload| payload.get("source"))
+                .and_then(Value::as_str)
+                != Some("chatos_project_requirement_execution")
+        {
+            return Ok(());
+        }
+        let mut runtime_task = task.clone();
+        if let Some(policy) = self.resolve_task_runner_policy_for_task(task).await? {
+            policy.apply_to_task(&mut runtime_task)?;
+        }
+        let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
+            &runtime_task.mcp_config,
+        );
+        let Err(contract_error) =
+            crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
+                &runtime_task,
+                &effective_tools,
+            )
+        else {
+            return Ok(());
+        };
+        let current_fingerprint =
+            crate::services::workspace_execution::task_runtime_capability_fingerprint(
+                &runtime_task,
+            );
+        if retry_capability_configuration_unchanged(
+            &run.input_snapshot,
+            current_fingerprint.as_str(),
+        ) {
+            return Err(format!(
+                "platform_configuration_unchanged: project execution task capability configuration is still invalid and unchanged for run {}: {contract_error}",
+                run.id
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn retry_capability_configuration_unchanged(
+    previous_input_snapshot: &Value,
+    current_fingerprint: &str,
+) -> bool {
+    previous_input_snapshot
+        .get("task_runtime_capability_fingerprint")
+        .and_then(Value::as_str)
+        .map(|previous| previous == current_fingerprint)
+        .unwrap_or(false)
 }
 
 fn retry_request_with_current_task_config(
@@ -239,7 +294,8 @@ fn retry_request_with_current_task_config(
 
 #[cfg(test)]
 mod tests {
-    use super::retry_request_with_current_task_config;
+    use super::{retry_capability_configuration_unchanged, retry_request_with_current_task_config};
+    use serde_json::json;
 
     #[test]
     fn retry_uses_current_task_model_configuration() {
@@ -254,5 +310,21 @@ mod tests {
             request.retry_instruction.as_deref(),
             Some("use the repaired configuration")
         );
+    }
+
+    #[test]
+    fn retry_requires_a_changed_runtime_capability_fingerprint() {
+        assert!(retry_capability_configuration_unchanged(
+            &json!({"task_runtime_capability_fingerprint": "fnv1a64:same"}),
+            "fnv1a64:same",
+        ));
+        assert!(!retry_capability_configuration_unchanged(
+            &json!({"task_runtime_capability_fingerprint": "fnv1a64:old"}),
+            "fnv1a64:new",
+        ));
+        assert!(!retry_capability_configuration_unchanged(
+            &json!({}),
+            "fnv1a64:new",
+        ));
     }
 }

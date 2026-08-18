@@ -14,8 +14,6 @@ use chatos_agent::{
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::TaskPluginConfig;
 
-use super::decode_remote_server_config_header;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum McpToolProfile {
     Default,
@@ -31,7 +29,6 @@ pub struct McpRequestContext {
     pub source_user_message_id: Option<String>,
     pub default_model_config_id: Option<String>,
     pub workspace_dir: Option<String>,
-    pub remote_server_config: Option<String>,
     pub tool_profile: Option<String>,
     pub task_profile: Option<String>,
     pub builtin_prompt_locale: Option<String>,
@@ -47,15 +44,9 @@ impl McpRequestContext {
             && self.source_turn_id.is_none()
             && self.source_user_message_id.is_none()
             && self.workspace_dir.is_none()
-            && self.remote_server_config.is_none()
         {
             return Ok(None);
         }
-        let remote_server_config = self
-            .remote_server_config
-            .as_deref()
-            .map(decode_remote_server_config_header)
-            .transpose()?;
         Ok(Some(TaskSourceContext {
             project_id: self.project_id.clone(),
             parent_task_id: None,
@@ -64,7 +55,6 @@ impl McpRequestContext {
             source_turn_id: self.source_turn_id.clone(),
             source_user_message_id: self.source_user_message_id.clone(),
             workspace_dir: self.workspace_dir.clone(),
-            remote_server_config,
             builtin_prompt_locale: Some(self.requested_builtin_prompt_locale()),
         }))
     }
@@ -117,24 +107,14 @@ impl McpRequestContext {
         }
     }
 
-    pub(super) fn child_task_profile(&self, is_planning_task: Option<bool>) -> Option<String> {
-        if self.tool_profile() == McpToolProfile::ProjectRequirementExecutionPlanner {
-            return Some(TASK_PROFILE_DEFAULT.to_string());
-        }
+    pub(super) fn enforce_created_task_kind(&self, input: &mut CreateTaskRequest) {
         if !self.is_chatos_plan_task_profile() {
-            return None;
+            input.task_profile = Some(TASK_PROFILE_DEFAULT.to_string());
+            return;
         }
-        // Preserve the historical planning profile when an older caller omits
-        // the field. Planner-facing schemas now require an explicit value.
-        let is_planning_task = is_planning_task.unwrap_or(true);
-        Some(
-            if is_planning_task {
-                TASK_PROFILE_CHATOS_PLAN
-            } else {
-                crate::models::TASK_PROFILE_DEFAULT
-            }
-            .to_string(),
-        )
+        input.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
+        let mcp_config = input.mcp_config.get_or_insert_with(Default::default);
+        mcp_config.requires_execution = Some(false);
     }
 
     pub(super) fn requested_builtin_prompt_locale(&self) -> String {

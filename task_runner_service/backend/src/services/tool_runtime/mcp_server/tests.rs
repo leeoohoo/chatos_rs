@@ -4,7 +4,8 @@
 use super::chatos_async_planner;
 use super::support::{
     agent_tool_allowed, create_task_schema, enrich_tool_schemas_with_model_configs,
-    filter_model_configs_for_user, model_configs_for_user, update_task_schema,
+    filter_model_configs_for_user, model_configs_for_user, model_visible_to_user,
+    update_task_schema,
 };
 use super::{CreateTaskArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 use crate::ask_user_prompt_service::AskUserPromptService;
@@ -52,7 +53,12 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         subject_id: None,
         schedule: None,
         plugin_config: Default::default(),
-        mcp_config: None,
+        mcp_config: Some(TaskMcpRequestConfig {
+            requires_execution: Some(false),
+            workspace_changes_required: None,
+            enabled_builtin_kinds: Vec::new(),
+            external_mcp_config_ids: Vec::new(),
+        }),
         prerequisite_task_ids: None,
     }
 }
@@ -65,8 +71,20 @@ async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectSe
 async fn test_mcp_service_with_config(
     config: AppConfig,
 ) -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
+    test_mcp_service_with_config_and_policy_mode(config, false).await
+}
+
+async fn test_mcp_service_with_config_and_policy_mode(
+    config: AppConfig,
+    allow_unresolved_plugin_policy: bool,
+) -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
     let store = AppStore::new(&config).await.expect("store");
     let task_service = TaskService::new(config.clone(), store.clone());
+    let task_service = if allow_unresolved_plugin_policy {
+        task_service.with_unresolved_plugin_policy_for_test()
+    } else {
+        task_service
+    };
     let model_config_service = ModelConfigService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone());
@@ -101,10 +119,6 @@ async fn test_project_sync_server() -> (String, CapturedProjectSyncCalls) {
         .route(
             "/api/chatos-sync/projects/{project_id}",
             get(get_project_sync_record),
-        )
-        .route(
-            "/api/chatos-sync/projects/{project_id}/runtime-environment",
-            get(get_project_runtime_environment),
         )
         .with_state(calls.clone());
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -150,48 +164,12 @@ async fn get_project_sync_record(
         "name": "Project A",
         "root_path": null,
         "git_url": null,
+        "source_type": "cloud",
         "description": null,
         "status": "active",
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
         "archived_at": null
-    }))
-}
-
-async fn get_project_runtime_environment(
-    Path(_project_id): Path<String>,
-    headers: HeaderMap,
-) -> Json<serde_json::Value> {
-    assert_project_service_internal_headers(&headers, "project.read");
-    Json(json!({
-        "environment": {
-            "sandbox_enabled": true,
-            "status": "ready",
-            "not_runnable_reason": null,
-            "execution_service_id": "workspace",
-            "env_vars": {},
-            "generated_config_files": []
-        },
-        "images": [
-            {
-                "environment_key": "workspace",
-                "service_id": "workspace",
-                "display_name": "Workspace",
-                "service_role": "workspace",
-                "mcp_policy": {
-                    "managed_by": "system",
-                    "attachment": "workspace_gateway_target",
-                    "filesystem": true,
-                    "terminal": true
-                },
-                "image_id": "test-workspace-image",
-                "image_ref": null,
-                "image_provider": "cloud_sandbox_manager",
-                "status": "ready",
-                "dockerfile": null,
-                "env_vars": {}
-            }
-        ]
     }))
 }
 
@@ -242,25 +220,12 @@ fn test_config() -> AppConfig {
         default_task_execution_max_iterations: 1,
         default_tool_result_model_max_chars: 1000,
         default_tool_results_model_total_max_chars: 2000,
-        default_execution_environment_mode: "local".to_string(),
-        default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-        sandbox_manager_http_client: reqwest::Client::new(),
-        sandbox_manager_client_id: None,
-        sandbox_manager_client_key: None,
-        default_sandbox_lease_ttl_seconds: 7_200,
         chatos_callback_url: String::new(),
         chatos_callback_http_client: reqwest::Client::new(),
         internal_api_secret: None,
         chatos_internal_api_secret: None,
         mcp_management_internal_api_secret: None,
         user_service_internal_api_secret: None,
-        local_connector_internal_api_secret: None,
-        local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-        local_connector_http_client: reqwest::Client::new(),
-        local_connector_service_request_timeout: Duration::from_millis(5_000),
-        plugin_relay_request_timeout: Duration::from_millis(60_000),
-        plugin_hook_relay_timeout: Duration::from_millis(330_000),
-        plugin_connector_discovery_timeout: Duration::from_millis(10_000),
         callback_timeout: Duration::from_millis(1000),
         admin_username: "admin".to_string(),
         admin_password: "admin".to_string(),
@@ -352,6 +317,8 @@ fn model_config(id: &str, owner_user_id: &str, enabled: bool) -> ModelConfigReco
         max_output_tokens: None,
         model_request_max_retries: 5,
         thinking_level: None,
+        supports_images: false,
+        supports_reasoning: false,
         supports_responses: true,
         instructions: None,
         request_cwd: None,
@@ -361,4 +328,15 @@ fn model_config(id: &str, owner_user_id: &str, enabled: bool) -> ModelConfigReco
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     }
+}
+
+#[test]
+fn administrator_can_use_cloud_models_owned_by_another_user() {
+    let model = model_config("shared-model", "model-owner", true);
+    assert!(model_visible_to_user(&model, &admin_user("administrator")));
+    assert!(!model_visible_to_user(
+        &model,
+        &agent_user("different-owner")
+    ));
+    assert!(model_visible_to_user(&model, &agent_user("model-owner")));
 }

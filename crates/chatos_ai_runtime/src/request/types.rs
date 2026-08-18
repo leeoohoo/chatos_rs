@@ -3,10 +3,13 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Debug, Clone)]
+use crate::JsonSchemaOutputFormat;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiResponse {
     pub content: String,
     pub reasoning: Option<String>,
@@ -15,6 +18,14 @@ pub struct AiResponse {
     pub provider_error: Option<Value>,
     pub usage: Option<Value>,
     pub response_id: Option<String>,
+    /// Exact `response.output` items returned by the Responses API.
+    ///
+    /// Cloud event-driven callers persist these items verbatim and append
+    /// tool outputs before the next request, as required by the official
+    /// stateless Responses function-calling protocol. Chat Completions leaves
+    /// this empty.
+    #[serde(default)]
+    pub response_output_items: Vec<Value>,
 }
 
 #[derive(Clone, Default)]
@@ -32,6 +43,7 @@ pub enum AiTransport {
 #[derive(Clone, Debug)]
 pub struct AiRequestOptions {
     pub prompt_cache_key: Option<String>,
+    pub previous_response_id: Option<String>,
     pub request_cwd: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
@@ -41,18 +53,21 @@ pub struct AiRequestOptions {
     /// subscribe to incremental callbacks. Recovery requests can disable
     /// streaming for OpenAI-compatible gateways that truncate SSE bodies.
     pub stream: bool,
+    pub output_format: Option<JsonSchemaOutputFormat>,
 }
 
 impl Default for AiRequestOptions {
     fn default() -> Self {
         Self {
             prompt_cache_key: None,
+            previous_response_id: None,
             request_cwd: None,
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             abort_token: None,
             force_identity_encoding: false,
             stream: true,
+            output_format: None,
         }
     }
 }

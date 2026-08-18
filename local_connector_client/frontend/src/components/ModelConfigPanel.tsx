@@ -2,273 +2,73 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import React from 'react';
-import { Brain, CheckCircle2, KeyRound, RefreshCw, Settings2, Trash2 } from 'lucide-react';
+import { Cloud, RefreshCw } from 'lucide-react';
 
 import {
   api,
   type LocalModelConfig,
-  type LocalModelCatalogResponse,
   type LocalModelSettings,
 } from '../api';
-import {
-  buildImportedModelConfigPayload,
-  buildProviderPreviewPayload,
-  defaultPromptVendor,
-  emptyModelDraft,
-  findExistingImportedModel,
-  formatProviderModelOption,
-  groupLocalModelProviders,
-  providerLabel,
-  type LocalModelProviderGroup,
-  type ModelDraftState,
-} from '../utils/modelConfigState';
 import { LocalDefaultModelSettings } from './LocalDefaultModelSettings';
-import { TaskModelSettingsSection } from './TaskModelSettingsSection';
 
 export function ModelConfigPanel() {
   const [items, setItems] = React.useState<LocalModelConfig[]>([]);
   const [settings, setSettings] = React.useState<LocalModelSettings>({});
-  const [draft, setDraft] = React.useState<ModelDraftState>(emptyModelDraft());
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [modelCatalog, setModelCatalog] = React.useState<LocalModelCatalogResponse | null>(null);
-  const [modelCatalogLoading, setModelCatalogLoading] = React.useState(false);
-  const [modelCatalogError, setModelCatalogError] = React.useState<string | null>(null);
 
-  const load = React.useCallback(async () => {
+  const applyResponse = React.useCallback((next: {
+    items: LocalModelConfig[];
+    settings: LocalModelSettings;
+  }) => {
+    setItems(next.items);
+    setSettings(next.settings || {});
+  }, []);
+
+  const load = React.useCallback(async (showSuccess = false) => {
+    setLoading(true);
     setError(null);
+    if (showSuccess) {
+      setMessage(null);
+    }
     try {
-      const next = await api.modelConfigs();
-      setItems(next.items);
-      setSettings(next.settings || {});
+      const next = await api.refreshModelConfigs();
+      applyResponse(next);
+      if (showSuccess) {
+        setMessage(`已与云端同步 ${next.items.length} 个模型`);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '读取模型配置失败');
+      setError(err instanceof Error ? err.message : '同步云端模型配置失败');
+      try {
+        applyResponse(await api.modelConfigs());
+      } catch {
+        // Keep the primary synchronization error visible.
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyResponse]);
 
   React.useEffect(() => {
     void load();
   }, [load]);
-
-  const clearCatalog = () => {
-    setModelCatalog(null);
-    setModelCatalogError(null);
-  };
-
-  const resetDraft = () => {
-    setDraft(emptyModelDraft());
-    clearCatalog();
-  };
-
-  const updateDraft = (patch: Partial<ModelDraftState>) => {
-    setDraft((current) => ({
-      ...current,
-      ...patch,
-    }));
-    clearCatalog();
-  };
-
-  const refreshModelCatalog = async () => {
-    setModelCatalogLoading(true);
-    setModelCatalogError(null);
-    try {
-      const catalog = await api.previewModelCatalog(buildProviderPreviewPayload(draft));
-      setModelCatalog(catalog);
-    } catch (err) {
-      setModelCatalogError(err instanceof Error ? err.message : '读取模型列表失败');
-    } finally {
-      setModelCatalogLoading(false);
-    }
-  };
-
-  const saveModel = async () => {
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    try {
-      const catalog = modelCatalog?.models.length
-        ? modelCatalog
-        : await api.previewModelCatalog(buildProviderPreviewPayload(draft));
-      if (!catalog.models.length) {
-        throw new Error(catalog.error || '没有读取到可导入的模型，请先确认 API Key 和 Base URL 后刷新模型。');
-      }
-      let savedCount = 0;
-      for (const providerModel of catalog.models) {
-        const existing = findExistingImportedModel(items, draft, catalog.base_url, providerModel.id);
-        const payload = buildImportedModelConfigPayload(draft, providerModel, catalog.base_url, existing);
-        if (existing) {
-          await api.updateModelConfig(existing.id, payload);
-        } else {
-          await api.saveModelConfig(payload);
-        }
-        savedCount += 1;
-      }
-      setMessage(`已保存到服务端并同步 ${savedCount} 个模型到本机`);
-      resetDraft();
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '保存供应商配置失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const providerGroups = React.useMemo(
-    () => groupLocalModelProviders(items),
-    [items],
-  );
-
-  const providerDraftFromGroup = (group: LocalModelProviderGroup): ModelDraftState => ({
-    ...emptyModelDraft(),
-    id: group.items[0]?.id,
-    name: group.name,
-    provider: group.provider,
-    prompt_vendor: group.prompt_vendor as 'glm' | 'deepseek' | 'gpt' | 'kimi',
-    base_url: group.base_url,
-    api_key_text: '',
-    clear_api_key: false,
-    enabled: group.enabled_count > 0,
-    supports_images: group.supports_images,
-    supports_reasoning: group.supports_reasoning,
-    supports_responses: group.supports_responses,
-  });
-
-  const editProviderGroup = (group: LocalModelProviderGroup) => {
-    clearCatalog();
-    setDraft(providerDraftFromGroup(group));
-  };
-
-  const refreshProviderGroup = async (group: LocalModelProviderGroup) => {
-    const nextDraft = providerDraftFromGroup(group);
-    setDraft(nextDraft);
-    setModelCatalogLoading(true);
-    setModelCatalogError(null);
-    setMessage(null);
-    setError(null);
-    try {
-      const catalog = await api.previewModelCatalog(buildProviderPreviewPayload(nextDraft));
-      setModelCatalog(catalog);
-      if (catalog.models.length) {
-        setMessage(`已读取供应商 ${group.name} 的 ${catalog.models.length} 个模型`);
-      } else if (catalog.error) {
-        setModelCatalogError(catalog.error);
-      }
-    } catch (err) {
-      setModelCatalogError(err instanceof Error ? err.message : '读取模型列表失败');
-    } finally {
-      setModelCatalogLoading(false);
-    }
-  };
-
-  const syncProviderGroup = async (group: LocalModelProviderGroup) => {
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    try {
-      for (const item of group.items) {
-        await api.syncModelConfig(item.id);
-      }
-      setMessage(`已同步供应商 ${group.name} 的 ${group.items.length} 个完整模型配置`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '同步供应商模型配置失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const deleteProviderGroup = async (group: LocalModelProviderGroup) => {
-    const confirmed = window.confirm(
-      `确定删除供应商“${group.name}”吗？会同时删除该供应商下的 ${group.items.length} 个模型配置。`,
-    );
-    if (!confirmed) {
-      return;
-    }
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    try {
-      for (const item of group.items) {
-        await api.deleteModelConfig(item.id);
-      }
-      if (draft.id && group.items.some((item) => item.id === draft.id)) {
-        resetDraft();
-      }
-      setMessage(`供应商已删除: ${group.name}`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除供应商配置失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const editModel = (item: LocalModelConfig) => {
-    clearCatalog();
-    setDraft({
-      id: item.id,
-      server_model_config_id: item.server_model_config_id || undefined,
-      name: item.name,
-      provider: item.provider,
-      prompt_vendor: item.prompt_vendor || defaultPromptVendor(item.provider),
-      model: item.model,
-      base_url: item.base_url || '',
-      api_key_text: '',
-      clear_api_key: false,
-      enabled: item.enabled,
-      supports_images: item.supports_images,
-      supports_reasoning: item.supports_reasoning,
-      supports_responses: item.supports_responses,
-      thinking_level: item.thinking_level || '',
-      task_usage_scenario: item.task_usage_scenario || '',
-      task_thinking_level: item.task_thinking_level || '',
-      temperature: item.temperature ?? null,
-      max_output_tokens: item.max_output_tokens ?? null,
-    });
-  };
-
-  const deleteModel = async (item: LocalModelConfig) => {
-    setMessage(null);
-    setError(null);
-    try {
-      await api.deleteModelConfig(item.id);
-      if (draft.id === item.id) {
-        resetDraft();
-      }
-      setMessage(`模型已删除: ${item.name}`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除模型配置失败');
-    }
-  };
-
-  const syncModel = async (item: LocalModelConfig) => {
-    setMessage(null);
-    setError(null);
-    try {
-      const synced = await api.syncModelConfig(item.id);
-      setMessage(`服务端模型配置已同步到本机: ${synced.name}`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '同步模型配置失败');
-    }
-  };
 
   const saveSettings = async () => {
     setSaving(true);
     setMessage(null);
     setError(null);
     try {
-      const next = await api.saveModelSettings(settings);
+      const next = await api.saveModelSettings({
+        model_request_max_retries: settings.model_request_max_retries ?? 5,
+        command_approval_model_config_id: settings.command_approval_model_config_id || null,
+        command_approval_thinking_level: settings.command_approval_thinking_level || null,
+      });
       setSettings(next);
-      setMessage('默认模型设置已保存到本机');
-      await load();
+      setMessage('审批模型已保存到本机');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存默认模型设置失败');
+      setError(err instanceof Error ? err.message : '保存审批模型失败');
     } finally {
       setSaving(false);
     }
@@ -279,249 +79,55 @@ export function ModelConfigPanel() {
       <section className="panel">
         <div className="panelHeader">
           <div>
-            <h2><Brain size={18} />模型配置</h2>
-            <p>服务端加密保存完整模型配置；当前客户端同步一份受保护的本地副本，离线时继续使用。</p>
+            <h2><Cloud size={18} />云端模型</h2>
+            <p>模型供应商、凭据与运行参数统一由云端管理；客户端自动同步只读副本。</p>
           </div>
-          <button className="iconButton" onClick={() => void load()} title="刷新模型">
-            <RefreshCw size={17} />
+          <button
+            className="iconButton"
+            disabled={loading}
+            onClick={() => void load(true)}
+            title="同步云端模型"
+          >
+            <RefreshCw className={loading ? 'spinIcon' : ''} size={17} />
           </button>
         </div>
         {message ? <div className="banner">{message}</div> : null}
-        {error ? <div className="formError">{error}</div> : null}
-        <div className="modelLayout">
-          <div className="modelList">
-            <div className="modelSectionTitle">
-              <span>供应商配置</span>
-              <small>{providerGroups.length} 个</small>
-            </div>
-            {providerGroups.map((group) => (
-              <div className="modelRow providerRow" key={group.key}>
-                <div>
-                  <div className="modelTitleLine">
-                    <strong>{group.name}</strong>
-                    <span className="status ok">{group.items.length} 个模型</span>
-                    <span className={group.enabled_count > 0 ? 'status ok' : 'status warn'}>
-                      {group.enabled_count} 个启用
-                    </span>
-                    <span className={group.has_api_key ? 'status ok' : 'status bad'}>
-                      {group.has_api_key ? 'Key 已保存' : '缺少 Key'}
-                    </span>
-                  </div>
-                  <span>{providerLabel(group.provider)} · {group.base_url || '默认 Base URL'}</span>
-                  <div className="providerModelChips">
-                    {group.items.slice(0, 8).map((item) => (
-                      <span key={item.id}>{item.model}</span>
-                    ))}
-                    {group.items.length > 8 ? <span>+{group.items.length - 8}</span> : null}
-                  </div>
-                </div>
-                <div className="modelActions">
-                  <button className="iconButton" title="编辑供应商" onClick={() => editProviderGroup(group)}>
-                    <Settings2 size={16} />
-                  </button>
-                  <button
-                    className="iconButton"
-                    title="刷新供应商模型列表"
-                    onClick={() => void refreshProviderGroup(group)}
-                  >
-                    <RefreshCw size={16} />
-                  </button>
-                  <button
-                    className="iconButton"
-                    title="同步供应商下的完整模型配置"
-                    onClick={() => void syncProviderGroup(group)}
-                  >
-                    <CheckCircle2 size={16} />
-                  </button>
-                  <button
-                    className="iconButton danger"
-                    title="删除供应商"
-                    onClick={() => void deleteProviderGroup(group)}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
-            {!providerGroups.length ? (
-              <div className="emptyState">{loading ? '正在读取供应商配置...' : '还没有保存过的供应商。'}</div>
-            ) : null}
-
-            <div className="modelSectionTitle">
-              <span>导入模型</span>
-              <small>{items.length} 个</small>
-            </div>
-            {items.map((item) => (
-              <div className="modelRow" key={item.id}>
-                <div>
-                  <div className="modelTitleLine">
-                    <strong>{item.name}</strong>
-                    <span className={item.enabled ? 'status ok' : 'status warn'}>
-                      {item.enabled ? '启用' : '停用'}
-                    </span>
-                    <span className={item.has_api_key ? 'status ok' : 'status bad'}>
-                      {item.has_api_key ? 'Key 已保存' : '缺少 Key'}
-                    </span>
-                  </div>
-                  <span>{item.provider} · {item.model}</span>
-                  <span className="mono">{item.server_model_config_id || '尚未同步到服务端'}</span>
-                </div>
-                <div className="modelActions">
-                  <button className="iconButton" title="编辑" onClick={() => editModel(item)}>
-                    <Settings2 size={16} />
-                  </button>
-                  <button className="iconButton" title="同步完整模型配置" onClick={() => void syncModel(item)}>
-                    <RefreshCw size={16} />
-                  </button>
-                  <button className="iconButton danger" title="删除" onClick={() => void deleteModel(item)}>
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
-            {!items.length ? (
-              <div className="emptyState">{loading ? '正在读取模型配置...' : '还没有导入具体模型。'}</div>
-            ) : null}
+        {error ? <div className="formError">云端同步失败，当前显示本机最近一次缓存：{error}</div> : null}
+        <div className="modelList cloudModelList">
+          <div className="modelSectionTitle">
+            <span>可用模型</span>
+            <small>{items.length} 个</small>
           </div>
-
-          <div className="modelEditor">
-            <div className="panelHeader compactHeader">
+          {items.map((item) => (
+            <div className={item.enabled ? 'modelRow' : 'modelRow muted'} key={item.id}>
               <div>
-                <h2><KeyRound size={18} />{draft.id ? '编辑供应商' : '添加供应商'}</h2>
-                <p>{draft.id ? '留空 API Key 会沿用本机已保存的值。' : '保存后会导入供应商返回的具体模型。'}</p>
-              </div>
-              {draft.id ? (
-                <button className="ghostButton compact" onClick={() => resetDraft()}>
-                  新建
-                </button>
-              ) : null}
-            </div>
-            <div className="approvalFormGrid">
-              <label>
-                名称
-                <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-              </label>
-              <label>
-                Provider
-                <select
-                  value={draft.provider || 'gpt'}
-                  onChange={(event) => updateDraft({
-                    provider: event.target.value,
-                    prompt_vendor: defaultPromptVendor(event.target.value),
-                  })}
-                >
-                  <option value="gpt">OpenAI</option>
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="kimi">Kimi</option>
-                  <option value="glm">GLM</option>
-                </select>
-              </label>
-              <label>
-                命令审批 Prompt
-                <select
-                  value={draft.prompt_vendor || defaultPromptVendor(draft.provider)}
-                  onChange={(event) => updateDraft({
-                    prompt_vendor: event.target.value as 'glm' | 'deepseek' | 'gpt' | 'kimi',
-                  })}
-                >
-                  <option value="glm">GLM</option>
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="gpt">GPT / OpenAI</option>
-                  <option value="kimi">Kimi / Moonshot</option>
-                </select>
-              </label>
-              <label>
-                Base URL
-                <input
-                  value={draft.base_url || ''}
-                  onChange={(event) => updateDraft({ base_url: event.target.value })}
-                />
-              </label>
-              <label>
-                API Key
-                <input
-                  type="password"
-                  value={draft.api_key_text}
-                  onChange={(event) => updateDraft({ api_key_text: event.target.value, clear_api_key: false })}
-                />
-              </label>
-              <div className="modelCatalogField">
-                <span className="fieldLabel">供应商模型</span>
-                <div className="modelSelectRow">
-                  <button
-                    type="button"
-                    className="ghostButton compact"
-                    onClick={() => void refreshModelCatalog()}
-                    disabled={modelCatalogLoading || Boolean(draft.clear_api_key)}
-                  >
-                    <RefreshCw size={15} />
-                    {modelCatalogLoading ? '读取中' : '刷新模型列表'}
-                  </button>
-                  <span className="catalogStatus">
-                    {modelCatalog
-                      ? `${modelCatalog.source === 'live' ? '已读取' : '使用缓存'} ${modelCatalog.models.length} 个模型 · ${modelCatalog.base_url}`
-                      : '保存时会按供应商返回的模型列表导入具体模型。'}
+                <div className="modelTitleLine">
+                  <strong>{item.name}</strong>
+                  <span className={item.enabled ? 'status ok' : 'status warn'}>
+                    {item.enabled ? '启用' : '停用'}
+                  </span>
+                  <span className={item.has_api_key ? 'status ok' : 'status bad'}>
+                    {item.has_api_key ? '凭据已同步' : '缺少凭据'}
                   </span>
                 </div>
-                {modelCatalog?.models.length ? (
-                  <div className="catalogModelList">
-                    {modelCatalog.models.slice(0, 12).map((model) => (
-                      <span key={model.id}>{formatProviderModelOption(model)}</span>
-                    ))}
-                    {modelCatalog.models.length > 12 ? <span>+{modelCatalog.models.length - 12}</span> : null}
-                  </div>
-                ) : null}
-                {modelCatalog?.error ? <span className="catalogError">{modelCatalog.error}</span> : null}
-                {modelCatalogError ? <span className="catalogError">{modelCatalogError}</span> : null}
+                <span>{item.provider} · {item.model}</span>
+                <span className="mono">{item.server_model_config_id || item.id}</span>
               </div>
-              <label className="inlineSwitch">
-                <span>启用</span>
-                <input type="checkbox" checked={draft.enabled ?? true} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />
-              </label>
-              <label className="inlineSwitch">
-                <span>Responses API</span>
-                <input type="checkbox" checked={draft.supports_responses ?? true} onChange={(event) => setDraft({ ...draft, supports_responses: event.target.checked })} />
-              </label>
-              <label className="inlineSwitch">
-                <span>图片输入</span>
-                <input type="checkbox" checked={draft.supports_images || false} onChange={(event) => setDraft({ ...draft, supports_images: event.target.checked })} />
-              </label>
-              <label className="inlineSwitch">
-                <span>Reasoning</span>
-                <input type="checkbox" checked={draft.supports_reasoning || false} onChange={(event) => setDraft({ ...draft, supports_reasoning: event.target.checked })} />
-              </label>
-              {draft.id ? (
-                <label className="inlineSwitch">
-                  <span>清除已保存 Key</span>
-                  <input
-                    type="checkbox"
-                    checked={draft.clear_api_key || false}
-                    onChange={(event) =>
-                      updateDraft({
-                        clear_api_key: event.target.checked,
-                        api_key_text: event.target.checked ? '' : draft.api_key_text,
-                      })
-                    }
-                  />
-                </label>
-              ) : null}
             </div>
-            <button className="primaryButton compact" disabled={saving || !draft.name.trim()} onClick={() => void saveModel()}>
-              {saving ? '保存中' : '保存并导入模型'}
-            </button>
-          </div>
+          ))}
+          {!items.length ? (
+            <div className="emptyState">{loading ? '正在同步云端模型...' : '云端还没有可用模型。'}</div>
+          ) : null}
         </div>
       </section>
 
       <LocalDefaultModelSettings
         models={items}
         settings={settings}
-        disabled={saving}
+        disabled={loading || saving}
         onChange={setSettings}
         onSave={() => void saveSettings()}
       />
-
-      <TaskModelSettingsSection items={items} loading={loading} onReload={load} />
     </section>
   );
 }

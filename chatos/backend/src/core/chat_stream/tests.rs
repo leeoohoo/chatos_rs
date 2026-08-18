@@ -4,21 +4,7 @@
 use serde_json::{json, Value};
 
 use super::events::{build_error_event_payload, select_persisted_turn_messages_from_desc_page};
-use super::text::join_stream_text;
 use crate::models::message::Message;
-
-#[test]
-fn join_stream_text_prefers_longer_snapshot() {
-    assert_eq!(join_stream_text("hello", "hello world"), "hello world");
-}
-
-#[test]
-fn join_stream_text_merges_suffix_overlap() {
-    assert_eq!(
-        join_stream_text("这是第一段内容ABCDEF", "内容ABCDEF第二段"),
-        "这是第一段内容ABCDEF第二段"
-    );
-}
 
 #[test]
 fn build_error_event_payload_marks_rate_limited_errors() {
@@ -60,6 +46,23 @@ fn build_error_event_payload_redacts_provider_secrets() {
     );
     assert!(!serialized.contains("test-secret"));
     assert!(!serialized.contains("internal_trace"));
+}
+
+#[test]
+fn build_error_event_payload_does_not_mislabel_mcp_failures_as_model_failures() {
+    let payload = build_error_event_payload(
+        "MCP Management 运行会话不可用：resolve ChatOS MCP gateway failed: project execution context was rejected with status 404: 项目不存在: -1",
+        None,
+    );
+
+    assert_eq!(
+        payload.get("code").and_then(Value::as_str),
+        Some("CHAT_RUNTIME_UNAVAILABLE")
+    );
+    assert_eq!(
+        payload.get("message").and_then(Value::as_str),
+        Some("聊天工具运行环境暂时不可用，请稍后重试。")
+    );
 }
 
 fn message(id: &str, role: &str, turn_id: &str, content: &str) -> Message {

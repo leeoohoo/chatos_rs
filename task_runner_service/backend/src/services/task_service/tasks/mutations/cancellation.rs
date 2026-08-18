@@ -242,6 +242,7 @@ impl TaskService {
             }
             if run.status == TaskRunStatus::Queued {
                 run.status = TaskRunStatus::Cancelled;
+                run.model_phase_status = crate::models::ModelPhaseStatus::Cancelled;
                 run.cancel_requested = true;
                 run.claim_token = None;
                 run.claim_until = None;
@@ -314,25 +315,12 @@ mod tests {
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1000,
             default_tool_results_model_total_max_chars: 2000,
-            default_execution_environment_mode: "local".to_string(),
-            default_sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_client_id: None,
-            sandbox_manager_client_key: None,
-            default_sandbox_lease_ttl_seconds: 7_200,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
             internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
-            local_connector_internal_api_secret: None,
-            local_connector_service_base_url: Some("http://127.0.0.1:39230".to_string()),
-            local_connector_http_client: reqwest::Client::new(),
-            local_connector_service_request_timeout: Duration::from_millis(5_000),
-            plugin_relay_request_timeout: Duration::from_millis(60_000),
-            plugin_hook_relay_timeout: Duration::from_millis(330_000),
-            plugin_connector_discovery_timeout: Duration::from_millis(10_000),
             callback_timeout: Duration::from_millis(1000),
             admin_username: "admin".to_string(),
             admin_password: "admin".to_string(),
@@ -524,7 +512,6 @@ mod tests {
             "model-1".to_string(),
             task.memory_thread_id.clone(),
             serde_json::json!({}),
-            Vec::new(),
             now.clone(),
         );
         run.status = TaskRunStatus::Running;

@@ -88,9 +88,9 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 - `optional`：该 agent 可以按需调用。
 - `required`：该 agent 默认必须携带。
 
-项目来源通过运行上下文条件收口。MCP Management 根据 Project Execution Context 将文件、终端、浏览器和本地 Plugin 工具路由到 Local Connector，或将云端工具路由到 Harness/Sandbox。模型不需要知道底层连接方式，但系统 Agent 现在区分独立的云端与本地配置身份。
+项目来源通过运行上下文条件收口。MCP Management 根据 Project Execution Context 将文件、终端、浏览器和本地 Plugin 工具路由到 Local Connector，或将云端工具路由到云端 provider。模型和 Task Runner Agent 身份都不需要知道底层连接方式。
 
-Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，但分别登记 cloud/local 两套稳定 Agent 身份：云端规划任务进入 `task_runner_plan_phase`，本地规划任务进入 `task_runner_local_plan_phase`；云端执行任务进入 `task_runner_run_phase`，本地执行任务进入 `task_runner_local_run_phase`。这样 Plugin Management 可以分别维护本地与云端项目的 MCP、Prompt 和插件能力边界。
+Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，并只登记两套稳定 Agent 身份：规划任务进入 `task_runner_plan_phase`，执行任务进入 `task_runner_run_phase`。项目实际使用 Local Connector 还是云端 provider 由 MCP Management 在建立 Runtime Session 时根据 Project Context 路由，Task Runner 和 Agent 身份不感知执行位置。
 
 ## 当前系统 Agent
 
@@ -98,10 +98,8 @@ Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker�
 
 - `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
 - `chatos_local_conversation_agent`：Chat OS 本地普通对话智能体。面向 Local Connector 项目，具备独立的 Prompt 与 MCP 配置。
-- `task_runner_plan_phase`：Task Runner 云端规划任务智能体。使用云端可用的只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
-- `task_runner_local_plan_phase`：Task Runner 本地规划任务智能体。面向本地项目的只读规划阶段，配置独立于云端规划任务。
-- `task_runner_run_phase`：Task Runner 云端执行任务智能体。负责云端代码修改、终端执行、测试、部署及工程验收。
-- `task_runner_local_run_phase`：Task Runner 本地执行任务智能体。负责本地项目的代码修改、终端执行、测试与工程验收。
+- `task_runner_plan_phase`：Task Runner 规划任务智能体。使用只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
+- `task_runner_run_phase`：Task Runner 执行任务智能体。负责代码修改、终端执行、测试、部署及工程验收。
 - `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、只读 `ProjectManagement`、`project_environment`、`sandbox_images`。
 - `project_management_local_agent`：本地项目运行环境智能体。面向本地项目的运行环境分析与依赖解析，配置独立于云端环境智能体。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。

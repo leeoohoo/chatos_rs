@@ -164,7 +164,8 @@ fn prompt_keeps_routing_program_owned_and_requires_exact_coverage() {
     assert!(!prompt.contains("local_connector"));
     assert!(prompt.contains("运行路由由系统自动完成"));
     assert!(prompt.contains("先补测试，再改实现"));
-    assert!(prompt.contains("task-1"));
+    assert!(prompt.contains("project_task_001"));
+    assert!(!prompt.contains("selected_project_task_ids"));
     assert!(prompt.contains("create_project_execution_tasks"));
 }
 
@@ -207,9 +208,10 @@ fn prompt_separates_pending_context_and_satisfied_prerequisites() {
     .expect("completed prerequisite is context, not a blocker");
 
     assert!(prompt.contains("satisfied_prerequisite_project_tasks"));
-    assert!(prompt.contains("task-completed"));
-    assert!(prompt.contains("pending_prerequisite_project_task_ids"));
-    assert!(prompt.contains("context_prerequisite_project_task_ids"));
+    assert!(!prompt.contains("task-completed"));
+    assert!(prompt.contains("已完成基础设施"));
+    assert!(prompt.contains("pending_prerequisite_project_task_refs"));
+    assert!(prompt.contains("context_prerequisite_project_task_refs"));
     assert!(!prompt.contains("\"prerequisite_project_task_ids\""));
 }
 

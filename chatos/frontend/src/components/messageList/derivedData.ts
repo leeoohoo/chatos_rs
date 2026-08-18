@@ -172,10 +172,13 @@ const anchorTaskRunnerCallbacksToSourceTurns = (
     return visible;
   }
 
-  const output = visible.filter((parsed) => !anchoredCallbacks.includes(parsed));
+  const baseOutput = visible.filter((parsed) => !anchoredCallbacks.includes(parsed));
+  const callbackGroups = new Map<string, ParsedMessageForList[]>();
+  const fallbackCallbacks: ParsedMessageForList[] = [];
+
   anchoredCallbacks.forEach((callback) => {
     let insertAfter = -1;
-    output.forEach((candidate, index) => {
+    baseOutput.forEach((candidate, index) => {
       if (
         parsedBelongsToTaskRunnerSource(
           candidate,
@@ -188,15 +191,38 @@ const anchorTaskRunnerCallbacksToSourceTurns = (
     });
 
     if (insertAfter < 0) {
-      const originalIndex = visible.findIndex((candidate) => candidate.id === callback.id);
-      const fallbackIndex = output.findIndex((candidate) => (
-        visible.findIndex((item) => item.id === candidate.id) > originalIndex
-      ));
-      output.splice(fallbackIndex < 0 ? output.length : fallbackIndex, 0, callback);
+      fallbackCallbacks.push(callback);
       return;
     }
 
-    output.splice(insertAfter + 1, 0, callback);
+    const anchorId = baseOutput[insertAfter].id;
+    callbackGroups.set(anchorId, [
+      ...(callbackGroups.get(anchorId) || []),
+      callback,
+    ]);
+  });
+
+  const originalIndexById = new Map(visible.map((item, index) => [item.id, index]));
+  const output: ParsedMessageForList[] = [];
+  baseOutput.forEach((candidate) => {
+    output.push(candidate);
+    const callbacks = callbackGroups.get(candidate.id);
+    if (!callbacks) {
+      return;
+    }
+    callbacks.sort((left, right) => (
+      left.time - right.time
+      || (originalIndexById.get(left.id) ?? 0) - (originalIndexById.get(right.id) ?? 0)
+    ));
+    output.push(...callbacks);
+  });
+
+  fallbackCallbacks.forEach((callback) => {
+    const originalIndex = originalIndexById.get(callback.id) ?? visible.length;
+    const fallbackIndex = output.findIndex((candidate) => (
+      (originalIndexById.get(candidate.id) ?? visible.length) > originalIndex
+    ));
+    output.splice(fallbackIndex < 0 ? output.length : fallbackIndex, 0, callback);
   });
 
   return output;

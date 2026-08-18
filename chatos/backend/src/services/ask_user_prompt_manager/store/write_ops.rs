@@ -33,6 +33,9 @@ pub async fn create_ask_user_prompt_record(
     let kind = trimmed_non_empty(payload.kind.as_str())
         .ok_or_else(|| "kind is required".to_string())?
         .to_string();
+    if let Some(existing) = super::read_ops::get_ask_user_prompt_record(id.as_str()).await? {
+        return Ok(existing);
+    }
 
     let now = crate::core::time::now_rfc3339();
     let expires_at = Some(
@@ -197,6 +200,22 @@ pub async fn update_ask_user_prompt_response(
     .await?;
 
     publish_ask_user_prompt_resolved(&updated).await;
+    if let Ok(config) =
+        chatos_mcp_management_sdk::McpManagementClientConfig::from_env("chatos").await
+    {
+        if let Ok(client) = chatos_mcp_management_sdk::McpManagementClient::new(config) {
+            if let Err(error) = client
+                .notify_waiting_user_resolved(updated.id.as_str())
+                .await
+            {
+                tracing::warn!(
+                    prompt_id = updated.id.as_str(),
+                    error = %error,
+                    "notify MCP Management Ask User resolution failed"
+                );
+            }
+        }
+    }
     Ok(updated)
 }
 

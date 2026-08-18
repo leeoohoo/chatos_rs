@@ -5,7 +5,7 @@ use crate::models::{TaskMcpConfig, TaskMcpResolutionResponse, TaskRecord};
 use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 
 use super::mcp_resolution::{
-    resolve_task_mcp, resolve_task_mcp_authoritative, selected_builtin_kinds_from_config,
+    resolve_task_mcp, selected_builtin_kinds_from_config,
     task_mcp_resolution_response as build_mcp_resolution_response,
 };
 use super::normalize_strings;
@@ -31,12 +31,6 @@ pub(super) fn selected_builtin_kinds(mcp_config: &TaskMcpConfig) -> Vec<BuiltinM
 
 pub(super) fn runtime_selected_builtin_kinds(task: &TaskRecord) -> Vec<BuiltinMcpKind> {
     resolve_task_mcp(task, &[]).server_local_builtin_kinds
-}
-
-pub(super) fn runtime_selected_builtin_kinds_authoritative(
-    task: &TaskRecord,
-) -> Vec<BuiltinMcpKind> {
-    resolve_task_mcp_authoritative(task, &[]).server_local_builtin_kinds
 }
 
 pub(super) fn task_mcp_resolution_response(task: &TaskRecord) -> TaskMcpResolutionResponse {
@@ -66,10 +60,10 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
     config.builtin_prompt_locale = normalized_optional(Some(config.builtin_prompt_locale))
         .unwrap_or_else(|| chatos_mcp_runtime::BuiltinMcpPromptLocale::DEFAULT_KEY.to_string());
     config.enabled_builtin_kinds = normalize_builtin_kind_names(config.enabled_builtin_kinds);
+    config
+        .enabled_builtin_kinds
+        .retain(|kind| kind != BuiltinMcpKind::RemoteConnectionController.kind_name());
     config.workspace_dir = normalized_optional(config.workspace_dir);
-    config.sandbox_manager_base_url = normalized_optional(config.sandbox_manager_base_url)
-        .map(|value| value.trim_end_matches('/').to_string());
-    config.default_remote_server_id = normalized_optional(config.default_remote_server_id);
     config.execution_service_id = normalized_optional(config.execution_service_id);
     config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
     config.selected_skill_ids = normalize_strings(config.selected_skill_ids);

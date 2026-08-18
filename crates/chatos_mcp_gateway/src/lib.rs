@@ -83,6 +83,57 @@ impl McpManagementGatewayBuilder {
             exposed_tool_count: session.exposed_tool_count,
             effective_mcp_ids: session.effective_mcp_ids,
             provider_skills_prompt: session.provider_skills_prompt,
+            plugin_instruction_items: session.plugin_instruction_items,
+            mcp_command_queue: session.mcp_command_queue,
+            runtime_token: session.runtime_token,
+            runtime_session,
+        })
+    }
+
+    pub async fn resolve_existing(self, session_id: &str) -> Result<ResolvedMcpGateway, String> {
+        let config = McpManagementClientConfig::from_env(self.caller_service.clone())
+            .await
+            .map_err(|error| format!("load MCP Management config failed: {error}"))?;
+        let client = McpManagementClient::new(config)
+            .map_err(|error| format!("initialize MCP Management client failed: {error}"))?;
+        let session = client
+            .runtime_session_routes(session_id)
+            .await
+            .map_err(|error| format!("resolve existing MCP runtime session failed: {error}"))?;
+        let runtime_session =
+            McpManagementRuntimeSessionHandle::new(client, session.session_id.clone());
+        let response = RuntimeSessionResponse {
+            session_id: session.session_id,
+            policy_revision: session.policy_revision,
+            route_revision: session.route_revision,
+            expires_at: session.expires_at,
+            mcp_server_url: session.mcp_server_url,
+            mcp_command_queue: session.mcp_command_queue,
+            runtime_token: session.runtime_token,
+            configured_mcp_count: session.routes.len(),
+            exposed_tool_count: session.tools.len(),
+            effective_mcp_ids: Vec::new(),
+            provider_skills_prompt: None,
+            plugin_instruction_items: Vec::new(),
+            unavailable_required_mcps: Vec::new(),
+        };
+        let server = build_gateway_server(
+            &response,
+            self.default_timeout,
+            self.tool_timeouts,
+            self.async_result_transport,
+        )?;
+        Ok(ResolvedMcpGateway {
+            server,
+            session_id: response.session_id,
+            route_revision: response.route_revision,
+            configured_mcp_count: response.configured_mcp_count,
+            exposed_tool_count: response.exposed_tool_count,
+            effective_mcp_ids: response.effective_mcp_ids,
+            provider_skills_prompt: response.provider_skills_prompt,
+            plugin_instruction_items: response.plugin_instruction_items,
+            mcp_command_queue: response.mcp_command_queue,
+            runtime_token: response.runtime_token,
             runtime_session,
         })
     }
@@ -96,6 +147,9 @@ pub struct ResolvedMcpGateway {
     pub exposed_tool_count: usize,
     pub effective_mcp_ids: Vec<String>,
     pub provider_skills_prompt: Option<String>,
+    pub plugin_instruction_items: Vec<serde_json::Value>,
+    pub mcp_command_queue: String,
+    pub runtime_token: String,
     pub runtime_session: McpManagementRuntimeSessionHandle,
 }
 
@@ -111,11 +165,20 @@ fn build_gateway_server(
     if session.runtime_token.trim().is_empty() {
         return Err("MCP Management runtime session returned an empty runtime token".to_string());
     }
+    if session.mcp_command_queue.trim().is_empty() {
+        return Err("MCP Management runtime session returned an empty command queue".to_string());
+    }
     let mut server = McpHttpServer::new("mcp_management", session.mcp_server_url.clone())
-        .with_headers(HashMap::from([(
-            "authorization".to_string(),
-            format!("Bearer {}", session.runtime_token),
-        )]))
+        .with_headers(HashMap::from([
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", session.runtime_token),
+            ),
+            (
+                "x-chatos-mcp-command-queue".to_string(),
+                session.mcp_command_queue.clone(),
+            ),
+        ]))
         .with_timeout(default_timeout)
         .with_async_result_transport(async_result_transport)
         .with_preserved_tool_names()
@@ -137,11 +200,13 @@ mod tests {
             route_revision: "route-1".to_string(),
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
+            mcp_command_queue: "mcp_management.async.dispatch".to_string(),
             runtime_token: "runtime-token".to_string(),
             configured_mcp_count: 1,
             exposed_tool_count: 1,
             effective_mcp_ids: Vec::new(),
             provider_skills_prompt: None,
+            plugin_instruction_items: Vec::new(),
             unavailable_required_mcps: Vec::new(),
         }
     }
@@ -156,7 +221,7 @@ mod tests {
         )
         .expect("gateway server");
 
-        assert_eq!(server.headers.as_ref().map(HashMap::len), Some(1));
+        assert_eq!(server.headers.as_ref().map(HashMap::len), Some(2));
         assert_eq!(
             server
                 .headers

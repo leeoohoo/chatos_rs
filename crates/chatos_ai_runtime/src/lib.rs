@@ -4,6 +4,7 @@
 pub mod builder;
 pub mod compat;
 pub mod error_policy;
+pub mod file_write_recovery;
 pub mod input_transform;
 pub mod lifecycle;
 pub mod mcp_executor;
@@ -37,9 +38,10 @@ pub use error_policy::{
     is_retryable_provider_backpressure_error, is_retryable_provider_overload_error,
     is_transient_network_error, is_transient_transport_or_parse_error,
     is_upstream_auth_unavailable_error, is_upstream_connection_interrupted_error,
-    replay_request_error_policy, should_retry_without_stream, transient_retry_backoff_ms,
-    transient_retry_kind_label, RequestErrorReplay, TransientRetryAction,
+    replay_request_error_policy, transient_retry_backoff_ms, transient_retry_kind_label,
+    RequestErrorReplay, TransientRetryAction,
 };
+pub use file_write_recovery::automatic_file_write_recovery_calls;
 pub use input_transform::{
     append_input_items, assistant_visible_text, build_current_input_items, content_parts_to_text,
     convert_parts_to_response_input, extract_raw_input, normalize_input_for_provider,
@@ -57,8 +59,8 @@ pub use memory_context::{
 };
 pub use request::{AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks};
 pub use runtime::{
-    AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiTurnReport, AiTurnStatus,
-    IterativeContextRefresh, MemoryContextOverflowRecovery,
+    AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepOutcome, AiSingleStepRequest,
+    AiTurnReport, AiTurnStatus, IterativeContextRefresh, MemoryContextOverflowRecovery,
 };
 pub use simple_prompt::{
     base_url_disallows_system_messages, base_url_requires_responses_input_list,
@@ -70,14 +72,16 @@ pub use stateless_history::{
     build_stateless_history_items, build_stateless_history_items_with_output_cap,
     splice_current_input_items, StatelessHistoryMessage,
 };
+#[cfg(feature = "local-agent-loop")]
+pub use task::TaskRunExecution;
 pub use task::{
     tool_result_is_meaningful_engineering_action, tool_result_is_missing_targeted_read,
-    tool_result_is_placeholder_progress_write, TaskBuiltinMcpPromptMode,
+    tool_result_is_placeholder_progress_write, TaskAcceptanceEvidence, TaskBuiltinMcpPromptMode,
     TaskBuiltinMcpPromptSnapshot, TaskExecutionOutcome, TaskExecutionOutcomeStatus,
-    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
-    TaskExecutionReviewTrigger, TaskMcpInitMode, TaskMemoryRuntimeConfig, TaskRunExecution,
-    TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeBuilder, TaskRuntimeConfig,
-    DEFAULT_TASK_RUN_MAX_ITERATIONS,
+    TaskExecutionProgressSnapshot, TaskExecutionProgressState, TaskExecutionReviewCheckpoint,
+    TaskExecutionReviewPolicy, TaskExecutionReviewTrigger, TaskMcpInitMode,
+    TaskMemoryRuntimeConfig, TaskRunReport, TaskRunSpec, TaskRuntime, TaskRuntimeBuilder,
+    TaskRuntimeConfig, DEFAULT_TASK_RUN_MAX_ITERATIONS,
 };
 pub use tool_runtime::{
     append_responses_tool_results, append_tool_results, append_tool_results_with_budget,
@@ -89,9 +93,9 @@ pub use tool_runtime::{
     TOOL_RESULT_MODEL_MAX_CHARS_ENV,
 };
 pub use traits::{
-    MemoryRecordWriter, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks, RuntimeMessage,
-    RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput, SaveToolRecordInput,
-    ToolExecutor, DEFAULT_MODEL_REQUEST_MAX_RETRIES,
+    JsonSchemaOutputFormat, MemoryRecordWriter, ModelRequest, ModelRuntimeConfig, RuntimeCallbacks,
+    RuntimeMessage, RuntimeRecordOptions, SaveAssistantRecordInput, SaveRecordInput,
+    SaveToolRecordInput, ToolExecutor, DEFAULT_MODEL_REQUEST_MAX_RETRIES,
 };
 pub use turn::{
     build_contextual_input, input_value_to_items, message_item, user_text_item,

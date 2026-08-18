@@ -56,7 +56,7 @@ impl SandboxManager {
         .to_rfc3339();
         let run_workspace =
             self.prepare_run_workspace(input.workspace_root.as_str(), run_id.as_str())?;
-        let effective_permissions = legacy_policy_permission_snapshot(
+        let effective_permissions = sandbox_manager_effective_permissions(
             &effective_policy,
             vec![run_workspace.to_string_lossy().to_string()],
         );
@@ -205,7 +205,7 @@ impl SandboxManager {
         record: SandboxLeaseRecord,
     ) -> Result<CreateSandboxLeaseResponse, ApiError> {
         let effective_permissions = record.effective_permissions.clone().unwrap_or_else(|| {
-            legacy_policy_permission_snapshot(
+            sandbox_manager_effective_permissions(
                 &record.effective_policy,
                 vec![record.run_workspace.clone()],
             )
@@ -254,20 +254,41 @@ impl SandboxManager {
                 agent_token: Some(agent_token.clone()),
                 resource_limits: record.resource_limits.clone(),
                 network: record.network.clone(),
+                effective_permissions: record.effective_permissions.clone().unwrap_or_else(|| {
+                    sandbox_manager_effective_permissions(
+                        &record.effective_policy,
+                        vec![record.run_workspace.clone()],
+                    )
+                }),
             })
             .await;
 
         match create_result {
             Ok(instance) => {
                 if let Err(err) = self.backend.start(record.sandbox_id.as_str()).await {
+                    let cleanup_error = self
+                        .backend
+                        .destroy(record.sandbox_id.as_str(), instance.backend_id.as_deref())
+                        .await
+                        .err();
                     record.status = SandboxStatus::Failed;
-                    record.last_error = Some(err.clone());
+                    record.last_error = Some(match cleanup_error.as_deref() {
+                        Some(cleanup_error) => {
+                            format!("{err}; cleanup after start failure failed: {cleanup_error}")
+                        }
+                        None => err.clone(),
+                    });
                     record.idempotency_key = None;
                     record.updated_at = now_rfc3339();
                     let _ = self.store.replace_lease(&record).await;
                     let _ = self.store.release_active_slot(record.id.as_str()).await;
-                    self.event(&record, "sandbox_start_failed", Some(&err), None)
-                        .await;
+                    self.event(
+                        &record,
+                        "sandbox_start_failed",
+                        record.last_error.as_deref(),
+                        cleanup_error.map(|error| json!({ "cleanup_error": error })),
+                    )
+                    .await;
                     return Err(ApiError::with_code(
                         StatusCode::BAD_GATEWAY,
                         "sandbox_create_failed",
@@ -291,7 +312,7 @@ impl SandboxManager {
                 .await;
                 let effective_permissions =
                     record.effective_permissions.clone().unwrap_or_else(|| {
-                        legacy_policy_permission_snapshot(
+                        sandbox_manager_effective_permissions(
                             &record.effective_policy,
                             vec![record.run_workspace.clone()],
                         )

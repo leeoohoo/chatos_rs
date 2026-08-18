@@ -164,7 +164,10 @@ async fn inspect_main_queues(state: &AppState) -> RabbitMqQueueRuntimeStats {
     };
     let topology = &state.task_queue_topology;
     let mut specs = vec![
-        RabbitMqQueueSpec::new("run_dispatch", topology.run_dispatch_queue.as_str()),
+        RabbitMqQueueSpec::new(
+            "cloud_agent_runtime",
+            crate::cloud_agent_queue::TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY,
+        ),
         RabbitMqQueueSpec::new("run_post_process", topology.run_post_process_queue.as_str()),
     ];
     if state.config.callback_delivery_enabled()
@@ -296,7 +299,7 @@ mod tests {
             .expect("valid pressure policy");
         assert_eq!(
             pressure_signal_from_queue_stats(
-                &stats(&[("run_dispatch", 50, 1), ("run_post_process", 49, 1)]),
+                &stats(&[("cloud_agent_runtime", 50, 1), ("run_post_process", 49, 1)]),
                 &policy,
             )
             .level,
@@ -304,7 +307,7 @@ mod tests {
         );
         assert_eq!(
             pressure_signal_from_queue_stats(
-                &stats(&[("run_dispatch", 60, 1), ("run_post_process", 40, 1)]),
+                &stats(&[("cloud_agent_runtime", 60, 1), ("run_post_process", 40, 1)]),
                 &policy,
             )
             .level,
@@ -312,7 +315,10 @@ mod tests {
         );
         assert_eq!(
             pressure_signal_from_queue_stats(
-                &stats(&[("run_dispatch", 900, 1), ("run_post_process", 100, 1)]),
+                &stats(&[
+                    ("cloud_agent_runtime", 900, 1),
+                    ("run_post_process", 100, 1)
+                ]),
                 &policy,
             )
             .level,
@@ -325,7 +331,7 @@ mod tests {
         let policy = TaskRunnerPressurePolicy::from_snapshot(&snapshot(100, 1_000, 5_000))
             .expect("valid pressure policy");
         let signal = pressure_signal_from_queue_stats(
-            &stats(&[("run_dispatch", 1, 0), ("run_post_process", 0, 0)]),
+            &stats(&[("cloud_agent_runtime", 1, 0), ("run_post_process", 0, 0)]),
             &policy,
         );
         assert_eq!(signal.level, PlatformPressureLevel::Critical);

@@ -69,35 +69,10 @@ pub async fn get_project_runtime_environment_progress(
                 project, None,
             )
         });
-    if environment.status == ProjectRuntimeEnvironmentStatus::Analyzing
-        && analysis_is_stale(&environment, state.config.environment_analysis_stale_after)
-    {
-        let error = format!(
-            "project environment analysis emitted no persistent progress within the configured stale threshold of {} ms",
-            state.config.environment_analysis_stale_after.as_millis()
-        );
-        environment.status = ProjectRuntimeEnvironmentStatus::Failed;
-        environment.analysis_summary = Some("项目运行环境分析已超时中断。".to_string());
-        environment.last_error = Some(error.clone());
-        environment.updated_at = now_rfc3339();
-        if let (Some(started_at), Some(run_id)) = (
-            environment
-                .detected_stack
-                .pointer("/analysis_progress/started_at")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-            environment.last_agent_run_id.clone(),
-        ) {
-            set_analysis_progress(
-                &mut environment.detected_stack,
-                run_id.as_str(),
-                "analysis_stale",
-                started_at.as_str(),
-                environment.updated_at.as_str(),
-                Some(environment.updated_at.as_str()),
-                Some(error.as_str()),
-            );
-        }
+    if reconcile_stale_analysis(
+        &mut environment,
+        state.config.environment_analysis_stale_after,
+    ) {
         environment = state
             .store
             .upsert_project_runtime_environment(&environment)
@@ -138,25 +113,6 @@ pub async fn get_project_runtime_environment_progress(
             .store
             .upsert_project_runtime_environment(&environment)
             .await?;
-    } else if environment.status == ProjectRuntimeEnvironmentStatus::Analyzing && job.is_none() {
-        let analysis_active = state
-            .runtime_environment_analysis_jobs
-            .lock()
-            .await
-            .contains(project.id.as_str());
-        if !analysis_active {
-            environment.status = ProjectRuntimeEnvironmentStatus::Failed;
-            environment.analysis_summary = Some("项目运行环境分析任务已中断。".to_string());
-            environment.last_error = Some(
-                "analysis worker is no longer active; please initialize the runtime environment again"
-                    .to_string(),
-            );
-            environment.updated_at = now_rfc3339();
-            environment = state
-                .store
-                .upsert_project_runtime_environment(&environment)
-                .await?;
-        }
     } else if active_image_build && job.is_none() {
         let image_build_active = state
             .runtime_environment_image_jobs
@@ -184,6 +140,44 @@ pub async fn get_project_runtime_environment_progress(
         provider,
         job.as_ref(),
     ))
+}
+
+pub(crate) fn reconcile_stale_analysis(
+    environment: &mut ProjectRuntimeEnvironmentRecord,
+    stale_after: Duration,
+) -> bool {
+    if environment.status != ProjectRuntimeEnvironmentStatus::Analyzing
+        || !analysis_is_stale(environment, stale_after)
+    {
+        return false;
+    }
+    let error = format!(
+        "project environment analysis emitted no persistent progress within the configured stale threshold of {} ms",
+        stale_after.as_millis()
+    );
+    environment.status = ProjectRuntimeEnvironmentStatus::Failed;
+    environment.analysis_summary = Some("项目运行环境分析已超时中断。".to_string());
+    environment.last_error = Some(error.clone());
+    environment.updated_at = now_rfc3339();
+    if let (Some(started_at), Some(run_id)) = (
+        environment
+            .detected_stack
+            .pointer("/analysis_progress/started_at")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        environment.last_agent_run_id.clone(),
+    ) {
+        set_analysis_progress(
+            &mut environment.detected_stack,
+            run_id.as_str(),
+            "analysis_stale",
+            started_at.as_str(),
+            environment.updated_at.as_str(),
+            Some(environment.updated_at.as_str()),
+            Some(error.as_str()),
+        );
+    }
+    true
 }
 
 fn analysis_is_stale(environment: &ProjectRuntimeEnvironmentRecord, stale_after: Duration) -> bool {
@@ -289,10 +283,14 @@ async fn fetch_local_image_jobs(
         .root_path
         .as_deref()
         .and_then(parse_local_connector_project_root);
-    let pairing =
-        find_enabled_local_sandbox_pairing(&state.config, Some(token), project_ref.as_ref())
-            .await?
-            .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
+    let pairing = find_enabled_local_sandbox_pairing(
+        &state.config,
+        Some(token),
+        project_ref.as_ref(),
+        project.owner_user_id.as_deref(),
+    )
+    .await?
+    .ok_or_else(|| "没有找到已启用的 Local Connector 沙箱配对".to_string())?;
     let facade_base = pairing
         .id
         .as_deref()

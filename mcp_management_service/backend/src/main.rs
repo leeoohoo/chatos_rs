@@ -37,16 +37,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let internal_mtls_bind_addr = config.internal_mtls_bind_addr();
     let internal_mtls_config = load_internal_mtls_config(&config)?;
     let app_state = AppState::new(config.clone()).await?;
+    app_state
+        .async_tool_dispatch
+        .initialize()
+        .await
+        .map_err(|error| format!("initialize MCP Management RabbitMQ topology failed: {error}"))?;
     tracing::info!(
         async_tool_dispatch_mode = app_state.config.async_tool_dispatch_topology.mode.as_str(),
         async_tool_worker_concurrency = app_state
             .config
             .async_tool_dispatch_topology
             .worker_concurrency,
-        async_tool_local_queue_buffer = app_state
-            .config
-            .async_tool_dispatch_topology
-            .local_queue_buffer,
         async_tool_max_delivery_attempts = app_state
             .config
             .async_tool_dispatch_topology
@@ -95,10 +96,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         background_handles.push(handle);
     }
-    if let Some(handle) =
-        mcp_management_service_backend::result_events::spawn_result_event_publisher(
-            app_state.clone(),
-        )
+    if let Some(handle) = app_state
+        .async_tool_dispatch
+        .spawn_invocation_consumer(app_state.clone())
+    {
+        background_handles.push(handle);
+    }
+    if let Some(handle) = app_state
+        .async_tool_dispatch
+        .spawn_terminal_consumer(app_state.clone())
     {
         background_handles.push(handle);
     }

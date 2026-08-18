@@ -13,7 +13,7 @@ use super::chatos_async_planner::{
 };
 use super::support::{
     ensure_task_status_update_allowed_from_mcp, task_creator_filter, task_for_agent_tool,
-    tasks_for_agent_tool, value_for_agent_tool,
+    tasks_for_agent_tool, validate_create_project_execution_tasks_arguments, value_for_agent_tool,
 };
 use super::{
     decode_args, reject_ai_runtime_config, text_result, BatchTaskDeleteArgs,
@@ -73,10 +73,9 @@ impl TaskRunnerMcpService {
             }
             "create_task" => {
                 let decoded = decode_args::<CreateTaskArgs>(args)?;
-                let child_task_profile =
-                    request_context.child_task_profile(decoded.is_planning_task);
                 let mut input: CreateTaskRequest = decoded.into_request()?;
                 request_context.enforce_plugin_config(&mut input);
+                request_context.enforce_created_task_kind(&mut input);
                 let source_context = request_context.task_source_context()?;
                 if let Some(prerequisite_task_ids) = input.prerequisite_task_ids.as_ref() {
                     self.require_tasks_for_user_in_context(
@@ -116,9 +115,6 @@ impl TaskRunnerMcpService {
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
                 }
-                if let Some(task_profile) = child_task_profile {
-                    input.task_profile = Some(task_profile);
-                }
                 let task = self
                     .task_service
                     .create_task(input, Some(current_user), source_context)
@@ -143,6 +139,7 @@ impl TaskRunnerMcpService {
                 Ok(text_result(result))
             }
             "create_project_execution_tasks" => {
+                validate_create_project_execution_tasks_arguments(&args)?;
                 let args: CreateProjectExecutionTasksArgs = decode_args(args)?;
                 let result = self
                     .create_project_execution_tasks(args, current_user, request_context)

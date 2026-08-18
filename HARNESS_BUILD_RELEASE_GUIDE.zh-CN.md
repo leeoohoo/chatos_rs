@@ -7,7 +7,7 @@
 1. 本地代码已经提交，工作区尽量保持干净。
 2. 服务器上的 Harness 可访问：`http://8.155.171.124:3001`。
 3. 服务器部署目录为：`/opt/chatos/docker-deploy/chatos_rs`。
-4. 生产密钥、SMTP 授权码等只放服务器 `docker/.env` 或 Harness secret，不写入仓库。
+4. 配置中心启动前必需的基础设施密钥只放服务器 `docker/bootstrap.conf` 或 Harness secret；SMTP 等业务配置通过配置中心发布，不写入仓库。
 
 发布前建议先确认当前分支和改动：
 

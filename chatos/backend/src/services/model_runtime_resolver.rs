@@ -10,7 +10,7 @@ use crate::models::ai_model_config::AiModelConfig;
 use crate::models::session::Session;
 use crate::repositories::{ai_model_configs, session_runtime_settings};
 
-use super::{access_token_scope, chatos_sessions, user_service_api_client};
+use super::{access_token_scope, chatos_sessions, task_runner_api_client, user_service_api_client};
 
 fn normalize_optional_id(value: Option<&str>) -> Option<String> {
     value
@@ -93,6 +93,72 @@ fn from_user_service_model_config(
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
+}
+
+fn from_task_runner_model_runtime_config(
+    record: task_runner_api_client::ChatosModelRuntimeConfig,
+) -> AiModelConfig {
+    let has_api_key = !record.api_key.trim().is_empty();
+    AiModelConfig {
+        id: record.id,
+        user_id: record.owner_user_id,
+        name: record.name,
+        provider: record.provider,
+        prompt_vendor: record.prompt_vendor,
+        model: record.model,
+        thinking_level: record.thinking_level,
+        task_usage_scenario: record.usage_scenario,
+        task_thinking_level: None,
+        temperature: record.temperature,
+        max_output_tokens: record.max_output_tokens,
+        api_key: Some(record.api_key),
+        has_api_key,
+        base_url: Some(record.base_url),
+        enabled: record.enabled,
+        supports_images: record.supports_images,
+        supports_reasoning: record.supports_reasoning,
+        supports_responses: record.supports_responses,
+        sync_warnings: Vec::new(),
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+async fn current_user_can_access_all_task_runner_models(cfg: &Config, user_id: &str) -> bool {
+    let Some(base_url) = configured_user_service_base_url(cfg) else {
+        return false;
+    };
+    let Some(access_token) = access_token_scope::get_current_access_token() else {
+        return false;
+    };
+    let Ok(verified) = user_service_api_client::verify_token(
+        base_url.as_str(),
+        access_token.as_str(),
+        cfg.user_service_request_timeout_ms,
+    )
+    .await
+    else {
+        return false;
+    };
+    let principal = verified.principal;
+    let principal_user_id = principal
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let role = principal.role.as_deref().map(str::trim).unwrap_or_default();
+    principal_user_id == Some(user_id) && matches!(role, "admin" | "super_admin")
+}
+
+async fn get_task_runner_model_config_by_id(
+    cfg: &Config,
+    model_id: &str,
+    user_id: &str,
+) -> Result<AiModelConfig, String> {
+    let include_all = current_user_can_access_all_task_runner_models(cfg, user_id).await;
+    task_runner_api_client::get_chatos_model_runtime_config(user_id, model_id, include_all)
+        .await
+        .map(from_task_runner_model_runtime_config)
 }
 
 async fn get_user_service_model_config_by_id(
@@ -307,10 +373,8 @@ async fn load_profile_by_id(
     model_id: &str,
     user_id: Option<&str>,
 ) -> Result<AiModelConfig, String> {
-    if configured_user_service_base_url(cfg).is_some() {
-        if let Some(user_id) = user_id {
-            return get_user_service_model_config_by_id(cfg, model_id, user_id).await;
-        }
+    if let Some(user_id) = user_id {
+        return get_task_runner_model_config_by_id(cfg, model_id, user_id).await;
     }
 
     let profile = ai_model_configs::get_ai_model_config_by_id(model_id)
@@ -413,8 +477,39 @@ pub async fn resolve_model_runtime_for_request(
 
 #[cfg(test)]
 mod tests {
-    use super::{compatible_replacement_profiles, select_model_id_by_precedence};
+    use super::{
+        compatible_replacement_profiles, from_task_runner_model_runtime_config,
+        select_model_id_by_precedence,
+    };
     use crate::models::ai_model_config::AiModelConfig;
+    use crate::services::task_runner_api_client::ChatosModelRuntimeConfig;
+
+    #[test]
+    fn task_runner_runtime_preserves_model_capabilities() {
+        let profile = from_task_runner_model_runtime_config(ChatosModelRuntimeConfig {
+            id: "model-1".to_string(),
+            owner_user_id: Some("user-1".to_string()),
+            name: "Primary".to_string(),
+            provider: "openai".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
+            base_url: "https://api.example.test/v1".to_string(),
+            api_key: "secret".to_string(),
+            model: "gpt-test".to_string(),
+            usage_scenario: Some("default".to_string()),
+            temperature: Some(0.2),
+            max_output_tokens: Some(4096),
+            thinking_level: Some("high".to_string()),
+            supports_images: true,
+            supports_reasoning: true,
+            supports_responses: true,
+            enabled: true,
+            created_at: "2026-08-11T00:00:00Z".to_string(),
+            updated_at: "2026-08-11T00:00:00Z".to_string(),
+        });
+
+        assert!(profile.supports_images);
+        assert!(profile.supports_reasoning);
+    }
 
     fn model_profile(
         id: &str,

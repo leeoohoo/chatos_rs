@@ -47,9 +47,64 @@ pub fn router() -> Router {
             post(mcp_management_entrypoint),
         )
         .route(
+            "/internal/mcp-management/mcp/{system_key}/start",
+            post(mcp_management_ask_user_start),
+        )
+        .route(
+            "/internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}",
+            post(mcp_management_ask_user_prompt),
+        )
+        .route(
             "/internal/mcp-management/mcp/browser_tools/sessions/{session_id}/close",
             post(browser::close_bound_cloud_browser_session),
         )
+}
+
+async fn mcp_management_ask_user_start(
+    Path(system_key): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<JsonRpcRequest>,
+) -> Json<JsonRpcResponse> {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if let Err(message) = require_mcp_management_request(&headers) {
+        return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
+    }
+    if system_key.parse::<SystemMcpKey>().ok() != Some(SystemMcpKey::AskUser) {
+        return Json(jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "only Ask User can be started",
+        ));
+    }
+    let binding = match mcp_management_binding_from_headers(&headers) {
+        Ok(binding) => binding,
+        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
+    };
+    Json(builtins::dispatch_bound_ask_user_start(request, &binding).await)
+}
+
+async fn mcp_management_ask_user_prompt(
+    Path((system_key, prompt_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    if require_mcp_management_request(&headers).is_err()
+        || system_key.parse::<SystemMcpKey>().ok() != Some(SystemMcpKey::AskUser)
+        || mcp_management_binding_from_headers(&headers).is_err()
+    {
+        return Json(serde_json::json!({"error": "invalid Ask User prompt request"}));
+    }
+    match crate::services::ask_user_prompt_manager::get_ask_user_prompt_record(prompt_id.as_str())
+        .await
+    {
+        Ok(Some(prompt)) => Json(serde_json::json!({
+            "pending": prompt.status
+                == crate::services::ask_user_prompt_manager::AskUserPromptStatus::Pending,
+            "kind": prompt.kind,
+            "response": prompt.response,
+        })),
+        Ok(None) => Json(serde_json::json!({"error": "ask_user prompt was not found"})),
+        Err(error) => Json(serde_json::json!({"error": error})),
+    }
 }
 
 #[derive(Debug, Clone)]

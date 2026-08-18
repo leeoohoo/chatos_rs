@@ -23,9 +23,7 @@ mod record_writer;
 pub use compose_items::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
 };
-pub use record_writer::{
-    BestEffortMemoryRecordWriter, MemoryEngineRecordWriter, MemoryRecordScope,
-};
+pub use record_writer::{MemoryEngineRecordWriter, MemoryRecordScope};
 
 use compose_items::default_compose_policy;
 
@@ -132,6 +130,31 @@ impl MemoryContextComposer {
         limits: Option<ToolResultModelBudgetLimits>,
     ) -> Result<Vec<Value>, String> {
         let response = self.compose(scope).await?;
+        Ok(compose_response_to_input_items_with_budget(
+            &response, limits,
+        ))
+    }
+
+    pub async fn compose_input_items_excluding_turn(
+        &self,
+        scope: &MemoryScope,
+        excluded_turn_id: Option<&str>,
+        limits: Option<ToolResultModelBudgetLimits>,
+    ) -> Result<Vec<Value>, String> {
+        let mut response = self.compose(scope).await?;
+        if let Some(excluded_turn_id) = excluded_turn_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            response.recent_records.retain(|record| {
+                record
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("conversation_turn_id"))
+                    .and_then(Value::as_str)
+                    != Some(excluded_turn_id)
+            });
+        }
         Ok(compose_response_to_input_items_with_budget(
             &response, limits,
         ))

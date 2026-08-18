@@ -29,8 +29,9 @@ pub(super) use status::{
 };
 pub(super) use sync::{
     apply_task_runner_task_snapshot, load_execution_links_for_work_items,
-    mark_execution_messages_for_stop, set_execution_turn_hidden, sync_execution_link_status,
-    sync_execution_message_task_tracking, sync_requirement_execution_state,
+    mark_execution_messages_for_stop, mark_execution_planner_failed, set_execution_turn_hidden,
+    sync_execution_link_status, sync_execution_message_task_tracking,
+    sync_requirement_execution_state,
 };
 pub(super) use tasks::ensure_requirement_execution_not_active;
 pub(super) use types::{ExecutionLink, WorkItemPlanItem};

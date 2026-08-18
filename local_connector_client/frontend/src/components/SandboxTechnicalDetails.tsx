@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { Cpu, HardDrive, Network, Settings2, Shield } from 'lucide-react';
+import { Cpu, Network, Settings2, Shield } from 'lucide-react';
 
 import type {
   ConnectorStatus,
@@ -27,27 +27,13 @@ export function SandboxTechnicalDetails({
           icon={Cpu}
           label="当前隔离方式"
           value={sandboxBackendLabel(backend)}
-          detail={backend === 'local_process'
-            ? '由操作系统沙箱限制本机进程；不是线程隔离。'
-            : '任务在独立 Docker 容器中运行。'}
+          detail="由操作系统沙箱限制本机进程；不是线程隔离。"
         />
-        {backend === 'docker' ? (
-          <TechnicalItem
-            icon={HardDrive}
-            label="Docker 环境"
-            value={status.docker.installed
-              ? (status.docker.running ? '运行中' : '未运行')
-              : '未安装'}
-            detail={status.docker.version || status.docker.error || 'Docker 模式需要'}
-          />
-        ) : null}
         <TechnicalItem
           icon={Network}
           label="网络隔离"
           value={status.sandbox.network_isolation === false ? '不可用' : '受策略限制'}
-          detail={backend === 'docker'
-            ? '受限权限使用无公网出口的 internal 网络；完整访问模式使用 bridge 网络。'
-            : '默认断网；需要时进入用户或 AI 审批流程。'}
+          detail="默认断网；需要时进入用户或 AI 审批流程。"
         />
         <TechnicalItem
           icon={Shield}

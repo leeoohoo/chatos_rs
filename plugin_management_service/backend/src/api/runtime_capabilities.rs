@@ -129,15 +129,13 @@ async fn resolve_agent_capabilities_for_owner(
         .list_bindings_for_runtime(agent_key.as_str(), owner_user_id.as_str())
         .await
         .map_err(ApiError::internal)?;
+    let bindings = select_runtime_bindings(bindings, &runtime_context);
     let mut mcps = Vec::new();
     let mut skills = Vec::new();
     let mut plugins = Vec::new();
     let mut local_connector_requirements = Vec::new();
 
     for binding in bindings {
-        if !binding_matches_runtime_context(&binding.conditions, &runtime_context) {
-            continue;
-        }
         match binding.resource_kind.as_str() {
             RESOURCE_KIND_MCP => {
                 let Some(resource) = state
@@ -436,6 +434,40 @@ async fn resolve_agent_capabilities_for_owner(
                 });
             }
         }
+
+        let mut resolved_plugin_ids = plugins
+            .iter()
+            .map(|item| item.catalog.id.clone())
+            .collect::<HashSet<_>>();
+        for preference in state
+            .store
+            .list_enabled_user_plugin_preferences(owner_user_id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+        {
+            if !resolved_plugin_ids.insert(preference.plugin_id.clone()) {
+                continue;
+            }
+            let binding = automatic_user_binding(
+                agent_key.as_str(),
+                owner_user_id.as_str(),
+                RESOURCE_KIND_PLUGIN,
+                preference.plugin_id.as_str(),
+            );
+            if let Some(plugin) = resolve_plugin_binding(
+                state,
+                binding,
+                owner_user_id.as_str(),
+                device_id.as_deref(),
+                runtime_context.runtime_provider.as_deref(),
+            )
+            .await?
+            {
+                if plugin.available || include_unavailable {
+                    plugins.push(plugin);
+                }
+            }
+        }
     }
 
     let generated_at = now_rfc3339();
@@ -480,6 +512,68 @@ fn binding_matches_runtime_context(
         conditions.schedule_mode.as_deref(),
         runtime_context.schedule_mode.as_deref(),
     )
+}
+
+fn select_runtime_bindings(
+    bindings: Vec<AgentBindingRecord>,
+    runtime_context: &BindingConditions,
+) -> Vec<AgentBindingRecord> {
+    let mut selected = HashMap::<(String, String), AgentBindingRecord>::new();
+    for binding in bindings
+        .into_iter()
+        .filter(|binding| binding_matches_runtime_context(&binding.conditions, runtime_context))
+    {
+        let key = (binding.resource_kind.clone(), binding.resource_id.clone());
+        match selected.get(&key) {
+            Some(current) if !runtime_binding_precedes(&binding, current) => {}
+            _ => {
+                selected.insert(key, binding);
+            }
+        }
+    }
+    let mut selected = selected.into_values().collect::<Vec<_>>();
+    selected.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then_with(|| left.created_at.cmp(&right.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    selected
+}
+
+fn runtime_binding_precedes(candidate: &AgentBindingRecord, current: &AgentBindingRecord) -> bool {
+    binding_scope_precedence(candidate.binding_scope.as_str())
+        .cmp(&binding_scope_precedence(current.binding_scope.as_str()))
+        .then_with(|| {
+            binding_condition_specificity(&candidate.conditions)
+                .cmp(&binding_condition_specificity(&current.conditions))
+        })
+        .then_with(|| current.priority.cmp(&candidate.priority))
+        .then_with(|| current.created_at.cmp(&candidate.created_at))
+        .then_with(|| current.id.cmp(&candidate.id))
+        .is_gt()
+}
+
+fn binding_scope_precedence(scope: &str) -> u8 {
+    match scope {
+        BINDING_SCOPE_ADMIN_OVERRIDE => 4,
+        BINDING_SCOPE_SYSTEM_REQUIRED => 3,
+        BINDING_SCOPE_USER_OVERRIDE => 2,
+        BINDING_SCOPE_GLOBAL_DEFAULT => 1,
+        _ => 0,
+    }
+}
+
+fn binding_condition_specificity(conditions: &BindingConditions) -> u8 {
+    [
+        conditions.task_profile.as_deref(),
+        conditions.project_source_type.as_deref(),
+        conditions.runtime_provider.as_deref(),
+        conditions.schedule_mode.as_deref(),
+    ]
+    .into_iter()
+    .filter(|value| normalized(*value).is_some())
+    .count() as u8
 }
 
 fn condition_matches(expected: Option<&str>, actual: Option<&str>) -> bool {

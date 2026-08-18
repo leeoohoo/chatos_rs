@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
-FROM node:24-bookworm-slim AS builder
+ARG NODE_IMAGE=node:24-bookworm-slim
+ARG NGINX_IMAGE=nginx:1.30-alpine
+
+FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /src
 COPY . .
@@ -12,6 +15,7 @@ ARG VITE_MEMORY_ENGINE_API_BASE=
 ARG VITE_USER_SERVICE_API_BASE=
 ARG VITE_CONFIG_CENTER_URL=
 ARG VITE_BASE_PATH=/
+ARG NPM_REGISTRY=https://registry.npmjs.org
 
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_MEMORY_ENGINE_API_BASE=${VITE_MEMORY_ENGINE_API_BASE}
@@ -20,10 +24,12 @@ ENV VITE_CONFIG_CENTER_URL=${VITE_CONFIG_CENTER_URL}
 ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 
 WORKDIR /src/${APP_DIR}
-RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
+RUN npm config set registry "$NPM_REGISTRY" \
+    && npm config set replace-registry-host always \
+    && if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
 RUN npm run build
 
-FROM nginx:1.30-alpine
+FROM ${NGINX_IMAGE}
 
 ARG APP_DIR
 

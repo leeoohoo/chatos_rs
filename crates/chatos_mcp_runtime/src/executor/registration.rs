@@ -19,7 +19,7 @@ use super::McpExecutor;
 
 impl McpExecutor {
     #[allow(clippy::too_many_arguments)]
-    fn register_available_tool(
+    pub(in crate::executor) fn register_available_tool(
         &mut self,
         server_name: &str,
         public_server_name: &str,

@@ -2,33 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::platform_queue::{TaskQueueMode, TaskQueueTopology};
-use tracing::warn;
-
-const MIN_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(5);
-const MAX_WORKER_CLAIM_EXPIRY_GRACE: Duration = Duration::from_secs(30);
-const MAX_WORKER_CLAIM_ATTEMPTS: i64 = 3;
-const WORKER_CLAIM_EXPIRED_ERROR: &str = "worker claim expired";
-const CANCEL_REQUESTED_CLAIM_EXPIRED_REASON: &str =
-    "run cancellation requested before worker claim expired";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RejectedRunClaimHeartbeatAction {
-    Continue,
-    Stop,
-    Abort,
-}
+use crate::platform_queue::TaskQueueTopology;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TaskRunnerPromptCachePolicy {
     pub(crate) enabled: bool,
     pub(crate) retention_enabled: bool,
-}
-
-pub(crate) fn worker_claim_expiry_grace(claim_ttl: Duration) -> Duration {
-    let proportional =
-        Duration::from_millis((claim_ttl.as_millis() / 10).min(u64::MAX as u128) as u64);
-    proportional.clamp(MIN_WORKER_CLAIM_EXPIRY_GRACE, MAX_WORKER_CLAIM_EXPIRY_GRACE)
 }
 
 impl RunService {
@@ -45,11 +24,10 @@ impl RunService {
             plugin_management_client: None,
             ask_user_prompt_service,
             runtime_stats: crate::state::TaskRunnerRuntimeStats::default(),
+            cloud_agent_store: CloudAgentStateStore::memory(),
             start_locks: Arc::new(KeyedAsyncLockRegistry::default()),
             callback_delivery_locks: Arc::new(KeyedAsyncLockRegistry::default()),
             runtime_abort_tokens: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            run_terminal_waiters: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
         }
     }
 
@@ -60,6 +38,7 @@ impl RunService {
         ask_user_prompt_service: AskUserPromptService,
         plugin_management_client: PluginManagementClient,
         runtime_stats: crate::state::TaskRunnerRuntimeStats,
+        cloud_agent_store: CloudAgentStateStore,
     ) -> Self {
         Self {
             config,
@@ -68,11 +47,10 @@ impl RunService {
             plugin_management_client: Some(plugin_management_client),
             ask_user_prompt_service,
             runtime_stats,
+            cloud_agent_store,
             start_locks: Arc::new(KeyedAsyncLockRegistry::default()),
             callback_delivery_locks: Arc::new(KeyedAsyncLockRegistry::default()),
             runtime_abort_tokens: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            run_terminal_waiters: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            plugin_cloud_bundle_cache: Arc::new(parking_lot::Mutex::new(Default::default())),
         }
     }
 
@@ -88,6 +66,19 @@ impl RunService {
     ) -> Result<chatos_agent::TaskRunnerRuntimeSettings, String> {
         let snapshot = load_managed_config_snapshot().await?;
         chatos_agent::require_task_runner_runtime_settings(&snapshot)
+    }
+
+    pub(super) async fn effective_run_timeouts_ms(&self) -> Result<(u64, u64), String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        Ok((
+            require_managed_u64(&snapshot, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY, 1)?,
+            require_managed_u64(&snapshot, TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY, 1)?,
+        ))
+    }
+
+    pub(super) async fn effective_ai_read_timeout_ms(&self) -> Result<u64, String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        require_managed_u64(&snapshot, TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY, 1)
     }
 
     pub(super) async fn effective_node_supply_chain_policy(
@@ -120,6 +111,14 @@ impl RunService {
                     &snapshot,
                     TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
                 )?,
+                install_registry: require_managed_string(
+                    &snapshot,
+                    TASK_RUNNER_SUPPLY_CHAIN_NODE_INSTALL_REGISTRY_CONFIG_KEY,
+                )?,
+                audit_registry: require_managed_string(
+                    &snapshot,
+                    TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_REGISTRY_CONFIG_KEY,
+                )?,
             },
         )
     }
@@ -129,15 +128,6 @@ impl RunService {
     ) -> Result<TaskRunnerPromptCachePolicy, String> {
         let snapshot = load_managed_config_snapshot().await?;
         prompt_cache_policy_from_snapshot(&snapshot)
-    }
-
-    pub(super) async fn effective_execution_timeout(&self) -> Result<Duration, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        Ok(Duration::from_millis(require_managed_u64(
-            &snapshot,
-            TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
-            1,
-        )?))
     }
 
     pub(super) async fn effective_tool_result_model_budget_limits(
@@ -159,30 +149,6 @@ impl RunService {
             ));
         }
         Ok(ToolResultModelBudgetLimits::new(per_result, total))
-    }
-
-    pub(super) async fn effective_execution_environment_mode(&self) -> Result<String, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_execution_environment_mode(&snapshot)
-    }
-
-    pub(super) async fn effective_sandbox_enabled(&self) -> Result<bool, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_bool(&snapshot, TASK_RUNNER_SANDBOX_ENABLED_CONFIG_KEY)
-    }
-
-    pub(super) async fn effective_sandbox_manager_base_url(&self) -> Result<String, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_http_base_url(&snapshot, TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY)
-    }
-
-    pub(super) async fn effective_sandbox_lease_ttl_seconds(&self) -> Result<u64, String> {
-        let snapshot = load_managed_config_snapshot().await?;
-        require_managed_u64(
-            &snapshot,
-            TASK_RUNNER_SANDBOX_LEASE_TTL_SECONDS_CONFIG_KEY,
-            1,
-        )
     }
 
     pub async fn list_runs(&self, task_id: Option<&str>) -> Result<Vec<TaskRunRecord>, String> {
@@ -244,157 +210,6 @@ impl RunService {
         self.store.has_active_run_for_task(task_id).await
     }
 
-    pub async fn claim_next_queued_run(
-        &self,
-        worker_id: &str,
-        claim_ttl: Duration,
-    ) -> Result<Option<TaskRunRecord>, String> {
-        let claim_token = Uuid::new_v4().to_string();
-        let claim_until = (chrono::Utc::now()
-            + chrono::Duration::from_std(claim_ttl).map_err(|err| err.to_string())?)
-        .to_rfc3339();
-        self.store
-            .claim_next_queued_run(worker_id, claim_token.as_str(), claim_until.as_str())
-            .await
-    }
-
-    pub async fn has_queued_run_waiting_for_execution(&self) -> Result<bool, String> {
-        self.store.has_queued_run_waiting_for_execution().await
-    }
-
-    pub async fn renew_run_claim(
-        &self,
-        run: &TaskRunRecord,
-        worker_id: &str,
-        claim_ttl: Duration,
-    ) -> Result<bool, String> {
-        let Some(claim_token) = run.claim_token.as_deref() else {
-            return Ok(false);
-        };
-        let claim_until = (chrono::Utc::now()
-            + chrono::Duration::from_std(claim_ttl).map_err(|err| err.to_string())?)
-        .to_rfc3339();
-        let renewed = self
-            .store
-            .renew_run_claim(&run.id, worker_id, claim_token, claim_until.as_str())
-            .await?;
-        if renewed {
-            if let Err(error) = self.renew_active_sandbox_lease(run.id.as_str()).await {
-                warn!(
-                    run_id = run.id.as_str(),
-                    error = error.as_str(),
-                    "task runner failed to renew active sandbox lease"
-                );
-            }
-        }
-        Ok(renewed)
-    }
-
-    pub async fn reconcile_expired_run_claims(&self, claim_ttl: Duration) -> Result<usize, String> {
-        let now = now_rfc3339();
-        let expiry_cutoff = (chrono::Utc::now()
-            - chrono::Duration::from_std(worker_claim_expiry_grace(claim_ttl))
-                .map_err(|err| err.to_string())?)
-        .to_rfc3339();
-        let reconciled_runs = self
-            .store
-            .reconcile_expired_run_claims(
-                expiry_cutoff.as_str(),
-                now.as_str(),
-                MAX_WORKER_CLAIM_ATTEMPTS,
-            )
-            .await?;
-        for run in &reconciled_runs {
-            self.store.signal_local_run_abort(run.id.as_str());
-            let cancelled_after_request = run.status == TaskRunStatus::Cancelled;
-            let requeued_after_interruption = run.status == TaskRunStatus::Queued;
-            if let Err(err) = self
-                .ask_user_prompt_service
-                .cancel_pending_prompts_for_run(
-                    run.id.as_str(),
-                    if cancelled_after_request {
-                        CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
-                    } else if requeued_after_interruption {
-                        "run execution was interrupted and automatically requeued"
-                    } else {
-                        WORKER_CLAIM_EXPIRED_ERROR
-                    },
-                )
-                .await
-            {
-                tracing::warn!(
-                    run_id = run.id.as_str(),
-                    error = err.as_str(),
-                    "failed to cancel pending ask user prompts after worker claim expired"
-                );
-            }
-            if let Some(mut task) = self.store.get_task(run.task_id.as_str()).await? {
-                if task.last_run_id.as_deref() == Some(run.id.as_str()) {
-                    task.status = if cancelled_after_request {
-                        TaskStatus::Cancelled
-                    } else if requeued_after_interruption {
-                        TaskStatus::Queued
-                    } else {
-                        TaskStatus::Failed
-                    };
-                    task.result_summary = run.result_summary.clone();
-                    task.updated_at = now.clone();
-                    self.store.save_task(task).await?;
-                }
-            }
-            self.store
-                .append_run_event(TaskRunEventRecord::new(
-                    run.id.clone(),
-                    if cancelled_after_request {
-                        "run.cancel_requested.claim_expired"
-                    } else if requeued_after_interruption {
-                        "run.claim.expired.requeued"
-                    } else {
-                        "run.claim.expired"
-                    }
-                    .to_string(),
-                    run.result_summary.clone(),
-                    Some(serde_json::json!({
-                        "reason": if cancelled_after_request {
-                            CANCEL_REQUESTED_CLAIM_EXPIRED_REASON
-                        } else if requeued_after_interruption {
-                            "worker_claim_expired_requeued"
-                        } else {
-                            "worker_claim_expired"
-                        },
-                        "previous_worker_id": run.worker_id,
-                        "attempt": run.attempt,
-                        "max_attempts": MAX_WORKER_CLAIM_ATTEMPTS,
-                    })),
-                ))
-                .await?;
-            if let Err(err) = self.release_sandboxes_for_terminal_run(run).await {
-                tracing::warn!(
-                    run_id = run.id.as_str(),
-                    error = err.as_str(),
-                    "failed to release sandboxes after worker claim expired"
-                );
-            }
-            if !requeued_after_interruption {
-                self.try_send_terminal_callback(run.task_id.as_str(), run)
-                    .await;
-            } else if let Err(err) = self.enqueue_run_dispatch_if_needed(run).await {
-                warn!(
-                    run_id = run.id.as_str(),
-                    task_id = run.task_id.as_str(),
-                    error = err.as_str(),
-                    "failed to re-enqueue recovered run dispatch"
-                );
-            }
-        }
-        self.store.refresh_runtime_guards().await?;
-        Ok(reconciled_runs.len())
-    }
-
-    pub(crate) fn signal_local_run_abort(&self, run_id: &str) {
-        self.store.signal_local_run_abort(run_id);
-    }
-
     pub(crate) fn signal_runtime_cancel(&self, run_id: &str) {
         self.store.signal_local_run_abort(run_id);
         if let Some(token) = self.runtime_abort_tokens.lock().get(run_id).cloned() {
@@ -419,117 +234,9 @@ impl RunService {
         self.runtime_abort_tokens.lock().remove(run_id);
     }
 
-    pub(super) fn register_run_terminal_waiter(
-        &self,
-        run_id: &str,
-        parent_run_id: &str,
-        token: tokio_util::sync::CancellationToken,
-    ) {
-        self.run_terminal_waiters
-            .lock()
-            .insert((run_id.to_string(), parent_run_id.to_string()), token);
-    }
-
-    pub(super) fn unregister_run_terminal_waiter(&self, run_id: &str, parent_run_id: &str) {
-        self.run_terminal_waiters
-            .lock()
-            .remove(&(run_id.to_string(), parent_run_id.to_string()));
-    }
-
-    pub(crate) fn signal_run_terminal(&self, run_id: &str) {
-        let tokens = self
-            .run_terminal_waiters
-            .lock()
-            .iter()
-            .filter(|((waiting_run_id, _), _)| waiting_run_id == run_id)
-            .map(|(_, token)| token.clone())
-            .collect::<Vec<_>>();
-        for token in tokens {
-            token.cancel();
-        }
-    }
-
     pub(crate) fn signal_ask_user_resolved(&self, prompt_id: &str) {
         self.ask_user_prompt_service
             .signal_prompt_resolved(prompt_id);
-    }
-
-    pub(crate) fn clear_local_run_abort(&self, run_id: &str) {
-        self.store.clear_local_run_abort(run_id);
-    }
-
-    pub(crate) async fn run_claim_is_current(&self, run: &TaskRunRecord) -> bool {
-        let Some(current) = self.store.get_run(run.id.as_str()).await.ok().flatten() else {
-            return false;
-        };
-        current.status == TaskRunStatus::Running
-            && current.worker_id.as_deref() == run.worker_id.as_deref()
-            && current.claim_token.as_deref() == run.claim_token.as_deref()
-    }
-
-    pub(crate) async fn handle_rejected_run_claim_heartbeat(
-        &self,
-        claimed_run: &TaskRunRecord,
-        worker_id: &str,
-    ) -> Result<RejectedRunClaimHeartbeatAction, String> {
-        let current = self.store.get_run(claimed_run.id.as_str()).await?;
-        let action = match current.as_ref() {
-            None => RejectedRunClaimHeartbeatAction::Abort,
-            Some(current) if current.status == TaskRunStatus::Running => {
-                if current.worker_id.as_deref() == Some(worker_id)
-                    && current.claim_token.as_deref() == claimed_run.claim_token.as_deref()
-                {
-                    RejectedRunClaimHeartbeatAction::Continue
-                } else {
-                    RejectedRunClaimHeartbeatAction::Abort
-                }
-            }
-            Some(current)
-                if current.error_message.as_deref() == Some(WORKER_CLAIM_EXPIRED_ERROR) =>
-            {
-                RejectedRunClaimHeartbeatAction::Abort
-            }
-            Some(_) => RejectedRunClaimHeartbeatAction::Stop,
-        };
-        if action != RejectedRunClaimHeartbeatAction::Abort {
-            return Ok(action);
-        }
-
-        self.store.signal_local_run_abort(claimed_run.id.as_str());
-        if let Err(err) = self
-            .ask_user_prompt_service
-            .cancel_pending_prompts_for_run(
-                claimed_run.id.as_str(),
-                "run claim lost while task was executing",
-            )
-            .await
-        {
-            tracing::warn!(
-                run_id = claimed_run.id.as_str(),
-                error = err.as_str(),
-                "failed to cancel pending ask user prompts after run claim was lost"
-            );
-        }
-        if let Err(err) = self
-            .store
-            .append_run_event(TaskRunEventRecord::new(
-                claimed_run.id.clone(),
-                "run.claim.execution_abort_requested".to_string(),
-                Some("运行租约已丢失，旧 Worker 已停止继续执行".to_string()),
-                Some(serde_json::json!({
-                    "reason": "run_claim_lost",
-                    "worker_id": worker_id,
-                })),
-            ))
-            .await
-        {
-            tracing::warn!(
-                run_id = claimed_run.id.as_str(),
-                error = err.as_str(),
-                "failed to append lost-claim execution abort event"
-            );
-        }
-        Ok(RejectedRunClaimHeartbeatAction::Abort)
     }
 
     pub async fn batch_start_runs(
@@ -647,45 +354,8 @@ impl RunService {
             .await
     }
 
-    pub(crate) fn task_queue_topology(&self) -> &TaskQueueTopology {
-        &self.task_queue_topology
-    }
-
-    pub(crate) async fn enqueue_run_dispatch_if_needed(
-        &self,
-        run: &TaskRunRecord,
-    ) -> Result<bool, String> {
-        if run.dispatch_paused
-            || self.task_queue_topology.run_dispatch_mode != TaskQueueMode::RabbitMq
-        {
-            return Ok(false);
-        }
-        crate::run_dispatch_queue::enqueue_run_dispatch(&self.task_queue_topology, run.id.as_str())
-            .await?;
-        self.store
-            .acknowledge_run_dispatch_event(run.id.as_str())
-            .await?;
-        Ok(true)
-    }
-
-    pub(crate) async fn publish_pending_run_dispatches(
-        &self,
-        limit: usize,
-    ) -> Result<usize, String> {
-        let pending = self.store.list_pending_run_dispatches(limit).await?;
-        let mut published = 0usize;
-        for run in pending {
-            crate::run_dispatch_queue::enqueue_run_dispatch(
-                &self.task_queue_topology,
-                run.id.as_str(),
-            )
-            .await?;
-            self.store
-                .acknowledge_run_dispatch_event(run.id.as_str())
-                .await?;
-            published += 1;
-        }
-        Ok(published)
+    pub(crate) fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
+        self.cloud_agent_store.clone()
     }
 
     pub(crate) async fn enqueue_run_cancel_event_if_needed(
@@ -727,40 +397,28 @@ impl RunService {
             .await?;
         let mut published = 0usize;
         for (run, subscription) in pending {
-            crate::worker_control_queue::publish_run_terminal_event(
-                &self.task_queue_topology,
-                &run,
-                &subscription,
-            )
-            .await?;
+            if subscription.worker_id == "cloud-agent" {
+                crate::cloud_agent_queue::publish_dependency_resume(
+                    &self.task_queue_topology,
+                    self,
+                    subscription.parent_run_id.as_str(),
+                    run.id.as_str(),
+                )
+                .await?;
+            } else {
+                crate::worker_control_queue::publish_run_terminal_event(
+                    &self.task_queue_topology,
+                    &run,
+                    &subscription,
+                )
+                .await?;
+            }
             self.store
                 .acknowledge_run_terminal_subscription(subscription.id.as_str())
                 .await?;
             published += 1;
         }
         Ok(published)
-    }
-
-    pub(crate) async fn enqueue_queued_runs_for_tasks(
-        &self,
-        task_ids: &[String],
-    ) -> Result<usize, String> {
-        if self.task_queue_topology.run_dispatch_mode != TaskQueueMode::RabbitMq {
-            return Ok(0);
-        }
-        let mut enqueued = 0usize;
-        for task_id in task_ids {
-            let runs = self.store.list_runs(Some(task_id.as_str())).await?;
-            for run in runs {
-                if run.status != TaskRunStatus::Queued || run.dispatch_paused {
-                    continue;
-                }
-                if self.enqueue_run_dispatch_if_needed(&run).await? {
-                    enqueued += 1;
-                }
-            }
-        }
-        Ok(enqueued)
     }
 }
 
@@ -843,30 +501,6 @@ mod worker_claim_tests {
                 enabled: true,
                 retention_enabled: false,
             }
-        );
-    }
-
-    #[test]
-    fn claim_expiry_grace_is_a_small_clock_skew_window() {
-        assert_eq!(
-            worker_claim_expiry_grace(Duration::from_secs(120)),
-            Duration::from_secs(12)
-        );
-    }
-
-    #[test]
-    fn short_claim_ttl_still_gets_minimum_expiry_grace() {
-        assert_eq!(
-            worker_claim_expiry_grace(Duration::from_secs(30)),
-            MIN_WORKER_CLAIM_EXPIRY_GRACE
-        );
-    }
-
-    #[test]
-    fn long_claim_ttl_caps_expiry_grace() {
-        assert_eq!(
-            worker_claim_expiry_grace(Duration::from_secs(600)),
-            MAX_WORKER_CLAIM_EXPIRY_GRACE
         );
     }
 }

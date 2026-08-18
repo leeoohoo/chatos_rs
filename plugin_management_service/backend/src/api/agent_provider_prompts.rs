@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
 use chatos_ai_runtime::{
     build_responses_text_input, run_compatible_prompt_with, select_preferred_response_text,
@@ -36,11 +36,17 @@ pub(super) struct GenerateAgentPromptRequest {
 #[derive(Debug, serde::Serialize)]
 pub(super) struct GenerateAgentPromptResponse {
     agent_key: String,
+    profile: String,
     vendor: AgentPromptVendor,
     model_config_id: String,
     provider: String,
     model: String,
     content: String,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub(super) struct AgentPromptProfileQuery {
+    profile: Option<String>,
 }
 
 pub(super) async fn list_agent_provider_prompts(
@@ -93,23 +99,26 @@ pub(super) async fn update_agent_provider_prompt_draft(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Path((agent_key, vendor)): Path<(String, String)>,
+    Query(query): Query<AgentPromptProfileQuery>,
     Json(request): Json<UpdateAgentPromptDraftRequest>,
 ) -> Result<Json<AgentProviderPromptRecord>, ApiError> {
     ensure_super_admin(&user)?;
     ensure_agent_exists(&state, agent_key.as_str()).await?;
+    let profile = require_agent_prompt_profile(agent_key.as_str(), query.profile.as_deref())?;
     let vendor = parse_vendor(vendor.as_str())?;
     let content = validate_prompt_content(request.content)?;
     let now = now_rfc3339();
     let mut record = match state
         .store
-        .get_agent_prompt(agent_key.as_str(), vendor)
+        .get_agent_prompt(agent_key.as_str(), profile.as_str(), vendor)
         .await
         .map_err(ApiError::internal)?
     {
         Some(record) => record,
         None => AgentProviderPromptRecord {
-            id: prompt_record_id(agent_key.as_str(), vendor),
+            id: prompt_record_id(agent_key.as_str(), profile.as_str(), vendor),
             agent_key: agent_key.clone(),
+            profile: profile.clone(),
             vendor,
             draft_content: None,
             published_content: None,
@@ -154,14 +163,16 @@ pub(super) async fn publish_agent_provider_prompt(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Path((agent_key, vendor)): Path<(String, String)>,
+    Query(query): Query<AgentPromptProfileQuery>,
     Json(request): Json<PublishAgentPromptRequest>,
 ) -> Result<Json<AgentProviderPromptRecord>, ApiError> {
     ensure_super_admin(&user)?;
     ensure_agent_exists(&state, agent_key.as_str()).await?;
+    let profile = require_agent_prompt_profile(agent_key.as_str(), query.profile.as_deref())?;
     let vendor = parse_vendor(vendor.as_str())?;
     let mut record = state
         .store
-        .get_agent_prompt(agent_key.as_str(), vendor)
+        .get_agent_prompt(agent_key.as_str(), profile.as_str(), vendor)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("Agent Prompt draft was not found"))?;
@@ -198,6 +209,7 @@ pub(super) async fn publish_agent_provider_prompt(
         &state,
         agent_key.as_str(),
         bundle.version,
+        Some(profile.as_str()),
         Some(vendor),
         user.user_id.as_str(),
         bundle.updated_at.as_str(),
@@ -211,17 +223,19 @@ pub(super) async fn generate_agent_provider_prompt(
     Extension(user): Extension<CurrentUser>,
     Extension(access_token): Extension<crate::auth::AccessToken>,
     Path((agent_key, vendor)): Path<(String, String)>,
+    Query(query): Query<AgentPromptProfileQuery>,
     Json(request): Json<GenerateAgentPromptRequest>,
 ) -> Result<Json<GenerateAgentPromptResponse>, ApiError> {
     ensure_super_admin(&user)?;
     ensure_agent_exists(&state, agent_key.as_str()).await?;
+    let profile = require_agent_prompt_profile(agent_key.as_str(), query.profile.as_deref())?;
     let vendor = parse_vendor(vendor.as_str())?;
     let requirement = validate_prompt_content(request.requirement)?;
     let current_content = match request.current_content {
         Some(content) if !content.trim().is_empty() => validate_prompt_content(content)?,
         _ => state
             .store
-            .get_agent_prompt(agent_key.as_str(), vendor)
+            .get_agent_prompt(agent_key.as_str(), profile.as_str(), vendor)
             .await
             .map_err(ApiError::internal)?
             .and_then(|record| record.draft_content.or(record.published_content))
@@ -261,6 +275,7 @@ pub(super) async fn generate_agent_provider_prompt(
     let content = validate_prompt_content(content.to_string())?;
     Ok(Json(GenerateAgentPromptResponse {
         agent_key,
+        profile,
         vendor,
         model_config_id: admin_model.model_config_id,
         provider: admin_model.provider,
@@ -281,6 +296,8 @@ pub(super) async fn agent_prompt_completeness(
         .map_err(ApiError::internal)?;
     let mut result = Vec::new();
     for agent in agents.into_iter().filter(|agent| agent.enabled) {
+        let required_profiles =
+            crate::seed::agent_prompt_profiles_for_agent(agent.agent_key.as_str());
         let records = state
             .store
             .list_agent_prompts(agent.agent_key.as_str())
@@ -296,25 +313,62 @@ pub(super) async fn agent_prompt_completeness(
                         .as_deref()
                         .is_some_and(|content| !content.trim().is_empty())
             })
-            .map(|record| record.vendor)
+            .map(|record| (record.profile, record.vendor))
             .collect::<HashSet<_>>();
-        let published_vendors = AgentPromptVendor::ALL
-            .into_iter()
-            .filter(|vendor| published.contains(vendor))
-            .collect::<Vec<_>>();
-        let missing_vendors = AgentPromptVendor::ALL
-            .into_iter()
-            .filter(|vendor| !published.contains(vendor))
-            .collect::<Vec<_>>();
-        result.push(AgentPromptCompleteness {
-            agent_key: agent.agent_key,
-            required_vendors: AgentPromptVendor::ALL.to_vec(),
-            ready: missing_vendors.is_empty(),
-            published_vendors,
-            missing_vendors,
-        });
+        result.push(build_prompt_completeness(
+            agent.agent_key,
+            required_profiles.as_slice(),
+            published,
+        ));
     }
     Ok(Json(result))
+}
+
+fn build_prompt_completeness(
+    agent_key: String,
+    required_profiles: &[&str],
+    published: HashSet<(String, AgentPromptVendor)>,
+) -> AgentPromptCompleteness {
+    let required = required_profiles
+        .iter()
+        .flat_map(|profile| {
+            AgentPromptVendor::ALL
+                .into_iter()
+                .map(|vendor| ((*profile).to_string(), vendor))
+        })
+        .collect::<HashSet<_>>();
+    let published_prompt_count = published.intersection(&required).count();
+    let published_vendors = AgentPromptVendor::ALL
+        .into_iter()
+        .filter(|vendor| {
+            published.contains(&(
+                chatos_plugin_management_sdk::DEFAULT_AGENT_PROMPT_PROFILE.to_string(),
+                *vendor,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let missing_vendors = AgentPromptVendor::ALL
+        .into_iter()
+        .filter(|vendor| {
+            !published.contains(&(
+                chatos_plugin_management_sdk::DEFAULT_AGENT_PROMPT_PROFILE.to_string(),
+                *vendor,
+            ))
+        })
+        .collect::<Vec<_>>();
+    AgentPromptCompleteness {
+        agent_key,
+        required_vendors: AgentPromptVendor::ALL.to_vec(),
+        required_profiles: required_profiles
+            .iter()
+            .map(|profile| profile.to_string())
+            .collect(),
+        published_prompt_count,
+        required_prompt_count: required.len(),
+        ready: published_prompt_count == required.len(),
+        published_vendors,
+        missing_vendors,
+    }
 }
 
 fn parse_vendor(value: &str) -> Result<AgentPromptVendor, ApiError> {
@@ -322,8 +376,23 @@ fn parse_vendor(value: &str) -> Result<AgentPromptVendor, ApiError> {
         .map_err(|_| ApiError::bad_request("Unsupported Agent Prompt vendor"))
 }
 
-fn prompt_record_id(agent_key: &str, vendor: AgentPromptVendor) -> String {
-    format!("{agent_key}__prompt__{vendor}")
+fn prompt_record_id(agent_key: &str, profile: &str, vendor: AgentPromptVendor) -> String {
+    if profile == chatos_plugin_management_sdk::DEFAULT_AGENT_PROMPT_PROFILE {
+        format!("{agent_key}__prompt__{vendor}")
+    } else {
+        format!("{agent_key}__prompt__{profile}__{vendor}")
+    }
+}
+
+fn require_agent_prompt_profile(
+    agent_key: &str,
+    profile: Option<&str>,
+) -> Result<String, ApiError> {
+    let profile = chatos_plugin_management_sdk::normalize_agent_prompt_profile(profile);
+    crate::seed::agent_prompt_profiles_for_agent(agent_key)
+        .contains(&profile.as_str())
+        .then_some(profile)
+        .ok_or_else(|| ApiError::bad_request("Unsupported Agent Prompt profile"))
 }
 
 fn validate_prompt_content(content: String) -> Result<String, ApiError> {
@@ -359,6 +428,7 @@ async fn persist_agent_prompt_version(
     state: &AppState,
     agent_key: &str,
     bundle_version: i64,
+    changed_profile: Option<&str>,
     changed_vendor: Option<AgentPromptVendor>,
     published_by: &str,
     published_at: &str,
@@ -383,6 +453,7 @@ async fn persist_agent_prompt_version(
             agent_key: agent_key.to_string(),
             bundle_version,
             changed_vendor,
+            changed_profile: changed_profile.map(str::to_string),
             prompts,
             published_by: published_by.to_string(),
             published_at: published_at.to_string(),
@@ -402,6 +473,7 @@ fn prompt_version_snapshot(record: AgentProviderPromptRecord) -> Option<AgentPro
         return None;
     }
     Some(AgentPromptVersionPrompt {
+        profile: record.profile,
         vendor: record.vendor,
         content,
         revision: record.published_revision,
@@ -418,10 +490,12 @@ fn version_summary(record: &AgentPromptVersionRecord) -> AgentPromptVersionSumma
         agent_key: record.agent_key.clone(),
         bundle_version: record.bundle_version,
         changed_vendor: record.changed_vendor,
+        changed_profile: record.changed_profile.clone(),
         vendor_revisions: record
             .prompts
             .iter()
             .map(|prompt| AgentPromptVersionVendorSummary {
+                profile: prompt.profile.clone(),
                 vendor: prompt.vendor,
                 revision: prompt.revision,
                 checksum: prompt.checksum.clone(),
@@ -466,7 +540,9 @@ mod tests {
             agent_key: "agent".to_string(),
             bundle_version: 3,
             changed_vendor: Some(AgentPromptVendor::Gpt),
+            changed_profile: Some("chatos_plan".to_string()),
             prompts: vec![AgentPromptVersionPrompt {
+                profile: "chatos_plan".to_string(),
                 vendor: AgentPromptVendor::Gpt,
                 content: "secretly large prompt".to_string(),
                 revision: 2,
@@ -477,6 +553,32 @@ mod tests {
             published_at: "2026-07-17T00:00:00Z".to_string(),
         });
         assert_eq!(summary.bundle_version, 3);
+        assert_eq!(summary.changed_profile.as_deref(), Some("chatos_plan"));
+        assert_eq!(summary.vendor_revisions[0].profile, "chatos_plan");
         assert_eq!(summary.vendor_revisions[0].revision, 2);
+    }
+
+    #[test]
+    fn chatos_prompt_completeness_counts_both_runtime_profiles() {
+        let published = ["default", "chatos_plan"]
+            .into_iter()
+            .flat_map(|profile| {
+                AgentPromptVendor::ALL
+                    .into_iter()
+                    .map(move |vendor| (profile.to_string(), vendor))
+            })
+            .collect::<HashSet<_>>();
+
+        let completeness = build_prompt_completeness(
+            "chatos_conversation_agent".to_string(),
+            &["default", "chatos_plan"],
+            published,
+        );
+
+        assert!(completeness.ready);
+        assert_eq!(completeness.published_prompt_count, 8);
+        assert_eq!(completeness.required_prompt_count, 8);
+        assert_eq!(completeness.published_vendors.len(), 4);
+        assert!(completeness.missing_vendors.is_empty());
     }
 }

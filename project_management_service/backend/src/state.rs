@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::config::AppConfig;
 use crate::store::AppStore;
+use chatos_cloud_agent_runtime::CloudAgentStateStore;
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 use tokio::sync::Mutex;
 
@@ -14,13 +14,14 @@ pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
     pub plugin_management_client: PluginManagementClient,
-    pub runtime_environment_analysis_jobs: Arc<Mutex<HashSet<String>>>,
-    pub runtime_environment_image_jobs: Arc<Mutex<HashSet<String>>>,
+    pub cloud_agent_store: CloudAgentStateStore,
+    pub runtime_environment_image_jobs: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
         let store = AppStore::new(&config.database_url).await?;
+        let cloud_agent_store = CloudAgentStateStore::connect(&config.database_url).await?;
         let plugin_management_config = PluginManagementClientConfig::from_env("project-service")
             .await
             .map_err(|err| format!("load plugin management client config failed: {err}"))?;
@@ -30,8 +31,8 @@ impl AppState {
             config,
             store,
             plugin_management_client,
-            runtime_environment_analysis_jobs: Arc::new(Mutex::new(HashSet::new())),
-            runtime_environment_image_jobs: Arc::new(Mutex::new(HashSet::new())),
+            cloud_agent_store,
+            runtime_environment_image_jobs: Arc::new(Mutex::new(std::collections::HashSet::new())),
         })
     }
 
@@ -40,6 +41,7 @@ impl AppState {
         config: AppConfig,
     ) -> Result<Self, String> {
         let store = AppStore::new_without_indexes(&config.database_url).await?;
+        let cloud_agent_store = CloudAgentStateStore::memory();
         let plugin_management_client = PluginManagementClient::new(
             PluginManagementClientConfig::new(
                 "http://127.0.0.1:1",
@@ -56,8 +58,8 @@ impl AppState {
             config,
             store,
             plugin_management_client,
-            runtime_environment_analysis_jobs: Arc::new(Mutex::new(HashSet::new())),
-            runtime_environment_image_jobs: Arc::new(Mutex::new(HashSet::new())),
+            cloud_agent_store,
+            runtime_environment_image_jobs: Arc::new(Mutex::new(std::collections::HashSet::new())),
         })
     }
 }

@@ -23,9 +23,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::validation::{
-    agent_tool_definition, sha256_text, validate_cloud_component_bundle,
-    validate_cloud_component_policy, validate_command_snapshot, validate_native_skill_snapshot,
-    validate_native_tool_snapshot_hash, validate_tool_snapshot,
+    agent_tool_definition, command_tool_definition, sha256_text, skill_tool_definition,
+    validate_cloud_component_bundle, validate_cloud_component_policy, validate_command_snapshot,
+    validate_native_skill_snapshot, validate_native_tool_snapshot_hash, validate_tool_snapshot,
 };
 use super::*;
 use crate::runtime::{PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot};
@@ -71,6 +71,7 @@ fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBindi
         auth_connection_ids: Vec::new(),
         required: true,
         allow_writes: false,
+        command_arguments: None,
     }
 }
 
@@ -112,6 +113,40 @@ fn agent_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBinding
         auth_connection_ids: Vec::new(),
         required: true,
         allow_writes: false,
+        command_arguments: None,
+    }
+}
+
+fn prompt_skill_binding() -> PluginToolComponentRuntimeBinding {
+    PluginToolComponentRuntimeBinding {
+        provider_ref: format!("plugin-tool-binding:{}", "f".repeat(64)),
+        resource_id: "plugin_component_review_skill".to_string(),
+        plugin_id: "plugin-review".to_string(),
+        release_id: "release-review-1".to_string(),
+        version: "1.0.0".to_string(),
+        artifact_sha256: "a".repeat(64),
+        normalized_manifest_sha256: "b".repeat(64),
+        component: PluginComponentDescriptor {
+            component_key: "review-skill".to_string(),
+            kind: PluginComponentKind::SkillCollection,
+            display_name: "Review Skill".to_string(),
+            execution_host: PluginExecutionHost::Local,
+            runtime_kind: "prompt".to_string(),
+            entrypoint: Some(PluginPathRef::new("./skills/review/SKILL.md")),
+            required: false,
+            permissions: Vec::new(),
+            metadata: BTreeMap::from([(
+                "description".to_string(),
+                json!("Review the current change"),
+            )]),
+        },
+        component_content_sha256: "c".repeat(64),
+        installation_device_id: Some("device-1".to_string()),
+        permission_snapshot: vec!["workspace.read".to_string()],
+        auth_connection_ids: Vec::new(),
+        required: true,
+        allow_writes: false,
+        command_arguments: None,
     }
 }
 
@@ -209,19 +244,23 @@ fn snapshot(
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_group_id: None,
+        execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
         source_session_id: None,
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: local_context(),
         policy_revision: "policy-1".to_string(),
         route_revision: "route-1".to_string(),
@@ -254,19 +293,23 @@ fn cloud_snapshot(
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_group_id: None,
+        execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
         source_session_id: None,
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
@@ -294,7 +337,12 @@ fn cloud_snapshot(
             PluginCloudToolComponentBinding {
                 runtime: binding.clone(),
                 bundle,
-                tools: vec![agent_tool_definition(binding)],
+                tools: vec![match binding.component.kind {
+                    PluginComponentKind::Command => command_tool_definition(binding),
+                    PluginComponentKind::Agent => agent_tool_definition(binding),
+                    PluginComponentKind::SkillCollection => skill_tool_definition(binding),
+                    _ => unreachable!("test helper accepts Agent tool component kinds"),
+                }],
             },
         )]),
         external_http_bindings: HashMap::new(),
@@ -362,7 +410,11 @@ async fn start_local_connector(
                 "version": state.binding.version,
                 "artifact_sha256": state.binding.artifact_sha256,
                 "component_key": state.binding.component.component_key,
-                "commands": [command_snapshot(&state.binding, None, false)],
+                "commands": [command_snapshot(
+                    &state.binding,
+                    state.binding.command_arguments.as_deref(),
+                    false,
+                )],
                 "operations": [COMMAND_INVOKE_OPERATION],
                 "adapter_session_id": "adapter-1",
                 "session_sha256": "e".repeat(64),
@@ -408,9 +460,10 @@ async fn start_local_connector(
 }
 
 #[tokio::test]
-async fn local_command_catalog_prepare_is_approval_free_and_invocation_is_argument_bound() {
+async fn local_command_is_approved_once_during_prepare_and_reused_without_duplicate_execution() {
     const SECRET: &str = "plugin-component-local-test-secret";
-    let immutable = command_binding(PluginExecutionHost::Local);
+    let mut immutable = command_binding(PluginExecutionHost::Local);
+    immutable.command_arguments = Some("src/lib.rs".to_string());
     let (base_url, requests, server) = start_local_connector(SECRET, immutable.clone()).await;
     let provider = PluginComponentProvider::new(
         reqwest::Client::new(),
@@ -450,9 +503,14 @@ async fn local_command_catalog_prepare_is_approval_free_and_invocation_is_argume
     assert_eq!(tool_snapshots[&immutable.resource_id][0]["name"], "invoke");
     let local = local_bindings[&immutable.resource_id].clone();
     assert_eq!(local.operation, COMMAND_INVOKE_OPERATION);
+    assert!(local.static_result.is_some());
     let prepared_request = requests.lock().unwrap()[0].1.clone();
     assert_eq!(prepared_request.get("catalog_only"), Some(&json!(true)));
-    assert!(prepared_request.get("arguments").is_none());
+    assert_eq!(
+        prepared_request.get("arguments"),
+        Some(&json!("src/lib.rs"))
+    );
+    assert_eq!(requests.lock().unwrap()[1].0, "execute");
 
     let runtime = snapshot(&immutable, local, routes[0].clone(), expires_at_unix);
     let outcome = provider
@@ -471,6 +529,131 @@ async fn local_command_catalog_prepare_is_approval_free_and_invocation_is_argume
         .unwrap();
     assert!(text.contains("Arguments for this invocation:\nsrc/lib.rs"));
     assert_eq!(requests.lock().unwrap().len(), 2);
+    let error = provider
+        .call_tool(
+            &runtime,
+            &routes[0],
+            COMMAND_TOOL_NAME,
+            json!({"arguments": "README.md"}),
+        )
+        .await
+        .expect_err("arguments outside the Runtime Session selection must be rejected");
+    assert!(error.message.contains("Runtime Session selection"));
+    assert_eq!(requests.lock().unwrap().len(), 2);
+
+    provider.close_session(&runtime).await;
+    assert_eq!(requests.lock().unwrap()[2].0, "cancel");
+    server.abort();
+}
+
+#[tokio::test]
+async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapter_session() {
+    const SECRET: &str = "plugin-component-local-skill-test-secret";
+    let immutable = prompt_skill_binding();
+    let instructions = "Review changes carefully and report concrete findings.";
+    let instructions_sha256 = sha256_text(instructions);
+    let requests = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+    let captured_requests = requests.clone();
+    let server_binding = immutable.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route(
+        "/api/local-connectors/relay/device-1/plugins/{action}",
+        post(move |Path(action): Path<String>, Json(body): Json<Value>| {
+            let requests = captured_requests.clone();
+            let binding = server_binding.clone();
+            let instructions_sha256 = instructions_sha256.clone();
+            async move {
+                requests.lock().unwrap().push((action.clone(), body));
+                match action.as_str() {
+                    "prepare" => Json(json!({
+                        "run_id": "session-1",
+                        "plugin_id": binding.plugin_id,
+                        "release_id": binding.release_id,
+                        "version": binding.version,
+                        "artifact_sha256": binding.artifact_sha256,
+                        "component_key": binding.component.component_key,
+                        "skills": [{
+                            "plugin_id": binding.plugin_id,
+                            "release_id": binding.release_id,
+                            "version": binding.version,
+                            "artifact_sha256": binding.artifact_sha256,
+                            "component_key": binding.component.component_key,
+                            "skill_key": binding.component.component_key,
+                            "instructions": instructions,
+                            "instructions_sha256": instructions_sha256,
+                            "snapshot_sha256": "d".repeat(64)
+                        }],
+                        "native_skill": null,
+                        "operations": ["load_skill_resource"],
+                        "adapter_session_id": "adapter-skill-1",
+                        "session_sha256": "e".repeat(64),
+                        "expires_at": chrono::Utc::now().timestamp() + 7200
+                    })),
+                    "cancel" => Json(json!({"cancelled": true})),
+                    "execute" => panic!("prompt-only Skill must not execute after prepare"),
+                    _ => panic!("unexpected Plugin component action"),
+                }
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = PluginComponentProvider::new(
+        reqwest::Client::new(),
+        format!("http://{address}"),
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let plugin_management = PluginManagementClient::new(
+        PluginManagementClientConfig::new(
+            "http://127.0.0.1:1",
+            "https://127.0.0.1:1",
+            Duration::from_secs(1),
+            None,
+            CALLER_SERVICE,
+            reqwest::Client::new(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut routes = vec![route(&immutable)];
+    let expires_at_unix = chrono::Utc::now().timestamp() + 600;
+    let (local_bindings, cloud_bindings, tool_snapshots) = provider
+        .prepare_routes(
+            &plugin_management,
+            &HashMap::from([(immutable.resource_id.clone(), immutable.clone())]),
+            routes.as_mut_slice(),
+            &local_context(),
+            "session-1",
+            "user-1",
+            expires_at_unix,
+        )
+        .await;
+    assert!(cloud_bindings.is_empty());
+    assert_eq!(tool_snapshots[&immutable.resource_id][0]["name"], "apply");
+    let local = local_bindings[&immutable.resource_id].clone();
+    assert_eq!(local.operation, LOCAL_SKILL_APPLY_OPERATION);
+    assert!(local.static_result.is_some());
+    assert_eq!(local.instruction_items.len(), 1);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+
+    let runtime = snapshot(&immutable, local, routes[0].clone(), expires_at_unix);
+    let outcome = provider
+        .call_tool(&runtime, &routes[0], "apply", json!({}))
+        .await
+        .unwrap();
+    assert!(outcome
+        .result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .unwrap()
+        .contains(instructions));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+
+    provider.close_session(&runtime).await;
+    assert_eq!(requests.lock().unwrap()[1].0, "cancel");
     server.abort();
 }
 
@@ -568,6 +751,70 @@ fn cloud_agent_bundle_publishes_apply_but_confirmation_commands_fail_closed() {
 
     let confirmation_command = command_binding(PluginExecutionHost::Cloud);
     assert!(validate_cloud_component_policy(&confirmation_command).is_err());
+}
+
+#[test]
+fn cloud_command_is_bound_to_the_runtime_session_arguments() {
+    let mut command = command_binding(PluginExecutionHost::Cloud);
+    command
+        .component
+        .metadata
+        .insert("requires_confirmation".to_string(), json!(false));
+    command.command_arguments = Some("src/lib.rs".to_string());
+    let primary_text = "Review the selected path and report concrete findings.".to_string();
+    let mut bundle = PluginCloudComponentBundle {
+        plugin_id: command.plugin_id.clone(),
+        release_id: command.release_id.clone(),
+        version: command.version.clone(),
+        component_key: command.component.component_key.clone(),
+        kind: command.component.kind,
+        execution_host: command.component.execution_host,
+        entrypoint: "commands/review.md".to_string(),
+        primary_sha256: sha256_text(primary_text.as_str()),
+        primary_text,
+        resources: Vec::new(),
+        bundle_sha256: String::new(),
+        artifact_sha256: command.artifact_sha256.clone(),
+        normalized_manifest_sha256: command.normalized_manifest_sha256.clone(),
+        ingested_at: "2026-08-01T00:00:00Z".to_string(),
+    };
+    bundle.bundle_sha256 = plugin_cloud_bundle_sha256(&bundle).unwrap();
+    command.component_content_sha256 = bundle.bundle_sha256.clone();
+    let route = route(&command);
+    let snapshot = cloud_snapshot(&command, bundle, route.clone());
+    let provider = PluginComponentProvider::new(
+        reqwest::Client::new(),
+        "http://127.0.0.1:1",
+        Duration::from_secs(1),
+        None,
+        1024 * 1024,
+    )
+    .unwrap();
+
+    let outcome = provider
+        .call_cloud(
+            &snapshot,
+            &route,
+            COMMAND_TOOL_NAME,
+            json!({"arguments": " src/lib.rs "}),
+        )
+        .unwrap();
+    assert!(outcome
+        .result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .unwrap()
+        .contains("Arguments for this invocation:\nsrc/lib.rs"));
+
+    let error = provider
+        .call_cloud(
+            &snapshot,
+            &route,
+            COMMAND_TOOL_NAME,
+            json!({"arguments": "README.md"}),
+        )
+        .expect_err("cloud command argument drift must be rejected");
+    assert!(error.message.contains("Runtime Session selection"));
 }
 
 #[test]

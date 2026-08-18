@@ -267,11 +267,11 @@ Local Connector 默认状态路径：
 要求 Docker Engine 与 Docker Compose v2：
 
 ```bash
-cp docker/.env.example docker/.env
+cp docker/bootstrap.conf.example docker/bootstrap.conf
 make docker-up
 ```
 
-默认主应用地址为 <http://localhost:8088>。开发环境默认管理员为 `admin / admin123456`，生产部署必须修改 `docker/.env` 中的默认密码和内部 Secret。
+默认主应用地址为 <http://localhost:8088>。业务配置统一通过配置中心发布；`docker/bootstrap.conf` 只保存配置中心可用前必须提供的基础设施参数和凭据，且不得提交。
 
 从当前源码构建镜像：
 

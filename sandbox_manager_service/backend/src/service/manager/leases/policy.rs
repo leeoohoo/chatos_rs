@@ -7,28 +7,52 @@ use super::*;
 pub(super) fn prepare_sandbox_workspace_owner(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::{chown, PermissionsExt};
 
-    let chown_error = chown(path, Some(1000), Some(1000)).err();
-    if let Some(err) = chown_error.as_ref() {
-        if err.kind() != std::io::ErrorKind::PermissionDenied {
-            return Err(format!(
-                "set sandbox workspace owner for {} failed: {err}",
+    for entry in walkdir::WalkDir::new(path).follow_links(false) {
+        let entry = entry.map_err(|error| {
+            format!(
+                "scan sandbox workspace ownership under {} failed: {error}",
                 path.display()
-            ));
+            )
+        })?;
+        if entry.file_type().is_symlink() {
+            continue;
         }
+        let entry_path = entry.path();
+        let chown_error = chown(entry_path, Some(1000), Some(1000)).err();
+        if let Some(error) = chown_error.as_ref() {
+            if error.kind() != std::io::ErrorKind::PermissionDenied {
+                return Err(format!(
+                    "set sandbox workspace owner for {} failed: {error}",
+                    entry_path.display()
+                ));
+            }
+        }
+        let metadata = std::fs::metadata(entry_path).map_err(|error| error.to_string())?;
+        let mut permissions = metadata.permissions();
+        let mode = if chown_error.is_some() {
+            if metadata.is_dir() {
+                0o777
+            } else {
+                0o666
+            }
+        } else if metadata.is_dir() {
+            0o700
+        } else {
+            let executable = permissions.mode() & 0o111 != 0;
+            if executable {
+                0o700
+            } else {
+                0o600
+            }
+        };
+        permissions.set_mode(mode);
+        std::fs::set_permissions(entry_path, permissions).map_err(|error| {
+            format!(
+                "make sandbox workspace {} accessible: {error}",
+                entry_path.display()
+            )
+        })?;
     }
-    let mut permissions = std::fs::metadata(path)
-        .map_err(|metadata_err| metadata_err.to_string())?
-        .permissions();
-    permissions.set_mode(if chown_error.is_some() { 0o777 } else { 0o700 });
-    std::fs::set_permissions(path, permissions).map_err(|permissions_err| {
-        format!(
-            "make sandbox workspace {} accessible{}: {permissions_err}",
-            path.display(),
-            chown_error
-                .map(|err| format!(" after chown failed ({err})"))
-                .unwrap_or_default()
-        )
-    })?;
     Ok(())
 }
 
@@ -85,4 +109,16 @@ pub(in crate::service::manager) fn sandbox_manager_effective_policy(
         policy_revision: request.policy_revision.clone(),
         additional_writable_roots: Vec::new(),
     }
+}
+
+pub(in crate::service::manager) fn sandbox_manager_effective_permissions(
+    policy: &EffectiveSandboxPolicy,
+    runtime_workspace_roots: Vec<String>,
+) -> EffectivePermissionSnapshot {
+    let mut permissions = legacy_policy_permission_snapshot(policy, runtime_workspace_roots);
+    // Project execution runs inside an isolated container/network namespace and needs outbound
+    // access for package managers and source dependencies. Filesystem access remains constrained
+    // to the managed workspace by the workspace permission profile.
+    permissions.network = NetworkPermissionPolicy::Unrestricted;
+    permissions
 }

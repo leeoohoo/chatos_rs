@@ -284,6 +284,39 @@ pub async fn release_subject_memory_scope_slot(
     Ok(())
 }
 
+pub async fn refresh_subject_memory_scope_slot(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    scope_key: &str,
+    lock_owner: &str,
+    lock_timeout_secs: i64,
+) -> Result<bool, String> {
+    let now = now_rfc3339();
+    let expires_at =
+        (chrono::Utc::now() + chrono::Duration::seconds(lock_timeout_secs.max(30))).to_rfc3339();
+    let result = db
+        .collection::<EngineSubjectMemoryScope>("engine_subject_memory_scopes")
+        .update_one(
+            doc! {
+                "tenant_id": tenant_id,
+                "source_id": source_id,
+                "scope_key": scope_key,
+                "subject_memory_status": "running",
+                "subject_memory_lock_owner": lock_owner,
+            },
+            doc! {
+                "$set": {
+                    "subject_memory_lock_expires_at": expires_at,
+                    "updated_at": now,
+                }
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(result.matched_count > 0)
+}
+
 pub async fn get_pending_subject_memory_dispatch(
     db: &Db,
     tenant_id: &str,

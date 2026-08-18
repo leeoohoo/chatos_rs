@@ -446,10 +446,14 @@ async fn browser_mcp_entrypoint(
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            match state
-                .browser_service
-                .call_tool(name, arguments, Some(runtime_session_id))
-            {
+            let tool_result_max_chars =
+                chatos_mcp_service::tool_result_max_chars_from_params(&request.params);
+            match state.browser_service.call_tool_with_context(
+                name,
+                arguments,
+                chatos_mcp::BrowserToolCallContext::from_conversation_id(Some(runtime_session_id))
+                    .with_tool_result_max_chars(tool_result_max_chars),
+            ) {
                 Ok(result) => jsonrpc_ok(id, result),
                 Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
             }

@@ -36,6 +36,10 @@ use super::requirements::{
     list_requirement_documents, update_requirement, update_requirement_document,
     upsert_requirement_technical_overview,
 };
+use super::run_workspace::{
+    finalize_run_workspace, get_run_workspace_changes, integrate_run_workspace,
+    prepare_run_workspace, promote_execution_workspace,
+};
 use super::runtime_environment::{
     analyze_project_runtime_environment_handler,
     generate_project_runtime_environment_image_handler, get_project_runtime_environment,
@@ -46,8 +50,9 @@ use super::runtime_environment::{
 };
 use super::runtime_environment_mcp::project_runtime_environment_mcp_entrypoint;
 use super::sync::{
-    sync_get_project, sync_get_project_runtime_environment, sync_import_project,
-    sync_list_projects, sync_requirement_execution_state, sync_task_runner_task_status,
+    sync_delete_execution_links, sync_get_project, sync_get_project_runtime_environment,
+    sync_import_project, sync_list_execution_links, sync_list_projects,
+    sync_requirement_execution_state, sync_task_runner_task_status,
     sync_task_runner_work_item_status,
 };
 use super::task_runner_links::{
@@ -257,6 +262,26 @@ pub fn build_internal_router(state: AppState) -> Router {
                 post(harness_project_mcp_entrypoint),
             )
             .route(
+                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/prepare",
+                post(prepare_run_workspace),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/finalize-result",
+                post(finalize_run_workspace),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/changes",
+                post(get_run_workspace_changes),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/run-workspaces/{run_id}/integrate",
+                post(integrate_run_workspace),
+            )
+            .route(
+                "/api/chatos-sync/projects/{project_id}/execution-workspaces/{execution_group_id}/promote",
+                post(promote_execution_workspace),
+            )
+            .route(
                 "/api/chatos-sync/work-items/{work_item_id}/task-runner-status",
                 post(sync_task_runner_work_item_status),
             )
@@ -267,6 +292,14 @@ pub fn build_internal_router(state: AppState) -> Router {
             .route(
                 "/api/chatos-sync/requirements/{requirement_id}/execution-state",
                 post(sync_requirement_execution_state),
+            )
+            .route(
+                "/api/chatos-sync/execution-links/query",
+                post(sync_list_execution_links),
+            )
+            .route(
+                "/api/chatos-sync/execution-links/delete",
+                post(sync_delete_execution_links),
             )
             .route("/mcp", post(mcp::mcp_entrypoint))
             .with_state(state),

@@ -60,6 +60,17 @@ pub(in super::super) async fn move_entry(
         );
     }
 
+    if let Some(response) = super::super::local_connector_bridge::move_entry(
+        source_raw.as_str(),
+        target_parent_raw.as_str(),
+        req.target_name.as_deref(),
+        req.replace_existing.unwrap_or(false),
+    )
+    .await
+    {
+        return response;
+    }
+
     let source_path =
         match policy.authorize_existing_entry(source_raw.as_str(), "源路径不存在", "源路径不合法")
         {

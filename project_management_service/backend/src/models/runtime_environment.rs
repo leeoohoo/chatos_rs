@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use chatos_ai_runtime::ModelRuntimeConfig;
+
 use super::DbStatus;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -216,6 +218,24 @@ pub struct ProjectRuntimeEnvironmentRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectEnvironmentAgentRunInput {
+    pub agent_run_id: String,
+    pub project_id: String,
+    pub owner_user_id: String,
+    pub model_config_id: String,
+    pub model_config: ModelRuntimeConfig,
+    pub agent_key: String,
+    pub agent_prompt: chatos_plugin_management_sdk::ResolvedAgentPrompt,
+    pub prompt: String,
+    pub mcp_command_queue: String,
+    pub file_provider: RuntimeEnvironmentProvider,
+    pub sandbox_provider: RuntimeEnvironmentProvider,
+    pub analysis_started_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRuntimeEnvironmentImageRecord {
     pub id: String,
     pub project_id: String,
@@ -301,6 +321,8 @@ pub struct AnalyzeProjectRuntimeEnvironmentRequest {
     pub analysis_requirement: Option<String>,
     #[serde(default, alias = "selectedDependencies")]
     pub selected_dependencies: Vec<String>,
+    #[serde(default, alias = "preferChinaMirrors")]
+    pub prefer_china_mirrors: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -75,10 +75,10 @@ export const TimelineDot: React.FC<{
   status?: TimelineStatus;
   type: TimelineItem['type'];
 }> = ({ status, type }) => {
-  const Icon = type === 'model'
-    ? Bot
-    : status === 'error'
+  const Icon = status === 'error'
       ? AlertTriangle
+    : type === 'model'
+      ? Bot
       : status === 'completed'
         ? CheckCircle2
         : Clock;
@@ -128,6 +128,11 @@ const ToolCallCard: React.FC<{
         <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
           {formatTime(item.createdAt)}
         </span>
+        {item.status === 'pending' ? (
+          <span className="shrink-0 text-[11px] text-amber-700 dark:text-amber-300">
+            进行中
+          </span>
+        ) : null}
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
           {expanded ? '收起' : '展开'}
           <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
@@ -135,7 +140,11 @@ const ToolCallCard: React.FC<{
       </button>
 
       {expanded ? (
-        <div className="grid gap-3 border-t border-border/70 bg-muted/10 p-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <div className={cn(
+          'grid gap-3 border-t border-border/70 bg-muted/10 p-3',
+          (item.error || item.hasResult) && 'lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]',
+        )}
+        >
           <ValueSection
             title="主要参数"
             value={item.toolCall.arguments}
@@ -151,15 +160,15 @@ const ToolCallCard: React.FC<{
               emptyArrayText="工具返回错误"
               emptyObjectText="工具返回错误"
             />
-          ) : (
+          ) : item.hasResult ? (
             <ValueSection
               title="返回结果"
-              value={item.hasResult ? item.result : undefined}
-              emptyText={item.hasResult ? '返回为空内容' : '暂无返回'}
+              value={item.result}
+              emptyText="返回为空内容"
               emptyArrayText="返回为空数组"
               emptyObjectText="返回为空对象"
             />
-          )}
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -186,6 +195,7 @@ const ToolResultCard: React.FC<{
         )}
         >
           {item.error ? '执行结果返回失败' : '已收到执行结果'}
+          {(item.repeatCount || 1) > 1 ? `（重复 ${item.repeatCount} 次）` : ''}
         </span>
         <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
           {formatTime(item.createdAt)}
@@ -195,12 +205,12 @@ const ToolResultCard: React.FC<{
           <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
         </span>
       </button>
-      {expanded ? (
+      {expanded && (item.error || item.hasResult) ? (
         <div className="border-t border-border/70 bg-muted/10 p-3">
           <ValueSection
             title={item.error ? '错误' : '返回结果'}
             value={resultValue}
-            emptyText={item.hasResult ? '返回为空内容' : '暂无返回'}
+            emptyText="返回为空内容"
             emptyArrayText="返回为空数组"
             emptyObjectText="返回为空对象"
           />
@@ -213,11 +223,22 @@ const ToolResultCard: React.FC<{
 const ModelCard: React.FC<{
   item: Extract<TimelineItem, { type: 'model' }>;
 }> = ({ item }) => (
-  <article className="rounded-md border border-border/80 bg-background px-3.5 py-3">
+  <article className={cn(
+    'rounded-md border bg-background px-3.5 py-3',
+    item.status === 'error' ? 'border-destructive/40' : 'border-border/80',
+  )}
+  >
     <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-      <span className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
+      <span className={cn(
+        'inline-flex items-center gap-1 rounded border bg-muted/40 px-2 py-0.5 font-medium',
+        item.status === 'error'
+          ? 'border-destructive/40 text-destructive'
+          : 'border-border text-foreground',
+      )}
+      >
         <Bot className="h-3 w-3" />
         {item.label}
+        {(item.repeatCount || 1) > 1 ? `（重复 ${item.repeatCount} 次）` : ''}
       </span>
       <span className="text-muted-foreground">{formatTime(item.createdAt)}</span>
     </div>

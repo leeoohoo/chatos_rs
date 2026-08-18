@@ -35,6 +35,10 @@ pub struct ModelConfigRecord {
     #[serde(default = "default_model_request_max_retries")]
     pub model_request_max_retries: usize,
     pub thinking_level: Option<String>,
+    #[serde(default)]
+    pub supports_images: bool,
+    #[serde(default)]
+    pub supports_reasoning: bool,
     pub supports_responses: bool,
     pub instructions: Option<String>,
     pub request_cwd: Option<String>,
@@ -72,9 +76,6 @@ impl ModelConfigRecord {
 
 fn runtime_provider_for_model(provider: &str, base_url: &str) -> String {
     let normalized = normalize_provider(provider);
-    if normalized == "glm" {
-        return "openai_compatible".to_string();
-    }
     if normalized == "gpt" && !is_openai_api_base_url(base_url) {
         return "openai_compatible".to_string();
     }
@@ -89,46 +90,6 @@ fn is_openai_api_base_url(base_url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::ModelConfigRecord;
-
-    #[test]
-    fn execution_environment_defaults_to_cloud_on_linux_only() {
-        assert_eq!(
-            super::default_execution_environment_mode_for_os("linux"),
-            "cloud"
-        );
-        assert_eq!(
-            super::default_execution_environment_mode_for_os("macos"),
-            "local"
-        );
-        assert_eq!(
-            super::default_execution_environment_mode_for_os("windows"),
-            "local"
-        );
-    }
-
-    #[test]
-    fn execution_environment_normalization_uses_platform_default_for_missing_or_invalid_values() {
-        assert_eq!(
-            super::normalize_execution_environment_mode_for_os(None, "linux"),
-            "cloud"
-        );
-        assert_eq!(
-            super::normalize_execution_environment_mode_for_os(Some(""), "linux"),
-            "cloud"
-        );
-        assert_eq!(
-            super::normalize_execution_environment_mode_for_os(Some("unknown"), "linux"),
-            "cloud"
-        );
-        assert_eq!(
-            super::normalize_execution_environment_mode_for_os(None, "macos"),
-            "local"
-        );
-        assert_eq!(
-            super::normalize_execution_environment_mode_for_os(Some("cloud"), "macos"),
-            "cloud"
-        );
-    }
 
     #[test]
     fn runtime_config_treats_custom_openai_base_url_as_compatible() {
@@ -152,13 +113,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_config_uses_compatible_transport_for_glm() {
+    fn runtime_config_keeps_glm_parameter_dialect() {
         let mut record = model_config_record("glm", "https://open.bigmodel.cn/api/paas/v4", "high");
         record.prompt_vendor = Some("glm".to_string());
 
         let runtime = record.to_runtime_config(None);
 
-        assert_eq!(runtime.provider, "openai_compatible");
+        assert_eq!(runtime.provider, "glm");
         assert_eq!(runtime.thinking_level.as_deref(), Some("high"));
     }
 
@@ -183,6 +144,8 @@ mod tests {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: Some(thinking_level.to_string()),
+            supports_images: false,
+            supports_reasoning: true,
             supports_responses: true,
             instructions: None,
             request_cwd: None,
@@ -231,6 +194,10 @@ pub struct ChatosSyncedModelConfigRequest {
     #[serde(default = "default_model_request_max_retries")]
     pub model_request_max_retries: usize,
     pub thinking_level: Option<String>,
+    #[serde(default)]
+    pub supports_images: Option<bool>,
+    #[serde(default)]
+    pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
     pub enabled: Option<bool>,
 }
@@ -286,14 +253,6 @@ pub struct RuntimeSettingsRecord {
     pub tool_result_model_max_chars: usize,
     #[serde(default = "default_tool_results_model_total_max_chars")]
     pub tool_results_model_total_max_chars: usize,
-    #[serde(default = "default_execution_environment_mode")]
-    pub execution_environment_mode: String,
-    #[serde(default)]
-    pub sandbox_enabled: bool,
-    #[serde(default = "default_sandbox_manager_base_url")]
-    pub sandbox_manager_base_url: String,
-    #[serde(default = "default_sandbox_lease_ttl_seconds")]
-    pub sandbox_lease_ttl_seconds: u64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -304,48 +263,6 @@ pub struct UpdateRuntimeSettingsRequest {
     pub execution_timeout_ms: Option<u64>,
     pub tool_result_model_max_chars: Option<usize>,
     pub tool_results_model_total_max_chars: Option<usize>,
-    pub execution_environment_mode: Option<String>,
-    pub sandbox_enabled: Option<bool>,
-    pub sandbox_manager_base_url: Option<String>,
-    pub sandbox_lease_ttl_seconds: Option<u64>,
-}
-
-pub fn normalize_execution_environment_mode(value: Option<&str>) -> String {
-    normalize_execution_environment_mode_for_os(value, std::env::consts::OS)
-}
-
-fn normalize_execution_environment_mode_for_os(value: Option<&str>, os: &str) -> String {
-    let default_mode = default_execution_environment_mode_for_os(os);
-    match value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(default_mode)
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "cloud" => "cloud".to_string(),
-        "local" => "local".to_string(),
-        _ => default_mode.to_string(),
-    }
-}
-
-pub fn default_execution_environment_mode() -> String {
-    default_execution_environment_mode_for_os(std::env::consts::OS).to_string()
-}
-
-fn default_execution_environment_mode_for_os(os: &str) -> &'static str {
-    match os {
-        "linux" => "cloud",
-        _ => "local",
-    }
-}
-
-pub fn default_sandbox_manager_base_url() -> String {
-    "http://127.0.0.1:8095".to_string()
-}
-
-pub fn default_sandbox_lease_ttl_seconds() -> u64 {
-    7_200
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

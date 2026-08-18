@@ -484,6 +484,7 @@ fn active_status_strings() -> Vec<&'static str> {
         SandboxStatus::Starting,
         SandboxStatus::Ready,
         SandboxStatus::Running,
+        SandboxStatus::Stopped,
         SandboxStatus::Releasing,
         SandboxStatus::Destroying,
     ]
@@ -517,5 +518,11 @@ mod pending_filter_tests {
                 .expect("lease kind filter"),
             &doc! { "$ne": "environment" }
         );
+    }
+
+    #[test]
+    fn stopped_diagnostic_leases_remain_expirable_and_capacity_tracked() {
+        let statuses = active_status_strings();
+        assert!(statuses.contains(&SandboxStatus::Stopped.as_str()));
     }
 }

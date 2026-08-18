@@ -95,7 +95,7 @@ Public registration now uses email as the login username and requires both an in
 - Super admins generate invite codes from the User Service users page.
 - Invite code plaintext is shown only once when generated; the database stores only a hash.
 - Registration email codes are 6 digits, expire after 10 minutes by default, and are rate-limited per email address.
-- Do not commit SMTP authorization codes. Set `USER_SERVICE_SMTP_PASSWORD` through deployment secrets or `docker/.env`.
+- Do not commit SMTP authorization codes. Publish `USER_SERVICE_SMTP_PASSWORD` through Configuration Center.
 
 Required SMTP environment variables:
 

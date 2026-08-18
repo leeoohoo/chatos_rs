@@ -25,9 +25,11 @@ pub(super) async fn resolve_agent_prompt_internal(
     Json(request): Json<ResolveAgentPromptRequest>,
 ) -> Result<Json<ResolvedAgentPrompt>, ApiError> {
     authorize(&state, &headers, AGENT_PROMPTS_RESOLVE_SCOPE)?;
+    let profile =
+        chatos_plugin_management_sdk::normalize_agent_prompt_profile(request.profile.as_deref());
     let record = state
         .store
-        .get_agent_prompt(request.agent_key.as_str(), request.vendor)
+        .get_agent_prompt(request.agent_key.as_str(), profile.as_str(), request.vendor)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("agent_prompt_not_configured"))?;
@@ -85,6 +87,9 @@ pub(super) async fn agent_prompt_bundle_internal(
         .map_err(ApiError::internal)?;
     let by_key = records
         .into_iter()
+        .filter(|record| {
+            record.profile == chatos_plugin_management_sdk::DEFAULT_AGENT_PROMPT_PROFILE
+        })
         .map(|record| ((record.agent_key.clone(), record.vendor), record))
         .collect::<HashMap<_, _>>();
     let mut prompts = Vec::new();

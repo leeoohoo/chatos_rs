@@ -197,11 +197,6 @@ pub(super) async fn get_system_stats(
         },
         queue: TaskRunnerQueueStatsSnapshot {
             rabbitmq_enabled: state.task_queue_topology.uses_rabbitmq(),
-            run_dispatch_mode: state
-                .task_queue_topology
-                .run_dispatch_mode
-                .as_str()
-                .to_string(),
             callback_delivery_mode: state
                 .task_queue_topology
                 .callback_delivery_mode
@@ -222,19 +217,11 @@ pub(super) async fn get_system_stats(
             callback_consumer_expected: state.config.callback_delivery_enabled()
                 && state.task_queue_topology.callback_delivery_mode
                     == crate::platform_queue::TaskQueueMode::RabbitMq,
-            run_dispatch_queue: state.task_queue_topology.run_dispatch_queue.clone(),
-            run_dispatch_retry_queue: state.task_queue_topology.run_dispatch_retry_queue.clone(),
-            run_dispatch_retry_delay_ms: state
+            event_outbox_reconcile_ms: state
                 .task_queue_topology
-                .run_dispatch_retry_delay
+                .event_outbox_reconcile_interval
                 .as_millis() as u64,
-            run_dispatch_outbox_reconcile_ms: state
-                .task_queue_topology
-                .run_dispatch_outbox_reconcile_interval
-                .as_millis() as u64,
-            run_dispatch_outbox_batch_size: state
-                .task_queue_topology
-                .run_dispatch_outbox_batch_size,
+            event_outbox_batch_size: state.task_queue_topology.event_outbox_batch_size,
             worker_control_queue_prefix: state
                 .task_queue_topology
                 .worker_control_queue_prefix
@@ -280,14 +267,37 @@ pub(super) async fn get_system_stats(
             dispatch_outbox_pending: run_stats.dispatch_outbox_pending,
             cancellation_outbox_pending: run_stats.cancellation_outbox_pending,
             post_process_outbox_pending: run_stats.post_process_outbox_pending,
-            terminal_cleanup_outbox_pending: run_stats.terminal_cleanup_outbox_pending,
+            integration_pending: run_stats.integration_pending,
+            integration_active: run_stats.integration_active,
+            integration_conflicts: run_stats.integration_conflicts,
+            integration_failed: run_stats.integration_failed,
         },
     }))
 }
 
 pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
     let stats = task_runner_rabbitmq_queue_stats(&state).await;
+    let run_stats = state
+        .run_service
+        .execution_stats()
+        .await
+        .unwrap_or_default();
     let mut body = chatos_queue_observability::render_prometheus_metrics("task-runner", &stats);
+    body.push_str(
+        "# HELP chatos_task_runner_integration_runs Current Run counts by code integration state.\n\
+# TYPE chatos_task_runner_integration_runs gauge\n",
+    );
+    for (status, value) in [
+        ("pending", run_stats.integration_pending),
+        ("integrating", run_stats.integration_active),
+        ("conflict", run_stats.integration_conflicts),
+        ("failed", run_stats.integration_failed),
+    ] {
+        body.push_str(
+            format!("chatos_task_runner_integration_runs{{status=\"{status}\"}} {value}\n")
+                .as_str(),
+        );
+    }
     body.push_str(
         "# HELP chatos_task_runner_run_dispatch_fairness_deferrals_total Fair scheduling triggers deferred because all eligible project execution lanes were occupied.\n\
 # TYPE chatos_task_runner_run_dispatch_fairness_deferrals_total counter\n",
@@ -470,10 +480,13 @@ async fn task_runner_rabbitmq_queue_stats(state: &AppState) -> RabbitMqQueueRunt
     };
     let topology = &state.task_queue_topology;
     let mut specs = vec![
-        RabbitMqQueueSpec::new("run_dispatch", topology.run_dispatch_queue.as_str()),
         RabbitMqQueueSpec::new(
-            "run_dispatch_retry",
-            topology.run_dispatch_retry_queue.as_str(),
+            "cloud_agent_runtime",
+            crate::cloud_agent_queue::TASK_RUNNER_CLOUD_AGENT_ROUTING_KEY,
+        ),
+        RabbitMqQueueSpec::new(
+            "cloud_agent_runtime_retry",
+            crate::cloud_agent_queue::TASK_RUNNER_CLOUD_AGENT_RETRY_ROUTING_KEY,
         ),
         RabbitMqQueueSpec::new("run_post_process", topology.run_post_process_queue.as_str()),
         RabbitMqQueueSpec::new(

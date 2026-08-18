@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+# Copy this file to docker/bootstrap.conf. This file is intentionally limited
+# to values Docker and Configuration Center need before runtime configuration
+# can be loaded. Publish all business configuration through Configuration Center.
+
+# Deployment mode and images
+CHATOS_ENV=local
+CHATOS_DOCKER_NETWORK=chatos-cloud
+CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
+CHATOS_IMAGE_TAG=latest
+SANDBOX_MANAGER_DOCKER_IMAGE=ghcr.io/leeoohoo/chatos-rs-sandbox-agent:latest
+DOCKER_SOCKET_PROXY_IMAGE=ghcr.io/tecnativa/docker-socket-proxy:latest
+
+# Infrastructure credentials
+MONGODB_USER=admin
+MONGODB_PASSWORD=admin
+RABBITMQ_DEFAULT_USER=chatos
+RABBITMQ_DEFAULT_PASS=change_me_rabbitmq_password
+RABBITMQ_DEFAULT_VHOST=/
+RABBITMQ_AMQP_VHOST=%2f
+VALKEY_PASSWORD=change_me_valkey_password
+
+# Configuration Center caller bootstrap secrets. Use distinct random values in
+# production. These authenticate initial snapshot and heartbeat requests only.
+CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET=change_me_config_center_chatos_backend_signing_secret
+CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_local_connector_signing_secret
+CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_mcp_management_signing_secret
+CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET=change_me_config_center_memory_engine_signing_secret
+CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET=change_me_config_center_official_website_signing_secret
+CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_plugin_management_signing_secret
+CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_project_service_signing_secret
+CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET=change_me_config_center_sandbox_manager_signing_secret
+CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET=change_me_config_center_task_runner_signing_secret
+CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_user_service_signing_secret
+
+# Configuration Center mTLS material is provisioned outside Git.
+CONFIG_CENTER_MTLS_DIR=./secrets/config-center-mtls
+MCP_MANAGEMENT_MTLS_DIR=./secrets/mcp-management-mtls
+PROJECT_SERVICE_MTLS_DIR=./secrets/project-service-mtls
+CHATOS_MTLS_DIR=./secrets/chatos-mtls
+LOCAL_CONNECTOR_MTLS_DIR=./secrets/local-connector-mtls
+USER_SERVICE_MTLS_DIR=./secrets/user-service-mtls
+PLUGIN_MANAGEMENT_MTLS_DIR=./secrets/plugin-management-mtls
+TASK_RUNNER_MTLS_DIR=./secrets/task-runner-mtls
+
+# Harness is infrastructure and must be available before project execution.
+HARNESS_IMAGE=harness/harness:latest
+HARNESS_ADMIN_EMAIL=admin@chatos.local
+HARNESS_ADMIN_PASSWORD=admin123456
+HARNESS_PUBLIC_BASE_URL=http://localhost:3000
+HARNESS_GIT_BASE_URL=http://localhost:3000/git
+HARNESS_SSH_PUBLIC_HOST=localhost
+HARNESS_BASE_URL=http://harness:3000
+
+# Sandbox frontend authenticates its bootstrap proxy before it can read runtime
+# settings from Configuration Center.
+SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID=sandbox-manager-frontend
+SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY=replace-with-configuration-center-secret
+
+# Host bindings and commonly overridden ports
+CHATOS_INFRA_BIND_HOST=127.0.0.1
+CHATOS_PUBLIC_BIND_HOST=0.0.0.0
+FRONTEND_PORT=8088
+MAIN_BACKEND_PORT=3997
+HARNESS_PORT=3000
+HARNESS_SSH_PORT=3022
+CONFIG_CENTER_BACKEND_PORT=39270
+CONFIG_CENTER_FRONTEND_PORT=39271
+GRAFANA_PORT=3001
+
+# Docker build and cleanup policy
+CHATOS_DOCKER_MODE=prebuilt
+CHATOS_DOCKER_BUILD_PARALLEL_LIMIT=1
+CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=true
+CHATOS_DOCKER_PRUNE_BUILD_CACHE=true
+CHATOS_DOCKER_BUILD_CACHE_MAX_USED_SPACE=32gb
+CHATOS_DOCKER_BUILD_CACHE_RESERVED_SPACE=8gb
+CHATOS_DOCKER_BUILD_CACHE_TIMEOUT=180s

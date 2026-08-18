@@ -70,6 +70,7 @@ async fn agent_chat_send(
     Json(mut req): Json<ChatStreamRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     ensure_and_set_user_id(&mut req.user_id, &auth)?;
+    req.user_role = Some(auth.role.clone());
     validate_chat_stream_request(&req, false).await?;
     let conversation_id = req.conversation_id.clone().unwrap_or_default();
     let session = ensure_owned_session(conversation_id.as_str(), &auth)
@@ -303,6 +304,7 @@ async fn stream_chat(sender: Option<SseSender>, req: ChatStreamRequest) {
         req,
         persisted_user_message_content: None,
         persisted_user_message_metadata: None,
+        cloud_agent_owner_context: None,
     })
     .await;
 }

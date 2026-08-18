@@ -149,9 +149,16 @@ pub(in super::super) async fn tool_list_dir(
         .and_then(Value::as_u64)
         .map(|value| value.clamp(1, 1000) as usize)
         .unwrap_or(200);
-    let content = fetch_harness_content(ctx, path.as_str())
-        .await
-        .map_err(|err| err.to_string())?;
+    let content = match fetch_harness_content(ctx, path.as_str()).await {
+        Ok(content) => content,
+        Err(err) if err.is_not_found() => {
+            return Ok(missing_directory_result(
+                path.as_str(),
+                err.to_string().as_str(),
+            ));
+        }
+        Err(err) => return Err(err.to_string()),
+    };
     if content.kind != "dir" {
         return Err("Target is not a directory.".to_string());
     }
@@ -164,6 +171,18 @@ pub(in super::super) async fn tool_list_dir(
         .map(directory_entry_payload)
         .collect::<Vec<_>>();
     Ok(tool_text_result(json!({ "entries": entries })))
+}
+
+fn missing_directory_result(requested_path: &str, error: &str) -> Value {
+    tool_text_result(json!({
+        "status": "not_found",
+        "operation": "list_dir",
+        "requested_path": requested_path,
+        "entries": Vec::<Value>::new(),
+        "error": error,
+        "message": "The requested directory was not found.",
+        "ai_instruction": "Do not retry the same missing directory. List a known parent directory or the workspace root before choosing another path."
+    }))
 }
 
 pub(in super::super) async fn tool_search_text(
@@ -520,6 +539,18 @@ mod tests {
     fn missing_file_parent_dir_uses_repo_root_for_root_files() {
         assert_eq!(parent_dir("README.md"), "");
         assert_eq!(parent_dir("./apps/web/package.json"), "apps/web");
+    }
+
+    #[test]
+    fn missing_directory_is_a_structured_business_result() {
+        let result = missing_directory_result(".git", "404 Not Found");
+        let structured = result.get("_structured_result").expect("structured result");
+
+        assert_eq!(structured["status"], "not_found");
+        assert_eq!(structured["operation"], "list_dir");
+        assert_eq!(structured["requested_path"], ".git");
+        assert_eq!(structured["entries"], json!([]));
+        assert_ne!(result.get("isError").and_then(Value::as_bool), Some(true));
     }
 
     #[test]

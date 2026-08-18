@@ -28,6 +28,11 @@ pub struct ProviderCallOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderWaitingForUser {
+    pub prompt_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderCallError {
     pub code: i32,
     pub message: String,
@@ -54,6 +59,7 @@ pub(super) struct ProjectServiceProvider {
     http: reqwest::Client,
     base_url: String,
     internal_secret: Option<String>,
+    request_timeout: std::time::Duration,
     response_limit_bytes: usize,
 }
 

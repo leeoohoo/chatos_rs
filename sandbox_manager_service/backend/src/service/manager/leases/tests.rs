@@ -57,3 +57,25 @@ fn effective_policy_reports_only_capabilities_enforced_by_manager() {
     );
     assert!(effective.additional_writable_roots.is_empty());
 }
+
+#[test]
+fn managed_project_execution_keeps_workspace_scope_and_enables_network() {
+    let policy = sandbox_manager_effective_policy(&SandboxLeasePolicyRequest::default());
+    let permissions = sandbox_manager_effective_permissions(
+        &policy,
+        vec!["/managed/project/workspace".to_string()],
+    );
+
+    assert_eq!(
+        policy.permission_profile_id,
+        PermissionProfileId::WorkspaceWrite
+    );
+    assert!(matches!(
+        permissions.file_system,
+        chatos_sandbox_contract::FileSystemPermissionPolicy::Restricted { .. }
+    ));
+    assert!(matches!(
+        permissions.network,
+        NetworkPermissionPolicy::Unrestricted
+    ));
+}

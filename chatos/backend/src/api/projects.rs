@@ -33,6 +33,14 @@ pub(crate) async fn repair_stale_cloud_execution_planner_message_for_reconciler(
     .map_err(|err| format!("{err:?}"))
 }
 
+pub(crate) async fn reconcile_requirement_planner_owner_context(
+    context: serde_json::Value,
+) -> Result<(), String> {
+    self::requirement_execution_handlers::reconcile_requirement_planner_owner_context(context)
+        .await
+        .map_err(|error| format!("{error:?}"))
+}
+
 use self::contact_handlers::{
     add_project_contact, get_project_contact_lock, list_project_contacts, remove_project_contact,
 };

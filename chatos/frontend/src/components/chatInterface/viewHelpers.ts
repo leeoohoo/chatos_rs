@@ -20,6 +20,7 @@ export const buildSupportedFileTypes = (supportsImages: boolean): string[] => (
 export const resolveModelSupportFlags = (
   selectedModelId: string | null,
   aiModelConfigs: AiModelConfig[],
+  _selectedThinkingLevel?: string | null,
 ): { supportsImages: boolean; supportsReasoning: boolean } => {
   if (!selectedModelId) {
     return { supportsImages: false, supportsReasoning: false };
@@ -27,6 +28,6 @@ export const resolveModelSupportFlags = (
   const matched = (aiModelConfigs || []).find((item) => item?.id === selectedModelId);
   return {
     supportsImages: matched?.supports_images === true,
-    supportsReasoning: matched?.supports_reasoning === true,
+    supportsReasoning: Boolean(matched),
   };
 };

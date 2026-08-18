@@ -19,7 +19,8 @@ use crate::services::runtime_environment::{
     enforce_project_runtime_boundary, environment_variable_name_is_secret,
     normalize_environment_variable_name, normalize_environment_variable_records,
     program_generated_runtime_analysis_summary, refresh_environment_variable_record,
-    required_environment_variables_are_complete, runtime_image_is_execution_required,
+    required_environment_variables_are_complete, runtime_environment_requires_managed_images,
+    runtime_image_is_execution_required,
 };
 use crate::state::AppState;
 
@@ -269,6 +270,7 @@ impl ProjectEnvironmentToolProvider {
             .required_services
             .as_ref()
             .unwrap_or(&environment.required_services);
+        let prefer_china_mirrors = analysis_prefers_china_mirrors(&proposed_stack);
         let analysis_requirement = environment
             .detected_stack
             .get("analysis_requirement")
@@ -298,6 +300,10 @@ impl ProjectEnvironmentToolProvider {
         detected_stack.insert(
             "selected_dependencies".to_string(),
             json!(self.selected_dependencies.clone()),
+        );
+        detected_stack.insert(
+            "prefer_china_mirrors".to_string(),
+            Value::Bool(prefer_china_mirrors),
         );
         if let Some(analysis_requirement) = analysis_requirement {
             detected_stack.insert("analysis_requirement".to_string(), analysis_requirement);
@@ -355,6 +361,7 @@ impl ProjectEnvironmentToolProvider {
                     image,
                     index,
                     environment.sandbox_provider,
+                    prefer_china_mirrors,
                     None,
                 )?);
             }
@@ -387,10 +394,11 @@ impl ProjectEnvironmentToolProvider {
                 &mut environment,
                 image_records.as_slice(),
             )?;
-            if image_records
-                .iter()
-                .filter(|image| runtime_image_is_execution_required(image))
-                .any(|image| !image_is_real_and_ready(image))
+            if runtime_environment_requires_managed_images(&environment)
+                && image_records
+                    .iter()
+                    .filter(|image| runtime_image_is_execution_required(image))
+                    .any(|image| !image_is_real_and_ready(image))
             {
                 environment.status = ProjectRuntimeEnvironmentStatus::PendingImageBuild;
             } else if !required_environment_variables_are_complete(
@@ -491,6 +499,7 @@ fn ensure_selected_dependency_image_records(
             },
             index,
             provider,
+            false,
             None,
         )?);
     }

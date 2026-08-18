@@ -189,16 +189,18 @@ mod tests {
 
     #[test]
     fn classifies_data_and_control_plane_resources() {
-        let summary = classify_resource(
-            "/api/memory-engine/v1/threads/thread-1/summaries/summary-1",
-        );
+        let summary =
+            classify_resource("/api/memory-engine/v1/threads/thread-1/summaries/summary-1");
         assert_eq!(summary.resource_type, "memory_summary");
         assert_eq!(summary.resource_name, Some("summary-1"));
 
         let replay = classify_resource("/api/memory-engine/v1/queue-operations/replay");
         assert_eq!(replay.resource_type, "memory_queue_operation");
         assert_eq!(
-            request_action(&Method::POST, "/api/memory-engine/v1/queue-operations/replay"),
+            request_action(
+                &Method::POST,
+                "/api/memory-engine/v1/queue-operations/replay"
+            ),
             "replay"
         );
 

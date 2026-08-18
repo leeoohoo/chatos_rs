@@ -2,39 +2,29 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::{
+    ModelPhaseStatus, TaskRunBranchTarget, WorkspaceIntegrationStatus, WorkspacePreparationStatus,
+};
 
-#[path = "completion/harness.rs"]
-mod harness;
 #[cfg(test)]
 #[path = "completion/tests.rs"]
 mod tests;
 
 impl RunService {
-    pub(super) async fn finalize_model_phase(
+    pub(in crate::services) async fn finalize_model_phase(
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
         report: TaskRunReport,
         effective_workspace_dir: &str,
-        sandbox_output: Option<SandboxOutputReport>,
-        harness_output: Option<HarnessRunOutputReport>,
     ) {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
             self.config.default_workspace_dir.as_str(),
             effective_workspace_dir,
         );
         let mut report = report;
-        harness::fail_report_when_promotion_failed(&mut report, harness_output.as_ref());
         run.bind_current_attempt_model_response(report.response_id.as_deref());
-        let reference_workspace_dir = sandbox_output
-            .as_ref()
-            .and_then(|output| output.output_workspace.as_deref())
-            .unwrap_or(effective_workspace_dir);
-        fail_report_when_outcome_references_invalid(
-            &mut report,
-            reference_workspace_dir,
-            task.mcp_config.requires_execution,
-        );
+        fail_report_when_outcome_references_invalid(&mut report);
         report.content = report
             .content
             .map(|content| path_redactor.redact_text(content.as_str()));
@@ -42,12 +32,10 @@ impl RunService {
             .error
             .map(|error| path_redactor.redact_text(error.as_str()));
         let terminal_status = resolve_report_terminal_status(&mut report);
-        let report_json =
-            report_json_with_outputs(&report, sandbox_output.as_ref(), harness_output.as_ref())
-                .map(|mut value| {
-                    path_redactor.redact_value(&mut value);
-                    value
-                });
+        let report_json = serde_json::to_value(&report).ok().map(|mut value| {
+            path_redactor.redact_value(&mut value);
+            value
+        });
         let existing_task = self.store.get_task(&task.id).await.ok().flatten();
         let task_already_succeeded = existing_task
             .as_ref()
@@ -76,7 +64,17 @@ impl RunService {
             TaskRunStatus::Queued | TaskRunStatus::Running => None,
         };
         run.updated_at = now_rfc3339();
-        run.finished_at = Some(report.completed_at.clone());
+        run.model_phase_status = model_phase_status_for_terminal(terminal_status);
+        let integration_pending = terminal_status == TaskRunStatus::Succeeded
+            && run.workspace_execution.as_ref().is_some_and(|execution| {
+                execution.status == WorkspacePreparationStatus::Ready
+                    && execution.execution_group_id.is_some()
+                    && matches!(
+                        execution.branch_target,
+                        Some(TaskRunBranchTarget::Run { .. } | TaskRunBranchTarget::Local)
+                    )
+            });
+        run.finished_at = (!integration_pending).then(|| report.completed_at.clone());
         run.result_summary = result_summary.clone();
         run.error_message = match terminal_status {
             TaskRunStatus::Blocked | TaskRunStatus::Failed => report
@@ -92,8 +90,26 @@ impl RunService {
         run.usage = report.usage.clone();
         run.report = report_json.clone();
         run.cancel_requested = false;
-        run.status = terminal_status;
-        if task_already_succeeded && run.status != TaskRunStatus::Succeeded {
+        run.status = if integration_pending {
+            TaskRunStatus::Running
+        } else {
+            terminal_status
+        };
+        if let Some(execution) = run.workspace_execution.as_mut() {
+            if integration_pending {
+                execution.integration_status = WorkspaceIntegrationStatus::Pending;
+                execution.integration_ready_at = Some(report.completed_at.clone());
+                execution.integration_started_at = None;
+                execution.integrated_at = None;
+                execution.conflict_files.clear();
+                execution.conflict_message = None;
+                execution.integration_last_error = None;
+            } else if terminal_status != TaskRunStatus::Succeeded {
+                execution.integration_status = WorkspaceIntegrationStatus::NotRequired;
+            }
+        }
+        if task_already_succeeded && !integration_pending && run.status != TaskRunStatus::Succeeded
+        {
             run.status = TaskRunStatus::Succeeded;
             run.error_message = None;
             result_summary = existing_task
@@ -102,7 +118,6 @@ impl RunService {
                 .or_else(|| Some("任务已完成。".to_string()));
             run.result_summary = result_summary.clone();
         }
-        self.request_task_terminal_cleanup(task, run);
         match self.store.save_run(run.clone()).await {
             Ok(saved) => {
                 *run = saved;
@@ -112,30 +127,41 @@ impl RunService {
                 return;
             }
         }
+        if !integration_pending {
+            self.notify_mcp_management_run_finalized(task, run).await;
+        }
 
-        let event_type = match run.status {
-            TaskRunStatus::Succeeded => "completed",
-            TaskRunStatus::Failed => "failed",
-            TaskRunStatus::Cancelled => "cancelled",
-            TaskRunStatus::Blocked => "blocked",
-            TaskRunStatus::Queued | TaskRunStatus::Running => "finished",
+        let event_type = if integration_pending {
+            "model_phase_succeeded"
+        } else {
+            match run.status {
+                TaskRunStatus::Succeeded => "completed",
+                TaskRunStatus::Failed => "failed",
+                TaskRunStatus::Cancelled => "cancelled",
+                TaskRunStatus::Blocked => "blocked",
+                TaskRunStatus::Queued | TaskRunStatus::Running => "finished",
+            }
         };
         if let Err(err) = self
             .store
             .append_run_event(TaskRunEventRecord::new(
                 run.id.clone(),
                 event_type,
-                Some(match run.status {
-                    TaskRunStatus::Blocked => format!(
-                        "任务执行受阻：{}",
-                        run.error_message.as_deref().unwrap_or("存在终态阻塞子任务")
-                    ),
-                    TaskRunStatus::Failed => format!(
-                        "任务执行失败：{}",
-                        run.error_message.as_deref().unwrap_or("未知错误")
-                    ),
-                    TaskRunStatus::Cancelled => "任务已取消。".to_string(),
-                    _ => report.user_message(),
+                Some(if integration_pending {
+                    "模型阶段已完成，等待代码集成。".to_string()
+                } else {
+                    match run.status {
+                        TaskRunStatus::Blocked => format!(
+                            "任务执行受阻：{}",
+                            run.error_message.as_deref().unwrap_or("存在终态阻塞子任务")
+                        ),
+                        TaskRunStatus::Failed => format!(
+                            "任务执行失败：{}",
+                            run.error_message.as_deref().unwrap_or("未知错误")
+                        ),
+                        TaskRunStatus::Cancelled => "任务已取消。".to_string(),
+                        _ => report.user_message(),
+                    }
                 }),
                 report_json.clone(),
             ))
@@ -165,7 +191,7 @@ impl RunService {
                 }
             }
         }
-        if !task_already_cancelled {
+        if !task_already_cancelled && !integration_pending {
             self.try_send_terminal_callback(task.id.as_str(), run).await;
         }
         self.enqueue_terminal_side_effects(run).await;
@@ -173,23 +199,127 @@ impl RunService {
     }
 }
 
-fn fail_report_when_outcome_references_invalid(
-    report: &mut TaskRunReport,
-    workspace_dir: &str,
-    requires_execution: bool,
-) {
+impl RunService {
+    pub(in crate::services) async fn notify_mcp_management_run_finalized(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+    ) {
+        if let Err(error) = self.finalize_mcp_management_run(task, run).await {
+            warn!(
+                task_id = task.id.as_str(),
+                run_id = run.id.as_str(),
+                error = %error,
+                "notify MCP Management that run finalized failed; durable post-process will retry"
+            );
+        }
+    }
+
+    pub(in crate::services) async fn finalize_mcp_management_run(
+        &self,
+        task: &TaskRecord,
+        run: &TaskRunRecord,
+    ) -> Result<Option<chatos_mcp_management_sdk::CloseRuntimeSessionResponse>, String> {
+        use chatos_mcp_management_sdk::{McpManagementClient, McpManagementClientConfig};
+
+        let _ = task;
+        if !matches!(
+            run.model_phase_status,
+            ModelPhaseStatus::Succeeded
+                | ModelPhaseStatus::Failed
+                | ModelPhaseStatus::Cancelled
+                | ModelPhaseStatus::Blocked
+        ) {
+            return Ok(None);
+        }
+        let Some(session_id) = run
+            .mcp_runtime_session_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(None);
+        };
+        let config = match McpManagementClientConfig::from_env("task-runner").await {
+            Ok(config) => config,
+            Err(error) => {
+                return Err(format!(
+                    "{}: load client config: {error}",
+                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+                ));
+            }
+        };
+        let client = match McpManagementClient::new(config) {
+            Ok(client) => client,
+            Err(error) => {
+                return Err(format!(
+                    "{}: initialize client: {error}",
+                    crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+                ));
+            }
+        };
+        match client
+            .close_runtime_session_with_status(session_id, task_run_terminal_status_name(run))
+            .await
+        {
+            Ok(response) => Ok(Some(response)),
+            Err(error) => {
+                let message = error.to_string();
+                if message.contains("404")
+                    || message.contains("not found")
+                    || message.contains("already closed")
+                {
+                    Ok(None)
+                } else {
+                    Err(format!(
+                        "{}: {message}",
+                        crate::services::MCP_RUN_FINALIZATION_ERROR_PREFIX
+                    ))
+                }
+            }
+        }
+    }
+}
+
+fn task_run_terminal_status_name(run: &TaskRunRecord) -> &'static str {
+    if run
+        .workspace_execution
+        .as_ref()
+        .is_some_and(|execution| execution.integration_status == WorkspaceIntegrationStatus::Waived)
+    {
+        return "waived";
+    }
+    match run.status {
+        TaskRunStatus::Succeeded => "succeeded",
+        TaskRunStatus::Failed => "failed",
+        TaskRunStatus::Cancelled => "cancelled",
+        TaskRunStatus::Blocked => "blocked",
+        TaskRunStatus::Queued | TaskRunStatus::Running => "succeeded",
+    }
+}
+
+fn model_phase_status_for_terminal(status: TaskRunStatus) -> ModelPhaseStatus {
+    match status {
+        TaskRunStatus::Succeeded => ModelPhaseStatus::Succeeded,
+        TaskRunStatus::Failed => ModelPhaseStatus::Failed,
+        TaskRunStatus::Cancelled => ModelPhaseStatus::Cancelled,
+        TaskRunStatus::Blocked => ModelPhaseStatus::Blocked,
+        TaskRunStatus::Queued => ModelPhaseStatus::Pending,
+        TaskRunStatus::Running => ModelPhaseStatus::Running,
+    }
+}
+
+fn fail_report_when_outcome_references_invalid(report: &mut TaskRunReport) {
     if report.status != chatos_ai_runtime::AiTurnStatus::Completed {
         return;
     }
-    let Some(outcome) = report.execution_outcome.as_ref() else {
+    let Some(outcome) = report.execution_outcome.as_mut() else {
         return;
     };
     if outcome.status != chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded {
         return;
     }
-    if let Err(err) =
-        validate_task_execution_outcome_references(outcome, workspace_dir, requires_execution)
-    {
+    if let Err(err) = validate_task_execution_outcome_references(outcome) {
         report.status = chatos_ai_runtime::AiTurnStatus::Failed;
         report.error = Some(format!(
             "structured task execution outcome reference validation failed: {err}"
@@ -198,12 +328,10 @@ fn fail_report_when_outcome_references_invalid(
 }
 
 fn validate_task_execution_outcome_references(
-    outcome: &chatos_ai_runtime::TaskExecutionOutcome,
-    workspace_dir: &str,
-    require_existing_paths: bool,
+    outcome: &mut chatos_ai_runtime::TaskExecutionOutcome,
 ) -> Result<(), String> {
-    for path in &outcome.referenced_paths {
-        validate_workspace_reference(workspace_dir, path, require_existing_paths)?;
+    for path in &mut outcome.referenced_paths {
+        *path = validate_workspace_reference(path)?;
     }
     for endpoint in &outcome.referenced_endpoints {
         validate_endpoint_reference(endpoint)?;
@@ -211,11 +339,7 @@ fn validate_task_execution_outcome_references(
     Ok(())
 }
 
-fn validate_workspace_reference(
-    workspace_dir: &str,
-    reference: &str,
-    require_exists: bool,
-) -> Result<(), String> {
+fn validate_workspace_reference(reference: &str) -> Result<String, String> {
     let reference = reference.trim();
     let relative_path = std::path::Path::new(reference);
     if relative_path.is_absolute()
@@ -232,20 +356,7 @@ fn validate_workspace_reference(
             "referenced path must stay inside the workspace: {reference}"
         ));
     }
-    if !require_exists {
-        return Ok(());
-    }
-
-    let workspace_root = std::fs::canonicalize(workspace_dir)
-        .map_err(|err| format!("failed to resolve workspace root {workspace_dir}: {err}"))?;
-    let resolved = std::fs::canonicalize(workspace_root.join(relative_path))
-        .map_err(|err| format!("referenced path does not exist: {reference}: {err}"))?;
-    if !resolved.starts_with(&workspace_root) {
-        return Err(format!(
-            "referenced path resolves outside the workspace: {reference}"
-        ));
-    }
-    Ok(())
+    Ok(reference.to_string())
 }
 
 fn validate_endpoint_reference(reference: &str) -> Result<(), String> {
@@ -352,26 +463,4 @@ fn resolve_report_terminal_status(report: &mut TaskRunReport) -> TaskRunStatus {
             }
         }
     }
-}
-
-fn report_json_with_outputs(
-    report: &TaskRunReport,
-    sandbox_output: Option<&SandboxOutputReport>,
-    harness_output: Option<&HarnessRunOutputReport>,
-) -> Option<Value> {
-    let mut report_json = serde_json::to_value(report).ok()?;
-    if sandbox_output.is_none() && harness_output.is_none() {
-        return Some(report_json);
-    }
-    if let Some(object) = report_json.as_object_mut() {
-        let mut output = serde_json::Map::new();
-        if let Some(sandbox) = sandbox_output {
-            output.insert("sandbox".to_string(), serde_json::to_value(sandbox).ok()?);
-        }
-        if let Some(harness) = harness_output {
-            output.insert("harness".to_string(), serde_json::to_value(harness).ok()?);
-        }
-        object.insert("output".to_string(), Value::Object(output));
-    }
-    Some(report_json)
 }

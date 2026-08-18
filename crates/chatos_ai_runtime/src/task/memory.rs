@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory_context::{
-    BestEffortMemoryRecordWriter, MemoryEngineRecordWriter, MemoryRecordScope,
-};
+use crate::memory_context::{MemoryEngineRecordWriter, MemoryRecordScope};
 use crate::runtime::MemoryContextOverflowRecovery;
 
 use super::TaskRuntimeBuilder;
@@ -137,7 +135,10 @@ impl TaskMemoryRuntimeConfig {
         }
         if let Some(record_scope) = self.record_scope.clone() {
             let writer = MemoryEngineRecordWriter::from_client(client.clone(), record_scope);
-            builder = builder.with_record_writer(BestEffortMemoryRecordWriter::new(writer));
+            // Task conversation records are authoritative Memory Engine data.
+            // Do not hide persistence failures and let the task continue with a
+            // history that the next model turn cannot recover.
+            builder = builder.with_record_writer(writer);
         }
         if self.retry_on_context_overflow {
             builder = builder.with_context_overflow_recovery(Some(

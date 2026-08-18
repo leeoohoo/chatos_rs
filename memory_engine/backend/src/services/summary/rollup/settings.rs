@@ -11,5 +11,8 @@ pub fn default_rollup_settings() -> RollupSettings {
         count_limit: 0,
         keep_level0_count: 5,
         max_level: 4,
+        cloud_owner_entity_id: None,
+        cloud_source_id: None,
+        cloud_thread_id: None,
     }
 }

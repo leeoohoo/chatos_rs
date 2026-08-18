@@ -19,7 +19,6 @@ impl MongoStore {
             task_projects: database.collection::<TaskProjectRecord>("task_projects"),
             model_configs: database.collection::<ModelConfigRecord>("model_configs"),
             runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
-            remote_servers: database.collection::<RemoteServerRecord>("remote_servers"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
             run_terminal_subscriptions: database
@@ -119,19 +118,6 @@ impl MongoStore {
         self.ensure_index(&self.task_projects, doc! { "status": 1 }, false)
             .await?;
 
-        self.ensure_index(&self.remote_servers, doc! { "id": 1 }, true)
-            .await?;
-        self.ensure_index(&self.remote_servers, doc! { "enabled": 1 }, false)
-            .await?;
-        self.ensure_index(&self.remote_servers, doc! { "creator_user_id": 1 }, false)
-            .await?;
-        self.ensure_index(&self.remote_servers, doc! { "owner_user_id": 1 }, false)
-            .await?;
-        self.ensure_index(&self.remote_servers, doc! { "task_id": 1 }, false)
-            .await?;
-        self.ensure_index(&self.remote_servers, doc! { "updated_at": -1 }, false)
-            .await?;
-
         self.ensure_index(&self.runs, doc! { "id": 1 }, true)
             .await?;
         self.ensure_index(&self.runs, doc! { "model_config_id": 1 }, false)
@@ -165,12 +151,6 @@ impl MongoStore {
         self.ensure_index(
             &self.runs,
             doc! { "post_process_event_pending": 1, "updated_at": 1 },
-            false,
-        )
-        .await?;
-        self.ensure_index(
-            &self.runs,
-            doc! { "terminal_cleanup_event_pending": 1, "updated_at": 1 },
             false,
         )
         .await?;

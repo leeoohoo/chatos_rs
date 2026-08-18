@@ -5,9 +5,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use chatos_sandbox_contract::{
-    legacy_policy_permission_snapshot, EffectiveSandboxPolicy, SandboxBackendKind,
-};
+use chatos_sandbox_contract::{EffectiveSandboxPolicy, SandboxBackendKind};
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -26,7 +24,10 @@ use crate::models::{
     SandboxLeaseRecord, SandboxStatus, StartSandboxEnvironmentRequest,
 };
 
-use super::leases::policy::{sandbox_manager_effective_policy, validate_requested_network_policy};
+use super::leases::policy::{
+    sandbox_manager_effective_permissions, sandbox_manager_effective_policy,
+    validate_requested_network_policy,
+};
 use super::{images, now_rfc3339, prefixed_id, SandboxManager};
 
 mod support;
@@ -94,7 +95,7 @@ impl SandboxManager {
         .to_rfc3339();
         let run_workspace =
             self.prepare_run_workspace(input.workspace_root.as_str(), run_id.as_str())?;
-        let effective_permissions = legacy_policy_permission_snapshot(
+        let effective_permissions = sandbox_manager_effective_permissions(
             &effective_policy,
             vec![run_workspace.to_string_lossy().to_string()],
         );
@@ -293,6 +294,12 @@ impl SandboxManager {
                 agent_token,
                 resource_limits: record.resource_limits.clone(),
                 network: record.network.clone(),
+                effective_permissions: record.effective_permissions.clone().unwrap_or_else(|| {
+                    sandbox_manager_effective_permissions(
+                        &record.effective_policy,
+                        vec![record.run_workspace.clone()],
+                    )
+                }),
             })
             .await;
         let instance = match create_result {
@@ -770,7 +777,7 @@ impl SandboxManager {
 
     fn environment_response(&self, record: &SandboxLeaseRecord) -> SandboxEnvironmentLeaseResponse {
         let effective_permissions = record.effective_permissions.clone().unwrap_or_else(|| {
-            legacy_policy_permission_snapshot(
+            sandbox_manager_effective_permissions(
                 &record.effective_policy,
                 vec![record.run_workspace.clone()],
             )

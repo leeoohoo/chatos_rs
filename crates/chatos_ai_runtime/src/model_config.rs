@@ -15,6 +15,52 @@ pub fn is_gpt_provider(provider: &str) -> bool {
     normalize_provider(provider) == "gpt"
 }
 
+pub fn effective_responses_support(_provider: &str, base_url: &str, configured: bool) -> bool {
+    if !configured {
+        return false;
+    }
+    let base_url = base_url.trim().to_ascii_lowercase();
+    if is_official_kimi_base_url(base_url.as_str()) || is_official_glm_base_url(base_url.as_str()) {
+        return false;
+    }
+    true
+}
+
+pub fn supports_responses_input_token_count(_provider: &str, base_url: &str) -> bool {
+    let base_url = base_url.trim().to_ascii_lowercase();
+    if is_official_deepseek_base_url(base_url.as_str())
+        || is_official_kimi_base_url(base_url.as_str())
+        || is_official_glm_base_url(base_url.as_str())
+    {
+        return false;
+    }
+    // OpenAI's /responses/input_tokens route is not shared by the public
+    // DeepSeek, Moonshot, or BigModel APIs. Custom gateways may implement it,
+    // so only the known direct vendor hosts are excluded here.
+    true
+}
+
+pub fn supports_previous_response_id(_provider: &str, base_url: &str) -> bool {
+    let base_url = base_url.trim().to_ascii_lowercase();
+    // DeepSeek's Responses API is stateless and silently ignores
+    // previous_response_id. Sending only a delta input would lose context.
+    !is_official_deepseek_base_url(base_url.as_str())
+}
+
+fn is_official_deepseek_base_url(base_url: &str) -> bool {
+    base_url.contains("api.deepseek.com")
+}
+
+fn is_official_kimi_base_url(base_url: &str) -> bool {
+    base_url.contains("api.moonshot.cn")
+        || base_url.contains("api.moonshot.ai")
+        || base_url.contains("api.kimi.com")
+}
+
+fn is_official_glm_base_url(base_url: &str) -> bool {
+    base_url.contains("open.bigmodel.cn")
+}
+
 pub fn default_base_url_for_provider(provider: &str, fallback_base_url: &str) -> String {
     match normalize_provider(provider).as_str() {
         "deepseek" => "https://api.deepseek.com".to_string(),
@@ -82,7 +128,7 @@ pub fn reasoning_effort_for_provider(
 
     match provider.as_str() {
         "deepseek" => match normalized.as_str() {
-            "none" => None,
+            "none" => Some("none".to_string()),
             "max" | "xhigh" => Some("max".to_string()),
             "low" | "medium" | "high" | "auto" | "minimal" => Some("high".to_string()),
             _ => None,
@@ -122,8 +168,9 @@ pub fn thinking_mode_for_provider(
 #[cfg(test)]
 mod tests {
     use super::{
-        default_base_url_for_provider, normalize_provider, normalize_thinking_level,
-        reasoning_effort_for_provider, thinking_mode_for_provider,
+        default_base_url_for_provider, effective_responses_support, normalize_provider,
+        normalize_thinking_level, reasoning_effort_for_provider, supports_previous_response_id,
+        supports_responses_input_token_count, thinking_mode_for_provider,
     };
 
     #[test]
@@ -170,6 +217,10 @@ mod tests {
             Some("disabled")
         );
         assert_eq!(
+            reasoning_effort_for_provider(Some("deepseek"), Some("none")).as_deref(),
+            Some("none")
+        );
+        assert_eq!(
             thinking_mode_for_provider(Some("deepseek"), Some("max")),
             Some("enabled")
         );
@@ -201,5 +252,50 @@ mod tests {
             reasoning_effort_for_provider(Some("openai_compatible"), Some("minimal")).as_deref(),
             Some("low")
         );
+    }
+
+    #[test]
+    fn direct_vendor_endpoints_use_only_supported_transports_and_count_routes() {
+        assert!(effective_responses_support(
+            "deepseek",
+            "https://api.deepseek.com",
+            true
+        ));
+        assert!(!supports_responses_input_token_count(
+            "deepseek",
+            "https://api.deepseek.com"
+        ));
+        assert!(!supports_previous_response_id(
+            "deepseek",
+            "https://api.deepseek.com"
+        ));
+        assert!(!supports_previous_response_id(
+            "openai_compatible",
+            "https://api.deepseek.com/v1"
+        ));
+
+        for (provider, base_url) in [
+            ("kimi", "https://api.moonshot.ai/v1"),
+            ("kimi", "https://api.moonshot.cn/v1"),
+            ("glm", "https://open.bigmodel.cn/api/paas/v4"),
+        ] {
+            assert!(!effective_responses_support(provider, base_url, true));
+            assert!(!supports_responses_input_token_count(provider, base_url));
+        }
+        assert!(!effective_responses_support(
+            "openai_compatible",
+            "https://api.moonshot.ai/v1",
+            true
+        ));
+
+        assert!(effective_responses_support(
+            "kimi",
+            "https://gateway.example.test/v1",
+            true
+        ));
+        assert!(supports_responses_input_token_count(
+            "glm",
+            "https://gateway.example.test/v1"
+        ));
     }
 }

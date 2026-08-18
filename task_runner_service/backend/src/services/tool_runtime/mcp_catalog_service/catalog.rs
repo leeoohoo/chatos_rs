@@ -14,7 +14,12 @@ impl McpCatalogService {
         }
     }
 
-    pub fn list_catalog(&self) -> Vec<McpCatalogEntry> {
+    pub async fn list_catalog(&self) -> Result<Vec<McpCatalogEntry>, String> {
+        let tool_result_max_chars = self
+            .task_service
+            .effective_tool_result_model_budget_limits()
+            .await?
+            .per_result_max_chars;
         let server_options =
             BuiltinMcpServerOptions::new(self.task_service.config.default_workspace_dir.clone())
                 .with_auto_create_task(true);
@@ -22,8 +27,9 @@ impl McpCatalogService {
             .into_iter()
             .map(|kind| kind.kind_name().to_string())
             .collect::<Vec<_>>();
-        configurable_builtin_kinds()
+        Ok(configurable_builtin_kinds()
             .into_iter()
+            .filter(|kind| *kind != chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController)
             .map(|kind| {
                 let server = kind.server_with_options(&server_options);
                 let guide = mcp_builtin_kind_guide(kind);
@@ -42,6 +48,7 @@ impl McpCatalogService {
                     &server,
                     self.task_service.clone(),
                     self.ask_user_prompt_service.clone(),
+                    tool_result_max_chars,
                 ) {
                     Ok(provider) => {
                         let available_tool_names = provider
@@ -74,9 +81,6 @@ impl McpCatalogService {
                             available_tool_names,
                             unavailable_tools,
                             message: match kind {
-                                chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
-                                    Some("服务器列表来自 Task Runner 的“服务器”页面".to_string())
-                                }
                                 chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
                                     Some("规划任务运行时会自动启用；普通任务不可选择。".to_string())
                                 }
@@ -103,6 +107,6 @@ impl McpCatalogService {
                     },
                 }
             })
-            .collect()
+            .collect())
     }
 }

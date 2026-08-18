@@ -70,10 +70,15 @@ export const RequirementExecutionModalFrame: React.FC<{
             )}
             >
               {isLocalExecution ? <Laptop className="h-3 w-3" /> : <Cloud className="h-3 w-3" />}
-              {isLocalExecution ? '本地规划 / 本地执行' : '云端规划 / 云端执行'}
+              {isLocalExecution ? '云端编排 / Local Connector 承载' : '云端编排 / 云端承载'}
             </span>
           </div>
           <p className="mt-1 truncate text-sm text-muted-foreground">{requirementTitle}</p>
+          <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+            {isLocalExecution
+              ? '任务计划由云端统一生成，本机目录、命令和沙箱能力会通过 Local Connector 网关受控执行。'
+              : '任务计划与执行资源都由云端统一编排和承载。'}
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {headerActions}

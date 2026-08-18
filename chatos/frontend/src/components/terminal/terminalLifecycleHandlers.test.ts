@@ -11,6 +11,7 @@ import {
 } from './terminalLifecycleHandlers';
 
 const createRef = <T,>(current: T) => ({ current });
+const OPEN_SOCKET_STATE = 1;
 
 describe('terminalLifecycleHandlers', () => {
   it('appends parsed commands and forwards socket payloads for terminal input', () => {
@@ -29,7 +30,7 @@ describe('terminalLifecycleHandlers', () => {
         },
       } as never,
       socketRef: createRef({
-        readyState: WebSocket.OPEN,
+        readyState: OPEN_SOCKET_STATE,
         send,
       } as unknown as WebSocket),
       inputForwardEnabledRef: createRef(true),
@@ -72,7 +73,7 @@ describe('terminalLifecycleHandlers', () => {
     const handler = createTerminalScrollHandler({
       terminalId: 'terminal_1',
       socketRef: createRef({
-        readyState: WebSocket.OPEN,
+        readyState: OPEN_SOCKET_STATE,
         send,
       } as unknown as WebSocket),
       snapshotVisibleLinesRef,
@@ -103,7 +104,7 @@ describe('terminalLifecycleHandlers', () => {
     const handler = createTerminalScrollHandler({
       terminalId: 'terminal_1',
       socketRef: createRef({
-        readyState: WebSocket.OPEN,
+        readyState: OPEN_SOCKET_STATE,
         send,
       } as unknown as WebSocket),
       snapshotVisibleLinesRef: createRef<Record<string, number>>({ terminal_1: 1000 }),
@@ -133,7 +134,7 @@ describe('terminalLifecycleHandlers', () => {
         rows: 40,
       } as unknown as import('@xterm/xterm').Terminal),
       socketRef: createRef({
-        readyState: WebSocket.OPEN,
+        readyState: OPEN_SOCKET_STATE,
         send,
       } as unknown as WebSocket),
     });

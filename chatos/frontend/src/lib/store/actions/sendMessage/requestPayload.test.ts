@@ -6,9 +6,22 @@ import { describe, expect, it } from 'vitest';
 import {
   buildChatRequestLogPayload,
   resolveEffectivePlanMode,
+  resolveModelCapabilities,
 } from './requestPayload';
 
 describe('sendMessage request payload helpers', () => {
+  it('preserves the reasoning toggle for any selected model', () => {
+    expect(resolveModelCapabilities({
+      id: 'model-1',
+      supports_images: false,
+      supports_reasoning: false,
+    } as never, true)).toEqual({
+      supportsImages: false,
+      supportsReasoning: true,
+      reasoningEnabled: true,
+    });
+  });
+
   it('summarizes chat request debug logs without embedding full payload content', () => {
     const payload = buildChatRequestLogPayload({
       sessionId: 'session-1',

@@ -9,6 +9,8 @@ pub mod chat_execution;
 pub mod chat_runner;
 #[path = "conversation_runtime/chat_usecase.rs"]
 pub mod chat_usecase;
+#[path = "conversation_runtime/cloud_agent.rs"]
+pub mod cloud_agent;
 #[path = "conversation_runtime/context_history.rs"]
 pub mod context_history;
 #[path = "conversation_runtime/guidance.rs"]
@@ -19,6 +21,8 @@ pub mod memory_compat;
 pub mod messages;
 #[path = "conversation_runtime/project_execution_planner.rs"]
 mod project_execution_planner;
+#[path = "conversation_runtime/project_planning_delegation.rs"]
+mod project_planning_delegation;
 #[path = "conversation_runtime/review_repair.rs"]
 pub mod review_repair;
 #[path = "conversation_runtime/runtime_context.rs"]
@@ -35,8 +39,6 @@ pub mod summaries;
 pub mod task_board;
 #[path = "conversation_runtime/tools_panel.rs"]
 pub mod tools_panel;
-#[path = "conversation_runtime/turn_lifecycle.rs"]
-pub mod turn_lifecycle;
 #[path = "conversation_runtime/user_context.rs"]
 pub mod user_context;
 

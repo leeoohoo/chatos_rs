@@ -148,11 +148,9 @@ export function createLoadSessionActions({
             ? rawSessions.map(normalizeSession)
             : [];
 
-          const { matchedSessions: filteredByContacts } = splitSessionsByMappedContacts(
-            sessions,
-            memoryContacts,
-          );
-          const mergedByContact = filteredByContacts;
+          const mergedByContact = memoryContacts.length > 0
+            ? splitSessionsByMappedContacts(sessions, memoryContacts).matchedSessions
+            : sessions;
           debugLog('🔍 loadSessions 返回结果:', mergedByContact);
 
           const existing = options.append ? (get().sessions || []) : [];

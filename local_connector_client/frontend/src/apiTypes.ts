@@ -18,13 +18,6 @@ export interface WorkspaceRecord {
   project_config_trusted_at?: string | null;
 }
 
-export interface DockerStatus {
-  installed: boolean;
-  running: boolean;
-  version?: string | null;
-  error?: string | null;
-}
-
 export interface SandboxState {
   enabled: boolean;
   backend?: string | null;
@@ -50,7 +43,6 @@ export interface SandboxState {
   policy_revision?: string | null;
   effective_policy?: SandboxEffectivePolicy | null;
   effective_permissions?: EffectivePermissionSnapshot | null;
-  selected_image_ref?: string | null;
 }
 
 export interface ConnectorStatus {
@@ -68,7 +60,6 @@ export interface ConnectorStatus {
   user?: AuthUser | null;
   workspaces: WorkspaceRecord[];
   sandbox: SandboxState;
-  docker: DockerStatus;
 }
 
 export interface FsEntry {
@@ -634,48 +625,6 @@ export interface SystemPermissionsResponse {
   items: SystemPermissionItem[];
 }
 
-export interface LocalProviderModel {
-  id: string;
-  owned_by?: string | null;
-  context_length?: number | null;
-  supports_images: boolean;
-  supports_reasoning: boolean;
-  supports_responses: boolean;
-}
-
-export interface LocalModelCatalogResponse {
-  provider: string;
-  base_url: string;
-  source: string;
-  fetched_at?: string | null;
-  models: LocalProviderModel[];
-  error?: string | null;
-}
-
-export interface LocalModelConfigDraft {
-  id?: string | null;
-  server_model_config_id?: string | null;
-  name: string;
-  provider?: string | null;
-  prompt_vendor?: 'glm' | 'deepseek' | 'gpt' | 'kimi' | null;
-  model?: string | null;
-  base_url?: string | null;
-  api_key?: string | null;
-  copy_api_key_from_id?: string | null;
-  clear_api_key?: boolean | null;
-  enabled?: boolean | null;
-  supports_images?: boolean | null;
-  supports_reasoning?: boolean | null;
-  supports_responses?: boolean | null;
-  thinking_level?: string | null;
-  task_usage_scenario?: string | null;
-  task_thinking_level?: string | null;
-  temperature?: number | null;
-  clear_temperature?: boolean | null;
-  max_output_tokens?: number | null;
-  clear_max_output_tokens?: boolean | null;
-}
-
 export type LocalMcpTransport = 'stdio' | 'http';
 
 export interface LocalMcpConfig {
@@ -765,33 +714,7 @@ export interface LocalSkillCatalogResponse {
   total: number;
 }
 
-export interface SandboxImageFeature {
-  id: string;
-  label: string;
-  description: string;
-  default_version: string;
-  versions: Array<{
-    id: string;
-    label: string;
-    description: string;
-    default: boolean;
-  }>;
-}
-
-export interface SandboxImageCatalog {
-  image_tag_prefix: string;
-  features: SandboxImageFeature[];
-  images: Array<{
-    id: string;
-    image_ref: string;
-    features: string[];
-    status: string;
-    rebuildable?: boolean;
-    created_at?: string;
-  }>;
-}
-
-export type SandboxBackendKind = 'docker' | 'local_process';
+export type SandboxBackendKind = 'local_process';
 export type PermissionProfileId = 'read_only' | 'workspace_write' | 'full_access';
 export type SandboxApprovalPolicy = 'on_request' | 'never';
 export type SandboxApprovalReviewer = 'user' | 'auto_review';
@@ -906,7 +829,6 @@ export interface SandboxSettings {
   effective_custom_permission_profiles?: Record<string, CustomPermissionProfile> | null;
   managed_permission_profiles?: string[] | null;
   policy_revision?: string | null;
-  selected_image_ref?: string | null;
   effective_policy: SandboxEffectivePolicy;
   effective_permissions: EffectivePermissionSnapshot;
 }
@@ -930,18 +852,6 @@ export type SandboxSettingsUpdate = Partial<
   risk_acknowledged?: boolean;
 };
 
-export interface SandboxImageJob {
-  id: string;
-  image_id: string;
-  image_name: string;
-  status: string;
-  features: string[];
-  output?: string | null;
-  error?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface SandboxLease {
   id: string;
   sandbox_id: string;
@@ -953,10 +863,7 @@ export interface SandboxLease {
   run_workspace: string;
   backend: string;
   backend_id?: string | null;
-  image_id?: string | null;
-  image_ref?: string | null;
   status: string;
-  agent_endpoint?: string | null;
   tools: string[];
   created_at: string;
   updated_at: string;

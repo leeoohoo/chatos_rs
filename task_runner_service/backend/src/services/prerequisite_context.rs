@@ -21,7 +21,9 @@ pub(super) struct PrerequisiteTaskContext {
     pub(super) run_result_summary: Option<String>,
     pub(super) process_log: Option<String>,
     pub(super) report_content: Option<String>,
-    pub(super) authoritative_file_changes: Vec<String>,
+    pub(super) execution_group_id: Option<String>,
+    pub(super) integrated_commit: Option<String>,
+    pub(super) supply_chain_receipt: Option<Value>,
 }
 
 pub(super) fn build_task_prompt(
@@ -70,9 +72,9 @@ pub(super) fn build_task_prompt(
         });
     } else if !task.mcp_config.requires_execution {
         current_task_prompt.push_str(if locale.is_english() {
-            "\n\nExecution policy: this is a file-only task. Use the default sandbox to inspect and modify project files. Do not require, initialize, start, build, test, or validate the project's dedicated runtime environment unless the user explicitly changes the task policy."
+            "\n\nExecution policy: this is a file-only task. Use the available managed file tools to inspect and modify project files. Do not require, initialize, start, build, test, or validate the project's dedicated runtime environment unless the user explicitly changes the task policy."
         } else {
-            "\n\n执行策略：这是一个仅文件处理任务。使用默认沙箱读取和修改项目文件；除非用户明确修改任务策略，否则不要要求、初始化、启动、构建、测试或验证项目专属运行环境。"
+            "\n\n执行策略：这是一个仅文件处理任务。使用当前可用的受管文件工具读取和修改项目文件；除非用户明确修改任务策略，否则不要要求、初始化、启动、构建、测试或验证项目专属运行环境。"
         });
     }
     append_retry_instruction(&mut current_task_prompt, retry_instruction, locale);
@@ -171,18 +173,6 @@ fn format_prerequisite_context_for_prompt(
         {
             item.push(format!("{}:\n{}", text.result_summary_label, summary));
         }
-        if !context.authoritative_file_changes.is_empty() {
-            item.push(format!(
-                "{}:\n{}",
-                text.authoritative_file_changes_label,
-                context
-                    .authoritative_file_changes
-                    .iter()
-                    .map(|entry| format!("- `{entry}`"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
         if let Some(process_log) = context.process_log.as_deref() {
             item.push(format!(
                 "{}:\n{}",
@@ -219,10 +209,6 @@ fn format_prerequisite_context_template(locale: BuiltinMcpPromptLocale) -> Strin
             text.result_summary_label
         ),
         format!(
-            "{}:\n{{{{prerequisite.authoritative_file_changes}}}}",
-            text.authoritative_file_changes_label
-        ),
-        format!(
             "{}:\n{{{{prerequisite.process_log}}}}",
             text.execution_process_label
         ),
@@ -242,7 +228,6 @@ struct TaskPromptText {
     prerequisite_objective_label: &'static str,
     latest_successful_run_label: &'static str,
     result_summary_label: &'static str,
-    authoritative_file_changes_label: &'static str,
     execution_process_label: &'static str,
     key_output_label: &'static str,
 }
@@ -255,13 +240,11 @@ fn task_prompt_text(locale: BuiltinMcpPromptLocale) -> TaskPromptText {
             task_description_label: "Task Description",
             input_data_label: "Input Data",
             prerequisite_heading: "Prerequisite Task Results",
-            prerequisite_path_policy: "Path reliability rule: prose summaries may contain inaccurate paths. For files added, modified, or deleted by a prerequisite, treat Verified File Changes as authoritative. Do not read a new file path found only in prose until directory listing or search confirms it exists.",
+            prerequisite_path_policy: "Path reliability rule: prose summaries may contain inaccurate paths. Confirm every prerequisite file path through directory listing or search before reading it.",
             current_task_heading: "Current Task",
             prerequisite_objective_label: "Objective",
             latest_successful_run_label: "Latest Successful Run",
             result_summary_label: "Result Summary",
-            authoritative_file_changes_label:
-                "Verified File Changes (authoritative paths; use these when prose conflicts)",
             execution_process_label: "Execution Process",
             key_output_label: "Key Output",
         }
@@ -272,13 +255,11 @@ fn task_prompt_text(locale: BuiltinMcpPromptLocale) -> TaskPromptText {
             task_description_label: "任务说明",
             input_data_label: "输入数据",
             prerequisite_heading: "前置任务执行结果",
-            prerequisite_path_policy: "文件路径可靠性规则：文字摘要中的路径可能不准确。前置任务新增、修改或删除的文件，以“已验证文件变更”为权威依据。仅在文字摘要中出现的新文件路径，必须先通过目录列表或搜索确认存在，再进行读取。",
+            prerequisite_path_policy: "文件路径可靠性规则：文字摘要中的路径可能不准确。读取前置任务提到的任何文件前，必须先通过目录列表或搜索确认路径存在。",
             current_task_heading: "当前任务",
             prerequisite_objective_label: "目标",
             latest_successful_run_label: "最近成功运行",
             result_summary_label: "结果摘要",
-            authoritative_file_changes_label:
-                "已验证文件变更（权威路径；与文字摘要冲突时以此处为准）",
             execution_process_label: "执行过程",
             key_output_label: "关键输出",
         }
@@ -314,9 +295,15 @@ pub(super) fn build_prerequisite_context(
             has_terminal_output,
         ),
         report_content,
-        authoritative_file_changes: run
-            .map(extract_authoritative_file_changes)
-            .unwrap_or_default(),
+        execution_group_id: run
+            .and_then(|run| run.workspace_execution.as_ref())
+            .and_then(|workspace| workspace.execution_group_id.clone()),
+        integrated_commit: run
+            .and_then(|run| run.workspace_execution.as_ref())
+            .and_then(|workspace| workspace.integrated_commit.clone()),
+        supply_chain_receipt: run
+            .and_then(|run| run.input_snapshot.get("supply_chain_receipt"))
+            .cloned(),
     }
 }
 
@@ -329,35 +316,6 @@ fn distinct_report_content(summary: Option<&str>, report_content: Option<&str>) 
     } else {
         Some(report_content.to_string())
     }
-}
-
-fn extract_authoritative_file_changes(run: &TaskRunRecord) -> Vec<String> {
-    let mut changes = run
-        .report
-        .as_ref()
-        .and_then(|report| report.pointer("/output/sandbox/file_changes_preview"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|change| {
-            let path = change.get("path").and_then(Value::as_str)?.trim();
-            if path.is_empty() {
-                return None;
-            }
-            let status = change
-                .get("status")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            Some(match status {
-                Some(status) => format!("{status}: {path}"),
-                None => path.to_string(),
-            })
-        })
-        .collect::<Vec<_>>();
-    changes.sort();
-    changes.dedup();
-    changes
 }
 
 fn prerequisite_process_log_for_context(
@@ -411,7 +369,9 @@ pub(super) fn prerequisite_context_json(contexts: &[PrerequisiteTaskContext]) ->
                 "run_result_summary": context.run_result_summary,
                 "process_log": context.process_log,
                 "report_content": context.report_content,
-                "authoritative_file_changes": context.authoritative_file_changes,
+                "execution_group_id": context.execution_group_id,
+                "integrated_commit": context.integrated_commit,
+                "supply_chain_receipt": context.supply_chain_receipt,
             })
         })
         .collect::<Vec<_>>())
@@ -504,39 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_authoritative_paths_from_sandbox_change_manifest() {
-        let mut run = TaskRunRecord::queued(
-            "run-1".to_string(),
-            "task-1".to_string(),
-            "model-1".to_string(),
-            "memory-1".to_string(),
-            json!({}),
-            Vec::new(),
-            "2026-08-06T00:00:00Z".to_string(),
-        );
-        run.report = Some(json!({
-            "output": {
-                "sandbox": {
-                    "file_changes_preview": [
-                        { "path": "src/domain/domain.test.ts", "status": "added" },
-                        { "path": "src/domain/index.ts", "status": "modified" },
-                        { "path": "src/domain/domain.test.ts", "status": "added" }
-                    ]
-                }
-            }
-        }));
-
-        assert_eq!(
-            extract_authoritative_file_changes(&run),
-            vec![
-                "added: src/domain/domain.test.ts".to_string(),
-                "modified: src/domain/index.ts".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn prerequisite_prompt_marks_verified_paths_as_authoritative() {
+    fn prerequisite_prompt_requires_path_verification() {
         let prompt = format_prerequisite_context_for_prompt(
             &[PrerequisiteTaskContext {
                 task_id: "task-1".to_string(),
@@ -548,13 +476,13 @@ mod tests {
                 run_result_summary: Some("新增 src/domain.test.ts".to_string()),
                 process_log: None,
                 report_content: None,
-                authoritative_file_changes: vec!["added: src/domain/domain.test.ts".to_string()],
+                execution_group_id: None,
+                integrated_commit: None,
+                supply_chain_receipt: None,
             }],
             BuiltinMcpPromptLocale::ZhCn,
         );
 
-        assert!(prompt.contains("权威路径"));
-        assert!(prompt.contains("必须先通过目录列表或搜索确认存在"));
-        assert!(prompt.contains("`added: src/domain/domain.test.ts`"));
+        assert!(prompt.contains("必须先通过目录列表或搜索确认路径存在"));
     }
 }

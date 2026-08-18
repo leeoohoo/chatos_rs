@@ -7,6 +7,7 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use tracing::{info, warn};
 
+use crate::compat::extract_usage_snapshot;
 use crate::request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
 use crate::traits::{ModelRequest, RuntimeCallbacks};
 
@@ -62,9 +63,22 @@ pub(super) async fn dispatch_model_request(
         "request_attempt": request_attempt,
         "stream": provider_stream,
         "thinking_level": request.thinking_level.clone(),
+        "previous_response_id": request.previous_response_id.clone(),
         "connection_mode": if force_identity_encoding { "isolated_retry" } else { "pooled" },
         "read_timeout_seconds": request_handler.read_timeout_seconds(),
     });
+    if let Some(callback) = &options.callbacks.on_turn_phase {
+        callback(build_model_request_phase_payload(
+            request,
+            iteration,
+            iteration_reason,
+            input_item_count,
+            tool_count,
+            request_attempt,
+            provider_stream,
+            request_handler.read_timeout_seconds(),
+        ));
+    }
     if let Some(callback) = &options.callbacks.on_before_model_input {
         callback(request.input.clone());
     }
@@ -96,12 +110,14 @@ pub(super) async fn dispatch_model_request(
             on_before_send_model_request,
             AiRequestOptions {
                 prompt_cache_key: request.prompt_cache_key.clone(),
+                previous_response_id: request.previous_response_id.clone(),
                 request_cwd: request.request_cwd.clone(),
                 include_prompt_cache_retention: request.include_prompt_cache_retention,
                 request_body_limit_bytes: request.request_body_limit_bytes,
                 abort_token: options.abort_token.clone(),
                 force_identity_encoding,
                 stream: provider_stream,
+                output_format: request.output_format.clone(),
             },
         )
         .await;
@@ -115,6 +131,7 @@ pub(super) async fn dispatch_model_request(
     let model_request_ms = started_at.elapsed().as_millis();
     match &result {
         Ok(response) => {
+            let usage = response.usage.as_ref().map(extract_usage_snapshot);
             info!(
                 conversation_id = options.conversation_id.as_deref().unwrap_or(""),
                 conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
@@ -132,6 +149,9 @@ pub(super) async fn dispatch_model_request(
                     .and_then(|value| value.as_array())
                     .map(Vec::len)
                     .unwrap_or_default(),
+                input_tokens = usage.map(|usage| usage.input_tokens).unwrap_or(-1),
+                cached_tokens = usage.map(|usage| usage.cached_tokens).unwrap_or(0),
+                output_tokens = usage.map(|usage| usage.output_tokens).unwrap_or(-1),
                 "ai runtime model request completed"
             );
         }
@@ -152,6 +172,29 @@ pub(super) async fn dispatch_model_request(
         }
     }
     result
+}
+
+fn build_model_request_phase_payload(
+    request: &ModelRequest,
+    iteration: usize,
+    iteration_reason: &str,
+    input_item_count: usize,
+    tool_count: usize,
+    request_attempt: usize,
+    provider_stream: bool,
+    read_timeout_seconds: Option<u64>,
+) -> Value {
+    json!({
+        "phase": "model_request",
+        "reason": iteration_reason,
+        "iteration": iteration,
+        "request_attempt": request_attempt,
+        "stream": provider_stream,
+        "model": request.model,
+        "input_item_count": input_item_count,
+        "tool_count": tool_count,
+        "read_timeout_seconds": read_timeout_seconds,
+    })
 }
 
 fn failed_ai_response_error(response: &AiResponse) -> Option<String> {
@@ -262,6 +305,7 @@ mod tests {
             })),
             usage: None,
             response_id: Some("resp_1".to_string()),
+            response_output_items: Vec::new(),
         };
 
         let error = failed_ai_response_error(&response).expect("failed response error");
@@ -282,6 +326,7 @@ mod tests {
             provider_error: None,
             usage: None,
             response_id: None,
+            response_output_items: Vec::new(),
         };
 
         assert_eq!(
@@ -329,5 +374,37 @@ mod tests {
             .expect("legacy value");
         assert_eq!(legacy["model"], payload["model"]);
         assert_eq!(legacy["task_runner_debug"]["iteration"], 2);
+    }
+
+    #[test]
+    fn model_request_phase_payload_is_streaming_and_does_not_expose_request_content() {
+        let request = ModelRequest::openai_compatible(
+            "https://example.com/v1",
+            "secret-key",
+            "gpt-5.5",
+            "openai_compatible",
+            json!([{"role": "user", "content": "secret prompt"}]),
+        );
+
+        let payload = build_model_request_phase_payload(
+            &request,
+            2,
+            "tool_results",
+            123,
+            10,
+            1,
+            true,
+            Some(300),
+        );
+
+        assert_eq!(payload["phase"], "model_request");
+        assert_eq!(payload["model"], "gpt-5.5");
+        assert_eq!(payload["iteration"], 2);
+        assert_eq!(payload["request_attempt"], 1);
+        assert_eq!(payload["stream"], true);
+        assert_eq!(payload["read_timeout_seconds"], 300);
+        assert!(payload.get("input").is_none());
+        assert!(payload.get("instructions").is_none());
+        assert!(payload.get("api_key").is_none());
     }
 }

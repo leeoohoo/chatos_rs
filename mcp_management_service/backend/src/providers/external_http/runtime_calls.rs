@@ -14,7 +14,7 @@ use crate::runtime::{ExternalHttpProviderBinding, RuntimeSessionSnapshot};
 
 use super::super::project_service::decode_jsonrpc_response;
 use super::{ExternalHttpProvider, ProviderCallError, JSON_CONTENT_TYPE};
-use crate::providers::decode_cancel_notification_response;
+use crate::providers::{decode_cancel_notification_response, managed_tool_call_params};
 use crate::providers::{ProviderCallOutcome, ProviderCancelOutcome};
 
 impl ExternalHttpProvider {
@@ -54,6 +54,7 @@ impl ExternalHttpProvider {
             arguments,
             invocation_id,
             "External HTTP MCP",
+            snapshot.tool_result_max_chars,
         )
         .await
     }
@@ -134,6 +135,7 @@ impl ExternalHttpProvider {
         arguments: Value,
         invocation_id: &str,
         provider_label: &str,
+        tool_result_max_chars: Option<usize>,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
         if !binding.allows_tool(original_tool_name) {
             return Err(ProviderCallError {
@@ -151,10 +153,11 @@ impl ExternalHttpProvider {
                 "jsonrpc": "2.0",
                 "id": invocation_id,
                 "method": METHOD_TOOLS_CALL,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments,
-                }
+                "params": managed_tool_call_params(
+                    original_tool_name,
+                    arguments,
+                    tool_result_max_chars,
+                )
             }))
             .send()
             .await

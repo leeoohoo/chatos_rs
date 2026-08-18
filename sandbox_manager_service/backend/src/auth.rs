@@ -426,22 +426,14 @@ fn sandbox_internal_audit_event(
     outcome: &str,
 ) -> chatos_service_runtime::InternalResourceAccessAudit {
     let represented_user_id = match identity.caller_service.as_str() {
-        "task-runner" => first_audit_header(
-            headers,
-            &["x-chatos-owner-user-id", "x-task-runner-owner-user-id"],
-        ),
         "mcp-management-service" => {
             first_audit_header(headers, &["x-mcp-management-owner-user-id"])
         }
         "project-service" => first_audit_header(headers, &["x-project-service-owner-user-id"]),
         _ => None,
     };
-    let tenant_id = match identity.caller_service.as_str() {
-        "task-runner" => first_audit_header(headers, &["x-chatos-tenant-id"]),
-        _ => None,
-    };
+    let tenant_id = None;
     let project_id = match identity.caller_service.as_str() {
-        "task-runner" => first_audit_header(headers, &["x-chatos-project-id"]),
         "mcp-management-service" => first_audit_header(headers, &["x-mcp-management-project-id"]),
         "project-service" => first_audit_header(
             headers,
@@ -569,16 +561,12 @@ fn authenticate_internal_service(
     .map_err(|_| ApiError::unauthorized("invalid Sandbox Manager internal API token"))?;
 
     let scopes = match caller.as_str() {
-        "task-runner" => vec![
+        "project-service" => vec![
             SCOPE_LEASE_CREATE,
-            SCOPE_LEASE_READ,
             SCOPE_LEASE_RELEASE,
-            SCOPE_MCP_TOOLS,
-            SCOPE_MCP_CALL,
-            SCOPE_POOL_READ,
             SCOPE_IMAGES_READ,
+            SCOPE_IMAGES_WRITE,
         ],
-        "project-service" => vec![SCOPE_IMAGES_READ, SCOPE_IMAGES_WRITE],
         "mcp-management-service" => vec![
             SCOPE_LEASE_READ,
             SCOPE_MCP_TOOLS,
@@ -738,18 +726,21 @@ mod tests {
         let config = AppConfig::for_tests();
         let secret = config
             .internal_api_secrets
-            .get("task-runner")
-            .expect("task runner secret");
+            .get("project-service")
+            .expect("project service secret");
         let token = chatos_service_runtime::issue_internal_service_token(
             secret,
-            "task-runner",
+            "project-service",
             INTERNAL_TOKEN_AUDIENCE,
             INTERNAL_SERVICE_SCOPE,
             60,
         )
         .expect("signed token");
         let mut headers = HeaderMap::new();
-        headers.insert("x-sandbox-caller", HeaderValue::from_static("task-runner"));
+        headers.insert(
+            "x-sandbox-caller",
+            HeaderValue::from_static("project-service"),
+        );
         headers.insert(
             "x-sandbox-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
@@ -758,9 +749,12 @@ mod tests {
         let client = authenticate_internal_service(&config, &headers)
             .expect("authentication result")
             .expect("internal client");
+        assert!(client.has_scope(SCOPE_LEASE_CREATE));
+        assert!(client.has_scope(SCOPE_LEASE_RELEASE));
+        assert!(!client.has_scope(SCOPE_MCP_CALL));
         let identity = client.internal_identity.expect("audit identity");
 
-        assert_eq!(identity.caller_service, "task-runner");
+        assert_eq!(identity.caller_service, "project-service");
         assert_eq!(identity.scope, INTERNAL_SERVICE_SCOPE);
         assert!(uuid::Uuid::parse_str(identity.trace_id.as_str()).is_ok());
     }
@@ -768,17 +762,19 @@ mod tests {
     #[test]
     fn audit_context_only_accepts_headers_for_the_verified_caller() {
         let identity = SandboxInternalIdentity {
-            caller_service: "task-runner".to_string(),
+            caller_service: "project-service".to_string(),
             scope: INTERNAL_SERVICE_SCOPE.to_string(),
             trace_id: uuid::Uuid::new_v4().to_string(),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
-            "x-chatos-owner-user-id",
-            HeaderValue::from_static("task-user"),
+            "x-project-service-owner-user-id",
+            HeaderValue::from_static("project-user"),
         );
-        headers.insert("x-chatos-tenant-id", HeaderValue::from_static("tenant-1"));
-        headers.insert("x-chatos-project-id", HeaderValue::from_static("project-1"));
+        headers.insert(
+            "x-project-service-project-id",
+            HeaderValue::from_static("project-1"),
+        );
         headers.insert(
             "x-mcp-management-owner-user-id",
             HeaderValue::from_static("spoofed-user"),
@@ -796,8 +792,8 @@ mod tests {
             "201",
         );
 
-        assert_eq!(event.represented_user_id.as_deref(), Some("task-user"));
-        assert_eq!(event.tenant_id.as_deref(), Some("tenant-1"));
+        assert_eq!(event.represented_user_id.as_deref(), Some("project-user"));
+        assert_eq!(event.tenant_id, None);
         assert_eq!(event.project_id.as_deref(), Some("project-1"));
         assert_eq!(event.resource_type, "sandbox");
         assert!(event.validate().is_ok());

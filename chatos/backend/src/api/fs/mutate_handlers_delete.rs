@@ -44,6 +44,13 @@ pub(in super::super) async fn delete_entry(
         return response;
     }
 
+    let recursive = req.recursive.unwrap_or(false);
+    if let Some(response) =
+        super::super::local_connector_bridge::delete_entry(raw.as_str(), recursive).await
+    {
+        return response;
+    }
+
     let path = match policy.authorize_existing_entry(raw.as_str(), "路径不存在", "路径不合法")
     {
         Ok(value) => value,
@@ -56,7 +63,6 @@ pub(in super::super) async fn delete_entry(
         return policy_error_tuple(err);
     }
 
-    let recursive = req.recursive.unwrap_or(false);
     let metadata = match fs::symlink_metadata(&path.path) {
         Ok(value) => value,
         Err(err) => {

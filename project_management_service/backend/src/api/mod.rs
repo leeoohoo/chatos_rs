@@ -13,6 +13,7 @@ mod project_environment_agent_mcp;
 mod projects;
 mod requirements;
 mod router;
+mod run_workspace;
 mod runtime_environment;
 mod runtime_environment_mcp;
 mod sync;

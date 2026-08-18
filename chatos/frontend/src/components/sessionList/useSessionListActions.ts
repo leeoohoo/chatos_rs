@@ -254,7 +254,7 @@ export const useSessionListActions = ({
   const handleCreateProject = useCallback(async () => {
     if (projectSourceMode === 'local_connector') {
       if (!allowLocalProjectCreation) {
-        setProjectError('本地项目只能在 Chat OS 桌面客户端中创建');
+        setProjectError('当前配置未开启本地项目创建');
         return;
       }
       const workspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalConnectorWorkspaceId);

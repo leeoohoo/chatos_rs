@@ -14,9 +14,18 @@ pub(super) type SharedEditSessionStore = Arc<AsyncMutex<EditSessionStore>>;
 
 const SESSION_TTL: Duration = Duration::from_secs(60 * 60);
 
-pub(super) fn store_for_project(project_id: &str, repo_path: &str) -> SharedEditSessionStore {
+pub(super) fn store_for_project(
+    project_id: &str,
+    repo_path: &str,
+    branch_ref: &str,
+) -> SharedEditSessionStore {
     static REGISTRY: OnceLock<Mutex<HashMap<String, SharedEditSessionStore>>> = OnceLock::new();
-    let key = format!("{}\0{}", project_id.trim(), repo_path.trim());
+    let key = format!(
+        "{}\0{}\0{}",
+        project_id.trim(),
+        repo_path.trim(),
+        branch_ref.trim()
+    );
     let mut registry = REGISTRY
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -265,7 +274,7 @@ mod tests {
     async fn project_store_survives_request_context_recreation() {
         let project_id = format!("project-{}", Uuid::new_v4());
         let repo_path = format!("repo-{}", Uuid::new_v4());
-        let first_store = store_for_project(project_id.as_str(), repo_path.as_str());
+        let first_store = store_for_project(project_id.as_str(), repo_path.as_str(), "main");
         let session_id = first_store
             .lock()
             .await
@@ -273,7 +282,7 @@ mod tests {
             .id;
         drop(first_store);
 
-        let second_store = store_for_project(project_id.as_str(), repo_path.as_str());
+        let second_store = store_for_project(project_id.as_str(), repo_path.as_str(), "main");
         assert!(second_store
             .lock()
             .await

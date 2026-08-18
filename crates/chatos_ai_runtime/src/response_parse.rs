@@ -124,7 +124,14 @@ pub fn tool_arguments_to_string(value: &Value) -> String {
 }
 
 pub fn append_stream_text(current: &mut String, chunk: &str) {
-    *current = join_stream_text(current.as_str(), chunk);
+    // Provider stream `delta` fields are incremental pieces, not cumulative
+    // snapshots.  De-duplicating them by looking for arbitrary suffix/prefix
+    // overlap can silently drop a character when two adjacent pieces happen to
+    // share the same boundary character (for example, `"a"` + `"a"`).  That
+    // corrupts streamed JSON and leaves the terminal outcome impossible to
+    // parse.  Snapshot merging, where it is actually needed, should continue
+    // to use `join_stream_text` explicitly.
+    current.push_str(chunk);
 }
 
 pub fn join_stream_text(current: &str, chunk: &str) -> String {
@@ -188,7 +195,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        extract_output_text, extract_reasoning_from_response, join_stream_text,
+        append_stream_text, extract_output_text, extract_reasoning_from_response, join_stream_text,
         join_stream_text_with_min_overlap, looks_like_response_id, tool_arguments_to_string,
     };
 
@@ -254,6 +261,14 @@ mod tests {
             join_stream_text_with_min_overlap("abcdef", "def123", 4),
             "abcdefdef123"
         );
+    }
+
+    #[test]
+    fn append_stream_text_preserves_repeated_delta_boundary_characters() {
+        let mut current = String::from("a");
+        append_stream_text(&mut current, "a");
+
+        assert_eq!(current, "aa");
     }
 
     #[test]

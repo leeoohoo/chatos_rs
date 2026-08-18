@@ -12,7 +12,7 @@ use chatos_sandbox_contract::{
     SandboxBackendKind, SandboxLeasePolicyRequest,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use super::permission_layers::{
     EffectivePermissionProfileConfiguration, RuntimePermissionProfileLayers,
@@ -41,22 +41,13 @@ pub(crate) struct LocalSandboxState {
     pub(crate) runtime_permission_profile_layers: RuntimePermissionProfileLayers,
     #[serde(default)]
     pub(crate) policy_revision: Option<String>,
-    pub(crate) selected_image_ref: Option<String>,
-    #[serde(default)]
-    pub(crate) images: Vec<LocalSandboxImageRecord>,
 }
 
 impl Default for LocalSandboxState {
     fn default() -> Self {
         Self {
             enabled: true,
-            // Existing installations keep their serialized choice. New macOS/Linux installs use
-            // the native OS sandbox and fail closed if readiness is not satisfied.
-            default_backend: if cfg!(any(target_os = "macos", target_os = "linux")) {
-                SandboxBackendKind::LocalProcess
-            } else {
-                SandboxBackendKind::Docker
-            },
+            default_backend: SandboxBackendKind::LocalProcess,
             default_permission_profile_id: PermissionProfileId::WorkspaceWrite,
             default_permission_profile_name: None,
             permission_profiles: BTreeMap::new(),
@@ -69,8 +60,6 @@ impl Default for LocalSandboxState {
             allowed_permission_profiles: None,
             runtime_permission_profile_layers: RuntimePermissionProfileLayers::default(),
             policy_revision: None,
-            selected_image_ref: None,
-            images: Vec::new(),
         }
     }
 }
@@ -294,25 +283,14 @@ impl LocalSandboxState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct LocalSandboxImageRecord {
-    pub(crate) id: String,
-    pub(crate) image_name: String,
-    pub(crate) image_ref: String,
-    pub(crate) features: Vec<String>,
-    #[serde(default)]
-    pub(crate) custom_build_script: Option<String>,
-    pub(crate) backend: String,
-    pub(crate) created_at: String,
-    pub(crate) updated_at: String,
-}
-
 #[derive(Clone, Default)]
 pub(crate) struct LocalSandboxRuntime {
-    pub(crate) jobs: Arc<RwLock<Vec<LocalSandboxImageJob>>>,
     pub(crate) leases: Arc<RwLock<HashMap<String, LocalSandboxLease>>>,
     pub(crate) processes:
         Arc<RwLock<HashMap<String, Arc<crate::sandbox::process::NativeSandboxProcess>>>>,
+    pub(crate) execution_scopes:
+        Arc<RwLock<HashMap<String, Arc<crate::mcp::execution_scope::LocalExecutionScope>>>>,
+    pub(crate) execution_scope_creation_lock: Arc<Mutex<()>>,
 }
 
 impl std::fmt::Debug for LocalSandboxRuntime {
@@ -321,29 +299,6 @@ impl std::fmt::Debug for LocalSandboxRuntime {
             .debug_struct("LocalSandboxRuntime")
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct LocalSandboxImageJob {
-    pub(crate) id: String,
-    pub(crate) image_id: String,
-    pub(crate) image_name: String,
-    pub(crate) image_ref: String,
-    pub(crate) features: Vec<String>,
-    pub(crate) backend: String,
-    pub(crate) status: String,
-    pub(crate) created_at: String,
-    pub(crate) updated_at: String,
-    pub(crate) started_at: Option<String>,
-    pub(crate) finished_at: Option<String>,
-    pub(crate) output: String,
-    pub(crate) error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) project_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) run_id: Option<String>,
-    #[serde(skip_serializing)]
-    pub(crate) custom_build_script: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -358,11 +313,7 @@ pub(crate) struct LocalSandboxLease {
     pub(crate) run_workspace: String,
     pub(crate) backend: String,
     pub(crate) backend_id: Option<String>,
-    pub(crate) image_id: Option<String>,
-    pub(crate) image_ref: Option<String>,
     pub(crate) status: String,
-    pub(crate) agent_endpoint: Option<String>,
-    pub(crate) agent_token: String,
     pub(crate) resource_limits: LocalSandboxResourceLimits,
     pub(crate) network: LocalSandboxNetworkPolicy,
     pub(crate) tools: Vec<String>,
@@ -419,7 +370,6 @@ pub(crate) struct CreateLocalSandboxLeaseRequest {
     pub(crate) project_id: String,
     pub(crate) run_id: String,
     pub(crate) workspace_root: String,
-    pub(crate) image_id: Option<String>,
     #[serde(default)]
     pub(crate) tools: Vec<String>,
     pub(crate) ttl_seconds: Option<u64>,

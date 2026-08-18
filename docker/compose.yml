@@ -238,14 +238,6 @@ x-config-center-mtls-task-runner-secrets: &config-center-mtls-task-runner-secret
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_task_runner_identity
     target: plugin_management_mtls_client_identity
-  - source: sandbox_manager_mtls_ca
-    target: sandbox_manager_mtls_ca
-  - source: sandbox_manager_mtls_task_runner_identity
-    target: sandbox_manager_mtls_client_identity
-  - source: local_connector_mtls_ca
-    target: local_connector_mtls_ca
-  - source: local_connector_mtls_task_runner_identity
-    target: local_connector_mtls_client_identity
   - source: chatos_mtls_ca
     target: chatos_mtls_ca
   - source: chatos_mtls_task_runner_identity
@@ -278,14 +270,6 @@ x-config-center-mtls-task-runner-api-secrets: &config-center-mtls-task-runner-ap
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_task_runner_identity
     target: plugin_management_mtls_client_identity
-  - source: sandbox_manager_mtls_ca
-    target: sandbox_manager_mtls_ca
-  - source: sandbox_manager_mtls_task_runner_identity
-    target: sandbox_manager_mtls_client_identity
-  - source: local_connector_mtls_ca
-    target: local_connector_mtls_ca
-  - source: local_connector_mtls_task_runner_identity
-    target: local_connector_mtls_client_identity
   - source: chatos_mtls_ca
     target: chatos_mtls_ca
   - source: chatos_mtls_task_runner_identity
@@ -373,9 +357,19 @@ services:
   mongodb:
     image: mongo:7.0
     restart: unless-stopped
+    entrypoint:
+      - bash
+      - -c
+      - |
+        umask 077
+        printf '%s' "$${MONGODB_REPLICA_SET_KEY}" > /tmp/mongodb-keyfile
+        chown mongodb:mongodb /tmp/mongodb-keyfile
+        chmod 400 /tmp/mongodb-keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --keyFile /tmp/mongodb-keyfile
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-admin}
+      MONGODB_REPLICA_SET_KEY: ${MONGODB_REPLICA_SET_KEY:-Q2hhdE9TTG9jYWxEZXZSZXBsaWNhU2V0S2V5MjAyNg}
     ports:
       - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${MONGODB_HOST_PORT:-27018}:27017"
     volumes:
@@ -384,7 +378,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1"
+          "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'try { rs.status().ok } catch (error) { if (error.code === 94) { rs.initiate({_id: \"rs0\", members: [{_id: 0, host: \"mongodb:27017\"}]}).ok } else { throw error } }' | grep 1"
         ]
       interval: 10s
       timeout: 5s
@@ -422,7 +416,7 @@ services:
       MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
-      CONFIG_CENTER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/configuration_center?authSource=admin
+      CONFIG_CENTER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/configuration_center?authSource=admin&replicaSet=rs0
       CONFIG_CENTER_MONGODB_DATABASE: configuration_center
       CONFIG_CENTER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL: https://mcp-management-service-backend:39282
@@ -537,7 +531,7 @@ services:
       USER_SERVICE_MTLS_SERVER_CERT_PATH: /run/secrets/user_service_mtls_server_cert
       USER_SERVICE_MTLS_SERVER_KEY_PATH: /run/secrets/user_service_mtls_server_key
       USER_SERVICE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
-      USER_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/user_service?authSource=admin
+      USER_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/user_service?authSource=admin&replicaSet=rs0
       USER_SERVICE_MONGODB_DATABASE: user_service
       USER_SERVICE_JWT_SECRET: ${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
       USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
@@ -615,7 +609,7 @@ services:
       MEMORY_ENGINE_MTLS_SERVER_CERT_PATH: /run/secrets/memory_engine_mtls_server_cert
       MEMORY_ENGINE_MTLS_SERVER_KEY_PATH: /run/secrets/memory_engine_mtls_server_key
       MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
-      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
+      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin?replicaSet=rs0
       MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
@@ -658,7 +652,7 @@ services:
       MEMORY_ENGINE_PORT: 7081
       MEMORY_ENGINE_API_ENABLED: "false"
       MEMORY_ENGINE_WORKER_ENABLED: "true"
-      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
+      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin?replicaSet=rs0
       MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
@@ -688,7 +682,7 @@ services:
       PROJECT_SERVICE_MTLS_SERVER_CERT_PATH: /run/secrets/project_service_mtls_server_cert
       PROJECT_SERVICE_MTLS_SERVER_KEY_PATH: /run/secrets/project_service_mtls_server_key
       PROJECT_SERVICE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
-      PROJECT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/project_management_service?authSource=admin
+      PROJECT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/project_management_service?authSource=admin&replicaSet=rs0
       PROJECT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
@@ -714,17 +708,22 @@ services:
       TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
       PROJECT_SERVICE_SELF_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SELF_INTERNAL_API_SECRET:-change_me_project_service_self_secret}
       MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_mcp_management_project_service_secret}
+      MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS:-180000}
       MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
       MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
       MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
       PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}
       PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
       PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
+      CHATOS_RUN_WORKSPACE_ROOT: /data/chatos/run-workspaces
     depends_on:
       plugin-management-backend:
         condition: service_healthy
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PROJECT_SERVICE_PORT:-39210}:39210"
+    volumes:
+      - chatos-data:/data/chatos
+      - sandbox-manager-data:/data/sandboxes
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39210/api/health"]
       interval: 10s
@@ -749,7 +748,7 @@ services:
       PLUGIN_MANAGEMENT_MTLS_SERVER_CERT_PATH: /run/secrets/plugin_management_mtls_server_cert
       PLUGIN_MANAGEMENT_MTLS_SERVER_KEY_PATH: /run/secrets/plugin_management_mtls_server_key
       PLUGIN_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/plugin_management_mtls_ca
-      PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/plugin_management_service?authSource=admin
+      PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/plugin_management_service?authSource=admin&replicaSet=rs0
       PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE: plugin_management_service
       PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
@@ -806,7 +805,7 @@ services:
       LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH: /run/secrets/local_connector_mtls_server_cert
       LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH: /run/secrets/local_connector_mtls_server_key
       LOCAL_CONNECTOR_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/local_connector_service?authSource=admin
+      LOCAL_CONNECTOR_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/local_connector_service?authSource=admin&replicaSet=rs0
       LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH:-}
@@ -814,7 +813,6 @@ services:
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID:-}
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS:-86400}
       CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
       PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}
       MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}
       LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}
@@ -863,7 +861,7 @@ services:
       MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_mcp_management_secret}
       MCP_MANAGEMENT_RUNTIME_GRANT_SECRET: ${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}
       MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET: ${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}
-      MCP_MANAGEMENT_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/mcp_management_service?authSource=admin
+      MCP_MANAGEMENT_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/mcp_management_service?authSource=admin&replicaSet=rs0
       MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS: ${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}
       MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL: https://plugin-management-backend:39262
       PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
@@ -971,10 +969,11 @@ services:
       SANDBOX_MANAGER_MTLS_SERVER_CERT_PATH: /run/secrets/sandbox_manager_mtls_server_cert
       SANDBOX_MANAGER_MTLS_SERVER_KEY_PATH: /run/secrets/sandbox_manager_mtls_server_key
       SANDBOX_MANAGER_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/sandbox_manager_mtls_ca
-      SANDBOX_MANAGER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/sandbox_manager_service?authSource=admin
+      SANDBOX_MANAGER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/sandbox_manager_service?authSource=admin&replicaSet=rs0
       SANDBOX_MANAGER_MONGODB_DATABASE: sandbox_manager_service
       SANDBOX_MANAGER_BACKEND: docker
       SANDBOX_MANAGER_WORK_ROOT: /data/sandboxes
+      SANDBOX_MANAGER_DOCKER_WORK_VOLUME: ${SANDBOX_MANAGER_DATA_VOLUME_NAME:-chatos-sandbox-manager-data}
       SANDBOX_MANAGER_DOCKER_IMAGE: ${SANDBOX_MANAGER_DOCKER_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-agent:${CHATOS_IMAGE_TAG:-latest}}
       SANDBOX_MANAGER_DOCKER_NETWORK: ${CHATOS_DOCKER_NETWORK:-chatos-cloud}
       SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE: container
@@ -982,7 +981,6 @@ services:
       SANDBOX_MANAGER_REQUIRE_AUTH: ${SANDBOX_MANAGER_REQUIRE_AUTH:-true}
       SANDBOX_MANAGER_AGENT_TOKEN_SECRET: ${SANDBOX_MANAGER_AGENT_TOKEN_SECRET:-chatos-sandbox-agent-dev-secret}
       SANDBOX_MANAGER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
       PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_project_service_sandbox_manager_secret}
       MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_mcp_management_sandbox_manager_secret}
       SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT: /opt/chatos-sandbox-build-context
@@ -997,6 +995,7 @@ services:
       - "${SANDBOX_MANAGER_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_PORT:-8095}:8095"
     volumes:
       - sandbox-manager-data:/data/sandboxes
+      - chatos-data:/data/chatos
       - ../Cargo.lock:/opt/chatos-sandbox-build-context/Cargo.lock:ro
       - ../BUILTIN_MCP_PROMPT.en-US.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.en-US.md:ro
       - ../BUILTIN_MCP_PROMPT.zh-CN.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.zh-CN.md:ro
@@ -1040,7 +1039,7 @@ services:
       TASK_RUNNER_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
       TASK_RUNNER_ROLE: ${TASK_RUNNER_ROLE:-api}
       TASK_RUNNER_STORE_MODE: mongo
-      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
+      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
@@ -1052,9 +1051,6 @@ services:
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: https://local-connector-service-backend:39232
-      LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
       MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
       MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
       MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
@@ -1062,11 +1058,6 @@ services:
       TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
-      TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: https://sandbox-manager-backend:8097
-      SANDBOX_MANAGER_MTLS_CA_CERT_PATH: /run/secrets/sandbox_manager_mtls_ca
-      SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/sandbox_manager_mtls_client_identity
-      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: task-runner
-      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
       TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
       CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
       CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
@@ -1074,7 +1065,6 @@ services:
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
       USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_user_service_task_runner_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
@@ -1129,7 +1119,7 @@ services:
       TASK_RUNNER_ROLE: ${TASK_RUNNER_WORKER_ROLE:-worker}
       TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_WORKER_ID:-task-runner-worker-docker}
       TASK_RUNNER_STORE_MODE: mongo
-      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
+      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
@@ -1141,9 +1131,6 @@ services:
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: https://local-connector-service-backend:39232
-      LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
       MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
       MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
       MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
@@ -1151,18 +1138,12 @@ services:
       TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
-      TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: https://sandbox-manager-backend:8097
-      SANDBOX_MANAGER_MTLS_CA_CERT_PATH: /run/secrets/sandbox_manager_mtls_ca
-      SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/sandbox_manager_mtls_client_identity
-      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: task-runner
-      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
       TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
       CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
       CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
       PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     volumes:
@@ -1202,7 +1183,7 @@ services:
       TASK_RUNNER_ROLE: ${TASK_RUNNER_SCHEDULER_ROLE:-scheduler}
       TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_SCHEDULER_WORKER_ID:-task-runner-scheduler-docker}
       TASK_RUNNER_STORE_MODE: mongo
-      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin
+      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
@@ -1214,9 +1195,6 @@ services:
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_SERVICE_BASE_URL: https://local-connector-service-backend:39232
-      LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
       MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
       MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
       MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
@@ -1224,18 +1202,12 @@ services:
       TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
-      TASK_RUNNER_SANDBOX_MANAGER_BASE_URL: https://sandbox-manager-backend:8097
-      SANDBOX_MANAGER_MTLS_CA_CERT_PATH: /run/secrets/sandbox_manager_mtls_ca
-      SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/sandbox_manager_mtls_client_identity
-      TASK_RUNNER_SANDBOX_MANAGER_CLIENT_ID: task-runner
-      TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${TASK_RUNNER_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_task_runner_sandbox_manager_secret}
       TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
       CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
       CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
       PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
-      TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${TASK_RUNNER_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_task_runner_local_connector_secret}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     volumes:
@@ -1296,7 +1268,7 @@ services:
       MONGODB_USER: ${MONGODB_USER:-admin}
       MONGODB_PASSWORD: ${MONGODB_PASSWORD:-admin}
       MONGODB_AUTH_SOURCE: admin
-      LEGACY_AUTH_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin
+      LEGACY_AUTH_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin?replicaSet=rs0
       LEGACY_AUTH_MONGODB_DATABASE: ${LEGACY_AUTH_MONGODB_DATABASE:-legacy_auth}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-dev-only-change-me-please}
       AUTH_ACCESS_TOKEN_TTL_SECONDS: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:-43200}
@@ -1532,6 +1504,7 @@ volumes:
   task-runner-data:
   local-connector-data:
   sandbox-manager-data:
+    name: ${SANDBOX_MANAGER_DATA_VOLUME_NAME:-chatos-sandbox-manager-data}
   harness-data:
 
 secrets:
@@ -1625,8 +1598,6 @@ secrets:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/server.key
   local_connector_mtls_chatos_identity:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/chatos-backend.identity.pem
-  local_connector_mtls_task_runner_identity:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/task-runner.identity.pem
   local_connector_mtls_project_service_identity:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/project-service.identity.pem
   local_connector_mtls_mcp_management_identity:
@@ -1673,8 +1644,6 @@ secrets:
     file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/server.crt
   sandbox_manager_mtls_server_key:
     file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/server.key
-  sandbox_manager_mtls_task_runner_identity:
-    file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/task-runner.identity.pem
   sandbox_manager_mtls_project_service_identity:
     file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/project-service.identity.pem
   sandbox_manager_mtls_mcp_management_identity:

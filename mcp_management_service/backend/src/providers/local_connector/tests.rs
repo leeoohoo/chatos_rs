@@ -34,6 +34,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
             .as_str()
             .to_string(),
@@ -41,14 +42,17 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_group_id: Some("group-1".to_string()),
+        execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
         source_session_id: None,
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
@@ -59,7 +63,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
                 workspace_id: "workspace-1".to_string(),
                 relative_root: Some("apps/backend".to_string()),
             }),
-            sandbox_provider: SandboxProviderKind::LocalConnector,
+            sandbox_provider: SandboxProviderKind::None,
             sandbox_pairing_id: None,
             source_type: Some("local_connector".to_string()),
             revision: "project-revision".to_string(),
@@ -124,6 +128,37 @@ async fn start_local_connector(
         );
         assert_eq!(
             headers
+                .get(MCP_MANAGEMENT_SESSION_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("session-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<i64>().ok()),
+            Some(i64::MAX)
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_RUN_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("group-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_TASK_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("task-1")
+        );
+        assert_eq!(
+            headers
                 .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
                 .and_then(|value| value.to_str().ok()),
             Some("CodeMaintainerRead")
@@ -156,7 +191,8 @@ async fn start_local_connector(
             ResponseMode::Oversized => json!({"content": "x".repeat(2048)}),
             ResponseMode::Valid | ResponseMode::WrongId => json!({
                 "forwarded_name": request.pointer("/params/name"),
-                "forwarded_arguments": request.pointer("/params/arguments")
+                "forwarded_arguments": request.pointer("/params/arguments"),
+                "forwarded_max_chars": request.pointer("/params/_meta/chatos~1toolResultMaxChars"),
             }),
         };
         Json(json!({"jsonrpc": "2.0", "id": id, "result": result}))
@@ -171,6 +207,123 @@ async fn start_local_connector(
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), handle)
+}
+
+async fn start_local_connector_lifecycle(
+    secret: &'static str,
+) -> (String, tokio::task::JoinHandle<()>) {
+    async fn handler(
+        State(secret): State<&'static str>,
+        headers: HeaderMap,
+        Query(query): Query<HashMap<String, String>>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_RUN_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("group-1")
+        );
+        assert_eq!(
+            headers
+                .get(MCP_MANAGEMENT_SCOPE_GENERATION_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("7")
+        );
+        assert_eq!(
+            query.get("workspace_id").map(String::as_str),
+            Some("workspace-1")
+        );
+        assert_eq!(query.get("cwd").map(String::as_str), Some("apps/backend"));
+        let token = headers
+            .get("x-local-connector-internal-token")
+            .and_then(|value| value.to_str().ok())
+            .expect("signed Local Connector token");
+        chatos_service_runtime::verify_internal_service_token(
+            token,
+            secret,
+            CALLER_SERVICE,
+            TOKEN_AUDIENCE,
+            MCP_RELAY_SCOPE,
+        )
+        .expect("valid Local Connector token");
+        assert_eq!(
+            request.pointer("/params/status").and_then(Value::as_str),
+            Some("succeeded")
+        );
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {
+                "status": "conflict",
+                "execution_group_id": "group-1",
+                "execution_branch_ref": "chatos/executions/local-group",
+                "base_commit": "base-commit",
+                "result_commit": "result-commit",
+                "integrated_commit": null,
+                "conflict_files": ["src/lib.rs"],
+                "files": [{"status": "M", "path": "src/lib.rs", "old_path": null}],
+                "message": "same line conflict",
+                "patch": "diff --git a/src/lib.rs b/src/lib.rs",
+                "patch_truncated": false
+            }
+        }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route("/api/local-connectors/relay/device-1/mcp", post(handler))
+        .with_state(secret);
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}"), handle)
+}
+
+#[tokio::test]
+async fn finalize_run_forwards_execution_group_and_decodes_structured_conflict() {
+    const SECRET: &str = "a-long-local-connector-secret";
+    let (base_url, server) = start_local_connector_lifecycle(SECRET).await;
+    let provider = LocalConnectorProvider::new(
+        reqwest::Client::new(),
+        base_url,
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let finalization = provider
+        .finalize_run(
+            &snapshot().project_context,
+            "user-1",
+            "project-1",
+            "run-1",
+            Some("group-1"),
+            7,
+            "succeeded",
+        )
+        .await
+        .unwrap()
+        .expect("Local Connector finalization");
+    assert_eq!(
+        finalization.status,
+        chatos_mcp_management_sdk::RuntimeProviderFinalizationStatus::Conflict
+    );
+    assert_eq!(
+        finalization.execution_branch_ref.as_deref(),
+        Some("chatos/executions/local-group")
+    );
+    assert_eq!(finalization.conflict_files, vec!["src/lib.rs"]);
+    assert_eq!(finalization.files.len(), 1);
+    assert_eq!(finalization.files[0].path, "src/lib.rs");
+    server.abort();
 }
 
 #[tokio::test]
@@ -188,9 +341,11 @@ async fn call_uses_signed_identity_workspace_snapshot_and_original_tool_name() {
     let mut route = code_read_route();
     route.server_name = "browser_tools".to_string();
     assert!(provider.supports(&route));
+    let mut runtime_snapshot = snapshot();
+    runtime_snapshot.tool_result_max_chars = Some(40_000);
     let outcome = provider
         .call_tool(
-            &snapshot(),
+            &runtime_snapshot,
             &route,
             "read_file",
             json!({"path": "src/lib.rs"}),
@@ -202,7 +357,8 @@ async fn call_uses_signed_identity_workspace_snapshot_and_original_tool_name() {
         outcome.result,
         json!({
             "forwarded_name": "read_file",
-            "forwarded_arguments": {"path": "src/lib.rs"}
+            "forwarded_arguments": {"path": "src/lib.rs"},
+            "forwarded_max_chars": 40_000,
         })
     );
     server.abort();

@@ -9,7 +9,6 @@ $ErrorActionPreference = "Stop"
 $ClientDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Resolve-Path (Join-Path $ClientDir "..")
 $FrontendDir = Join-Path $ClientDir "frontend"
-$ChatosFrontendDir = Join-Path $RootDir "chatos\frontend"
 $ElectronResourcesDir = Join-Path $FrontendDir "electron\resources"
 $SkillCatalogPath = Join-Path $ClientDir "skill_bundles\catalog\internal-skill-catalog.json"
 $PluginCatalogPath = Join-Path $ClientDir "plugin_bundles\catalog\bundled-plugin-catalog.json"
@@ -125,22 +124,6 @@ function Invoke-FrontendBuild {
   }
 }
 
-function Invoke-ChatosFrontendBuild {
-  Push-Location $ChatosFrontendDir
-  try {
-    $previousApiBase = $env:VITE_API_BASE_URL
-    $env:VITE_API_BASE_URL = if ($env:LOCAL_CONNECTOR_CHATOS_API_BASE_URL) {
-      $env:LOCAL_CONNECTOR_CHATOS_API_BASE_URL
-    } else {
-      "https://app.jgoool.com/api"
-    }
-    npm run build
-  } finally {
-    $env:VITE_API_BASE_URL = $previousApiBase
-    Pop-Location
-  }
-}
-
 function Invoke-CoreBuild {
   Push-Location $RootDir
   try {
@@ -185,7 +168,6 @@ function Sync-ElectronResources {
   $pluginBundlesDir = Join-Path $ElectronResourcesDir "plugin-bundles"
   Invoke-PluginBundleTool -OutputDir $pluginBundlesDir -Platform $platform
   Invoke-PluginBundleTool -OutputDir $pluginBundlesDir -Platform $platform -VerifyOnly
-  Copy-Item -LiteralPath (Join-Path $ChatosFrontendDir "dist") -Destination (Join-Path $ElectronResourcesDir "chatos-frontend") -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ClientDir "core\migrations") -Destination (Join-Path $ElectronResourcesDir "sqlite-migrations") -Recurse -Force
 }
 
@@ -232,7 +214,6 @@ function New-ManualElectronPackage {
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "bundled-tools") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "skill_bundles") -Destination (Join-Path $resourcesDir "skill-bundles") -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "plugin-bundles") -Destination $resourcesDir -Recurse -Force
-  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos-frontend") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chrome-extension") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "sqlite-migrations") -Destination $resourcesDir -Recurse -Force
 
@@ -254,7 +235,6 @@ function New-ManualElectronPackage {
 
 Test-SkillBundles
 Invoke-FrontendBuild
-Invoke-ChatosFrontendBuild
 Invoke-CoreBuild
 Sync-ElectronResources
 New-ManualElectronPackage

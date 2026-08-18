@@ -7,8 +7,10 @@ use chatos_project_execution::{
     missing_project_task_ids, validate_exact_project_task_scope, ExecutionPlanIdentity,
     STATUS_STOPPED, STATUS_STOPPING,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
@@ -16,14 +18,13 @@ use crate::services::{chatos_sessions, task_runner_api_client};
 
 use super::super::requirement_execution::{
     apply_task_runner_task_snapshot, create_execution_planner_failure_message,
-    load_execution_links_for_work_items, mark_execution_messages_for_stop,
-    sync_execution_link_status, sync_execution_message_task_tracking,
-    sync_requirement_execution_state, task_runner_callback_event_for_status,
-    task_runner_status_is_active, task_runner_status_is_cancelled, value_string, ExecutionLink,
-    HandlerError, WorkItemPlanItem,
+    mark_execution_messages_for_stop, mark_execution_planner_failed, sync_execution_link_status,
+    sync_execution_message_task_tracking, sync_requirement_execution_state,
+    task_runner_callback_event_for_status, task_runner_status_is_active,
+    task_runner_status_is_cancelled, value_string, ExecutionLink, HandlerError, WorkItemPlanItem,
 };
+use super::execution_message_status;
 use super::plan_query::execution_status_is_stopped_terminal;
-use super::{execution_message_status, retire_cloud_execution_batch};
 
 pub(super) async fn load_expected_execution_project_task_ids(
     auth: &AuthUser,
@@ -363,21 +364,22 @@ fn inactive_links_record_a_cancelled_batch(links: &[ExecutionLink]) -> bool {
             .any(|link| task_runner_status_is_cancelled(link.task_runner_status.as_deref()))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RequirementPlannerRecovery {
-    pub(super) access_token: String,
+    #[serde(default)]
+    pub(super) agent_run_error: Option<String>,
+    #[serde(default)]
+    pub(super) agent_run_status: Option<String>,
+    pub(super) kind: String,
     pub(super) execution_group_id: String,
     pub(super) executing_requirement_ids: BTreeSet<String>,
     pub(super) link_scope_work_items: Vec<WorkItemPlanItem>,
     pub(super) project_id: String,
-    pub(super) project_service_base_url: String,
-    pub(super) project_sync_secret: String,
     pub(super) replacement_identity: Option<ExecutionPlanIdentity>,
     pub(super) replacement_work_items: Vec<WorkItemPlanItem>,
     pub(super) requirement_id: String,
     pub(super) selected_work_items: Vec<WorkItemPlanItem>,
     pub(super) session_id: String,
-    pub(super) task_runner_base_url: String,
 }
 
 pub(super) fn replacement_link_scope(
@@ -400,6 +402,24 @@ pub(super) fn replacement_link_scope(
 pub(super) async fn reconcile_requirement_planner_outcome(
     recovery: RequirementPlannerRecovery,
 ) -> Result<(), HandlerError> {
+    if recovery.kind != "requirement_planner" {
+        return Err(HandlerError::bad_request(
+            "invalid requirement planner owner context",
+        ));
+    }
+    let config =
+        Config::try_get().map_err(|error| HandlerError::internal("配置未初始化", error))?;
+    let project_sync_secret = config
+        .project_service_sync_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            HandlerError::internal(
+                "项目执行需要配置项目管理同步密钥",
+                "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET is required from configuration center",
+            )
+        })?;
     if let Ok(Some(session)) =
         chatos_sessions::get_session_by_id(recovery.session_id.as_str()).await
     {
@@ -419,12 +439,9 @@ pub(super) async fn reconcile_requirement_planner_outcome(
         recovery.link_scope_work_items.as_slice(),
         recovery.replacement_work_items.as_slice(),
     );
-    let links = load_execution_links_for_work_items(
-        recovery.project_service_base_url.as_str(),
-        recovery.access_token.as_str(),
-        link_scope_work_items.as_slice(),
-    )
-    .await?;
+    let links =
+        load_execution_links_for_recovery(project_sync_secret, link_scope_work_items.as_slice())
+            .await?;
     let current_execution_links = links
         .iter()
         .filter(|link| {
@@ -440,13 +457,42 @@ pub(super) async fn reconcile_requirement_planner_outcome(
         recovery.selected_work_items.as_slice(),
         &linked_project_task_ids,
     );
-    if missing_project_task_ids.is_empty() {
+    if !current_execution_links.is_empty() {
         sync_execution_message_task_tracking(
             recovery.session_id.as_str(),
             recovery.execution_group_id.as_str(),
             current_execution_links.as_slice(),
         )
         .await?;
+    }
+    if recovery
+        .agent_run_status
+        .as_deref()
+        .is_some_and(|status| matches!(status.trim(), "failed" | "blocked"))
+    {
+        restore_missing_planner_work_items(&recovery, &linked_project_task_ids).await?;
+        let failure_reason = build_planner_runtime_failure_message(
+            recovery.agent_run_error.as_deref(),
+            current_execution_links.len(),
+            missing_project_task_ids.len(),
+        );
+        create_execution_planner_failure_message(
+            recovery.session_id.as_str(),
+            recovery.execution_group_id.as_str(),
+            "planner_runtime_failed",
+            failure_reason.clone(),
+        )
+        .await?;
+        mark_execution_planner_failed(
+            recovery.session_id.as_str(),
+            recovery.execution_group_id.as_str(),
+            "planner_runtime_failed",
+            failure_reason.as_str(),
+        )
+        .await?;
+        return Ok(());
+    }
+    if missing_project_task_ids.is_empty() {
         if let Some(identity) = recovery.replacement_identity.as_ref() {
             let replaced_links = links
                 .iter()
@@ -457,10 +503,8 @@ pub(super) async fn reconcile_requirement_planner_outcome(
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            if let Err(error) = retire_cloud_execution_batch(
-                recovery.task_runner_base_url.as_str(),
-                recovery.project_service_base_url.as_str(),
-                recovery.access_token.as_str(),
+            if let Err(error) = retire_cloud_execution_batch_for_recovery(
+                project_sync_secret,
                 recovery.project_id.as_str(),
                 recovery.requirement_id.as_str(),
                 identity.conversation_id.as_str(),
@@ -469,10 +513,8 @@ pub(super) async fn reconcile_requirement_planner_outcome(
             )
             .await
             {
-                let _ = retire_cloud_execution_batch(
-                    recovery.task_runner_base_url.as_str(),
-                    recovery.project_service_base_url.as_str(),
-                    recovery.access_token.as_str(),
+                let _ = retire_cloud_execution_batch_for_recovery(
+                    project_sync_secret,
                     recovery.project_id.as_str(),
                     recovery.requirement_id.as_str(),
                     recovery.session_id.as_str(),
@@ -480,19 +522,22 @@ pub(super) async fn reconcile_requirement_planner_outcome(
                     current_execution_links.as_slice(),
                 )
                 .await;
-                let _ = set_task_runner_async_overall_status_for_session(
-                    recovery.session_id.as_str(),
-                    recovery.execution_group_id.as_str(),
-                    "failed",
-                )
-                .await;
+                let failure_reason = format!(
+                    "新的执行流程已经生成，但旧批次任务及临时资源清理失败，因此新流程没有切换为可执行状态。请检查 Task Runner、沙箱和 Git 分支清理状态后重试。详情：{}",
+                    error.error
+                );
                 create_execution_planner_failure_message(
                     recovery.session_id.as_str(),
                     recovery.execution_group_id.as_str(),
-                    format!(
-                        "新的执行流程已经生成，但旧批次任务及临时资源清理失败，因此新流程没有切换为可执行状态。请检查 Task Runner、沙箱和 Git 分支清理状态后重试。详情：{}",
-                        error.error
-                    ),
+                    "replacement_cleanup_failed",
+                    failure_reason.clone(),
+                )
+                .await?;
+                mark_execution_planner_failed(
+                    recovery.session_id.as_str(),
+                    recovery.execution_group_id.as_str(),
+                    "replacement_cleanup_failed",
+                    failure_reason.as_str(),
                 )
                 .await?;
                 return Err(error);
@@ -501,15 +546,45 @@ pub(super) async fn reconcile_requirement_planner_outcome(
         return Ok(());
     }
 
-    if !current_execution_links.is_empty() {
-        sync_execution_message_task_tracking(
-            recovery.session_id.as_str(),
-            recovery.execution_group_id.as_str(),
-            current_execution_links.as_slice(),
-        )
-        .await?;
-    }
+    restore_missing_planner_work_items(&recovery, &linked_project_task_ids).await?;
+    let failure_reason = build_planner_coverage_failure_message(
+        recovery.selected_work_items.as_slice(),
+        &linked_project_task_ids,
+    );
+    create_execution_planner_failure_message(
+        recovery.session_id.as_str(),
+        recovery.execution_group_id.as_str(),
+        "planner_created_no_tasks",
+        failure_reason.clone(),
+    )
+    .await?;
+    mark_execution_planner_failed(
+        recovery.session_id.as_str(),
+        recovery.execution_group_id.as_str(),
+        "planner_created_no_tasks",
+        failure_reason.as_str(),
+    )
+    .await?;
+    Ok(())
+}
 
+async fn restore_missing_planner_work_items(
+    recovery: &RequirementPlannerRecovery,
+    linked_project_task_ids: &BTreeSet<String>,
+) -> Result<(), HandlerError> {
+    let config =
+        Config::try_get().map_err(|error| HandlerError::internal("配置未初始化", error))?;
+    let project_sync_secret = config
+        .project_service_sync_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            HandlerError::internal(
+                "项目执行需要配置项目管理同步密钥",
+                "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET is required from configuration center",
+            )
+        })?;
     let mut work_item_ids_by_requirement = BTreeMap::<String, Vec<String>>::new();
     for item in &recovery.selected_work_items {
         work_item_ids_by_requirement
@@ -527,7 +602,7 @@ pub(super) async fn reconcile_requirement_planner_outcome(
             .cloned()
             .collect::<Vec<_>>();
         sync_requirement_execution_state(
-            recovery.project_sync_secret.as_str(),
+            project_sync_secret,
             requirement_id.as_str(),
             Some("approved"),
             missing_ids,
@@ -536,22 +611,108 @@ pub(super) async fn reconcile_requirement_planner_outcome(
         )
         .await?;
     }
-    let _ = set_task_runner_async_overall_status_for_session(
-        recovery.session_id.as_str(),
-        recovery.execution_group_id.as_str(),
-        "failed",
-    )
-    .await;
-    create_execution_planner_failure_message(
-        recovery.session_id.as_str(),
-        recovery.execution_group_id.as_str(),
-        build_planner_coverage_failure_message(
-            recovery.selected_work_items.as_slice(),
-            &linked_project_task_ids,
-        ),
-    )
-    .await?;
     Ok(())
+}
+
+pub(super) fn build_planner_runtime_failure_message(
+    error: Option<&str>,
+    created_task_count: usize,
+    missing_task_count: usize,
+) -> String {
+    let raw = error.unwrap_or_default().trim();
+    let lower = raw.to_ascii_lowercase();
+    let reason = if lower.contains("auth_unavailable") || lower.contains("no auth available") {
+        "模型网关当前没有可用的认证资源，自动重试后仍未恢复".to_string()
+    } else if lower.contains("unexpected eof")
+        || lower.contains("response body failed")
+        || lower.contains("响应解析异常")
+        || lower.contains("传输或解码过程中中断")
+    {
+        "模型流式响应在传输过程中被中断，自动重试后仍未恢复".to_string()
+    } else if raw.is_empty() || raw.eq_ignore_ascii_case("ChatOS Cloud Agent failed") {
+        "模型规划运行异常，自动重试后仍未恢复".to_string()
+    } else {
+        raw.to_string()
+    };
+    format!(
+        "执行计划生成失败：{reason}。本批次已停止；已创建 {created_task_count} 个执行节点，仍缺少 {missing_task_count} 个，未创建节点的项目任务已恢复为就绪状态，请重新生成。"
+    )
+}
+
+pub(crate) async fn reconcile_requirement_planner_owner_context(
+    context: Value,
+) -> Result<(), HandlerError> {
+    let recovery = serde_json::from_value::<RequirementPlannerRecovery>(context)
+        .map_err(|error| HandlerError::bad_request(format!("invalid planner recovery: {error}")))?;
+    reconcile_requirement_planner_outcome(recovery).await
+}
+
+async fn load_execution_links_for_recovery(
+    project_sync_secret: &str,
+    work_items: &[WorkItemPlanItem],
+) -> Result<Vec<ExecutionLink>, HandlerError> {
+    let values = crate::services::project_management_api_client::sync_list_execution_links(
+        project_sync_secret,
+        work_items.iter().map(|item| item.id.clone()).collect(),
+    )
+    .await
+    .map_err(|error| HandlerError::bad_gateway("读取项目任务执行关联失败", error))?;
+    Ok(values
+        .into_iter()
+        .filter_map(|value| {
+            Some(ExecutionLink {
+                link_id: value_string(&value, "id"),
+                work_item_id: value_string(&value, "work_item_id")?,
+                task_runner_task_id: value_string(&value, "task_runner_task_id")?,
+                task_runner_run_id: value_string(&value, "task_runner_run_id"),
+                task_runner_status: value_string(&value, "task_runner_status"),
+                source_session_id: value_string(&value, "source_session_id"),
+                source_user_message_id: value_string(&value, "source_user_message_id"),
+            })
+        })
+        .collect())
+}
+
+async fn retire_cloud_execution_batch_for_recovery(
+    project_sync_secret: &str,
+    project_id: &str,
+    requirement_id: &str,
+    source_session_id: &str,
+    source_user_message_id: &str,
+    links: &[ExecutionLink],
+) -> Result<Value, HandlerError> {
+    let config =
+        Config::try_get().map_err(|error| HandlerError::internal("配置未初始化", error))?;
+    let retired = task_runner_api_client::retire_project_execution(
+        config.task_runner_base_url.as_str(),
+        project_id,
+        requirement_id,
+        source_session_id,
+        source_user_message_id,
+    )
+    .await
+    .map_err(|error| HandlerError::bad_gateway("回收旧 Task Runner 执行批次失败", error))?;
+    let link_identities = links
+        .iter()
+        .filter_map(|link| {
+            Some(
+                crate::services::project_management_api_client::SyncExecutionLinkIdentity {
+                    work_item_id: link.work_item_id.clone(),
+                    link_id: link.link_id.clone()?,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let deleted = crate::services::project_management_api_client::sync_delete_execution_links(
+        project_sync_secret,
+        link_identities,
+    )
+    .await
+    .map_err(|error| HandlerError::bad_gateway("清理旧项目任务执行关联失败", error))?;
+    Ok(serde_json::json!({
+        "task_runner": retired,
+        "project_management": deleted,
+    }))
 }
 
 pub(super) fn build_planner_coverage_failure_message(

@@ -4,9 +4,11 @@
 import {
   Button,
   Descriptions,
+  Input,
+  message,
+  Modal,
   Space,
   Tag,
-  Typography,
 } from 'antd';
 import dayjs from 'dayjs';
 
@@ -32,10 +34,16 @@ type RunDetailSummaryProps = {
   streamStats: RunStreamStats;
   canceling: boolean;
   retrying: boolean;
+  integrationRetrying: boolean;
+  integrationWaiving: boolean;
+  changesLoading: boolean;
   onOpenTask: (taskId: string) => void;
   onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
+  onRetryIntegration: (runId: string) => void;
+  onWaiveIntegration: (runId: string, reason: string) => Promise<void>;
+  onOpenChanges: (runId: string) => void;
 };
 
 export function RunDetailSummary({
@@ -49,13 +57,18 @@ export function RunDetailSummary({
   streamStats,
   canceling,
   retrying,
+  integrationRetrying,
+  integrationWaiving,
+  changesLoading,
   onOpenTask,
   onOpenModel,
   onCancel,
   onRetry,
+  onRetryIntegration,
+  onWaiveIntegration,
+  onOpenChanges,
 }: RunDetailSummaryProps) {
   const runStatusLabel = (status: TaskRunStatus) => t(`runs.status.${status}`);
-  const pluginCloudRuntimeLabel = t('runs.detail.pluginCloudRuntime');
   const inputSnapshot =
     run.input_snapshot && typeof run.input_snapshot === 'object'
       ? (run.input_snapshot as Record<string, unknown>)
@@ -64,19 +77,47 @@ export function RunDetailSummary({
   const agentLabel =
     agentKey === 'task_runner_plan_phase'
       ? t('runs.detail.cloudPlanningAgent')
-      : agentKey === 'task_runner_local_plan_phase'
-        ? t('runs.detail.localPlanningAgent')
       : agentKey === 'task_runner_run_phase'
         ? t('runs.detail.cloudExecutionAgent')
-        : agentKey === 'task_runner_local_run_phase'
-          ? t('runs.detail.localExecutionAgent')
         : '-';
   const totalDuration = run.started_at
     ? formatDuration(run.started_at, run.finished_at || undefined)
     : '-';
-  const formatPluginTarget = (deviceId?: string | null, workspaceId?: string | null) => {
-    const runtime = deviceId || pluginCloudRuntimeLabel;
-    return workspaceId ? `${runtime} / ${workspaceId}` : runtime;
+  const integration = run.workspace_execution;
+  const mcpConfig = inputSnapshot?.mcp_config && typeof inputSnapshot.mcp_config === 'object'
+    ? inputSnapshot.mcp_config as Record<string, unknown>
+    : null;
+  const canWaiveIntegration = integration?.integration_status === 'conflict'
+    && mcpConfig?.workspace_changes_required === false;
+  const openWaiveIntegrationConfirm = () => {
+    let reason = '';
+    Modal.confirm({
+      title: t('runs.detail.waiveIntegration'),
+      content: (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>{t('runs.detail.waiveIntegrationHelp')}</div>
+          <Input.TextArea
+            rows={4}
+            maxLength={2000}
+            showCount
+            placeholder={t('runs.detail.waiveIntegrationReasonPlaceholder')}
+            onChange={(event) => {
+              reason = event.target.value;
+            }}
+          />
+        </Space>
+      ),
+      okText: t('runs.detail.waiveIntegrationConfirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        if (!reason.trim()) {
+          message.warning(t('runs.detail.waiveIntegrationReasonRequired'));
+          throw new Error(t('runs.detail.waiveIntegrationReasonRequired'));
+        }
+        await onWaiveIntegration(run.id, reason.trim());
+      },
+    });
   };
 
   return (
@@ -99,6 +140,29 @@ export function RunDetailSummary({
         >
           {t('runs.detail.retryWithCurrentConfig')}
         </Button>
+        <Button
+          disabled={integration?.integration_status !== 'conflict'}
+          loading={integrationRetrying}
+          onClick={() => onRetryIntegration(run.id)}
+        >
+          {t('runs.detail.retryIntegration')}
+        </Button>
+        {canWaiveIntegration ? (
+          <Button
+            danger
+            loading={integrationWaiving}
+            onClick={openWaiveIntegrationConfirm}
+          >
+            {t('runs.detail.waiveIntegration')}
+          </Button>
+        ) : null}
+        <Button
+          disabled={!integration?.result_commit}
+          loading={changesLoading}
+          onClick={() => onOpenChanges(run.id)}
+        >
+          {t('runs.detail.viewChanges')}
+        </Button>
       </Space>
 
       <Descriptions bordered column={1} size="small">
@@ -109,51 +173,25 @@ export function RunDetailSummary({
         <Descriptions.Item label={t('common.status')}>
           <Tag color={runColorMap[run.status]}>{runStatusLabel(run.status)}</Tag>
         </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.modelPhaseStatus')}>
+          {t(`runs.modelPhaseStatus.${run.model_phase_status}`)}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('runs.detail.integrationStatus')}>
+          {integration
+            ? t(`runs.integrationStatus.${integration.integration_status}`)
+            : t('runs.integrationStatus.not_required')}
+        </Descriptions.Item>
+        {integration?.execution_branch_ref ? (
+          <Descriptions.Item label={t('runs.detail.executionBranch')}>
+            {integration.execution_branch_ref}
+          </Descriptions.Item>
+        ) : null}
+        {integration?.conflict_files?.length ? (
+          <Descriptions.Item label={t('runs.detail.conflictFiles')}>
+            {integration.conflict_files.join(', ')}
+          </Descriptions.Item>
+        ) : null}
         <Descriptions.Item label={t('runs.detail.agent')}>{agentLabel}</Descriptions.Item>
-        <Descriptions.Item label={t('runs.detail.plugins')}>
-          {run.plugin_snapshots?.length ? (
-            <Space direction="vertical" size="small" style={{ width: '100%' }}>
-              {run.plugin_snapshots.map((plugin) => (
-                <Space
-                  key={`${plugin.plugin_id}:${plugin.release_id}`}
-                  direction="vertical"
-                  size={0}
-                  style={{ width: '100%' }}
-                >
-                  <Tag color="purple">{plugin.plugin_id}</Tag>
-                  <Typography.Text type="secondary">
-                    {t('runs.detail.pluginSnapshotSummary', {
-                      version: `v${plugin.version}`,
-                      target: formatPluginTarget(plugin.device_id, plugin.workspace_id),
-                      componentCount: plugin.component_snapshots.length,
-                    })}
-                  </Typography.Text>
-                </Space>
-              ))}
-            </Space>
-          ) : (
-            '-'
-          )}
-        </Descriptions.Item>
-        <Descriptions.Item label={t('runs.detail.pluginTarget')}>
-          {run.plugin_snapshots?.length ? (
-            <Space wrap>
-              {Array.from(
-                new Set(
-                  run.plugin_snapshots.map(
-                    (plugin) => formatPluginTarget(plugin.device_id, plugin.workspace_id),
-                  ),
-                ),
-              ).map((target) => (
-                <Tag key={target} color={target.startsWith(pluginCloudRuntimeLabel) ? 'blue' : 'cyan'}>
-                  {target}
-                </Tag>
-              ))}
-            </Space>
-          ) : (
-            '-'
-          )}
-        </Descriptions.Item>
         <Descriptions.Item label={t('runs.column.modelConfig')}>
           <Button
             type="link"

@@ -129,6 +129,45 @@ start_backend() {
   fi
 }
 
+ensure_local_dev_sandbox_runtime_proxy() {
+  if [[ "${CHATOS_LOCAL_DEV_MANAGED_SANDBOX_RUNTIME_PROXY:-false}" != "true" ]]; then
+    return 0
+  fi
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+
+  local name="sandbox-runtime-proxy"
+  local host_address="${CHATOS_LOCAL_DEV_HOST_ADDRESS:-}"
+  local port="${CHATOS_LOCAL_DEV_SANDBOX_RUNTIME_PROXY_PORT:-17897}"
+  local log_file pid_file proxy_script spawned_pid
+  if [[ -z "$host_address" || ! "$port" =~ ^[1-9][0-9]*$ || "$port" -gt 65535 ]]; then
+    echo "[ERROR] invalid managed sandbox runtime proxy address: ${host_address}:${port}" >&2
+    return 1
+  fi
+  if [[ -n "$(pid_for_port "$port")" ]]; then
+    echo "[OK] sandbox runtime proxy is already listening on ${host_address}:${port}"
+    return 0
+  fi
+  if ! command -v ruby >/dev/null 2>&1 \
+    || ! ruby -rwebrick -rwebrick/httpproxy -e 'exit 0' >/dev/null 2>&1; then
+    echo "[ERROR] managed sandbox runtime proxy requires Ruby with WEBrick" >&2
+    return 1
+  fi
+
+  log_file="$(log_file_for "$name")"
+  pid_file="$(pid_file_for "$name")"
+  stop_service_pid "$name"
+  : >"$log_file"
+  proxy_script='logger=WEBrick::Log.new($stderr, WEBrick::Log::INFO); server=WEBrick::HTTPProxyServer.new(Port: Integer(ARGV.fetch(1)), BindAddress: ARGV.fetch(0), Logger: logger, AccessLog: []); ["INT", "TERM"].each { |signal| trap(signal) { server.shutdown } }; server.start'
+  spawned_pid="$(
+    spawn_detached "$ROOT_DIR" "$log_file" \
+      ruby -rwebrick -rwebrick/httpproxy -e "$proxy_script" "$host_address" "$port"
+  )"
+  echo "$spawned_pid" >"$pid_file"
+  wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
+}
+
 ensure_config_center_mtls_material() {
   "$ROOT_DIR/scripts/generate-config-center-mtls.sh" "$CONFIG_CENTER_MTLS_DIR"
 }
@@ -255,7 +294,6 @@ valkey_password = os.environ.get("VALKEY_PASSWORD", "change_me_valkey_password")
 valkey_port = os.environ.get("VALKEY_PORT", "6379")
 valkey_url = f"redis://:{valkey_password}@127.0.0.1:{valkey_port}/0"
 desired.update({
-    "task_runner.queue.run_dispatch_mode": "rabbitmq",
     "task_runner.queue.callback_delivery_mode": "rabbitmq",
     "task_runner.queue.rabbitmq_url": rabbitmq_url,
     "task_runner.observability.otlp_endpoint": "http://127.0.0.1:4317",
@@ -552,7 +590,8 @@ ensure_managed_queue_consumers() {
   local rabbitmq_container="${COMPOSE_PROJECT_NAME}-rabbitmq-1"
   local -a required_queues=(
     "mcp_management.async.dispatch"
-    "task_runner.run.dispatch"
+    "cloud_agent.task_runner.runtime"
+    "task_runner.run.post_process"
     "task_runner.callback.delivery"
   )
 
@@ -585,145 +624,6 @@ PY
 
   echo "[ERROR] RabbitMQ managed queues did not acquire consumers within ${timeout_seconds}s" >&2
   printf '%s\n' "$queue_table" >&2
-  return 1
-}
-
-ensure_task_runner_sandbox_base_image() {
-  local base_url="http://127.0.0.1:${SANDBOX_MANAGER_PORT}"
-  local user_service_base_url="http://127.0.0.1:${USER_SERVICE_PORT}"
-  local image_id="${TASK_RUNNER_SANDBOX_BASE_IMAGE_ID:-default}"
-  local feature_list="${CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES:-}"
-  local timeout_seconds="${CHATOS_LOCAL_DEV_SANDBOX_IMAGE_TIMEOUT_SECONDS:-900}"
-  local login_payload login_response access_token
-  local catalog_file job_file jobs_file job_id built_image_id status error elapsed
-  catalog_file="$(mktemp)"
-  job_file="$(mktemp)"
-  jobs_file="$(mktemp)"
-
-  login_payload="$(python3 - <<'PY'
-import json
-import os
-print(json.dumps({
-    "username": os.environ["CHATOS_ADMIN_USERNAME"],
-    "password": os.environ["CHATOS_ADMIN_PASSWORD"],
-}, separators=(",", ":")))
-PY
-  )"
-  if ! login_response="$(
-    curl -fsS \
-      -H "content-type: application/json" \
-      --data "$login_payload" \
-      "$user_service_base_url/api/auth/login"
-  )"; then
-    rm -f "$catalog_file" "$job_file" "$jobs_file"
-    echo "[ERROR] User Service super-admin login failed during sandbox image initialization" >&2
-    return 1
-  fi
-  access_token="$(printf '%s' "$login_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"
-
-  if ! curl -fsS \
-    -H "authorization: Bearer $access_token" \
-    "$base_url/api/sandbox-images" >"$catalog_file"; then
-    rm -f "$catalog_file" "$job_file" "$jobs_file"
-    echo "[ERROR] failed to inspect Sandbox Manager image catalog" >&2
-    return 1
-  fi
-  if python3 - "$catalog_file" "$image_id" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    catalog = json.load(handle)
-image_id = sys.argv[2]
-ready = any(
-    image.get("id") == image_id and image.get("initialized") is True
-    for image in catalog.get("images", [])
-)
-raise SystemExit(0 if ready else 1)
-PY
-  then
-    echo "[INFO] Task Runner sandbox base image is ready: $image_id"
-    rm -f "$catalog_file" "$job_file" "$jobs_file"
-    return 0
-  fi
-
-  if [[ -z "$feature_list" ]]; then
-    rm -f "$catalog_file" "$job_file" "$jobs_file"
-    echo "[ERROR] sandbox base image $image_id is missing and CHATOS_LOCAL_DEV_SANDBOX_BASE_IMAGE_FEATURES is empty" >&2
-    return 1
-  fi
-
-  echo "[INFO] initializing Task Runner sandbox base image: $image_id"
-  if ! python3 - "$feature_list" <<'PY' | curl -fsS \
-    -H "content-type: application/json" \
-    -H "authorization: Bearer $access_token" \
-    --data-binary @- \
-    "$base_url/api/sandbox-images/initialize" >"$job_file"
-import json
-import sys
-
-features = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
-print(json.dumps({"features": features}, separators=(",", ":")))
-PY
-  then
-    rm -f "$catalog_file" "$job_file" "$jobs_file"
-    echo "[ERROR] failed to initialize Sandbox Manager image $image_id" >&2
-    return 1
-  fi
-
-  read -r job_id built_image_id < <(python3 - "$job_file" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    job = json.load(handle)
-print(job.get("id", ""), job.get("image_id", ""))
-PY
-  )
-  if [[ -z "$job_id" || "$built_image_id" != "$image_id" ]]; then
-    rm -f "$catalog_file" "$job_file" "$jobs_file"
-    echo "[ERROR] sandbox feature selection produced $built_image_id instead of configured image $image_id" >&2
-    return 1
-  fi
-
-  elapsed=0
-  while (( elapsed < timeout_seconds )); do
-    if ! curl -fsS \
-      -H "authorization: Bearer $access_token" \
-      "$base_url/api/sandbox-images/jobs" >"$jobs_file"; then
-      rm -f "$catalog_file" "$job_file" "$jobs_file"
-      echo "[ERROR] failed to inspect Sandbox Manager image job $job_id" >&2
-      return 1
-    fi
-    read -r status error < <(python3 - "$jobs_file" "$job_id" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    jobs = json.load(handle)
-job = next((item for item in jobs if item.get("id") == sys.argv[2]), {})
-error = str(job.get("error") or "").replace("\n", " ")
-print(job.get("status", "missing"), error)
-PY
-    )
-    case "$status" in
-      succeeded)
-        echo "[INFO] Task Runner sandbox base image initialized: $image_id"
-        rm -f "$catalog_file" "$job_file" "$jobs_file"
-        return 0
-        ;;
-      failed)
-        rm -f "$catalog_file" "$job_file" "$jobs_file"
-        echo "[ERROR] Sandbox Manager image build failed for $image_id: $error" >&2
-        return 1
-        ;;
-    esac
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-
-  rm -f "$catalog_file" "$job_file" "$jobs_file"
-  echo "[ERROR] timed out waiting for Sandbox Manager image $image_id" >&2
   return 1
 }
 
@@ -787,6 +687,8 @@ start_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  ensure_local_dev_sandbox_runtime_proxy
+  prepare_sandbox_docker_config
   ensure_config_center_mtls_material
   ensure_mcp_management_mtls_material
   ensure_task_runner_mtls_material
@@ -824,9 +726,6 @@ start_all() {
         start_backend "$name" "$service_name" "$package" "$health_path" "$port" "$bin" "$env_overrides"
       fi
     fi
-    if [[ "$name" == "sandbox-manager-backend" ]]; then
-      ensure_task_runner_sandbox_base_image
-    fi
     if [[ "$name" == "task-runner-scheduler" ]]; then
       ensure_managed_queue_consumers
     fi
@@ -843,6 +742,7 @@ stop_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
+  stop_service_pid "sandbox-runtime-proxy"
   cleanup_legacy_local_connector_client_state
   deregister_local_dev_services
   local item name unused port

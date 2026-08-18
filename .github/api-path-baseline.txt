@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=264
-total_endpoint_count=264
+main_backend_endpoint_count=267
+total_endpoint_count=267
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -96,8 +96,7 @@ GET /api/messages/{id}/task-runner/graph
 GET /api/messages/{id}/task-runner/tasks
 GET /api/messages/{message_id}/task-runner/graph/runs/{run_id}
 GET /api/messages/{message_id}/task-runner/runs/{run_id}
-GET /api/messages/{message_id}/task-runner/runs/{run_id}/output/changes
-GET /api/messages/{message_id}/task-runner/runs/{run_id}/output/diff
+GET /api/messages/{message_id}/task-runner/runs/{run_id}/changes
 GET /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/assets/{*asset_path}
 GET /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts
 GET /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts/{artifact_id}
@@ -212,6 +211,8 @@ POST /api/memory/v1/sessions
 POST /api/memory/v1/sessions/{session_id}/messages
 POST /api/memory/v1/sessions/{session_id}/messages/batch
 POST /api/messages
+POST /api/messages/{message_id}/task-runner/runs/{run_id}/integration/retry
+POST /api/messages/{message_id}/task-runner/runs/{run_id}/integration/waive
 POST /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions
 POST /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts
 POST /api/messages/{message_id}/task-runner/runs/{run_id}/retry
@@ -252,6 +253,8 @@ POST /api/terminals/dispatch-command
 POST /api/terminals/{id}/interrupt
 POST /internal/mcp-management/mcp/browser_tools/sessions/{session_id}/close
 POST /internal/mcp-management/mcp/{system_key}
+POST /internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}
+POST /internal/mcp-management/mcp/{system_key}/start
 PUT /api/ai-model-configs/{config_id}
 PUT /api/ai-model-providers/{provider_id}
 PUT /api/ai-model-settings

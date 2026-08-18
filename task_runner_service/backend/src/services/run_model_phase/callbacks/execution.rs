@@ -2,52 +2,20 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use std::time::Instant;
 
 impl RunService {
-    pub(in crate::services) async fn execute_prepared_model_run(
+    pub(in crate::services) async fn prepare_single_model_step(
         &self,
         task: &TaskRecord,
         run: &TaskRunRecord,
         model_config: &ModelConfigRecord,
         prepared_execution: PreparedModelExecution,
-    ) -> TaskRunReport {
-        let mcp_management_runtime_session =
-            prepared_execution.mcp_management_runtime_session.clone();
+    ) -> Result<PreparedSingleModelStep, String> {
         let max_iterations = prepared_execution
             .runtime_config
             .max_iterations
             .unwrap_or(DEFAULT_TASK_RUN_MAX_ITERATIONS);
-        let runtime_settings = match self.effective_task_runner_runtime_settings().await {
-            Ok(settings) => settings,
-            Err(err) => {
-                let report = TaskRunReport::from_ai_report(
-                    task.id.clone(),
-                    run.id.clone(),
-                    Some(model_config.id.clone()),
-                    AiTurnReport::failed(format!(
-                        "failed to resolve Task Runner runtime settings: {err}"
-                    )),
-                );
-                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
-                    .await;
-                return report;
-            }
-        };
-        let supply_chain_policy = match self.effective_node_supply_chain_policy().await {
-            Ok(policy) => policy,
-            Err(err) => {
-                let report = TaskRunReport::from_ai_report(
-                    task.id.clone(),
-                    run.id.clone(),
-                    Some(model_config.id.clone()),
-                    AiTurnReport::failed(format!("failed to resolve supply-chain policy: {err}")),
-                );
-                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
-                    .await;
-                return report;
-            }
-        };
+        let runtime_settings = self.effective_task_runner_runtime_settings().await?;
         let review_policy = TaskExecutionReviewPolicy::new(
             runtime_settings.review_read_only_iterations,
             runtime_settings.review_missing_read_failures,
@@ -62,155 +30,66 @@ impl RunService {
             review_policy,
             task.mcp_config.requires_execution,
             prepared_execution.effective_workspace_dir.as_str(),
-        );
-        let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
-            self.config.default_workspace_dir.as_str(),
-            prepared_execution.effective_workspace_dir.as_str(),
-        );
-        let execution_timeout = match self.effective_execution_timeout().await {
-            Ok(timeout) => timeout,
-            Err(err) => {
-                let report = TaskRunReport::from_ai_report(
-                    task.id.clone(),
-                    run.id.clone(),
-                    Some(model_config.id.clone()),
-                    AiTurnReport::failed(format!("failed to resolve execution timeout: {err}")),
-                );
-                close_mcp_management_runtime_session(mcp_management_runtime_session, task, run)
-                    .await;
-                return report;
-            }
-        };
-        let mut run_spec = prepared_execution.run_spec;
-        if task.mcp_config.requires_execution {
-            run_spec.prefixed_input_items.push(
-                crate::services::run_model_phase::supply_chain::policy_guidance(
-                    &supply_chain_policy,
-                ),
-            );
-        }
-        let agent = prepared_execution.agent;
-        let runtime_config = prepared_execution.runtime_config;
-        let mcp_builder = prepared_execution.mcp_builder;
-        let runtime_options = runtime_execution.runtime_options;
-        let mut report = match tokio::time::timeout(execution_timeout, async {
-            let runtime_init_started_at = Instant::now();
-            let runtime = match runtime_config
-                .build_runtime_with_mcp_builder_and_memory_http_client(
-                    mcp_builder,
-                    self.config.memory_engine_http_client.clone(),
-                )
-                .await
-            {
-                Ok(runtime) => runtime,
-                Err(err) => {
-                    warn!(
-                        run_id = run.id.as_str(),
-                        task_id = task.id.as_str(),
-                        model_config_id = model_config.id.as_str(),
-                        runtime_init_ms = runtime_init_started_at.elapsed().as_millis(),
-                        error = err.as_str(),
-                        "task runner runtime init failed"
-                    );
-                    return TaskRunReport::from_ai_report(
-                        task.id.clone(),
-                        run.id.clone(),
-                        Some(model_config.id.clone()),
-                        AiTurnReport::failed(
-                            path_redactor
-                                .redact_text(format!("runtime init failed: {err}").as_str()),
-                        ),
-                    );
-                }
-            };
-            info!(
-                run_id = run.id.as_str(),
-                task_id = task.id.as_str(),
-                model_config_id = model_config.id.as_str(),
-                runtime_init_ms = runtime_init_started_at.elapsed().as_millis(),
-                "task runner runtime initialized"
-            );
-            self.persist_mcp_runtime_snapshot(task, run, &runtime_config, &runtime)
-                .await;
-            append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
-            agent
-                .run_report_with_runtime_options(
-                    runtime_config.clone(),
-                    run_spec.clone(),
-                    &runtime,
-                    runtime_options.clone(),
-                )
-                .await
-        })
-        .await
-        {
-            Ok(report) => report,
-            Err(_) => TaskRunReport::from_ai_report(
-                task.id.clone(),
-                run.id.clone(),
-                Some(model_config.id.clone()),
-                AiTurnReport::failed(format!(
-                    "execution timed out after {} seconds",
-                    execution_timeout.as_secs()
-                )),
-            ),
-        };
-        if report.is_completed() {
-            report.execution_outcome = runtime_execution.execution_outcome.lock().clone();
-        }
-        if task.mcp_config.requires_execution {
-            let supply_chain_report = runtime_execution
-                .supply_chain_evidence
-                .lock()
-                .evaluate(&supply_chain_policy);
-            if supply_chain_report.applicable {
-                apply_supply_chain_outcome_gate(&mut report, &supply_chain_report);
-                self.store.append_run_event_sync(TaskRunEventRecord::new(
-                    run.id.clone(),
-                    "supply_chain_audit",
-                    Some(match supply_chain_report.status {
-                        "passed" => "Node.js 供应链审计通过".to_string(),
-                        _ => "Node.js 供应链审计未通过".to_string(),
-                    }),
-                    Some(supply_chain_report.event_payload()),
-                ));
-            }
-        }
-        self.unregister_runtime_abort_token(run.id.as_str());
-        flush_pending_stream_event(
-            &self.store,
-            run.id.as_str(),
-            &runtime_execution.pending_stream_event,
-            Some(&path_redactor),
-        );
-        if report.is_aborted() && self.task_is_already_succeeded(task.id.as_str()).await {
-            let content = self
-                .store
-                .get_task(&task.id)
-                .await
-                .ok()
+            task.input_payload
+                .as_ref()
+                .and_then(|payload| payload.get("acceptance_criteria"))
+                .and_then(Value::as_array)
+                .into_iter()
                 .flatten()
-                .and_then(|task| task.result_summary)
-                .unwrap_or_else(|| "任务已完成。".to_string());
-            report.status = chatos_ai_runtime::AiTurnStatus::Completed;
-            report.execution_outcome = Some(chatos_ai_runtime::TaskExecutionOutcome::succeeded(
-                content.clone(),
-                vec!["task status was already persisted as succeeded".to_string()],
-            ));
-            report.content = Some(path_redactor.redact_text(content.as_str()));
-            report.error = None;
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|criterion| !criterion.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+        );
+        let supply_chain_policy = if task.mcp_config.requires_execution {
+            Some(self.effective_node_supply_chain_policy().await?)
+        } else {
+            None
+        };
+        if let Some(policy) = supply_chain_policy.as_ref() {
+            if let Some(inherited) =
+                super::supply_chain::SupplyChainEvidenceState::inherit_for_run(run, policy)
+            {
+                *runtime_execution.supply_chain_evidence.lock() = inherited;
+            }
         }
-        close_mcp_management_runtime_session(mcp_management_runtime_session, task, run).await;
-        report
-    }
-
-    async fn task_is_already_succeeded(&self, task_id: &str) -> bool {
-        self.store
-            .get_task(task_id)
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|task| task.status == TaskStatus::Succeeded)
+        let runtime_config = prepared_execution.runtime_config;
+        let runtime = runtime_config
+            .build_runtime_with_mcp_builder_and_memory_http_client(
+                prepared_execution.mcp_builder,
+                self.config.memory_engine_http_client.clone(),
+            )
+            .await?;
+        self.persist_mcp_runtime_snapshot(task, run, &runtime_config, &runtime)
+            .await;
+        let mut run_spec = prepared_execution.run_spec;
+        if task.mcp_config.requires_execution
+            && run_spec.model_config.previous_response_id.is_none()
+        {
+            let policy = supply_chain_policy
+                .as_ref()
+                .expect("execution supply-chain policy was loaded");
+            run_spec
+                .prefixed_input_items
+                .push(super::supply_chain::policy_guidance(policy));
+        }
+        append_external_mcp_runtime_notice(&mut run_spec, task, &runtime);
+        Ok(PreparedSingleModelStep {
+            agent: prepared_execution.agent,
+            run_spec,
+            runtime,
+            runtime_options: runtime_execution.runtime_options,
+            mcp_runtime_session_ref: prepared_execution
+                .mcp_management_runtime_session
+                .session_id()
+                .to_string(),
+            mcp_command_queue: prepared_execution.mcp_command_queue,
+            lifecycle_state: runtime_execution.lifecycle_state,
+            progress: runtime_execution.progress,
+            pending_stream_event: runtime_execution.pending_stream_event,
+            supply_chain_evidence: runtime_execution.supply_chain_evidence,
+        })
     }
 
     async fn persist_mcp_runtime_snapshot(
@@ -273,7 +152,7 @@ impl RunService {
     }
 }
 
-fn apply_supply_chain_outcome_gate(
+pub(in crate::services) fn apply_supply_chain_outcome_gate(
     report: &mut TaskRunReport,
     supply_chain: &crate::services::run_model_phase::supply_chain::SupplyChainAuditReport,
 ) {
@@ -304,6 +183,7 @@ mod supply_chain_gate_tests {
     use crate::services::run_model_phase::supply_chain::{
         NodeVulnerabilityCounts, SupplyChainAuditReport,
     };
+    use chatos_ai_runtime::AiTurnReport;
 
     fn report(status: &'static str, blocking_reasons: Vec<String>) -> SupplyChainAuditReport {
         SupplyChainAuditReport {
@@ -341,6 +221,8 @@ mod supply_chain_gate_tests {
                 finish_reason: Some("stop".to_string()),
                 usage: None,
                 response_id: None,
+                response_output_items: Vec::new(),
+                request_input_items: Vec::new(),
             }),
         );
         report.execution_outcome = Some(chatos_ai_runtime::TaskExecutionOutcome::succeeded(
@@ -394,23 +276,6 @@ mod supply_chain_gate_tests {
             .verification_evidence
             .iter()
             .any(|evidence| evidence.contains("high=0, critical=0")));
-    }
-}
-
-async fn close_mcp_management_runtime_session(
-    runtime_session: McpManagementRuntimeSessionHandle,
-    task: &TaskRecord,
-    run: &TaskRunRecord,
-) {
-    let mcp_session_id = runtime_session.session_id().to_string();
-    if let Err(error) = runtime_session.close().await {
-        warn!(
-            task_id = task.id.as_str(),
-            run_id = run.id.as_str(),
-            mcp_session_id,
-            error = %error,
-            "close Task Runner MCP Management runtime session failed"
-        );
     }
 }
 
@@ -482,5 +347,4 @@ fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool
                 chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
             )
             .server_name
-        && info.server_name != crate::services::sandbox_runtime::SANDBOX_MCP_SERVER_NAME
 }

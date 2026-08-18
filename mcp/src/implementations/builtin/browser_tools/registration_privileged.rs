@@ -102,7 +102,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |_args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_route_clear_with_context(
                         ctx,
@@ -130,7 +130,7 @@ impl BrowserToolsService {
                 "additionalProperties": false
             }),
             async_browser_text_tool_handler(move |args, browser_context| {
-                let ctx = bound.clone();
+                let ctx = bound.for_tool_call(&browser_context);
                 Ok(async move {
                     browser_cdp_command_with_context(
                         ctx,

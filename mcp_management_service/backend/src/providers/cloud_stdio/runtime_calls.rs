@@ -14,6 +14,7 @@ use super::{
     CloudStdioProviderBinding, ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome,
     ResolvedMcpRoute, RuntimeSessionSnapshot, SandboxExecutionTarget,
 };
+use crate::providers::managed_tool_call_params;
 
 impl CloudStdioProvider {
     pub(super) async fn list_tools(
@@ -102,7 +103,7 @@ impl CloudStdioProvider {
                     "Cloud stdio MCP runtime binding is missing",
                 )
             })?;
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -142,7 +143,7 @@ impl CloudStdioProvider {
         arguments: Value,
         invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -164,10 +165,11 @@ impl CloudStdioProvider {
             plugin_artifact: binding.plugin_artifact.as_ref(),
             plugin_workspace_write: binding.plugin_artifact.is_some() && binding.allow_writes,
             method: METHOD_TOOLS_CALL,
-            params: json!({
-                "name": original_tool_name,
-                "arguments": arguments,
-            }),
+            params: managed_tool_call_params(
+                original_tool_name,
+                arguments,
+                snapshot.tool_result_max_chars,
+            ),
             expires_at_unix: snapshot.expires_at_unix,
             timeout_ms: self.request_timeout.as_millis().min(u128::from(u64::MAX)) as u64,
         };
@@ -214,7 +216,7 @@ impl CloudStdioProvider {
                     "Cloud stdio MCP runtime binding is missing",
                 )
             })?;
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -238,7 +240,7 @@ impl CloudStdioProvider {
         resource_id: &str,
         invocation_id: &str,
     ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let target = snapshot.sandbox_target.as_ref().ok_or_else(|| {
+        let target = snapshot.sandbox_target().ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Cloud stdio MCP runtime session has no sandbox target",
             )
@@ -282,7 +284,7 @@ impl CloudStdioProvider {
     }
 
     pub(in crate::providers) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
-        let Some(target) = snapshot.sandbox_target.as_ref() else {
+        let Some(target) = snapshot.sandbox_target() else {
             return;
         };
         self.close_bindings(

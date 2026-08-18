@@ -42,13 +42,17 @@ pub(crate) async fn call_cloud_browser_tool(
     binding: CloudBrowserRuntimeBinding,
     name: &str,
     arguments: Value,
+    tool_result_max_chars: Option<usize>,
 ) -> Result<Value, String> {
     let runtime = get_or_create_runtime(binding).await?;
     let _guard = runtime.call_lock.lock().await;
-    runtime.service.call_tool(
+    runtime.service.call_tool_with_context(
         name,
         arguments,
-        Some(runtime.binding.source_session_id.as_str()),
+        chatos_mcp::BrowserToolCallContext::from_conversation_id(Some(
+            runtime.binding.source_session_id.as_str(),
+        ))
+        .with_tool_result_max_chars(tool_result_max_chars),
     )
 }
 

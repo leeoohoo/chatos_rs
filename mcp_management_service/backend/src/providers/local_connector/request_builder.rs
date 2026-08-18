@@ -10,7 +10,10 @@ use crate::trace_context::InternalTraceContextExt;
 use super::binding::resolve_binding;
 use super::{
     LocalConnectorProvider, ProviderCallError, CALLER_SERVICE, LOCAL_CONNECTOR_PROJECT_ID_HEADER,
-    MCP_RELAY_SCOPE, TOKEN_AUDIENCE,
+    MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER, MCP_MANAGEMENT_RUN_ID_HEADER,
+    MCP_MANAGEMENT_SCOPE_GENERATION_HEADER, MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER,
+    MCP_MANAGEMENT_SESSION_ID_HEADER, MCP_MANAGEMENT_TASK_ID_HEADER, MCP_RELAY_SCOPE,
+    TOKEN_AUDIENCE,
 };
 
 impl LocalConnectorProvider {
@@ -59,7 +62,7 @@ impl LocalConnectorProvider {
                 query.append_pair("cwd", relative_root);
             }
         }
-        Ok(self
+        let mut request = self
             .http
             .post(url)
             .header("x-local-connector-caller", CALLER_SERVICE)
@@ -76,6 +79,27 @@ impl LocalConnectorProvider {
                 LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
                 binding.enabled_builtin_kinds,
             )
-            .with_internal_trace_context())
+            .header(
+                MCP_MANAGEMENT_SESSION_ID_HEADER,
+                snapshot.session_id.as_str(),
+            )
+            .header(
+                MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER,
+                snapshot.expires_at_unix.to_string(),
+            )
+            .with_internal_trace_context();
+        if let Some(run_id) = snapshot.run_id.as_deref() {
+            request = request.header(MCP_MANAGEMENT_RUN_ID_HEADER, run_id);
+        }
+        if let Some(execution_group_id) = snapshot.execution_group_id.as_deref() {
+            request = request.header(MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER, execution_group_id);
+        }
+        if let Some(generation) = snapshot.execution_scope_generation {
+            request = request.header(MCP_MANAGEMENT_SCOPE_GENERATION_HEADER, generation);
+        }
+        if let Some(task_id) = snapshot.task_id.as_deref() {
+            request = request.header(MCP_MANAGEMENT_TASK_ID_HEADER, task_id);
+        }
+        Ok(request)
     }
 }

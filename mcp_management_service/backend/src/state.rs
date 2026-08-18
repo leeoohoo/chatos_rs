@@ -9,8 +9,9 @@ use crate::providers::{
 };
 use crate::routing::RoutingEngine;
 use crate::runtime::{
-    RuntimeGrantService, RuntimeInvocationQuota, RuntimeInvocationQuotaLimits,
-    RuntimeInvocationStore, RuntimeSessionCacheLimits, RuntimeSessionStore,
+    RuntimeExecutionScopeStore, RuntimeGrantService, RuntimeInvocationQuota,
+    RuntimeInvocationQuotaLimits, RuntimeInvocationStore, RuntimeSessionCacheLimits,
+    RuntimeSessionCloseStore, RuntimeSessionStore, RuntimeToolBatchStore,
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 #[cfg(not(test))]
@@ -44,7 +45,10 @@ pub struct AppState {
     pub providers: ProviderDispatcher,
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
+    pub runtime_session_closes: RuntimeSessionCloseStore,
+    pub runtime_execution_scopes: RuntimeExecutionScopeStore,
     pub runtime_invocations: RuntimeInvocationStore,
+    pub runtime_tool_batches: RuntimeToolBatchStore,
     pub async_tool_dispatch: AsyncToolDispatch,
 }
 
@@ -73,6 +77,7 @@ impl AppState {
             config.project_service_http_client.clone(),
             config.project_service_base_url.clone(),
             config.project_service_internal_api_secret.clone(),
+            config.project_service_tool_timeout,
             TaskRunnerProviderConfig {
                 http: task_runner_http_client(&config)?,
                 base_url: config.task_runner_service_base_url.clone(),
@@ -132,6 +137,18 @@ impl AppState {
                 }
             }
         };
+        let runtime_session_closes = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => RuntimeSessionCloseStore::connect(database_url).await?,
+            None => RuntimeSessionCloseStore::memory(),
+        };
+        let runtime_execution_scopes = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => RuntimeExecutionScopeStore::connect(database_url).await?,
+            None => RuntimeExecutionScopeStore::memory(),
+        };
+        let runtime_tool_batches = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => RuntimeToolBatchStore::connect(database_url).await?,
+            None => RuntimeToolBatchStore::memory(),
+        };
         let async_tool_dispatch =
             AsyncToolDispatch::new(config.async_tool_dispatch_topology.clone());
         let state = Self {
@@ -145,13 +162,12 @@ impl AppState {
             project_context_client,
             providers,
             runtime_sessions,
+            runtime_session_closes,
+            runtime_execution_scopes,
             runtime_invocations,
+            runtime_tool_batches,
             async_tool_dispatch,
         };
-        state
-            .async_tool_dispatch
-            .start_local_worker(state.clone())
-            .await?;
         Ok(state)
     }
 }

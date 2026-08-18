@@ -150,6 +150,7 @@ where
         provider_error: finalized.provider_error,
         usage: finalized.usage,
         response_id: finalized.response_id,
+        response_output_items: finalized.response_output_items,
     })
 }
 

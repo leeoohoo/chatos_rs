@@ -116,37 +116,6 @@ fn legacy_harness_endpoint_cannot_change_plan_capabilities() {
 }
 
 #[test]
-fn planning_task_never_requires_execution_sandbox() {
-    let mut task = sample_task(
-        TASK_PROFILE_CHATOS_PLAN,
-        vec!["CodeMaintainerRead".to_string(), "AskUser".to_string()],
-    );
-    task.mcp_config.requires_execution = false;
-    task.mcp_config
-        .ephemeral_http_servers
-        .push(harness_code_server());
-
-    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
-        &task, true
-    ));
-    assert!(!crate::services::sandbox_runtime::task_requires_sandbox(
-        &task, false
-    ));
-}
-
-#[test]
-fn execution_task_with_write_capability_requires_sandbox() {
-    let task = sample_task(
-        TASK_PROFILE_DEFAULT,
-        vec!["CodeMaintainerWrite".to_string()],
-    );
-
-    assert!(crate::services::sandbox_runtime::task_requires_sandbox(
-        &task, true
-    ));
-}
-
-#[test]
 fn workspace_base_check_accepts_relative_child_under_relative_base() {
     assert!(ensure_workspace_is_inside_base(".", ".\\users\\subject\\workspaces\\default").is_ok());
 }

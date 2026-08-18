@@ -18,6 +18,8 @@ impl TaskService {
             config,
             store,
             plugin_management_client: None,
+            #[cfg(test)]
+            allow_unresolved_plugin_policy_for_test: false,
         }
     }
 
@@ -30,7 +32,15 @@ impl TaskService {
             config,
             store,
             plugin_management_client: Some(plugin_management_client),
+            #[cfg(test)]
+            allow_unresolved_plugin_policy_for_test: false,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_unresolved_plugin_policy_for_test(mut self) -> Self {
+        self.allow_unresolved_plugin_policy_for_test = true;
+        self
     }
 
     pub fn resolve_task_mcp(&self, task: &TaskRecord) -> TaskMcpResolutionResponse {

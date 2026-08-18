@@ -41,12 +41,14 @@ const SERVER_NAME: &str = "harness_code";
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const TASK_RUNNER_PROJECT_ID_HEADER: &str = "x-task-runner-project-id";
 const MCP_MANAGEMENT_RUN_ID_HEADER: &str = "x-mcp-management-run-id";
+const MCP_MANAGEMENT_BRANCH_REF_HEADER: &str = "x-mcp-management-harness-branch-ref";
 const DEFAULT_MAX_WRITE_BYTES: i64 = 5 * 1024 * 1024;
 
 #[derive(Debug)]
 struct HarnessMcpContext {
     project_id: String,
     repo_path: String,
+    branch_ref: String,
     access: HarnessApiAccessResponse,
     client: reqwest::Client,
     enabled_tools: HostCapabilityPolicy,
@@ -97,7 +99,14 @@ pub(in crate::api) async fn harness_project_mcp_entrypoint(
             message,
         ));
     }
-    let response = handle_harness_jsonrpc(state, project_id.clone(), headers, request).await;
+    let response = handle_harness_jsonrpc(
+        state,
+        project_id.clone(),
+        identity.caller_service.as_str(),
+        headers,
+        request,
+    )
+    .await;
     let outcome = if response.error.is_some() {
         "failed"
     } else {
@@ -170,12 +179,14 @@ fn record_harness_write_audit(
 async fn handle_harness_jsonrpc(
     state: AppState,
     project_id: String,
+    caller_service: &str,
     headers: HeaderMap,
     request: JsonRpcRequest,
 ) -> JsonRpcResponse {
     let id = request.id.clone().unwrap_or(Value::Null);
     let enabled_tools = enabled_harness_tools_from_headers(&headers);
     let run_id = header_text(&headers, MCP_MANAGEMENT_RUN_ID_HEADER);
+    let branch_ref = header_text(&headers, MCP_MANAGEMENT_BRANCH_REF_HEADER);
     let result = match request.method.as_str() {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
@@ -189,12 +200,23 @@ async fn handle_harness_jsonrpc(
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tool_definitions(&enabled_tools) })),
-        "tools/call" => match build_harness_mcp_context(state, project_id, enabled_tools, run_id)
+        "tools/call" => {
+            match build_harness_mcp_context(
+                state,
+                project_id,
+                caller_service,
+                enabled_tools,
+                run_id,
+                branch_ref,
+            )
             .await
-        {
-            Ok(ctx) => call_harness_tool(&ctx, request.params.unwrap_or_else(|| json!({}))).await,
-            Err(err) => Err(err),
-        },
+            {
+                Ok(ctx) => {
+                    call_harness_tool(&ctx, request.params.unwrap_or_else(|| json!({}))).await
+                }
+                Err(err) => Err(err),
+            }
+        }
         method => Err(format!("unsupported MCP method: {method}")),
     };
     match result {
@@ -219,11 +241,16 @@ async fn handle_harness_jsonrpc(
 async fn build_harness_mcp_context(
     state: AppState,
     project_id: String,
+    caller_service: &str,
     enabled_tools: HostCapabilityPolicy,
     run_id: Option<String>,
+    branch_ref: Option<String>,
 ) -> Result<HarnessMcpContext, String> {
     if !enabled_tools.code_read && !enabled_tools.code_write {
-        return Err("CodeMaintainer has no enabled project workspace capabilities".to_string());
+        return Err("project workspace has no enabled capabilities".to_string());
+    }
+    if enabled_tools.terminal {
+        return Err("TerminalController cannot be routed to the Harness provider".to_string());
     }
     let project = state
         .store
@@ -239,6 +266,22 @@ async fn build_harness_mcp_context(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "project source workspace is not available".to_string())?
         .to_string();
+    let manual_project_access = caller_service == CHATOS_CALLER;
+    let default_branch = project
+        .harness_default_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+    let branch_ref =
+        resolve_harness_branch_ref(default_branch, branch_ref.as_deref(), manual_project_access)?;
+    validate_harness_branch_target(
+        &project,
+        run_id.as_deref(),
+        branch_ref.as_str(),
+        enabled_tools.code_write,
+        manual_project_access,
+    )?;
     let owner_user_id = project_owner_user_id(&project)?;
     let access = fetch_harness_api_access(&state, owner_user_id.as_str()).await?;
     ensure_harness_space_matches(&project, &access)?;
@@ -246,10 +289,12 @@ async fn build_harness_mcp_context(
         state.config.user_service_request_timeout,
     ))
     .map_err(|err| format!("build project workspace tool client failed: {err}"))?;
-    let session_store = store_for_project(project_id.as_str(), repo_path.as_str());
+    let session_store =
+        store_for_project(project_id.as_str(), repo_path.as_str(), branch_ref.as_str());
     Ok(HarnessMcpContext {
         project_id,
         repo_path,
+        branch_ref,
         access,
         client,
         enabled_tools,
@@ -276,6 +321,76 @@ fn ensure_harness_project_ready(project: &ProjectRecord) -> Result<(), String> {
         .is_none()
     {
         return Err("project source workspace is not available".to_string());
+    }
+    Ok(())
+}
+
+fn validate_harness_branch_target(
+    project: &ProjectRecord,
+    run_id: Option<&str>,
+    branch_ref: &str,
+    code_write: bool,
+    manual_project_access: bool,
+) -> Result<(), String> {
+    let default_branch = project
+        .harness_default_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+    validate_harness_branch_ref(
+        default_branch,
+        run_id,
+        branch_ref,
+        code_write,
+        manual_project_access,
+    )
+}
+
+fn resolve_harness_branch_ref(
+    default_branch: &str,
+    requested_branch_ref: Option<&str>,
+    manual_project_access: bool,
+) -> Result<String, String> {
+    if let Some(branch_ref) = requested_branch_ref
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(branch_ref.to_string());
+    }
+    if manual_project_access {
+        return Ok(default_branch.to_string());
+    }
+    Err("Harness MCP requires a frozen branch target".to_string())
+}
+
+fn validate_harness_branch_ref(
+    default_branch: &str,
+    run_id: Option<&str>,
+    branch_ref: &str,
+    code_write: bool,
+    manual_project_access: bool,
+) -> Result<(), String> {
+    if branch_ref == default_branch {
+        return if code_write && !manual_project_access {
+            Err("Harness write capability requires a Task Run branch".to_string())
+        } else {
+            Ok(())
+        };
+    }
+    let run_id = run_id
+        .map(str::trim)
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        })
+        .ok_or_else(|| "Harness run branch requires a valid Task Run id".to_string())?;
+    let expected = format!("chatos/runs/{run_id}");
+    if branch_ref != expected {
+        return Err("Harness branch target does not belong to this Task Run".to_string());
     }
     Ok(())
 }
@@ -582,5 +697,41 @@ mod tests {
             None
         );
         assert_eq!(requested_harness_write_tool(&request("unknown")), None);
+    }
+
+    #[test]
+    fn task_runtime_write_requires_run_branch_but_manual_project_edits_use_default_branch() {
+        assert!(validate_harness_branch_ref("main", Some("run-1"), "main", false, false).is_ok());
+        assert!(validate_harness_branch_ref("main", Some("run-1"), "main", true, false).is_err());
+        assert!(validate_harness_branch_ref("main", None, "main", true, true).is_ok());
+        assert!(validate_harness_branch_ref(
+            "main",
+            Some("run-1"),
+            "chatos/runs/run-1",
+            true,
+            false,
+        )
+        .is_ok());
+        assert!(validate_harness_branch_ref(
+            "main",
+            Some("run-1"),
+            "chatos/runs/run-2",
+            false,
+            false,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn only_manual_project_access_can_derive_the_default_branch() {
+        assert_eq!(
+            resolve_harness_branch_ref("main", None, true).unwrap(),
+            "main"
+        );
+        assert!(resolve_harness_branch_ref("main", None, false).is_err());
+        assert_eq!(
+            resolve_harness_branch_ref("main", Some("chatos/runs/run-1"), false).unwrap(),
+            "chatos/runs/run-1"
+        );
     }
 }

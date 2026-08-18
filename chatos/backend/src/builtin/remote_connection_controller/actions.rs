@@ -106,7 +106,7 @@ pub(super) async fn run_command_with_context(
         .clamp(1, ctx.max_command_timeout_seconds);
     let output_limit = max_output_chars
         .unwrap_or(ctx.max_output_chars)
-        .clamp(128, ctx.max_output_chars.max(128));
+        .clamp(1, ctx.max_output_chars.max(1));
 
     let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
     let output = run_ssh_command(

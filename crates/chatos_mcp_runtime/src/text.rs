@@ -13,11 +13,31 @@ const MODEL_INPUT_MAX_IMAGES: usize = 2;
 const MODEL_INPUT_MAX_DECODED_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn to_text_and_structured_result(result: &Value) -> (String, Option<Value>) {
-    to_text_and_structured_result_inner(result, false)
+    to_text_and_structured_result_inner(result, false, tool_result_text_max_chars())
 }
 
 pub fn to_text_and_structured_result_with_transient(result: &Value) -> (String, Option<Value>) {
-    to_text_and_structured_result_inner(result, true)
+    to_text_and_structured_result_inner(result, true, tool_result_text_max_chars())
+}
+
+pub fn to_text_and_structured_result_with_transient_limit(
+    result: &Value,
+    max_chars: usize,
+) -> (String, Option<Value>) {
+    to_text_and_structured_result_inner(result, true, max_chars.max(1))
+}
+
+/// Return the innermost MCP structured payload.
+///
+/// Providers and transports may independently wrap a tool result in
+/// `_structured_result`. Keeping the unwrapping here prevents the synchronous,
+/// asynchronous and recovery paths from interpreting the same result
+/// differently.
+pub fn structured_result_payload(mut result: &Value) -> &Value {
+    while let Some(payload) = result.get("_structured_result") {
+        result = payload;
+    }
+    result
 }
 
 pub(crate) fn take_transient_model_input(
@@ -32,8 +52,12 @@ pub(crate) fn take_transient_model_input(
 fn to_text_and_structured_result_inner(
     result: &Value,
     include_transient: bool,
+    max_chars: usize,
 ) -> (String, Option<Value>) {
-    let mut structured_result = result.get("_structured_result").cloned();
+    let mut structured_result = result
+        .get("_structured_result")
+        .map(structured_result_payload)
+        .cloned();
     if include_transient {
         if let Some(items) = validated_model_input_images(result.get(MODEL_INPUT_FIELD)) {
             let structured =
@@ -67,7 +91,7 @@ fn to_text_and_structured_result_inner(
     };
 
     (
-        truncate_tool_text(raw.as_str(), tool_result_text_max_chars()),
+        truncate_tool_text(raw.as_str(), max_chars),
         structured_result,
     )
 }
@@ -206,5 +230,41 @@ mod tests {
             let (_, mut structured) = to_text_and_structured_result_with_transient(&payload);
             assert!(take_transient_model_input(&mut structured).is_none());
         }
+    }
+
+    #[test]
+    fn explicit_text_limit_overrides_the_legacy_environment_default() {
+        let payload = json!({
+            "content": [{"type": "text", "text": "x".repeat(20_000)}]
+        });
+
+        let (text, _) = to_text_and_structured_result_with_transient_limit(&payload, 40_000);
+
+        assert_eq!(text.chars().count(), 20_000);
+        assert!(!text.contains("...[truncated"));
+    }
+
+    #[test]
+    fn nested_structured_result_wrappers_are_fully_unwrapped() {
+        let payload = json!({
+            "content": [{"type": "text", "text": "completed"}],
+            "_structured_result": {
+                "_structured_result": {
+                    "_structured_result": {
+                        "changed": true,
+                        "sha256": "abc"
+                    }
+                }
+            }
+        });
+
+        let (text, structured) = to_text_and_structured_result(&payload);
+
+        assert_eq!(text, "completed");
+        assert_eq!(structured, Some(json!({"changed": true, "sha256": "abc"})));
+        assert_eq!(
+            structured_result_payload(&payload),
+            &json!({"changed": true, "sha256": "abc"})
+        );
     }
 }

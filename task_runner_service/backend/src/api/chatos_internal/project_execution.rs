@@ -90,22 +90,6 @@ pub(super) async fn confirm_chatos_project_execution(
     let already_confirmed = tasks
         .iter()
         .any(|task| task.last_run_id.is_some() || task.status != TaskStatus::Ready);
-    if !already_confirmed {
-        for task in tasks
-            .iter()
-            .filter(|task| task.mcp_config.requires_execution)
-        {
-            state
-                .run_service
-                .validate_sandbox_route_for_task(task)
-                .await
-                .map_err(|error| {
-                    InternalApiError::conflict(format!(
-                        "project sandbox environment must be ready before execution: {error}"
-                    ))
-                })?;
-        }
-    }
     let started_runs = if already_confirmed {
         let mut existing_runs = Vec::new();
         for run_id in tasks.iter().filter_map(|task| task.last_run_id.as_deref()) {
@@ -367,28 +351,6 @@ pub(super) async fn retire_chatos_project_execution(
             )));
         }
     }
-    let mut cleaned_artifacts = Vec::new();
-    for task in &tasks {
-        let runs = state
-            .run_service
-            .list_runs(Some(task.id.as_str()))
-            .await
-            .map_err(InternalApiError::internal)?;
-        for run in &runs {
-            state
-                .run_service
-                .release_sandboxes_for_terminal_run(run)
-                .await
-                .map_err(InternalApiError::internal)?;
-            cleaned_artifacts.extend(
-                state
-                    .run_service
-                    .cleanup_harness_artifacts_for_run(run)
-                    .await
-                    .map_err(InternalApiError::internal)?,
-            );
-        }
-    }
     let mut deleted_task_ids = Vec::new();
     for task in &tasks {
         if state
@@ -407,7 +369,6 @@ pub(super) async fn retire_chatos_project_execution(
         "source_session_id": source_session_id,
         "source_user_message_id": source_user_message_id,
         "deleted_task_ids": deleted_task_ids,
-        "cleaned_artifacts": cleaned_artifacts,
     }));
     audit.succeeded();
     Ok(response)

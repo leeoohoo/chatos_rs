@@ -5,10 +5,14 @@ use super::*;
 use crate::mcp_server::support::{
     create_model_config_schema, create_project_execution_tasks_schema,
     create_tasks_with_prerequisites_schema, update_model_config_schema,
+    validate_create_project_execution_tasks_arguments,
 };
 use crate::mcp_server::PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE;
-use crate::mcp_server::{reject_ai_runtime_config, support::remove_internal_task_fields};
+use crate::mcp_server::{
+    reject_ai_runtime_config, support::remove_internal_task_fields, CreateProjectExecutionTasksArgs,
+};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -57,14 +61,14 @@ fn model_config_thinking_level_schema_is_enum_choice() {
 }
 
 #[test]
-fn planner_task_creation_schemas_require_explicit_task_nature() {
+fn task_creation_schemas_leave_task_nature_to_request_context() {
     let create = create_task_schema();
-    assert!(create.pointer("/properties/is_planning_task").is_some());
+    assert!(create.pointer("/properties/is_planning_task").is_none());
 
     let batch = create_tasks_with_prerequisites_schema();
     assert!(batch
         .pointer("/properties/tasks/items/properties/is_planning_task")
-        .is_some());
+        .is_none());
 
     let project = create_project_execution_tasks_schema();
     assert!(project.pointer("/properties/execution_group_id").is_none());
@@ -73,7 +77,7 @@ fn planner_task_creation_schemas_require_explicit_task_nature() {
         .is_none());
     assert!(project
         .pointer("/properties/tasks/items/properties/requires_execution")
-        .is_none());
+        .is_some());
     let required = project
         .pointer("/properties/tasks/items/required")
         .and_then(|value| value.as_array())
@@ -81,6 +85,98 @@ fn planner_task_creation_schemas_require_explicit_task_nature() {
     assert!(!required
         .iter()
         .any(|value| value.as_str() == Some("is_planning_task")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("requires_execution")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
+    assert!(project
+        .pointer("/properties/tasks/items/properties/owned_paths")
+        .is_some());
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("owned_paths")));
+}
+
+#[test]
+fn project_execution_schema_example_matches_the_wire_contract() {
+    let schema = create_project_execution_tasks_schema();
+    let task = schema
+        .pointer("/properties/tasks/items/examples/0")
+        .cloned()
+        .expect("project execution task example");
+    let arguments = json!({
+        "project_id": "project-1",
+        "requirement_id": "requirement-1",
+        "tasks": [task]
+    });
+
+    validate_create_project_execution_tasks_arguments(&arguments)
+        .expect("schema example must pass aggregate validation");
+    serde_json::from_value::<CreateProjectExecutionTasksArgs>(arguments)
+        .expect("schema example must decode through the wire type");
+}
+
+#[test]
+fn project_execution_argument_validation_reports_all_schema_errors_once() {
+    let error = validate_create_project_execution_tasks_arguments(&json!({
+        "project_id": "project-1",
+        "unknown_root": true,
+        "tasks": [{
+            "ref": "task-1",
+            "project_task_id": "project-task-1",
+            "title": "",
+            "objective": "implement",
+            "acceptance_criteria": "done",
+            "task_role": "quality",
+            "requires_execution": "yes",
+            "enabled_builtin_kinds": [],
+            "owned_paths": []
+        }]
+    }))
+    .expect_err("invalid batch must be rejected");
+
+    for expected in [
+        "arguments.unknown_root 是未知字段",
+        "requirement_id 缺失",
+        "tasks[0].ref 是未知字段",
+        "tasks[0].client_ref 缺失",
+        "tasks[0].project_task_ref 缺失",
+        "tasks[0].title 不能为空",
+        "tasks[0].acceptance_criteria 必须是字符串数组",
+        "tasks[0].task_role 必须是 implementation 或 verification",
+        "tasks[0].requires_execution 必须是布尔值",
+    ] {
+        assert!(
+            error.contains(expected),
+            "missing error: {expected}\n{error}"
+        );
+    }
+}
+
+#[test]
+fn project_execution_schema_exposes_program_owned_project_task_refs() {
+    let mut tools = vec![serde_json::json!({
+        "name": "create_project_execution_tasks",
+        "inputSchema": create_project_execution_tasks_schema(),
+    })];
+    super::super::support::enrich_project_execution_task_scope_schema(
+        &mut tools,
+        &BTreeSet::from(["project-task-a".to_string(), "project-task-b".to_string()]),
+    );
+
+    let values = tools[0]
+        .pointer("/inputSchema/properties/tasks/items/properties/project_task_ref/enum")
+        .and_then(Value::as_array)
+        .expect("request-scoped project task enum");
+    assert_eq!(
+        values,
+        &vec![
+            Value::String("project_task_001".to_string()),
+            Value::String("project_task_002".to_string()),
+        ]
+    );
 }
 
 #[test]
@@ -94,12 +190,9 @@ fn ai_task_input_cannot_supply_mcp_configuration() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
-        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: Some(TaskMcpConfig {
@@ -129,7 +222,12 @@ fn update_task_schema_hides_execution_status() {
 #[test]
 fn ai_task_update_rejects_program_managed_runtime_configuration() {
     let plugin_config = chatos_plugin_management_sdk::TaskPluginConfig {
-        device_id: Some("device-1".to_string()),
+        selected_plugins: vec![chatos_plugin_management_sdk::SelectedPluginRef {
+            plugin_id: "plugin-1".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
         ..Default::default()
     };
 
@@ -187,6 +285,7 @@ fn external_mcp_tools_hide_internal_process_recorder() {
 fn default_agent_hides_direct_history_status_tools() {
     assert!(!agent_tool_allowed("batch_update_task_status"));
     assert!(!agent_tool_allowed("retry_run"));
+    assert!(!agent_tool_allowed("summarize_task_memory"));
     assert!(agent_tool_allowed("start_task_run"));
     assert!(agent_tool_allowed("cancel_task"));
 }
@@ -202,7 +301,6 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
         tags: None,
         default_model_config_id: None,
         requires_execution: None,
-        is_planning_task: None,
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: Some(vec![
@@ -210,8 +308,6 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
             String::new(),
             "external-mcp-1".to_string(),
         ]),
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -233,6 +329,33 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
 }
 
 #[test]
+fn explicit_execution_requirement_is_never_downgraded_by_read_selection() {
+    let request = CreateTaskArgs {
+        title: "review task".to_string(),
+        description: None,
+        objective: "read the project without changing files".to_string(),
+        input_payload: None,
+        priority: None,
+        tags: None,
+        default_model_config_id: None,
+        requires_execution: Some(true),
+        schedule: None,
+        enabled_builtin_kinds: Some(vec!["CodeMaintainerRead".to_string()]),
+        external_mcp_config_ids: None,
+        selected_plugins: None,
+        prerequisite_task_ids: None,
+        mcp_config: None,
+    }
+    .into_request()
+    .expect("read-only task request");
+
+    assert_eq!(
+        request.mcp_config.expect("MCP request").requires_execution,
+        Some(true)
+    );
+}
+
+#[test]
 fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
     let error = CreateTaskArgs {
         title: "browser task".to_string(),
@@ -243,12 +366,9 @@ fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
-        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        plugin_device_id: Some(" device-1 ".to_string()),
-        plugin_workspace_id: Some(" workspace-1 ".to_string()),
         selected_plugins: Some(vec![
             chatos_plugin_management_sdk::SelectedPluginRef {
                 plugin_id: " plugin-browser ".to_string(),
@@ -283,12 +403,9 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
         tags: None,
         default_model_config_id: None,
         requires_execution: Some(true),
-        is_planning_task: Some(false),
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
-        plugin_device_id: None,
-        plugin_workspace_id: None,
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -297,8 +414,6 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
     .expect("model request");
     let context = McpRequestContext {
         plugin_config_override: Some(chatos_plugin_management_sdk::TaskPluginConfig {
-            device_id: Some("user-device".to_string()),
-            workspace_id: Some("user-workspace".to_string()),
             selected_plugins: vec![chatos_plugin_management_sdk::SelectedPluginRef {
                 plugin_id: "user-plugin".to_string(),
                 selected_skill_ids: Vec::new(),
@@ -315,15 +430,6 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
     };
 
     context.enforce_plugin_config(&mut request);
-
-    assert_eq!(
-        request.plugin_config.device_id.as_deref(),
-        Some("user-device")
-    );
-    assert_eq!(
-        request.plugin_config.workspace_id.as_deref(),
-        Some("user-workspace")
-    );
     assert_eq!(request.plugin_config.selected_plugins.len(), 1);
     assert_eq!(
         request.plugin_config.selected_plugins[0].plugin_id,
@@ -340,7 +446,7 @@ fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
 }
 
 #[test]
-fn mcp_model_list_is_strictly_scoped_to_current_owner() {
+fn admin_mcp_model_list_exposes_all_enabled_cloud_models() {
     let current_user = admin_user("user-1");
     let models = vec![
         model_config("own-enabled", "user-1", true),
@@ -350,7 +456,7 @@ fn mcp_model_list_is_strictly_scoped_to_current_owner() {
 
     let visible = model_configs_for_user(models, &current_user);
 
-    assert_eq!(visible.len(), 1);
+    assert_eq!(visible.len(), 2);
     assert_eq!(
         visible[0].get("id").and_then(|value| value.as_str()),
         Some("own-enabled")
@@ -362,7 +468,7 @@ fn mcp_model_list_is_strictly_scoped_to_current_owner() {
 }
 
 #[test]
-fn mcp_tool_schema_exposes_only_current_owner_enabled_model_choices() {
+fn admin_mcp_tool_schema_exposes_all_enabled_cloud_model_choices() {
     let current_user = admin_user("user-1");
     let models = vec![
         model_config("own-enabled", "user-1", true),
@@ -383,12 +489,15 @@ fn mcp_tool_schema_exposes_only_current_owner_enabled_model_choices() {
         .get("enum")
         .and_then(serde_json::Value::as_array)
         .expect("model enum");
-    assert_eq!(enum_values, &vec![json!("own-enabled")]);
+    assert_eq!(
+        enum_values,
+        &vec![json!("own-enabled"), json!("other-enabled")]
+    );
     let choices = model_schema
         .get("oneOf")
         .and_then(serde_json::Value::as_array)
         .expect("model choices");
-    assert_eq!(choices.len(), 1);
+    assert_eq!(choices.len(), 2);
     assert_eq!(choices[0].get("const"), Some(&json!("own-enabled")));
     assert!(choices[0]
         .get("title")
@@ -587,7 +696,7 @@ fn async_planner_preserves_only_execution_intent_before_programmatic_resolution(
 }
 
 #[test]
-fn async_planner_schema_exposes_mcp_selection_without_runtime_routing() {
+fn async_planner_schema_requires_explicit_agent_capability_selection() {
     let mut tools = vec![json!({
         "name": "create_task",
         "inputSchema": create_task_schema(),
@@ -598,11 +707,24 @@ fn async_planner_schema_exposes_mcp_selection_without_runtime_routing() {
     let input_schema = tools[0].get("inputSchema").expect("input schema");
     assert!(input_schema.get("anyOf").is_none());
     assert!(input_schema
+        .pointer("/properties/requires_execution")
+        .is_some());
+    assert!(input_schema
         .pointer("/properties/enabled_builtin_kinds")
         .is_some());
     assert!(input_schema
         .pointer("/properties/external_mcp_config_ids")
         .is_some());
+    let required = input_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .expect("required fields");
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("requires_execution")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
     assert!(input_schema
         .pointer("/properties/plugin_device_id")
         .is_none());
@@ -615,7 +737,7 @@ fn async_planner_schema_exposes_mcp_selection_without_runtime_routing() {
 }
 
 #[test]
-fn async_planner_batch_schema_exposes_per_task_mcp_selection() {
+fn async_planner_batch_schema_requires_explicit_agent_capability_selection() {
     let mut tools = vec![json!({
         "name": "create_tasks_with_prerequisites",
         "inputSchema": super::super::support::create_tasks_with_prerequisites_schema(),
@@ -628,11 +750,24 @@ fn async_planner_batch_schema_exposes_per_task_mcp_selection() {
         .pointer("/properties/tasks/items/anyOf")
         .is_none());
     assert!(input_schema
+        .pointer("/properties/tasks/items/properties/requires_execution")
+        .is_some());
+    assert!(input_schema
         .pointer("/properties/tasks/items/properties/enabled_builtin_kinds")
         .is_some());
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/external_mcp_config_ids")
         .is_some());
+    let required = input_schema
+        .pointer("/properties/tasks/items/required")
+        .and_then(Value::as_array)
+        .expect("required fields");
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("requires_execution")));
+    assert!(required
+        .iter()
+        .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
     assert!(input_schema
         .pointer("/properties/tasks/items/properties/plugin_device_id")
         .is_none());
@@ -742,28 +877,23 @@ fn mcp_request_context_detects_chatos_plan_task_profile() {
 }
 
 #[test]
-fn chatos_plan_context_assigns_child_profile_from_task_nature() {
+fn chatos_plan_context_forces_created_tasks_to_plan_phase() {
     let context = McpRequestContext {
         task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
         ..McpRequestContext::default()
     };
+    let mut request = valid_planner_create_request();
+
+    context.enforce_created_task_kind(&mut request);
 
     assert_eq!(
-        context.child_task_profile(Some(true)).as_deref(),
+        request.task_profile.as_deref(),
         Some(TASK_PROFILE_CHATOS_PLAN)
     );
-    assert_eq!(
-        context.child_task_profile(Some(false)).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
-    assert_eq!(
-        context.child_task_profile(None).as_deref(),
-        Some(TASK_PROFILE_CHATOS_PLAN)
-    );
-    assert_eq!(
-        context.child_task_profile(None).as_deref(),
-        Some(TASK_PROFILE_CHATOS_PLAN)
-    );
+    let mcp_config = request.mcp_config.as_ref().expect("plan MCP config");
+    assert_eq!(mcp_config.requires_execution, Some(false));
+    assert!(mcp_config.enabled_builtin_kinds.is_empty());
+    assert!(mcp_config.external_mcp_config_ids.is_empty());
 }
 
 #[test]
@@ -773,16 +903,20 @@ fn project_execution_planner_always_creates_ordinary_execution_tasks() {
         ..McpRequestContext::default()
     };
 
-    assert_eq!(
-        context.child_task_profile(Some(true)).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
-    assert_eq!(
-        context.child_task_profile(Some(false)).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
-    assert_eq!(
-        context.child_task_profile(None).as_deref(),
-        Some(TASK_PROFILE_DEFAULT)
-    );
+    let mut request = valid_planner_create_request();
+
+    context.enforce_created_task_kind(&mut request);
+
+    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
+}
+
+#[test]
+fn ordinary_context_forces_created_tasks_to_default_profile() {
+    let context = McpRequestContext::default();
+    let mut request = valid_planner_create_request();
+
+    context.enforce_created_task_kind(&mut request);
+
+    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
+    assert!(request.mcp_config.is_some());
 }

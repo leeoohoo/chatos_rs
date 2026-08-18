@@ -15,5 +15,4 @@ pub(crate) use code::{code_maintainer_service_for_root, normalize_code_maintaine
 pub(crate) use project::{normalize_request_project_relative_path, request_project_root};
 pub(crate) use terminal_controller::call_local_terminal_controller_tool;
 
-#[cfg(test)]
 pub(crate) use code::code_maintainer_structured_result;

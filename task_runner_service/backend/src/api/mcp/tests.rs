@@ -13,6 +13,10 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         " user-1 ".parse().expect("valid header"),
     );
     headers.insert(
+        "x-mcp-management-owner-role",
+        " super_admin ".parse().expect("valid header"),
+    );
+    headers.insert(
         "x-mcp-management-agent-key",
         format!(" {} ", SystemAgentKey::TaskRunnerRunPhase.as_str())
             .parse()
@@ -65,6 +69,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
 
     let binding = mcp_management_binding_from_headers(&headers).expect("valid binding");
     assert_eq!(binding.owner_user_id, "user-1");
+    assert_eq!(binding.owner_role.as_deref(), Some("super_admin"));
     assert_eq!(binding.agent_key, SystemAgentKey::TaskRunnerRunPhase);
     assert_eq!(binding.session_id, "session-1");
     assert_eq!(binding.session_expires_at_unix, 4_102_444_800);
@@ -102,6 +107,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
 fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
     let binding = McpManagementBinding {
         owner_user_id: "user-1".to_string(),
+        owner_role: Some("super_admin".to_string()),
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
         session_id: "session-1".to_string(),
         session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
@@ -130,6 +136,7 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
 fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
     let binding = McpManagementBinding {
         owner_user_id: "user-1".to_string(),
+        owner_role: Some("super_admin".to_string()),
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
         session_id: "session-1".to_string(),
         session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
@@ -151,6 +158,7 @@ fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
     assert_eq!(creator.username, "chatos-agent-1");
     assert_eq!(creator.display_name, "chatos-agent-1");
     assert_eq!(creator.effective_owner_user_id(), Some("user-1"));
+    assert!(creator.is_admin());
 
     let mut missing_agent = binding;
     missing_agent.contact_agent_id = None;
@@ -211,14 +219,6 @@ fn request_context_reads_exact_project_task_scope_header() {
 fn request_context_reads_and_normalizes_user_plugin_selection() {
     let mut headers = HeaderMap::new();
     headers.insert(
-        "x-task-runner-plugin-device-id",
-        " device-1 ".parse().expect("valid header"),
-    );
-    headers.insert(
-        "x-task-runner-plugin-workspace-id",
-        " workspace-1 ".parse().expect("valid header"),
-    );
-    headers.insert(
         "x-task-runner-selected-plugins",
         r#"["plugin-a",{"plugin_id":" plugin-a ","selected_skill_ids":[],"selected_command_ids":[]},{"plugin_id":"plugin-b","selected_skill_ids":[" skill-1 ","skill-1"],"selected_command_ids":[" review ","review"]}]"#
             .parse()
@@ -245,8 +245,6 @@ fn request_context_reads_and_normalizes_user_plugin_selection() {
         .plugin_config_override
         .expect("plugin config override");
 
-    assert_eq!(config.device_id.as_deref(), Some("device-1"));
-    assert_eq!(config.workspace_id.as_deref(), Some("workspace-1"));
     assert_eq!(config.selected_plugins.len(), 2);
     assert_eq!(config.selected_plugins[0].plugin_id, "plugin-a");
     assert_eq!(

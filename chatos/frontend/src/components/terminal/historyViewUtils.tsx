@@ -25,15 +25,18 @@ export const TERMINAL_SNAPSHOT_PAGE_LINES = 500;
 export const TERMINAL_SNAPSHOT_MAX_LINES = 10_000;
 export const TERMINAL_SCROLL_TOP_LOAD_THRESHOLD = 0;
 
+const WEB_SOCKET_CONNECTING_STATE = 0;
+const WEB_SOCKET_OPEN_STATE = 1;
+
 export const closeWebSocketSafely = (socket: WebSocket | null | undefined) => {
   if (!socket) {
     return;
   }
-  if (socket.readyState === WebSocket.OPEN) {
+  if (socket.readyState === WEB_SOCKET_OPEN_STATE) {
     socket.close();
     return;
   }
-  if (socket.readyState === WebSocket.CONNECTING) {
+  if (socket.readyState === WEB_SOCKET_CONNECTING_STATE) {
     const closeOnOpen = () => {
       try {
         socket.close();

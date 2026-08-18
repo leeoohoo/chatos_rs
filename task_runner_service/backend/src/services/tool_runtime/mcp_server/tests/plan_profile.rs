@@ -264,6 +264,8 @@ async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })
@@ -289,6 +291,7 @@ async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
                 "title": "plan task",
                 "objective": "define implementation plan",
                 "default_model_config_id": "model-1",
+                "requires_execution": true,
             }),
             &current_user,
             &McpRequestContext {
@@ -315,6 +318,7 @@ async fn create_task_in_chatos_plan_profile_persists_plan_task_profile() {
         .expect("task");
 
     assert_eq!(task.task_profile, TASK_PROFILE_CHATOS_PLAN);
+    assert!(!task.mcp_config.requires_execution);
     assert_ne!(task.status, TaskStatus::Ready);
     assert_eq!(task.schedule.mode, TaskScheduleMode::ContactAsync);
     assert!(task.schedule.next_run_at.is_none());
@@ -349,6 +353,8 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })
@@ -376,13 +382,15 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
                         "client_ref": "root",
                         "title": "root task",
                         "objective": "define implementation plan",
-                        "default_model_config_id": "model-1"
+                        "default_model_config_id": "model-1",
+                        "requires_execution": true
                     },
                     {
                         "client_ref": "child",
                         "title": "child task",
                         "objective": "detail follow-up",
                         "default_model_config_id": "model-1",
+                        "requires_execution": true,
                         "prerequisite_refs": ["root"]
                     }
                 ]
@@ -440,6 +448,7 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
             .expect("get task")
             .expect("task");
         assert_eq!(task.task_profile, TASK_PROFILE_CHATOS_PLAN);
+        assert!(!task.mcp_config.requires_execution);
         assert_eq!(task.project_id, project.id);
         assert!(task.schedule.next_run_at.is_none());
     }

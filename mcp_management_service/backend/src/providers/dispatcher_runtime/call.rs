@@ -9,6 +9,67 @@ use crate::runtime::RuntimeSessionSnapshot;
 use super::super::{ProviderCallError, ProviderCallOutcome, ProviderDispatcher};
 
 impl ProviderDispatcher {
+    pub async fn start_waiting_user_call(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        original_tool_name: &str,
+        arguments: Value,
+        invocation_id: &str,
+    ) -> Result<super::super::ProviderWaitingForUser, ProviderCallError> {
+        if self.task_runner.supports(route) {
+            return self
+                .task_runner
+                .start_waiting_user_call(
+                    snapshot,
+                    route,
+                    original_tool_name,
+                    arguments,
+                    invocation_id,
+                )
+                .await;
+        }
+        if self.chatos.supports(route) {
+            return self
+                .chatos
+                .start_waiting_user_call(
+                    snapshot,
+                    route,
+                    original_tool_name,
+                    arguments,
+                    invocation_id,
+                )
+                .await;
+        }
+        Err(ProviderCallError::provider_unavailable(
+            "Ask User route has no resumable provider adapter",
+        ))
+    }
+
+    pub async fn resolve_waiting_user_call(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        prompt_id: &str,
+        invocation_id: &str,
+    ) -> Result<Option<Value>, ProviderCallError> {
+        if self.task_runner.supports(route) {
+            return self
+                .task_runner
+                .resolve_waiting_user_call(snapshot, prompt_id, invocation_id)
+                .await;
+        }
+        if self.chatos.supports(route) {
+            return self
+                .chatos
+                .resolve_waiting_user_call(snapshot, prompt_id, invocation_id)
+                .await;
+        }
+        Err(ProviderCallError::provider_unavailable(
+            "Ask User route has no resumable provider adapter",
+        ))
+    }
+
     pub async fn call_tool(
         &self,
         snapshot: &RuntimeSessionSnapshot,
@@ -81,17 +142,6 @@ impl ProviderDispatcher {
             }
             McpProviderKind::LocalConnector if self.local_connector.supports(route) => {
                 self.local_connector
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
-            McpProviderKind::LocalConnector if self.local_sandbox.supports(route) => {
-                self.local_sandbox
                     .call_tool(
                         snapshot,
                         route,

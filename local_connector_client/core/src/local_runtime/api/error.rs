@@ -30,14 +30,6 @@ impl LocalRuntimeApiError {
         }
     }
 
-    pub(super) fn not_found(code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            code,
-            message: message.into(),
-        }
-    }
-
     pub(super) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

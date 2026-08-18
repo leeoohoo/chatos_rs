@@ -3,7 +3,6 @@
 
 import React from 'react';
 
-import { MessageTaskChangesModal } from '../../messageTasks/MessageTaskChangesModal';
 import {
   MessageTaskDetailModal,
   MessageTaskProcessLogModal,
@@ -16,27 +15,22 @@ export const RequirementExecutionTaskModals: React.FC<{
 }> = ({ taskGraph }) => {
   const {
     allTasks,
-    changesTask,
-    closeChanges,
     closeDetail,
     closeProcessLog,
     closeRun,
     detailTask,
-    error: graphError,
     loadMoreRunEvents,
-    loadingChangesRunId,
-    loadingDiffPath,
     loadingRunId,
-    outputChanges,
-    outputDiff,
     processRunDetail,
     processTask,
+    refreshRunDetail,
+    refreshingRunDetail,
     retryError,
     retryTask,
+    retryTaskIntegration,
     retryingTaskId,
     runDetail,
-    selectChangeFile,
-    selectedChangePath,
+    waiveTaskIntegration,
   } = taskGraph;
 
   return (
@@ -47,6 +41,8 @@ export const RequirementExecutionTaskModals: React.FC<{
         retrying={Boolean(retryingTaskId)}
         retryError={retryError}
         onRetry={retryTask}
+        onRetryIntegration={retryTaskIntegration}
+        onWaiveIntegration={waiveTaskIntegration}
         onClose={closeDetail}
       />
       <MessageTaskProcessLogModal
@@ -57,21 +53,10 @@ export const RequirementExecutionTaskModals: React.FC<{
       <MessageTaskRunDetailModal
         detail={runDetail}
         loadingMoreEvents={Boolean(runDetail && loadingRunId === runDetail.run?.id)}
+        refreshing={refreshingRunDetail}
         onLoadMoreEvents={loadMoreRunEvents}
+        onRefresh={() => void refreshRunDetail(false)}
         onClose={closeRun}
-      />
-      <MessageTaskChangesModal
-        task={changesTask}
-        changes={outputChanges}
-        diff={outputDiff}
-        selectedPath={selectedChangePath}
-        loadingChanges={Boolean(
-          changesTask?.last_run_id && loadingChangesRunId === changesTask.last_run_id
-        )}
-        loadingDiff={Boolean(selectedChangePath && loadingDiffPath === selectedChangePath)}
-        error={graphError}
-        onSelectFile={selectChangeFile}
-        onClose={closeChanges}
       />
     </>
   );

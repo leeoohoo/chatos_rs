@@ -99,7 +99,10 @@ pub fn materialize_mcp_candidates(
     })
 }
 
-fn plugin_permission_snapshot(plugin: &ResolvedPlugin, component_key: &str) -> Vec<String> {
+pub(crate) fn plugin_permission_snapshot(
+    plugin: &ResolvedPlugin,
+    component_key: &str,
+) -> Vec<String> {
     let mut permissions = plugin
         .release
         .iter()

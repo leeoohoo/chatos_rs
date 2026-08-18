@@ -11,6 +11,8 @@ use chatos_mcp_runtime::ToolResult;
 pub struct RuntimeRecordOptions {
     pub persist_assistant_records: bool,
     pub persist_tool_records: bool,
+    pub assistant_message_id: Option<String>,
+    pub tool_message_id_prefix: Option<String>,
     pub assistant_message_mode: Option<String>,
     pub assistant_message_source: Option<String>,
     pub assistant_metadata: Option<Value>,
@@ -35,6 +37,16 @@ impl RuntimeRecordOptions {
 
     pub fn with_persist_tool_records(mut self, persist: bool) -> Self {
         self.persist_tool_records = persist;
+        self
+    }
+
+    pub fn with_assistant_message_id(mut self, message_id: impl Into<String>) -> Self {
+        self.assistant_message_id = Some(message_id.into());
+        self
+    }
+
+    pub fn with_tool_message_id_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.tool_message_id_prefix = Some(prefix.into());
         self
     }
 

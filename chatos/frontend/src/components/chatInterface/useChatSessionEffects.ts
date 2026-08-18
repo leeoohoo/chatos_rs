@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { useEffect, useMemo, useRef } from 'react';
-
 import type { Session } from '../../types';
 
 interface UseChatSessionEffectsParams {
@@ -45,8 +44,8 @@ export const useChatSessionEffects = ({
     didInitRef.current = true;
 
     void loadProjects();
-    void loadAiModelConfigs();
     void loadAgents();
+    void loadAiModelConfigs();
   }, [loadProjects, loadAiModelConfigs, loadAgents]);
 
   useEffect(() => {

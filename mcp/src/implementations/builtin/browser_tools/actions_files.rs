@@ -5,12 +5,16 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 use super::actions_shared::{
     copy_response_fields, fail_json, finalize_browser_action_response, is_success, normalize_ref,
-    run_basic_browser_action, run_browser_command,
+    parse_browser_eval_payload, run_basic_browser_action, run_browser_command,
 };
 use super::BoundContext;
 
@@ -20,6 +24,8 @@ pub(super) const MAX_BROWSER_UPLOAD_TOTAL_BYTES: u64 = 100 * 1024 * 1024;
 pub(super) const MAX_BROWSER_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_BROWSER_FILE_PATH_CHARS: usize = 4_096;
 const DOWNLOAD_STAGING_PREFIX: &str = ".chatos-browser-download-";
+const BLOB_DOWNLOAD_CHUNK_BYTES: u64 = 512 * 1024;
+const DOWNLOAD_TEXT_PREVIEW_BYTES: usize = 8 * 1024;
 
 #[derive(Debug)]
 struct UploadFile {
@@ -33,6 +39,17 @@ struct DownloadDestination {
     target: PathBuf,
     staging: PathBuf,
     relative: String,
+}
+
+#[derive(Debug)]
+struct BrowserDownloadEvidence {
+    bytes: u64,
+    sha256: String,
+    suggested_filename: Option<String>,
+    mime_type: String,
+    source_kind: String,
+    content_preview: Option<String>,
+    json_content: Option<Value>,
 }
 
 pub(super) async fn browser_upload_with_context(
@@ -86,36 +103,69 @@ pub(super) async fn browser_download_with_context(
     let destination = prepare_download_destination(ctx.workspace_dir.as_path(), path.as_str())?;
     let reference = normalize_ref(reference);
     let session = super::super::context::conversation_key(conversation_id);
-    let result = run_browser_command(
-        &ctx,
-        session.as_str(),
-        "download",
-        vec![
-            reference.clone(),
-            destination.staging.to_string_lossy().to_string(),
-        ],
-        ctx.command_timeout_seconds.max(120),
-    )
-    .await?;
-    if !is_success(&result) {
-        remove_regular_file_or_symlink(destination.staging.as_path());
-        return Ok(fail_json(&result, "Browser download failed"));
-    }
-
-    let bytes = match publish_download(&destination) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            remove_regular_file_or_symlink(destination.staging.as_path());
-            remove_regular_file_or_symlink(destination.target.as_path());
-            let mut response = json!({
-                "_summary_text": format!("Browser download failed: {error}."),
-                "success": false,
-                "error": error,
-                "path": destination.relative,
-            });
-            copy_response_fields(&mut response, &result, &["browser_session"]);
-            return Ok(response);
+    let href = browser_element_attribute(&ctx, session.as_str(), reference.as_str(), "href").await;
+    let suggested_filename =
+        browser_element_attribute(&ctx, session.as_str(), reference.as_str(), "download").await;
+    let (result, evidence) = if href.is_none() {
+        match capture_generated_blob_download(
+            &ctx,
+            session.as_str(),
+            reference.as_str(),
+            &destination,
+        )
+        .await
+        {
+            Ok((result, evidence)) => (result, evidence),
+            Err(error) => {
+                remove_regular_file_or_symlink(destination.staging.as_path());
+                remove_regular_file_or_symlink(destination.target.as_path());
+                return Ok(json!({
+                    "_summary_text": format!("Browser download failed: {error}."),
+                    "success": false,
+                    "error": error,
+                    "path": destination.relative,
+                }));
+            }
         }
+    } else {
+        let result = run_browser_command(
+            &ctx,
+            session.as_str(),
+            "download",
+            vec![
+                reference.clone(),
+                destination.staging.to_string_lossy().to_string(),
+            ],
+            ctx.command_timeout_seconds.max(120),
+        )
+        .await?;
+        if !is_success(&result) {
+            remove_regular_file_or_symlink(destination.staging.as_path());
+            return Ok(fail_json(&result, "Browser download failed"));
+        }
+        let evidence = publish_download_with_evidence(
+            &destination,
+            suggested_filename,
+            href.as_deref(),
+            None,
+            "browser_download_event",
+        );
+        let evidence = match evidence {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                remove_regular_file_or_symlink(destination.staging.as_path());
+                remove_regular_file_or_symlink(destination.target.as_path());
+                let mut response = json!({
+                    "_summary_text": format!("Browser download failed: {error}."),
+                    "success": false,
+                    "error": error,
+                    "path": destination.relative,
+                });
+                copy_response_fields(&mut response, &result, &["browser_session"]);
+                return Ok(response);
+            }
+        };
+        (result, evidence)
     };
 
     Ok(finalize_browser_action_response(
@@ -125,13 +175,293 @@ pub(super) async fn browser_download_with_context(
             "success": true,
             "element": reference,
             "path": destination.relative,
-            "bytes": bytes,
+            "bytes": evidence.bytes,
+            "sha256": evidence.sha256,
+            "suggested_filename": evidence.suggested_filename,
+            "mime_type": evidence.mime_type,
+            "source_kind": evidence.source_kind,
+            "content_preview": evidence.content_preview,
+            "json_content": evidence.json_content,
             "overwrote_existing": false,
+            "browser_session": result.get("browser_session").cloned(),
         }),
-        "Downloaded a browser file into the workspace without overwriting an existing path.",
-        Some("The downloaded file is now available through workspace file tools."),
+        "Downloaded and verified a browser file in the workspace without overwriting an existing path.",
+        Some("The result includes the browser filename, MIME type, byte count, SHA-256, and bounded content evidence."),
     )
     .await)
+}
+
+async fn browser_element_attribute(
+    ctx: &BoundContext,
+    session: &str,
+    reference: &str,
+    attribute: &str,
+) -> Option<String> {
+    let result = run_browser_command(
+        ctx,
+        session,
+        "get",
+        vec![
+            "attr".to_string(),
+            reference.to_string(),
+            attribute.to_string(),
+        ],
+        ctx.command_timeout_seconds,
+    )
+    .await
+    .ok()?;
+    if !is_success(&result) {
+        return None;
+    }
+    result
+        .pointer("/data/value")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+async fn capture_generated_blob_download(
+    ctx: &BoundContext,
+    session: &str,
+    reference: &str,
+    destination: &DownloadDestination,
+) -> Result<(Value, BrowserDownloadEvidence), String> {
+    let installed = run_browser_command(
+        ctx,
+        session,
+        "eval",
+        vec![blob_capture_install_script().to_string()],
+        ctx.command_timeout_seconds,
+    )
+    .await?;
+    if !is_success(&installed) {
+        return Err("installing the Blob download capture hook failed".to_string());
+    }
+    let click = run_browser_command(
+        ctx,
+        session,
+        "click",
+        vec![reference.to_string()],
+        ctx.command_timeout_seconds,
+    )
+    .await?;
+    if !is_success(&click) {
+        return Err("clicking the export control failed".to_string());
+    }
+
+    let mut metadata = None;
+    for _ in 0..20 {
+        let value = run_browser_command(
+            ctx,
+            session,
+            "eval",
+            vec![blob_capture_metadata_script().to_string()],
+            ctx.command_timeout_seconds,
+        )
+        .await?;
+        if is_success(&value) {
+            let parsed = parse_browser_eval_payload(
+                value
+                    .pointer("/data/result")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            );
+            if parsed.get("ready").and_then(Value::as_bool) == Some(true) {
+                metadata = Some(parsed);
+                break;
+            }
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    let metadata = metadata.ok_or_else(|| {
+        "the clicked control did not expose a capturable Blob/data download".to_string()
+    })?;
+    let bytes = metadata
+        .get("size")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "captured browser download is missing its byte size".to_string())?;
+    if bytes > MAX_BROWSER_DOWNLOAD_BYTES {
+        return Err(format!(
+            "browser download exceeds {MAX_BROWSER_DOWNLOAD_BYTES} bytes"
+        ));
+    }
+    let suggested_filename = metadata
+        .get("filename")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let mime_type = metadata
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let source_kind = metadata
+        .get("sourceKind")
+        .and_then(Value::as_str)
+        .unwrap_or("blob")
+        .to_string();
+
+    let mut staging = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination.staging.as_path())
+        .map_err(|error| format!("create Blob download staging file failed: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut written = 0_u64;
+    while written < bytes {
+        let end = written.saturating_add(BLOB_DOWNLOAD_CHUNK_BYTES).min(bytes);
+        let value = run_browser_command(
+            ctx,
+            session,
+            "eval",
+            vec![blob_capture_chunk_script(written, end)],
+            ctx.command_timeout_seconds,
+        )
+        .await?;
+        if !is_success(&value) {
+            return Err(format!(
+                "reading Blob download bytes {written}..{end} failed"
+            ));
+        }
+        let parsed = parse_browser_eval_payload(
+            value
+                .pointer("/data/result")
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        let encoded = parsed
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Blob download chunk is missing base64 data".to_string())?;
+        let chunk = STANDARD
+            .decode(encoded)
+            .map_err(|error| format!("decode Blob download chunk failed: {error}"))?;
+        if u64::try_from(chunk.len()).ok() != Some(end - written) {
+            return Err("Blob download chunk size verification failed".to_string());
+        }
+        staging
+            .write_all(chunk.as_slice())
+            .map_err(|error| format!("write Blob download staging file failed: {error}"))?;
+        hasher.update(chunk.as_slice());
+        written = end;
+    }
+    staging
+        .flush()
+        .map_err(|error| format!("flush Blob download staging file failed: {error}"))?;
+    staging
+        .sync_all()
+        .map_err(|error| format!("sync Blob download staging file failed: {error}"))?;
+    drop(staging);
+    let evidence = publish_download_with_evidence(
+        destination,
+        suggested_filename,
+        None,
+        Some(mime_type),
+        source_kind.as_str(),
+    )?;
+    if evidence.sha256 != hex::encode(hasher.finalize()) {
+        remove_regular_file_or_symlink(destination.target.as_path());
+        return Err("Blob download SHA-256 changed while publishing".to_string());
+    }
+    let _ = run_browser_command(
+        ctx,
+        session,
+        "eval",
+        vec!["(()=>{if(window.__chatosDownloadCaptureV1){window.__chatosDownloadCaptureV1.blob=null}return true})()".to_string()],
+        ctx.command_timeout_seconds,
+    )
+    .await;
+    Ok((click, evidence))
+}
+
+fn blob_capture_install_script() -> &'static str {
+    r#"(()=>{const key="__chatosDownloadCaptureV1";const state=window[key]||{installed:false};state.blob=null;state.filename=null;state.sourceKind=null;state.error=null;window[key]=state;if(state.installed)return JSON.stringify({installed:true,reused:true});const blobs=new Map();const create=URL.createObjectURL.bind(URL);const revoke=URL.revokeObjectURL.bind(URL);URL.createObjectURL=(value)=>{const url=create(value);if(value instanceof Blob)blobs.set(url,value);return url};URL.revokeObjectURL=(url)=>{setTimeout(()=>{blobs.delete(url);revoke(url)},30000)};const capture=(anchor)=>{const href=anchor.href||"";const current=window[key];const blob=blobs.get(href);if(blob){current.blob=blob;current.filename=anchor.download||"download";current.sourceKind="blob";return true}if(href.startsWith("data:")){fetch(href).then(response=>response.blob()).then(value=>{current.blob=value;current.filename=anchor.download||"download";current.sourceKind="data"}).catch(error=>{current.error=String(error)});return true}return false};const nativeClick=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){if(capture(this))return;return nativeClick.call(this)};document.addEventListener("click",event=>{const anchor=event.target instanceof Element?event.target.closest("a[href]"):null;if(anchor&&capture(anchor)){event.preventDefault();event.stopImmediatePropagation()}},true);state.installed=true;return JSON.stringify({installed:true,reused:false})})()"#
+}
+
+fn blob_capture_metadata_script() -> &'static str {
+    r#"(()=>{const state=window.__chatosDownloadCaptureV1;return JSON.stringify({ready:!!state?.blob,filename:state?.filename??null,mimeType:state?.blob?.type||"application/octet-stream",size:state?.blob?.size??null,sourceKind:state?.sourceKind??null,error:state?.error??null})})()"#
+}
+
+fn blob_capture_chunk_script(start: u64, end: u64) -> String {
+    format!(
+        r#"(async()=>{{const blob=window.__chatosDownloadCaptureV1?.blob;if(!blob)throw new Error("captured Blob is unavailable");const bytes=new Uint8Array(await blob.slice({start},{end}).arrayBuffer());let binary="";for(let index=0;index<bytes.length;index+=32768)binary+=String.fromCharCode(...bytes.subarray(index,index+32768));return JSON.stringify({{data:btoa(binary),bytes:bytes.length}})}})()"#
+    )
+}
+
+fn publish_download_with_evidence(
+    destination: &DownloadDestination,
+    suggested_filename: Option<String>,
+    source_url: Option<&str>,
+    explicit_mime_type: Option<String>,
+    source_kind: &str,
+) -> Result<BrowserDownloadEvidence, String> {
+    let bytes = publish_download(destination)?;
+    let content = fs::read(destination.target.as_path())
+        .map_err(|error| format!("read verified browser download failed: {error}"))?;
+    if u64::try_from(content.len()).ok() != Some(bytes) {
+        return Err("verified browser download size changed after publishing".to_string());
+    }
+    let sha256 = hex::encode(Sha256::digest(content.as_slice()));
+    let mime_type = explicit_mime_type
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| source_url.and_then(mime_type_from_data_url))
+        .unwrap_or_else(|| infer_download_mime_type(destination, content.as_slice()));
+    let textual = mime_type.starts_with("text/")
+        || matches!(
+            mime_type.as_str(),
+            "application/json" | "application/xml" | "application/javascript"
+        );
+    let content_preview = textual
+        .then(|| {
+            std::str::from_utf8(&content[..content.len().min(DOWNLOAD_TEXT_PREVIEW_BYTES)])
+                .ok()
+                .map(ToOwned::to_owned)
+        })
+        .flatten();
+    let json_content = (mime_type == "application/json")
+        .then(|| serde_json::from_slice(content.as_slice()).ok())
+        .flatten();
+    Ok(BrowserDownloadEvidence {
+        bytes,
+        sha256,
+        suggested_filename,
+        mime_type,
+        source_kind: source_kind.to_string(),
+        content_preview,
+        json_content,
+    })
+}
+
+fn mime_type_from_data_url(url: &str) -> Option<String> {
+    let metadata = url.strip_prefix("data:")?.split_once(',')?.0;
+    let mime = metadata.split(';').next()?.trim();
+    (!mime.is_empty()).then(|| mime.to_string())
+}
+
+fn infer_download_mime_type(destination: &DownloadDestination, content: &[u8]) -> String {
+    if serde_json::from_slice::<Value>(content).is_ok() {
+        return "application/json".to_string();
+    }
+    match destination
+        .target
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "txt" | "md" | "csv" => "text/plain".to_string(),
+        "json" => "application/json".to_string(),
+        "pdf" => "application/pdf".to_string(),
+        "png" => "image/png".to_string(),
+        "jpg" | "jpeg" => "image/jpeg".to_string(),
+        "webp" => "image/webp".to_string(),
+        _ => "application/octet-stream".to_string(),
+    }
 }
 
 fn resolve_upload_files(

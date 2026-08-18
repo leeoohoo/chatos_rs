@@ -10,7 +10,9 @@ use serde_json::{json, Value};
 
 use super::result::*;
 use super::validation::*;
-use super::{PluginComponentProvider, AGENT_TOOL_NAME, COMMAND_TOOL_NAME};
+use super::{
+    PluginComponentProvider, AGENT_TOOL_NAME, COMMAND_TOOL_NAME, LOCAL_SKILL_APPLY_OPERATION,
+};
 use crate::providers::{ProviderCallError, ProviderCallOutcome};
 use crate::runtime::{PluginLocalToolComponentBinding, RuntimeSessionSnapshot};
 
@@ -38,6 +40,45 @@ impl PluginComponentProvider {
                     .to_string(),
             });
         }
+        if binding.operation == LOCAL_SKILL_APPLY_OPERATION {
+            ensure_expected_tool(original_tool_name, "apply")?;
+            validate_empty_arguments(&arguments, "Plugin Skill apply")?;
+            let result = binding.static_result.clone().ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "prepared Plugin Skill has no static instruction result",
+                )
+            })?;
+            let response_bytes = serde_json::to_vec(&result)
+                .map_err(|error| ProviderCallError::invalid_response(error.to_string()))?
+                .len();
+            return Ok(ProviderCallOutcome {
+                result,
+                response_bytes,
+            });
+        }
+        if binding.runtime.component.kind == PluginComponentKind::Command {
+            ensure_expected_tool(original_tool_name, COMMAND_TOOL_NAME)?;
+            let command_arguments = parse_command_arguments(arguments)?;
+            if command_arguments != binding.runtime.command_arguments {
+                return Err(ProviderCallError {
+                    code: MCP_ERROR_AUTH_REQUIRED,
+                    message: "Plugin Command arguments do not match the Runtime Session selection"
+                        .to_string(),
+                });
+            }
+            let result = binding.static_result.clone().ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "prepared Plugin Command has no approved instruction result",
+                )
+            })?;
+            let response_bytes = serde_json::to_vec(&result)
+                .map_err(|error| ProviderCallError::invalid_response(error.to_string()))?
+                .len();
+            return Ok(ProviderCallOutcome {
+                result,
+                response_bytes,
+            });
+        }
         let mut body = serde_json::Map::from_iter([
             ("run_id".to_string(), json!(binding.run_id)),
             ("plugin_id".to_string(), json!(binding.runtime.plugin_id)),
@@ -56,7 +97,9 @@ impl PluginComponentProvider {
             ),
             ("operation".to_string(), json!(binding.operation)),
         ]);
-        let mut invoked_command_arguments = None;
+        if let Some(max_chars) = snapshot.tool_result_max_chars {
+            body.insert("tool_result_max_chars".to_string(), json!(max_chars.max(1)));
+        }
         match binding.runtime.component.kind {
             PluginComponentKind::SkillCollection => {
                 if !arguments.is_object() {
@@ -67,14 +110,7 @@ impl PluginComponentProvider {
                 body.insert("tool_name".to_string(), json!(original_tool_name));
                 body.insert("arguments".to_string(), arguments);
             }
-            PluginComponentKind::Command => {
-                ensure_expected_tool(original_tool_name, COMMAND_TOOL_NAME)?;
-                let command_arguments = parse_command_arguments(arguments)?;
-                invoked_command_arguments = command_arguments.clone();
-                if let Some(arguments) = command_arguments.as_deref() {
-                    body.insert("arguments".to_string(), json!(arguments));
-                }
-            }
+            PluginComponentKind::Command => unreachable!("prepared commands return above"),
             PluginComponentKind::Agent => {
                 ensure_expected_tool(original_tool_name, AGENT_TOOL_NAME)?;
                 validate_empty_arguments(&arguments, "Plugin Agent apply")?;
@@ -108,39 +144,7 @@ impl PluginComponentProvider {
         })?;
         let result = match binding.runtime.component.kind {
             PluginComponentKind::SkillCollection => result.clone(),
-            PluginComponentKind::Command => {
-                let command = result.get("command").ok_or_else(|| {
-                    ProviderCallError::invalid_response(
-                        "Plugin Command invocation response is missing command",
-                    )
-                })?;
-                let arguments_sha256 = command
-                    .get("arguments_sha256")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        ProviderCallError::invalid_response(
-                            "Plugin Command invocation response is missing arguments_sha256",
-                        )
-                    })?;
-                let expected_arguments_sha256 =
-                    sha256_text(invoked_command_arguments.as_deref().unwrap_or_default());
-                if arguments_sha256 != expected_arguments_sha256 {
-                    return Err(ProviderCallError::invalid_response(
-                        "Plugin Command invocation response arguments hash does not match the MCP call",
-                    ));
-                }
-                validate_command_snapshot(
-                    &binding.runtime,
-                    command,
-                    invoked_command_arguments.as_deref(),
-                    true,
-                )?;
-                plugin_command_result(
-                    &binding.runtime,
-                    command,
-                    invoked_command_arguments.as_deref(),
-                )?
-            }
+            PluginComponentKind::Command => unreachable!("prepared commands return above"),
             PluginComponentKind::Agent => {
                 let agent = result.get("agent").ok_or_else(|| {
                     ProviderCallError::invalid_response(

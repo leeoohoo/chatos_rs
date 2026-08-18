@@ -14,9 +14,7 @@ impl ProviderDispatcher {
                     || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => {
-                self.local_connector.supports(route)
-                    || self.local_sandbox.supports(route)
-                    || self.sandbox_images.supports(route)
+                self.local_connector.supports(route) || self.sandbox_images.supports(route)
             }
             McpProviderKind::CloudSandbox => {
                 self.cloud_sandbox.supports(route) || self.sandbox_images.supports(route)
@@ -32,9 +30,7 @@ impl ProviderDispatcher {
     }
 
     pub fn requires_sandbox_target(&self, route: &ResolvedMcpRoute) -> bool {
-        self.cloud_sandbox.supports(route)
-            || self.local_sandbox.supports(route)
-            || self.cloud_stdio.supports(route)
+        self.cloud_sandbox.supports(route) || self.cloud_stdio.supports(route)
     }
 
     pub fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
@@ -44,9 +40,7 @@ impl ProviderDispatcher {
                     || self.task_runner.supports(route)
                     || self.chatos.supports(route)
             }
-            McpProviderKind::LocalConnector => {
-                self.local_connector.supports(route) || self.local_sandbox.supports(route)
-            }
+            McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
             McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),

@@ -3,14 +3,15 @@
 
 use super::*;
 
-mod execution;
-mod runtime_state;
+pub(in crate::services) mod execution;
+pub(in crate::services) mod runtime_state;
 
 type PendingRunStreamState = Arc<parking_lot::Mutex<PendingRunStreamEvent>>;
 
 struct RuntimeExecutionState {
-    runtime_options: AiRuntimeOptions,
-    pending_stream_event: PendingRunStreamState,
-    execution_outcome: Arc<parking_lot::Mutex<Option<chatos_ai_runtime::TaskExecutionOutcome>>>,
+    pub(super) runtime_options: AiRuntimeOptions,
+    pub(super) pending_stream_event: PendingRunStreamState,
+    lifecycle_state: Arc<parking_lot::Mutex<TaskRunnerLifecycleState>>,
+    progress: Arc<chatos_ai_runtime::TaskExecutionProgressState>,
     supply_chain_evidence: Arc<parking_lot::Mutex<super::supply_chain::SupplyChainEvidenceState>>,
 }

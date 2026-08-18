@@ -32,7 +32,11 @@ impl BuiltinHostBackend {
             ),
             Self::HarnessCode => matches!(
                 normalize_builtin_kind_name(value),
-                Some(BUILTIN_KIND_CODE_MAINTAINER_READ | BUILTIN_KIND_CODE_MAINTAINER_WRITE)
+                Some(
+                    BUILTIN_KIND_CODE_MAINTAINER_READ
+                        | BUILTIN_KIND_CODE_MAINTAINER_WRITE
+                        | BUILTIN_KIND_TERMINAL_CONTROLLER
+                )
             ),
         }
     }
@@ -279,6 +283,7 @@ mod tests {
             vec![
                 BUILTIN_KIND_CODE_MAINTAINER_READ,
                 BUILTIN_KIND_CODE_MAINTAINER_WRITE,
+                BUILTIN_KIND_TERMINAL_CONTROLLER,
             ]
         );
         assert!(BuiltinHostBackend::LocalConnector.replaces_builtin_kind_name("browser_tools"));

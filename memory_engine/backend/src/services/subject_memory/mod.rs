@@ -51,6 +51,7 @@ mod scopes;
 mod selectors;
 mod settings;
 
+pub(crate) use job::resume_subject_memory_job;
 pub use job::run_subject_memory_job;
 pub use scopes::run_registered_subject_memory_scopes;
 pub(crate) use scopes::{run_scope_once, scope_has_pending_work};

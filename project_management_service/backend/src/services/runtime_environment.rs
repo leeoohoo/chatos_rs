@@ -34,7 +34,7 @@ pub async fn ensure_runtime_environment_for_project(
             };
             if !sandbox_enabled {
                 existing.sandbox_provider = RuntimeEnvironmentProvider::None;
-                existing.file_provider = RuntimeEnvironmentProvider::None;
+                existing.file_provider = project_file_provider(project);
                 existing.last_error = None;
             }
             existing.updated_at = now_rfc3339();
@@ -67,7 +67,7 @@ pub fn default_runtime_environment_for_project(
         },
         sandbox_enabled,
         sandbox_provider: RuntimeEnvironmentProvider::None,
-        file_provider: RuntimeEnvironmentProvider::None,
+        file_provider: project_file_provider(project),
         analysis_summary: None,
         not_runnable_reason: None,
         execution_service_id: None,
@@ -80,6 +80,29 @@ pub fn default_runtime_environment_for_project(
         last_error: None,
         created_at: now.clone(),
         updated_at: now,
+    }
+}
+
+fn project_file_provider(project: &ProjectRecord) -> RuntimeEnvironmentProvider {
+    match project.source_type {
+        ProjectSourceType::Cloud
+            if project
+                .harness_repo_identifier
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()) =>
+        {
+            RuntimeEnvironmentProvider::Harness
+        }
+        ProjectSourceType::Local | ProjectSourceType::LocalConnector
+            if chatos_project_execution::parse_local_connector_workspace_root(
+                project.root_path.as_deref().unwrap_or_default(),
+            )
+            .is_some() =>
+        {
+            RuntimeEnvironmentProvider::LocalConnector
+        }
+        _ => RuntimeEnvironmentProvider::None,
     }
 }
 
@@ -133,9 +156,15 @@ pub fn program_generated_runtime_analysis_summary(
         })
         .map(|record| record.name.as_str())
         .collect::<Vec<_>>();
-    let base = format!(
-        "已识别 {application_count} 个平等应用组件、{dependency_count} 个依赖服务和 {artifact_count} 个非运行组件，生成唯一工作区执行镜像计划及 {config_file_count} 个环境配置文件"
-    );
+    let base = if runtime_environment_requires_managed_images(environment) {
+        format!(
+            "已识别 {application_count} 个平等应用组件、{dependency_count} 个依赖服务和 {artifact_count} 个非运行组件，生成唯一工作区执行镜像计划及 {config_file_count} 个环境配置文件"
+        )
+    } else {
+        format!(
+            "已识别 {application_count} 个应用组件、{dependency_count} 个依赖服务和 {artifact_count} 个非运行组件，记录本地启动条件及 {config_file_count} 个环境配置文件"
+        )
+    };
     match environment.status {
         ProjectRuntimeEnvironmentStatus::PendingImageBuild => {
             format!("{base}，等待生成工作区执行镜像。")
@@ -148,9 +177,23 @@ pub fn program_generated_runtime_analysis_summary(
             missing_variables.len(),
             missing_variables.join(", ")
         ),
-        ProjectRuntimeEnvironmentStatus::Ready => format!("{base}，运行环境已就绪。"),
+        ProjectRuntimeEnvironmentStatus::Ready
+            if runtime_environment_requires_managed_images(environment) =>
+        {
+            format!("{base}，运行环境已就绪。")
+        }
+        ProjectRuntimeEnvironmentStatus::Ready => {
+            format!("{base}，本地隔离与执行由 Local Connector 客户端负责。")
+        }
         _ => format!("{base}。"),
     }
+}
+
+pub fn runtime_environment_requires_managed_images(
+    environment: &ProjectRuntimeEnvironmentRecord,
+) -> bool {
+    environment.sandbox_enabled
+        && environment.sandbox_provider == RuntimeEnvironmentProvider::CloudSandboxManager
 }
 
 pub fn replace_legacy_internal_routing_summary(

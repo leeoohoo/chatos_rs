@@ -22,6 +22,14 @@ const statusLabel = (status?: string | null): string => {
       return '排队中';
     case 'running':
       return '运行中';
+    case 'integration_pending':
+      return '等待代码集成';
+    case 'integrating':
+      return '正在集成代码';
+    case 'integration_conflict':
+      return '代码集成冲突';
+    case 'integration_failed':
+      return '代码集成失败';
     case 'succeeded':
       return '成功';
     case 'failed':

@@ -183,4 +183,17 @@ mod tests {
         assert!(names.contains(&"abort_edit_session"));
         assert_eq!(names.len(), 8);
     }
+
+    #[test]
+    fn terminal_capability_is_never_exposed_by_harness() {
+        let tools = tool_definitions(&HostCapabilityPolicy::from_builtin_kind_names([
+            "TerminalController",
+        ]));
+        let names = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert!(names.is_empty());
+    }
 }

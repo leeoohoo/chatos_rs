@@ -8,31 +8,14 @@ mod initialization;
 mod preparation;
 
 impl RunService {
-    pub(super) fn log_run_model_phase_start(
-        &self,
-        task: &TaskRecord,
-        model_config: &ModelConfigRecord,
-        run: &TaskRunRecord,
-        input: &StartTaskRunRequest,
-        effective_workspace_dir: &str,
-    ) {
-        initialization::log_run_model_phase_start(
-            run,
-            task,
-            model_config,
-            input,
-            effective_workspace_dir,
-        );
-    }
-
-    pub(super) async fn initialize_model_phase(
+    pub(in crate::services) async fn initialize_model_phase(
         &self,
         task: &TaskRecord,
         run: &mut TaskRunRecord,
         effective_workspace_dir: &str,
         prerequisite_context: &[PrerequisiteTaskContext],
         authoritative_policy: bool,
-    ) -> bool {
+    ) -> Result<bool, String> {
         initialization::initialize_model_phase(
             self,
             task,
@@ -44,7 +27,7 @@ impl RunService {
         .await
     }
 
-    pub(super) async fn prepare_model_execution(
+    pub(in crate::services) async fn prepare_model_execution(
         &self,
         task: &TaskRecord,
         model_config: &ModelConfigRecord,
@@ -53,6 +36,7 @@ impl RunService {
         effective_workspace_dir: &str,
         prerequisite_context: &[PrerequisiteTaskContext],
         capability_policy: Option<&TaskRunnerCapabilityPolicy>,
+        mcp_runtime_session_ref: Option<&str>,
     ) -> Result<PreparedModelExecution, String> {
         preparation::prepare_model_execution(
             self,
@@ -63,6 +47,7 @@ impl RunService {
             effective_workspace_dir,
             prerequisite_context,
             capability_policy,
+            mcp_runtime_session_ref,
         )
         .await
     }

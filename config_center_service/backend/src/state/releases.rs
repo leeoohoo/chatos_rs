@@ -555,7 +555,6 @@ pub(super) fn validate_sandbox_manager_mtls_invariants(
     errors: &mut Vec<String>,
 ) {
     for key in [
-        TASK_RUNNER_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
         PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
         MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
     ] {

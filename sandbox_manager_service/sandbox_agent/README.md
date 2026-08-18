@@ -17,6 +17,16 @@ docker build -t chatos-sandbox-agent:dev-java17-python3.14-go1.26 \
   .
 ```
 
+Build with a custom mainland China apt mirror:
+
+```bash
+docker build -t chatos-sandbox-agent:latest \
+  -f sandbox_manager_service/sandbox_agent/Dockerfile \
+  --build-arg SANDBOX_APT_UBUNTU_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ \
+  --build-arg SANDBOX_APT_UBUNTU_PORTS_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ \
+  .
+```
+
 Run locally:
 
 ```bash

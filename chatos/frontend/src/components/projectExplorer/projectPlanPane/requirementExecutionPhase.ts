@@ -327,7 +327,9 @@ export const buildRequirementExecutionProcessEntries = ({
   const entries: ProcessEntry[] = [{
     id: 'accepted',
     title: '执行规划请求已接受',
-    detail: isLocalExecution ? '由本地客户端规划' : '由云端规划服务处理',
+    detail: isLocalExecution
+      ? '由云端统一规划，确认后再通过 Local Connector 调度本机能力执行'
+      : '由云端统一规划并继续推进执行准备',
     state: 'done',
   }];
   entries.push({
@@ -437,7 +439,12 @@ export const resolveRequirementExecutionRecoveryActions = ({
   phase: RequirementExecutionProcessPhase;
   recoveryAction?: RequirementExecutionRecoveryAction | null;
 }): { canRegenerate: boolean; canRevise: boolean; canRerun: boolean } => ({
-  canRegenerate: recoveryAction === 'regenerate' && !hasActiveRuns,
+  canRegenerate: !hasActiveRuns
+    && (
+      recoveryAction === 'regenerate'
+      || phase === 'stopped'
+      || (phase === 'awaiting_confirmation' && !actuallyStarted)
+    ),
   canRevise: !hasActiveRuns
     && (!actuallyStarted || phase === 'stopped'),
   canRerun: recoveryAction === 'rerun' && phase === 'stopped' && !hasActiveRuns,

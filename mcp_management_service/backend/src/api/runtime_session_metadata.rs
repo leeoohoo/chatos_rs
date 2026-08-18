@@ -13,6 +13,7 @@ pub(super) fn resolve_runtime_session_prompt_metadata(
     capabilities: &ResolvedAgentCapabilities,
     tools: &[RuntimeToolDescriptor],
     locale: Option<&str>,
+    task_profile: Option<&str>,
 ) -> RuntimeSessionPromptMetadata {
     let mut effective_mcp_ids = tools
         .iter()
@@ -20,14 +21,20 @@ pub(super) fn resolve_runtime_session_prompt_metadata(
         .collect::<Vec<_>>();
     effective_mcp_ids.sort();
     effective_mcp_ids.dedup();
-    let provider_skills_prompt = capabilities.compose_provider_skills_prompt(
+    let provider_skills_prompt = capabilities.compose_provider_skills_prompt_for_task_profile(
         effective_mcp_ids.iter().map(String::as_str),
         normalized_provider_prompt_locale(locale),
+        task_profile,
     );
     RuntimeSessionPromptMetadata {
         effective_mcp_ids,
         provider_skills_prompt,
     }
+}
+
+#[cfg(test)]
+fn task_profile_uses_planning_guidance(task_profile: Option<&str>) -> bool {
+    task_profile.is_some_and(chatos_agent::is_chatos_plan_task_profile)
 }
 
 fn normalized_provider_prompt_locale(value: Option<&str>) -> Option<&str> {
@@ -91,8 +98,17 @@ mod tests {
             },
         ];
         let metadata =
-            resolve_runtime_session_prompt_metadata(&capabilities, &tools, Some("zh-CN"));
+            resolve_runtime_session_prompt_metadata(&capabilities, &tools, Some("zh-CN"), None);
         assert_eq!(metadata.effective_mcp_ids, ["mcp-a", "mcp-b"]);
         assert!(metadata.provider_skills_prompt.is_none());
+    }
+
+    #[test]
+    fn task_runner_guidance_profile_is_selected_only_by_program_context() {
+        assert!(!task_profile_uses_planning_guidance(None));
+        assert!(!task_profile_uses_planning_guidance(Some("default")));
+        assert!(task_profile_uses_planning_guidance(Some(
+            chatos_agent::CHATOS_PLAN_TASK_PROFILE,
+        )));
     }
 }

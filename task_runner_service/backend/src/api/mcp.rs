@@ -10,14 +10,10 @@ use chatos_agent::{
     is_task_runner_phase_agent,
 };
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
-use chatos_service_runtime::http_body::read_response_bytes_limited;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
-
-use crate::trace_context::InternalTraceContextExt;
 
 use super::internal_auth::{
     require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, MCP_TOOLS_CALL_SCOPE,
@@ -27,7 +23,6 @@ use super::internal_auth::{
 mod headers;
 use headers::*;
 
-const PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES: usize = 1024 * 1024;
 const PLUGIN_SELECTION_HEADER_LIMIT_BYTES: usize = 16 * 1024;
 const PLUGIN_SELECTION_MAX_ITEMS: usize = 50;
 const PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES: usize = 256 * 1024;
@@ -37,28 +32,15 @@ const PLUGIN_COMMAND_INVOCATION_MAX_ITEMS: usize = 64;
 const PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES: usize = 16 * 1024;
 const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
-#[derive(Debug, Deserialize, Serialize)]
-pub(super) struct PluginConnectorDeviceView {
-    id: String,
-    display_name: String,
-    client_version: Option<String>,
-    os: Option<String>,
-    status: String,
-    last_seen_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub(super) struct PluginConnectorWorkspaceView {
-    id: String,
-    device_id: String,
-    display_name: String,
-    local_path_alias: String,
-    capabilities: Vec<String>,
-    status: String,
-}
-
-pub(super) async fn list_mcp_catalog(State(state): State<AppState>) -> Json<Vec<McpCatalogEntry>> {
-    Json(state.mcp_catalog_service.list_catalog())
+pub(super) async fn list_mcp_catalog(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<McpCatalogEntry>>, ApiError> {
+    state
+        .mcp_catalog_service
+        .list_catalog()
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_request)
 }
 
 pub(super) async fn list_task_capability_catalog(
@@ -104,83 +86,6 @@ pub(super) async fn list_task_capability_catalog(
     })))
 }
 
-pub(super) async fn list_plugin_connectors(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
-    let access_token = crate::auth::get_current_access_token()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::unauthorized("current user access token is unavailable"))?;
-    let base_url =
-        crate::services::plugin_relay_base_url(&state.config).map_err(ApiError::bad_gateway)?;
-    let client = &state.config.local_connector_http_client;
-    let devices_url = format!("{base_url}/api/local-connectors/devices");
-    let workspaces_url = format!("{base_url}/api/local-connectors/workspaces");
-    let (devices, workspaces) = tokio::try_join!(
-        fetch_plugin_connector_json::<Vec<PluginConnectorDeviceView>>(
-            &client,
-            devices_url.as_str(),
-            access_token.as_str(),
-        ),
-        fetch_plugin_connector_json::<Vec<PluginConnectorWorkspaceView>>(
-            &client,
-            workspaces_url.as_str(),
-            access_token.as_str(),
-        )
-    )?;
-    Ok(Json(json!({
-        "devices": devices,
-        "workspaces": workspaces,
-    })))
-}
-
-async fn fetch_plugin_connector_json<T>(
-    client: &reqwest::Client,
-    url: &str,
-    access_token: &str,
-) -> Result<T, ApiError>
-where
-    T: DeserializeOwned,
-{
-    let response = client
-        .get(url)
-        .bearer_auth(access_token)
-        .with_internal_trace_context()
-        .send()
-        .await
-        .map_err(|error| ApiError {
-            status: upstream_gateway_status(&error),
-            message: format!("Local Connector discovery request failed: {error}"),
-        })?;
-    let status = response.status();
-    let bytes = read_response_bytes_limited(response, PLUGIN_CONNECTOR_RESPONSE_LIMIT_BYTES)
-        .await
-        .map_err(|error| {
-            ApiError::bad_gateway(format!(
-                "read Local Connector discovery response failed: {error}"
-            ))
-        })?;
-    if !status.is_success() {
-        let message = serde_json::from_slice::<Value>(bytes.as_slice())
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| "Local Connector discovery was rejected".to_string());
-        return Err(ApiError::bad_gateway(format!(
-            "Local Connector discovery failed with {status}: {message}"
-        )));
-    }
-    serde_json::from_slice(bytes.as_slice()).map_err(|error| {
-        ApiError::bad_gateway(format!(
-            "decode Local Connector discovery response failed: {error}"
-        ))
-    })
-}
-
 #[derive(Debug, Deserialize)]
 pub(super) struct TaskCapabilityCatalogQuery {
     task_profile: Option<String>,
@@ -205,6 +110,7 @@ pub(super) async fn preview_mcp_prompt(
     let preview = state
         .mcp_catalog_service
         .preview_prompt(input)
+        .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(redact_workspace_paths(&state, preview)?))
 }
@@ -328,6 +234,7 @@ pub(super) async fn mcp_entrypoint(
 #[derive(Debug, Clone)]
 struct McpManagementBinding {
     owner_user_id: String,
+    owner_role: Option<String>,
     agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     session_id: String,
     session_expires_at_unix: i64,
@@ -420,6 +327,74 @@ pub(super) async fn mcp_management_entrypoint(
     Json(response)
 }
 
+pub(super) async fn mcp_management_ask_user_start(
+    State(state): State<AppState>,
+    Path(system_key): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<JsonRpcRequest>,
+) -> Json<JsonRpcResponse> {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if let Err(error) = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[MCP_MANAGEMENT_CALLER],
+        MCP_TOOLS_CALL_SCOPE,
+    ) {
+        return Json(task_runner_mcp_error(id, -32001, error.message));
+    }
+    if system_key.parse::<chatos_mcp::SystemMcpKey>().ok()
+        != Some(chatos_mcp::SystemMcpKey::AskUser)
+    {
+        return Json(task_runner_mcp_error(
+            id,
+            -32602,
+            "only Ask User can be started",
+        ));
+    }
+    let binding = match mcp_management_binding_from_headers(&headers) {
+        Ok(binding) => binding,
+        Err(message) => return Json(task_runner_mcp_error(id, -32602, message)),
+    };
+    let response = dispatch_bound_ask_user_start(&state, request, &binding).await;
+    Json(response)
+}
+
+pub(super) async fn mcp_management_ask_user_prompt(
+    State(state): State<AppState>,
+    Path((system_key, prompt_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    if let Err(error) = require_task_runner_internal_request(
+        &state.config,
+        &headers,
+        &[MCP_MANAGEMENT_CALLER],
+        MCP_TOOLS_CALL_SCOPE,
+    ) {
+        return Json(json!({"error": error.message}));
+    }
+    if system_key.parse::<chatos_mcp::SystemMcpKey>().ok()
+        != Some(chatos_mcp::SystemMcpKey::AskUser)
+    {
+        return Json(json!({"error": "only Ask User prompts can be loaded"}));
+    }
+    if mcp_management_binding_from_headers(&headers).is_err() {
+        return Json(json!({"error": "invalid MCP Management binding"}));
+    }
+    match state
+        .ask_user_prompt_service
+        .get_prompt(prompt_id.as_str())
+        .await
+    {
+        Ok(Some(prompt)) => Json(json!({
+            "pending": prompt.status == crate::models::AskUserPromptStatus::Pending,
+            "kind": prompt.kind,
+            "response": prompt.response,
+        })),
+        Ok(None) => Json(json!({"error": "ask_user prompt was not found"})),
+        Err(error) => Json(json!({"error": error})),
+    }
+}
+
 async fn dispatch_bound_task_runner_tool(
     state: &AppState,
     request: JsonRpcRequest,
@@ -459,7 +434,6 @@ async fn dispatch_bound_task_runner_tool(
         source_user_message_id: binding.source_user_message_id.clone(),
         default_model_config_id: binding.default_model_config_id.clone(),
         workspace_dir: None,
-        remote_server_config: None,
         tool_profile: Some(tool_profile.to_string()),
         task_profile: binding.task_profile.clone(),
         builtin_prompt_locale: None,
@@ -488,7 +462,15 @@ fn bound_task_creator(
         id: creator_id.clone(),
         username: creator_id.clone(),
         display_name: creator_id,
-        role: crate::models::UserRole::Agent,
+        role: if binding
+            .owner_role
+            .as_deref()
+            .is_some_and(|role| matches!(role.trim(), "admin" | "super_admin"))
+        {
+            crate::models::UserRole::Admin
+        } else {
+            crate::models::UserRole::Agent
+        },
         owner_user_id: Some(binding.owner_user_id.clone()),
         owner_username: None,
         owner_display_name: None,
@@ -685,6 +667,72 @@ async fn dispatch_bound_ask_user(
             jsonrpc: "2.0",
             id,
             result: Some(result),
+            error: None,
+        },
+        Err(error) => task_runner_mcp_error(id, -32000, error),
+    }
+}
+
+async fn dispatch_bound_ask_user_start(
+    state: &AppState,
+    request: JsonRpcRequest,
+    binding: &McpManagementBinding,
+) -> JsonRpcResponse {
+    let id = request.id.unwrap_or(Value::Null);
+    if !is_task_runner_phase_agent(binding.agent_key) {
+        return task_runner_mcp_error(
+            id,
+            -32001,
+            "configured Agent is not allowed to use Task Runner Ask User MCP",
+        );
+    }
+    let Some(task_id) = binding.task_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound task_id");
+    };
+    let Some(run_id) = binding.run_id.as_deref() else {
+        return task_runner_mcp_error(id, -32602, "Ask User requires bound run_id");
+    };
+    let prompt_timeout_ms = match bound_ask_user_prompt_timeout_ms(binding) {
+        Ok(timeout_ms) => timeout_ms,
+        Err(message) => return task_runner_mcp_error(id, -32001, message),
+    };
+    let Some(name) = request
+        .params
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return task_runner_mcp_error(id, -32602, "Ask User tool name is required");
+    };
+    let arguments = request
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let mut payload = match chatos_mcp::ask_user::prepare_prompt(
+        name,
+        arguments,
+        task_id,
+        run_id,
+        prompt_timeout_ms,
+    ) {
+        Ok(payload) => payload,
+        Err(error) => return task_runner_mcp_error(id, -32000, error),
+    };
+    if let Value::String(invocation_id) = &id {
+        payload.prompt_id = invocation_id.clone();
+        payload.tool_call_id = Some(invocation_id.clone());
+    }
+    match state
+        .ask_user_prompt_service
+        .create_prompt_without_wait(payload)
+        .await
+    {
+        Ok(prompt) => JsonRpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(json!({"prompt_id": prompt.id})),
             error: None,
         },
         Err(error) => task_runner_mcp_error(id, -32000, error),

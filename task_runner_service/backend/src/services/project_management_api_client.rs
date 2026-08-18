@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_mcp_management_sdk::SandboxExecutionTarget;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::auth;
 use crate::config::AppConfig;
@@ -23,6 +23,129 @@ pub(in crate::services) const PROJECT_READ_SCOPE: &str = "project.read";
 pub(in crate::services) const PROJECT_SYNC_SCOPE: &str = "project.sync";
 pub(in crate::services) const PROJECT_MCP_SCOPE: &str = "project.mcp";
 pub(in crate::services) const PROJECT_HARNESS_SCOPE: &str = "project.harness";
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PrepareRunWorkspaceRequest {
+    pub owner_user_id: String,
+    pub tenant_id: String,
+    pub create_run_branch: bool,
+    pub create_cloud_sandbox: bool,
+    pub execution_group_id: Option<String>,
+    pub expected_execution_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct PreparedRunBranch {
+    pub branch_id: String,
+    pub branch_ref: String,
+    pub base_branch: String,
+    pub base_commit: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FinalizeRunWorkspaceRequest {
+    pub owner_user_id: String,
+    pub branch: Option<PreparedRunBranch>,
+    pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub destroy_sandbox: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FinalizeRunWorkspaceResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub result_commit: Option<String>,
+    #[serde(default)]
+    pub sandbox_retained_for_diagnostics: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GetRunWorkspaceChangesRequest {
+    pub owner_user_id: String,
+    pub branch: PreparedRunBranch,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct GetRunWorkspaceChangesResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub branch_ref: String,
+    pub base_commit: String,
+    pub result_commit: String,
+    pub files: Vec<crate::models::TaskRunWorkspaceChangedFile>,
+    pub patch: String,
+    pub patch_truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct IntegrateRunWorkspaceRequest {
+    pub owner_user_id: String,
+    pub execution_group_id: String,
+    pub execution_branch_ref: String,
+    pub integration_ready_at: String,
+    pub branch: PreparedRunBranch,
+    pub result_commit: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunWorkspaceIntegrationResultStatus {
+    Integrated,
+    Conflict,
+    RetryableError,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct IntegrateRunWorkspaceResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub status: RunWorkspaceIntegrationResultStatus,
+    pub result_commit: String,
+    pub integration_base_commit: Option<String>,
+    pub integrated_commit: Option<String>,
+    #[serde(rename = "execution_head_commit")]
+    pub _execution_head_commit: Option<String>,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PromoteExecutionWorkspaceRequest {
+    pub owner_user_id: String,
+    pub execution_group_id: String,
+    pub execution_branch_ref: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PromoteExecutionWorkspaceStatus {
+    Promoted,
+    Conflict,
+    RetryableError,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PromoteExecutionWorkspaceResponse {
+    pub project_id: String,
+    pub execution_group_id: String,
+    pub status: PromoteExecutionWorkspaceStatus,
+    pub promoted_commit: Option<String>,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PrepareRunWorkspaceResponse {
+    pub project_id: String,
+    pub run_id: String,
+    pub default_branch: String,
+    pub branch: Option<PreparedRunBranch>,
+    pub sandbox_target: Option<SandboxExecutionTarget>,
+    pub execution_branch_ref: Option<String>,
+    pub execution_base_commit: Option<String>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 struct ProjectServiceProjectRecord {
@@ -44,112 +167,11 @@ struct ProjectServiceProjectRecord {
     #[serde(default)]
     source_git_url: Option<String>,
     #[serde(default)]
-    harness_space_identifier: Option<String>,
-    #[serde(default)]
-    harness_repo_identifier: Option<String>,
-    #[serde(default)]
-    harness_repo_path: Option<String>,
-    #[serde(default)]
-    harness_git_url: Option<String>,
-    #[serde(default)]
-    harness_git_ssh_url: Option<String>,
-    #[serde(default)]
-    harness_default_branch: Option<String>,
-    #[serde(default)]
-    harness_provision_status: Option<String>,
-    #[serde(default)]
-    harness_provision_error: Option<String>,
-    #[serde(default)]
-    harness_provisioned_at: Option<String>,
-    #[serde(default)]
     description: Option<String>,
     status: TaskProjectStatus,
     created_at: String,
     updated_at: String,
     archived_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProjectHarnessGitAccess {
-    pub project_id: String,
-    pub repo_path: String,
-    pub git_url: String,
-    pub default_branch: String,
-    pub space_identifier: String,
-    pub access_username: String,
-    pub access_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProjectRuntimeEnvironmentResponse {
-    environment: ProjectRuntimeEnvironmentSettings,
-    #[serde(default)]
-    images: Vec<ProjectRuntimeEnvironmentImage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentSettings {
-    pub(crate) sandbox_enabled: bool,
-    #[serde(default)]
-    pub(crate) status: String,
-    #[serde(default)]
-    pub(crate) not_runnable_reason: Option<String>,
-    #[serde(default, alias = "primary_service_id")]
-    pub(crate) execution_service_id: Option<String>,
-    #[serde(default)]
-    pub(crate) env_vars: Value,
-    #[serde(default)]
-    pub(crate) generated_config_files: Vec<ProjectRuntimeEnvironmentConfigFile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentConfigFile {
-    pub(crate) path: String,
-    pub(crate) content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentImage {
-    #[serde(default)]
-    pub(crate) environment_key: String,
-    #[serde(default)]
-    pub(crate) service_id: String,
-    #[serde(default)]
-    pub(crate) display_name: String,
-    #[serde(default)]
-    pub(crate) service_role: String,
-    #[serde(default)]
-    pub(crate) mcp_policy: ProjectRuntimeEnvironmentMcpPolicy,
-    #[serde(default)]
-    pub(crate) image_id: Option<String>,
-    #[serde(default)]
-    pub(crate) image_ref: Option<String>,
-    #[serde(default)]
-    pub(crate) image_provider: String,
-    #[serde(default)]
-    pub(crate) status: String,
-    #[serde(default)]
-    pub(crate) dockerfile: Option<String>,
-    #[serde(default)]
-    pub(crate) env_vars: Value,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(crate) struct ProjectRuntimeEnvironmentMcpPolicy {
-    #[serde(default)]
-    pub(crate) managed_by: String,
-    #[serde(default)]
-    pub(crate) attachment: String,
-    #[serde(default)]
-    pub(crate) filesystem: bool,
-    #[serde(default)]
-    pub(crate) terminal: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct ProjectSandboxRuntimeSettings {
-    pub(crate) environment: ProjectRuntimeEnvironmentSettings,
-    pub(crate) images: Vec<ProjectRuntimeEnvironmentImage>,
 }
 
 pub async fn get_project_from_project_service(
@@ -307,56 +329,129 @@ pub async fn sync_get_project(
         .map(|project| project.map(Into::into))
 }
 
-pub async fn get_project_harness_git_access(
+pub(crate) async fn prepare_run_workspace(
     config: &AppConfig,
     project_id: &str,
-) -> Result<ProjectHarnessGitAccess, String> {
+    run_id: &str,
+    input: &PrepareRunWorkspaceRequest,
+) -> Result<PrepareRunWorkspaceResponse, String> {
     let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
-        "{}/api/chatos-sync/projects/{}/harness/git-access",
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/prepare",
         base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
     );
-    send_json(signed_project_service_request(
-        config.project_service_internal_http_client.get(endpoint),
-        sync_secret,
-        PROJECT_HARNESS_SCOPE,
-    )?)
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
     .await
 }
 
-pub async fn get_project_sandbox_enabled(
+pub(crate) async fn finalize_run_workspace(
     config: &AppConfig,
     project_id: &str,
-) -> Result<bool, String> {
-    Ok(get_project_sandbox_runtime_settings(config, project_id)
-        .await?
-        .environment
-        .sandbox_enabled)
-}
-
-pub(crate) async fn get_project_sandbox_runtime_settings(
-    config: &AppConfig,
-    project_id: &str,
-) -> Result<ProjectSandboxRuntimeSettings, String> {
+    run_id: &str,
+    input: &FinalizeRunWorkspaceRequest,
+) -> Result<FinalizeRunWorkspaceResponse, String> {
     let base_url = required_project_service_internal_base_url(config)?;
     let sync_secret = required_sync_secret(config)?;
     let endpoint = format!(
-        "{}/api/chatos-sync/projects/{}/runtime-environment",
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/finalize-result",
         base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
     );
-    let response = send_json::<ProjectRuntimeEnvironmentResponse>(signed_project_service_request(
-        config.project_service_internal_http_client.get(endpoint),
-        sync_secret,
-        PROJECT_READ_SCOPE,
-    )?)
-    .await?;
-    Ok(ProjectSandboxRuntimeSettings {
-        environment: response.environment,
-        images: response.images,
-    })
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
+}
+
+pub(crate) async fn integrate_run_workspace(
+    config: &AppConfig,
+    project_id: &str,
+    run_id: &str,
+    input: &IntegrateRunWorkspaceRequest,
+) -> Result<IntegrateRunWorkspaceResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/integrate",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
+}
+
+pub(crate) async fn get_run_workspace_changes(
+    config: &AppConfig,
+    project_id: &str,
+    run_id: &str,
+    input: &GetRunWorkspaceChangesRequest,
+) -> Result<GetRunWorkspaceChangesResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/run-workspaces/{}/changes",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(run_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
+}
+
+pub(crate) async fn promote_execution_workspace(
+    config: &AppConfig,
+    project_id: &str,
+    execution_group_id: &str,
+    input: &PromoteExecutionWorkspaceRequest,
+) -> Result<PromoteExecutionWorkspaceResponse, String> {
+    let base_url = required_project_service_internal_base_url(config)?;
+    let sync_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/execution-workspaces/{}/promote",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id.trim()),
+        urlencoding::encode(execution_group_id.trim())
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_HARNESS_SCOPE,
+        )?
+        .json(input),
+    )
+    .await
 }
 
 #[derive(Debug, Serialize)]
@@ -370,6 +465,8 @@ pub struct SyncTaskRunnerWorkItemStatusRequest {
     pub last_error_message: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub supersedes_task_runner_task_ids: Vec<String>,
 }
 
 pub async fn sync_work_item_task_runner_status(
@@ -644,15 +741,6 @@ impl From<ProjectServiceProjectRecord> for TaskProjectRecord {
             cloud_import_source: value.cloud_import_source,
             import_status: value.import_status,
             source_git_url: value.source_git_url,
-            harness_space_identifier: value.harness_space_identifier,
-            harness_repo_identifier: value.harness_repo_identifier,
-            harness_repo_path: value.harness_repo_path,
-            harness_git_url: value.harness_git_url,
-            harness_git_ssh_url: value.harness_git_ssh_url,
-            harness_default_branch: value.harness_default_branch,
-            harness_provision_status: value.harness_provision_status,
-            harness_provision_error: value.harness_provision_error,
-            harness_provisioned_at: value.harness_provisioned_at,
             description: value.description,
             status: value.status,
             created_at: value.created_at,
@@ -674,7 +762,7 @@ mod tests {
         insert_project_service_mcp_signing_headers(
             &mut headers,
             "task-runner-internal-secret",
-            PROJECT_HARNESS_SCOPE,
+            PROJECT_MCP_SCOPE,
         )
         .expect("deferred project service signing headers");
 
@@ -683,7 +771,7 @@ mod tests {
             headers
                 .get("x-project-service-internal-scope")
                 .map(String::as_str),
-            Some(PROJECT_HARNESS_SCOPE)
+            Some(PROJECT_MCP_SCOPE)
         );
 
         assert_eq!(

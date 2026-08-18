@@ -29,6 +29,40 @@ fn relay_request(request_id: &str) -> RelayRequest {
     }
 }
 
+#[tokio::test]
+async fn active_session_requires_matching_owner_and_registered_websocket() {
+    let relay = ConnectorRelay::default();
+    assert!(!relay
+        .has_active_session("owner-1", "device-1")
+        .await
+        .expect("query empty relay"));
+
+    let (outbound, _inbound) = mpsc::channel(1);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    assert!(relay
+        .has_active_session("owner-1", "device-1")
+        .await
+        .expect("query registered relay"));
+    assert!(!relay
+        .has_active_session("owner-2", "device-1")
+        .await
+        .expect("query mismatched owner"));
+
+    relay.unregister_session("device-1", "session-1").await;
+    assert!(!relay
+        .has_active_session("owner-1", "device-1")
+        .await
+        .expect("query unregistered relay"));
+}
+
 async fn spawn_test_instance_listener(
     coordinator: ValkeyCoordinator,
     instance_id: String,
@@ -720,6 +754,143 @@ async fn plugin_response_completes_pending_relay_request() {
         assert_eq!(response.status, 200);
         assert_eq!(response.body["action"].as_str(), Some(action));
     }
+}
+
+#[tokio::test]
+async fn workspace_directory_responses_complete_pending_relay_requests() {
+    let relay = ConnectorRelay::default();
+    let (outbound, mut inbound) = mpsc::channel(2);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    for action in ["list", "create"] {
+        let request_id = format!("workspace-directory-{action}");
+        let request_type = format!("workspace_directory_{action}_request");
+        let response_type = format!("workspace_directory_{action}_response");
+        let dispatch_relay = relay.clone();
+        let dispatch_request_id = request_id.clone();
+        let dispatch_request_type = request_type.clone();
+        let dispatch = tokio::spawn(async move {
+            let mut request = relay_request(dispatch_request_id.as_str());
+            request.message_type = dispatch_request_type;
+            request.method = if action == "list" { "GET" } else { "POST" }.to_string();
+            request.path = "/api/local/runtime/workspaces/workspace-1/directories".to_string();
+            request.body = serde_json::json!({"path":"apps"});
+            dispatch_relay
+                .dispatch(request, Duration::from_secs(1))
+                .await
+        });
+
+        let outbound = inbound.recv().await.expect("workspace directory request");
+        assert!(outbound.contains(request_type.as_str()));
+        assert!(relay
+            .handle_inbound_text(
+                serde_json::json!({
+                    "type": response_type,
+                    "request_id": request_id,
+                    "status": 200,
+                    "body": {"path":"apps","entries":[]},
+                })
+                .to_string()
+                .as_str(),
+            )
+            .await
+            .expect("workspace directory response"));
+
+        let response = dispatch
+            .await
+            .expect("workspace directory dispatch task")
+            .expect("workspace directory relay response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["path"].as_str(), Some("apps"));
+    }
+}
+
+#[tokio::test]
+async fn workspace_filesystem_responses_complete_pending_relay_requests() {
+    let relay = ConnectorRelay::default();
+    let (outbound, mut inbound) = mpsc::channel(16);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    for operation in [
+        "list",
+        "read",
+        "search_entries",
+        "search_content",
+        "create_directory",
+        "create_file",
+        "write_file",
+        "move",
+        "delete",
+    ] {
+        let request_id = format!("workspace-filesystem-{operation}");
+        let dispatch_relay = relay.clone();
+        let dispatch_request_id = request_id.clone();
+        let dispatch = tokio::spawn(async move {
+            let mut request = relay_request(dispatch_request_id.as_str());
+            request.message_type = "workspace_filesystem_request".to_string();
+            request.method = "POST".to_string();
+            request.path = "/api/local/runtime/workspaces/workspace-1/filesystem".to_string();
+            request.body = serde_json::json!({"operation": operation});
+            dispatch_relay
+                .dispatch(request, Duration::from_secs(1))
+                .await
+        });
+
+        let outbound = inbound.recv().await.expect("workspace filesystem request");
+        assert!(outbound.contains("workspace_filesystem_request"));
+        assert!(outbound.contains(request_id.as_str()));
+        assert!(relay
+            .handle_inbound_text(
+                serde_json::json!({
+                    "type": "workspace_filesystem_response",
+                    "request_id": request_id,
+                    "status": 200,
+                    "body": {"operation": operation},
+                })
+                .to_string()
+                .as_str(),
+            )
+            .await
+            .expect("workspace filesystem response"));
+
+        let response = dispatch
+            .await
+            .expect("workspace filesystem dispatch task")
+            .expect("workspace filesystem relay response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["operation"].as_str(), Some(operation));
+    }
+}
+
+#[tokio::test]
+async fn unknown_relay_response_types_are_rejected_instead_of_acknowledged() {
+    let relay = ConnectorRelay::default();
+    let error = relay
+        .handle_inbound_text(
+            r#"{"type":"workspace_future_response","request_id":"request-1","status":200}"#,
+        )
+        .await
+        .expect_err("unknown response must be rejected");
+    assert!(error.contains("workspace_future_response"));
+
+    assert!(!relay
+        .handle_inbound_text(r#"{"type":"device_status","connected":true}"#)
+        .await
+        .expect("ordinary control message"));
 }
 
 #[tokio::test]

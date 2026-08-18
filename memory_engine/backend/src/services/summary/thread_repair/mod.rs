@@ -5,3 +5,4 @@ mod common;
 mod summary;
 
 pub use summary::run_thread_repair_summary;
+pub(crate) use summary::run_thread_repair_summary_job;

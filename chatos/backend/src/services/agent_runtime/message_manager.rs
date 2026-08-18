@@ -85,8 +85,39 @@ impl MessageManager {
         turn_id: Option<&str>,
         response_status: Option<&str>,
     ) -> Result<Message, String> {
+        self.save_assistant_response_message_with_id(
+            session_id,
+            content,
+            reasoning,
+            message_mode,
+            message_source,
+            metadata,
+            tool_calls,
+            response_id,
+            turn_id,
+            response_status,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_assistant_response_message_with_id(
+        &self,
+        session_id: &str,
+        content: &str,
+        reasoning: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
+        metadata: Option<Value>,
+        tool_calls: Option<Value>,
+        response_id: Option<&str>,
+        turn_id: Option<&str>,
+        response_status: Option<&str>,
+        message_id: Option<String>,
+    ) -> Result<Message, String> {
         self.core
-            .save_assistant_response_message(
+            .save_assistant_response_message_with_id(
                 session_id,
                 content,
                 reasoning,
@@ -97,6 +128,7 @@ impl MessageManager {
                 response_id,
                 turn_id,
                 response_status,
+                message_id,
             )
             .await
     }
@@ -110,20 +142,48 @@ impl MessageManager {
         message_source: Option<String>,
         metadata: Option<Value>,
     ) -> Result<Message, String> {
+        self.save_tool_message_with_id(
+            session_id,
+            content,
+            tool_call_id,
+            message_mode,
+            message_source,
+            metadata,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_tool_message_with_id(
+        &self,
+        session_id: &str,
+        content: &str,
+        tool_call_id: &str,
+        message_mode: Option<String>,
+        message_source: Option<String>,
+        metadata: Option<Value>,
+        message_id: Option<String>,
+    ) -> Result<Message, String> {
         self.core
-            .save_tool_message(
+            .save_tool_message_with_id(
                 session_id,
                 content,
                 tool_call_id,
                 message_mode,
                 message_source,
                 metadata,
+                message_id,
             )
             .await
     }
 
-    pub async fn save_tool_results(&self, session_id: &str, results: &[ToolResult]) {
-        self.core.save_tool_results(session_id, results).await;
+    pub async fn save_tool_results(
+        &self,
+        session_id: &str,
+        results: &[ToolResult],
+    ) -> Result<(), String> {
+        self.core.save_tool_results(session_id, results).await
     }
 
     pub async fn get_session_messages(&self, session_id: &str, limit: Option<i64>) -> Vec<Message> {

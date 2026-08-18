@@ -7,8 +7,10 @@ use chatos_mcp_runtime::{BuiltinMcpPromptBuildResult, BuiltinMcpPromptLocale, Mc
 
 use crate::runtime::AiRuntimeOptions;
 use crate::turn::ContextualTurnRunner;
+use crate::AiSingleStepOutcome;
 
 mod config;
+#[cfg(feature = "local-agent-loop")]
 mod execution;
 mod memory;
 mod progress_review;
@@ -17,14 +19,18 @@ mod runtime_builder;
 mod spec;
 
 pub use self::config::{TaskMcpInitMode, TaskRuntimeConfig};
+#[cfg(feature = "local-agent-loop")]
 pub use self::execution::TaskRunExecution;
 pub use self::memory::TaskMemoryRuntimeConfig;
 pub use self::progress_review::{
     tool_result_is_meaningful_engineering_action, tool_result_is_missing_targeted_read,
-    tool_result_is_placeholder_progress_write, TaskExecutionProgressState,
-    TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy, TaskExecutionReviewTrigger,
+    tool_result_is_placeholder_progress_write, TaskExecutionProgressSnapshot,
+    TaskExecutionProgressState, TaskExecutionReviewCheckpoint, TaskExecutionReviewPolicy,
+    TaskExecutionReviewTrigger,
 };
-pub use self::report::{TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskRunReport};
+pub use self::report::{
+    TaskAcceptanceEvidence, TaskExecutionOutcome, TaskExecutionOutcomeStatus, TaskRunReport,
+};
 pub use self::runtime_builder::TaskRuntimeBuilder;
 pub use self::spec::TaskRunSpec;
 
@@ -101,10 +107,12 @@ impl TaskRuntime {
         }
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report(&self, spec: TaskRunSpec) -> TaskRunReport {
         self.runner.run_task_report(self.prepare_spec(spec)).await
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report_with_options(
         &self,
         spec: TaskRunSpec,
@@ -114,9 +122,29 @@ impl TaskRuntime {
             .run_task_report_with_options(self.prepare_spec(spec), runtime_options)
             .await
     }
+
+    pub async fn execute_task_once(
+        &self,
+        spec: TaskRunSpec,
+        runtime_options: AiRuntimeOptions,
+        iteration: usize,
+        reason: impl Into<String>,
+        model_attempt: usize,
+    ) -> Result<AiSingleStepOutcome, String> {
+        self.runner
+            .execute_once(
+                self.prepare_spec(spec)
+                    .into_contextual_turn_request_with_options(runtime_options),
+                iteration,
+                reason,
+                model_attempt,
+            )
+            .await
+    }
 }
 
 impl ContextualTurnRunner {
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report(&self, spec: TaskRunSpec) -> TaskRunReport {
         let task_id = spec.task_id.clone();
         let run_id = spec.run_id.clone();
@@ -127,6 +155,7 @@ impl ContextualTurnRunner {
         TaskRunReport::from_ai_report(task_id, run_id, model_config_id, report)
     }
 
+    #[cfg(feature = "local-agent-loop")]
     pub async fn run_task_report_with_options(
         &self,
         spec: TaskRunSpec,
@@ -142,5 +171,5 @@ impl ContextualTurnRunner {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agent-loop"))]
 mod tests;

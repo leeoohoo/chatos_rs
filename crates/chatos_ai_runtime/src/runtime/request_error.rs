@@ -1,39 +1,35 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+#[cfg(feature = "local-agent-loop")]
 use serde_json::Value;
+#[cfg(feature = "local-agent-loop")]
 use tracing::{info, warn};
 
+#[cfg(feature = "local-agent-loop")]
 use crate::error_policy::{
     handle_transient_retry_with_abort, is_context_length_exceeded_error,
-    is_missing_tool_call_error, is_request_body_too_large_error, is_response_parse_error,
-    is_upstream_connection_interrupted_error, should_retry_without_stream,
+    is_missing_tool_call_error, is_request_body_too_large_error,
 };
+#[cfg(feature = "local-agent-loop")]
 use crate::traits::ModelRequest;
+#[cfg(feature = "local-agent-loop")]
 use crate::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
 
+#[cfg(feature = "local-agent-loop")]
 use super::input_items::merge_pending_tool_turn_into_input;
+#[cfg(feature = "local-agent-loop")]
 use super::options::AiRuntimeOptions;
 
+#[cfg(feature = "local-agent-loop")]
 pub(super) enum ModelRequestErrorAction {
     ReplayMissingToolTurn(Value),
     ContextRecovered,
-    RetryRequest {
-        disable_stream: bool,
-        downgrade_thinking: bool,
-    },
+    RetryRequest,
     Fail(String),
 }
 
-pub(super) fn downgraded_thinking_level(level: Option<&str>) -> Option<String> {
-    match level.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
-        Some("xhigh" | "max") => Some("high".to_string()),
-        Some("high") => Some("medium".to_string()),
-        Some("medium") => Some("low".to_string()),
-        _ => None,
-    }
-}
-
+#[cfg(feature = "local-agent-loop")]
 pub(super) async fn handle_model_request_error(
     err: String,
     request: &ModelRequest,
@@ -44,7 +40,6 @@ pub(super) async fn handle_model_request_error(
     pending_tool_outputs: Option<&[Value]>,
     context_overflow_recovery_attempted: &mut bool,
     transient_retry_count: &mut usize,
-    provider_stream: bool,
 ) -> Result<ModelRequestErrorAction, String> {
     if !missing_tool_turn_replay_attempted
         && request.supports_responses
@@ -108,22 +103,11 @@ pub(super) async fn handle_model_request_error(
     )
     .await;
     match retry_result {
-        Ok(true) => {
-            return Ok(ModelRequestErrorAction::RetryRequest {
-                disable_stream: provider_stream && should_retry_without_stream(err.as_str()),
-                downgrade_thinking: is_response_parse_error(err.as_str())
-                    || is_upstream_connection_interrupted_error(err.as_str()),
-            });
-        }
+        Ok(true) => return Ok(ModelRequestErrorAction::RetryRequest),
         Ok(false) => {}
         Err(final_error) => {
             if final_error == "aborted" {
                 return Err(final_error);
-            }
-            if !provider_stream {
-                return Err(format!(
-                    "{final_error} 系统已自动切换为非流式响应，并使用独立 HTTP/1.1 连接重试。"
-                ));
             }
             return Err(final_error);
         }

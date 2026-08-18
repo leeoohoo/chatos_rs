@@ -7,7 +7,7 @@ import { resolveVisibleWorkspaceTabs } from './workspaceTabsModel';
 
 describe('resolveVisibleWorkspaceTabs', () => {
   it('uses the sandbox runtime tab instead of project settings for cloud projects', () => {
-    expect(resolveVisibleWorkspaceTabs(true, true)).toEqual([
+    expect(resolveVisibleWorkspaceTabs(true)).toEqual([
       'files',
       'team',
       'plan',
@@ -15,22 +15,13 @@ describe('resolveVisibleWorkspaceTabs', () => {
     ]);
   });
 
-  it('adds sandbox runtime without removing local project settings when enabled', () => {
-    expect(resolveVisibleWorkspaceTabs(false, true)).toEqual([
+  it('keeps sandbox runtime out of local project navigation', () => {
+    expect(resolveVisibleWorkspaceTabs(false)).toEqual([
       'files',
       'team',
       'plan',
       'settings',
-      'sandbox',
     ]);
   });
 
-  it('keeps sandbox runtime hidden for local projects when sandbox is disabled', () => {
-    expect(resolveVisibleWorkspaceTabs(false, false)).toEqual([
-      'files',
-      'team',
-      'plan',
-      'settings',
-    ]);
-  });
 });

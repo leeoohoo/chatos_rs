@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=211
-total_route_count=211
+main_backend_route_count=214
+total_route_count=214
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -93,6 +93,8 @@ chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/projec
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/workspaces", get(list_workspaces))
 chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/mcp_management.rs: .route(
+chatos/backend/src/api/mcp_management.rs: .route(
+chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/memory_compat.rs: .route(
 chatos/backend/src/api/memory_compat.rs: .route(
 chatos/backend/src/api/memory_compat.rs: .route(
@@ -110,6 +112,7 @@ chatos/backend/src/api/memory_mappings.rs: .route(
 chatos/backend/src/api/memory_mappings.rs: .route(
 chatos/backend/src/api/memory_mappings.rs: .route("/api/memory/projects", get(list_memory_projects))
 chatos/backend/src/api/memory_mappings.rs: .route("/api/memory/projects/sync", post(sync_memory_project))
+chatos/backend/src/api/message_task_runner.rs: .route(
 chatos/backend/src/api/message_task_runner.rs: .route(
 chatos/backend/src/api/message_task_runner.rs: .route(
 chatos/backend/src/api/message_task_runner.rs: .route(

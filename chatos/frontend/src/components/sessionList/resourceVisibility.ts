@@ -7,12 +7,10 @@ export interface WorkspaceResourceVisibility {
 }
 
 export const resolveWorkspaceResourceVisibility = (input: {
-  desktopBridgeAvailable: boolean;
   terminalUiEnabled: boolean;
   terminalUiResolved: boolean;
 }): WorkspaceResourceVisibility => ({
-  showTerminalSection: input.desktopBridgeAvailable
-    && input.terminalUiResolved
+  showTerminalSection: input.terminalUiResolved
     && input.terminalUiEnabled,
-  showRemoteSection: input.desktopBridgeAvailable,
+  showRemoteSection: true,
 });

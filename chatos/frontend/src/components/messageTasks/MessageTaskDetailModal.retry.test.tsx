@@ -6,7 +6,12 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { canRetryMessageTask, MessageTaskDetailModal } from './MessageTaskDetailModal';
+import {
+  canRetryMessageTask,
+  canRetryMessageTaskIntegration,
+  canWaiveMessageTaskIntegration,
+  MessageTaskDetailModal,
+} from './MessageTaskDetailModal';
 
 afterEach(() => cleanup());
 
@@ -110,5 +115,88 @@ describe('message task node retry', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     await user.click(screen.getByRole('button', { name: '重试此任务' }));
     expect(onRetry).toHaveBeenCalledWith(task);
+  });
+
+  it('retries only code integration for an integration conflict', async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: 'task-conflict',
+      title: '冲突任务',
+      status: 'blocked',
+      last_run_id: 'run-conflict',
+      last_run: {
+        id: 'run-conflict',
+        workspace_execution: {
+          integration_status: 'conflict',
+          execution_branch_ref: 'chatos/executions/group-1',
+          conflict_files: ['src/main.rs'],
+        },
+      },
+    };
+    const onRetry = vi.fn();
+    const onRetryIntegration = vi.fn();
+
+    expect(canRetryMessageTask(task)).toBe(false);
+    expect(canRetryMessageTaskIntegration(task)).toBe(true);
+    render(
+      <MessageTaskDetailModal
+        task={task}
+        onRetry={onRetry}
+        onRetryIntegration={onRetryIntegration}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('src/main.rs')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '重新集成代码' }));
+
+    expect(onRetryIntegration).toHaveBeenCalledWith(task);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('only allows an optional conflict task to waive its code changes with a reason', async () => {
+    const user = userEvent.setup();
+    const task = {
+      id: 'task-optional-conflict',
+      title: '可选冲突任务',
+      status: 'blocked',
+      last_run_id: 'run-optional-conflict',
+      mcp_config: {
+        workspace_changes_required: false,
+      },
+      last_run: {
+        id: 'run-optional-conflict',
+        workspace_execution: {
+          integration_status: 'conflict',
+        },
+      },
+    };
+    const onWaiveIntegration = vi.fn();
+
+    expect(canWaiveMessageTaskIntegration(task)).toBe(true);
+    expect(canWaiveMessageTaskIntegration({
+      ...task,
+      mcp_config: { workspace_changes_required: true },
+    })).toBe(false);
+
+    render(
+      <MessageTaskDetailModal
+        task={task}
+        onRetryIntegration={vi.fn()}
+        onWaiveIntegration={onWaiveIntegration}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const waiveButton = screen.getByRole('button', { name: '放弃代码变更' });
+    expect((waiveButton as HTMLButtonElement).disabled).toBe(true);
+    await user.type(
+      screen.getByRole('textbox', { name: '放弃代码变更原因（必填）' }),
+      '该可选报告不需要进入本次发布',
+    );
+    await user.click(waiveButton);
+
+    expect(onWaiveIntegration).toHaveBeenCalledWith(task, '该可选报告不需要进入本次发布');
+    expect(screen.getAllByText(/不会重新调用模型/).length).toBeGreaterThan(0);
   });
 });

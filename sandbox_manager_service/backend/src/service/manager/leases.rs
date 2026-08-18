@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use chatos_sandbox_contract::{
-    legacy_policy_permission_snapshot, ApprovalPolicy, ApprovalReviewer, EffectiveSandboxPolicy,
+    legacy_policy_permission_snapshot, ApprovalPolicy, ApprovalReviewer,
+    EffectivePermissionSnapshot, EffectiveSandboxPolicy, NetworkPermissionPolicy,
     PermissionProfileId, SandboxBackendKind, SandboxLeasePolicyRequest,
 };
 use chrono::{Duration as ChronoDuration, Utc};

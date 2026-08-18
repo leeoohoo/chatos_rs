@@ -50,7 +50,7 @@ ci_paths=(
   ".drone.images.yml"
   ".harness/pipelines"
   "docker/compose.yml"
-  "docker/.env.example"
+  "docker/bootstrap.conf.example"
   "docker/deploy-harness-ci.sh"
   "docs/HARNESS_CI.md"
   "scripts/bootstrap_harness_ci.sh"

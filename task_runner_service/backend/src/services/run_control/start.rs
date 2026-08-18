@@ -3,10 +3,8 @@
 
 use super::*;
 use crate::auth::CurrentUser;
-use crate::models::{
-    normalize_execution_environment_mode, normalize_project_id, PUBLIC_PROJECT_ID,
-};
-use crate::services::project_management_api_client;
+use chatos_agent::AgentIdentity;
+use chrono::Utc;
 
 impl RunService {
     pub async fn start_run(
@@ -77,6 +75,15 @@ impl RunService {
             None,
         )
         .await
+    }
+
+    pub(in crate::services) async fn start_dependency_run(
+        &self,
+        task_id: &str,
+        input: StartTaskRunRequest,
+    ) -> Result<TaskRunRecord, String> {
+        self.start_run_with_trigger(task_id, input, RunTriggerSource::Dependency, None, None)
+            .await
     }
 
     pub(crate) fn start_lock_for_task(&self, task_id: &str) -> KeyedAsyncLockHandle {
@@ -166,30 +173,35 @@ impl RunService {
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
-        let configured_execution_environment_mode =
-            self.effective_execution_environment_mode().await?;
-        let execution_environment_mode = self
-            .execution_environment_mode_for_task(
+        let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
+            &runtime_task.mcp_config,
+        );
+        crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
+            &runtime_task,
+            &effective_tools,
+        )?;
+        let task_runtime_capability_fingerprint =
+            crate::services::workspace_execution::task_runtime_capability_fingerprint(
                 &runtime_task,
-                configured_execution_environment_mode.as_str(),
-            )
-            .await;
-        let sandbox_enabled = self
-            .should_route_task_to_sandbox(&runtime_task, capability_policy.is_some())
-            .await?;
-        if sandbox_enabled {
-            self.validate_sandbox_route_for_task(&runtime_task).await?;
-        }
-
+            );
+        let execution_lane_key = crate::services::workspace_execution::model_execution_lane_key(
+            self,
+            &runtime_task,
+            &effective_tools,
+        )
+        .await?;
         let run_id = Uuid::new_v4().to_string();
+        let (execution_timeout_ms, ai_read_timeout_ms) = self.effective_run_timeouts_ms().await?;
+        let execution_timeout =
+            chrono::Duration::milliseconds(i64::try_from(execution_timeout_ms).map_err(|_| {
+                "Task Runner execution timeout exceeds supported range".to_string()
+            })?);
+        let deadline_at = Utc::now()
+            .checked_add_signed(execution_timeout)
+            .ok_or_else(|| "Task Runner execution deadline exceeds supported range".to_string())?;
         let skill_snapshots = capability_policy
             .as_ref()
             .map(|policy| policy.skill_snapshots(&runtime_task))
-            .transpose()?
-            .unwrap_or_default();
-        let plugin_snapshots = capability_policy
-            .as_ref()
-            .map(|policy| policy.plugin_snapshots(&runtime_task))
             .transpose()?
             .unwrap_or_default();
         let input_snapshot = json!({
@@ -205,12 +217,64 @@ impl RunService {
             "plugin_config": runtime_task.plugin_config,
             "mcp_config": runtime_task.mcp_config,
             "skill_snapshots": skill_snapshots,
-            "plugin_snapshots": plugin_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
-            "execution_environment_mode": execution_environment_mode,
-            "sandbox_enabled": sandbox_enabled,
+            "task_runtime_capability_fingerprint": task_runtime_capability_fingerprint,
             "retry_of_run_id": retry_of_run_id,
+            "started_as_prerequisite": trigger == RunTriggerSource::Dependency,
+            "execution_timeout_ms": execution_timeout_ms,
+            "ai_read_timeout_ms": ai_read_timeout_ms,
+            "deadline_at": deadline_at,
         });
+        let agent = chatos_agent::TaskRunnerAgent::new(agent_key);
+        let agent_prompt =
+            crate::services::plugin_management_prompts::resolve_task_runner_agent_prompt(
+                self,
+                &agent,
+                model_config.prompt_vendor.as_deref(),
+                model_config.provider.as_str(),
+            )
+            .await?;
+        let max_iterations =
+            u32::try_from(self.effective_task_execution_max_iterations().await?)
+                .map_err(|_| "Task Runner max iterations exceeds Cloud Agent range".to_string())?;
+        let ordering_lane_key = format!("task:{}", task.id);
+        let agent_run_id = format!("task_runner_agent_{run_id}");
+        let cloud_run = chatos_cloud_agent_runtime::create_cloud_agent_run(
+            &self.cloud_agent_store,
+            chatos_cloud_agent_runtime::NewCloudAgentRun {
+                ordering_lane_key: ordering_lane_key.clone(),
+                agent_run_id: agent_run_id.clone(),
+                owner_service: "task-runner".to_string(),
+                owner_entity_type: "task_run".to_string(),
+                owner_entity_id: run_id.clone(),
+                owner_user_id: task
+                    .owner_user_id
+                    .as_deref()
+                    .or(task.creator_user_id.as_deref())
+                    .unwrap_or(task.subject_id.as_str())
+                    .to_string(),
+                agent_key: agent.descriptor().key.as_str().to_string(),
+                input: Value::Null,
+                model_config_ref: model_config_id.clone(),
+                model_runtime_snapshot_ref: format!("task_run:{run_id}:model_runtime"),
+                agent_prompt_revision: agent_prompt.revision.to_string(),
+                agent_prompt_checksum: agent_prompt.checksum.clone(),
+                capability_policy_revision: capability_policy
+                    .as_ref()
+                    .map(|policy| policy.policy_revision())
+                    .unwrap_or("unmanaged")
+                    .to_string(),
+                mcp_runtime_session_ref: None,
+                current_input_items_ref: format!("task_run:{run_id}:input_snapshot"),
+                max_iterations,
+                deadline_at: Some(deadline_at),
+                runtime_routing_key: "cloud_agent.task_runner.runtime".to_string(),
+                start_causation_id: run_id.clone(),
+                start_payload: json!({"task_run_id": run_id}),
+            },
+        )
+        .await?;
+        let lane_seq = cloud_run.ordering.lane_seq;
         let now = now_rfc3339();
         let mut run = TaskRunRecord::queued(
             run_id.clone(),
@@ -218,13 +282,25 @@ impl RunService {
             model_config_id.clone(),
             task.memory_thread_id.clone(),
             input_snapshot,
-            plugin_snapshots,
             now,
         );
-        run.execution_lane_key = task.execution_lane_key();
+        run.effective_tools = effective_tools;
+        run.agent_run_id = Some(agent_run_id);
+        run.dispatch_event_pending = false;
+        run.agent_ordering_lane_key = Some(ordering_lane_key);
+        run.agent_lane_seq = Some(lane_seq);
+        run.execution_lane_key = execution_lane_key;
         let requested_dispatch_paused = task.task_tool_state.execution_paused;
         run.dispatch_paused = requested_dispatch_paused || retry_of_run_id.is_some();
-        self.store.save_run(run.clone()).await?;
+        if let Err(error) = self.store.save_run(run.clone()).await {
+            warn!(
+                run_id = run.id.as_str(),
+                agent_run_id = run.agent_run_id.as_deref().unwrap_or_default(),
+                error = error.as_str(),
+                "Task Run persistence failed after Cloud Agent creation"
+            );
+            return Err(error);
+        }
         if let Some(previous_run_id) = retry_of_run_id {
             Box::pin(self.prepare_retry_task_session(
                 task.id.as_str(),
@@ -273,48 +349,7 @@ impl RunService {
         // run id/status before batch pause or cancellation decisions are made.
         self.try_send_task_callback("task.run.started", task_id, Some(&run))
             .await;
-        if let Err(err) = self.enqueue_run_dispatch_if_needed(&run).await {
-            warn!(
-                run_id = run.id.as_str(),
-                task_id = task_id,
-                error = err.as_str(),
-                "failed to enqueue queued run for rabbitmq dispatch"
-            );
-        }
-
         Ok(run)
-    }
-
-    async fn execution_environment_mode_for_task(
-        &self,
-        task: &TaskRecord,
-        configured_mode: &str,
-    ) -> String {
-        let fallback = normalize_execution_environment_mode(Some(configured_mode));
-        let project_id = normalize_project_id(Some(task.project_id.clone()));
-        if project_id == PUBLIC_PROJECT_ID
-            || !project_management_api_client::project_service_enabled(&self.config)
-        {
-            return fallback;
-        }
-
-        match project_management_api_client::sync_get_project(&self.config, project_id.as_str())
-            .await
-        {
-            Ok(Some(project)) => execution_environment_mode_for_project_source(
-                project.source_type.as_deref(),
-                fallback.as_str(),
-            ),
-            Ok(None) => fallback,
-            Err(error) => {
-                warn!(
-                    project_id = project_id.as_str(),
-                    error = error.as_str(),
-                    "failed to resolve project execution environment mode; using configured fallback"
-                );
-                fallback
-            }
-        }
     }
 
     async fn prepare_retry_task_session(
@@ -334,7 +369,10 @@ impl RunService {
 fn contact_async_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
     matches!(
         trigger,
-        RunTriggerSource::Scheduler | RunTriggerSource::Retry | RunTriggerSource::AutomaticRetry
+        RunTriggerSource::Scheduler
+            | RunTriggerSource::Retry
+            | RunTriggerSource::AutomaticRetry
+            | RunTriggerSource::Dependency
     )
 }
 
@@ -342,26 +380,10 @@ fn cancelled_task_trigger_is_allowed(trigger: RunTriggerSource) -> bool {
     matches!(trigger, RunTriggerSource::Retry)
 }
 
-fn execution_environment_mode_for_project_source(
-    source_type: Option<&str>,
-    configured_mode: &str,
-) -> String {
-    match source_type
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("cloud") => "cloud".to_string(),
-        Some("local" | "local_connector") => "local".to_string(),
-        _ => normalize_execution_environment_mode(Some(configured_mode)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        cancelled_task_trigger_is_allowed, contact_async_trigger_is_allowed,
-        execution_environment_mode_for_project_source, RunTriggerSource,
+        cancelled_task_trigger_is_allowed, contact_async_trigger_is_allowed, RunTriggerSource,
     };
 
     #[test]
@@ -386,29 +408,5 @@ mod tests {
         assert!(!cancelled_task_trigger_is_allowed(
             RunTriggerSource::Scheduler
         ));
-    }
-
-    #[test]
-    fn cloud_project_overrides_a_local_host_default_for_run_observability() {
-        assert_eq!(
-            execution_environment_mode_for_project_source(Some("cloud"), "local"),
-            "cloud"
-        );
-    }
-
-    #[test]
-    fn local_connector_project_remains_local_even_with_a_cloud_default() {
-        assert_eq!(
-            execution_environment_mode_for_project_source(Some("local_connector"), "cloud"),
-            "local"
-        );
-    }
-
-    #[test]
-    fn unknown_project_source_uses_the_configured_mode() {
-        assert_eq!(
-            execution_environment_mode_for_project_source(Some("legacy"), "cloud"),
-            "cloud"
-        );
     }
 }

@@ -14,8 +14,10 @@ use super::internal_auth::{
 use super::ApiError;
 use crate::models::{
     ImportProjectRequest, ProjectRecord, ProjectRuntimeEnvironmentResponse, ProjectStatus,
-    SyncRequirementExecutionStateRequest, SyncRequirementExecutionStateResponse,
-    SyncTaskRunnerWorkItemStatusRequest, SyncTaskRunnerWorkItemStatusResponse,
+    ProjectWorkItemTaskRunnerLinkRecord, SyncDeleteExecutionLinksRequest,
+    SyncExecutionLinksQueryRequest, SyncRequirementExecutionStateRequest,
+    SyncRequirementExecutionStateResponse, SyncTaskRunnerWorkItemStatusRequest,
+    SyncTaskRunnerWorkItemStatusResponse,
 };
 use crate::services::execution_sync::{self, ExecutionSyncError};
 use crate::services::runtime_environment::{
@@ -157,6 +159,60 @@ pub(in crate::api) async fn sync_get_project_runtime_environment(
     }))
 }
 
+pub(in crate::api) async fn sync_list_execution_links(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<SyncExecutionLinksQueryRequest>,
+) -> Result<Json<Vec<ProjectWorkItemTaskRunnerLinkRecord>>, ApiError> {
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_READ_SCOPE,
+    )?;
+    let mut links = Vec::new();
+    for work_item_id in normalized_unique_ids(input.work_item_ids) {
+        links.extend(
+            state
+                .store
+                .list_task_runner_links(work_item_id.as_str())
+                .await
+                .map_err(ApiError::bad_request)?,
+        );
+    }
+    Ok(Json(links))
+}
+
+pub(in crate::api) async fn sync_delete_execution_links(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<SyncDeleteExecutionLinksRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_project_internal_request(
+        &state.config,
+        &headers,
+        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
+        PROJECT_SYNC_SCOPE,
+    )?;
+    let mut deleted = 0usize;
+    for link in input.links {
+        let work_item_id = link.work_item_id.trim();
+        let link_id = link.link_id.trim();
+        if work_item_id.is_empty() || link_id.is_empty() {
+            continue;
+        }
+        if state
+            .store
+            .delete_task_runner_link(work_item_id, link_id)
+            .await
+            .map_err(ApiError::bad_request)?
+        {
+            deleted += 1;
+        }
+    }
+    Ok(Json(serde_json::json!({ "deleted_count": deleted })))
+}
+
 pub(in crate::api) async fn sync_task_runner_work_item_status(
     Path(work_item_id): Path<String>,
     State(state): State<AppState>,
@@ -271,6 +327,16 @@ fn operation_outcome<T>(result: &Result<T, ApiError>) -> &'static str {
     } else {
         "failed"
     }
+}
+
+fn normalized_unique_ids(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn sync_error_to_api_error(error: ExecutionSyncError) -> ApiError {

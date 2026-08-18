@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type { FC } from 'react';
+import { useEffect, useState, type FC } from 'react';
+import { RefreshCw } from 'lucide-react';
+import { getMessageTaskRunnerRunChanges } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
-import type { MessageTaskRunnerRunDetailResponse } from '../../lib/api/client/types';
+import type {
+  MessageTaskRunnerRunChanges,
+  MessageTaskRunnerRunDetailResponse,
+} from '../../lib/api/client/types';
+import { useApiClient } from '../../lib/api/ApiClientContext';
 import { sanitizeUserVisibleAppError } from '../../lib/domain/userVisibleError';
 import { CollapsibleSection, CollapsibleText } from './CollapsibleSection';
 import { FieldGrid, MarkdownCard, ModalShell } from './parts';
@@ -15,14 +21,16 @@ import { BrowserSessionEventsCard } from './BrowserSessionEventsCard';
 import { PluginRunSnapshotCard } from './PluginRunSnapshotCard';
 import { PluginRuntimeEventsCard } from './PluginRuntimeEventsCard';
 import { PluginUiWorkbenchCard } from './PluginUiWorkbenchCard';
-import { extractReportContent, formatDateTime, isRecord, readString } from './utils';
+import { extractReportContent, formatDateTime, readString } from './utils';
 
 interface MessageTaskRunDetailModalProps {
   detail: MessageTaskRunnerRunDetailResponse | null;
   messageId?: string;
   taskLookup?: MessageTaskRunnerLookupOptions;
   loadingMoreEvents?: boolean;
+  refreshing?: boolean;
   onLoadMoreEvents?: () => void;
+  onRefresh?: () => void;
   onClose: () => void;
 }
 
@@ -48,78 +56,25 @@ const formatModelConfig = (
   return id ? `模型配置暂不可用 (${shortId(id)})` : '-';
 };
 
-interface RunExecutionLocation {
-  environmentMode: string | null;
-  sandboxEnabled: boolean | null;
-  sandboxProvider: string | null;
-  sandboxId: string | null;
-  leaseId: string | null;
-  leaseExpiresAt: string | null;
-  harnessRepoPath: string | null;
-  harnessBaseBranch: string | null;
-  harnessRunBranch: string | null;
-  harnessStatus: string | null;
-  harnessResultCommit: string | null;
-}
-
-const readRecord = (value: unknown): Record<string, unknown> | null => (
-  isRecord(value) ? value : null
-);
-
-const extractRunExecutionLocation = (
-  run: MessageTaskRunnerRunDetailResponse['run'],
-): RunExecutionLocation => {
-  const input = readRecord(run.input_snapshot);
-  const inputSandbox = readRecord(input?.sandbox);
-  const inputHarness = readRecord(input?.harness);
-  const report = readRecord(run.report);
-  const reportOutput = readRecord(report?.output);
-  const outputSandbox = readRecord(reportOutput?.sandbox);
-  const outputHarness = readRecord(reportOutput?.harness);
-  const sandboxEnabled = typeof input?.sandbox_enabled === 'boolean'
-    ? input.sandbox_enabled
-    : typeof outputSandbox?.enabled === 'boolean'
-      ? outputSandbox.enabled
-      : inputSandbox
-        ? true
-        : null;
-
-  return {
-    environmentMode: readString(input?.execution_environment_mode),
-    sandboxEnabled,
-    sandboxProvider: readString(inputSandbox?.provider),
-    sandboxId: readString(inputSandbox?.sandbox_id) || readString(outputSandbox?.sandbox_id),
-    leaseId: readString(inputSandbox?.lease_id) || readString(outputSandbox?.lease_id),
-    leaseExpiresAt: readString(inputSandbox?.expires_at),
-    harnessRepoPath: readString(inputHarness?.repo_path) || readString(outputHarness?.repo_path),
-    harnessBaseBranch: readString(inputHarness?.base_branch) || readString(outputHarness?.base_branch),
-    harnessRunBranch: readString(inputHarness?.run_branch) || readString(outputHarness?.run_branch),
-    harnessStatus: readString(outputHarness?.status) || readString(inputHarness?.status),
-    harnessResultCommit: readString(outputHarness?.result_commit),
-  };
-};
-
-const environmentModeLabel = (mode: string | null): string => {
-  if (mode === 'cloud') return '云端';
-  if (mode === 'local') return '本地';
-  return mode || '-';
-};
-
-const sandboxStatusLabel = (location: RunExecutionLocation): string => {
-  if (location.sandboxId && location.leaseId) return '已准备';
-  if (location.sandboxEnabled === true) return '准备中';
-  if (location.sandboxEnabled === false) return '未启用';
-  return '-';
-};
-
 export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   detail,
   messageId,
   taskLookup,
   loadingMoreEvents = false,
+  refreshing = false,
   onLoadMoreEvents,
+  onRefresh,
   onClose,
 }) => {
+  const apiClient = useApiClient();
+  const [changes, setChanges] = useState<MessageTaskRunnerRunChanges | null>(null);
+  const [changesLoading, setChangesLoading] = useState(false);
+  const [changesError, setChangesError] = useState<string | null>(null);
+  useEffect(() => {
+    setChanges(null);
+    setChangesLoading(false);
+    setChangesError(null);
+  }, [detail?.run.id]);
   if (!detail) {
     return null;
   }
@@ -135,7 +90,6 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
   const eventsHasMore = Boolean(detail.events_has_more);
   const resultSummary = readString(run.result_summary);
   const normalizedReportContent = readString(reportContent);
-  const executionLocation = extractRunExecutionLocation(run);
   const userVisibleError = run.error_message
     ? sanitizeUserVisibleAppError(run.error_message)
     : null;
@@ -143,6 +97,31 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
     normalizedReportContent
       && normalizedReportContent !== resultSummary,
   );
+  const canLoadChanges = Boolean(
+    messageId
+      && taskLookup
+      && readString(run.workspace_execution?.result_commit),
+  );
+
+  const loadChanges = async () => {
+    if (!messageId || !taskLookup || changesLoading) {
+      return;
+    }
+    setChangesLoading(true);
+    setChangesError(null);
+    try {
+      setChanges(await getMessageTaskRunnerRunChanges(
+        apiClient.getRequestFn(),
+        messageId,
+        run.id,
+        taskLookup,
+      ));
+    } catch (error) {
+      setChangesError(error instanceof Error ? error.message : '读取任务代码变更失败');
+    } finally {
+      setChangesLoading(false);
+    }
+  };
 
   return (
     <ModalShell
@@ -151,11 +130,28 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
       onClose={onClose}
       widthClassName="max-w-6xl"
     >
+      {onRefresh ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+            disabled={refreshing}
+            onClick={onRefresh}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? '正在刷新' : '刷新运行详情'}
+          </button>
+        </div>
+      ) : null}
       <FieldGrid
         items={[
           ['运行 ID', run.id],
           ['任务', task.title || run.task_id],
           ['状态', run.status],
+          ['模型阶段', run.model_phase_status],
+          ['代码集成', run.workspace_execution?.integration_status || 'not_required'],
+          ['执行批次分支', run.workspace_execution?.execution_branch_ref || '-'],
+          ['冲突文件', run.workspace_execution?.conflict_files?.join('、') || '-'],
           ['模型', formatModelConfig(detail.model_config, run.model_config_id)],
           ['开始时间', formatDateTime(run.started_at)],
           ['结束时间', formatDateTime(run.finished_at)],
@@ -165,27 +161,36 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
         ]}
       />
 
-      <CollapsibleSection title="执行位置" defaultOpen>
-        <FieldGrid
-          items={[
-            ['执行环境', environmentModeLabel(executionLocation.environmentMode)],
-            ['沙箱状态', sandboxStatusLabel(executionLocation)],
-            ['沙箱提供方', executionLocation.sandboxProvider],
-            ['Sandbox ID', executionLocation.sandboxId],
-            ['Lease ID', executionLocation.leaseId],
-            ['租约到期', executionLocation.leaseExpiresAt
-              ? formatDateTime(executionLocation.leaseExpiresAt)
-              : null],
-            ['Harness 仓库', executionLocation.harnessRepoPath],
-            ['Harness 基线分支', executionLocation.harnessBaseBranch],
-            ['Harness 运行分支', executionLocation.harnessRunBranch],
-            ['Harness 状态', executionLocation.harnessStatus],
-            ['Harness 结果提交', executionLocation.harnessResultCommit],
-          ]}
-        />
-      </CollapsibleSection>
-
       <PluginRunSnapshotCard inputSnapshot={run.input_snapshot} />
+      {canLoadChanges ? (
+        <CollapsibleSection
+          title="代码变更"
+          summary={changes ? `${changes.files.length} 个文件` : '查看任务分支相对执行基线的真实差异'}
+          defaultOpen={Boolean(changes || changesError)}
+        >
+          {!changes ? (
+            <button
+              type="button"
+              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+              disabled={changesLoading}
+              onClick={() => void loadChanges()}
+            >
+              {changesLoading ? '正在读取代码变更' : '查看代码变更'}
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <CollapsibleText value={changes.files} code />
+              <CollapsibleText value={changes.patch || '没有代码差异'} code />
+              {changes.patch_truncated ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">差异内容过长，已截断展示。</p>
+              ) : null}
+            </div>
+          )}
+          {changesError ? (
+            <p role="alert" className="mt-2 text-xs text-destructive">{changesError}</p>
+          ) : null}
+        </CollapsibleSection>
+      ) : null}
       <BrowserSessionEventsCard events={events} />
       <PluginRuntimeEventsCard events={events} />
       {messageId && taskLookup ? (

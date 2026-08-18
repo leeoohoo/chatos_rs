@@ -5,7 +5,7 @@ mod client;
 mod parsing;
 mod protocol;
 
-pub use client::AiClient;
+pub(crate) use client::{AiClient, AiGenerateTextError, SUMMARY_SYSTEM_PROMPT};
 
 #[cfg(test)]
 mod tests;

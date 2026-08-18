@@ -12,6 +12,7 @@ import { MessageAvatar } from './messageItem/MessageAvatar';
 import { MessageEditForm } from './messageItem/MessageEditForm';
 import { MessageHeader } from './messageItem/MessageHeader';
 import { SessionSummaryCard } from './messageItem/SessionSummaryCard';
+import { MessageTaskInlinePanel } from './messageTasks/MessageTaskInlinePanel';
 import type { MessageItemProps } from './messageItem/messageItemTypes';
 import { useMessageItemModel } from './messageItem/useMessageItemModel';
 import PluginCommandAuditList from './pluginCommands/PluginCommandAuditList';
@@ -51,11 +52,16 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+  const [assistantBubbleExpandSignal, setAssistantBubbleExpandSignal] = useState(0);
   useEffect(() => {
     if (!isEditing) {
       setEditContent(message.content);
     }
   }, [isEditing, message.content]);
+
+  useEffect(() => {
+    setAssistantBubbleExpandSignal(0);
+  }, [message.id]);
 
   // 处理代码应用
   const handleApplyCode = (code: string, _language: string) => {
@@ -204,7 +210,10 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
         ) : (
           isAssistant ? (
             shouldHideEmptyNonTaskRunnerAssistant ? null : (
-              <AssistantMessageBubble messageId={message.id}>
+              <AssistantMessageBubble
+                messageId={message.id}
+                expandSignal={assistantBubbleExpandSignal}
+              >
                 <div className="space-y-3">
                   <MessageContentRenderer
                     message={message}
@@ -218,6 +227,12 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                     collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
                     onApplyCode={handleApplyCode}
                   />
+                  {showAssistantChrome ? (
+                    <MessageTaskInlinePanel
+                      message={message}
+                      onRequestExpandMessage={() => setAssistantBubbleExpandSignal((value) => value + 1)}
+                    />
+                  ) : null}
                 </div>
               </AssistantMessageBubble>
             )

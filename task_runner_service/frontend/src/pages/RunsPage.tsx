@@ -11,7 +11,7 @@ import {
 
 import { api, buildEventSourceUrl } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
-import type { TaskRunEventRecord, TaskRunStatus } from '../types';
+import type { RunWorkspaceChanges, TaskRunEventRecord, TaskRunStatus } from '../types';
 import {
   type RunStatusFilter,
 } from './runs/runPageUtils';
@@ -63,6 +63,7 @@ export function RunsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [messageApi, contextHolder] = message.useMessage();
+  const [runChanges, setRunChanges] = useState<RunWorkspaceChanges | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<RunStatusFilter>('all');
   const [runPage, setRunPage] = useState(1);
@@ -90,8 +91,6 @@ export function RunsPage() {
     taskOptions,
     modelOptions,
     modelNameMap,
-    selectedRemoteOperations,
-    selectedRemoteOperationStats,
   } = useRunsPageData({
     t,
     taskFilterId,
@@ -265,6 +264,42 @@ export function RunsPage() {
     onError: (error: Error) => messageApi.error(error.message),
   });
 
+  const retryRunIntegrationMutation = useMutation({
+    mutationFn: api.retryRunIntegration,
+    onSuccess: async (run) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['run-index'] }),
+        queryClient.invalidateQueries({ queryKey: ['run', run.id] }),
+        queryClient.invalidateQueries({ queryKey: ['run-events', run.id] }),
+      ]);
+      messageApi.success(t('runs.integrationRetryRequested'));
+    },
+    onError: (error: Error) => messageApi.error(error.message),
+  });
+
+  const waiveRunIntegrationMutation = useMutation({
+    mutationFn: ({ runId, reason }: { runId: string; reason: string }) => (
+      api.waiveRunIntegration(runId, reason)
+    ),
+    onSuccess: async (run) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['runs'] }),
+        queryClient.invalidateQueries({ queryKey: ['run-index'] }),
+        queryClient.invalidateQueries({ queryKey: ['run', run.id] }),
+        queryClient.invalidateQueries({ queryKey: ['run-events', run.id] }),
+      ]);
+      messageApi.success(t('runs.integrationWaived'));
+    },
+    onError: (error: Error) => messageApi.error(error.message),
+  });
+
+  const runChangesMutation = useMutation({
+    mutationFn: api.getRunChanges,
+    onSuccess: setRunChanges,
+    onError: (error: Error) => messageApi.error(error.message),
+  });
+
   return (
     <>
       {contextHolder}
@@ -351,8 +386,6 @@ export function RunsPage() {
         toolResults={selectedToolResults}
         modelRequests={selectedModelRequests}
         streamStats={selectedStreamStats}
-        remoteOperations={selectedRemoteOperations}
-        remoteOperationStats={selectedRemoteOperationStats}
         promptsPage={runPromptsQuery.data}
         promptsLoading={runPromptsQuery.isLoading}
         promptPage={runPromptPage}
@@ -361,20 +394,27 @@ export function RunsPage() {
         eventsLoading={runEventsQuery.isLoading}
         canceling={cancelRunMutation.isPending}
         retrying={retryRunMutation.isPending}
+        integrationRetrying={retryRunIntegrationMutation.isPending}
+        integrationWaiving={waiveRunIntegrationMutation.isPending}
+        changes={runChanges}
+        changesLoading={runChangesMutation.isPending}
         onClose={() => {
           const next = new URLSearchParams(searchParams);
           next.delete('run_id');
           setSearchParams(next);
           setSelectedRunId(null);
+          setRunChanges(null);
         }}
         onOpenTask={(taskId) => navigate(`/tasks?task_id=${encodeURIComponent(taskId)}`)}
         onOpenModel={(modelId) => navigate(`/models?model_id=${encodeURIComponent(modelId)}`)}
         onCancel={(runId) => cancelRunMutation.mutate(runId)}
         onRetry={(runId) => retryRunMutation.mutate(runId)}
-        onManageServers={() => navigate('/servers')}
-        onOpenServer={(serverId) =>
-          navigate(`/servers?server_id=${encodeURIComponent(serverId)}`)
-        }
+        onRetryIntegration={(runId) => retryRunIntegrationMutation.mutate(runId)}
+        onWaiveIntegration={async (runId, reason) => {
+          await waiveRunIntegrationMutation.mutateAsync({ runId, reason });
+        }}
+        onOpenChanges={(runId) => runChangesMutation.mutate(runId)}
+        onCloseChanges={() => setRunChanges(null)}
         onOpenPrompt={(promptId, runId) =>
           navigate(
             `/prompts?prompt_id=${encodeURIComponent(promptId)}&run_id=${encodeURIComponent(runId)}`,

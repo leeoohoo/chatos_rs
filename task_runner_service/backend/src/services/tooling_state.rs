@@ -12,7 +12,10 @@ use crate::notepad_store::TaskRunnerNotepadStore;
 use crate::terminal_store::TaskRunnerTerminalControllerStore;
 
 use super::workspace_mcp::default_user_workspace_dir;
-use super::{normalized_optional, ToolingStateService};
+use super::{
+    load_managed_config_snapshot, normalized_optional, require_managed_usize, ToolingStateService,
+    TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
+};
 
 impl ToolingStateService {
     pub(crate) fn new(config: AppConfig) -> Self {
@@ -66,7 +69,7 @@ impl ToolingStateService {
     ) -> Result<Value, String> {
         TaskRunnerTerminalControllerStore
             .process_list(
-                self.terminal_context(user_id, project_id),
+                self.terminal_context(user_id, project_id).await?,
                 include_exited,
                 limit.clamp(1, 100),
             )
@@ -83,7 +86,7 @@ impl ToolingStateService {
     ) -> Result<Value, String> {
         TaskRunnerTerminalControllerStore
             .process_poll(
-                self.terminal_context(user_id, project_id),
+                self.terminal_context(user_id, project_id).await?,
                 terminal_id.to_string(),
                 offset,
                 limit.unwrap_or(200).clamp(1, 200),
@@ -99,7 +102,7 @@ impl ToolingStateService {
     ) -> Result<Value, String> {
         TaskRunnerTerminalControllerStore
             .process_kill(
-                self.terminal_context(user_id, project_id),
+                self.terminal_context(user_id, project_id).await?,
                 terminal_id.to_string(),
             )
             .await
@@ -115,7 +118,7 @@ impl ToolingStateService {
     ) -> Result<Value, String> {
         TaskRunnerTerminalControllerStore
             .process_write(
-                self.terminal_context(user_id, project_id),
+                self.terminal_context(user_id, project_id).await?,
                 terminal_id.to_string(),
                 data,
                 submit,
@@ -130,24 +133,27 @@ impl ToolingStateService {
         TaskRunnerNotepadStore::new(root, user_id.unwrap_or("task_runner"))
     }
 
-    fn terminal_context(
+    async fn terminal_context(
         &self,
         user_id: Option<String>,
         project_id: Option<String>,
-    ) -> TerminalControllerContext {
+    ) -> Result<TerminalControllerContext, String> {
+        let snapshot = load_managed_config_snapshot().await?;
+        let max_output_chars =
+            require_managed_usize(&snapshot, TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY, 1)?;
         let normalized_user_id = normalized_optional(user_id);
         let root = default_user_workspace_dir(
             self.config.default_workspace_dir.as_str(),
             normalized_user_id.as_deref(),
         );
         let _ = std::fs::create_dir_all(root.as_path());
-        TerminalControllerContext {
+        Ok(TerminalControllerContext {
             root,
             user_id: normalized_user_id,
             project_id: normalized_optional(project_id),
             idle_timeout_ms: 5_000,
             max_wait_ms: 60_000,
-            max_output_chars: 20_000,
-        }
+            max_output_chars,
+        })
     }
 }

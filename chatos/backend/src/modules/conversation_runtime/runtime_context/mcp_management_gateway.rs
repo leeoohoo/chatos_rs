@@ -6,7 +6,7 @@ use std::time::Duration;
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_gateway::McpManagementGatewayBuilder;
 use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
-use chatos_plugin_management_sdk::SystemMcpKey;
+use chatos_plugin_management_sdk::{PluginCommandInvocation, SelectedPluginRef, SystemMcpKey};
 use tracing::{info, warn};
 
 use crate::services::mcp_loader::McpHttpServer;
@@ -18,6 +18,7 @@ const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
 pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) tenant_id: Option<&'a str>,
     pub(super) owner_user_id: Option<&'a str>,
+    pub(super) owner_role: Option<&'a str>,
     pub(super) agent_profile: ChatosAgentProfile,
     pub(super) project_id: Option<&'a str>,
     pub(super) source_session_id: Option<&'a str>,
@@ -26,6 +27,8 @@ pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) contact_agent_id: Option<&'a str>,
     pub(super) default_model_config_id: Option<&'a str>,
     pub(super) expected_project_task_ids: &'a [String],
+    pub(super) selected_plugins: Vec<SelectedPluginRef>,
+    pub(super) plugin_command_invocations: Vec<PluginCommandInvocation>,
     pub(super) locale: Option<&'a str>,
 }
 
@@ -33,6 +36,8 @@ pub(super) struct McpManagementGateway {
     server: McpHttpServer,
     effective_mcp_ids: Vec<String>,
     provider_skills_prompt: Option<String>,
+    plugin_instruction_items: Vec<serde_json::Value>,
+    mcp_command_queue: String,
     runtime_session: McpManagementRuntimeSessionHandle,
 }
 
@@ -43,12 +48,16 @@ impl McpManagementGateway {
         McpHttpServer,
         Vec<String>,
         Option<String>,
+        Vec<serde_json::Value>,
+        String,
         McpManagementRuntimeSessionHandle,
     ) {
         (
             self.server,
             self.effective_mcp_ids,
             self.provider_skills_prompt,
+            self.plugin_instruction_items,
+            self.mcp_command_queue,
             self.runtime_session,
         )
     }
@@ -68,9 +77,11 @@ pub(super) async fn resolve_mcp_management_gateway(
     let session_request = CreateRuntimeSessionRequest {
         tenant_id: tenant_id.to_string(),
         owner_user_id: owner_user_id.to_string(),
+        owner_role: normalized(request.owner_role),
         agent_key: agent_key.clone(),
         project_id: project_id.to_string(),
         run_id: None,
+        execution_group_id: None,
         turn_id: Some(turn_id.to_string()),
         task_id: None,
         task_profile: request
@@ -81,13 +92,65 @@ pub(super) async fn resolve_mcp_management_gateway(
         source_user_message_id: Some(source_user_message_id.to_string()),
         contact_agent_id: normalized(request.contact_agent_id),
         default_model_config_id: normalized(request.default_model_config_id),
+        tool_result_max_chars: None,
         expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
         requested_mcp_ids: None,
+        selected_plugins: request.selected_plugins,
+        plugin_command_invocations: request.plugin_command_invocations,
         locale: normalized(request.locale),
-        requested_device_id: None,
-        requested_sandbox_provider: None,
-        sandbox_target: None,
+        workspace_route: None,
     };
+    let resolved = configured_gateway_builder(session_request)?
+        .resolve()
+        .await
+        .map_err(|error| format!("resolve ChatOS MCP gateway failed: {error}"))?;
+    info!(
+        source_session_id,
+        turn_id,
+        agent_key = agent_key.as_str(),
+        session_id = resolved.session_id.as_str(),
+        route_revision = resolved.route_revision.as_str(),
+        configured_mcp_count = resolved.configured_mcp_count,
+        exposed_tool_count = resolved.exposed_tool_count,
+        "ChatOS resolved MCP Management runtime session"
+    );
+    build_resolved_gateway(resolved, source_session_id, turn_id).await
+}
+
+pub(super) async fn resolve_existing_mcp_management_gateway(
+    session_id: &str,
+) -> Result<McpManagementGateway, String> {
+    let session_id = required_text(Some(session_id), "session_id")?;
+    let builder = configured_gateway_builder(CreateRuntimeSessionRequest {
+        tenant_id: String::new(),
+        owner_user_id: String::new(),
+        owner_role: None,
+        agent_key: String::new(),
+        project_id: String::new(),
+        run_id: None,
+        execution_group_id: None,
+        turn_id: None,
+        task_id: None,
+        task_profile: None,
+        source_session_id: None,
+        source_user_message_id: None,
+        contact_agent_id: None,
+        default_model_config_id: None,
+        tool_result_max_chars: None,
+        expected_project_task_ids: Vec::new(),
+        requested_mcp_ids: None,
+        selected_plugins: Vec::new(),
+        plugin_command_invocations: Vec::new(),
+        locale: None,
+        workspace_route: None,
+    })?;
+    let resolved = builder.resolve_existing(session_id).await?;
+    build_resolved_gateway(resolved, "existing", "existing").await
+}
+
+fn configured_gateway_builder(
+    session_request: CreateRuntimeSessionRequest,
+) -> Result<McpManagementGatewayBuilder, String> {
     let timeout = Duration::from_millis(
         std::env::var("CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")
             .ok()
@@ -126,20 +189,15 @@ pub(super) async fn resolve_mcp_management_gateway(
             terminal_wait_timeout,
         );
     }
-    let resolved = builder
-        .resolve()
-        .await
-        .map_err(|error| format!("resolve ChatOS MCP gateway failed: {error}"))?;
-    info!(
-        source_session_id,
-        turn_id,
-        agent_key = agent_key.as_str(),
-        session_id = resolved.session_id.as_str(),
-        route_revision = resolved.route_revision.as_str(),
-        configured_mcp_count = resolved.configured_mcp_count,
-        exposed_tool_count = resolved.exposed_tool_count,
-        "ChatOS resolved MCP Management runtime session"
-    );
+    Ok(builder)
+}
+
+async fn build_resolved_gateway(
+    resolved: chatos_mcp_gateway::ResolvedMcpGateway,
+    source_session_id: &str,
+    turn_id: &str,
+) -> Result<McpManagementGateway, String> {
+    let mcp_command_queue = resolved.mcp_command_queue.clone();
     let runtime_session = resolved.runtime_session;
     let server = match crate::services::shared_mcp_runtime::chatos_http_server(resolved.server) {
         Ok(server) => server,
@@ -161,6 +219,8 @@ pub(super) async fn resolve_mcp_management_gateway(
         server,
         effective_mcp_ids: resolved.effective_mcp_ids,
         provider_skills_prompt: resolved.provider_skills_prompt,
+        plugin_instruction_items: resolved.plugin_instruction_items,
+        mcp_command_queue,
         runtime_session,
     })
 }

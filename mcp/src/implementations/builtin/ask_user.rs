@@ -108,6 +108,80 @@ pub struct AskUserService {
     store: AskUserStoreRef,
 }
 
+pub fn prepare_prompt(
+    name: &str,
+    args: Value,
+    conversation_id: &str,
+    conversation_turn_id: &str,
+    timeout_ms: u64,
+) -> Result<AskUserPromptPayload, String> {
+    let timeout_ms = timeout_ms.clamp(10_000, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT);
+    let common = |kind: &str, payload: Value| AskUserPromptPayload {
+        prompt_id: make_prompt_id(),
+        conversation_id: conversation_id.to_string(),
+        conversation_turn_id: conversation_turn_id.to_string(),
+        tool_call_id: None,
+        kind: kind.to_string(),
+        title: optional_string(&args, "title"),
+        message: optional_string(&args, "message"),
+        allow_cancel: args
+            .get("allow_cancel")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        timeout_ms,
+        payload,
+    };
+    match name {
+        "prompt_key_values" => {
+            let fields = normalize_kv_fields(args.get("fields"), 50)?;
+            Ok(common(
+                "kv",
+                json!({"fields": kv_fields_to_value(fields.as_slice())}),
+            ))
+        }
+        "prompt_choices" => {
+            let multiple = args
+                .get("multiple")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let options = normalize_choice_options(args.get("options"), 60)?;
+            let limits = normalize_choice_limits(
+                multiple,
+                parse_i64(args.get("min_selections")),
+                parse_i64(args.get("max_selections")),
+                options.len(),
+                parse_i64(args.get("single_min_selections")),
+                parse_i64(args.get("single_max_selections")),
+            )?;
+            let default_selection =
+                normalize_default_selection(args.get("default"), multiple, options.as_slice());
+            Ok(common(
+                "choice",
+                json!({
+                    "choice": choice_to_value(
+                        multiple,
+                        options.as_slice(),
+                        &limits,
+                        default_selection,
+                    )
+                }),
+            ))
+        }
+        "prompt_mixed_form" => {
+            let fields = parse_mixed_fields(&args)?;
+            let choice = parse_choice_block(build_mixed_choice_input(&args).as_ref())?;
+            if fields.is_empty() && choice.is_none() {
+                return Err("mixed form requires fields and/or choice".to_string());
+            }
+            Ok(common(
+                "mixed",
+                Value::Object(build_mixed_payload_map(fields.as_slice(), choice)),
+            ))
+        }
+        _ => Err(format!("Tool not found: {name}")),
+    }
+}
+
 type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Send + Sync>;
 
 struct ToolContext {

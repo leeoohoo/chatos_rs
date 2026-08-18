@@ -154,7 +154,9 @@ pub(super) async fn generate_project_runtime_environment_image(
     if !is_cloud_project(&project) {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "本地项目镜像必须由本地客户端生成" })),
+            Json(
+                json!({ "error": "本地项目不会通过这个云端接口直接生成镜像；请改走 Local Connector 运行环境流程" }),
+            ),
         );
     }
     let (cfg, access_token) = match project_service_context() {

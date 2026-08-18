@@ -8,6 +8,7 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
     server: &McpBuiltinServer,
     task_service: TaskService,
     ask_user_prompt_service: AskUserPromptService,
+    tool_result_max_chars: usize,
 ) -> Result<TaskRunnerBuiltinProvider, String> {
     let Some(kind) = builtin_kind_by_any(server.kind.as_str()) else {
         return Err(format!("unknown builtin MCP kind: {}", server.kind));
@@ -20,10 +21,10 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
             build_notepad_provider(server, task_service)?
         }
         chatos_mcp_runtime::BuiltinMcpKind::TerminalController => {
-            build_terminal_controller_provider(server)?
+            build_terminal_controller_provider(server, tool_result_max_chars)?
         }
         chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
-            build_remote_connection_controller_provider(server, task_service)?
+            return Err("RemoteConnectionController is routed by MCP Management".to_string())
         }
         chatos_mcp_runtime::BuiltinMcpKind::AskUser => {
             build_ask_user_provider(server, ask_user_prompt_service)?
@@ -65,6 +66,7 @@ fn build_notepad_provider(
 
 fn build_terminal_controller_provider(
     server: &McpBuiltinServer,
+    tool_result_max_chars: usize,
 ) -> Result<TaskRunnerBuiltinProvider, String> {
     let service = TerminalControllerService::new(TerminalControllerOptions {
         root: PathBuf::from(&server.workspace_dir),
@@ -72,42 +74,12 @@ fn build_terminal_controller_provider(
         project_id: server.project_id.clone(),
         idle_timeout_ms: 5_000,
         max_wait_ms: 60_000,
-        max_output_chars: 20_000,
+        max_output_chars: tool_result_max_chars,
         store: TerminalControllerStoreRef::new(Arc::new(TaskRunnerTerminalControllerStore)),
     })?;
     Ok(TaskRunnerBuiltinProvider::new(
         server.name.clone(),
         TaskRunnerBuiltinToolService::TerminalController(service),
-    ))
-}
-
-fn build_remote_connection_controller_provider(
-    server: &McpBuiltinServer,
-    task_service: TaskService,
-) -> Result<TaskRunnerBuiltinProvider, String> {
-    let service = RemoteConnectionControllerService::new(RemoteConnectionControllerOptions {
-        server_name: server.name.clone(),
-        user_id: server
-            .user_id
-            .clone()
-            .or_else(|| Some(task_service.config.default_subject_id.clone())),
-        default_remote_connection_id: server.remote_connection_id.clone(),
-        command_timeout_seconds: 20,
-        max_command_timeout_seconds: 120,
-        max_output_chars: 20_000,
-        max_read_file_bytes: 256 * 1024,
-        store: RemoteConnectionControllerStoreRef::new(Arc::new(
-            TaskRunnerRemoteConnectionStore::new(
-                task_service.config.clone(),
-                task_service.store.clone(),
-            ),
-        )),
-    })?;
-    Ok(TaskRunnerBuiltinProvider::new(
-        server.name.clone(),
-        TaskRunnerBuiltinToolService::Shared(SharedBuiltinToolService::RemoteConnectionController(
-            service,
-        )),
     ))
 }
 

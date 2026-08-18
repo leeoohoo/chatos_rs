@@ -43,9 +43,7 @@ pub(super) struct MessageTaskRunnerLookupQuery {
     source_user_message_id: Option<String>,
     event_limit: Option<usize>,
     event_offset: Option<usize>,
-    limit: Option<usize>,
-    offset: Option<usize>,
-    path: Option<String>,
+    include_events: Option<bool>,
 }
 
 impl MessageTaskRunnerLookupQuery {
@@ -79,16 +77,8 @@ impl MessageTaskRunnerLookupQuery {
         self.event_offset
     }
 
-    pub(super) fn output_limit(&self) -> Option<usize> {
-        self.limit
-    }
-
-    pub(super) fn output_offset(&self) -> Option<usize> {
-        self.offset
-    }
-
-    pub(super) fn output_path(&self) -> Option<String> {
-        normalize_text(self.path.as_deref())
+    pub(super) fn include_events(&self) -> Option<bool> {
+        self.include_events
     }
 }
 

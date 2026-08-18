@@ -44,7 +44,7 @@ where
     let agent_key = agent.descriptor().key;
     let vendor = required_agent_prompt_vendor(prompt_vendor, model_provider)
         .map_err(|error| AgentError::execution(agent_key.as_str(), error.to_string()))?;
-    resolve_managed_prompt_by_key_with_vendor(client, agent_key, vendor).await
+    resolve_managed_prompt_by_key_with_vendor(client, agent_key, vendor, None).await
 }
 
 pub async fn resolve_managed_prompt_by_key_for_model(
@@ -53,21 +53,43 @@ pub async fn resolve_managed_prompt_by_key_for_model(
     prompt_vendor: Option<&str>,
     model_provider: &str,
 ) -> Result<ResolvedAgentPrompt, AgentError> {
+    resolve_managed_prompt_by_key_for_model_with_profile(
+        caller_service,
+        agent_key,
+        prompt_vendor,
+        model_provider,
+        None,
+    )
+    .await
+}
+
+pub async fn resolve_managed_prompt_by_key_for_model_with_profile(
+    caller_service: &str,
+    agent_key: SystemAgentKey,
+    prompt_vendor: Option<&str>,
+    model_provider: &str,
+    profile: Option<&str>,
+) -> Result<ResolvedAgentPrompt, AgentError> {
     let vendor = required_agent_prompt_vendor(prompt_vendor, model_provider)
         .map_err(|error| AgentError::execution(agent_key.as_str(), error.to_string()))?;
     let client = client_for_service(caller_service)
         .await
         .map_err(|error| AgentError::execution(agent_key.as_str(), error))?;
-    resolve_managed_prompt_by_key_with_vendor(&client, agent_key, vendor).await
+    resolve_managed_prompt_by_key_with_vendor(&client, agent_key, vendor, profile).await
 }
 
 async fn resolve_managed_prompt_by_key_with_vendor(
     client: &PluginManagementClient,
     agent_key: SystemAgentKey,
     vendor: AgentPromptVendor,
+    profile: Option<&str>,
 ) -> Result<ResolvedAgentPrompt, AgentError> {
     let prompt = client
-        .resolve_agent_prompt_for_service(&ResolveAgentPromptRequest { agent_key, vendor })
+        .resolve_agent_prompt_for_service(&ResolveAgentPromptRequest {
+            agent_key,
+            vendor,
+            profile: profile.map(str::to_string),
+        })
         .await
         .map_err(|error| {
             AgentError::execution(

@@ -18,6 +18,7 @@ pub struct CommonChatBootstrapInput {
     pub session_id: String,
     pub content: String,
     pub user_id: Option<String>,
+    pub user_role: Option<String>,
     pub contact_agent_id: Option<String>,
     pub project_id: Option<String>,
     pub project_root: Option<String>,
@@ -68,6 +69,7 @@ pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> Comm
         &input.content,
         &ConversationRuntimeRequest {
             effective_user_id: user_context.effective_user_id.clone(),
+            owner_role: input.user_role,
             contact_agent_id: input.contact_agent_id,
             project_id: input.project_id,
             project_root: input.project_root,

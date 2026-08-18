@@ -1,18 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::State;
 use axum::Json;
-use serde_json::{json, Value};
 
 use crate::api::types::{
-    LocalApiError, LocalModelConfigListResponse, PreviewLocalModelCatalogRequest,
-    SaveLocalModelConfigRequest, UpdateLocalModelSettingsRequest,
+    LocalApiError, LocalModelConfigListResponse, UpdateLocalModelSettingsRequest,
 };
 use crate::model_configs::{
-    delete_local_model_config, list_local_model_configs, preview_local_model_catalog,
-    save_local_model_config, save_local_model_settings, sync_local_model_config,
-    sync_local_model_settings, LocalModelCatalogResponse, LocalModelConfigPublic,
+    list_local_model_configs, reconcile_local_model_configs, save_local_model_settings,
     LocalModelSettings,
 };
 use crate::LocalRuntime;
@@ -27,63 +23,18 @@ pub(crate) async fn local_model_configs(
     }))
 }
 
-pub(crate) async fn local_preview_model_catalog(
+pub(crate) async fn local_refresh_model_configs(
     State(runtime): State<LocalRuntime>,
-    Json(req): Json<PreviewLocalModelCatalogRequest>,
-) -> Result<Json<LocalModelCatalogResponse>, LocalApiError> {
-    let state = runtime.state.read().await.clone();
-    let catalog = preview_local_model_catalog(&runtime.http_client, &state, req.draft)
-        .await
-        .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
-    Ok(Json(catalog))
-}
-
-pub(crate) async fn local_save_model_config(
-    State(runtime): State<LocalRuntime>,
-    Json(req): Json<SaveLocalModelConfigRequest>,
-) -> Result<Json<LocalModelConfigPublic>, LocalApiError> {
+) -> Result<Json<LocalModelConfigListResponse>, LocalApiError> {
     let mut state = runtime.state.write().await;
-    let record = save_local_model_config(&mut state, req.draft)?;
-    let record = if req.sync.unwrap_or(true) {
-        sync_local_model_config(&runtime.http_client, &mut state, record.id.as_str())
-            .await
-            .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?
-    } else {
-        record
-    };
-    state.save(runtime.state_path.as_path())?;
-    Ok(Json(record.public_value()))
-}
-
-pub(crate) async fn local_update_model_config(
-    State(runtime): State<LocalRuntime>,
-    AxumPath(id): AxumPath<String>,
-    Json(mut req): Json<SaveLocalModelConfigRequest>,
-) -> Result<Json<LocalModelConfigPublic>, LocalApiError> {
-    req.draft.id = Some(id);
-    local_save_model_config(State(runtime), Json(req)).await
-}
-
-pub(crate) async fn local_delete_model_config(
-    State(runtime): State<LocalRuntime>,
-    AxumPath(id): AxumPath<String>,
-) -> Result<Json<Value>, LocalApiError> {
-    let mut state = runtime.state.write().await;
-    delete_local_model_config(&runtime.http_client, &mut state, id.as_str()).await?;
-    state.save(runtime.state_path.as_path())?;
-    Ok(Json(json!({ "ok": true })))
-}
-
-pub(crate) async fn local_sync_model_config(
-    State(runtime): State<LocalRuntime>,
-    AxumPath(id): AxumPath<String>,
-) -> Result<Json<LocalModelConfigPublic>, LocalApiError> {
-    let mut state = runtime.state.write().await;
-    let record = sync_local_model_config(&runtime.http_client, &mut state, id.as_str())
+    reconcile_local_model_configs(&runtime.http_client, &mut state)
         .await
         .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
     state.save(runtime.state_path.as_path())?;
-    Ok(Json(record.public_value()))
+    Ok(Json(LocalModelConfigListResponse {
+        items: list_local_model_configs(&state),
+        settings: state.model_configs.settings.clone(),
+    }))
 }
 
 pub(crate) async fn local_model_settings(
@@ -98,6 +49,27 @@ pub(crate) async fn local_update_model_settings(
     Json(req): Json<UpdateLocalModelSettingsRequest>,
 ) -> Result<Json<LocalModelSettings>, LocalApiError> {
     let mut state = runtime.state.write().await;
+    let model_config_id = req
+        .command_approval_model_config_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| LocalApiError::bad_request("command approval model is required"))?;
+    let selectable = state.model_configs.configs.iter().any(|item| {
+        item.id == model_config_id
+            && item.enabled
+            && !item.model.trim().is_empty()
+            && item
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+    });
+    if !selectable {
+        return Err(LocalApiError::bad_request(
+            "command approval model must be an enabled cloud model with credentials",
+        ));
+    }
     let model_request_max_retries = req
         .model_request_max_retries
         .unwrap_or(state.model_configs.settings.model_request_max_retries);
@@ -108,16 +80,11 @@ pub(crate) async fn local_update_model_settings(
     }
     let settings = LocalModelSettings {
         model_request_max_retries,
-        command_approval_model_config_id: req.command_approval_model_config_id,
+        command_approval_model_config_id: Some(model_config_id.to_string()),
         command_approval_thinking_level: req.command_approval_thinking_level,
         updated_at: None,
     };
     let settings = save_local_model_settings(&mut state, settings)?;
-    if req.sync.unwrap_or(false) {
-        sync_local_model_settings(&runtime.http_client, &state)
-            .await
-            .map_err(|err| LocalApiError::bad_gateway(err.to_string()))?;
-    }
     state.save(runtime.state_path.as_path())?;
     Ok(Json(settings))
 }

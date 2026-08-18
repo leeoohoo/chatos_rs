@@ -105,6 +105,26 @@ fn every_system_mcp_has_provider_skills() {
 }
 
 #[test]
+fn task_runner_provider_skills_are_split_by_runtime_profile() {
+    let skills = provider_skills_for_system_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
+        .and_then(|value| value.as_array().cloned())
+        .expect("task runner provider skills");
+    assert_eq!(skills.len(), 2);
+    assert!(skills.iter().any(|skill| {
+        skill
+            .get("task_profiles")
+            .and_then(Value::as_array)
+            .is_some_and(|profiles| profiles == &[Value::String("default".to_string())])
+    }));
+    assert!(skills.iter().any(|skill| {
+        skill
+            .get("task_profiles")
+            .and_then(Value::as_array)
+            .is_some_and(|profiles| profiles == &[Value::String("chatos_plan".to_string())])
+    }));
+}
+
+#[test]
 fn project_runtime_environment_skill_distinguishes_application_topology_from_project_tools() {
     let skills = provider_skills_for_system_mcp(PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID)
         .and_then(|value| value.as_array().cloned())
@@ -190,9 +210,7 @@ fn system_agent_registry_contains_all_runtime_roles() {
             PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
             PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
             TASK_RUNNER_PLAN_AGENT_KEY,
-            TASK_RUNNER_LOCAL_PLAN_AGENT_KEY,
             TASK_RUNNER_RUN_AGENT_KEY,
-            TASK_RUNNER_LOCAL_RUN_AGENT_KEY,
             PROJECT_MANAGEMENT_AGENT_KEY,
             PROJECT_MANAGEMENT_LOCAL_AGENT_KEY,
             LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY,

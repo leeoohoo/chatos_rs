@@ -46,9 +46,9 @@ describe('ApiClient surface header', () => {
       password: 'secret',
     });
 
-    expect(requestedHeaders(fetchMock).has('X-Chatos-Client-Surface')).toBe(false);
-    expect(requestedHeaders(fetchMock).get('X-Requested-With'))
+    expect(requestedHeaders(fetchMock).get('X-Chatos-Client-Surface'))
       .toBe('local-connector-desktop');
+    expect(requestedHeaders(fetchMock).has('X-Requested-With')).toBe(false);
   });
 
   it('invalidates the active session when an authenticated request returns 401', async () => {

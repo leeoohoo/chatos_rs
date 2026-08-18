@@ -118,7 +118,7 @@ fn spawn_detached_repair_job(
     });
 }
 
-async fn run_thread_repair_summary_job(
+pub(crate) async fn run_thread_repair_summary_job(
     config: &AppConfig,
     db: &Db,
     tenant_id: &str,
@@ -126,7 +126,8 @@ async fn run_thread_repair_summary_job(
     thread_id: &str,
     job_run_id: &str,
 ) -> Result<RunThreadRepairSummaryResponse, String> {
-    let prep = load_repair_summary_preparation(db, tenant_id, source_id, thread_id).await?;
+    let mut prep = load_repair_summary_preparation(db, tenant_id, source_id, thread_id).await?;
+    prep.settings.cloud_owner_entity_id = Some(job_run_id.to_string());
     if prep.selection.selected.is_empty() {
         finalize_job_run(
             db,
@@ -350,6 +351,9 @@ async fn run_thread_repair_summary_job(
     .await;
 
     if let Err(err) = &result {
+        if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED {
+            return result;
+        }
         warn!(
             "[MEMORY-ENGINE-REPAIR] result-failed thread_id={} job_run_id={} pending_before_count={} processed_count={} output_count={} error={}",
             thread_id,

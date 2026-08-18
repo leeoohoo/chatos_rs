@@ -6,8 +6,8 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::models::{
-    now_rfc3339, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskStatus,
+    now_rfc3339, ModelPhaseStatus, TaskMcpConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord,
+    TaskRunStatus, TaskStatus,
 };
 
 use super::RunService;
@@ -36,6 +36,7 @@ impl RunService {
         _workspace_dir: &str,
     ) {
         run.status = TaskRunStatus::Cancelled;
+        run.model_phase_status = ModelPhaseStatus::Cancelled;
         run.cancel_requested = false;
         run.finished_at = Some(now_rfc3339());
         run.updated_at = now_rfc3339();

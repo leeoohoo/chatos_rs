@@ -3,7 +3,7 @@
 
 import { ArrowLeftOutlined, RobotOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Input, Space, Spin, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Input, Segmented, Space, Spin, Tabs, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '../../api/client';
@@ -34,8 +34,9 @@ export function AgentPromptDetailPage({
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  const [profile, setProfile] = useState('default');
   const [vendor, setVendor] = useState<AgentPromptVendor>('glm');
-  const [drafts, setDrafts] = useState<Partial<Record<AgentPromptVendor, string>>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [generateOpen, setGenerateOpen] = useState(false);
   const editable = selection.kind === 'current';
   const promptsQuery = useQuery({
@@ -56,17 +57,28 @@ export function AgentPromptDetailPage({
     enabled: selection.kind === 'history',
   });
   const records = useMemo(
-    () => new Map((promptsQuery.data || []).map((record) => [record.vendor, record])),
+    () => new Map((promptsQuery.data || []).map((record) => [promptKey(record.profile, record.vendor), record])),
     [promptsQuery.data],
   );
   const snapshots = useMemo(
-    () => new Map((versionQuery.data?.prompts || []).map((prompt) => [prompt.vendor, prompt])),
+    () => new Map((versionQuery.data?.prompts || []).map((prompt) => [promptKey(prompt.profile, prompt.vendor), prompt])),
     [versionQuery.data],
   );
-  const current = records.get(vendor);
-  const snapshot = snapshots.get(vendor);
+  const profiles = useMemo(() => {
+    const values = new Set(
+      (editable ? promptsQuery.data || [] : versionQuery.data?.prompts || [])
+        .map((item) => item.profile || 'default'),
+    );
+    if (values.size === 0) values.add('default');
+    return [...values].sort((left, right) => (
+      left === 'default' ? -1 : right === 'default' ? 1 : left.localeCompare(right)
+    ));
+  }, [editable, promptsQuery.data, versionQuery.data?.prompts]);
+  const activeKey = promptKey(profile, vendor);
+  const current = records.get(activeKey);
+  const snapshot = snapshots.get(activeKey);
   const content = editable
-    ? drafts[vendor] ?? current?.draft_content ?? current?.published_content ?? ''
+    ? drafts[activeKey] ?? current?.draft_content ?? current?.published_content ?? ''
     : snapshot?.content || '';
   const revision = editable ? current?.published_revision || 0 : snapshot?.revision || 0;
   const checksum = editable ? current?.published_checksum : snapshot?.checksum;
@@ -75,6 +87,7 @@ export function AgentPromptDetailPage({
   );
 
   useEffect(() => {
+    setProfile('default');
     setVendor('glm');
     setDrafts({});
     setGenerateOpen(false);
@@ -87,8 +100,9 @@ export function AgentPromptDetailPage({
     setDrafts((existing) => {
       const next = { ...existing };
       for (const record of promptsQuery.data) {
-        if (next[record.vendor] === undefined) {
-          next[record.vendor] = record.draft_content || record.published_content || '';
+        const key = promptKey(record.profile, record.vendor);
+        if (next[key] === undefined) {
+          next[key] = record.draft_content || record.published_content || '';
         }
       }
       return next;
@@ -99,23 +113,26 @@ export function AgentPromptDetailPage({
     mutationFn: async ({ publish }: { publish: boolean }) => {
       const saved = await api.updateAgentProviderPromptDraft(
         agent.agent_key,
+        profile,
         vendor,
         content,
         current?.updated_at,
       );
       return publish
-        ? api.publishAgentProviderPrompt(agent.agent_key, vendor)
+        ? api.publishAgentProviderPrompt(agent.agent_key, profile, vendor)
         : saved;
     },
     onSuccess: (record, variables) => {
       setDrafts((existing) => ({
         ...existing,
-        [record.vendor]: record.draft_content || record.published_content || '',
+        [promptKey(record.profile, record.vendor)]: record.draft_content || record.published_content || '',
       }));
       queryClient.setQueryData<AgentProviderPromptRecord[]>(
         ['agent-provider-prompts', agent.agent_key],
         (existing = []) => [
-          ...existing.filter((item) => item.vendor !== record.vendor),
+          ...existing.filter((item) => (
+            item.vendor !== record.vendor || item.profile !== record.profile
+          )),
           record,
         ],
       );
@@ -157,6 +174,21 @@ export function AgentPromptDetailPage({
         title={editable ? t('agent.promptNotice') : t('agent.promptHistoryNotice')}
       />
       <div className="prompt-editor-panel">
+        {profiles.length > 1 ? (
+          <Segmented
+            block
+            value={profile}
+            onChange={(value) => setProfile(String(value))}
+            options={profiles.map((item) => ({
+              value: item,
+              label: item === 'chatos_plan'
+                ? t('agent.promptProfilePlanning')
+                : item === 'default'
+                  ? t('agent.promptProfileDefault')
+                  : item,
+            }))}
+          />
+        ) : null}
         <Tabs
           activeKey={vendor}
           onChange={(value) => setVendor(value as AgentPromptVendor)}
@@ -194,7 +226,7 @@ export function AgentPromptDetailPage({
               readOnly={!editable}
               onChange={(event) => setDrafts((existing) => ({
                 ...existing,
-                [vendor]: event.target.value,
+                [activeKey]: event.target.value,
               }))}
             />
             {editable ? (
@@ -224,15 +256,20 @@ export function AgentPromptDetailPage({
         <AgentPromptGenerateModal
           open={generateOpen}
           agentKey={agent.agent_key}
+          profile={profile}
           vendor={vendor}
           currentContent={content}
           onClose={() => setGenerateOpen(false)}
           onGenerated={(generated) => setDrafts((existing) => ({
             ...existing,
-            [vendor]: generated,
+            [activeKey]: generated,
           }))}
         />
       ) : null}
     </div>
   );
+}
+
+function promptKey(profile: string, vendor: AgentPromptVendor): string {
+  return `${profile || 'default'}:${vendor}`;
 }

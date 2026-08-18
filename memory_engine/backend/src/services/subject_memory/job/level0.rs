@@ -26,6 +26,7 @@ pub(crate) async fn process_level0_selection(
     from_scope_runner: bool,
     input_count: usize,
     job_run_id: &str,
+    scope_lock_owner: Option<&str>,
     progress: &mut SubjectMemoryJobProgress,
 ) -> Result<(), String> {
     progress.add_processed(selected.len());
@@ -73,6 +74,15 @@ pub(crate) async fn process_level0_selection(
         selected_texts.as_slice(),
         settings.token_limit,
         settings.target_summary_tokens,
+        job_run_id,
+        serde_json::json!({
+            "resume_kind": "subject_memory_job",
+            "job_run_id": job_run_id,
+            "request": req,
+            "from_scope_runner": from_scope_runner,
+            "scope_lock_owner": scope_lock_owner,
+            "scope_key": req.scope_key,
+        }),
     )
     .await
     {

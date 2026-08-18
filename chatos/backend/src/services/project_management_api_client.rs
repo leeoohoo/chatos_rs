@@ -409,8 +409,8 @@ fn parse_harness_tool_response(response: Value) -> Result<Value, String> {
             .unwrap_or("Harness MCP tool failed");
         return Err(message.to_string());
     }
-    if let Some(structured) = result.get("_structured_result") {
-        return Ok(structured.clone());
+    if result.get("_structured_result").is_some() {
+        return Ok(chatos_mcp_runtime::structured_result_payload(result).clone());
     }
     let Some(text) = result.pointer("/content/0/text").and_then(Value::as_str) else {
         return Ok(result.clone());
@@ -567,6 +567,8 @@ pub struct SyncTaskRunnerWorkItemStatusRequest {
     pub last_error_message: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supersedes_task_runner_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -575,6 +577,68 @@ pub struct SyncRequirementExecutionStateRequest {
     pub work_item_ids: Vec<String>,
     pub work_item_status: Option<String>,
     pub skip_done_work_items: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncExecutionLinksQueryRequest {
+    pub work_item_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncDeleteExecutionLinksRequest {
+    pub links: Vec<SyncExecutionLinkIdentity>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncExecutionLinkIdentity {
+    pub work_item_id: String,
+    pub link_id: String,
+}
+
+pub async fn sync_list_execution_links(
+    sync_secret: &str,
+    work_item_ids: Vec<String>,
+) -> Result<Vec<Value>, String> {
+    let config = crate::config::Config::try_get()?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/execution-links/query",
+        config
+            .project_service_internal_base_url
+            .trim()
+            .trim_end_matches('/')
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_READ_SCOPE,
+        )?
+        .json(&SyncExecutionLinksQueryRequest { work_item_ids }),
+    )
+    .await
+}
+
+pub async fn sync_delete_execution_links(
+    sync_secret: &str,
+    links: Vec<SyncExecutionLinkIdentity>,
+) -> Result<Value, String> {
+    let config = crate::config::Config::try_get()?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/execution-links/delete",
+        config
+            .project_service_internal_base_url
+            .trim()
+            .trim_end_matches('/')
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.post(endpoint),
+            sync_secret,
+            PROJECT_SYNC_SCOPE,
+        )?
+        .json(&SyncDeleteExecutionLinksRequest { links }),
+    )
+    .await
 }
 
 pub async fn sync_work_item_task_runner_status(
@@ -704,6 +768,24 @@ mod tests {
         assert_eq!(
             parsed.pointer("/entries/0/path").and_then(Value::as_str),
             Some("src")
+        );
+    }
+
+    #[test]
+    fn harness_tool_response_recursively_unwraps_structured_result() {
+        let parsed = parse_harness_tool_response(json!({
+            "result": {
+                "content": [{ "type": "text", "text": "ignored" }],
+                "_structured_result": {
+                    "_structured_result": { "entries": [{ "path": "src/main.rs" }] }
+                },
+                "isError": false
+            }
+        }))
+        .expect("parse nested Harness tool response");
+        assert_eq!(
+            parsed.pointer("/entries/0/path").and_then(Value::as_str),
+            Some("src/main.rs")
         );
     }
 }

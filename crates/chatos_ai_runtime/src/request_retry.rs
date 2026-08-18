@@ -28,6 +28,14 @@ pub fn is_prompt_cache_option_unsupported_error(err: &str) -> bool {
             || normalized.contains("not supported"))
 }
 
+pub fn is_previous_response_id_unsupported_error(err: &str) -> bool {
+    let normalized = err.to_ascii_lowercase();
+    normalized.contains("previous_response_id")
+        && (normalized.contains("unsupported parameter")
+            || normalized.contains("unknown parameter")
+            || normalized.contains("not supported"))
+}
+
 pub fn base_url_supports_prompt_cache_retention(base_url: &str) -> bool {
     let normalized = base_url.trim().to_ascii_lowercase();
     normalized.contains("api.openai.com")
@@ -85,6 +93,19 @@ mod tests {
         ));
         assert!(!super::is_prompt_cache_option_unsupported_error(
             "status 500: upstream timeout",
+        ));
+    }
+
+    #[test]
+    fn recognizes_unsupported_previous_response_id_errors() {
+        assert!(super::is_previous_response_id_unsupported_error(
+            "status 400: unknown parameter `previous_response_id`",
+        ));
+        assert!(super::is_previous_response_id_unsupported_error(
+            "status 400: previous_response_id is not supported by upstream",
+        ));
+        assert!(!super::is_previous_response_id_unsupported_error(
+            "status 404: previous response not found",
         ));
     }
 

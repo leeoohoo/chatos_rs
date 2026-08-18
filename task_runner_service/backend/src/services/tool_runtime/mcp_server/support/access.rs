@@ -30,7 +30,6 @@ pub(crate) fn agent_tool_allowed(name: &str) -> bool {
             | "batch_start_task_runs"
             | "get_task_memory_context"
             | "list_task_memory_records"
-            | "summarize_task_memory"
             | "cancel_run"
             | "list_run_events"
             | "list_prompts"
@@ -218,8 +217,6 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
                 "plugin_snapshots",
                 "skill_snapshots",
                 "effective_workspace_dir",
-                "execution_environment_mode",
-                "sandbox_enabled",
                 "task_tool_state",
                 "worker_id",
                 "claim_token",
@@ -285,15 +282,7 @@ pub(crate) fn model_has_cloud_runtime_credentials(model: &ModelConfigRecord) -> 
 }
 
 pub(crate) fn model_visible_to_user(model: &ModelConfigRecord, current_user: &CurrentUser) -> bool {
-    let Some(expected_owner_user_id) = current_user.effective_owner_user_id() else {
-        return false;
-    };
-    model
-        .owner_user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        == Some(expected_owner_user_id)
+    current_user.can_access_owned_resource(model.owner_user_id.as_deref())
 }
 
 pub(crate) fn select_model_config_id_for_task(
@@ -437,6 +426,8 @@ mod model_selection_tests {
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: false,
+            supports_reasoning: false,
             supports_responses: true,
             instructions: None,
             request_cwd: None,

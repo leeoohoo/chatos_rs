@@ -12,6 +12,11 @@ pub struct AiRuntimeResult {
     pub finish_reason: Option<String>,
     pub usage: Option<Value>,
     pub response_id: Option<String>,
+    pub response_output_items: Vec<Value>,
+    /// Exact input items used for this model request after Memory Engine
+    /// composition. Cloud orchestration persists this as the base of the next
+    /// stateless Responses request.
+    pub request_input_items: Vec<Value>,
 }
 
 impl AiRuntimeResult {

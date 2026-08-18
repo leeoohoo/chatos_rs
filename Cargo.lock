@@ -832,6 +832,8 @@ dependencies = [
  "bytes",
  "chatos_agent",
  "chatos_ai_runtime",
+ "chatos_cloud_agent_protocol",
+ "chatos_cloud_agent_runtime",
  "chatos_config_sdk",
  "chatos_mcp",
  "chatos_mcp_gateway",
@@ -923,6 +925,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_cloud_agent_protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "chatos_cloud_agent_runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chatos_ai_runtime",
+ "chatos_cloud_agent_protocol",
+ "chatos_mcp_service",
+ "chrono",
+ "futures-util",
+ "lapin",
+ "mongodb",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "chatos_config_sdk"
 version = "0.1.0"
 dependencies = [
@@ -982,12 +1013,14 @@ version = "0.1.0"
 dependencies = [
  "chatos_mcp_management_sdk",
  "chatos_mcp_runtime",
+ "serde_json",
 ]
 
 [[package]]
 name = "chatos_mcp_management_sdk"
 version = "0.1.0"
 dependencies = [
+ "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "reqwest",
  "serde",
@@ -1004,6 +1037,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chatos_mcp_management_sdk",
+ "chatos_mcp_service",
  "chatos_service_runtime",
  "futures-util",
  "hex",
@@ -3383,6 +3417,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tokio",
  "urlencoding",
 ]
 
@@ -4259,6 +4294,8 @@ dependencies = [
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
+ "chatos_cloud_agent_protocol",
+ "chatos_cloud_agent_runtime",
  "chatos_mcp",
  "chatos_mcp_gateway",
  "chatos_mcp_management_sdk",
@@ -4281,6 +4318,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "tower-http 0.7.0",
  "tracing",
@@ -4980,11 +5018,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]
@@ -5809,6 +5849,8 @@ dependencies = [
  "base64 0.22.1",
  "chatos_agent",
  "chatos_ai_runtime",
+ "chatos_cloud_agent_protocol",
+ "chatos_cloud_agent_runtime",
  "chatos_config_sdk",
  "chatos_mcp",
  "chatos_mcp_gateway",
@@ -5816,10 +5858,8 @@ dependencies = [
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
- "chatos_plugin_package",
  "chatos_project_execution",
  "chatos_queue_observability",
- "chatos_sandbox_contract",
  "chatos_service_runtime",
  "chatos_terminal_runtime",
  "chrono",

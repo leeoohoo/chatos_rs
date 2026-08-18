@@ -16,6 +16,7 @@ pub struct AiRuntimeBuilder {
     record_writer: Option<Arc<dyn MemoryRecordWriter>>,
     memory_composer: Option<MemoryContextComposer>,
     max_iterations: Option<usize>,
+    request_read_timeout: Option<Duration>,
     context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
 }
 
@@ -86,6 +87,11 @@ impl AiRuntimeBuilder {
         self
     }
 
+    pub fn with_request_read_timeout(mut self, read_timeout: Duration) -> Self {
+        self.request_read_timeout = Some(read_timeout);
+        self
+    }
+
     pub fn with_context_overflow_recovery(
         mut self,
         context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
@@ -98,6 +104,9 @@ impl AiRuntimeBuilder {
         let mut runtime = AiRuntime::new(self.tool_executor).with_record_writer(self.record_writer);
         if let Some(max_iterations) = self.max_iterations {
             runtime = runtime.with_max_iterations(max_iterations);
+        }
+        if let Some(read_timeout) = self.request_read_timeout {
+            runtime = runtime.with_request_read_timeout(read_timeout);
         }
         runtime
     }

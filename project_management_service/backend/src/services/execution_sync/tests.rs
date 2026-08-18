@@ -122,6 +122,7 @@ async fn create_test_work_item(
                 due_at: None,
                 sort_order: None,
                 tags: None,
+                owned_paths: Vec::new(),
                 is_planning_task: false,
             },
             &test_user(),
@@ -607,4 +608,62 @@ async fn work_item_waits_for_all_current_execution_tasks_before_completion() {
         .expect("get requirement")
         .expect("requirement");
     assert_eq!(requirement_after_all_done.status, RequirementStatus::Done);
+}
+
+#[tokio::test]
+#[ignore = "requires MongoDB"]
+async fn repair_link_supersedes_only_the_failed_verification_link() {
+    let store = test_store().await;
+    let project = create_test_project(&store).await;
+    let requirement = create_test_requirement(&store, &project.id, None, "Requirement").await;
+    let item = create_test_work_item(&store, &requirement, "Project task").await;
+    let execution_group_id = "execution-group-repair";
+    let verification_task_id = "verification-task";
+    let repair_task_id = "repair-task";
+
+    sync_task_runner_work_item_status(
+        &store,
+        &item.id,
+        SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: verification_task_id.to_string(),
+            task_runner_status: Some("blocked".to_string()),
+            execution_group_id: Some(execution_group_id.to_string()),
+            ..SyncTaskRunnerWorkItemStatusRequest::default()
+        },
+    )
+    .await
+    .expect("sync blocked verification");
+
+    let repair = sync_task_runner_work_item_status(
+        &store,
+        &item.id,
+        SyncTaskRunnerWorkItemStatusRequest {
+            task_runner_task_id: repair_task_id.to_string(),
+            task_runner_status: Some("ready".to_string()),
+            execution_group_id: Some(execution_group_id.to_string()),
+            supersedes_task_runner_task_ids: vec![verification_task_id.to_string()],
+            ..SyncTaskRunnerWorkItemStatusRequest::default()
+        },
+    )
+    .await
+    .expect("sync repair task");
+
+    assert_eq!(repair.link.task_runner_task_id, repair_task_id);
+    assert!(repair.link.is_current);
+    let links = store
+        .list_task_runner_links(&item.id)
+        .await
+        .expect("list task runner links");
+    let verification = links
+        .iter()
+        .find(|link| link.task_runner_task_id == verification_task_id)
+        .expect("verification link");
+    let persisted_repair = links
+        .iter()
+        .find(|link| link.task_runner_task_id == repair_task_id)
+        .expect("repair link");
+    assert!(!verification.is_current);
+    assert!(verification.superseded_at.is_some());
+    assert!(persisted_repair.is_current);
+    assert!(persisted_repair.superseded_at.is_none());
 }

@@ -6,14 +6,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { workspaceGitFacade } from './gitFacade';
 
 describe('workspaceGitFacade local routing', () => {
-  it('keeps local Git reads and writes inside the desktop runtime', async () => {
-    const getGitDiff = vi.fn().mockResolvedValue({ patch: '' });
-    const commitGit = vi.fn().mockResolvedValue({ success: true });
-    const cloudRequest = vi.fn(() => {
-      throw new Error('cloud Git request must not run');
-    });
+  it('routes local connector Git reads and writes through the cloud gateway', async () => {
+    const cloudRequest = vi.fn()
+      .mockResolvedValueOnce({ patch: '' })
+      .mockResolvedValueOnce({ success: true });
     const context = {
-      getLocalRuntimeClient: () => ({ getGitDiff, commitGit }),
       getRequestFn: () => cloudRequest,
     };
     const root = 'local://connector/device/workspace/project';
@@ -27,8 +24,17 @@ describe('workspaceGitFacade local routing', () => {
       message: 'local commit',
     });
 
-    expect(getGitDiff).toHaveBeenCalledWith({ root, path: 'README.md' });
-    expect(commitGit).toHaveBeenCalledWith({ root, message: 'local commit' });
-    expect(cloudRequest).not.toHaveBeenCalled();
+    expect(cloudRequest).toHaveBeenNthCalledWith(
+      1,
+      '/git/diff?root=local%3A%2F%2Fconnector%2Fdevice%2Fworkspace%2Fproject&path=README.md',
+    );
+    expect(cloudRequest).toHaveBeenNthCalledWith(2, '/git/commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        root,
+        message: 'local commit',
+        paths: undefined,
+      }),
+    });
   });
 });

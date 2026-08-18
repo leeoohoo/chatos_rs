@@ -45,6 +45,45 @@ struct AskUserPromptWaiters {
 }
 
 impl AskUserPromptService {
+    pub(crate) async fn create_prompt_without_wait(
+        &self,
+        payload: AskUserPromptPayload,
+    ) -> Result<AskUserPromptRecord, String> {
+        if let Some(existing) = self
+            .store
+            .get_ask_user_prompt(payload.prompt_id.as_str())
+            .await?
+        {
+            return Ok(existing);
+        }
+        let (task_id, run_id) = self.resolve_context_ids(&payload).await?;
+        if self.config.is_some() && run_id.is_none() {
+            return Err("ask_user requires an active Run for Worker event routing".to_string());
+        }
+        let created_at = now_rfc3339();
+        let expires_at = if payload.timeout_ms > 0 {
+            Some(
+                (Utc::now()
+                    + ChronoDuration::milliseconds(payload.timeout_ms.min(i64::MAX as u64) as i64))
+                .to_rfc3339(),
+            )
+        } else {
+            None
+        };
+        let prompt =
+            AskUserPromptRecord::from_payload(payload, task_id, run_id, created_at, expires_at);
+        let saved = self.store.save_ask_user_prompt(prompt).await?;
+        self.append_prompt_event(
+            &saved,
+            "ask_user_prompt_pending",
+            Some("任务等待人工确认".to_string()),
+            Some(support::prompt_event_payload(&saved)),
+        )
+        .await;
+        self.try_send_chatos_ask_user_prompt_required(&saved).await;
+        Ok(saved)
+    }
+
     #[cfg(test)]
     pub(crate) fn new(store: AppStore) -> Self {
         Self {
@@ -99,12 +138,37 @@ impl AskUserPromptService {
                 prompt.id
             )
         })?;
-        crate::worker_control_queue::publish_ask_user_resolved_event(
-            &self.task_queue_topology,
-            prompt.id.as_str(),
-            &run,
-        )
-        .await?;
+        // Worker-owned runs wait inside the executing worker and therefore
+        // need a worker-control wake-up. Cloud Agent runs are resumed by MCP
+        // Management's durable tool-batch notification and intentionally have
+        // no worker_id. Trying to route those through the legacy worker queue
+        // leaves the resolution outbox permanently pending and logs the same
+        // error on every reconciliation pass.
+        if ask_user_resolution_needs_worker_control(&run) {
+            crate::worker_control_queue::publish_ask_user_resolved_event(
+                &self.task_queue_topology,
+                prompt.id.as_str(),
+                &run,
+            )
+            .await?;
+        }
+        if let Ok(config) =
+            chatos_mcp_management_sdk::McpManagementClientConfig::from_env("task-runner").await
+        {
+            if let Ok(client) = chatos_mcp_management_sdk::McpManagementClient::new(config) {
+                if let Err(error) = client
+                    .notify_waiting_user_resolved(prompt.id.as_str())
+                    .await
+                {
+                    tracing::warn!(
+                        prompt_id = prompt.id.as_str(),
+                        error = %error,
+                        "notify MCP Management Ask User resolution failed; resolution remains pending for reconciliation"
+                    );
+                    return Ok(false);
+                }
+            }
+        }
         self.store
             .acknowledge_ask_user_resolution_event(prompt.id.as_str())
             .await?;
@@ -129,6 +193,13 @@ impl AskUserPromptService {
     }
 }
 
+fn ask_user_resolution_needs_worker_control(run: &crate::models::TaskRunRecord) -> bool {
+    run.worker_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|worker_id| !worker_id.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::sync::broadcast;
@@ -137,6 +208,30 @@ mod tests {
     use crate::models::SubmitAskUserPromptRequest;
     use crate::store::InMemoryStore;
     use chatos_mcp::AskUserStore;
+
+    fn queued_run(worker_id: Option<&str>) -> crate::models::TaskRunRecord {
+        let mut run = crate::models::TaskRunRecord::queued(
+            "run_1".to_string(),
+            "task_1".to_string(),
+            "model_1".to_string(),
+            "thread_1".to_string(),
+            json!({}),
+            now_rfc3339(),
+        );
+        run.worker_id = worker_id.map(ToOwned::to_owned);
+        run
+    }
+
+    #[test]
+    fn cloud_agent_ask_user_resolution_skips_legacy_worker_control_routing() {
+        assert!(!ask_user_resolution_needs_worker_control(&queued_run(None)));
+        assert!(!ask_user_resolution_needs_worker_control(&queued_run(
+            Some("  ")
+        )));
+        assert!(ask_user_resolution_needs_worker_control(&queued_run(Some(
+            "worker-1"
+        ))));
+    }
 
     #[tokio::test]
     async fn execute_prompt_consumes_resolution_event_from_another_service_instance() {

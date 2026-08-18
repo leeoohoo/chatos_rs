@@ -7,8 +7,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    SandboxProviderKind, WorkspaceProviderKind,
+    ExecutionPlane, HarnessBranchTarget, McpProviderKind, McpRetryClass, ProjectExecutionContext,
+    ResolvedMcpRoute, RuntimeWorkspaceRouteTarget, SandboxProviderKind, WorkspaceProviderKind,
 };
 use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
 use serde_json::json;
@@ -24,6 +24,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         trace_id: "00000000-0000-4000-8000-000000000001".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
+        owner_role: None,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
             .as_str()
             .to_string(),
@@ -31,14 +32,17 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_id: "project-1".to_string(),
         device_id: None,
         run_id: Some("run-1".to_string()),
+        execution_group_id: None,
+        execution_scope_generation: Some(1),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
         source_session_id: None,
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        sandbox_target: None,
+        workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
@@ -196,6 +200,7 @@ async fn project_management_call_uses_frozen_snapshot_identity_and_original_tool
         reqwest::Client::new(),
         base_url,
         Some(SECRET.to_string()),
+        std::time::Duration::from_secs(180),
         1024 * 1024,
     )
     .unwrap();
@@ -255,6 +260,7 @@ fn harness_route_uses_the_project_scoped_harness_endpoint() {
         reqwest::Client::new(),
         "http://127.0.0.1:39210",
         Some("a-long-project-service-secret".to_string()),
+        std::time::Duration::from_secs(180),
         1024 * 1024,
     )
     .unwrap();
@@ -275,11 +281,58 @@ fn harness_route_uses_the_project_scoped_harness_endpoint() {
 }
 
 #[test]
+fn harness_request_carries_the_frozen_run_branch_header() {
+    let provider = ProjectServiceProvider::new(
+        reqwest::Client::new(),
+        "http://127.0.0.1:39210",
+        Some("a-long-project-service-secret".to_string()),
+        std::time::Duration::from_secs(180),
+        1024 * 1024,
+    )
+    .unwrap();
+    let route = ResolvedMcpRoute {
+        resource_id: "builtin_code_maintainer_write".to_string(),
+        server_name: "code_maintainer_write".to_string(),
+        provider_kind: McpProviderKind::Harness,
+        provider_ref: None,
+        tool_namespace: "code_maintainer_write".to_string(),
+        allow_writes: true,
+        retry_class: McpRetryClass::NoRetry,
+        cancel_supported: true,
+        reason: "test".to_string(),
+    };
+    let mut snapshot = snapshot();
+    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::Harness {
+        branch: HarnessBranchTarget::Run {
+            branch_id: "project-1:run-1".to_string(),
+            branch_ref: "chatos/runs/run-1".to_string(),
+            base_branch: "main".to_string(),
+            base_commit: "base-commit".to_string(),
+        },
+    });
+
+    let request = provider
+        .request(&snapshot, &route)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        request
+            .headers()
+            .get("x-mcp-management-harness-branch-ref")
+            .and_then(|value| value.to_str().ok()),
+        Some("chatos/runs/run-1")
+    );
+}
+
+#[test]
 fn project_environment_route_uses_the_run_bound_internal_endpoint() {
     let provider = ProjectServiceProvider::new(
         reqwest::Client::new(),
         "http://127.0.0.1:39210",
         Some("a-long-project-service-secret".to_string()),
+        std::time::Duration::from_secs(180),
         1024 * 1024,
     )
     .unwrap();

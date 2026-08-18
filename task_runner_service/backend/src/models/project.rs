@@ -37,24 +37,6 @@ pub struct TaskProjectRecord {
     #[serde(default)]
     pub source_git_url: Option<String>,
     #[serde(default)]
-    pub harness_space_identifier: Option<String>,
-    #[serde(default)]
-    pub harness_repo_identifier: Option<String>,
-    #[serde(default)]
-    pub harness_repo_path: Option<String>,
-    #[serde(default)]
-    pub harness_git_url: Option<String>,
-    #[serde(default)]
-    pub harness_git_ssh_url: Option<String>,
-    #[serde(default)]
-    pub harness_default_branch: Option<String>,
-    #[serde(default)]
-    pub harness_provision_status: Option<String>,
-    #[serde(default)]
-    pub harness_provision_error: Option<String>,
-    #[serde(default)]
-    pub harness_provisioned_at: Option<String>,
-    #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
     pub status: TaskProjectStatus,
@@ -97,24 +79,6 @@ pub struct ChatosProjectImportRequest {
     pub import_status: Option<String>,
     #[serde(default)]
     pub source_git_url: Option<String>,
-    #[serde(default)]
-    pub harness_space_identifier: Option<String>,
-    #[serde(default)]
-    pub harness_repo_identifier: Option<String>,
-    #[serde(default)]
-    pub harness_repo_path: Option<String>,
-    #[serde(default)]
-    pub harness_git_url: Option<String>,
-    #[serde(default)]
-    pub harness_git_ssh_url: Option<String>,
-    #[serde(default)]
-    pub harness_default_branch: Option<String>,
-    #[serde(default)]
-    pub harness_provision_status: Option<String>,
-    #[serde(default)]
-    pub harness_provision_error: Option<String>,
-    #[serde(default)]
-    pub harness_provisioned_at: Option<String>,
     pub description: Option<String>,
     pub status: Option<TaskProjectStatus>,
     pub created_at: Option<String>,

@@ -12,6 +12,7 @@ const colorByStatus: Record<SandboxStatus, string> = {
   starting: 'processing',
   ready: 'success',
   running: 'blue',
+  stopped: 'default',
   releasing: 'warning',
   destroying: 'warning',
   destroyed: 'default',

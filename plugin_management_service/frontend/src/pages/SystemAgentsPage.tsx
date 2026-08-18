@@ -189,7 +189,9 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
               })}
             >
               <Typography.Text type={item?.ready ? 'success' : 'warning'}>
-                {t('agent.promptCount', { count: item?.published_vendors.length || 0 })}
+                {item?.required_prompt_count
+                  ? `Prompt ${item.published_prompt_count}/${item.required_prompt_count}`
+                  : t('agent.promptCount', { count: item?.published_vendors.length || 0 })}
               </Typography.Text>
             </Tooltip>
           );

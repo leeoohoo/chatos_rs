@@ -132,7 +132,7 @@ impl chatos_ai_runtime::MemoryRecordWriter for ChatosMemoryRecordWriterAdapter {
                 let turn_id = input.conversation_turn_id.clone();
                 let response_status = input.response_status.clone();
                 self.message_manager
-                    .save_assistant_response_message(
+                    .save_assistant_response_message_with_id(
                         input.conversation_id.as_str(),
                         input.content.as_str(),
                         input.reasoning,
@@ -143,6 +143,7 @@ impl chatos_ai_runtime::MemoryRecordWriter for ChatosMemoryRecordWriterAdapter {
                         response_id.as_deref(),
                         turn_id.as_deref(),
                         response_status.as_deref(),
+                        input.message_id,
                     )
                     .await
                     .map(|_| ())
@@ -174,7 +175,7 @@ impl chatos_ai_runtime::MemoryRecordWriter for ChatosMemoryRecordWriterAdapter {
         let turn_id = input.conversation_turn_id.clone();
         let response_status = input.response_status.clone();
         self.message_manager
-            .save_assistant_response_message(
+            .save_assistant_response_message_with_id(
                 input.conversation_id.as_str(),
                 input.content.as_str(),
                 input.reasoning,
@@ -185,6 +186,7 @@ impl chatos_ai_runtime::MemoryRecordWriter for ChatosMemoryRecordWriterAdapter {
                 response_id.as_deref(),
                 turn_id.as_deref(),
                 response_status.as_deref(),
+                input.message_id,
             )
             .await
             .map(|_| ())
@@ -196,13 +198,14 @@ impl chatos_ai_runtime::MemoryRecordWriter for ChatosMemoryRecordWriterAdapter {
     ) -> Result<(), String> {
         let record: chatos_ai_runtime::SaveRecordInput = input.clone().into();
         self.message_manager
-            .save_tool_message(
+            .save_tool_message_with_id(
                 input.conversation_id.as_str(),
                 input.content.as_str(),
                 input.tool_call_id.as_str(),
                 input.message_mode,
                 input.message_source,
                 record.packed_metadata(),
+                input.message_id,
             )
             .await
             .map(|_| ())
@@ -228,6 +231,7 @@ impl chatos_ai_runtime::ToolExecutor for ChatosToolExecutorAdapter {
                 context.conversation_turn_id.as_deref(),
                 context.caller_model.as_deref(),
                 context.caller_model_runtime.as_ref(),
+                context.tool_result_max_chars,
                 on_tool_result,
             )
             .await

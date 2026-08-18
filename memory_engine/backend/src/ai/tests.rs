@@ -30,6 +30,18 @@ fn moonshot_kimi_disables_thinking() {
         "https://api.moonshot.cn/v1",
         "kimi-k2.6"
     ));
+    assert!(provider_requires_disabled_thinking(
+        "https://api.moonshot.ai/v1",
+        "kimi-k2.6"
+    ));
+    assert!(!provider_requires_disabled_thinking(
+        "https://api.moonshot.ai/v1",
+        "kimi-k2.7-code"
+    ));
+    assert!(!provider_requires_disabled_thinking(
+        "https://api.moonshot.ai/v1",
+        "kimi-k3"
+    ));
 }
 
 #[test]

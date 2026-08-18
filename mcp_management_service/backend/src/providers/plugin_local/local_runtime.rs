@@ -163,6 +163,7 @@ impl PluginLocalProvider {
             "operation": binding.operation,
             "tool_name": original_tool_name,
             "arguments": arguments,
+            "tool_result_max_chars": snapshot.tool_result_max_chars,
         });
         let bytes = self
             .request(

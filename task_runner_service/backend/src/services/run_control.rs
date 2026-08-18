@@ -6,8 +6,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::models::{
-    now_rfc3339, ModelConfigRecord, StartTaskRunRequest, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskScheduleMode, TaskStatus,
+    now_rfc3339, StartTaskRunRequest, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskScheduleMode, TaskStatus,
 };
 
 use super::task_threads::ensure_task_thread_for_config;
@@ -19,4 +19,5 @@ use super::{
 
 mod cancellation;
 mod execution;
+pub(crate) use execution::cloud_agent_profile;
 mod start;

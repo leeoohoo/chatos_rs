@@ -14,7 +14,7 @@ pub(crate) use normalize::{
 };
 pub(crate) use resolve::{
     canonicalize_existing_dir, relative_to_workspace, resolve_request_workspace_dir,
-    resolve_workspace_dir, workspace_fingerprint,
+    resolve_workspace_dir, resolve_workspace_path, workspace_fingerprint,
 };
 
 #[cfg(test)]

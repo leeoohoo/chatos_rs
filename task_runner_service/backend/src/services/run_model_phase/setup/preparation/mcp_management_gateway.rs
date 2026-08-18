@@ -5,15 +5,13 @@ use std::time::Duration;
 
 use chatos_mcp_gateway::McpManagementGatewayBuilder;
 use chatos_mcp_management_sdk::{
-    CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle, SandboxExecutionTarget,
+    CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle, RuntimeWorkspaceRouteTarget,
 };
-use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, McpHttpServer};
+use chatos_mcp_runtime::McpHttpServer;
 use chatos_plugin_management_sdk::{SystemAgentKey, SystemMcpKey};
 use tracing::info;
 
-use crate::models::{TaskMcpConfig, TaskRecord, TaskRunRecord};
-
-use crate::services::sandbox_runtime::SandboxRuntimeContext;
+use crate::models::{TaskRecord, TaskRunRecord};
 
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
@@ -24,19 +22,23 @@ pub(super) async fn resolve_mcp_management_gateway(
     task: &TaskRecord,
     run: &TaskRunRecord,
     agent_key: SystemAgentKey,
-    sandbox_context: Option<&SandboxRuntimeContext>,
+    tool_result_max_chars: usize,
+    existing_session_ref: Option<&str>,
+    workspace_route: Option<&RuntimeWorkspaceRouteTarget>,
 ) -> Result<ResolvedMcpManagementGateway, String> {
     let owner_user_id = normalized_task_owner_user_id(task)
         .ok_or_else(|| "task owner user id is required for MCP Management".to_string())?;
-    let sandbox_provider = sandbox_context
-        .map(SandboxRuntimeContext::provider_kind)
-        .transpose()?;
     let request = CreateRuntimeSessionRequest {
         tenant_id: task.tenant_id.trim().to_string(),
         owner_user_id,
+        owner_role: None,
         agent_key: agent_key.as_str().to_string(),
         project_id: crate::models::normalize_project_id(Some(task.project_id.clone())),
         run_id: Some(run.id.clone()),
+        execution_group_id: run
+            .workspace_execution
+            .as_ref()
+            .and_then(|execution| execution.execution_group_id.clone()),
         turn_id: None,
         task_id: Some(task.id.clone()),
         task_profile: Some(task.task_profile.clone()),
@@ -44,24 +46,29 @@ pub(super) async fn resolve_mcp_management_gateway(
         source_user_message_id: task.source_user_message_id.clone(),
         contact_agent_id: None,
         default_model_config_id: task.default_model_config_id.clone(),
+        tool_result_max_chars: Some(tool_result_max_chars.max(1)),
         expected_project_task_ids: Vec::new(),
-        requested_mcp_ids: Some(requested_mcp_resource_ids(&task.mcp_config)),
+        requested_mcp_ids: Some(run.effective_tools.requested_mcp_resource_ids.clone()),
+        selected_plugins: task.plugin_config.selected_plugins.clone(),
+        plugin_command_invocations: task.plugin_config.command_invocations.clone(),
         locale: Some(if task.mcp_config.locale().is_english() {
             "en-US".to_string()
         } else {
             "zh-CN".to_string()
         }),
-        requested_device_id: None,
-        requested_sandbox_provider: sandbox_provider,
-        sandbox_target: sandbox_context.map(|context| SandboxExecutionTarget {
-            provider: sandbox_provider.expect("sandbox context provider was resolved"),
-            pairing_id: context.local_connector_pairing_id.clone(),
-            sandbox_id: context.sandbox_id.clone(),
-            lease_id: context.lease_id.clone(),
-            is_environment: context.is_environment,
-            service_id: context.service_id.clone(),
-        }),
+        workspace_route: workspace_route.cloned(),
     };
+    if run.effective_tools.terminal
+        && !matches!(
+            workspace_route,
+            Some(RuntimeWorkspaceRouteTarget::CloudSandbox { .. })
+                | Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+        )
+    {
+        return Err(
+            "TerminalController requires a prepared Cloud Sandbox for cloud projects".to_string(),
+        );
+    }
     let timeout = Duration::from_millis(
         std::env::var("TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")
             .ok()
@@ -98,10 +105,11 @@ pub(super) async fn resolve_mcp_management_gateway(
             Duration::from_millis(TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS),
         );
     }
-    let resolved = builder
-        .resolve()
-        .await
-        .map_err(|error| format!("resolve Task Runner MCP gateway failed: {error}"))?;
+    let resolved = match existing_session_ref {
+        Some(session_ref) => builder.resolve_existing(session_ref).await,
+        None => builder.resolve().await,
+    }
+    .map_err(|error| format!("resolve Task Runner MCP gateway failed: {error}"))?;
     info!(
         task_id = task.id.as_str(),
         run_id = run.id.as_str(),
@@ -114,6 +122,8 @@ pub(super) async fn resolve_mcp_management_gateway(
     Ok(ResolvedMcpManagementGateway {
         server: resolved.server,
         provider_skills_prompt: resolved.provider_skills_prompt,
+        plugin_instruction_items: resolved.plugin_instruction_items,
+        mcp_command_queue: resolved.mcp_command_queue,
         runtime_session: resolved.runtime_session,
     })
 }
@@ -121,12 +131,18 @@ pub(super) async fn resolve_mcp_management_gateway(
 pub(super) struct ResolvedMcpManagementGateway {
     server: McpHttpServer,
     pub(super) provider_skills_prompt: Option<String>,
+    pub(super) plugin_instruction_items: Vec<serde_json::Value>,
+    mcp_command_queue: String,
     runtime_session: McpManagementRuntimeSessionHandle,
 }
 
 impl ResolvedMcpManagementGateway {
-    pub(super) fn into_parts(self) -> (McpHttpServer, McpManagementRuntimeSessionHandle) {
-        (self.server, self.runtime_session)
+    pub(super) fn session_id(&self) -> &str {
+        self.runtime_session.session_id()
+    }
+
+    pub(super) fn into_parts(self) -> (McpHttpServer, McpManagementRuntimeSessionHandle, String) {
+        (self.server, self.runtime_session, self.mcp_command_queue)
     }
 }
 
@@ -140,35 +156,14 @@ fn normalized_task_owner_user_id(task: &TaskRecord) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
-    let builtin_kinds = complete_builtin_kind_dependencies(
-        config
-            .enabled_builtin_kinds
-            .iter()
-            .filter_map(|kind| builtin_kind_by_any(kind)),
-    );
-    let mut resource_ids = builtin_kinds
-        .iter()
-        .filter_map(|kind| chatos_mcp::system_mcp_descriptor_by_any(kind.kind_name()))
-        .map(|descriptor| descriptor.resource_id.to_string())
-        .chain(
-            config
-                .external_mcp_config_ids
-                .iter()
-                .filter_map(|resource_id| {
-                    let resource_id = resource_id.trim();
-                    (!resource_id.is_empty()).then(|| resource_id.to_string())
-                }),
-        )
-        .collect::<Vec<_>>();
-    resource_ids.sort();
-    resource_ids.dedup();
-    resource_ids
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::models::TaskMcpConfig;
+
+    fn requested_mcp_resource_ids(config: &TaskMcpConfig) -> Vec<String> {
+        crate::services::workspace_execution::effective_task_tool_snapshot(config)
+            .requested_mcp_resource_ids
+    }
 
     #[test]
     fn authoritative_task_mcp_config_maps_to_runtime_resource_scope() {
@@ -191,6 +186,7 @@ mod tests {
                 "builtin_browser_tools".to_string(),
                 "builtin_code_maintainer_read".to_string(),
                 "external-mcp-1".to_string(),
+                "system_mcp_task_process_log".to_string(),
             ]
         );
     }
@@ -207,7 +203,49 @@ mod tests {
             vec![
                 "builtin_code_maintainer_read".to_string(),
                 "builtin_code_maintainer_write".to_string(),
+                "system_mcp_task_process_log".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn enabled_task_mcp_scope_always_contains_run_process_log() {
+        let config = TaskMcpConfig {
+            enabled: true,
+            ..TaskMcpConfig::default()
+        };
+
+        assert!(requested_mcp_resource_ids(&config)
+            .contains(&"system_mcp_task_process_log".to_string()));
+    }
+
+    #[test]
+    fn empty_selection_does_not_programmatically_add_project_tools() {
+        let config = TaskMcpConfig {
+            requires_execution: false,
+            enabled_builtin_kinds: Vec::new(),
+            ..TaskMcpConfig::default()
+        };
+
+        let ids = requested_mcp_resource_ids(&config);
+
+        assert!(!ids.contains(&"builtin_code_maintainer_read".to_string()));
+        assert!(!ids.contains(&"builtin_code_maintainer_write".to_string()));
+        assert!(!ids.contains(&"builtin_terminal_controller".to_string()));
+    }
+
+    #[test]
+    fn execution_flag_does_not_expand_the_selected_tool_scope() {
+        let config = TaskMcpConfig {
+            requires_execution: true,
+            enabled_builtin_kinds: Vec::new(),
+            ..TaskMcpConfig::default()
+        };
+
+        let ids = requested_mcp_resource_ids(&config);
+
+        assert!(!ids.contains(&"builtin_code_maintainer_read".to_string()));
+        assert!(!ids.contains(&"builtin_code_maintainer_write".to_string()));
+        assert!(!ids.contains(&"builtin_terminal_controller".to_string()));
     }
 }

@@ -335,7 +335,8 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
     config.project_service_base_url = Some(project_service_base_url);
     config.project_service_internal_base_url = config.project_service_base_url.clone();
     config.project_service_sync_secret = Some("project-sync-secret".to_string());
-    let (mcp_service, task_service, project_service) = test_mcp_service_with_config(config).await;
+    let (mcp_service, task_service, project_service) =
+        test_mcp_service_with_config_and_policy_mode(config, true).await;
     let current_user = agent_user("owner-a");
     let _model = mcp_service
         .model_config_service
@@ -353,6 +354,8 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             max_output_tokens: None,
             model_request_max_retries: 5,
             thinking_level: None,
+            supports_images: None,
+            supports_reasoning: None,
             enabled: Some(true),
             supports_responses: Some(true),
         })
@@ -377,13 +380,17 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             json!({
                 "project_id": project.id.clone(),
                 "requirement_id": "requirement-1",
-                "execution_group_id": "model-supplied-wrong-execution-group",
                 "tasks": [
                     {
                         "client_ref": "prepare",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Prepare implementation",
                         "objective": "Inspect the current implementation and prepare the change.",
+                        "acceptance_criteria": ["Current implementation is inspected"],
+                        "task_role": "implementation",
+                        "requires_execution": true,
+                        "enabled_builtin_kinds": ["CodeMaintainerWrite"],
+                        "owned_paths": ["src"],
                         "default_model_config_id": "model-that-must-be-overridden",
                         "input_payload": {
                             "requirement_id": "child-requirement-1",
@@ -392,9 +399,14 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                     },
                     {
                         "client_ref": "implement",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
+                        "acceptance_criteria": ["Change is implemented and verified"],
+                        "task_role": "implementation",
+                        "requires_execution": true,
+                        "enabled_builtin_kinds": ["CodeMaintainerWrite", "TerminalController"],
+                        "owned_paths": ["src"],
                         "default_model_config_id": "another-model-that-must-be-overridden",
                         "prerequisite_refs": ["prepare"],
                         "context_refs": ["prepare"],
@@ -614,19 +626,28 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
             json!({
                 "project_id": project.id.clone(),
                 "requirement_id": "requirement-1",
-                "execution_group_id": "execution-group-1",
                 "tasks": [
                     {
                         "client_ref": "prepare",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Prepare implementation",
-                        "objective": "Inspect the current implementation and prepare the change."
+                        "objective": "Inspect the current implementation and prepare the change.",
+                        "acceptance_criteria": ["Current implementation is inspected"],
+                        "task_role": "implementation",
+                        "requires_execution": true,
+                        "enabled_builtin_kinds": ["CodeMaintainerWrite"],
+                        "owned_paths": ["src"]
                     },
                     {
                         "client_ref": "implement",
-                        "project_task_id": "project-task-1",
+                        "project_task_ref": "project_task_001",
                         "title": "Implement change",
                         "objective": "Apply the code changes and verify the behavior.",
+                        "acceptance_criteria": ["Change is implemented and verified"],
+                        "task_role": "implementation",
+                        "requires_execution": true,
+                        "enabled_builtin_kinds": ["CodeMaintainerWrite", "TerminalController"],
+                        "owned_paths": ["src"],
                         "prerequisite_refs": ["prepare"]
                     }
                 ]

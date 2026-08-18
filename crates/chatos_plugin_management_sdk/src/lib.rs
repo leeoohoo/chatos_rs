@@ -14,8 +14,9 @@ pub mod policy;
 pub mod provider_skills;
 
 pub use agent_prompts::{
-    agent_prompt_checksum, normalize_agent_prompt_vendor, required_agent_prompt_vendor,
-    validate_agent_prompt_checksum, AgentPromptResolutionError, AgentPromptVendor,
+    agent_prompt_checksum, normalize_agent_prompt_profile, normalize_agent_prompt_vendor,
+    required_agent_prompt_vendor, validate_agent_prompt_checksum, AgentPromptResolutionError,
+    AgentPromptVendor, DEFAULT_AGENT_PROMPT_PROFILE,
 };
 pub use cache::{CapabilityCache, CapabilityCacheKey, ResolveAuthMode};
 pub use client::PluginManagementClient;
@@ -26,6 +27,6 @@ pub use plugin_manifest::*;
 pub use plugin_runtime::*;
 pub use plugin_signing::*;
 pub use provider_skills::{
-    compose_mcp_provider_skills_prompt, provider_skills_from_metadata, McpProviderSkill,
-    PROVIDER_SKILLS_METADATA_KEY,
+    compose_mcp_provider_skills_prompt, compose_mcp_provider_skills_prompt_for_task_profile,
+    provider_skills_from_metadata, McpProviderSkill, PROVIDER_SKILLS_METADATA_KEY,
 };

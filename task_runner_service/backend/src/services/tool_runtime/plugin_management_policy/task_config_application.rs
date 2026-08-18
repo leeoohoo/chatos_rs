@@ -64,7 +64,6 @@ impl TaskRunnerCapabilityPolicy {
         effective_skills.dedup();
         task.mcp_config.selected_skill_ids = effective_skills;
         task.mcp_config.skill_policy_revision = Some(self.policy_revision().to_string());
-        task.mcp_config.sandbox_manager_base_url = None;
         task.mcp_config.ephemeral_http_servers.clear();
         self.apply_plugins_to_task(task)?;
         Ok(())
@@ -134,9 +133,6 @@ impl TaskRunnerCapabilityPolicy {
             .iter()
             .map(normalized_command_invocation)
             .collect::<Result<Vec<_>, _>>()?;
-        // Execution location belongs to the project and is frozen into the Run snapshot.
-        task.plugin_config.device_id = None;
-        task.plugin_config.workspace_id = None;
         task.plugin_config.selected_plugins = effective;
         task.plugin_config.command_invocations = command_invocations;
         self.inject_plugin_builtin_dependencies(task)?;

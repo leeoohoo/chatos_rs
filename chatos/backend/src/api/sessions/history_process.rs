@@ -749,6 +749,80 @@ mod tests {
     }
 
     #[test]
+    fn compact_history_from_turn_slices_sorts_recovered_task_runner_callbacks_by_created_at() {
+        let user = build_engine_record("user-1", "user", "help", "turn-1");
+        let mut earlier_callback = build_message("assistant", "Task failed first.");
+        earlier_callback.id =
+            "task_runner_callback::user-1::task-1::task.failed::run-1".to_string();
+        earlier_callback.created_at = "2026-08-11T09:16:00Z".to_string();
+        earlier_callback.message_mode = Some("task_runner_callback".to_string());
+        earlier_callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update",
+                "source_turn_id": "turn-1"
+            }
+        }));
+        let mut later_callback = build_message("assistant", "Task completed later.");
+        later_callback.id =
+            "task_runner_callback::user-1::task-1::task.completed::run-2".to_string();
+        later_callback.created_at = "2026-08-11T09:28:00Z".to_string();
+        later_callback.message_mode = Some("task_runner_callback".to_string());
+        later_callback.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update",
+                "source_turn_id": "turn-1"
+            }
+        }));
+        let mut process_messages_by_turn = HashMap::new();
+        process_messages_by_turn.insert(
+            "turn-1".to_string(),
+            vec![later_callback.clone(), earlier_callback.clone()],
+        );
+
+        let mut final_assistant = build_engine_record(
+            "task_runner_callback::user-1::task-1::task.completed::run-2",
+            "assistant",
+            "Task completed later.",
+            "turn-1",
+        );
+        final_assistant.created_at = "2026-08-11T09:28:00Z".to_string();
+        final_assistant.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update",
+                "source_turn_id": "turn-1"
+            }
+        }));
+
+        let compact = build_compact_history_messages_from_turn_slices_with_process(
+            vec![memory_engine_sdk::TurnRecordSlice {
+                turn_id: "turn-1".to_string(),
+                user_record: user,
+                final_assistant_record: Some(final_assistant),
+                has_process: true,
+                tool_call_count: 0,
+                thinking_count: 0,
+                process_message_count: 2,
+            }],
+            &process_messages_by_turn,
+        );
+
+        assert_eq!(
+            compact
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "user-1",
+                "task_runner_callback::user-1::task-1::task.failed::run-1",
+                "task_runner_callback::user-1::task-1::task.completed::run-2",
+            ]
+        );
+    }
+
+    #[test]
     fn compact_history_repairs_stale_processing_status_from_terminal_tracking() {
         let mut user = build_message("user", "help");
         user.id = "user-1".to_string();

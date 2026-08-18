@@ -4,14 +4,10 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use chatos_sandbox_contract::SandboxBackendKind;
 use serde_json::{json, Value};
 
 use crate::approval::clear_session_approvals;
 use crate::relay::RelayRequest;
-use crate::sandbox::docker::{
-    destroy_all_local_sandbox_containers, destroy_local_sandbox_container,
-};
 use crate::sandbox::manifest::summarize_local_sandbox_manifest_counts;
 use crate::sandbox::process::destroy_native_sandbox_process;
 use crate::sandbox::types::{LocalSandboxRuntime, ReleaseLocalSandboxRequest};
@@ -71,12 +67,7 @@ pub(crate) async fn release_local_sandbox(
         (None, None, None, None)
     };
     if input.destroy {
-        match lease.effective_policy.sandbox_mode {
-            SandboxBackendKind::Docker => destroy_local_sandbox_container(sandbox_id).await?,
-            SandboxBackendKind::LocalProcess => {
-                destroy_native_sandbox_process(sandbox_runtime, sandbox_id).await?
-            }
-        }
+        destroy_native_sandbox_process(sandbox_runtime, sandbox_id).await?;
         lease.status = LOCAL_SANDBOX_STATUS_DESTROYED.to_string();
         lease.destroyed_at = Some(local_now_rfc3339());
         clear_session_approvals(sandbox_id).await;
@@ -121,9 +112,6 @@ pub(crate) async fn shutdown_local_sandboxes(sandbox_runtime: &LocalSandboxRunti
         if let Err(err) = destroy_native_sandbox_process(sandbox_runtime, sandbox_id).await {
             errors.push(format!("destroy native sandbox {sandbox_id} failed: {err}"));
         }
-    }
-    if let Err(err) = destroy_all_local_sandbox_containers().await {
-        errors.push(format!("destroy Docker sandboxes failed: {err}"));
     }
     for sandbox_id in &lease_ids {
         clear_session_approvals(sandbox_id).await;

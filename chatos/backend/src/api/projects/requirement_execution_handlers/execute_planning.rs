@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::panic::AssertUnwindSafe;
 
 use axum::http::StatusCode;
 use chatos_project_execution::{
@@ -12,17 +11,15 @@ use chatos_project_execution::{
     select_unblocked_pending_work_items, sort_work_items_for_planning, ExecutionPlanIdentity,
     ExecutionPlane, NEXT_ACTION_PREVIEW_AND_CONFIRM, RECOVERY_ACTION_NONE, STATUS_PLANNING_STARTED,
 };
-use futures::FutureExt;
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
-use tracing::warn;
 
 use crate::api::chat_stream_common::ChatStreamRequest;
 use crate::core::auth::AuthUser;
-use crate::core::messages::set_task_runner_async_overall_status_for_session;
 use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::modules::conversation_runtime::guidance;
-use crate::services::{access_token_scope, project_management_api_client};
+use crate::services::project_management_api_client;
 use crate::utils::abort_registry;
 
 use super::super::requirement_execution::{
@@ -34,10 +31,13 @@ use super::super::requirement_execution::{
     sync_requirement_execution_state, topological_work_item_order,
     validate_requirement_prerequisites, work_item_dependency_map, HandlerError,
 };
+use super::plan_query::{
+    find_latest_cloud_execution_source_message, is_cloud_execution_planner_status_pending,
+};
 use super::rerun_support::ensure_old_cloud_execution_batch_ready_for_replacement;
 use super::{
     expected_execution_project_task_ids, load_cloud_execution_source_message,
-    reconcile_requirement_planner_outcome, ExecuteRequirementRequest, RequirementPlannerRecovery,
+    repair_stale_cloud_execution_planner_message, ExecuteRequirementRequest,
 };
 
 pub(super) async fn execute_requirement_inner(
@@ -201,6 +201,15 @@ pub(super) async fn execute_requirement_inner(
             "该需求执行范围内没有需要执行的未完成项目任务",
         ));
     }
+    ensure_latest_cloud_execution_planner_not_active(
+        &auth,
+        project.id.as_str(),
+        requirement_id.as_str(),
+        cfg.project_service_base_url.as_str(),
+        access_token.as_str(),
+        all_work_items.as_slice(),
+    )
+    .await?;
     ensure_requirement_execution_not_active(
         &root_requirement,
         &selected_work_items,
@@ -216,15 +225,17 @@ pub(super) async fn execute_requirement_inner(
         &requirement_scope,
     )
     .await?;
-    ensure_project_runtime_environment_initialization(
-        cfg.project_service_base_url.as_str(),
-        access_token.as_str(),
-        project.id.as_str(),
-        &root_requirement,
-        &selected_work_items,
-        &requirement_documents,
-    )
-    .await?;
+    if project_requires_cloud_runtime_initialization(project.source_type.as_deref()) {
+        ensure_project_runtime_environment_initialization(
+            cfg.project_service_base_url.as_str(),
+            access_token.as_str(),
+            project.id.as_str(),
+            &root_requirement,
+            &selected_work_items,
+            &requirement_documents,
+        )
+        .await?;
+    }
     let planner_prompt = build_requirement_execution_planner_prompt(
         project.id.as_str(),
         &root_requirement,
@@ -294,6 +305,7 @@ pub(super) async fn execute_requirement_inner(
             .or_else(|| session.selected_model_id.clone()),
         ai_model_config: None,
         user_id: Some(auth.user_id.clone()),
+        user_role: Some(auth.role.clone()),
         attachments: None,
         reasoning_enabled: None,
         plan_mode: false,
@@ -314,34 +326,26 @@ pub(super) async fn execute_requirement_inner(
             .collect(),
     };
     let persisted_user_message_metadata = message.metadata.clone();
-    let recovery = RequirementPlannerRecovery {
-        access_token: access_token.clone(),
-        execution_group_id: execution_group_id.clone(),
-        executing_requirement_ids,
-        link_scope_work_items: all_work_items.clone(),
-        project_id: project.id.clone(),
-        project_service_base_url: cfg.project_service_base_url.clone(),
-        project_sync_secret,
-        replacement_identity,
-        replacement_work_items,
-        requirement_id: requirement_id.clone(),
-        selected_work_items: selected_work_items.clone(),
-        session_id: session.id.clone(),
-        task_runner_base_url: contact_runtime.task_runner_base_url.clone(),
-    };
     prepare_requirement_planner_turn(session.id.as_str(), execution_group_id.as_str());
-    access_token_scope::spawn_with_current_access_token(async move {
-        run_requirement_planner_background_job(
-            RunChatUsecaseInput {
-                sender: None,
-                req: chat_req,
-                persisted_user_message_content: Some(user_visible_content),
-                persisted_user_message_metadata,
-            },
-            recovery,
-        )
-        .await;
-    });
+    run_chat_usecase(RunChatUsecaseInput {
+        sender: None,
+        req: chat_req,
+        persisted_user_message_content: Some(user_visible_content),
+        persisted_user_message_metadata,
+        cloud_agent_owner_context: Some(json!({
+            "kind": "requirement_planner",
+            "project_id": project.id,
+            "requirement_id": requirement_id,
+            "session_id": session.id,
+            "execution_group_id": execution_group_id,
+            "executing_requirement_ids": executing_requirement_ids,
+            "link_scope_work_items": selected_work_items,
+            "selected_work_items": selected_work_items,
+            "replacement_identity": replacement_identity,
+            "replacement_work_items": replacement_work_items,
+        })),
+    })
+    .await;
 
     Ok(json!({
         "success": true,
@@ -370,60 +374,53 @@ pub(super) async fn execute_requirement_inner(
     }))
 }
 
+async fn ensure_latest_cloud_execution_planner_not_active(
+    auth: &AuthUser,
+    project_id: &str,
+    requirement_id: &str,
+    project_service_base_url: &str,
+    access_token: &str,
+    all_work_items: &[super::super::requirement_execution::WorkItemPlanItem],
+) -> Result<(), HandlerError> {
+    let Some(message) =
+        find_latest_cloud_execution_source_message(auth, project_id, requirement_id).await?
+    else {
+        return Ok(());
+    };
+    let project_task_ids =
+        expected_execution_project_task_ids(message.metadata.as_ref(), project_id, requirement_id)?;
+    let planner_work_items = all_work_items
+        .iter()
+        .filter(|item| project_task_ids.contains(item.id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let current_links = load_execution_links_for_work_items(
+        project_service_base_url,
+        access_token,
+        planner_work_items.as_slice(),
+    )
+    .await?
+    .into_iter()
+    .filter(|link| {
+        link.source_session_id.as_deref() == Some(message.session_id.as_str())
+            && link.source_user_message_id.as_deref() == Some(message.id.as_str())
+    })
+    .collect::<Vec<_>>();
+    let message =
+        repair_stale_cloud_execution_planner_message(message, current_links.is_empty()).await?;
+    if is_cloud_execution_planner_status_pending(
+        super::plan_query::execution_message_status(&message).as_str(),
+    ) {
+        return Err(HandlerError::bad_request(
+            "该需求已有正在生成的执行计划，请等待当前规划完成或停止后重试",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn prepare_requirement_planner_turn(session_id: &str, execution_group_id: &str) {
     abort_registry::reset_turn(session_id, Some(execution_group_id));
     guidance::register_active_turn(session_id, execution_group_id);
-}
-
-async fn run_requirement_planner_background_job(
-    input: RunChatUsecaseInput,
-    recovery: RequirementPlannerRecovery,
-) {
-    let panic_detail = AssertUnwindSafe(run_chat_usecase(input))
-        .catch_unwind()
-        .await
-        .err()
-        .map(|payload| panic_payload_to_string(payload.as_ref()));
-    if let Some(detail) = panic_detail.as_deref() {
-        warn!(
-            session_id = recovery.session_id.as_str(),
-            execution_group_id = recovery.execution_group_id.as_str(),
-            panic = detail,
-            "requirement execution planner background task panicked"
-        );
-        if let Err(err) = set_task_runner_async_overall_status_for_session(
-            recovery.session_id.as_str(),
-            recovery.execution_group_id.as_str(),
-            "failed",
-        )
-        .await
-        {
-            warn!(
-                session_id = recovery.session_id.as_str(),
-                execution_group_id = recovery.execution_group_id.as_str(),
-                error = err.as_str(),
-                "failed to persist planner failure status after panic"
-            );
-        }
-    }
-    if let Err(err) = reconcile_requirement_planner_outcome(recovery).await {
-        warn!(
-            error = err.error.as_str(),
-            detail = err.detail.as_deref().unwrap_or_default(),
-            panic = panic_detail.as_deref().unwrap_or_default(),
-            "failed to reconcile requirement execution planner outcome"
-        );
-    }
-}
-
-fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&'static str>() {
-        return (*message).to_string();
-    }
-    if let Some(message) = payload.downcast_ref::<String>() {
-        return message.clone();
-    }
-    "non-string panic payload".to_string()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -433,11 +430,26 @@ enum RuntimeEnvironmentInitializationAction {
     GenerateImage(String),
 }
 
+fn project_requires_cloud_runtime_initialization(source_type: Option<&str>) -> bool {
+    source_type
+        .map(str::trim)
+        .is_some_and(|source_type| source_type.eq_ignore_ascii_case("cloud"))
+}
+
 const RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS: usize = 4_000;
+const RUNTIME_ANALYSIS_STALE_AFTER_SECONDS: i64 = 15 * 60;
 
 fn runtime_environment_initialization_action(
     current: &Value,
     analysis_requirement: Option<&str>,
+) -> RuntimeEnvironmentInitializationAction {
+    runtime_environment_initialization_action_at(current, analysis_requirement, Utc::now())
+}
+
+fn runtime_environment_initialization_action_at(
+    current: &Value,
+    analysis_requirement: Option<&str>,
+    now: DateTime<Utc>,
 ) -> RuntimeEnvironmentInitializationAction {
     let status = current
         .get("environment")
@@ -450,7 +462,10 @@ fn runtime_environment_initialization_action(
             RuntimeEnvironmentInitializationAction::None
         }
         Some("ready") => RuntimeEnvironmentInitializationAction::Analyze,
-        Some("analyzing") => RuntimeEnvironmentInitializationAction::None,
+        Some("analyzing") if !runtime_environment_analysis_is_stale(current, now) => {
+            RuntimeEnvironmentInitializationAction::None
+        }
+        Some("analyzing") => RuntimeEnvironmentInitializationAction::Analyze,
         Some("pending_image_build") => current
             .get("images")
             .and_then(Value::as_array)
@@ -476,6 +491,30 @@ fn runtime_environment_initialization_action(
             .unwrap_or(RuntimeEnvironmentInitializationAction::None),
         _ => RuntimeEnvironmentInitializationAction::Analyze,
     }
+}
+
+fn runtime_environment_analysis_is_stale(current: &Value, now: DateTime<Utc>) -> bool {
+    let updated_at = current
+        .get("environment")
+        .and_then(|environment| environment.get("detected_stack"))
+        .and_then(|stack| stack.get("analysis_progress"))
+        .and_then(|progress| progress.get("updated_at"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            current
+                .get("environment")
+                .and_then(|environment| environment.get("updated_at"))
+                .and_then(Value::as_str)
+        });
+    let Some(updated_at) = updated_at else {
+        return true;
+    };
+    let Ok(updated_at) = DateTime::parse_from_rfc3339(updated_at) else {
+        return true;
+    };
+    now.signed_duration_since(updated_at.with_timezone(&Utc))
+        .num_seconds()
+        >= RUNTIME_ANALYSIS_STALE_AFTER_SECONDS
 }
 
 async fn ensure_project_runtime_environment_initialization(
@@ -616,6 +655,25 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     truncated
 }
 
+async fn load_requirement_documents_for_scope(
+    base_url: &str,
+    access_token: &str,
+    requirement_scope: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Value>, HandlerError> {
+    let mut out = BTreeMap::new();
+    for requirement_id in requirement_scope {
+        let documents = project_management_api_client::list_project_service_requirement_documents(
+            base_url,
+            access_token,
+            requirement_id.as_str(),
+        )
+        .await
+        .map_err(|err| HandlerError::bad_gateway("读取需求技术文档失败", err))?;
+        out.insert(requirement_id.clone(), documents);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod runtime_environment_tests {
     use std::collections::BTreeMap;
@@ -624,9 +682,11 @@ mod runtime_environment_tests {
     use serde_json::json;
 
     use super::{
-        execution_runtime_analysis_request, runtime_environment_initialization_action,
+        execution_runtime_analysis_request, project_requires_cloud_runtime_initialization,
+        runtime_environment_initialization_action, runtime_environment_initialization_action_at,
         RuntimeEnvironmentInitializationAction, RUNTIME_ANALYSIS_REQUIREMENT_MAX_CHARS,
     };
+    use chrono::{TimeZone, Utc};
 
     #[test]
     fn execution_context_drives_runtime_analysis_request() {
@@ -682,7 +742,10 @@ mod runtime_environment_tests {
         assert_eq!(
             runtime_environment_initialization_action(
                 &json!({
-                    "environment": { "status": "ANALYZING" },
+                    "environment": {
+                        "status": "ANALYZING",
+                        "updated_at": Utc::now().to_rfc3339(),
+                    },
                 }),
                 Some("React and Rust")
             ),
@@ -702,6 +765,41 @@ mod runtime_environment_tests {
             ),
             RuntimeEnvironmentInitializationAction::None
         );
+    }
+
+    #[test]
+    fn only_cloud_projects_require_server_managed_runtime_initialization() {
+        assert!(project_requires_cloud_runtime_initialization(Some("cloud")));
+        assert!(!project_requires_cloud_runtime_initialization(Some(
+            "local"
+        )));
+        assert!(!project_requires_cloud_runtime_initialization(Some(
+            "local_connector"
+        )));
+        assert!(!project_requires_cloud_runtime_initialization(None));
+    }
+
+    #[test]
+    fn stale_or_unverifiable_analyzing_environment_is_restarted() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 17, 8, 0, 0).unwrap();
+        for current in [
+            json!({ "environment": { "status": "analyzing" } }),
+            json!({
+                "environment": {
+                    "status": "analyzing",
+                    "detected_stack": {
+                        "analysis_progress": {
+                            "updated_at": "2026-08-17T07:30:00Z"
+                        }
+                    }
+                }
+            }),
+        ] {
+            assert_eq!(
+                runtime_environment_initialization_action_at(&current, Some("React and Rust"), now,),
+                RuntimeEnvironmentInitializationAction::Analyze
+            );
+        }
     }
 
     #[test]
@@ -766,39 +864,4 @@ mod runtime_environment_tests {
             );
         }
     }
-}
-
-#[cfg(test)]
-mod panic_payload_tests {
-    use super::panic_payload_to_string;
-
-    #[test]
-    fn panic_payload_stringifies_common_payload_types() {
-        let owned = "owned panic".to_string();
-        assert_eq!(panic_payload_to_string(&owned), "owned panic");
-        assert_eq!(panic_payload_to_string(&"static panic"), "static panic");
-        assert_eq!(
-            panic_payload_to_string(&42usize),
-            "non-string panic payload"
-        );
-    }
-}
-
-async fn load_requirement_documents_for_scope(
-    base_url: &str,
-    access_token: &str,
-    requirement_scope: &BTreeSet<String>,
-) -> Result<BTreeMap<String, Value>, HandlerError> {
-    let mut out = BTreeMap::new();
-    for requirement_id in requirement_scope {
-        let documents = project_management_api_client::list_project_service_requirement_documents(
-            base_url,
-            access_token,
-            requirement_id.as_str(),
-        )
-        .await
-        .map_err(|err| HandlerError::bad_gateway("读取需求技术文档失败", err))?;
-        out.insert(requirement_id.clone(), documents);
-    }
-    Ok(out)
 }

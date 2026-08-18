@@ -73,6 +73,14 @@ pub(super) async fn list_sandbox_pairings(
         {
             return Ok(Json(Vec::new()));
         }
+        if !state
+            .relay
+            .has_active_session(owner_user_id, session.device_id.as_str())
+            .await
+            .map_err(super::relay_error_to_api_error)?
+        {
+            return Ok(Json(Vec::new()));
+        }
         Some(session.device_id)
     } else {
         requested_device_id
@@ -228,7 +236,7 @@ mod tests {
             "device-1".to_string(),
             "workspace-1".to_string(),
             enabled,
-            "docker".to_string(),
+            "local_process".to_string(),
             readiness.map(ToOwned::to_owned),
             None,
             None,

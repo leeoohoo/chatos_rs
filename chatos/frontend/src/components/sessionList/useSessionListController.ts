@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n/I18nProvider';
 import { useApiClient } from '../../lib/api/ApiClientContext';
 import type { TaskRunnerAgentAccountResponse } from '../../lib/api/client/types';
-import { localRuntimeBridgeAvailable } from '../../lib/api/localRuntime';
 import {
   useOptionalChatStoreContext,
 } from '../../lib/store/ChatStoreContext';
@@ -158,8 +157,7 @@ export const useSessionListController = ({
     localProjectCreationEnabled,
     localProjectCreationResolved,
   } = useLocalProjectCreationSetting();
-  const allowLocalProjectCreation = localRuntimeBridgeAvailable()
-    && localProjectCreationResolved
+  const allowLocalProjectCreation = localProjectCreationResolved
     && localProjectCreationEnabled;
   const { confirm, alert } = useDialogService();
 
@@ -382,11 +380,10 @@ export const useSessionListController = ({
   } = useTerminalUiSetting();
   const workspaceResourceVisibility = useMemo(
     () => resolveWorkspaceResourceVisibility({
-      desktopBridgeAvailable: allowLocalProjectCreation,
       terminalUiEnabled,
       terminalUiResolved,
     }),
-    [allowLocalProjectCreation, terminalUiEnabled, terminalUiResolved],
+    [terminalUiEnabled, terminalUiResolved],
   );
 
   useEffect(() => {

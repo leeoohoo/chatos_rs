@@ -247,12 +247,30 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
         *task_runner_async = Value::Object(serde_json::Map::new());
     }
     if let Value::Object(task_runner_async_map) = task_runner_async {
+        let requested_overall_status = if overall_status.trim().eq_ignore_ascii_case("completed")
+            && task_runner_async_has_pending_created_tasks(task_runner_async_map)
+        {
+            "processing"
+        } else {
+            overall_status
+        };
         let current_overall_status = task_runner_async_map
             .get("overall_status")
             .and_then(Value::as_str)
             .unwrap_or_default();
         if task_runner_async_status_is_stop_locked(current_overall_status)
-            && !task_runner_async_status_is_stop_locked(overall_status)
+            && !task_runner_async_status_is_stop_locked(requested_overall_status)
+        {
+            return;
+        }
+        if task_runner_async_status_is_failure_locked(current_overall_status)
+            && !task_runner_async_status_is_failure_locked(requested_overall_status)
+            && !task_runner_async_status_is_stop_locked(requested_overall_status)
+        {
+            return;
+        }
+        if task_runner_async_callback_is_terminal(task_runner_async_map)
+            && !current_overall_status.eq_ignore_ascii_case(requested_overall_status)
         {
             return;
         }
@@ -261,24 +279,69 @@ fn apply_task_runner_async_overall_status(message: &mut Message, overall_status:
             .or_insert_with(|| Value::String("contact_async".to_string()));
         task_runner_async_map.insert(
             "overall_status".to_string(),
-            Value::String(overall_status.to_string()),
+            Value::String(requested_overall_status.to_string()),
         );
         if matches!(
-            overall_status.trim().to_ascii_lowercase().as_str(),
+            requested_overall_status
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
             "failed" | "error" | "stopping" | "stopped" | "cancelled" | "canceled"
         ) {
             task_runner_async_map.insert(
                 "confirmation_status".to_string(),
-                Value::String(overall_status.to_string()),
+                Value::String(requested_overall_status.to_string()),
             );
         }
     }
+}
+
+fn task_runner_async_has_pending_created_tasks(
+    task_runner_async: &serde_json::Map<String, Value>,
+) -> bool {
+    let created = task_runner_async
+        .get("created_task_ids")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if created.is_empty() {
+        return false;
+    }
+    let terminal = task_runner_async
+        .get("terminal_task_ids")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+    created.iter().any(|task_id| !terminal.contains(task_id))
+}
+
+fn task_runner_async_callback_is_terminal(
+    task_runner_async: &serde_json::Map<String, Value>,
+) -> bool {
+    let created_count = task_runner_async
+        .get("created_task_ids")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    created_count > 0 && !task_runner_async_has_pending_created_tasks(task_runner_async)
 }
 
 fn task_runner_async_status_is_stop_locked(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
         "stopping" | "stopped" | "cancelled" | "canceled"
+    )
+}
+
+fn task_runner_async_status_is_failure_locked(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "failed" | "error" | "blocked"
     )
 }
 
@@ -361,74 +424,6 @@ pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message
     Ok(saved)
 }
 
-pub fn flatten_text_value(value: &Value, object_keys: &[&str]) -> String {
-    if let Some(text) = value.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(array) = value.as_array() {
-        let mut out = Vec::new();
-        for item in array {
-            let text = flatten_text_value(item, object_keys);
-            if !text.is_empty() {
-                out.push(text);
-            }
-        }
-        return out.join("");
-    }
-
-    let Some(object) = value.as_object() else {
-        return String::new();
-    };
-
-    for key in object_keys {
-        if let Some(inner) = object.get(*key) {
-            let text = flatten_text_value(inner, object_keys);
-            if !text.is_empty() {
-                return text;
-            }
-        }
-    }
-
-    String::new()
-}
-
-pub fn extract_non_empty_text_value(value: &Value, object_keys: &[&str]) -> Option<String> {
-    let text = flatten_text_value(value, object_keys);
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
-pub fn text_value_or_json(value: &Value, object_keys: &[&str]) -> String {
-    if value.is_null() {
-        return String::new();
-    }
-
-    extract_non_empty_text_value(value, object_keys).unwrap_or_else(|| value.to_string())
-}
-
-pub fn join_text_lines_or_json(value: &Value, object_keys: &[&str]) -> String {
-    if let Some(text) = value.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(array) = value.as_array() {
-        let mut lines = Vec::new();
-        for item in array {
-            let text = text_value_or_json(item, object_keys);
-            if !text.is_empty() {
-                lines.push(text);
-            }
-        }
-        return lines.join("\n");
-    }
-
-    text_value_or_json(value, object_keys)
-}
-
 pub fn object_string_alias<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
     let object = value.as_object()?;
     keys.iter()
@@ -455,10 +450,10 @@ mod tests {
 
     use super::{
         apply_task_runner_async_overall_status, ensure_message_metadata_object,
-        extract_message_tool_calls_for_display, extract_non_empty_text_value, flatten_text_value,
-        is_session_summary_message, join_text_lines_or_json, message_metadata_string_alias,
-        message_turn_id, object_string_alias, optional_text_has_content, owned_non_empty_text,
-        select_preferred_text, text_has_content, text_value_or_json, MessageOut,
+        extract_message_tool_calls_for_display, is_session_summary_message,
+        message_metadata_string_alias, message_turn_id, object_string_alias,
+        optional_text_has_content, owned_non_empty_text, select_preferred_text, text_has_content,
+        MessageOut,
     };
     use crate::models::message::Message;
 
@@ -511,61 +506,6 @@ mod tests {
         assert!(!output
             .content
             .contains("project_requirement_execution_planning"));
-    }
-
-    #[test]
-    fn flattens_text_values_using_configured_keys() {
-        let value = json!([
-            {"text": {"value": "hello"}},
-            {"content": [{"delta": " world"}]}
-        ]);
-        assert_eq!(
-            flatten_text_value(&value, &["text", "value", "content", "delta"]),
-            "hello world"
-        );
-    }
-
-    #[test]
-    fn extracts_non_empty_text_or_none() {
-        let value = json!({"output_text": {"value": "done"}});
-        assert_eq!(
-            extract_non_empty_text_value(
-                &value,
-                &["text", "value", "content", "output_text", "delta"]
-            )
-            .as_deref(),
-            Some("done")
-        );
-        assert_eq!(
-            extract_non_empty_text_value(&json!({"other": 1}), &["text", "value"]),
-            None
-        );
-    }
-
-    #[test]
-    fn stringifies_text_or_json_with_configured_keys() {
-        assert_eq!(
-            text_value_or_json(&json!({"text": {"value": "done"}}), &["text", "value"]),
-            "done"
-        );
-        assert_eq!(
-            text_value_or_json(&json!({"other": 1}), &["text", "value"]),
-            "{\"other\":1}"
-        );
-        assert_eq!(text_value_or_json(&Value::Null, &["text"]), "");
-    }
-
-    #[test]
-    fn joins_text_lines_or_json_from_arrays() {
-        let value = json!([
-            {"text": "alpha"},
-            {"other": 1},
-            "omega"
-        ]);
-        assert_eq!(
-            join_text_lines_or_json(&value, &["text"]),
-            "alpha\n{\"other\":1}\nomega"
-        );
     }
 
     #[test]
@@ -736,6 +676,77 @@ mod tests {
                 .get("confirmation_status")
                 .and_then(Value::as_str),
             Some("stopped")
+        );
+    }
+
+    #[test]
+    fn planner_completion_keeps_message_processing_while_created_tasks_are_active() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "processing",
+                "created_task_ids": ["task-1", "task-2"],
+                "terminal_task_ids": ["task-1"]
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "completed");
+
+        assert_eq!(
+            message.metadata.as_ref().unwrap()["task_runner_async"]["overall_status"],
+            "processing"
+        );
+    }
+
+    #[test]
+    fn planner_finalize_does_not_overwrite_terminal_callback_failure() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "failed",
+                "created_task_ids": ["task-1"],
+                "terminal_task_ids": ["task-1"],
+                "failed_task_ids": ["task-1"]
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "completed");
+
+        assert_eq!(
+            message.metadata.as_ref().unwrap()["task_runner_async"]["overall_status"],
+            "failed"
+        );
+    }
+
+    #[test]
+    fn planner_finalize_does_not_overwrite_zero_task_failure() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "user".to_string(),
+            "plan".to_string(),
+        );
+        message.metadata = Some(json!({
+            "task_runner_async": {
+                "overall_status": "failed",
+                "confirmation_status": "failed",
+                "created_task_ids": [],
+                "terminal_task_ids": []
+            }
+        }));
+
+        apply_task_runner_async_overall_status(&mut message, "completed");
+
+        assert_eq!(
+            message.metadata.as_ref().unwrap()["task_runner_async"]["overall_status"],
+            "failed"
         );
     }
 }

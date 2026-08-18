@@ -140,7 +140,7 @@ fn recover_task_runner_callback_updates(
     final_assistant: Option<&Message>,
     turn_process_messages: Option<&Vec<Message>>,
 ) -> Vec<Message> {
-    turn_process_messages
+    let mut callbacks: Vec<Message> = turn_process_messages
         .map(|messages| {
             messages
                 .iter()
@@ -152,5 +152,11 @@ fn recover_task_runner_callback_updates(
                 .cloned()
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    callbacks.sort_by(|left: &Message, right: &Message| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    callbacks
 }

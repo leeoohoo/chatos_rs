@@ -81,7 +81,8 @@ impl MessageManagerCore {
         self.persist_message(message).await
     }
 
-    pub(crate) async fn save_assistant_response_message(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn save_assistant_response_message_with_id(
         &self,
         session_id: &str,
         content: &str,
@@ -93,6 +94,7 @@ impl MessageManagerCore {
         response_id: Option<&str>,
         turn_id: Option<&str>,
         response_status: Option<&str>,
+        message_id: Option<String>,
     ) -> Result<Message, String> {
         let metadata = build_assistant_message_metadata(
             tool_calls.as_ref(),
@@ -101,17 +103,20 @@ impl MessageManagerCore {
             response_status,
             metadata.as_ref(),
         );
-        self.save_assistant_message(
-            session_id,
-            content,
-            None,
-            reasoning,
-            message_mode,
-            message_source,
-            metadata,
-            tool_calls,
-        )
-        .await
+        let mut message = Message::new(
+            session_id.to_string(),
+            "assistant".to_string(),
+            content.to_string(),
+        );
+        if let Some(message_id) = message_id {
+            message.id = message_id;
+        }
+        message.reasoning = reasoning;
+        message.message_mode = message_mode;
+        message.message_source = message_source;
+        message.metadata = metadata;
+        message.tool_calls = tool_calls;
+        self.persist_message(message).await
     }
 
     pub(crate) async fn save_tool_message(
@@ -123,11 +128,37 @@ impl MessageManagerCore {
         message_source: Option<String>,
         metadata: Option<Value>,
     ) -> Result<Message, String> {
+        self.save_tool_message_with_id(
+            session_id,
+            content,
+            tool_call_id,
+            message_mode,
+            message_source,
+            metadata,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn save_tool_message_with_id(
+        &self,
+        session_id: &str,
+        content: &str,
+        tool_call_id: &str,
+        message_mode: Option<String>,
+        message_source: Option<String>,
+        metadata: Option<Value>,
+        message_id: Option<String>,
+    ) -> Result<Message, String> {
         let mut message = Message::new(
             session_id.to_string(),
             "tool".to_string(),
             content.to_string(),
         );
+        if let Some(message_id) = message_id {
+            message.id = message_id;
+        }
         message.tool_call_id = Some(tool_call_id.to_string());
         message.message_mode = message_mode;
         message.message_source = message_source;
@@ -135,20 +166,24 @@ impl MessageManagerCore {
         self.persist_message(message).await
     }
 
-    pub(crate) async fn save_tool_results(&self, session_id: &str, results: &[ToolResult]) {
+    pub(crate) async fn save_tool_results(
+        &self,
+        session_id: &str,
+        results: &[ToolResult],
+    ) -> Result<(), String> {
         for result in results {
             let metadata = build_tool_result_metadata(result);
-            let _ = self
-                .save_tool_message(
-                    session_id,
-                    &result.content,
-                    &result.tool_call_id,
-                    None,
-                    None,
-                    Some(metadata),
-                )
-                .await;
+            self.save_tool_message(
+                session_id,
+                &result.content,
+                &result.tool_call_id,
+                None,
+                None,
+                Some(metadata),
+            )
+            .await?;
         }
+        Ok(())
     }
 
     async fn persist_message(&self, message: Message) -> Result<Message, String> {

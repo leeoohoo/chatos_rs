@@ -54,16 +54,20 @@ pub fn router() -> Router {
             get(get_message_task_runner_run),
         )
         .route(
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/changes",
+            get(get_message_task_runner_run_changes),
+        )
+        .route(
             "/api/messages/{message_id}/task-runner/runs/{run_id}/retry",
             post(retry_message_task_runner_run),
         )
         .route(
-            "/api/messages/{message_id}/task-runner/runs/{run_id}/output/changes",
-            get(get_message_task_runner_run_output_changes),
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/integration/retry",
+            post(retry_message_task_runner_run_integration),
         )
         .route(
-            "/api/messages/{message_id}/task-runner/runs/{run_id}/output/diff",
-            get(get_message_task_runner_run_output_diff),
+            "/api/messages/{message_id}/task-runner/runs/{run_id}/integration/waive",
+            post(waive_message_task_runner_run_integration),
         )
         .route(
             "/api/messages/{message_id}/task-runner/graph/runs/{run_id}",
@@ -89,6 +93,11 @@ struct ConversationTaskRunnerActiveMessageTasksRequest {
 struct RetryMessageTaskRunnerRunRequest {
     retry_instruction: Option<String>,
     execution_service_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WaiveMessageTaskRunnerRunIntegrationRequest {
+    reason: String,
 }
 
 fn parse_retry_message_task_runner_run_request(
@@ -379,6 +388,7 @@ async fn get_message_task_runner_graph_run(
         context.source_turn_id.as_deref(),
         query.event_limit(),
         query.event_offset(),
+        query.include_events(),
     )
     .await
     {
@@ -416,6 +426,7 @@ async fn get_message_task_runner_run(
         context.source_turn_id.as_deref(),
         query.event_limit(),
         query.event_offset(),
+        query.include_events(),
     )
     .await
     {
@@ -511,7 +522,7 @@ async fn retry_message_task_runner_run(
     }
 }
 
-async fn get_message_task_runner_run_output_changes(
+async fn get_message_task_runner_run_changes(
     auth: AuthUser,
     Path((message_id, run_id)): Path<(String, String)>,
     Query(query): Query<MessageTaskRunnerLookupQuery>,
@@ -526,39 +537,28 @@ async fn get_message_task_runner_run_output_changes(
         }
         Err(err) => return err,
     };
-    let payload = match task_runner_api_client::get_message_run_output_changes(
+    match task_runner_api_client::get_message_run_changes(
         context.base_url.as_str(),
         run_id.as_str(),
         context.source_session_id.as_str(),
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
-        query.output_limit(),
-        query.output_offset(),
     )
     .await
     {
-        Ok(payload) => payload,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "读取运行输出变更失败", "detail": err})),
-            );
-        }
-    };
-    (StatusCode::OK, Json(payload))
+        Ok(payload) => (StatusCode::OK, Json(payload)),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "读取任务代码变更失败", "detail": err})),
+        ),
+    }
 }
 
-async fn get_message_task_runner_run_output_diff(
+async fn retry_message_task_runner_run_integration(
     auth: AuthUser,
     Path((message_id, run_id)): Path<(String, String)>,
     Query(query): Query<MessageTaskRunnerLookupQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let Some(diff_path) = query.output_path() else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "path is required"})),
-        );
-    };
     let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
         Ok(Some(context)) => context,
         Ok(None) => {
@@ -569,25 +569,55 @@ async fn get_message_task_runner_run_output_diff(
         }
         Err(err) => return err,
     };
-    let payload = match task_runner_api_client::get_message_run_output_diff(
+    match task_runner_api_client::retry_message_run_integration(
         context.base_url.as_str(),
         run_id.as_str(),
         context.source_session_id.as_str(),
         context.source_user_message_id.as_deref(),
         context.source_turn_id.as_deref(),
-        diff_path.as_str(),
     )
     .await
     {
-        Ok(payload) => payload,
-        Err(err) => {
+        Ok(payload) => (StatusCode::OK, Json(payload)),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "重新集成任务代码失败", "detail": err})),
+        ),
+    }
+}
+
+async fn waive_message_task_runner_run_integration(
+    auth: AuthUser,
+    Path((message_id, run_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+    Json(request): Json<WaiveMessageTaskRunnerRunIntegrationRequest>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
             return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "读取运行输出 diff 失败", "detail": err})),
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
             );
         }
+        Err(err) => return err,
     };
-    (StatusCode::OK, Json(payload))
+    match task_runner_api_client::waive_message_run_integration(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+        request.reason.as_str(),
+    )
+    .await
+    {
+        Ok(payload) => (StatusCode::OK, Json(payload)),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "放弃任务代码变更失败", "detail": err})),
+        ),
+    }
 }
 
 #[cfg(test)]

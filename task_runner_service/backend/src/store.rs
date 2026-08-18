@@ -8,10 +8,7 @@ use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{self, doc, Bson, Document},
-    options::{
-        FindOneAndUpdateOptions, FindOneOptions, FindOptions, IndexOptions, ReplaceOptions,
-        ReturnDocument,
-    },
+    options::{FindOneOptions, FindOptions, IndexOptions, ReplaceOptions},
     Client, Collection, IndexModel,
 };
 use parking_lot::RwLock;
@@ -25,7 +22,7 @@ use crate::models::{
     now_rfc3339, AskUserPromptPruneResult, AskUserPromptRecord, AskUserPromptStatus,
     AskUserPromptTaskCountRecord, ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus,
     ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
-    RemoteServerRecord, RunEventPruneResult, RunExecutionStats, RunListFilters, RunSummaryRecord,
+    RunEventPruneResult, RunExecutionStats, RunListFilters, RunSummaryRecord,
     RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
     TaskRunAttemptRecord, TaskRunAttemptStatus, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
@@ -58,6 +55,7 @@ use self::task_support::{
 const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
 const ACTIVE_EXECUTION_LANE_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_execution_lane_unique";
 const TASK_RUNS_TASK_CREATED_INDEX_NAME: &str = "idx_task_runs_task_created_at";
+pub(crate) const EXECUTION_LANE_BUSY_ERROR: &str = "当前项目执行通道已有正在执行的运行";
 
 fn task_run_status_is_terminal(status: TaskRunStatus) -> bool {
     matches!(
@@ -86,13 +84,13 @@ fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecor
         run.claim_token = None;
         run.claim_until = None;
         ensure_terminal_callback_pending(&mut run);
-        ensure_run_post_process_pending(&mut run);
     }
+    ensure_run_post_process_pending(&mut run);
     run
 }
 
 fn ensure_run_post_process_pending(run: &mut TaskRunRecord) {
-    if run.status == TaskRunStatus::Succeeded
+    if run.requires_post_process()
         && !run.post_process_completed
         && !run.post_process_dead_lettered
         && !run.post_process_event_enqueued
@@ -125,23 +123,6 @@ fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
     } else {
         run.post_process_event_pending |= current.post_process_event_pending;
     }
-
-    run.terminal_cleanup_completed |= current.terminal_cleanup_completed;
-    run.terminal_cleanup_event_enqueued |= current.terminal_cleanup_event_enqueued;
-    run.terminal_cleanup_attempt_count = run
-        .terminal_cleanup_attempt_count
-        .max(current.terminal_cleanup_attempt_count);
-    if run.terminal_cleanup_last_error.is_none() {
-        run.terminal_cleanup_last_error = current.terminal_cleanup_last_error.clone();
-    }
-    if run.terminal_cleanup_completed {
-        run.terminal_cleanup_event_pending = false;
-        run.terminal_cleanup_event_enqueued = false;
-    } else if run.terminal_cleanup_event_enqueued {
-        run.terminal_cleanup_event_pending = false;
-    } else {
-        run.terminal_cleanup_event_pending |= current.terminal_cleanup_event_pending;
-    }
 }
 
 fn run_attempt_status_for_run_status(status: TaskRunStatus) -> Option<TaskRunAttemptStatus> {
@@ -172,12 +153,6 @@ fn merge_run_attempts(
         }
         if incoming.recovery_reason.is_none() {
             incoming.recovery_reason = current.recovery_reason.clone();
-        }
-        if incoming.sandbox_id.is_none() {
-            incoming.sandbox_id = current.sandbox_id.clone();
-        }
-        if incoming.lease_id.is_none() {
-            incoming.lease_id = current.lease_id.clone();
         }
         if incoming.model_response_id.is_none() {
             incoming.model_response_id = current.model_response_id.clone();
@@ -228,7 +203,6 @@ struct StoreData {
     task_projects: BTreeMap<String, TaskProjectRecord>,
     model_configs: BTreeMap<String, ModelConfigRecord>,
     runtime_settings: Option<RuntimeSettingsRecord>,
-    remote_servers: BTreeMap<String, RemoteServerRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
     run_events: BTreeMap<String, Vec<TaskRunEventRecord>>,
     run_terminal_subscriptions: BTreeMap<String, RunTerminalSubscriptionRecord>,
@@ -248,12 +222,23 @@ pub(crate) struct RunTerminalSubscriptionRecord {
 }
 
 impl RunTerminalSubscriptionRecord {
+    #[cfg(test)]
     pub(crate) fn new(run_id: &str, parent_run_id: &str, worker_id: &str) -> Self {
         Self {
             id: format!("{run_id}:{parent_run_id}:{worker_id}"),
             run_id: run_id.to_string(),
             parent_run_id: parent_run_id.to_string(),
             worker_id: worker_id.to_string(),
+            created_at: now_rfc3339(),
+        }
+    }
+
+    pub(crate) fn cloud_agent(run_id: &str, parent_run_id: &str) -> Self {
+        Self {
+            id: format!("{run_id}:{parent_run_id}:cloud-agent"),
+            run_id: run_id.to_string(),
+            parent_run_id: parent_run_id.to_string(),
+            worker_id: "cloud-agent".to_string(),
             created_at: now_rfc3339(),
         }
     }
@@ -271,7 +256,6 @@ pub(crate) struct MongoStore {
     task_projects: Collection<TaskProjectRecord>,
     model_configs: Collection<ModelConfigRecord>,
     runtime_settings: Collection<RuntimeSettingsRecord>,
-    remote_servers: Collection<RemoteServerRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
     run_terminal_subscriptions: Collection<RunTerminalSubscriptionRecord>,

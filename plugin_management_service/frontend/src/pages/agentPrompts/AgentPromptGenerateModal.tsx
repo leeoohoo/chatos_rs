@@ -17,6 +17,7 @@ type GenerateValues = {
 export function AgentPromptGenerateModal({
   open,
   agentKey,
+  profile,
   vendor,
   currentContent,
   onClose,
@@ -24,6 +25,7 @@ export function AgentPromptGenerateModal({
 }: {
   open: boolean;
   agentKey: string;
+  profile: string;
   vendor: AgentPromptVendor;
   currentContent: string;
   onClose: () => void;
@@ -39,6 +41,7 @@ export function AgentPromptGenerateModal({
   const generateMutation = useMutation({
     mutationFn: (values: GenerateValues) => api.generateAgentProviderPrompt(
       agentKey,
+      profile,
       vendor,
       { ...values, current_content: currentContent },
     ),

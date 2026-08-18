@@ -32,6 +32,18 @@ fn truncate_text_bytes(value: &str, max_bytes: usize) -> Option<String> {
     ))
 }
 
+fn truncate_text_chars(value: &str, max_chars: usize) -> Option<String> {
+    let original_chars = value.chars().count();
+    if original_chars <= max_chars {
+        return None;
+    }
+    let preview = value.chars().take(max_chars).collect::<String>();
+    Some(format!(
+        "{}\n\n...（内容已截断，原始大小 {} chars）",
+        preview, original_chars
+    ))
+}
+
 fn preview_json_value(value: &Value, max_bytes: usize) -> String {
     let text = value
         .as_str()
@@ -55,6 +67,28 @@ fn truncate_json_value(value: Value, max_bytes: usize) -> Value {
     })
 }
 
+fn truncate_json_value_chars(value: Value, max_chars: usize) -> Value {
+    let Ok(compact) = serde_json::to_string(&value) else {
+        return value;
+    };
+    let original_bytes = compact.len();
+    let original_chars = compact.chars().count();
+    if original_chars <= max_chars {
+        return value;
+    }
+    let preview = value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| serde_json::to_string_pretty(&value).ok())
+        .unwrap_or(compact);
+    json!({
+        "truncated": true,
+        "original_chars": original_chars,
+        "original_bytes": original_bytes,
+        "preview": truncate_text_chars(preview.as_str(), max_chars).unwrap_or(preview),
+    })
+}
+
 pub(super) fn redact_workspace_paths_internal<T>(
     state: &AppState,
     value: T,
@@ -74,6 +108,7 @@ where
 pub(super) fn trim_run_for_chatos_detail(
     mut run: crate::models::TaskRunRecord,
 ) -> crate::models::TaskRunRecord {
+    run.agent_ordering_lane_key = None;
     run.execution_lane_key = None;
     run.chatos_callback_delivery = None;
     redact_plugin_command_arguments(&mut run.input_snapshot);
@@ -89,9 +124,6 @@ pub(super) fn trim_run_for_chatos_detail(
 
 fn truncate_run_input_snapshot_for_chatos(value: Value) -> Value {
     let plugin_config = value.get("plugin_config").cloned();
-    let plugin_snapshots = value
-        .get("plugin_snapshots")
-        .map(project_plugin_snapshot_summaries_for_chatos);
     let mut projected = truncate_json_value(value, RUN_SNAPSHOT_PREVIEW_LIMIT_BYTES);
     if projected.get("truncated").and_then(Value::as_bool) != Some(true) {
         return projected;
@@ -102,73 +134,28 @@ fn truncate_run_input_snapshot_for_chatos(value: Value) -> Value {
     if let Some(plugin_config) = plugin_config {
         root.insert("plugin_config".to_string(), plugin_config);
     }
-    if let Some(plugin_snapshots) = plugin_snapshots {
-        root.insert("plugin_snapshots".to_string(), plugin_snapshots);
-    }
     projected
 }
 
-fn project_plugin_snapshot_summaries_for_chatos(value: &Value) -> Value {
-    let Some(snapshots) = value.as_array() else {
-        return Value::Array(Vec::new());
-    };
-    Value::Array(
-        snapshots
-            .iter()
-            .take(50)
-            .filter_map(Value::as_object)
-            .map(|snapshot| {
-                let mut projected = serde_json::Map::new();
-                copy_bounded_string_fields(
-                    snapshot,
-                    &mut projected,
-                    &[
-                        ("plugin_id", 256),
-                        ("release_id", 256),
-                        ("version", 64),
-                        ("artifact_sha256", 64),
-                    ],
-                );
-                if let Some(components) = snapshot
-                    .get("component_snapshots")
-                    .and_then(Value::as_array)
-                {
-                    let components = components
-                        .iter()
-                        .take(128)
-                        .filter_map(Value::as_object)
-                        .map(|component| {
-                            let mut projected_component = serde_json::Map::new();
-                            copy_bounded_string_fields(
-                                component,
-                                &mut projected_component,
-                                &[("component_key", 256), ("content_sha256", 64)],
-                            );
-                            if let Some(kind) = component.get("kind").and_then(Value::as_str) {
-                                projected_component
-                                    .insert("kind".to_string(), Value::String(kind.to_string()));
-                            }
-                            Value::Object(projected_component)
-                        })
-                        .collect();
-                    projected.insert("component_snapshots".to_string(), Value::Array(components));
-                }
-                Value::Object(projected)
-            })
-            .collect(),
-    )
-}
-
-fn trim_event_for_chatos_detail(
+pub(super) fn trim_event_for_chatos_detail(
     mut event: crate::models::TaskRunEventRecord,
+    tool_text_limit_chars: usize,
 ) -> crate::models::TaskRunEventRecord {
     event.message = event.message.map(|message| {
         truncate_text_bytes(message.as_str(), RUN_EVENT_MESSAGE_PREVIEW_LIMIT_BYTES)
             .unwrap_or(message)
     });
     event.payload = event.payload.map(|value| {
-        let projected = project_plugin_event_payload_for_chatos(event.event_type.as_str(), value);
-        truncate_json_value(projected, RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES)
+        let projected = project_plugin_event_payload_for_chatos(
+            event.event_type.as_str(),
+            value,
+            tool_text_limit_chars,
+        );
+        if matches!(event.event_type.as_str(), "tool_stream" | "tools_start") {
+            projected
+        } else {
+            truncate_json_value(projected, RUN_EVENT_PAYLOAD_PREVIEW_LIMIT_BYTES)
+        }
     });
     event
 }
@@ -186,30 +173,6 @@ fn redact_plugin_command_arguments(snapshot: &mut Value) {
         for invocation in command_invocations {
             if let Some(invocation) = invocation.as_object_mut() {
                 replace_plugin_arguments_with_audit(invocation);
-            }
-        }
-    }
-    if let Some(plugin_snapshots) = root
-        .get_mut("plugin_snapshots")
-        .and_then(Value::as_array_mut)
-    {
-        for plugin in plugin_snapshots {
-            let Some(components) = plugin
-                .as_object_mut()
-                .and_then(|plugin| plugin.get_mut("component_snapshots"))
-                .and_then(Value::as_array_mut)
-            else {
-                continue;
-            };
-            for component in components {
-                let Some(runtime) = component
-                    .as_object_mut()
-                    .and_then(|component| component.get_mut("runtime"))
-                    .and_then(Value::as_object_mut)
-                else {
-                    continue;
-                };
-                replace_plugin_arguments_with_audit(runtime);
             }
         }
     }
@@ -234,14 +197,135 @@ fn replace_plugin_arguments_with_audit(object: &mut serde_json::Map<String, Valu
     );
 }
 
-fn project_plugin_event_payload_for_chatos(event_type: &str, payload: Value) -> Value {
+fn project_plugin_event_payload_for_chatos(
+    event_type: &str,
+    payload: Value,
+    tool_text_limit_chars: usize,
+) -> Value {
     match event_type {
+        "tool_stream" => project_tool_stream_payload_for_chatos(&payload, tool_text_limit_chars),
+        "tools_start" => project_tools_start_payload_for_chatos(&payload, tool_text_limit_chars),
         "plugin_runtime" => project_plugin_runtime_payload(&payload),
         "plugin_hook_blocked" => project_plugin_hook_blocked_payload(&payload),
         "plugin_ui_ready" => project_plugin_ui_ready_payload(&payload),
         "plugin_artifact_ready" => project_plugin_artifact_ready_payload(&payload),
         _ => payload,
     }
+}
+
+fn project_tool_stream_payload_for_chatos(payload: &Value, tool_text_limit_chars: usize) -> Value {
+    let Some(source) = payload.as_object() else {
+        return payload.clone();
+    };
+    let mut projected = serde_json::Map::new();
+    copy_bounded_string_fields(
+        source,
+        &mut projected,
+        &[
+            ("tool_call_id", 256),
+            ("call_id", 256),
+            ("id", 256),
+            ("name", 512),
+            ("conversation_turn_id", 256),
+            ("invocation_id", 256),
+        ],
+    );
+    for field in ["success", "is_error", "is_stream", "fatal_error"] {
+        copy_bool(source, &mut projected, field);
+    }
+
+    if let Some(result) = source.get("result").filter(|value| !value.is_null()) {
+        projected.insert(
+            "result".to_string(),
+            truncate_json_value_chars(result.clone(), tool_text_limit_chars),
+        );
+    }
+    let should_include_content = !projected.contains_key("result")
+        || source.get("is_error").and_then(Value::as_bool) == Some(true)
+        || source.get("success").and_then(Value::as_bool) == Some(false);
+    if should_include_content {
+        if let Some(content) = source.get("content").and_then(Value::as_str) {
+            projected.insert(
+                "content".to_string(),
+                Value::String(
+                    truncate_text_chars(content, tool_text_limit_chars)
+                        .unwrap_or_else(|| content.to_string()),
+                ),
+            );
+        }
+    }
+    Value::Object(projected)
+}
+
+fn project_tools_start_payload_for_chatos(payload: &Value, tool_text_limit_chars: usize) -> Value {
+    if let Some(calls) = payload.as_array() {
+        return Value::Array(
+            calls
+                .iter()
+                .take(64)
+                .map(|call| project_tool_call_for_chatos(call, tool_text_limit_chars))
+                .collect(),
+        );
+    }
+    let Some(source) = payload.as_object() else {
+        return payload.clone();
+    };
+    let mut projected = source.clone();
+    for field in ["tool_calls", "toolCalls", "calls", "tools"] {
+        let Some(calls) = source.get(field).and_then(Value::as_array) else {
+            continue;
+        };
+        projected.insert(
+            field.to_string(),
+            Value::Array(
+                calls
+                    .iter()
+                    .take(64)
+                    .map(|call| project_tool_call_for_chatos(call, tool_text_limit_chars))
+                    .collect(),
+            ),
+        );
+    }
+    Value::Object(projected)
+}
+
+fn project_tool_call_for_chatos(call: &Value, tool_text_limit_chars: usize) -> Value {
+    let Some(source) = call.as_object() else {
+        return call.clone();
+    };
+    let mut projected = serde_json::Map::new();
+    copy_bounded_string_fields(
+        source,
+        &mut projected,
+        &[
+            ("id", 256),
+            ("call_id", 256),
+            ("tool_call_id", 256),
+            ("type", 64),
+            ("name", 512),
+            ("invocation_id", 256),
+        ],
+    );
+    if let Some(function) = source.get("function").and_then(Value::as_object) {
+        let mut projected_function = serde_json::Map::new();
+        copy_bounded_string_fields(function, &mut projected_function, &[("name", 512)]);
+        if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+            projected_function.insert(
+                "arguments".to_string(),
+                Value::String(
+                    truncate_text_chars(arguments, tool_text_limit_chars)
+                        .unwrap_or_else(|| arguments.to_string()),
+                ),
+            );
+        }
+        projected.insert("function".to_string(), Value::Object(projected_function));
+    } else if let Some(arguments) = source.get("arguments") {
+        projected.insert(
+            "arguments".to_string(),
+            truncate_json_value_chars(arguments.clone(), tool_text_limit_chars),
+        );
+    }
+    Value::Object(projected)
 }
 
 fn project_plugin_runtime_payload(payload: &Value) -> Value {
@@ -474,13 +558,14 @@ pub(super) fn paginate_run_events(
     events: Vec<crate::models::TaskRunEventRecord>,
     limit: usize,
     offset: usize,
+    tool_text_limit_chars: usize,
 ) -> (Vec<ChatosMessageTaskRunEvent>, usize, bool) {
     let total = events.len();
     let items = events
         .into_iter()
         .skip(offset)
         .take(limit)
-        .map(trim_event_for_chatos_detail)
+        .map(|event| trim_event_for_chatos_detail(event, tool_text_limit_chars))
         .map(ChatosMessageTaskRunEvent::from)
         .collect::<Vec<_>>();
     let has_more = offset.saturating_add(items.len()) < total;

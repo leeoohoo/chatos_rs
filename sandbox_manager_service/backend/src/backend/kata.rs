@@ -63,13 +63,14 @@ impl SandboxBackend for KataSandboxBackend {
             .arg("chatos.backend=kata");
         append_sandbox_create_runtime_args(
             &mut command,
+            &self.config,
             &spec,
             network,
             cpu.as_str(),
             memory.as_str(),
             pids.as_str(),
             disk_limit_bytes,
-        );
+        )?;
         if publish_agent {
             command
                 .arg("-p")

@@ -36,7 +36,7 @@ pub async fn run_pending_summaries_once(
         &state.config,
         tenant_id,
         Some(auth.source_id()),
-        policy.token_limit.unwrap_or(6000).max(128),
+        crate::services::summary::effective_thread_summary_token_limit(policy.token_limit),
         limit,
     )
     .await
