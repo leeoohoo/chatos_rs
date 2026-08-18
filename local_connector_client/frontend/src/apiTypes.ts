@@ -33,6 +33,7 @@ export interface SandboxState {
   permission_configuration_error?: string | null;
   default_approval_policy?: SandboxApprovalPolicy | null;
   default_approval_reviewer?: SandboxApprovalReviewer | null;
+  default_network_access?: SandboxNetworkAccess | null;
   default_network_requirements?: SandboxNetworkRequirements | null;
   allowed_permission_profiles?: Record<string, boolean> | null;
   configured_allowed_permission_profiles?: Record<string, boolean> | null;
@@ -718,6 +719,7 @@ export type SandboxBackendKind = 'local_process';
 export type PermissionProfileId = 'read_only' | 'workspace_write' | 'full_access';
 export type SandboxApprovalPolicy = 'on_request' | 'never';
 export type SandboxApprovalReviewer = 'user' | 'auto_review';
+export type SandboxNetworkAccess = 'disabled' | 'controlled' | 'host';
 
 export interface PermissionProfileSummary {
   id: string;
@@ -821,6 +823,7 @@ export interface SandboxSettings {
   permission_configuration_error?: string | null;
   default_approval_policy: SandboxApprovalPolicy;
   default_approval_reviewer: SandboxApprovalReviewer;
+  default_network_access: SandboxNetworkAccess;
   default_network_requirements: SandboxNetworkRequirements;
   allowed_permission_profiles?: Record<string, boolean> | null;
   configured_allowed_permission_profiles?: Record<string, boolean> | null;

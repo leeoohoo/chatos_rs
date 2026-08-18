@@ -7,6 +7,7 @@ import type {
   ConnectorStatus,
   PermissionProfileId,
   SandboxCapabilities,
+  SandboxNetworkAccess,
   SandboxSettings,
   SandboxSettingsUpdate,
 } from '../api';
@@ -68,22 +69,22 @@ export function SandboxPolicySettings({
     );
   };
 
-  const setDefaultNetworkAccess = async (enabled: boolean) => {
-    if (view.networkPresentation.unrestricted) {
+  const setDefaultNetworkAccess = async (access: SandboxNetworkAccess) => {
+    if (access === view.networkPresentation.access) {
       return;
     }
-    if (enabled && !window.confirm(
+    if (access === 'controlled' && !window.confirm(
       '开启后，任务默认可通过本机受控网络代理访问互联网，不再每次弹出联网审批。确定开启吗？',
     )) {
       return;
     }
+    if (access === 'host' && !window.confirm(
+      '开启后，任务进程会使用宿主机网络。这个设置只影响网络，不改变文件访问范围。确定开启吗？',
+    )) {
+      return;
+    }
     await onSave(
-      {
-        default_network_requirements: enabled
-          ? { enabled: true, mode: 'full' }
-          : { enabled: false },
-        risk_acknowledged: enabled,
-      },
+      networkAccessPatch(access),
       '互联网访问',
     );
   };
@@ -167,20 +168,29 @@ export function SandboxPolicySettings({
           <small>{view.networkPresentation.detail}</small>
           <div className="sandboxNetworkApprovalRow">
             <div>
-              <strong><Cloud size={14} />默认允许联网</strong>
+              <strong><Cloud size={14} />联网模式</strong>
               <small>
-                开启后任务直接走本机受控网络代理，不再逐次申请联网。
+                文件访问范围不影响网络；宿主机网络会直接使用本机网络栈。
               </small>
             </div>
-            <label className="switch" title="允许任务默认访问互联网">
-              <input
-                type="checkbox"
-                checked={view.networkPresentation.enabled}
-                disabled={saving || view.networkPresentation.unrestricted}
-                onChange={(event) => void setDefaultNetworkAccess(event.target.checked)}
-              />
-              <span />
-            </label>
+            <select
+              value={view.networkPresentation.access}
+              disabled={saving || view.customPermissionProfileActive}
+              title="选择任务进程的默认网络模式"
+              onChange={(event) => void setDefaultNetworkAccess(
+                event.target.value as SandboxNetworkAccess,
+              )}
+            >
+              {view.customPermissionProfileActive ? (
+                <option value={view.networkPresentation.access}>由本机策略管理</option>
+              ) : (
+                <>
+                  <option value="disabled">默认关闭</option>
+                  <option value="controlled">受控代理</option>
+                  <option value="host">宿主机网络</option>
+                </>
+              )}
+            </select>
           </div>
           <div className="sandboxNetworkApprovalRow">
             <div>
@@ -209,6 +219,27 @@ export function SandboxPolicySettings({
       <SandboxTechnicalDetails status={status} settings={settings} backend={view.backend} />
     </>
   );
+}
+
+function networkAccessPatch(access: SandboxNetworkAccess): SandboxSettingsUpdate {
+  if (access === 'controlled') {
+    return {
+      default_network_access: 'controlled',
+      default_network_requirements: { enabled: true, mode: 'full' },
+      risk_acknowledged: true,
+    };
+  }
+  if (access === 'host') {
+    return {
+      default_network_access: 'host',
+      risk_acknowledged: true,
+    };
+  }
+  return {
+    default_network_access: 'disabled',
+    default_network_requirements: { enabled: false },
+    risk_acknowledged: false,
+  };
 }
 
 function PermissionOption({

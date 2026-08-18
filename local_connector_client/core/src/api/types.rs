@@ -127,6 +127,8 @@ pub(super) struct UpdateSandboxSettingsRequest {
     #[serde(default)]
     pub(super) default_approval_reviewer: Option<ApprovalReviewer>,
     #[serde(default)]
+    pub(super) default_network_access: Option<crate::sandbox::types::LocalSandboxNetworkAccess>,
+    #[serde(default)]
     pub(super) default_network_requirements: Option<chatos_sandbox_contract::NetworkRequirements>,
     #[serde(default)]
     pub(super) allowed_permission_profiles: Option<std::collections::BTreeMap<String, bool>>,

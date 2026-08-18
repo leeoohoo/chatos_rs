@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 
 use crate::sandbox::lease::shutdown_local_sandboxes;
 use crate::sandbox::process::native_process_sandbox_capability;
+use crate::sandbox::types::LocalSandboxNetworkAccess;
 use crate::{local_now_rfc3339, LocalRuntime};
 
 use super::super::types::{LocalApiError, ToggleSandboxRequest, UpdateSandboxSettingsRequest};
@@ -109,6 +110,9 @@ pub(crate) async fn local_update_sandbox_settings(
         }
         if let Some(reviewer) = req.default_approval_reviewer {
             state.sandbox.default_approval_reviewer = reviewer;
+        }
+        if let Some(access) = req.default_network_access {
+            state.sandbox.default_network_access = Some(access);
         }
         if let Some(network) = req.default_network_requirements {
             state.sandbox.default_network_requirements = network;
@@ -239,14 +243,22 @@ fn validate_sandbox_settings_update(
         }
         _ => None,
     };
-    let effective_network = profile_network.unwrap_or_else(|| {
-        req.default_network_requirements
-            .as_ref()
-            .unwrap_or(&current.default_network_requirements)
-    });
+    let effective_network_access = prospective.effective_default_network_access();
+    let effective_network_requirements = prospective.effective_default_network_requirements();
+    let effective_network = profile_network.unwrap_or(&effective_network_requirements);
     let (previous_network_unrestricted, previous_network) =
         current_effective_network_requirements(current);
     if !previous_network_unrestricted
+        && effective_network_access == LocalSandboxNetworkAccess::Host
+        && !req.risk_acknowledged
+    {
+        return Err(LocalApiError::conflict_code(
+            "sandbox_risk_ack_required",
+            "enabling host sandbox network access requires explicit risk acknowledgement",
+        ));
+    }
+    if !previous_network_unrestricted
+        && effective_network_access != LocalSandboxNetworkAccess::Host
         && network_risk_increases(effective_network, &previous_network)
         && !req.risk_acknowledged
     {
@@ -307,12 +319,21 @@ fn prospective_sandbox_state(
     if let Some(profile_name) = req.default_permission_profile_name.as_ref() {
         prospective.default_permission_profile_name = Some(profile_name.clone());
     }
+    if let Some(access) = req.default_network_access {
+        prospective.default_network_access = Some(access);
+    }
+    if let Some(network) = req.default_network_requirements.as_ref() {
+        prospective.default_network_requirements = network.clone();
+    }
     prospective
 }
 
 fn current_effective_network_requirements(
     current: &crate::sandbox::types::LocalSandboxState,
 ) -> (bool, NetworkRequirements) {
+    if current.effective_default_network_access() == LocalSandboxNetworkAccess::Host {
+        return (true, NetworkRequirements::default());
+    }
     let profile_name = current.effective_default_permission_profile_name();
     if !profile_name.starts_with(':') {
         if let Ok(resolved) = current.resolve_permission_profile(profile_name.as_str(), Vec::new())
@@ -324,7 +345,7 @@ fn current_effective_network_requirements(
             }
         }
     }
-    (false, current.default_network_requirements.clone())
+    (false, current.effective_default_network_requirements())
 }
 
 fn validate_network_requirements(network: &NetworkRequirements) -> Result<(), LocalApiError> {
@@ -422,6 +443,9 @@ fn sandbox_policy_fields_changed(
             .default_approval_reviewer
             .is_some_and(|reviewer| reviewer != current.default_approval_reviewer)
         || req
+            .default_network_access
+            .is_some_and(|access| access != current.effective_default_network_access())
+        || req
             .default_network_requirements
             .as_ref()
             .is_some_and(|network| network != &current.default_network_requirements)
@@ -480,6 +504,7 @@ fn sandbox_settings_payload(sandbox: &crate::sandbox::types::LocalSandboxState) 
             .map(|effective| &effective.managed_profile_names),
         "default_approval_policy": sandbox.default_approval_policy,
         "default_approval_reviewer": sandbox.default_approval_reviewer,
+        "default_network_access": sandbox.effective_default_network_access(),
         "default_network_requirements": sandbox.default_network_requirements,
         "configured_allowed_permission_profiles": sandbox.allowed_permission_profiles,
         "allowed_permission_profiles": effective_configuration

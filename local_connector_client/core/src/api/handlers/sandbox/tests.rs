@@ -17,6 +17,7 @@ fn update_request() -> UpdateSandboxSettingsRequest {
         permission_profiles_toml: None,
         default_approval_policy: None,
         default_approval_reviewer: None,
+        default_network_access: None,
         default_network_requirements: None,
         allowed_permission_profiles: None,
         risk_acknowledged: false,
@@ -69,6 +70,23 @@ fn restricted_network_requires_risk_acknowledgement() {
     req.risk_acknowledged = true;
     validate_sandbox_settings_update(&req, &state)
         .expect("native proxy network with acknowledgement");
+}
+
+#[test]
+fn host_network_requires_risk_acknowledgement() {
+    let state = crate::sandbox::types::LocalSandboxState::default();
+    let mut req = update_request();
+    req.default_network_access = Some(LocalSandboxNetworkAccess::Host);
+
+    let err = validate_sandbox_settings_update(&req, &state)
+        .expect_err("host network requires acknowledgement");
+    assert_eq!(
+        err.message(),
+        "enabling host sandbox network access requires explicit risk acknowledgement"
+    );
+
+    req.risk_acknowledged = true;
+    validate_sandbox_settings_update(&req, &state).expect("host network acknowledged");
 }
 
 #[test]
@@ -385,4 +403,8 @@ fn sandbox_policy_revision_changes_only_for_policy_fields() {
     let mut reviewer = update_request();
     reviewer.default_approval_reviewer = Some(ApprovalReviewer::AutoReview);
     assert!(sandbox_policy_fields_changed(&reviewer, &state));
+
+    let mut host_network = update_request();
+    host_network.default_network_access = Some(LocalSandboxNetworkAccess::Host);
+    assert!(sandbox_policy_fields_changed(&host_network, &state));
 }

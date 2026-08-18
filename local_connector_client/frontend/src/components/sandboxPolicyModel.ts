@@ -8,6 +8,7 @@ import type {
   SandboxApprovalReviewer,
   SandboxBackendKind,
   SandboxCapabilities,
+  SandboxNetworkAccess,
   SandboxNetworkRequirements,
   SandboxSettings,
   SandboxSettingsUpdate,
@@ -76,6 +77,7 @@ export function recommendedSandboxSettings(
     default_permission_profile_id: 'workspace_write',
     default_approval_policy: 'on_request',
     default_approval_reviewer: 'user',
+    default_network_access: 'disabled',
     default_network_requirements: { enabled: false },
     risk_acknowledged: false,
   };
@@ -122,37 +124,54 @@ export function sandboxBackendDescription(_backend: SandboxBackendKind) {
 function resolveEffectiveNetwork(
   status: ConnectorStatus,
   settings: SandboxSettings | null,
-): { unrestricted: boolean; requirements: SandboxNetworkRequirements } {
+): {
+  access: SandboxNetworkAccess;
+  unrestricted: boolean;
+  requirements: SandboxNetworkRequirements;
+} {
+  const fallbackRequirements =
+    settings?.default_network_requirements
+    || status.sandbox.default_network_requirements
+    || { enabled: false };
+  const configuredAccess = normalizeNetworkAccess(
+    settings?.default_network_access || status.sandbox.default_network_access,
+    fallbackRequirements,
+  );
   const effective = settings?.effective_permissions || status.sandbox.effective_permissions;
   if (effective?.network.type === 'unrestricted') {
-    return { unrestricted: true, requirements: {} };
+    return { access: 'host', unrestricted: true, requirements: {} };
   }
   if (effective?.network.type === 'restricted') {
-    return { unrestricted: false, requirements: effective.network.requirements };
+    return {
+      access: configuredAccess,
+      unrestricted: false,
+      requirements: effective.network.requirements,
+    };
   }
   return {
+    access: configuredAccess,
     unrestricted: false,
-    requirements:
-      settings?.default_network_requirements
-      || status.sandbox.default_network_requirements
-      || { enabled: false },
+    requirements: fallbackRequirements,
   };
 }
 
 function describeNetworkAccess(network: {
+  access: SandboxNetworkAccess;
   unrestricted: boolean;
   requirements: SandboxNetworkRequirements;
 }, approvalMode: SandboxApprovalMode, backend: SandboxBackendKind) {
   if (network.unrestricted) {
     return {
+      access: 'host' as const,
       enabled: true,
-      label: '不受限制',
+      label: '宿主机网络',
       unrestricted: true,
-      detail: '当前网络策略允许任务主动访问互联网。',
+      detail: '任务进程使用宿主机网络，不走逐次联网审批。',
     };
   }
   if (network.requirements.enabled === true) {
     return {
+      access: network.access,
       enabled: true,
       label: '按本机策略限制',
       unrestricted: false,
@@ -163,6 +182,7 @@ function describeNetworkAccess(network: {
   }
   if (approvalMode === 'auto_review') {
     return {
+      access: network.access,
       enabled: false,
       label: '默认关闭，由 AI 审批',
       unrestricted: false,
@@ -171,6 +191,7 @@ function describeNetworkAccess(network: {
   }
   if (approvalMode === 'never') {
     return {
+      access: network.access,
       enabled: false,
       label: '默认关闭，直接拒绝',
       unrestricted: false,
@@ -178,11 +199,22 @@ function describeNetworkAccess(network: {
     };
   }
   return {
+    access: network.access,
     enabled: false,
     label: '默认关闭，需要时询问',
     unrestricted: false,
     detail: '任务默认断网；确需联网时会弹出授权请求。',
   };
+}
+
+function normalizeNetworkAccess(
+  value: string | null | undefined,
+  requirements: SandboxNetworkRequirements,
+): SandboxNetworkAccess {
+  if (value === 'host' || value === 'controlled' || value === 'disabled') {
+    return value;
+  }
+  return requirements.enabled === true ? 'controlled' : 'disabled';
 }
 
 function hasNetworkDomainRules(requirements: SandboxNetworkRequirements) {

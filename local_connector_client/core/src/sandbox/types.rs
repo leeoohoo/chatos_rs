@@ -34,6 +34,8 @@ pub(crate) struct LocalSandboxState {
     #[serde(default)]
     pub(crate) default_approval_reviewer: ApprovalReviewer,
     #[serde(default)]
+    pub(crate) default_network_access: Option<LocalSandboxNetworkAccess>,
+    #[serde(default)]
     pub(crate) default_network_requirements: NetworkRequirements,
     #[serde(default)]
     pub(crate) allowed_permission_profiles: Option<BTreeMap<String, bool>>,
@@ -53,6 +55,7 @@ impl Default for LocalSandboxState {
             permission_profiles: BTreeMap::new(),
             default_approval_policy: ApprovalPolicy::OnRequest,
             default_approval_reviewer: ApprovalReviewer::User,
+            default_network_access: None,
             default_network_requirements: NetworkRequirements {
                 enabled: Some(false),
                 ..Default::default()
@@ -65,6 +68,30 @@ impl Default for LocalSandboxState {
 }
 
 impl LocalSandboxState {
+    pub(crate) fn effective_default_network_access(&self) -> LocalSandboxNetworkAccess {
+        self.default_network_access.unwrap_or_else(|| {
+            if self.default_network_requirements.enabled == Some(true) {
+                LocalSandboxNetworkAccess::Controlled
+            } else {
+                LocalSandboxNetworkAccess::Disabled
+            }
+        })
+    }
+
+    pub(crate) fn effective_default_network_requirements(&self) -> NetworkRequirements {
+        let mut requirements = self.default_network_requirements.clone();
+        match self.effective_default_network_access() {
+            LocalSandboxNetworkAccess::Disabled => {
+                requirements.enabled = Some(false);
+            }
+            LocalSandboxNetworkAccess::Controlled => {
+                requirements.enabled = Some(true);
+            }
+            LocalSandboxNetworkAccess::Host => {}
+        }
+        requirements
+    }
+
     pub(crate) fn load_runtime_permission_profile_layers(
         &mut self,
         cloud_managed: Option<CodexPermissionProfileDocument>,
@@ -219,7 +246,9 @@ impl LocalSandboxState {
                 runtime_workspace_roots.clone(),
                 project,
             ) {
-                return resolved.effective_permissions;
+                let mut snapshot = resolved.effective_permissions;
+                self.apply_builtin_network_policy(&mut snapshot, Some(profile_name));
+                return snapshot;
             }
         }
         let mut snapshot = legacy_policy_permission_snapshot(policy, runtime_workspace_roots);
@@ -276,9 +305,16 @@ impl LocalSandboxState {
         if profile_name.is_some_and(|name| !name.starts_with(':')) {
             return;
         }
-        if policy_network_matches_default(snapshot, &self.default_network_requirements) {
-            return;
-        }
+        let network = match self.effective_default_network_access() {
+            LocalSandboxNetworkAccess::Host => NetworkPermissionPolicy::Unrestricted,
+            LocalSandboxNetworkAccess::Controlled | LocalSandboxNetworkAccess::Disabled => {
+                let requirements = self.effective_default_network_requirements();
+                if policy_network_matches_default(snapshot, &requirements) {
+                    return;
+                }
+                NetworkPermissionPolicy::Restricted { requirements }
+            }
+        };
 
         let base_profile = snapshot.active_profile.id.clone();
         snapshot.active_profile = ActivePermissionProfile {
@@ -286,9 +322,7 @@ impl LocalSandboxState {
             extends: Some(base_profile),
         };
         snapshot.provenance = PermissionProfileProvenance::User;
-        snapshot.network = NetworkPermissionPolicy::Restricted {
-            requirements: self.default_network_requirements.clone(),
-        };
+        snapshot.network = network;
     }
 }
 
@@ -302,6 +336,14 @@ fn policy_network_matches_default(
             requirements: current,
         } if current == requirements
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LocalSandboxNetworkAccess {
+    Disabled,
+    Controlled,
+    Host,
 }
 
 #[derive(Clone, Default)]
@@ -436,7 +478,11 @@ mod tests {
             ..Default::default()
         };
         let policy = state.effective_policy_defaults();
-        let snapshot = state.effective_permissions(None, &policy, vec!["/workspace".to_string()]);
+        let snapshot = state.effective_permissions(
+            Some(PermissionProfileId::WorkspaceWrite.codex_name()),
+            &policy,
+            vec!["/workspace".to_string()],
+        );
 
         assert_eq!(snapshot.provenance, PermissionProfileProvenance::User);
         assert_eq!(
@@ -460,6 +506,7 @@ mod tests {
     fn full_access_file_profile_keeps_network_separate() {
         let state = LocalSandboxState {
             default_permission_profile_id: PermissionProfileId::FullAccess,
+            default_network_access: Some(LocalSandboxNetworkAccess::Disabled),
             default_network_requirements: NetworkRequirements {
                 enabled: Some(false),
                 ..Default::default()
@@ -467,7 +514,11 @@ mod tests {
             ..Default::default()
         };
         let policy = state.effective_policy_defaults();
-        let snapshot = state.effective_permissions(None, &policy, vec!["/workspace".to_string()]);
+        let snapshot = state.effective_permissions(
+            Some(PermissionProfileId::FullAccess.codex_name()),
+            &policy,
+            vec!["/workspace".to_string()],
+        );
 
         assert!(matches!(
             snapshot.file_system,
@@ -477,6 +528,30 @@ mod tests {
             panic!("network must remain controlled independently from file access");
         };
         assert_eq!(requirements.enabled, Some(false));
+    }
+
+    #[test]
+    fn host_network_is_independent_from_file_profile() {
+        let state = LocalSandboxState {
+            default_permission_profile_id: PermissionProfileId::WorkspaceWrite,
+            default_network_access: Some(LocalSandboxNetworkAccess::Host),
+            ..Default::default()
+        };
+        let policy = state.effective_policy_defaults();
+        let snapshot = state.effective_permissions(
+            Some(PermissionProfileId::WorkspaceWrite.codex_name()),
+            &policy,
+            vec!["/workspace".to_string()],
+        );
+
+        assert!(matches!(
+            snapshot.file_system,
+            FileSystemPermissionPolicy::Restricted { .. }
+        ));
+        assert!(matches!(
+            snapshot.network,
+            NetworkPermissionPolicy::Unrestricted
+        ));
     }
 
     #[test]

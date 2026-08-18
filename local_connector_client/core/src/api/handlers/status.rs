@@ -44,7 +44,7 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
         .lock()
         .await
         .as_ref()
-        .map(|handle| !handle.is_finished())
+        .map(|task| task.is_running())
         .unwrap_or(false);
     let workspaces = state
         .workspaces
@@ -104,6 +104,7 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
                 .map(|effective| &effective.managed_profile_names),
             "default_approval_policy": state.sandbox.default_approval_policy,
             "default_approval_reviewer": state.sandbox.default_approval_reviewer,
+            "default_network_access": state.sandbox.effective_default_network_access(),
             "default_network_requirements": state.sandbox.default_network_requirements,
             "configured_allowed_permission_profiles": state.sandbox.allowed_permission_profiles,
             "allowed_permission_profiles": effective_permission_configuration

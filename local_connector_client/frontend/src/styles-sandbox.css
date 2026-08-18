@@ -238,6 +238,11 @@
   flex: 0 0 auto;
 }
 
+.sandboxNetworkApprovalRow select {
+  flex: 0 0 118px;
+  width: 118px;
+}
+
 .sandboxInboundNotice {
   background: var(--panel-subtle);
   border-left: 3px solid var(--accent);
