@@ -12,6 +12,10 @@ updates:
       chat-app-npm:
         patterns:
           - "*"
+        # Keep behavior-changing minor and major upgrades isolated so each
+        # frontend migration can be reviewed and tested independently.
+        update-types:
+          - "patch"
 
   - package-ecosystem: "npm"
     directories:
@@ -30,6 +34,10 @@ updates:
       service-frontends-npm:
         patterns:
           - "*"
+        # A cross-service batch is only safe for patch releases. Electron,
+        # Vite, jsdom, and UI framework minors need product-specific checks.
+        update-types:
+          - "patch"
 
   - package-ecosystem: "cargo"
     directory: "/"
@@ -40,6 +48,10 @@ updates:
       chat-app-server-rs-cargo:
         patterns:
           - "*"
+        # Cargo 0.x minor bumps and normal major bumps can change APIs; keep
+        # those out of the shared lockfile update batch.
+        update-types:
+          - "patch"
 
   - package-ecosystem: "cargo"
     directories:
@@ -52,3 +64,7 @@ updates:
       standalone-services-cargo:
         patterns:
           - "*"
+        # Queue, authentication, TLS, and server runtime migrations must be
+        # evaluated separately instead of being hidden in one grouped PR.
+        update-types:
+          - "patch"
