@@ -21,7 +21,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "electron": "^43.1.0",
     "electron-builder": "^26.15.3",
-    "lucide-react": "^1.24.0",
+    "lucide-react": "^1.31.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^7.0.2",
