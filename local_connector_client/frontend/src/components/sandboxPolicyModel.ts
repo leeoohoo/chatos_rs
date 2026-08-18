@@ -96,7 +96,7 @@ export function permissionProfileDescription(profile: PermissionProfileId) {
     return '可以读取授权项目，但不能修改文件。';
   }
   if (profile === 'full_access') {
-    return '可以访问项目以外的本机文件，请谨慎使用。';
+    return '可以访问项目以外的本机文件；网络访问由互联网访问设置单独控制。';
   }
   return '只允许读取和修改你已经授权的项目目录。';
 }
@@ -145,32 +145,50 @@ function describeNetworkAccess(network: {
 }, approvalMode: SandboxApprovalMode, backend: SandboxBackendKind) {
   if (network.unrestricted) {
     return {
+      enabled: true,
       label: '不受限制',
-      detail: '当前“整台电脑”模式允许任务主动访问互联网。',
+      unrestricted: true,
+      detail: '当前网络策略允许任务主动访问互联网。',
     };
   }
   if (network.requirements.enabled === true) {
     return {
+      enabled: true,
       label: '按本机策略限制',
-      detail: '任务只能主动访问客户端策略预设的网站。',
+      unrestricted: false,
+      detail: hasNetworkDomainRules(network.requirements)
+        ? '任务只能主动访问客户端策略预设的网站。'
+        : '任务默认可通过本机受控网络代理访问互联网。',
     };
   }
   if (approvalMode === 'auto_review') {
     return {
+      enabled: false,
       label: '默认关闭，由 AI 审批',
+      unrestricted: false,
       detail: '任务确需联网时，由命令审批模型决定批准、拒绝或转交给你。',
     };
   }
   if (approvalMode === 'never') {
     return {
+      enabled: false,
       label: '默认关闭，直接拒绝',
+      unrestricted: false,
       detail: '任务发起的临时联网请求会直接失败。',
     };
   }
   return {
+    enabled: false,
     label: '默认关闭，需要时询问',
+    unrestricted: false,
     detail: '任务默认断网；确需联网时会弹出授权请求。',
   };
+}
+
+function hasNetworkDomainRules(requirements: SandboxNetworkRequirements) {
+  return Object.keys(requirements.domains || {}).length > 0
+    || (requirements.allowedDomains?.length || 0) > 0
+    || (requirements.deniedDomains?.length || 0) > 0;
 }
 
 function normalizeSandboxBackend(_value?: string | null): SandboxBackendKind {

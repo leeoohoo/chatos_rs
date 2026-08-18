@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { CloudOff, Shield, Sparkles } from 'lucide-react';
+import { Cloud, CloudOff, Shield, Sparkles } from 'lucide-react';
 
 import type {
   ConnectorStatus,
@@ -65,6 +65,26 @@ export function SandboxPolicySettings({
         risk_acknowledged: enabled,
       },
       'AI 自动审批',
+    );
+  };
+
+  const setDefaultNetworkAccess = async (enabled: boolean) => {
+    if (view.networkPresentation.unrestricted) {
+      return;
+    }
+    if (enabled && !window.confirm(
+      '开启后，任务默认可通过本机受控网络代理访问互联网，不再每次弹出联网审批。确定开启吗？',
+    )) {
+      return;
+    }
+    await onSave(
+      {
+        default_network_requirements: enabled
+          ? { enabled: true, mode: 'full' }
+          : { enabled: false },
+        risk_acknowledged: enabled,
+      },
+      '互联网访问',
     );
   };
 
@@ -140,8 +160,28 @@ export function SandboxPolicySettings({
 
         <div className="sandboxSimpleSetting networkSummarySetting">
           <span className="settingLabel">互联网访问</span>
-          <strong><CloudOff size={15} />{view.networkPresentation.label}</strong>
+          <strong>
+            {view.networkPresentation.enabled ? <Cloud size={15} /> : <CloudOff size={15} />}
+            {view.networkPresentation.label}
+          </strong>
           <small>{view.networkPresentation.detail}</small>
+          <div className="sandboxNetworkApprovalRow">
+            <div>
+              <strong><Cloud size={14} />默认允许联网</strong>
+              <small>
+                开启后任务直接走本机受控网络代理，不再逐次申请联网。
+              </small>
+            </div>
+            <label className="switch" title="允许任务默认访问互联网">
+              <input
+                type="checkbox"
+                checked={view.networkPresentation.enabled}
+                disabled={saving || view.networkPresentation.unrestricted}
+                onChange={(event) => void setDefaultNetworkAccess(event.target.checked)}
+              />
+              <span />
+            </label>
+          </div>
           <div className="sandboxNetworkApprovalRow">
             <div>
               <strong><Sparkles size={14} />AI 自动审批</strong>

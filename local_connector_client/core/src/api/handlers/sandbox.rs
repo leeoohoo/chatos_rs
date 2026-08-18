@@ -255,14 +255,6 @@ fn validate_sandbox_settings_update(
             "enabling or widening sandbox network access requires explicit risk acknowledgement",
         ));
     }
-    if effective_network.enabled == Some(true)
-        && resolved_profile.permission_profile_id == PermissionProfileId::FullAccess
-    {
-        return Err(LocalApiError::conflict_code(
-            "sandbox_network_proxy_full_access_conflict",
-            "full-access permission profiles have unrestricted networking; choose read-only or workspace-write before enabling restricted networking",
-        ));
-    }
     Ok(())
 }
 
@@ -321,9 +313,6 @@ fn prospective_sandbox_state(
 fn current_effective_network_requirements(
     current: &crate::sandbox::types::LocalSandboxState,
 ) -> (bool, NetworkRequirements) {
-    if current.effective_default_permission_profile() == PermissionProfileId::FullAccess {
-        return (true, NetworkRequirements::default());
-    }
     let profile_name = current.effective_default_permission_profile_name();
     if !profile_name.starts_with(':') {
         if let Ok(resolved) = current.resolve_permission_profile(profile_name.as_str(), Vec::new())

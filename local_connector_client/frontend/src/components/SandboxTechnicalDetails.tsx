@@ -33,7 +33,7 @@ export function SandboxTechnicalDetails({
           icon={Network}
           label="网络隔离"
           value={status.sandbox.network_isolation === false ? '不可用' : '受策略限制'}
-          detail="默认断网；需要时进入用户或 AI 审批流程。"
+          detail="可默认断网并按请求审批，也可开启本机受控网络代理。"
         />
         <TechnicalItem
           icon={Shield}

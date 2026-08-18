@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Context, Result};
 use chatos_sandbox_contract::{
-    EffectiveSandboxPolicy, PermissionProfileId, SandboxBackendKind, SandboxBackendReadinessStatus,
+    EffectiveSandboxPolicy, NetworkPermissionPolicy, SandboxBackendKind,
+    SandboxBackendReadinessStatus,
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::Method;
@@ -80,10 +81,8 @@ pub(crate) async fn create_local_sandbox_lease(
             }),
         ));
     }
-    let network = normalized_native_process_network(
-        &requested_network,
-        effective_policy.permission_profile_id,
-    )?;
+    let network =
+        normalized_native_process_network(&requested_network, &effective_permissions.network)?;
     let backend_id = start_native_sandbox_process(
         sandbox_runtime,
         sandbox_id.as_str(),
@@ -208,10 +207,10 @@ fn local_effective_policy(
 
 fn normalized_native_process_network(
     network: &LocalSandboxNetworkPolicy,
-    permission_profile: PermissionProfileId,
+    effective_network: &NetworkPermissionPolicy,
 ) -> Result<LocalSandboxNetworkPolicy> {
     let mode = network.mode.trim();
-    if permission_profile == PermissionProfileId::FullAccess {
+    if matches!(effective_network, NetworkPermissionPolicy::Unrestricted) {
         if mode.is_empty()
             || mode.eq_ignore_ascii_case("bridge")
             || mode.eq_ignore_ascii_case("host")
@@ -221,7 +220,7 @@ fn normalized_native_process_network(
             });
         }
         return Err(anyhow!(
-            "full-access native process mode cannot claim network isolation for requested mode {mode:?}"
+            "unrestricted native process networking cannot claim network isolation for requested mode {mode:?}"
         ));
     }
     if mode.is_empty() || mode.eq_ignore_ascii_case("bridge") || mode.eq_ignore_ascii_case("none") {
@@ -320,7 +319,9 @@ mod tests {
             &LocalSandboxNetworkPolicy {
                 mode: "bridge".to_string(),
             },
-            PermissionProfileId::WorkspaceWrite,
+            &NetworkPermissionPolicy::Restricted {
+                requirements: Default::default(),
+            },
         )
         .expect("restricted network");
         assert_eq!(network.mode, "none");
@@ -329,9 +330,9 @@ mod tests {
             &LocalSandboxNetworkPolicy {
                 mode: "bridge".to_string(),
             },
-            PermissionProfileId::FullAccess,
+            &NetworkPermissionPolicy::Unrestricted,
         )
-        .expect("full access network");
+        .expect("unrestricted network");
         assert_eq!(network.mode, "host");
     }
 

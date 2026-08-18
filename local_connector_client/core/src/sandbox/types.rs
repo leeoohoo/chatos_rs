@@ -223,21 +223,7 @@ impl LocalSandboxState {
             }
         }
         let mut snapshot = legacy_policy_permission_snapshot(policy, runtime_workspace_roots);
-        if policy.permission_profile_id == PermissionProfileId::FullAccess
-            || self.default_network_requirements.enabled != Some(true)
-        {
-            return snapshot;
-        }
-
-        let base_profile = snapshot.active_profile.id.clone();
-        snapshot.active_profile = ActivePermissionProfile {
-            id: "local:configured-network".to_string(),
-            extends: Some(base_profile),
-        };
-        snapshot.provenance = PermissionProfileProvenance::User;
-        snapshot.network = NetworkPermissionPolicy::Restricted {
-            requirements: self.default_network_requirements.clone(),
-        };
+        self.apply_builtin_network_policy(&mut snapshot, profile_name);
         snapshot
     }
 
@@ -281,6 +267,41 @@ impl LocalSandboxState {
             .effective_policy_revision_with_project(self.policy_revision.as_deref(), project)
             .or_else(|| self.policy_revision.clone())
     }
+
+    fn apply_builtin_network_policy(
+        &self,
+        snapshot: &mut EffectivePermissionSnapshot,
+        profile_name: Option<&str>,
+    ) {
+        if profile_name.is_some_and(|name| !name.starts_with(':')) {
+            return;
+        }
+        if policy_network_matches_default(snapshot, &self.default_network_requirements) {
+            return;
+        }
+
+        let base_profile = snapshot.active_profile.id.clone();
+        snapshot.active_profile = ActivePermissionProfile {
+            id: "local:configured-network".to_string(),
+            extends: Some(base_profile),
+        };
+        snapshot.provenance = PermissionProfileProvenance::User;
+        snapshot.network = NetworkPermissionPolicy::Restricted {
+            requirements: self.default_network_requirements.clone(),
+        };
+    }
+}
+
+fn policy_network_matches_default(
+    snapshot: &EffectivePermissionSnapshot,
+    requirements: &NetworkRequirements,
+) -> bool {
+    matches!(
+        &snapshot.network,
+        NetworkPermissionPolicy::Restricted {
+            requirements: current,
+        } if current == requirements
+    )
 }
 
 #[derive(Clone, Default)]
@@ -395,7 +416,9 @@ fn default_true() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chatos_sandbox_contract::{NetworkDomainPermission, NetworkProxyMode};
+    use chatos_sandbox_contract::{
+        FileSystemPermissionPolicy, NetworkDomainPermission, NetworkProxyMode,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -431,6 +454,29 @@ mod tests {
                 .and_then(|domains| domains.get("api.openai.com")),
             Some(&NetworkDomainPermission::Allow)
         );
+    }
+
+    #[test]
+    fn full_access_file_profile_keeps_network_separate() {
+        let state = LocalSandboxState {
+            default_permission_profile_id: PermissionProfileId::FullAccess,
+            default_network_requirements: NetworkRequirements {
+                enabled: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let policy = state.effective_policy_defaults();
+        let snapshot = state.effective_permissions(None, &policy, vec!["/workspace".to_string()]);
+
+        assert!(matches!(
+            snapshot.file_system,
+            FileSystemPermissionPolicy::Unrestricted
+        ));
+        let NetworkPermissionPolicy::Restricted { requirements } = snapshot.network else {
+            panic!("network must remain controlled independently from file access");
+        };
+        assert_eq!(requirements.enabled, Some(false));
     }
 
     #[test]

@@ -6,8 +6,8 @@ use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 use chatos_sandbox_contract::{
-    ApprovalPolicy, ApprovalReviewer, GrantedPermissionProfile, PermissionProfileId,
-    SandboxBackendKind,
+    ApprovalPolicy, ApprovalReviewer, FileSystemPermissionPolicy, GrantedPermissionProfile,
+    NetworkPermissionPolicy, RequestPermissionProfile, SandboxBackendKind,
 };
 use serde_json::json;
 use serde_json::Value;
@@ -176,7 +176,7 @@ async fn approve_sandbox_tool_call(
             "permission elevation request is missing".to_string(),
         )));
     };
-    if lease.effective_policy.permission_profile_id == PermissionProfileId::FullAccess {
+    if effective_permissions_cover_request(lease, &requested_permissions) {
         remove_permission_control_fields(forwarded_body);
         return Ok(None);
     }
@@ -316,6 +316,35 @@ fn install_granted_permissions(
         serde_json::to_value(granted_permissions).context("encode granted permission overlay")?,
     );
     Ok(())
+}
+
+fn effective_permissions_cover_request(
+    lease: &LocalSandboxLease,
+    requested_permissions: &RequestPermissionProfile,
+) -> bool {
+    let file_system_covered =
+        requested_permissions
+            .file_system
+            .as_ref()
+            .is_none_or(|file_system| {
+                file_system.is_empty()
+                    || matches!(
+                        lease.effective_permissions.file_system,
+                        FileSystemPermissionPolicy::Unrestricted
+                    )
+            });
+    let network_covered = requested_permissions
+        .network
+        .as_ref()
+        .and_then(|network| network.enabled)
+        != Some(true)
+        || match &lease.effective_permissions.network {
+            NetworkPermissionPolicy::Unrestricted => true,
+            NetworkPermissionPolicy::Restricted { requirements } => {
+                requirements.enabled == Some(true)
+            }
+        };
+    file_system_covered && network_covered
 }
 
 fn approval_mode_for_lease(lease: &LocalSandboxLease) -> Option<ApprovalMode> {
