@@ -13,7 +13,7 @@ pub fn resolve_wait_timeout_ms(args: &Value) -> u64 {
                 .and_then(Value::as_u64)
                 .map(|seconds| seconds.saturating_mul(1_000))
         })
-        .unwrap_or(30_000)
+        .unwrap_or(PROCESS_WAIT_MAX_TIMEOUT_MS)
         .clamp(1_000, PROCESS_WAIT_MAX_TIMEOUT_MS)
 }
 

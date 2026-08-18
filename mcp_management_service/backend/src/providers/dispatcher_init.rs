@@ -68,7 +68,7 @@ impl ProviderDispatcher {
             local_connector: LocalConnectorProvider::new(
                 local_connector_http.clone(),
                 local_connector_service_base_url.clone(),
-                runtime.downstream_request_timeout,
+                runtime.local_connector_request_timeout,
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,

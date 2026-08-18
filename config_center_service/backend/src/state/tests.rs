@@ -1226,11 +1226,11 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         ),
         (
             MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(3 * 60 * 1_000),
+            json!(2 * 60 * 60 * 1_000),
         ),
         (
             MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(60_000),
+            json!(2 * 60 * 60 * 1_000),
         ),
         (
             MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY.to_string(),
@@ -1246,7 +1246,7 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         ),
         (
             MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(3 * 60 * 1_000),
+            json!(2 * 60 * 60 * 1_000),
         ),
         (
             MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -1254,7 +1254,7 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         ),
         (
             MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(3 * 60 * 1_000),
+            json!(2 * 60 * 60 * 1_000),
         ),
         (
             MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -1266,7 +1266,7 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         ),
         (
             MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(120_000),
+            json!(2 * 60 * 60 * 1_000),
         ),
         (
             MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES_CONFIG_KEY.to_string(),
@@ -1422,13 +1422,13 @@ fn mcp_management_snapshot_exposes_async_dispatch_environment_aliases() {
         snapshot
             .env
             .get("MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS"),
-        Some(&"180000".to_string())
+        Some(&"7200000".to_string())
     );
     assert_eq!(
         snapshot
             .env
             .get("MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS"),
-        Some(&"60000".to_string())
+        Some(&"7200000".to_string())
     );
     assert_eq!(
         snapshot

@@ -206,7 +206,7 @@ pub fn local_command_approval_decision_tool_definition() -> Value {
                 },
                 "remember_allow": {
                     "type": "boolean",
-                    "description": "Set true only for a stable low-risk approve decision that should be whitelisted."
+                    "description": "Set true for stable low-risk approve decisions that can be safely whitelisted for repeated identical project commands. Keep false for requested permissions, secrets, destructive operations, project-external paths, or unclear scope."
                 }
             },
             "required": ["decision", "reason"],

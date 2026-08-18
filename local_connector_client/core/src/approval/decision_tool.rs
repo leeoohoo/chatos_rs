@@ -10,6 +10,7 @@ pub(crate) const APPROVAL_DECISION_TOOL: &str = "approval_decision";
 pub(crate) struct ApprovalToolDecision {
     pub(crate) decision: String,
     pub(crate) reason: String,
+    pub(crate) remember_allow: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +50,14 @@ pub(crate) fn approval_decision_tool_result(
             "remember_allow": remember_allow,
         },
     });
-    Ok((ApprovalToolDecision { decision, reason }, result))
+    Ok((
+        ApprovalToolDecision {
+            decision,
+            reason,
+            remember_allow,
+        },
+        result,
+    ))
 }
 
 #[cfg(test)]
@@ -67,6 +75,7 @@ mod tests {
 
         assert_eq!(decision.decision, "approve");
         assert_eq!(decision.reason, "matches project scripts");
+        assert!(decision.remember_allow);
         assert_eq!(result["_structured_result"]["remember_allow"], true);
         assert_eq!(result["_structured_result"]["decision"], "approve");
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { Button, Popconfirm, Space, Tag, Typography } from 'antd';
+import { Button, Popconfirm, Space, Switch, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -220,9 +220,15 @@ export function buildProviderColumns({
   ];
 }
 
-export function buildModelColumns(
-  users?: UserSummaryRecord[],
-): ColumnsType<UserModelConfigRecord> {
+export function buildModelColumns({
+  users,
+  onEnabledChange,
+  updatingModelId,
+}: {
+  users?: UserSummaryRecord[];
+  onEnabledChange: (record: UserModelConfigRecord, enabled: boolean) => void;
+  updatingModelId?: string;
+}): ColumnsType<UserModelConfigRecord> {
   return [
     {
       title: 'Concrete Model',
@@ -255,10 +261,25 @@ export function buildModelColumns(
       render: (value?: string | null) => value || '-',
     },
     {
+      title: 'Status',
+      dataIndex: 'enabled',
+      width: 150,
+      render: (enabled: boolean, record) => (
+        <Switch
+          checked={enabled}
+          checkedChildren="Enabled"
+          unCheckedChildren="Disabled"
+          loading={updatingModelId === record.id}
+          disabled={Boolean(updatingModelId) && updatingModelId !== record.id}
+          onChange={(nextEnabled) => onEnabledChange(record, nextEnabled)}
+        />
+      ),
+    },
+    {
       title: 'Flags',
       key: 'flags',
       width: 220,
-      render: (_, record) => <ModelCapabilityTags record={record} />,
+      render: (_, record) => <ModelCapabilityTags record={record} showEnabled={false} />,
     },
     {
       title: 'Updated',
@@ -271,17 +292,21 @@ export function buildModelColumns(
 
 function ModelCapabilityTags({
   record,
+  showEnabled = true,
 }: {
   record: Pick<
     UserModelConfigRecord | UserModelProviderRecord,
     'enabled' | 'supports_images' | 'supports_reasoning' | 'supports_responses'
   >;
+  showEnabled?: boolean;
 }) {
   return (
     <Space wrap>
-      <Tag color={record.enabled ? 'success' : 'default'}>
-        {record.enabled ? 'Enabled' : 'Disabled'}
-      </Tag>
+      {showEnabled ? (
+        <Tag color={record.enabled ? 'success' : 'default'}>
+          {record.enabled ? 'Enabled' : 'Disabled'}
+        </Tag>
+      ) : null}
       {record.supports_images ? <Tag>Image</Tag> : null}
       {record.supports_reasoning ? <Tag>Reasoning</Tag> : null}
       {record.supports_responses ? <Tag>Responses</Tag> : null}

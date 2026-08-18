@@ -219,12 +219,7 @@ pub(crate) async fn local_logout(
         let state = runtime.state.read().await;
         ClientConfig::from_state(&state, runtime.state_path.clone()).zip(state.device_id.clone())
     };
-    {
-        let mut task = runtime.connector_task.lock().await;
-        if let Some(handle) = task.take() {
-            handle.abort();
-        }
-    }
+    runtime.stop_connector().await;
     if let Some((config, device_id)) = disconnect {
         if let Err(err) = disconnect_device(&runtime.http_client, &config, device_id.as_str()).await
         {

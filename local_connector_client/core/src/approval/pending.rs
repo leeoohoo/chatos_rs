@@ -3,7 +3,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use chatos_sandbox_contract::{
     CommandExecutionApprovalDecision, GrantedPermissionProfile, PermissionGrantScope,
@@ -16,11 +15,6 @@ use crate::local_now_rfc3339;
 
 use super::fingerprint::normalized_command;
 use super::types::{ApprovalConfirmationRequirement, CommandApprovalRequest, PendingApprovalItem};
-
-#[cfg(not(test))]
-const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-#[cfg(test)]
-const APPROVAL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub(crate) struct PendingApprovalDecision {
@@ -175,29 +169,21 @@ pub(crate) async fn request_pending_approval(
         armed: true,
     };
 
-    let result = tokio::time::timeout(APPROVAL_TIMEOUT, rx).await;
+    let result = rx.await;
     {
         let mut pending = pending_store().lock().await;
         pending.remove(id.as_str());
     }
     cleanup.armed = false;
     match result {
-        Ok(Ok(decision)) => decision,
-        Ok(Err(_)) => PendingApprovalDecision {
+        Ok(decision) => decision,
+        Err(_) => PendingApprovalDecision {
             decision: CommandExecutionApprovalDecision::Simple(
                 SimpleCommandExecutionApprovalDecision::Cancel,
             ),
             granted_permissions: None,
             permission_scope: PermissionGrantScope::Turn,
             reason: Some("approval request was cancelled".to_string()),
-        },
-        Err(_) => PendingApprovalDecision {
-            decision: CommandExecutionApprovalDecision::Simple(
-                SimpleCommandExecutionApprovalDecision::Decline,
-            ),
-            granted_permissions: None,
-            permission_scope: PermissionGrantScope::Turn,
-            reason: Some("approval request timed out".to_string()),
         },
     }
 }
@@ -352,6 +338,8 @@ async fn resolve_pending_approval(id: &str, decision: PendingApprovalDecision) -
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::approval::{
         ApprovalActionAudit, ApprovalActionAuditDetail, ApprovalProjectKey, CommandApprovalRequest,

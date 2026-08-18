@@ -134,7 +134,7 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
         .find(|definition| definition.key == TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY)
         .expect("task runner AI read timeout definition");
     assert_eq!(ai_read_timeout.value_type, "duration_ms");
-    assert_eq!(ai_read_timeout.default_value, json!(300_000));
+    assert_eq!(ai_read_timeout.default_value, json!(7_200_000));
     assert_eq!(ai_read_timeout.reload_mode, "next_run");
 
     let audit_level = definitions

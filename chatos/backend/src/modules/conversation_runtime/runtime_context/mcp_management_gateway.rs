@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use crate::services::mcp_loader::McpHttpServer;
 
-const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
+const DEFAULT_TOOL_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
     chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
 

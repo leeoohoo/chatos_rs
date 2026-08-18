@@ -14,7 +14,7 @@ use tracing::info;
 
 use crate::models::ProjectRecord;
 
-const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
+const DEFAULT_TOOL_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1_000;
 
 pub(super) struct ProjectEnvironmentMcpGateway {
     runtime_session: McpManagementRuntimeSessionHandle,

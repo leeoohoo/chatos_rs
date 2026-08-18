@@ -33,6 +33,36 @@ export function approvalDecisionClass(decision: string) {
   return decision === 'approved' ? 'status ok' : decision === 'denied' ? 'status bad' : 'status warn';
 }
 
+export function approvalHistoryDecisionLabel(entry: {
+  decision: string;
+  decision_source?: string | null;
+  reason?: string | null;
+}) {
+  if (
+    entry.decision === 'denied'
+    && entry.decision_source === 'static_rule'
+    && entry.reason?.startsWith('AI approval unavailable:')
+  ) {
+    return '审批不可用';
+  }
+  return approvalDecisionLabel(entry.decision);
+}
+
+export function approvalHistoryDecisionClass(entry: {
+  decision: string;
+  decision_source?: string | null;
+  reason?: string | null;
+}) {
+  if (
+    entry.decision === 'denied'
+    && entry.decision_source === 'static_rule'
+    && entry.reason?.startsWith('AI approval unavailable:')
+  ) {
+    return 'status warn';
+  }
+  return approvalDecisionClass(entry.decision);
+}
+
 export function riskLabel(risk: string) {
   const labels: Record<string, string> = {
     low: '低风险',

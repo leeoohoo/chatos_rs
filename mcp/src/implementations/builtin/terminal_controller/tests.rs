@@ -289,7 +289,10 @@ fn coerce_process_identifier_supports_numeric_value() {
 
 #[test]
 fn resolve_wait_timeout_ms_supports_timeout_alias_seconds() {
-    assert_eq!(resolve_wait_timeout_ms(&json!({})), 30_000);
+    assert_eq!(
+        resolve_wait_timeout_ms(&json!({})),
+        PROCESS_WAIT_MAX_TIMEOUT_MS
+    );
     assert_eq!(resolve_wait_timeout_ms(&json!({ "timeout": 7 })), 7_000);
     assert_eq!(
         resolve_wait_timeout_ms(&json!({ "timeout_ms": 2_500, "timeout": 7 })),

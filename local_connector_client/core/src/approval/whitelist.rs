@@ -54,7 +54,7 @@ pub(crate) fn build_whitelist_entry(
 }
 
 fn whitelist_entry_can_authorize(entry: &CommandWhitelistEntry) -> bool {
-    entry.created_by == ApprovalSource::User
+    matches!(entry.created_by, ApprovalSource::User | ApprovalSource::Ai)
 }
 
 #[cfg(test)]
@@ -73,7 +73,7 @@ mod tests {
     }
 
     #[test]
-    fn whitelist_matching_ignores_ai_created_entries() {
+    fn whitelist_matching_allows_user_and_ai_created_entries() {
         let key = project_key();
         let command = "npm";
         let args = vec!["test".to_string()];
@@ -95,8 +95,16 @@ mod tests {
             ApprovalSource::User,
         );
 
-        assert!(
-            find_matching_whitelist(&[ai_entry], &key, command, args.as_slice(), cwd).is_none()
+        assert_eq!(
+            find_matching_whitelist(
+                std::slice::from_ref(&ai_entry),
+                &key,
+                command,
+                args.as_slice(),
+                cwd
+            )
+            .map(|entry| entry.id.as_str()),
+            Some(ai_entry.id.as_str())
         );
         assert_eq!(
             find_matching_whitelist(

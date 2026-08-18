@@ -27,7 +27,7 @@ pub const RECENT_LOGS_MAX_PER_TERMINAL_LIMIT: i64 = 50;
 pub const RECENT_LOGS_MAX_TERMINAL_LIMIT: u64 = 20;
 pub const PROCESS_LIST_MAX_LIMIT: u64 = 100;
 pub const PROCESS_POLL_MAX_LIMIT: i64 = 200;
-pub const PROCESS_WAIT_MAX_TIMEOUT_MS: u64 = 600_000;
+pub const PROCESS_WAIT_MAX_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1_000;
 
 #[derive(Debug, Clone)]
 pub struct TerminalControllerOptions {

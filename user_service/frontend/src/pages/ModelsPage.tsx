@@ -104,6 +104,22 @@ export function ModelsPage() {
     onError: showError,
   });
 
+  const updateModelEnabledMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.updateModelConfig(id, { enabled }),
+    onSuccess: async (result) => {
+      showWarnings(result.sync_warnings);
+      queryClient.setQueriesData<UserModelConfigRecord[]>(
+        { queryKey: ['model-configs'] },
+        (items) =>
+          items?.map((item) => (item.id === result.id ? { ...item, ...result } : item)),
+      );
+      message.success(result.enabled ? 'Model enabled' : 'Model disabled');
+      await queryClient.invalidateQueries({ queryKey: ['model-configs'] });
+    },
+    onError: showError,
+  });
+
   const deleteProviderMutation = useMutation({
     mutationFn: (id: string) => api.deleteModelProvider(id),
     onSuccess: async () => {
@@ -152,7 +168,23 @@ export function ModelsPage() {
       }),
     [deleteProviderMutation, refreshProviderMutation, usersQuery.data],
   );
-  const modelColumns = useMemo(() => buildModelColumns(usersQuery.data), [usersQuery.data]);
+  const modelColumns = useMemo(
+    () =>
+      buildModelColumns({
+        users: usersQuery.data,
+        updatingModelId: updateModelEnabledMutation.isPending
+          ? updateModelEnabledMutation.variables?.id
+          : undefined,
+        onEnabledChange: (record, enabled) =>
+          updateModelEnabledMutation.mutate({ id: record.id, enabled }),
+      }),
+    [
+      updateModelEnabledMutation.isPending,
+      updateModelEnabledMutation.mutate,
+      updateModelEnabledMutation.variables?.id,
+      usersQuery.data,
+    ],
+  );
 
   function showWarnings(warnings?: string[]) {
     if (!warnings || warnings.length === 0) {

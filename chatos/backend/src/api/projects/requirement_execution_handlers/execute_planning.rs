@@ -15,11 +15,12 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::api::chat_stream_common::ChatStreamRequest;
+use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::modules::conversation_runtime::guidance;
-use crate::services::project_management_api_client;
+use crate::services::{project_management_api_client, user_service_api_client};
 use crate::utils::abort_registry;
 
 use super::super::requirement_execution::{
@@ -46,7 +47,7 @@ pub(super) async fn execute_requirement_inner(
     requirement_id: String,
     req: ExecuteRequirementRequest,
 ) -> Result<Value, HandlerError> {
-    let requested_model_config_id = normalize_non_empty(req.model_config_id.clone());
+    let explicitly_requested_model_config_id = normalize_non_empty(req.model_config_id.clone());
     let planning_feedback = normalize_non_empty(req.planning_feedback.clone());
     let mut replacement_identity = ExecutionPlanIdentity::optional(
         req.replaces_execution_group_id.as_deref(),
@@ -59,6 +60,20 @@ pub(super) async fn execute_requirement_inner(
     let access_token = context.access_token;
     let project_sync_secret = context.project_sync_secret;
     let plan = context.plan;
+    let configured_model_config_id = if explicitly_requested_model_config_id.is_none() {
+        load_project_management_agent_model_config_id(
+            cfg,
+            access_token.as_str(),
+            auth.user_id.as_str(),
+        )
+        .await?
+    } else {
+        None
+    };
+    let requested_model_config_id = select_requirement_planner_model_config_id(
+        explicitly_requested_model_config_id,
+        configured_model_config_id,
+    );
 
     let requirement_items =
         parse_requirements(project_plan_array(&plan, "requirements", "requirements"));
@@ -372,6 +387,65 @@ pub(super) async fn execute_requirement_inner(
         "planner_agent_key": chatos_plugin_management_sdk::SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
         "plan_mode_enabled": false,
     }))
+}
+
+fn select_requirement_planner_model_config_id(
+    explicitly_requested: Option<String>,
+    configured_default: Option<String>,
+) -> Option<String> {
+    explicitly_requested.or(configured_default)
+}
+
+async fn load_project_management_agent_model_config_id(
+    cfg: &Config,
+    access_token: &str,
+    user_id: &str,
+) -> Result<Option<String>, HandlerError> {
+    let Some(base_url) = cfg
+        .user_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let settings = user_service_api_client::get_model_settings(
+        base_url,
+        access_token,
+        Some(user_id),
+        cfg.user_service_request_timeout_ms,
+    )
+    .await
+    .map_err(|err| HandlerError::bad_gateway("读取项目管理 Agent 模型设置失败", err))?;
+    Ok(normalize_non_empty(
+        settings.project_management_agent_model_config_id,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_requirement_planner_model_config_id;
+
+    #[test]
+    fn explicit_requirement_model_overrides_configured_project_management_default() {
+        assert_eq!(
+            select_requirement_planner_model_config_id(
+                Some("explicit-model".to_string()),
+                Some("configured-model".to_string()),
+            )
+            .as_deref(),
+            Some("explicit-model"),
+        );
+    }
+
+    #[test]
+    fn configured_project_management_model_is_used_when_request_omits_model() {
+        assert_eq!(
+            select_requirement_planner_model_config_id(None, Some("configured-model".to_string()),)
+                .as_deref(),
+            Some("configured-model"),
+        );
+    }
 }
 
 async fn ensure_latest_cloud_execution_planner_not_active(

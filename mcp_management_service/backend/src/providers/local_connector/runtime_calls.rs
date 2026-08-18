@@ -23,6 +23,11 @@ impl LocalConnectorProvider {
         arguments: Value,
         invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
+        let call_timeout = super::local_connector_call_timeout(
+            original_tool_name,
+            &arguments,
+            self.request_timeout,
+        );
         let response = self
             .relay_request(snapshot, route)?
             .json(&json!({
@@ -35,7 +40,7 @@ impl LocalConnectorProvider {
                     snapshot.tool_result_max_chars,
                 )
             }))
-            .timeout(self.request_timeout)
+            .timeout(call_timeout)
             .send()
             .await
             .map_err(|error| {

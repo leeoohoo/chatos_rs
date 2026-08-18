@@ -103,7 +103,7 @@ async fn terminal_process_wait_timeout_is_recorded_as_failed_with_result_preserv
             "wait_status": "timeout",
             "completed": false,
             "timed_out": true,
-            "waited_ms": 600_000
+            "waited_ms": 7_200_000
         }
     });
     assert!(store

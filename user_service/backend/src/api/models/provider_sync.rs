@@ -90,24 +90,10 @@ pub(super) async fn sync_imported_models_from_provider_state(
             continue;
         }
 
-        let changed = model.api_key != provider_record.api_key
-            || model.prompt_vendor != provider_record.prompt_vendor
-            || model.has_api_key != provider_record.has_api_key
-            || model.enabled != provider_record.enabled
-            || model.supports_images != provider_record.supports_images
-            || model.supports_reasoning != provider_record.supports_reasoning
-            || model.supports_responses != provider_record.supports_responses;
-        if !changed {
+        if !apply_provider_managed_fields(&mut model, provider_record) {
             continue;
         }
 
-        model.api_key = provider_record.api_key.clone();
-        model.prompt_vendor = provider_record.prompt_vendor.clone();
-        model.has_api_key = provider_record.has_api_key;
-        model.enabled = provider_record.enabled;
-        model.supports_images = provider_record.supports_images;
-        model.supports_reasoning = provider_record.supports_reasoning;
-        model.supports_responses = provider_record.supports_responses;
         model.updated_at = now.clone();
 
         let saved = state
@@ -119,6 +105,36 @@ pub(super) async fn sync_imported_models_from_provider_state(
     }
 
     Ok(sync_warnings)
+}
+
+fn apply_provider_managed_fields(
+    model: &mut UserModelConfigRecord,
+    provider_record: &UserModelProviderRecord,
+) -> bool {
+    let changed = model.api_key != provider_record.api_key
+        || model.prompt_vendor != provider_record.prompt_vendor
+        || model.has_api_key != provider_record.has_api_key
+        || model.supports_images != provider_record.supports_images
+        || model.supports_reasoning != provider_record.supports_reasoning
+        || model.supports_responses != provider_record.supports_responses;
+    if !changed {
+        return false;
+    }
+
+    model.api_key = provider_record.api_key.clone();
+    model.prompt_vendor = provider_record.prompt_vendor.clone();
+    model.has_api_key = provider_record.has_api_key;
+    model.supports_images = provider_record.supports_images;
+    model.supports_reasoning = provider_record.supports_reasoning;
+    model.supports_responses = provider_record.supports_responses;
+    true
+}
+
+fn imported_model_enabled(
+    existing: Option<&UserModelConfigRecord>,
+    provider_enabled: bool,
+) -> bool {
+    existing.map_or(provider_enabled, |model| model.enabled)
 }
 
 pub(super) async fn refresh_provider_models_from_record(
@@ -257,7 +273,7 @@ pub(super) async fn refresh_provider_models_from_record(
             api_key: provider_record.api_key.clone(),
             has_api_key: true,
             base_url: provider_record.base_url.clone(),
-            enabled: provider_record.enabled,
+            enabled: imported_model_enabled(existing.as_ref(), provider_record.enabled),
             supports_images: provider_record.supports_images,
             supports_reasoning: provider_record.supports_reasoning,
             supports_responses: provider_record.supports_responses,
@@ -329,4 +345,87 @@ pub(super) async fn refresh_provider_models_from_record(
         "model_provider.refresh.success"
     );
     Ok((saved_provider, sync_warnings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_provider_managed_fields, imported_model_enabled};
+    use crate::models::{UserModelConfigRecord, UserModelProviderRecord};
+
+    fn model(enabled: bool) -> UserModelConfigRecord {
+        UserModelConfigRecord {
+            id: "model-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            source_provider_id: Some("provider-1".to_string()),
+            name: "Provider / gpt-5.5".to_string(),
+            provider: "gpt".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
+            model: "gpt-5.5".to_string(),
+            thinking_level: None,
+            task_usage_scenario: None,
+            task_thinking_level: None,
+            temperature: None,
+            max_output_tokens: None,
+            api_key: Some("old-key".to_string()),
+            has_api_key: true,
+            base_url: Some("https://example.com/v1".to_string()),
+            enabled,
+            supports_images: false,
+            supports_reasoning: false,
+            supports_responses: false,
+            created_at: "created".to_string(),
+            updated_at: "updated".to_string(),
+        }
+    }
+
+    fn provider(enabled: bool) -> UserModelProviderRecord {
+        UserModelProviderRecord {
+            id: "provider-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            name: "Provider".to_string(),
+            provider: "gpt".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
+            api_key: Some("new-key".to_string()),
+            has_api_key: true,
+            base_url: Some("https://example.com/v1".to_string()),
+            enabled,
+            supports_images: true,
+            supports_reasoning: true,
+            supports_responses: true,
+            last_sync_status: None,
+            last_sync_error: None,
+            last_synced_at: None,
+            imported_model_count: 1,
+            created_at: "created".to_string(),
+            updated_at: "updated".to_string(),
+        }
+    }
+
+    #[test]
+    fn provider_refresh_preserves_existing_model_enabled_state() {
+        let disabled_model = model(false);
+        let enabled_model = model(true);
+
+        assert!(!imported_model_enabled(Some(&disabled_model), true));
+        assert!(imported_model_enabled(Some(&enabled_model), false));
+    }
+
+    #[test]
+    fn new_models_inherit_provider_enabled_state() {
+        assert!(imported_model_enabled(None, true));
+        assert!(!imported_model_enabled(None, false));
+    }
+
+    #[test]
+    fn provider_settings_sync_does_not_overwrite_model_enabled_state() {
+        let mut model = model(false);
+        let provider = provider(true);
+
+        assert!(apply_provider_managed_fields(&mut model, &provider));
+        assert!(!model.enabled);
+        assert_eq!(model.api_key.as_deref(), Some("new-key"));
+        assert!(model.supports_images);
+        assert!(model.supports_reasoning);
+        assert!(model.supports_responses);
+    }
 }

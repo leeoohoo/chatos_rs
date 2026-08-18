@@ -149,7 +149,22 @@ impl CommandApprovalService {
                 granted_permissions: requested_grant(&request),
                 permission_scope: PermissionGrantScope::Turn,
             }),
-            ApprovalMode::AutoApproval => self.auto_approve(&state_snapshot, &request, &risk).await,
+            ApprovalMode::AutoApproval => {
+                if let Some(reason) = super::risk::static_environment_probe_approval(
+                    normalized_command(request.command.as_str(), request.args.as_slice()).as_str(),
+                    request.requested_permissions.as_ref(),
+                ) {
+                    Ok(ApprovalDecision::Approved {
+                        source: ApprovalSource::StaticRule,
+                        reason: Some(reason.to_string()),
+                        whitelist_entry_id: None,
+                        granted_permissions: None,
+                        permission_scope: PermissionGrantScope::Turn,
+                    })
+                } else {
+                    self.auto_approve(&state_snapshot, &request, &risk).await
+                }
+            }
             ApprovalMode::RequestApproval => self.request_user_approval(&request, &risk).await,
         };
         let decision = match decision_result {
@@ -178,22 +193,40 @@ impl CommandApprovalService {
         request: &CommandApprovalRequest,
         risk: &super::risk::RiskSummary,
     ) -> Result<ApprovalDecision> {
-        match run_auto_approval_agent(
+        let approval = run_auto_approval_agent(
             state_snapshot,
             self.state_path.as_path(),
             request,
             risk.level.as_str(),
             risk.reason.as_deref(),
         )
-        .await
-        {
-            Ok(AutoApprovalDecision::Approved { reason }) => Ok(ApprovalDecision::Approved {
-                source: ApprovalSource::Ai,
-                reason: Some(reason),
-                whitelist_entry_id: None,
-                granted_permissions: requested_grant(request),
-                permission_scope: PermissionGrantScope::Turn,
-            }),
+        .await;
+        match approval {
+            Ok(AutoApprovalDecision::Approved {
+                reason,
+                remember_allow,
+            }) => {
+                let whitelist_entry_id =
+                    if remember_allow && request.requested_permissions.is_none() {
+                        Some(
+                            self.add_whitelist_entry(
+                                request,
+                                WhitelistCwdScope::Project,
+                                ApprovalSource::Ai,
+                            )
+                            .await?,
+                        )
+                    } else {
+                        None
+                    };
+                Ok(ApprovalDecision::Approved {
+                    source: ApprovalSource::Ai,
+                    reason: Some(reason),
+                    whitelist_entry_id,
+                    granted_permissions: requested_grant(request),
+                    permission_scope: PermissionGrantScope::Turn,
+                })
+            }
             Ok(AutoApprovalDecision::Denied { reason }) => Ok(ApprovalDecision::Denied {
                 source: ApprovalSource::Ai,
                 reason,

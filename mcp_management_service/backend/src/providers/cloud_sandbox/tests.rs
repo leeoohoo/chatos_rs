@@ -54,18 +54,18 @@ fn terminal_wait_call_timeout_follows_requested_wait_budget() {
     assert_eq!(
         cloud_sandbox_call_timeout(
             "process_wait",
-            &json!({"timeout_ms": 600_000}),
+            &json!({"timeout_ms": 7_200_000}),
             default_timeout
         ),
-        Duration::from_millis(615_000)
+        Duration::from_millis(7_215_000)
     );
     assert_eq!(
         cloud_sandbox_call_timeout(
             "process",
-            &json!({"action": "wait", "timeout": 600}),
+            &json!({"action": "wait", "timeout": 7_200}),
             default_timeout
         ),
-        Duration::from_millis(615_000)
+        Duration::from_millis(7_215_000)
     );
     assert_eq!(
         cloud_sandbox_call_timeout("process_poll", &json!({}), default_timeout),

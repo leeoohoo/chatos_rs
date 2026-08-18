@@ -559,8 +559,7 @@ async fn prepare_local_git_execution_workspace(
     };
     let run_id = relay_header(request, RUN_ID_HEADER)
         .ok_or_else(|| anyhow!("local Git execution workspace is missing run identity"))?;
-    let repository_root =
-        PathBuf::from(git_stdout(project_root, &["rev-parse", "--show-toplevel"]).await?);
+    let repository_root = ensure_local_git_repository(project_root).await?;
     let repository_root = repository_root
         .canonicalize()
         .context("canonicalize local Git repository root")?;
@@ -631,6 +630,28 @@ async fn prepare_local_git_execution_workspace(
         run_worktree,
         run_project_root,
     }))
+}
+
+async fn ensure_local_git_repository(project_root: &Path) -> Result<PathBuf> {
+    if git_status(project_root, &["rev-parse", "--is-inside-work-tree"]).await? != 0 {
+        git_stdout(project_root, &["init"]).await?;
+        git_stdout_with_identity(
+            project_root,
+            &[
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "--allow-empty",
+                "--no-verify",
+                "-m",
+                "Initialize ChatOS local execution repository",
+            ],
+        )
+        .await?;
+    }
+    let repository_root =
+        PathBuf::from(git_stdout(project_root, &["rev-parse", "--show-toplevel"]).await?);
+    Ok(repository_root)
 }
 
 async fn ensure_local_chatos_git_exclude(repository_root: &Path) -> Result<()> {
@@ -1421,6 +1442,21 @@ mod tests {
             fs::read_to_string(root.path().join("game.txt")).unwrap(),
             "dirty\n"
         );
+    }
+
+    #[tokio::test]
+    async fn local_execution_group_initializes_an_empty_project_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let request = execution_request(root.path(), "group-empty", "run-empty");
+
+        let workspace = prepare_local_git_execution_workspace(&request, root.path())
+            .await
+            .unwrap()
+            .expect("Git execution workspace");
+
+        assert!(root.path().join(".git").is_dir());
+        assert!(workspace.run_project_root.is_dir());
+        assert!(!git(root.path(), &["rev-parse", "HEAD"]).is_empty());
     }
 
     #[tokio::test]

@@ -90,7 +90,7 @@ pub(super) async fn load_managed_config_snapshot(
             ),
             (
                 TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY.to_string(),
-                json!(300_000),
+                json!(7_200_000),
             ),
             (
                 TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string(),

@@ -111,7 +111,7 @@ pub(crate) async fn connect_loop(
         MANAGED_RUNTIME_CONFIG_SYNC_INTERVAL_SECONDS,
     ));
     let mut remote_terminal_cleanup = tokio::time::interval(Duration::from_secs(60));
-    let mut plugin_execute_tasks = tokio::task::JoinSet::new();
+    let mut relay_tasks = tokio::task::JoinSet::new();
     mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     managed_runtime_config_sync.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     remote_terminal_cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -208,9 +208,9 @@ pub(crate) async fn connect_loop(
                     .await
                     .context("send relay event")?;
             }
-            completed = plugin_execute_tasks.join_next(), if !plugin_execute_tasks.is_empty() => {
+            completed = relay_tasks.join_next(), if !relay_tasks.is_empty() => {
                 if let Some(Err(error)) = completed {
-                    tracing_stdout(format!("Plugin execute relay task failed: {error}").as_str());
+                    tracing_stdout(format!("Local Connector relay task failed: {error}").as_str());
                 }
             }
             message = read.next() => {
@@ -221,36 +221,49 @@ pub(crate) async fn connect_loop(
                 match message {
                     Message::Text(text) => {
                         let state_snapshot = state.read().await.clone();
-                        if let Ok(value) = serde_json::from_str::<Value>(text.as_str()) {
-                            if value.get("type").and_then(Value::as_str)
-                                == Some("plugin_execute_request")
-                            {
-                                if let Err(err) = validate_remote_control_request(
-                                    "plugin_execute_request",
-                                    &value,
+                        let message_type = serde_json::from_str::<Value>(text.as_str())
+                            .ok()
+                            .and_then(|value| {
+                                value
+                                    .get("type")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                            });
+                        if message_type
+                            .as_deref()
+                            .is_some_and(is_async_relay_request)
+                        {
+                            let text = text.to_string();
+                            let database = database.clone();
+                            let http_client = http_client.clone();
+                            let sandbox_runtime = sandbox_runtime.clone();
+                            let terminal_manager = terminal_manager.clone();
+                            let remote_terminal_manager = remote_terminal_manager.clone();
+                            let remote_sftp_manager = remote_sftp_manager.clone();
+                            let history_recorder = history_recorder.clone();
+                            let plugin_runtime = plugin_runtime.clone();
+                            let outbound_tx = outbound_tx.clone();
+                            let response_tx = outbound_tx.clone();
+                            let remote_control_verifier = remote_control_verifier.clone();
+                            relay_tasks.spawn(async move {
+                                if let Some(response) = handle_text_message(
+                                    text.as_str(),
                                     &state_snapshot,
+                                    &database,
+                                    &http_client,
+                                    &sandbox_runtime,
+                                    &terminal_manager,
+                                    &remote_terminal_manager,
+                                    &remote_sftp_manager,
+                                    &history_recorder,
+                                    &plugin_runtime,
+                                    outbound_tx,
                                     &remote_control_verifier,
                                 ).await {
-                                    if let Some(response) = remote_control_error_response(
-                                        "plugin_execute_request",
-                                        &value,
-                                        err,
-                                    ) {
-                                        write
-                                            .send(Message::Text(response.to_string().into()))
-                                            .await
-                                            .context("send Plugin execute validation response")?;
-                                    }
-                                } else {
-                                    let plugin_runtime = plugin_runtime.clone();
-                                    let outbound_tx = outbound_tx.clone();
-                                    plugin_execute_tasks.spawn(async move {
-                                        let response = plugin_runtime.handle_execute(value).await;
-                                        let _ = outbound_tx.send(response);
-                                    });
+                                    let _ = response_tx.send(response);
                                 }
-                                continue;
-                            }
+                            });
+                            continue;
                         }
                         if let Some(response) =
                             handle_text_message(
@@ -535,6 +548,36 @@ fn is_remote_control_message(message_type: &str) -> bool {
     )
 }
 
+fn is_async_relay_request(message_type: &str) -> bool {
+    matches!(
+        message_type,
+        MCP_RELAY_MESSAGE_TYPE
+            | "sandbox_request"
+            | "terminal_exec_request"
+            | "remote_connection_test_request"
+            | "remote_connection_command_request"
+            | "remote_sftp_request"
+            | "remote_terminal_session_create_request"
+            | "model_runtime_request"
+            | "skill_prepare_request"
+            | "skill_execute_request"
+            | "skill_cancel_request"
+            | "plugin_prepare_request"
+            | "plugin_execute_request"
+            | "plugin_cancel_request"
+            | "plugin_ui_asset_request"
+            | "plugin_artifact_list_request"
+            | "plugin_artifact_read_request"
+            | "plugin_artifact_create_request"
+            | "plugin_artifact_update_request"
+            | "workspace_directory_create_request"
+            | "workspace_directory_list_request"
+            | "workspace_filesystem_request"
+            | "terminal_session_create_request"
+            | "terminal_snapshot_request"
+    )
+}
+
 async fn validate_remote_control_request(
     message_type: &str,
     value: &Value,
@@ -736,4 +779,30 @@ fn websocket_url(base: &str, path: &str) -> String {
         .or_else(|| trimmed.strip_prefix("http://"))
         .unwrap_or(trimmed);
     format!("{scheme}{without_scheme}{path}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_async_relay_request;
+
+    #[test]
+    fn long_running_relay_requests_are_dispatched_off_the_websocket_loop() {
+        for message_type in [
+            "mcp",
+            "terminal_exec_request",
+            "plugin_execute_request",
+            "workspace_filesystem_request",
+        ] {
+            assert!(is_async_relay_request(message_type), "{message_type}");
+        }
+
+        for ordered_control_message in [
+            "heartbeat",
+            "terminal_input",
+            "terminal_resize",
+            "terminal_close",
+        ] {
+            assert!(!is_async_relay_request(ordered_control_message));
+        }
+    }
 }

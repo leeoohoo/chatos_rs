@@ -20,6 +20,31 @@ use crate::runtime::RuntimeSessionSnapshot;
 use super::binding::validate_relative_root;
 use super::*;
 
+#[test]
+fn local_connector_timeout_outlives_service_and_declared_terminal_wait() {
+    let default_timeout = Duration::from_secs(75);
+    assert_eq!(
+        local_connector_call_timeout("execute_command", &json!({}), default_timeout),
+        default_timeout
+    );
+    assert_eq!(
+        local_connector_call_timeout(
+            "terminal_controller_process_wait",
+            &json!({"timeout_ms": 7_200_000}),
+            default_timeout
+        ),
+        Duration::from_millis(7_230_000)
+    );
+    assert_eq!(
+        local_connector_call_timeout(
+            "process",
+            &json!({"action": "wait", "timeout": 7_200}),
+            default_timeout
+        ),
+        Duration::from_millis(7_230_000)
+    );
+}
+
 #[derive(Clone, Copy)]
 enum ResponseMode {
     Valid,

@@ -105,7 +105,6 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
   const refreshedTerminalExecutionKeysRef = useRef(new Set<string>());
   const [visibleWorkItemLimit, setVisibleWorkItemLimit] = useState(SELECTED_WORK_ITEM_INITIAL_RENDER_LIMIT);
   const refreshSessionById = useChatStore((state) => state.refreshSessionById);
-  const selectedModelId = useChatStore((state) => state.selectedModelId);
 
   const loadPlan = useCallback(async () => {
     setLoading(true);
@@ -233,7 +232,6 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
         buildRequirementExecutionPayload({
           includePrerequisiteDependents: options?.includePrerequisiteDependents,
           planningFeedback: options?.planningFeedback,
-          selectedModelId,
         }),
       );
       const nextProcess = buildRequirementExecutionProcess({
@@ -289,7 +287,7 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
     } finally {
       setExecutingRequirementId(null);
     }
-  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById, selectedModelId]);
+  }, [apiClient, executingRequirementId, loadPlan, project.id, refreshSessionById]);
 
   const requirements = useMemo(
     () => (Array.isArray(plan?.requirements) ? plan.requirements : []),

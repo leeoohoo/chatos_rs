@@ -459,7 +459,7 @@ impl AppConfig {
         )?;
         let external_http_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS")?
-                .clamp(1_000, 10 * 60 * 1_000),
+                .clamp(1_000, 2 * 60 * 60 * 1_000),
         );
         let runtime_session_ttl = Duration::from_secs(
             required_u64("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")?.clamp(5 * 60, 2 * 60 * 60),
@@ -501,7 +501,7 @@ impl AppConfig {
         );
         let chatos_browser_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS")?
-                .clamp(30_000, 10 * 60 * 1_000),
+                .clamp(30_000, 2 * 60 * 60 * 1_000),
         );
         let chatos_service_base_url = require_https_base_url(
             "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL",
@@ -646,29 +646,29 @@ impl AppConfig {
             project_service_base_url: "http://127.0.0.1:39210".to_string(),
             project_service_http_client: reqwest::Client::new(),
             project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
-            project_service_tool_timeout: Duration::from_secs(180),
+            project_service_tool_timeout: Duration::from_secs(2 * 60 * 60),
             task_runner_service_base_url: "http://127.0.0.1:39090".to_string(),
             task_runner_mtls_ca_cert_path: PathBuf::new(),
             task_runner_mtls_client_identity_path: PathBuf::new(),
             task_runner_internal_api_secret: Some("a-long-task-runner-secret".to_string()),
-            task_runner_request_timeout: Duration::from_secs(180),
+            task_runner_request_timeout: Duration::from_secs(2 * 60 * 60),
             task_runner_ask_user_request_timeout: Duration::from_secs(86_700),
             chatos_service_base_url: "http://127.0.0.1:3997".to_string(),
             chatos_http_client: reqwest::Client::new(),
             chatos_internal_api_secret: Some("a-long-chatos-secret".to_string()),
             chatos_ask_user_request_timeout: Duration::from_secs(86_700),
-            chatos_browser_request_timeout: Duration::from_secs(120),
+            chatos_browser_request_timeout: Duration::from_secs(2 * 60 * 60),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_http_client: reqwest::Client::new(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),
             sandbox_manager_http_client: reqwest::Client::new(),
             sandbox_manager_internal_api_secret: Some("a-long-sandbox-manager-secret".to_string()),
-            sandbox_manager_request_timeout: Duration::from_secs(180),
+            sandbox_manager_request_timeout: Duration::from_secs(2 * 60 * 60),
             sandbox_image_request_timeout: Duration::from_secs(2 * 60 * 60 + 30),
             embedded_work_dir: std::env::temp_dir().join("chatos-mcp-management-test"),
             downstream_request_timeout: Duration::from_secs(5),
-            external_http_request_timeout: Duration::from_secs(60),
+            external_http_request_timeout: Duration::from_secs(2 * 60 * 60),
             provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),
             runtime_grant_secret: "a-long-runtime-grant-secret".to_string(),

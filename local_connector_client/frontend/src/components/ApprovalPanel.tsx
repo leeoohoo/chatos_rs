@@ -13,8 +13,8 @@ import {
   type RequestPermissionProfile,
 } from '../api';
 import {
-  approvalDecisionClass,
-  approvalDecisionLabel,
+  approvalHistoryDecisionClass,
+  approvalHistoryDecisionLabel,
   approvalModeDescription,
   approvalModeLabel,
   decisionSourceLabel,
@@ -483,7 +483,7 @@ export function ApprovalPanel() {
             <div className="approvalSimpleRow" key={entry.id}>
               <div>
                 <div className="approvalCommandLine">
-                  <span className={approvalDecisionClass(entry.decision)}>{approvalDecisionLabel(entry.decision)}</span>
+                  <span className={approvalHistoryDecisionClass(entry)}>{approvalHistoryDecisionLabel(entry)}</span>
                   <span className={riskStatusClass(entry.risk)}>{riskLabel(entry.risk)}</span>
                   <strong>{entry.normalized_command}</strong>
                 </div>

@@ -331,11 +331,13 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
 }
 
 #[test]
-fn ai_read_timeout_defaults_to_five_minutes_and_accepts_valid_override() {
-    assert_eq!(parse_timeout_seconds(None, 300), 300);
-    assert_eq!(parse_timeout_seconds(Some("450"), 300), 450);
-    assert_eq!(parse_timeout_seconds(Some("0"), 300), 300);
-    assert_eq!(parse_timeout_seconds(Some("invalid"), 300), 300);
+fn ai_read_timeout_defaults_to_two_hours_and_accepts_valid_override() {
+    assert_eq!(parse_timeout_seconds(None, 7_200), 7_200);
+    assert_eq!(parse_timeout_seconds(Some("450"), 7_200), 450);
+    assert_eq!(parse_timeout_seconds(Some("7200"), 7_200), 7_200);
+    assert_eq!(parse_timeout_seconds(Some("7201"), 7_200), 7_200);
+    assert_eq!(parse_timeout_seconds(Some("0"), 7_200), 7_200);
+    assert_eq!(parse_timeout_seconds(Some("invalid"), 7_200), 7_200);
 }
 
 #[test]

@@ -32,9 +32,16 @@ use self::tool_executor::ApprovalAgentToolExecutor;
 
 #[derive(Debug, Clone)]
 pub(crate) enum AutoApprovalDecision {
-    Approved { reason: String },
-    Denied { reason: String },
-    AskUser { reason: String },
+    Approved {
+        reason: String,
+        remember_allow: bool,
+    },
+    Denied {
+        reason: String,
+    },
+    AskUser {
+        reason: String,
+    },
 }
 
 pub(crate) async fn run_auto_approval_agent(
@@ -119,13 +126,16 @@ pub(crate) async fn run_auto_approval_agent(
         .map(|_| ())
         .map_err(|error| anyhow!(error.message().to_string()));
 
-    if execution_result.is_ok()
-        && decision
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-            .is_none()
-    {
+    // approval_decision is the terminal, authoritative output of this agent.
+    // The generic agent runtime may still ask for a displayable assistant
+    // message after the tool call and report an empty-final-response error.
+    // Do not discard a decision that the tool executor already validated and
+    // persisted merely because that presentation-only follow-up was empty.
+    if let Some(decision) = captured_approval_decision(&decision) {
+        return Ok(auto_approval_decision(decision));
+    }
+
+    if execution_result.is_ok() && captured_approval_decision(&decision).is_none() {
         let retry_run_id = format!("approval-agent-retry-{}", Uuid::new_v4());
         let retry_prompt = format!(
             "{retry_prompt_source}\n\n上一轮没有调用 `{APPROVAL_DECISION_TOOL}`，因此没有形成有效审批结果。现在必须调用 `{APPROVAL_DECISION_TOOL}`，并且只能通过该工具返回 approve、deny 或 ask_user 之一；不要只输出文字结论。"
@@ -150,16 +160,26 @@ pub(crate) async fn run_auto_approval_agent(
             .map_err(|error| anyhow!(error.message().to_string()));
     }
 
+    if let Some(decision) = captured_approval_decision(&decision) {
+        return Ok(auto_approval_decision(decision));
+    }
     execution_result?;
+    Err(anyhow!("AI did not call approval_decision"))
+}
 
-    let decision = decision
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
-        .ok_or_else(|| anyhow!("AI did not call approval_decision"))?;
-    Ok(match decision.decision.as_str() {
+fn captured_approval_decision(
+    decision: &Arc<Mutex<Option<super::decision_tool::ApprovalToolDecision>>>,
+) -> Option<super::decision_tool::ApprovalToolDecision> {
+    decision.lock().ok().and_then(|guard| guard.clone())
+}
+
+fn auto_approval_decision(
+    decision: super::decision_tool::ApprovalToolDecision,
+) -> AutoApprovalDecision {
+    match decision.decision.as_str() {
         "approve" => AutoApprovalDecision::Approved {
             reason: decision.reason,
+            remember_allow: decision.remember_allow,
         },
         "deny" => AutoApprovalDecision::Denied {
             reason: decision.reason,
@@ -170,7 +190,7 @@ pub(crate) async fn run_auto_approval_agent(
         other => AutoApprovalDecision::AskUser {
             reason: format!("AI returned unsupported approval decision: {other}"),
         },
-    })
+    }
 }
 
 struct LocalApprovalCapabilityPolicy {
@@ -305,7 +325,10 @@ fn approval_model_config(
         .with_temperature(runtime.temperature.or(Some(0.0)))
         .with_max_output_tokens(runtime.max_output_tokens.or(Some(1_200)))
         .with_thinking_level(thinking_level)
-        .with_max_transient_retries(Some(runtime.model_request_max_retries)),
+        // Command approval is on the critical path of a tool call. Do not let
+        // provider retry storms consume the entire relay lifetime; the caller
+        // has a hard deadline and fails closed if this short retry is exhausted.
+        .with_max_transient_retries(Some(runtime.model_request_max_retries.min(1))),
         prompt_vendor,
     ))
 }
@@ -340,6 +363,11 @@ fn build_approval_prompt(
 - 临时权限是否是完成该命令所必需的最小范围；不要因为命令本身常见就忽略越界文件或网络权限。
 - 命令是否包含破坏性删除、权限提升、远程脚本直接执行、生产基础设施操作等风险。
 - 如果命令只是常见的只读检查、测试、构建、格式化、依赖安装等，也要结合项目文件确认合理性。
+
+复用建议：
+- 对确定性、低风险、无临时权限请求的项目内命令，如果后续重复执行不需要重新审查，请在 `approve` 时设置 `remember_allow: true`。
+- 适合记住的例子包括版本/工具链查询、只读包元数据查询、项目脚本中已有的测试/构建/格式化命令，以及固定 cwd 下的相同安全命令。
+- 不要为读取密钥或 `.env`、系统目录操作、破坏性命令、远程脚本执行、生产/集群操作、项目外路径、或带 requested_permissions 的命令设置 `remember_allow`。
 "#,
         source = request.source,
         cwd = cwd,
@@ -375,6 +403,7 @@ fn approval_cwd_for_prompt(cwd: &str, project_root: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn approval_prompt_does_not_expose_routing_identity_or_absolute_project_root() {
@@ -407,6 +436,24 @@ mod tests {
         assert!(!prompt.contains("workspace-1"));
         assert!(!prompt.contains("project-1"));
         assert!(!prompt.contains("device-1"));
+    }
+
+    #[test]
+    fn approval_tool_remember_allow_reaches_auto_decision() {
+        let (decision, _) = super::super::decision_tool::approval_decision_tool_result(json!({
+            "decision": "approve",
+            "reason": "stable project test command",
+            "remember_allow": true
+        }))
+        .expect("approval decision");
+
+        assert!(matches!(
+            auto_approval_decision(decision),
+            AutoApprovalDecision::Approved {
+                remember_allow: true,
+                ..
+            }
+        ));
     }
 
     #[test]

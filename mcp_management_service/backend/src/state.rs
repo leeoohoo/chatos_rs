@@ -14,6 +14,12 @@ use crate::runtime::{
     RuntimeSessionCloseStore, RuntimeSessionStore, RuntimeToolBatchStore,
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
+use std::time::Duration;
+
+// The Local Connector Service may legitimately hold an MCP relay for 90 seconds
+// (bounded approval + foreground command wait). Keep an outer transport margin
+// so MCP Management never races the Service's own timeout.
+const MIN_LOCAL_CONNECTOR_TOOL_TIMEOUT: Duration = Duration::from_secs(105);
 #[cfg(not(test))]
 const RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
     "mcp_management.runtime.session_cache_max_entries";
@@ -103,6 +109,9 @@ impl AppState {
             config.embedded_work_dir.clone(),
             ProviderRuntimeConfig {
                 downstream_request_timeout: config.downstream_request_timeout,
+                local_connector_request_timeout: local_connector_tool_timeout(
+                    config.downstream_request_timeout,
+                ),
                 external_http_request_timeout: config.external_http_request_timeout,
                 sandbox_image_request_timeout: config.sandbox_image_request_timeout,
                 response_limit_bytes: config.provider_response_limit_bytes,
@@ -170,6 +179,10 @@ impl AppState {
         };
         Ok(state)
     }
+}
+
+fn local_connector_tool_timeout(downstream_timeout: Duration) -> Duration {
+    downstream_timeout.max(MIN_LOCAL_CONNECTOR_TOOL_TIMEOUT)
 }
 
 fn task_runner_http_client(config: &AppConfig) -> Result<reqwest::Client, String> {
@@ -252,4 +265,21 @@ async fn load_runtime_managed_resources(
             100_000, 100_000, 100_000, 100_000,
         )?),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_connector_tool_timeout_is_not_limited_by_short_control_plane_timeout() {
+        assert_eq!(
+            local_connector_tool_timeout(Duration::from_secs(5)),
+            Duration::from_secs(75)
+        );
+        assert_eq!(
+            local_connector_tool_timeout(Duration::from_secs(90)),
+            Duration::from_secs(90)
+        );
+    }
 }

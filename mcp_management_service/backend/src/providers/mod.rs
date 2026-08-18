@@ -80,6 +80,7 @@ pub struct ChatosProviderConfig {
 
 pub struct ProviderRuntimeConfig {
     pub downstream_request_timeout: Duration,
+    pub local_connector_request_timeout: Duration,
     pub external_http_request_timeout: Duration,
     pub sandbox_image_request_timeout: Duration,
     pub response_limit_bytes: usize,

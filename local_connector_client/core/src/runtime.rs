@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
@@ -27,13 +28,50 @@ use crate::sandbox::managed_requirements::{
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::{tracing_stdout, LocalState};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConnectorIdentity {
+    cloud_base_url: String,
+    access_token_sha256: [u8; 32],
+    device_id: String,
+}
+
+impl ConnectorIdentity {
+    fn new(config: &ClientConfig, device_id: &str) -> Self {
+        Self {
+            cloud_base_url: config.cloud_base_url.clone(),
+            access_token_sha256: Sha256::digest(config.access_token.as_bytes()).into(),
+            device_id: device_id.to_string(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ConnectorTask {
+    identity: ConnectorIdentity,
+    handle: JoinHandle<()>,
+}
+
+impl ConnectorTask {
+    pub(crate) fn is_running(&self) -> bool {
+        !self.handle.is_finished()
+    }
+
+    fn matches_running(&self, identity: &ConnectorIdentity) -> bool {
+        self.identity == *identity && self.is_running()
+    }
+
+    fn abort(self) {
+        self.handle.abort();
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LocalRuntime {
     pub(crate) state_path: PathBuf,
     pub(crate) state: Arc<RwLock<LocalState>>,
     pub(crate) http_client: reqwest::Client,
     pub(crate) database: Option<LocalDatabase>,
-    pub(crate) connector_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    pub(crate) connector_task: Arc<Mutex<Option<ConnectorTask>>>,
     pub(crate) plugin_auto_update_lock: Arc<Mutex<()>>,
     pub(crate) sandbox_runtime: LocalSandboxRuntime,
     pub(crate) plugin_installer: PluginInstaller,
@@ -175,6 +213,12 @@ impl LocalRuntime {
         Ok(())
     }
 
+    pub(crate) async fn stop_connector(&self) {
+        if let Some(task) = self.connector_task.lock().await.take() {
+            task.abort();
+        }
+    }
+
     async fn clear_expired_cloud_auth(&self) -> Result<()> {
         let mut state = self.state.write().await;
         state.auth = None;
@@ -228,13 +272,20 @@ impl LocalRuntime {
             device_id
         };
         let database = self.local_database()?.clone();
+        let identity = ConnectorIdentity::new(&config, device_id.as_str());
 
         let mut current = self.connector_task.lock().await;
-        if let Some(handle) = current.take() {
-            handle.abort();
+        if current
+            .as_ref()
+            .is_some_and(|task| task.matches_running(&identity))
+        {
+            return Ok(());
+        }
+        if let Some(task) = current.take() {
+            task.abort();
         }
         let runtime = self.clone();
-        *current = Some(tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 let maybe_config = {
                     let state = runtime.state.read().await;
@@ -280,7 +331,34 @@ impl LocalRuntime {
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
-        }));
+        });
+        *current = Some(ConnectorTask { identity, handle });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConnectorIdentity, ConnectorTask};
+    use sha2::{Digest, Sha256};
+
+    #[tokio::test]
+    async fn connector_task_only_matches_same_running_identity() {
+        let identity = ConnectorIdentity {
+            cloud_base_url: "http://127.0.0.1:39230".to_string(),
+            access_token_sha256: Sha256::digest(b"token-a").into(),
+            device_id: "device-a".to_string(),
+        };
+        let task = ConnectorTask {
+            identity: identity.clone(),
+            handle: tokio::spawn(std::future::pending()),
+        };
+
+        assert!(task.matches_running(&identity));
+        assert!(!task.matches_running(&ConnectorIdentity {
+            access_token_sha256: Sha256::digest(b"token-b").into(),
+            ..identity.clone()
+        }));
+        task.abort();
     }
 }

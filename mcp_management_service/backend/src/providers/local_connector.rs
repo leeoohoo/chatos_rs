@@ -22,6 +22,7 @@ const MCP_MANAGEMENT_SCOPE_GENERATION_HEADER: &str = "x-mcp-management-execution
 const MCP_MANAGEMENT_TASK_ID_HEADER: &str = "x-mcp-management-task-id";
 const MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER: &str =
     "x-mcp-management-session-expires-at-unix";
+const TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 30_000;
 
 #[derive(Clone)]
 pub(super) struct LocalConnectorProvider {
@@ -30,6 +31,25 @@ pub(super) struct LocalConnectorProvider {
     internal_secret: Option<String>,
     request_timeout: Duration,
     response_limit_bytes: usize,
+}
+
+fn local_connector_call_timeout(
+    original_tool_name: &str,
+    arguments: &serde_json::Value,
+    default_timeout: Duration,
+) -> Duration {
+    let tool_name = original_tool_name.trim();
+    let is_terminal_wait = tool_name == "process_wait"
+        || tool_name.ends_with("_process_wait")
+        || ((tool_name == "process" || tool_name.ends_with("_process"))
+            && arguments.get("action").and_then(serde_json::Value::as_str) == Some("wait"));
+    if !is_terminal_wait {
+        return default_timeout;
+    }
+    let requested_timeout_ms = chatos_mcp::resolve_wait_timeout_ms(arguments);
+    default_timeout.max(Duration::from_millis(
+        requested_timeout_ms.saturating_add(TERMINAL_WAIT_TRANSPORT_GRACE_MS),
+    ))
 }
 
 #[cfg(test)]

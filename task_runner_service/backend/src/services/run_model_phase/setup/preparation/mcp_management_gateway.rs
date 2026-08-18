@@ -13,7 +13,7 @@ use tracing::info;
 
 use crate::models::{TaskRecord, TaskRunRecord};
 
-const DEFAULT_TOOL_TIMEOUT_MS: u64 = 180_000;
+const DEFAULT_TOOL_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1_000;
 const ASK_USER_TRANSPORT_TIMEOUT_MS: u64 =
     chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT + 5 * 60 * 1_000;
 const TERMINAL_WAIT_TRANSPORT_TIMEOUT_MS: u64 = chatos_mcp::PROCESS_WAIT_MAX_TIMEOUT_MS + 15_000;

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use crate::models::normalize_optional_text;
 use crate::models::{
@@ -106,6 +107,12 @@ use self::workspaces::{
 };
 
 const MAX_USER_SERVICE_PROXY_BODY_BYTES: usize = 2 * 1024 * 1024;
+// A command may spend up to 40 seconds in bounded local AI approval and then
+// another 30 seconds in the foreground terminal wait. Keep enough transport
+// margin for both phases instead of timing out while the Core is still working.
+const MIN_MCP_RELAY_TIMEOUT: Duration = Duration::from_secs(90);
+const MCP_TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
+const MCP_TERMINAL_WAIT_MAX_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 
 #[derive(Debug, Deserialize)]
 struct McpRelayQuery {
@@ -300,6 +307,8 @@ async fn mcp_relay(
             relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
         }
     }
+    let relay_body = relay_body(body.as_ref());
+    let relay_timeout = mcp_relay_timeout(state.config.relay_request_timeout, &relay_body);
     let request = RelayRequest {
         message_type: "mcp".to_string(),
         request_id: Uuid::new_v4().to_string(),
@@ -309,14 +318,14 @@ async fn mcp_relay(
         method: "POST".to_string(),
         path: "/mcp".to_string(),
         headers: relay_headers,
-        body: relay_body(body.as_ref()),
+        body: relay_body,
         platform_signature: None,
         platform_signature_key_id: None,
         platform_signature_alg: None,
         platform_timestamp: None,
         platform_nonce: None,
     };
-    let response = dispatch_relay(&state, request, state.config.relay_request_timeout).await?;
+    let response = dispatch_relay(&state, request, relay_timeout).await?;
     Ok(relay_response_to_http(response))
 }
 
@@ -842,6 +851,45 @@ fn relay_body(body: &[u8]) -> Value {
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into_owned()))
 }
 
+fn mcp_relay_timeout(configured_timeout: Duration, body: &Value) -> Duration {
+    let baseline = configured_timeout.max(MIN_MCP_RELAY_TIMEOUT);
+    if !is_terminal_wait_mcp_call(body) {
+        return baseline;
+    }
+    let arguments = body.pointer("/params/arguments").unwrap_or(&Value::Null);
+    let requested_timeout_ms = arguments
+        .get("timeout_ms")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            arguments
+                .get("timeout")
+                .and_then(Value::as_u64)
+                .map(|seconds| seconds.saturating_mul(1_000))
+        })
+        .unwrap_or(30_000)
+        .clamp(1_000, MCP_TERMINAL_WAIT_MAX_TIMEOUT_MS);
+    baseline.max(Duration::from_millis(
+        requested_timeout_ms.saturating_add(MCP_TERMINAL_WAIT_TRANSPORT_GRACE_MS),
+    ))
+}
+
+fn is_terminal_wait_mcp_call(body: &Value) -> bool {
+    if body.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return false;
+    }
+    let Some(tool_name) = body.pointer("/params/name").and_then(Value::as_str) else {
+        return false;
+    };
+    let tool_name = tool_name.trim();
+    tool_name == "process_wait"
+        || tool_name.ends_with("_process_wait")
+        || ((tool_name == "process" || tool_name.ends_with("_process"))
+            && body
+                .pointer("/params/arguments/action")
+                .and_then(Value::as_str)
+                == Some("wait"))
+}
+
 fn relay_error_to_api_error(error: RelayError) -> ApiError {
     match error {
         RelayError::Offline => ApiError::service_unavailable(error.message()),
@@ -872,7 +920,9 @@ fn is_plugin_hook_dispatch(action: &str, body: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_local_sandbox_mcp_path, is_plugin_hook_dispatch};
+    use std::time::Duration;
+
+    use super::{is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout};
     use serde_json::json;
 
     #[test]
@@ -896,5 +946,54 @@ mod tests {
         assert!(is_local_sandbox_mcp_path("/api/sandboxes/sandbox-1/mcp"));
         assert!(!is_local_sandbox_mcp_path("/api/sandboxes/leases"));
         assert!(!is_local_sandbox_mcp_path("/api/local/sandbox/images/mcp"));
+    }
+
+    #[test]
+    fn mcp_relay_outlives_default_local_terminal_wait() {
+        assert_eq!(
+            mcp_relay_timeout(
+                Duration::from_secs(30),
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": "command-1",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "execute_command",
+                        "arguments": {"command": "npm install", "background": false}
+                    }
+                })
+            ),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn mcp_terminal_wait_relay_follows_declared_wait_budget() {
+        assert_eq!(
+            mcp_relay_timeout(
+                Duration::from_secs(30),
+                &json!({
+                    "method": "tools/call",
+                    "params": {
+                        "name": "terminal_controller_process_wait",
+                        "arguments": {"timeout_ms": 600_000}
+                    }
+                })
+            ),
+            Duration::from_millis(615_000)
+        );
+        assert_eq!(
+            mcp_relay_timeout(
+                Duration::from_secs(30),
+                &json!({
+                    "method": "tools/call",
+                    "params": {
+                        "name": "process",
+                        "arguments": {"action": "wait", "timeout": 600}
+                    }
+                })
+            ),
+            Duration::from_millis(615_000)
+        );
     }
 }
