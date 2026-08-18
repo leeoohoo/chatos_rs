@@ -32,6 +32,7 @@ import {
   LocalBoundaryPanel,
   WorkspacePanel,
 } from './components/ConnectionPanels';
+import { GlobalApprovalTray } from './components/GlobalApprovalTray';
 import { ModelConfigPanel } from './components/ModelConfigPanel';
 import { McpConfigPanel } from './components/McpConfigPanel';
 import { RuntimeSettingsPanel } from './components/RuntimeSettingsPanel';
@@ -200,6 +201,7 @@ function ShellApp() {
           <span>设置</span>
         </button>
       </div>
+      <GlobalApprovalTray />
     </div>
   );
 }
@@ -209,7 +211,7 @@ function SettingsApp() {
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [activeTab, setActiveTab] = React.useState<AppTab>('workspaces');
+  const [activeTab, setActiveTab] = React.useState<AppTab>(initialTab);
   const [theme, setTheme] = React.useState<ThemeMode>(initialTheme);
 
   const refresh = React.useCallback(async () => {
@@ -372,6 +374,7 @@ function SettingsApp() {
           </section>
         </main>
       )}
+      {status?.configured ? <GlobalApprovalTray onOpenApproval={() => setActiveTab('approval')} /> : null}
     </div>
   );
 }
@@ -394,6 +397,28 @@ function initialTheme(): ThemeMode {
     // Fall back to the operating system preference.
   }
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function initialTab(): AppTab {
+  const params = new URLSearchParams(window.location.search);
+  const requestedTab = params.get('tab') || readAndClearNextTab();
+  return isAppTab(requestedTab) ? requestedTab : 'workspaces';
+}
+
+function readAndClearNextTab(): string | null {
+  try {
+    const nextTab = window.localStorage.getItem('local-connector-next-tab');
+    if (nextTab) {
+      window.localStorage.removeItem('local-connector-next-tab');
+    }
+    return nextTab;
+  } catch {
+    return null;
+  }
+}
+
+function isAppTab(tab: string | null): tab is AppTab {
+  return Boolean(tab && TABS.some((item) => item.id === tab));
 }
 
 function TabNav({

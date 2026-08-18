@@ -5,13 +5,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chatos_sandbox_contract::{
     CommandExecutionApprovalDecision, GrantedPermissionProfile, PermissionGrantScope,
     SimpleCommandExecutionApprovalDecision,
 };
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock, Semaphore};
 use uuid::Uuid;
 
 use crate::{local_now_rfc3339, tracing_stdout, LocalState};
@@ -31,6 +31,7 @@ use super::{
 };
 
 const MAX_APPROVAL_HISTORY_ENTRIES: usize = 1_000;
+const MAX_CONCURRENT_AUTO_APPROVALS: usize = 2;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CommandApprovalService {
@@ -162,7 +163,8 @@ impl CommandApprovalService {
                         permission_scope: PermissionGrantScope::Turn,
                     })
                 } else {
-                    self.auto_approve(&state_snapshot, &request, &risk).await
+                    self.auto_approve_once(&state_snapshot, &request, &risk)
+                        .await
                 }
             }
             ApprovalMode::RequestApproval => self.request_user_approval(&request, &risk).await,
@@ -185,6 +187,51 @@ impl CommandApprovalService {
         }
         append_result?;
         Ok(decision)
+    }
+
+    async fn auto_approve_once(
+        &self,
+        state_snapshot: &LocalState,
+        request: &CommandApprovalRequest,
+        risk: &super::risk::RiskSummary,
+    ) -> Result<ApprovalDecision> {
+        let key = auto_approval_inflight_key(request);
+        let entry = {
+            let mut store = auto_approval_inflight_store().lock().await;
+            if let Some(entry) = store.get(key.as_str()) {
+                entry.clone()
+            } else {
+                let entry = Arc::new(AutoApprovalInflight::default());
+                store.insert(key.clone(), entry.clone());
+                entry
+            }
+        };
+
+        if entry.try_claim_leader().await {
+            let result = self
+                .auto_approve_limited(state_snapshot, request, risk)
+                .await;
+            entry.finish(result).await;
+            auto_approval_inflight_store()
+                .lock()
+                .await
+                .remove(key.as_str());
+        }
+
+        entry.result().await
+    }
+
+    async fn auto_approve_limited(
+        &self,
+        state_snapshot: &LocalState,
+        request: &CommandApprovalRequest,
+        risk: &super::risk::RiskSummary,
+    ) -> Result<ApprovalDecision> {
+        let _permit = auto_approval_semaphore()
+            .acquire()
+            .await
+            .map_err(|err| anyhow!("auto approval limiter closed: {err}"))?;
+        self.auto_approve(state_snapshot, request, risk).await
     }
 
     async fn auto_approve(
@@ -449,6 +496,65 @@ pub(crate) async fn clear_session_approvals(session_id: &str) {
     session_approval_store().lock().await.remove(session_id);
 }
 
+#[derive(Default)]
+struct AutoApprovalInflight {
+    state: Mutex<AutoApprovalInflightState>,
+    notify: Notify,
+}
+
+#[derive(Default)]
+struct AutoApprovalInflightState {
+    leader_claimed: bool,
+    result: Option<Result<ApprovalDecision, String>>,
+}
+
+impl AutoApprovalInflight {
+    async fn try_claim_leader(&self) -> bool {
+        let mut state = self.state.lock().await;
+        if state.leader_claimed {
+            return false;
+        }
+        state.leader_claimed = true;
+        true
+    }
+
+    async fn finish(&self, result: Result<ApprovalDecision>) {
+        let result = result.map_err(|err| err.to_string());
+        let mut state = self.state.lock().await;
+        state.result = Some(result);
+        drop(state);
+        self.notify.notify_waiters();
+    }
+
+    async fn result(&self) -> Result<ApprovalDecision> {
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(result) = self.state.lock().await.result.clone() {
+                return result.map_err(|err| anyhow!(err));
+            }
+            notified.await;
+        }
+    }
+}
+
+fn auto_approval_inflight_store() -> &'static Mutex<BTreeMap<String, Arc<AutoApprovalInflight>>> {
+    static STORE: OnceLock<Mutex<BTreeMap<String, Arc<AutoApprovalInflight>>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn auto_approval_semaphore() -> &'static Semaphore {
+    static SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+    SEMAPHORE.get_or_init(|| Semaphore::new(MAX_CONCURRENT_AUTO_APPROVALS))
+}
+
+fn auto_approval_inflight_key(request: &CommandApprovalRequest) -> String {
+    let project_key =
+        serde_json::to_string(&request.project_key).unwrap_or_else(|_| "unknown".to_string());
+    format!("{project_key}\n{}", session_approval_key(request))
+}
+
 fn session_approval_key(request: &CommandApprovalRequest) -> String {
     let permissions = request
         .requested_permissions
@@ -606,6 +712,27 @@ mod tests {
         assert!(session_approval_matches(&approved).await);
         assert!(!session_approval_matches(&request(session_id.as_str(), false)).await);
         assert!(!session_approval_matches(&request("another-session", true)).await);
+    }
+
+    #[tokio::test]
+    async fn auto_approval_inflight_key_includes_project_and_permission_request() {
+        let base = request("auto-key", true);
+        let mut another_project = base.clone();
+        another_project.project_key.project_id = Some("another-project".to_string());
+        let without_network = request("auto-key", false);
+
+        assert_eq!(
+            auto_approval_inflight_key(&base),
+            auto_approval_inflight_key(&base.clone())
+        );
+        assert_ne!(
+            auto_approval_inflight_key(&base),
+            auto_approval_inflight_key(&another_project)
+        );
+        assert_ne!(
+            auto_approval_inflight_key(&base),
+            auto_approval_inflight_key(&without_network)
+        );
     }
 
     #[tokio::test]

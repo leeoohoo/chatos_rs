@@ -264,4 +264,25 @@
   .modalActions {
     flex-wrap: wrap;
   }
+
+  .globalApprovalTray {
+    bottom: 10px;
+    left: 10px;
+    max-width: calc(100vw - 20px);
+    right: 10px;
+  }
+
+  .globalApprovalSummary {
+    align-self: stretch;
+    min-width: 0;
+  }
+
+  .globalApprovalPopover {
+    width: 100%;
+  }
+
+  .globalApprovalActions .primaryButton,
+  .globalApprovalActions .ghostButton {
+    flex: 1 1 110px;
+  }
 }

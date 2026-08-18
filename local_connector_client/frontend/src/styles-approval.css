@@ -8,6 +8,168 @@
   gap: 14px;
 }
 
+.globalApprovalTray {
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 24px));
+  position: fixed;
+  right: 16px;
+  z-index: 40;
+}
+
+.globalApprovalSummary {
+  align-items: center;
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--panel-bg) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border));
+  border-radius: 8px;
+  box-shadow: var(--shadow-menu);
+  color: var(--text);
+  display: grid;
+  gap: 9px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 44px;
+  min-width: 214px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.globalApprovalSummary:hover {
+  background: var(--panel-subtle);
+}
+
+.globalApprovalIcon {
+  align-items: center;
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: 8px;
+  color: var(--warning);
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.globalApprovalSummary span:last-child,
+.globalApprovalHeader > div,
+.globalApprovalItem {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.globalApprovalSummary strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.globalApprovalSummary small,
+.globalApprovalHeader span,
+.globalApprovalMeta,
+.globalApprovalReason {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.globalApprovalPopover {
+  background: color-mix(in srgb, var(--panel-bg) 98%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-menu);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(620px, calc(100vh - 86px));
+  overflow: auto;
+  padding: 12px;
+  width: min(420px, calc(100vw - 24px));
+}
+
+.globalApprovalHeader {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.globalApprovalHeader strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.globalApprovalReviewing {
+  align-items: center;
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: 8px;
+  color: var(--warning);
+  display: flex;
+  font-size: 10px;
+  gap: 7px;
+  padding: 8px 9px;
+}
+
+.globalApprovalList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.globalApprovalItem {
+  background: var(--panel-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  gap: 7px;
+  padding: 10px;
+}
+
+.globalApprovalCommandLine {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.globalApprovalCommandLine strong {
+  color: var(--text);
+  flex: 1;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 560;
+  min-width: 140px;
+  overflow-wrap: anywhere;
+}
+
+.globalApprovalReason {
+  overflow-wrap: anywhere;
+}
+
+.globalApprovalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.globalApprovalMore {
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  min-height: 32px;
+  padding: 7px 10px;
+}
+
+.globalApprovalMore:hover {
+  background: var(--panel-subtle);
+  color: var(--text);
+}
+
 .settingsFormGrid {
   display: grid;
   gap: 10px;
