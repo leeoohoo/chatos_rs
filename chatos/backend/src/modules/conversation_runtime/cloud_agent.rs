@@ -526,7 +526,7 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
     let agent_run_id = run.ordering.agent_run_id.as_str();
     let input: ChatosCloudAgentRunInput = serde_json::from_value(run.input.clone())
         .map_err(|error| format!("decode ChatOS Cloud Agent input failed: {error}"))?;
-    input.validate_identity(&run)?;
+    input.validate_identity(run)?;
     if let Ok(resumed) = resume_mcp_management_gateway(input.mcp_session_id.as_str()).await {
         if let Err(error) = resumed.runtime_session.close().await {
             warn!(agent_run_id, error = %error, "close ChatOS MCP runtime session failed");

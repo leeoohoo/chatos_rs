@@ -167,7 +167,7 @@ pub fn build_chat_stream_callbacks(
         );
     }) as Arc<dyn Fn(Value) + Send + Sync>;
 
-    let callbacks = AgentAiClientCallbacks {
+    AgentAiClientCallbacks {
         on_chunk: Some(Arc::new(on_chunk)),
         on_thinking: Some(Arc::new(on_thinking)),
         on_turn_phase: Some(on_turn_phase),
@@ -180,7 +180,5 @@ pub fn build_chat_stream_callbacks(
         on_context_summarized_end: Some(on_sum_end),
         on_before_send_model_request: None,
         on_before_model_request: None,
-    };
-
-    callbacks
+    }
 }

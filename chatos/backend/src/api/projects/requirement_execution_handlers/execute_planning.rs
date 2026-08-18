@@ -655,6 +655,25 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     truncated
 }
 
+async fn load_requirement_documents_for_scope(
+    base_url: &str,
+    access_token: &str,
+    requirement_scope: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Value>, HandlerError> {
+    let mut out = BTreeMap::new();
+    for requirement_id in requirement_scope {
+        let documents = project_management_api_client::list_project_service_requirement_documents(
+            base_url,
+            access_token,
+            requirement_id.as_str(),
+        )
+        .await
+        .map_err(|err| HandlerError::bad_gateway("读取需求技术文档失败", err))?;
+        out.insert(requirement_id.clone(), documents);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod runtime_environment_tests {
     use std::collections::BTreeMap;
@@ -845,23 +864,4 @@ mod runtime_environment_tests {
             );
         }
     }
-}
-
-async fn load_requirement_documents_for_scope(
-    base_url: &str,
-    access_token: &str,
-    requirement_scope: &BTreeSet<String>,
-) -> Result<BTreeMap<String, Value>, HandlerError> {
-    let mut out = BTreeMap::new();
-    for requirement_id in requirement_scope {
-        let documents = project_management_api_client::list_project_service_requirement_documents(
-            base_url,
-            access_token,
-            requirement_id.as_str(),
-        )
-        .await
-        .map_err(|err| HandlerError::bad_gateway("读取需求技术文档失败", err))?;
-        out.insert(requirement_id.clone(), documents);
-    }
-    Ok(out)
 }
