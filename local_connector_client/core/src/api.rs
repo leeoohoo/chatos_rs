@@ -36,21 +36,19 @@ use handlers::{
     local_chrome_native_connect, local_chrome_native_disconnect, local_chrome_native_event,
     local_chrome_native_next, local_clear_command_history, local_command_history,
     local_complete_plugin_oauth, local_complete_plugin_oauth_query, local_delete_mcp_config,
-    local_delete_plugin_credential, local_delete_sandbox_image, local_deny_pending_approval,
-    local_desktop_ticket, local_disable_chrome_integration, local_disable_mcp_config,
-    local_disconnect_plugin_oauth, local_docker_status, local_enable_chrome_integration,
-    local_enable_mcp_config, local_fs_list_handler, local_get_mcp_config,
-    local_initialize_sandbox_image, local_install_plugin, local_login, local_logout,
-    local_mcp_configs, local_model_configs, local_model_settings, local_pending_approvals,
-    local_plugin_catalog, local_plugin_credentials, local_plugin_events,
-    local_plugin_oauth_connections, local_plugin_status, local_recover_plugin_transactions,
-    local_refresh_model_configs, local_register, local_reinitialize_sandbox_image,
-    local_remove_workspace, local_request_system_permission, local_rollback_plugin,
-    local_runtime_settings, local_sandbox_capabilities, local_sandbox_image_jobs,
-    local_sandbox_image_mcp, local_sandbox_images, local_sandbox_leases, local_sandbox_settings,
-    local_save_mcp_config, local_send_register_email_code, local_shutdown_sandboxes, local_skills,
-    local_status, local_sync_mcp_config, local_sync_skill_inventory, local_system_permissions,
-    local_terminal_exec, local_test_mcp_config, local_toggle_sandbox, local_uninstall_plugin,
+    local_delete_plugin_credential, local_deny_pending_approval, local_desktop_ticket,
+    local_disable_chrome_integration, local_disable_mcp_config, local_disconnect_plugin_oauth,
+    local_enable_chrome_integration, local_enable_mcp_config, local_fs_list_handler,
+    local_get_mcp_config, local_install_plugin, local_login, local_logout, local_mcp_configs,
+    local_model_configs, local_model_settings, local_pending_approvals, local_plugin_catalog,
+    local_plugin_credentials, local_plugin_events, local_plugin_oauth_connections,
+    local_plugin_status, local_recover_plugin_transactions, local_refresh_model_configs,
+    local_register, local_remove_workspace, local_request_system_permission, local_rollback_plugin,
+    local_runtime_settings, local_sandbox_capabilities, local_sandbox_leases,
+    local_sandbox_settings, local_save_mcp_config, local_send_register_email_code,
+    local_shutdown_sandboxes, local_skills, local_status, local_sync_mcp_config,
+    local_sync_skill_inventory, local_system_permissions, local_terminal_exec,
+    local_test_mcp_config, local_toggle_sandbox, local_uninstall_plugin,
     local_update_agent_prompt_bundle, local_update_approval_settings, local_update_mcp_config,
     local_update_model_settings, local_update_plugin_preference, local_update_runtime_settings,
     local_update_sandbox_settings, local_update_skill_preference,
@@ -143,7 +141,6 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
             "/api/local/commands",
             get(local_command_history).delete(local_clear_command_history),
         )
-        .route("/api/local/docker/status", get(local_docker_status))
         .route(
             "/api/local/runtime-settings",
             get(local_runtime_settings).post(local_update_runtime_settings),
@@ -177,31 +174,10 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
             "/api/local/sandbox/settings",
             get(local_sandbox_settings).put(local_update_sandbox_settings),
         )
-        .route("/api/local/sandbox/images", get(local_sandbox_images))
-        .route(
-            "/api/local/sandbox/images/{image_id}",
-            delete(local_delete_sandbox_image),
-        )
-        .route(
-            "/api/local/sandbox/images/{image_id}/reinitialize",
-            post(local_reinitialize_sandbox_image),
-        )
-        .route(
-            "/api/local/sandbox/images/mcp",
-            post(local_sandbox_image_mcp),
-        )
-        .route(
-            "/api/local/sandbox/images/jobs",
-            get(local_sandbox_image_jobs),
-        )
         .route("/api/local/sandbox/leases", get(local_sandbox_leases))
         .route(
             "/api/local/sandbox/shutdown",
             post(local_shutdown_sandboxes),
-        )
-        .route(
-            "/api/local/sandbox/images/initialize",
-            post(local_initialize_sandbox_image),
         )
         .route("/api/local/terminal/exec", post(local_terminal_exec))
         .route(

@@ -107,16 +107,6 @@
   transform: translateX(18px);
 }
 
-.dockerBox {
-  align-items: center;
-  background: var(--panel-subtle);
-  border-radius: 7px;
-  display: flex;
-  gap: 7px;
-  margin-bottom: 11px;
-  padding: 9px;
-}
-
 .dot {
   border-radius: 50%;
   display: inline-block;

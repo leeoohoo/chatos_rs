@@ -6,7 +6,6 @@ use axum::Json;
 use chatos_sandbox_contract::{PermissionProfileId, SandboxBackendCapability, SandboxBackendKind};
 use serde_json::{json, Value};
 
-use crate::sandbox::docker::docker_status_struct;
 use crate::sandbox::process::native_process_sandbox_capability;
 use crate::workspace::trust::workspace_project_config_trust_is_current;
 use crate::LocalRuntime;
@@ -21,7 +20,7 @@ pub(crate) async fn local_status(
 
 pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
     let state = runtime.state.read().await.clone();
-    let sandbox_backend = state.sandbox.default_backend;
+    let sandbox_backend = SandboxBackendKind::LocalProcess;
     let effective_permission_profile = state.sandbox.effective_default_permission_profile();
     let effective_permission_profile_name =
         state.sandbox.effective_default_permission_profile_name();
@@ -38,16 +37,8 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
         &effective_policy,
         Vec::new(),
     );
-    let process_capability = if sandbox_backend == SandboxBackendKind::LocalProcess {
-        Some(native_process_sandbox_capability().await)
-    } else {
-        None
-    };
-    let isolation = sandbox_isolation_status(
-        sandbox_backend,
-        effective_permission_profile,
-        process_capability.as_ref(),
-    );
+    let process_capability = native_process_sandbox_capability().await;
+    let isolation = sandbox_isolation_status(effective_permission_profile, &process_capability);
     let connector_running = runtime
         .connector_task
         .lock()
@@ -122,9 +113,7 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
             "policy_revision": state.sandbox.effective_policy_revision(),
             "effective_policy": effective_policy,
             "effective_permissions": effective_permissions,
-            "selected_image_ref": state.sandbox.selected_image_ref,
         },
-        "docker": docker_status_struct().await,
     })
 }
 
@@ -138,79 +127,31 @@ struct SandboxIsolationStatus {
 }
 
 fn sandbox_isolation_status(
-    backend: SandboxBackendKind,
     permission_profile: PermissionProfileId,
-    process_capability: Option<&SandboxBackendCapability>,
+    process_capability: &SandboxBackendCapability,
 ) -> SandboxIsolationStatus {
-    match backend {
-        SandboxBackendKind::Docker => SandboxIsolationStatus {
-            legacy_isolation: "local_docker",
-            filesystem_isolation: true,
-            network_isolation: permission_profile != PermissionProfileId::FullAccess,
-            process_tree_control: true,
-            note: if permission_profile == PermissionProfileId::FullAccess {
-                "Docker 容器文件系统/进程边界已启用；完整访问模式使用 bridge 网络，不提供出站网络隔离".to_string()
-            } else {
-                "Docker 容器文件系统/进程边界已启用；受限权限使用专用 internal 网络阻止外部出站访问"
-                    .to_string()
-            },
-        },
-        SandboxBackendKind::LocalProcess => {
-            let capability = process_capability;
-            if permission_profile == PermissionProfileId::FullAccess {
-                return SandboxIsolationStatus {
-                    legacy_isolation: "local_process",
-                    filesystem_isolation: false,
-                    network_isolation: false,
-                    process_tree_control: capability
-                        .is_some_and(|value| value.process_tree_control),
-                    note: "本机进程以完全访问模式运行；仅保留进程树回收，不施加文件系统或网络沙箱"
-                        .to_string(),
-                };
-            }
-            SandboxIsolationStatus {
-                legacy_isolation: "local_process",
-                filesystem_isolation: capability.is_some_and(|value| value.filesystem_isolation),
-                network_isolation: capability.is_some_and(|value| value.network_isolation),
-                process_tree_control: capability.is_some_and(|value| value.process_tree_control),
-                note: capability
-                    .map(|value| value.message.clone())
-                    .unwrap_or_else(|| "本机进程隔离能力尚未探测".to_string()),
-            }
-        }
+    if permission_profile == PermissionProfileId::FullAccess {
+        return SandboxIsolationStatus {
+            legacy_isolation: "local_process",
+            filesystem_isolation: false,
+            network_isolation: false,
+            process_tree_control: process_capability.process_tree_control,
+            note: "本机进程以完全访问模式运行；仅保留进程树回收，不施加文件系统或网络沙箱"
+                .to_string(),
+        };
+    }
+    SandboxIsolationStatus {
+        legacy_isolation: "local_process",
+        filesystem_isolation: process_capability.filesystem_isolation,
+        network_isolation: process_capability.network_isolation,
+        process_tree_control: process_capability.process_tree_control,
+        note: process_capability.message.clone(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn docker_status_reports_restricted_network_isolation() {
-        let status = sandbox_isolation_status(
-            SandboxBackendKind::Docker,
-            PermissionProfileId::WorkspaceWrite,
-            None,
-        );
-
-        assert_eq!(status.legacy_isolation, "local_docker");
-        assert!(status.filesystem_isolation);
-        assert!(status.network_isolation);
-        assert!(status.process_tree_control);
-        assert!(status.note.contains("internal"));
-    }
-
-    #[test]
-    fn docker_full_access_reports_bridge_network_without_isolation() {
-        let status = sandbox_isolation_status(
-            SandboxBackendKind::Docker,
-            PermissionProfileId::FullAccess,
-            None,
-        );
-
-        assert!(!status.network_isolation);
-        assert!(status.note.contains("bridge"));
-    }
 
     #[test]
     fn local_process_status_reflects_native_capability() {
@@ -223,11 +164,7 @@ mod tests {
             process_tree_control: true,
             message: "Seatbelt ready".to_string(),
         };
-        let status = sandbox_isolation_status(
-            SandboxBackendKind::LocalProcess,
-            PermissionProfileId::WorkspaceWrite,
-            Some(&capability),
-        );
+        let status = sandbox_isolation_status(PermissionProfileId::WorkspaceWrite, &capability);
 
         assert_eq!(status.legacy_isolation, "local_process");
         assert!(status.filesystem_isolation);
@@ -247,11 +184,7 @@ mod tests {
             process_tree_control: true,
             message: "Seatbelt ready".to_string(),
         };
-        let status = sandbox_isolation_status(
-            SandboxBackendKind::LocalProcess,
-            PermissionProfileId::FullAccess,
-            Some(&capability),
-        );
+        let status = sandbox_isolation_status(PermissionProfileId::FullAccess, &capability);
 
         assert!(!status.filesystem_isolation);
         assert!(!status.network_isolation);

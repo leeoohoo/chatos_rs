@@ -192,13 +192,10 @@ export function LocalBoundaryPanel({ status }: { status: ConnectorStatus }) {
           <span>本地沙箱</span>
           <strong>{status.sandbox.enabled ? '已开启' : '已关闭'}</strong>
         </div>
-        <div>
-          <span>Docker</span>
-          <strong>{status.docker.installed ? (status.docker.running ? '运行中' : '未运行') : '未安装'}</strong>
-        </div>
+        <div><span>隔离方式</span><strong>本机进程</strong></div>
       </div>
       <div className="boundaryList">
-        <div><CheckCircle2 size={16} />Local Connector Core 执行 Docker、文件和终端操作。</div>
+        <div><CheckCircle2 size={16} />Local Connector Core 执行本机沙箱、文件和终端操作。</div>
         <div><CheckCircle2 size={16} />Local Connector Service 只负责登录设备、保存配对和 relay 消息。</div>
         <div><CheckCircle2 size={16} />本地沙箱不调用云端 Sandbox Manager，也不复用云端沙箱实例。</div>
       </div>

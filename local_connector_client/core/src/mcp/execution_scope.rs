@@ -8,9 +8,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use chatos_mcp_service::TOOL_RESULT_MAX_CHARS_META_KEY;
-use chatos_sandbox_contract::{
-    PermissionProfileId, SandboxBackendKind, SandboxBackendReadinessStatus,
-};
+use chatos_sandbox_contract::{SandboxBackendKind, SandboxBackendReadinessStatus};
 use chrono::Utc;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -30,21 +28,15 @@ use crate::mcp::tools::{
     request_project_root,
 };
 use crate::relay::RelayRequest;
-use crate::sandbox::docker::{
-    destroy_local_sandbox_container, ensure_docker_running, published_local_sandbox_agent_endpoint,
-    start_local_sandbox_container, wait_for_local_sandbox_agent,
-};
 use crate::sandbox::process::{
     call_native_sandbox_mcp, destroy_native_sandbox_process, native_process_sandbox_capability,
     start_native_sandbox_process,
 };
-use crate::sandbox::types::{
-    LocalSandboxNetworkPolicy, LocalSandboxResourceLimits, LocalSandboxRuntime,
-};
+use crate::sandbox::types::{LocalSandboxResourceLimits, LocalSandboxRuntime};
 use crate::workspace::paths::relative_to_workspace;
 use crate::{
-    local_now_rfc3339, LocalState, WorkspaceState, DEFAULT_LOCAL_SANDBOX_IMAGE,
-    DEFAULT_TERMINAL_EXEC_TIMEOUT_MS, MAX_TERMINAL_EXEC_TIMEOUT_MS,
+    local_now_rfc3339, LocalState, WorkspaceState, DEFAULT_TERMINAL_EXEC_TIMEOUT_MS,
+    MAX_TERMINAL_EXEC_TIMEOUT_MS,
 };
 
 const SESSION_ID_HEADER: &str = "x-mcp-management-session-id";
@@ -72,9 +64,6 @@ struct LocalGitExecutionWorkspace {
 pub(crate) struct LocalExecutionScope {
     pub(crate) scope_id: String,
     generation: i64,
-    backend: SandboxBackendKind,
-    agent_endpoint: Option<String>,
-    agent_token: String,
     git_workspace: Option<LocalGitExecutionWorkspace>,
     active_invocations: AtomicUsize,
     draining: std::sync::atomic::AtomicBool,
@@ -460,7 +449,7 @@ fn mcp_text_result(payload: Value) -> Value {
 async fn get_or_create_scope(
     request: &RelayRequest,
     state: &LocalState,
-    http_client: &reqwest::Client,
+    _http_client: &reqwest::Client,
     runtime: &LocalSandboxRuntime,
     database: &LocalDatabase,
     project_root: &Path,
@@ -520,79 +509,32 @@ async fn get_or_create_scope(
         .as_ref()
         .map(|workspace| workspace.run_project_root.as_path())
         .unwrap_or(project_root);
-    let backend = state.sandbox.default_backend;
-    let policy = state.sandbox.effective_policy_defaults();
+    let mut policy = state.sandbox.effective_policy_defaults();
+    policy.sandbox_mode = SandboxBackendKind::LocalProcess;
     let permissions = state.sandbox.effective_permissions(
         None,
         &policy,
         vec![execution_project_root.to_string_lossy().to_string()],
     );
     let limits = LocalSandboxResourceLimits::default();
-    let agent_token = format!("scope-token-{}", uuid::Uuid::new_v4().simple());
-    let agent_endpoint = match backend {
-        SandboxBackendKind::LocalProcess => {
-            let capability = native_process_sandbox_capability().await;
-            if capability.status != SandboxBackendReadinessStatus::Ready {
-                return Err(anyhow!(capability.message));
-            }
-            start_native_sandbox_process(
-                runtime,
-                identity.scope_id.as_str(),
-                execution_project_root,
-                &policy,
-                &permissions,
-                &limits,
-                identity.project_id.as_str(),
-                identity.owner_user_id.as_str(),
-            )
-            .await?;
-            None
-        }
-        SandboxBackendKind::Docker => {
-            ensure_docker_running().await?;
-            let image_ref = state
-                .sandbox
-                .selected_image_ref
-                .clone()
-                .unwrap_or_else(|| DEFAULT_LOCAL_SANDBOX_IMAGE.to_string());
-            let network = LocalSandboxNetworkPolicy {
-                mode: if policy.permission_profile_id == PermissionProfileId::FullAccess {
-                    "bridge".to_string()
-                } else {
-                    "none".to_string()
-                },
-            };
-            start_local_sandbox_container(
-                identity.scope_id.as_str(),
-                execution_project_root,
-                image_ref.as_str(),
-                agent_token.as_str(),
-                &limits,
-                &network,
-                policy.permission_profile_id,
-            )
-            .await?;
-            let Some(endpoint) =
-                published_local_sandbox_agent_endpoint(identity.scope_id.as_str()).await
-            else {
-                let _ = destroy_local_sandbox_container(identity.scope_id.as_str()).await;
-                return Err(anyhow!(
-                    "local Docker execution agent port was not published"
-                ));
-            };
-            if let Err(error) = wait_for_local_sandbox_agent(http_client, endpoint.as_str()).await {
-                let _ = destroy_local_sandbox_container(identity.scope_id.as_str()).await;
-                return Err(error);
-            }
-            Some(endpoint)
-        }
-    };
+    let capability = native_process_sandbox_capability().await;
+    if capability.status != SandboxBackendReadinessStatus::Ready {
+        return Err(anyhow!(capability.message));
+    }
+    start_native_sandbox_process(
+        runtime,
+        identity.scope_id.as_str(),
+        execution_project_root,
+        &policy,
+        &permissions,
+        &limits,
+        identity.project_id.as_str(),
+        identity.owner_user_id.as_str(),
+    )
+    .await?;
     let scope = Arc::new(LocalExecutionScope {
         scope_id: identity.scope_id,
         generation: identity.generation,
-        backend,
-        agent_endpoint,
-        agent_token,
         git_workspace,
         active_invocations: AtomicUsize::new(0),
         draining: std::sync::atomic::AtomicBool::new(false),
@@ -1186,40 +1128,12 @@ fn tool_call_body(
 }
 
 async fn call_scope_mcp(
-    http_client: &reqwest::Client,
+    _http_client: &reqwest::Client,
     runtime: &LocalSandboxRuntime,
     scope: &LocalExecutionScope,
     request: &Value,
 ) -> Result<Value> {
-    match scope.backend {
-        SandboxBackendKind::LocalProcess => {
-            call_native_sandbox_mcp(runtime, scope.scope_id.as_str(), request).await
-        }
-        SandboxBackendKind::Docker => {
-            let endpoint = scope
-                .agent_endpoint
-                .as_deref()
-                .ok_or_else(|| anyhow!("local Docker execution agent endpoint is unavailable"))?;
-            let response = http_client
-                .post(format!("{}/mcp", endpoint.trim_end_matches('/')))
-                .bearer_auth(scope.agent_token.as_str())
-                .json(request)
-                .send()
-                .await
-                .context("call local Docker execution agent")?;
-            let status = response.status();
-            let body = response
-                .json::<Value>()
-                .await
-                .context("decode local Docker execution agent response")?;
-            if !status.is_success() {
-                return Err(anyhow!(
-                    "local Docker execution agent returned HTTP {status}: {body}"
-                ));
-            }
-            Ok(body)
-        }
-    }
+    call_native_sandbox_mcp(runtime, scope.scope_id.as_str(), request).await
 }
 
 fn decode_tool_result(response: Value, expected_id: Option<&Value>) -> Result<Value> {
@@ -1283,14 +1197,7 @@ async fn reap_expired_execution_scopes(runtime: &LocalSandboxRuntime) {
 }
 
 async fn release_scope(runtime: &LocalSandboxRuntime, scope: &LocalExecutionScope) -> Result<()> {
-    match scope.backend {
-        SandboxBackendKind::Docker => {
-            destroy_local_sandbox_container(scope.scope_id.as_str()).await
-        }
-        SandboxBackendKind::LocalProcess => {
-            destroy_native_sandbox_process(runtime, scope.scope_id.as_str()).await
-        }
-    }
+    destroy_native_sandbox_process(runtime, scope.scope_id.as_str()).await
 }
 
 async fn release_drained_scope(runtime: &LocalSandboxRuntime, scope: &Arc<LocalExecutionScope>) {
@@ -1472,9 +1379,6 @@ mod tests {
         let scope = Arc::new(LocalExecutionScope {
             scope_id: "scope-1".to_string(),
             generation: 1,
-            backend: SandboxBackendKind::LocalProcess,
-            agent_endpoint: None,
-            agent_token: "token".to_string(),
             git_workspace: None,
             active_invocations: AtomicUsize::new(0),
             draining: std::sync::atomic::AtomicBool::new(true),

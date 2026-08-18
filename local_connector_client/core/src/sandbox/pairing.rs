@@ -7,12 +7,11 @@ use anyhow::{Context, Result};
 use chatos_sandbox_contract::{
     SandboxBackendCapability, SandboxBackendKind, SandboxBackendReadinessStatus,
 };
-use serde_json::{json, Value};
+use serde_json::json;
 use tokio::sync::RwLock;
 
 use crate::config::{api_url, ClientConfig};
 use crate::registration::ensure_success;
-use crate::sandbox::docker::docker_status_struct;
 use crate::sandbox::process::native_process_sandbox_capability;
 use crate::LocalState;
 
@@ -22,7 +21,7 @@ pub(crate) async fn reconcile_sandbox_pairings(
     state: &Arc<RwLock<LocalState>>,
     device_id: &str,
 ) -> Result<usize> {
-    let (enabled, workspaces, policy) = {
+    let (enabled, workspaces, mut policy) = {
         let state = state.read().await;
         (
             state.sandbox.enabled,
@@ -30,11 +29,9 @@ pub(crate) async fn reconcile_sandbox_pairings(
             state.sandbox.effective_policy_defaults(),
         )
     };
-    let docker_status =
-        serde_json::to_value(docker_status_struct().await).unwrap_or_else(|_| json!({}));
+    policy.sandbox_mode = SandboxBackendKind::LocalProcess;
     let process_capability = native_process_sandbox_capability().await;
-    let readiness =
-        sandbox_pairing_readiness(policy.sandbox_mode, &docker_status, &process_capability);
+    let readiness = sandbox_pairing_readiness(&process_capability);
     let mut synced = 0;
     for workspace in workspaces {
         let response = client
@@ -66,33 +63,12 @@ pub(crate) async fn reconcile_sandbox_pairings(
     Ok(synced)
 }
 
-fn sandbox_pairing_readiness(
-    backend: SandboxBackendKind,
-    docker_status: &Value,
-    process_capability: &SandboxBackendCapability,
-) -> &'static str {
-    match backend {
-        SandboxBackendKind::Docker => {
-            if docker_status
-                .get("installed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-                && docker_status
-                    .get("running")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-            {
-                "ready"
-            } else {
-                "setup_required"
-            }
-        }
-        SandboxBackendKind::LocalProcess => match process_capability.status {
-            SandboxBackendReadinessStatus::Ready => "ready",
-            SandboxBackendReadinessStatus::SetupRequired => "setup_required",
-            SandboxBackendReadinessStatus::Unsupported => "unsupported",
-            SandboxBackendReadinessStatus::UnderDevelopment => "under_development",
-        },
+fn sandbox_pairing_readiness(process_capability: &SandboxBackendCapability) -> &'static str {
+    match process_capability.status {
+        SandboxBackendReadinessStatus::Ready => "ready",
+        SandboxBackendReadinessStatus::SetupRequired => "setup_required",
+        SandboxBackendReadinessStatus::Unsupported => "unsupported",
+        SandboxBackendReadinessStatus::UnderDevelopment => "under_development",
     }
 }
 
@@ -113,49 +89,15 @@ mod tests {
     }
 
     #[test]
-    fn docker_pairing_readiness_tracks_docker_status() {
-        assert_eq!(
-            sandbox_pairing_readiness(
-                SandboxBackendKind::Docker,
-                &json!({ "installed": true, "running": true }),
-                &process_capability(SandboxBackendReadinessStatus::Ready),
-            ),
-            "ready"
-        );
-        assert_eq!(
-            sandbox_pairing_readiness(
-                SandboxBackendKind::Docker,
-                &json!({ "installed": true, "running": false }),
-                &process_capability(SandboxBackendReadinessStatus::Ready),
-            ),
-            "setup_required"
-        );
-        assert_eq!(
-            sandbox_pairing_readiness(
-                SandboxBackendKind::Docker,
-                &json!({ "installed": false, "running": false }),
-                &process_capability(SandboxBackendReadinessStatus::Ready),
-            ),
-            "setup_required"
-        );
-    }
-
-    #[test]
     fn local_process_pairing_readiness_tracks_native_isolation() {
         assert_eq!(
-            sandbox_pairing_readiness(
-                SandboxBackendKind::LocalProcess,
-                &json!({}),
-                &process_capability(SandboxBackendReadinessStatus::Ready),
-            ),
+            sandbox_pairing_readiness(&process_capability(SandboxBackendReadinessStatus::Ready)),
             "ready"
         );
         assert_eq!(
-            sandbox_pairing_readiness(
-                SandboxBackendKind::LocalProcess,
-                &json!({}),
-                &process_capability(SandboxBackendReadinessStatus::SetupRequired),
-            ),
+            sandbox_pairing_readiness(&process_capability(
+                SandboxBackendReadinessStatus::SetupRequired,
+            )),
             "setup_required"
         );
     }

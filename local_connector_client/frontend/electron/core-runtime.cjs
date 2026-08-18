@@ -137,18 +137,10 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     const candidates = [bundledBrowserRuntime().toolsDir];
     if (process.platform === 'darwin') {
       candidates.push(
-        path.join(app.getPath('home'), '.docker', 'bin'),
-        '/Applications/Docker.app/Contents/Resources/bin',
         '/opt/homebrew/bin',
         '/usr/local/bin',
       );
-    } else if (process.platform === 'win32') {
-      for (const root of [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) {
-        if (root) {
-          candidates.push(path.join(root, 'Docker', 'Docker', 'resources', 'bin'));
-        }
-      }
-    } else {
+    } else if (process.platform !== 'win32') {
       candidates.push('/usr/local/bin', '/usr/bin', '/snap/bin');
     }
     return [...new Set([...candidates, ...existing])].join(path.delimiter);

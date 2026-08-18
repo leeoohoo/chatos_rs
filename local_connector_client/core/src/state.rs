@@ -155,6 +155,7 @@ impl LocalState {
         let mut value = serde_json::from_str::<Value>(content.as_str())
             .with_context(|| format!("parse state file {}", path.display()))?;
         let mut migrated = remove_legacy_runtime_settings(&mut value);
+        migrated |= migrate_legacy_sandbox_state(&mut value);
         match serde_json::from_value(value.clone()) {
             Ok(state) => {
                 if migrated {
@@ -214,6 +215,23 @@ impl LocalState {
     }
 }
 
+fn migrate_legacy_sandbox_state(value: &mut Value) -> bool {
+    let Some(sandbox) = value.get_mut("sandbox").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let mut migrated = false;
+    if sandbox.get("default_backend").and_then(Value::as_str) != Some("local_process") {
+        sandbox.insert(
+            "default_backend".to_string(),
+            Value::String("local_process".to_string()),
+        );
+        migrated = true;
+    }
+    migrated |= sandbox.remove("selected_image_ref").is_some();
+    migrated |= sandbox.remove("images").is_some();
+    migrated
+}
+
 fn remove_legacy_runtime_settings(value: &mut Value) -> bool {
     value
         .get_mut("runtime_settings")
@@ -269,6 +287,26 @@ mod tests {
             value.pointer("/future_field/keep"),
             Some(&Value::Bool(true))
         );
+    }
+
+    #[test]
+    fn migrates_legacy_sandbox_backend_and_removes_image_state() {
+        let mut value = serde_json::json!({
+            "sandbox": {
+                "default_backend": "docker",
+                "selected_image_ref": "legacy-image:latest",
+                "images": [{"id": "legacy"}],
+                "enabled": true
+            }
+        });
+
+        assert!(migrate_legacy_sandbox_state(&mut value));
+        assert_eq!(
+            value.pointer("/sandbox/default_backend"),
+            Some(&Value::String("local_process".to_string()))
+        );
+        assert!(value.pointer("/sandbox/selected_image_ref").is_none());
+        assert!(value.pointer("/sandbox/images").is_none());
     }
 
     #[test]

@@ -107,12 +107,6 @@ pub(super) struct ToggleSandboxRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct InitializeImageRequest {
-    pub(super) features: Vec<String>,
-    pub(super) custom_build_script: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct UpdateSandboxSettingsRequest {
     #[serde(default)]
     pub(super) enabled: Option<bool>,

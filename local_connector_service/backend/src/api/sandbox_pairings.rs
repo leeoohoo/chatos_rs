@@ -236,7 +236,7 @@ mod tests {
             "device-1".to_string(),
             "workspace-1".to_string(),
             enabled,
-            "docker".to_string(),
+            "local_process".to_string(),
             readiness.map(ToOwned::to_owned),
             None,
             None,

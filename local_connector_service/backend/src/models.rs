@@ -17,7 +17,6 @@ pub const BINDING_MODE_MCP: &str = "local_mcp";
 pub const BINDING_MODE_TERMINAL: &str = "local_terminal";
 pub const BINDING_MODE_SANDBOX: &str = "local_sandbox";
 
-pub const SANDBOX_MODE_DOCKER: &str = "docker";
 pub const SANDBOX_MODE_LOCAL_PROCESS: &str = "local_process";
 pub const SANDBOX_READINESS_READY: &str = "ready";
 pub const SANDBOX_READINESS_SETUP_REQUIRED: &str = "setup_required";
@@ -405,13 +404,8 @@ pub fn normalize_binding_mode(value: Option<String>) -> String {
     }
 }
 
-pub fn normalize_sandbox_mode(value: Option<String>) -> String {
-    match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
-        Some(value) if value == SANDBOX_MODE_LOCAL_PROCESS => {
-            SANDBOX_MODE_LOCAL_PROCESS.to_string()
-        }
-        _ => SANDBOX_MODE_DOCKER.to_string(),
-    }
+pub fn normalize_sandbox_mode(_value: Option<String>) -> String {
+    SANDBOX_MODE_LOCAL_PROCESS.to_string()
 }
 
 pub fn normalize_sandbox_readiness(value: Option<String>) -> String {
@@ -459,7 +453,7 @@ pub fn normalize_approval_reviewer(value: Option<String>) -> String {
 }
 
 fn default_sandbox_mode() -> String {
-    SANDBOX_MODE_DOCKER.to_string()
+    SANDBOX_MODE_LOCAL_PROCESS.to_string()
 }
 
 fn default_sandbox_readiness() -> String {
@@ -500,6 +494,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sandbox_mode_is_always_native_local_process() {
+        assert_eq!(normalize_sandbox_mode(None), SANDBOX_MODE_LOCAL_PROCESS);
+        assert_eq!(
+            normalize_sandbox_mode(Some("legacy".to_string())),
+            SANDBOX_MODE_LOCAL_PROCESS
+        );
+    }
+
+    #[test]
     fn sandbox_readiness_normalization_preserves_non_ready_states() {
         assert_eq!(
             normalize_sandbox_readiness(Some("setup_required".to_string())),
@@ -527,7 +530,7 @@ mod tests {
             SANDBOX_READINESS_READY
         );
         assert_eq!(
-            normalize_sandbox_readiness(Some("docker_not_installed".to_string())),
+            normalize_sandbox_readiness(Some("legacy_unknown".to_string())),
             SANDBOX_READINESS_READY
         );
     }

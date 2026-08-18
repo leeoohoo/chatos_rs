@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::Json;
-use chatos_mcp::sandbox_images::SandboxImageBackend;
 use chatos_sandbox_contract::{
     parse_codex_permission_profile_toml, ApprovalReviewer, NetworkDomainPermission,
     NetworkPermissionPolicy, NetworkRequirements, PermissionProfileId, SandboxBackendCapability,
@@ -11,24 +10,12 @@ use chatos_sandbox_contract::{
 };
 use serde_json::{json, Value};
 
-use crate::config::normalize_optional;
-use crate::sandbox::docker::{docker_status, docker_status_struct, ensure_docker_running};
-use crate::sandbox::images::{
-    delete_local_sandbox_image, local_sandbox_image_catalog, reinitialize_local_sandbox_image,
-    start_local_sandbox_image_job,
-};
 use crate::sandbox::lease::shutdown_local_sandboxes;
 use crate::sandbox::process::native_process_sandbox_capability;
 use crate::{local_now_rfc3339, LocalRuntime};
 
-use super::super::types::{
-    InitializeImageRequest, LocalApiError, ToggleSandboxRequest, UpdateSandboxSettingsRequest,
-};
+use super::super::types::{LocalApiError, ToggleSandboxRequest, UpdateSandboxSettingsRequest};
 use super::status::status_payload;
-
-pub(crate) async fn local_docker_status() -> Json<Value> {
-    Json(docker_status().await)
-}
 
 pub(crate) async fn local_shutdown_sandboxes(State(runtime): State<LocalRuntime>) -> Json<Value> {
     Json(shutdown_local_sandboxes(&runtime.sandbox_runtime).await)
@@ -168,6 +155,14 @@ fn validate_sandbox_settings_update(
     req: &UpdateSandboxSettingsRequest,
     current: &crate::sandbox::types::LocalSandboxState,
 ) -> Result<(), LocalApiError> {
+    if req
+        .default_backend
+        .is_some_and(|backend| backend != SandboxBackendKind::LocalProcess)
+    {
+        return Err(LocalApiError::bad_request(
+            "the local client only supports the local_process sandbox backend",
+        ));
+    }
     let prospective = prospective_sandbox_state(req, current);
     let effective = prospective
         .effective_permission_profile_configuration()
@@ -236,15 +231,6 @@ fn validate_sandbox_settings_update(
     if let Some(network) = req.default_network_requirements.as_ref() {
         validate_network_requirements(network)?;
     }
-    let effective_backend = req.default_backend.unwrap_or(current.default_backend);
-    if !effective_profile_name.starts_with(':')
-        && effective_backend != SandboxBackendKind::LocalProcess
-    {
-        return Err(LocalApiError::conflict_code(
-            "sandbox_custom_profile_requires_native_backend",
-            "custom permission profiles require the native local-process sandbox backend",
-        ));
-    }
     let profile_network = match &resolved_profile.effective_permissions.network {
         NetworkPermissionPolicy::Restricted { requirements }
             if !effective_profile_name.starts_with(':') =>
@@ -267,14 +253,6 @@ fn validate_sandbox_settings_update(
         return Err(LocalApiError::conflict_code(
             "sandbox_risk_ack_required",
             "enabling or widening sandbox network access requires explicit risk acknowledgement",
-        ));
-    }
-    if effective_network.enabled == Some(true)
-        && effective_backend != SandboxBackendKind::LocalProcess
-    {
-        return Err(LocalApiError::conflict_code(
-            "sandbox_network_proxy_requires_native_backend",
-            "restricted domain networking requires the native local-process sandbox backend",
         ));
     }
     if effective_network.enabled == Some(true)
@@ -460,21 +438,6 @@ fn sandbox_policy_fields_changed(
             .is_some_and(|network| network != &current.default_network_requirements)
 }
 
-pub(crate) async fn local_sandbox_images(
-    State(runtime): State<LocalRuntime>,
-) -> Result<Json<Value>, LocalApiError> {
-    ensure_local_sandbox_enabled(&runtime).await?;
-    Ok(Json(local_sandbox_image_catalog(&runtime).await))
-}
-
-pub(crate) async fn local_sandbox_image_jobs(
-    State(runtime): State<LocalRuntime>,
-) -> Result<Json<Value>, LocalApiError> {
-    ensure_local_sandbox_enabled(&runtime).await?;
-    let jobs = runtime.sandbox_runtime.jobs.read().await.clone();
-    Ok(Json(json!(jobs)))
-}
-
 pub(crate) async fn local_sandbox_leases(
     State(runtime): State<LocalRuntime>,
 ) -> Result<Json<Value>, LocalApiError> {
@@ -488,108 +451,6 @@ pub(crate) async fn local_sandbox_leases(
         .cloned()
         .collect::<Vec<_>>();
     Ok(Json(json!(leases)))
-}
-
-pub(crate) async fn local_initialize_sandbox_image(
-    State(runtime): State<LocalRuntime>,
-    Json(req): Json<InitializeImageRequest>,
-) -> Result<Json<Value>, LocalApiError> {
-    ensure_local_sandbox_enabled(&runtime).await?;
-    ensure_docker_running()
-        .await
-        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
-    let job = start_local_sandbox_image_job(
-        &runtime,
-        req.features,
-        normalize_optional(req.custom_build_script.as_deref()),
-        None,
-        None,
-    )
-    .await
-    .map_err(LocalApiError::bad_request)?;
-    Ok(Json(json!(job)))
-}
-
-pub(crate) async fn local_delete_sandbox_image(
-    State(runtime): State<LocalRuntime>,
-    Path(image_id): Path<String>,
-) -> Result<Json<Value>, LocalApiError> {
-    ensure_local_sandbox_enabled(&runtime).await?;
-    ensure_docker_running()
-        .await
-        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
-    delete_local_sandbox_image(&runtime, image_id.as_str())
-        .await
-        .map(Json)
-        .map_err(|err| {
-            if err.contains("in use by an active lease") {
-                LocalApiError::conflict(err)
-            } else {
-                LocalApiError::bad_request(err)
-            }
-        })
-}
-
-pub(crate) async fn local_reinitialize_sandbox_image(
-    State(runtime): State<LocalRuntime>,
-    Path(image_id): Path<String>,
-) -> Result<Json<Value>, LocalApiError> {
-    ensure_local_sandbox_enabled(&runtime).await?;
-    ensure_docker_running()
-        .await
-        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
-    reinitialize_local_sandbox_image(&runtime, image_id.as_str())
-        .await
-        .map(|job| Json(json!(job)))
-        .map_err(LocalApiError::bad_request)
-}
-
-pub(crate) async fn local_sandbox_image_mcp(
-    State(runtime): State<LocalRuntime>,
-    Json(payload): Json<Value>,
-) -> Json<Value> {
-    let backend = LocalSandboxImageMcpBackend { runtime };
-    Json(chatos_mcp::sandbox_images::handle_jsonrpc(&backend, payload).await)
-}
-
-struct LocalSandboxImageMcpBackend {
-    runtime: LocalRuntime,
-}
-
-#[async_trait::async_trait]
-impl SandboxImageBackend for LocalSandboxImageMcpBackend {
-    async fn image_catalog(&self) -> Result<Value, String> {
-        ensure_local_sandbox_enabled(&self.runtime)
-            .await
-            .map_err(|err| err.message().to_string())?;
-        Ok(local_sandbox_image_catalog(&self.runtime).await)
-    }
-
-    async fn image_jobs(&self) -> Result<Value, String> {
-        ensure_local_sandbox_enabled(&self.runtime)
-            .await
-            .map_err(|err| err.message().to_string())?;
-        let jobs = self.runtime.sandbox_runtime.jobs.read().await.clone();
-        Ok(json!(jobs))
-    }
-
-    async fn initialize_image(
-        &self,
-        features: Vec<String>,
-        custom_build_script: Option<String>,
-    ) -> Result<Value, String> {
-        ensure_local_sandbox_enabled(&self.runtime)
-            .await
-            .map_err(|err| err.message().to_string())?;
-        ensure_docker_running()
-            .await
-            .map_err(|err| err.to_string())?;
-        let job =
-            start_local_sandbox_image_job(&self.runtime, features, custom_build_script, None, None)
-                .await
-                .map_err(|err| err.to_string())?;
-        Ok(json!(job))
-    }
 }
 
 async fn ensure_local_sandbox_enabled(runtime: &LocalRuntime) -> Result<(), LocalApiError> {
@@ -637,74 +498,30 @@ fn sandbox_settings_payload(sandbox: &crate::sandbox::types::LocalSandboxState) 
             .and_then(|effective| effective.configuration.allowed_permission_profiles.as_ref()),
         "permission_profiles": sandbox.permission_profile_catalog(),
         "policy_revision": sandbox.effective_policy_revision(),
-        "selected_image_ref": sandbox.selected_image_ref.clone(),
         "effective_policy": effective_policy,
         "effective_permissions": effective_permissions,
     })
 }
 
 async fn local_sandbox_backend_capabilities() -> Vec<SandboxBackendCapability> {
-    let docker = serde_json::to_value(docker_status_struct().await).unwrap_or_else(|_| json!({}));
-    let docker_capability = docker_backend_capability_from_status(&docker);
     let process_capability = native_process_sandbox_capability().await;
-
-    vec![docker_capability, process_capability]
+    vec![process_capability]
 }
 
 async fn ensure_sandbox_backend_ready(backend: SandboxBackendKind) -> Result<(), LocalApiError> {
-    match backend {
-        SandboxBackendKind::Docker => ensure_docker_running()
-            .await
-            .map_err(|err| LocalApiError::bad_request(err.to_string())),
-        SandboxBackendKind::LocalProcess => {
-            let capability = native_process_sandbox_capability().await;
-            if capability.status == SandboxBackendReadinessStatus::Ready {
-                Ok(())
-            } else {
-                Err(LocalApiError::conflict_code(
-                    "sandbox_backend_not_ready",
-                    capability.message,
-                ))
-            }
-        }
+    if backend != SandboxBackendKind::LocalProcess {
+        return Err(LocalApiError::bad_request(
+            "the local client only supports the local_process sandbox backend",
+        ));
     }
-}
-
-fn docker_backend_capability_from_status(docker: &Value) -> SandboxBackendCapability {
-    let docker_installed = docker
-        .get("installed")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let docker_running = docker
-        .get("running")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let docker_detail = docker
-        .get("error")
-        .and_then(Value::as_str)
-        .or_else(|| docker.get("version").and_then(Value::as_str))
-        .unwrap_or("Docker is required for the current local sandbox backend");
-    let docker_status = if docker_installed && docker_running {
-        SandboxBackendReadinessStatus::Ready
+    let capability = native_process_sandbox_capability().await;
+    if capability.status == SandboxBackendReadinessStatus::Ready {
+        Ok(())
     } else {
-        SandboxBackendReadinessStatus::SetupRequired
-    };
-    let docker_message = if docker_installed && docker_running {
-        "Docker is installed and running; restricted profiles use a private internal network, while full-access profiles use bridge networking".to_string()
-    } else if docker_installed {
-        format!("Docker is installed but not running: {docker_detail}")
-    } else {
-        docker_detail.to_string()
-    };
-
-    SandboxBackendCapability {
-        backend: SandboxBackendKind::Docker,
-        status: docker_status,
-        selectable: true,
-        filesystem_isolation: true,
-        network_isolation: docker_installed && docker_running,
-        process_tree_control: true,
-        message: docker_message,
+        Err(LocalApiError::conflict_code(
+            "sandbox_backend_not_ready",
+            capability.message,
+        ))
     }
 }
 

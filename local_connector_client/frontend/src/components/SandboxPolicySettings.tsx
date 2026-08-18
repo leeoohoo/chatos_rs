@@ -6,7 +6,6 @@ import { CloudOff, Shield, Sparkles } from 'lucide-react';
 import type {
   ConnectorStatus,
   PermissionProfileId,
-  SandboxBackendKind,
   SandboxCapabilities,
   SandboxSettings,
   SandboxSettingsUpdate,
@@ -53,21 +52,6 @@ export function SandboxPolicySettings({
     );
   };
 
-  const setBackend = async (backend: SandboxBackendKind) => {
-    if (backend === view.backend) {
-      return;
-    }
-    if (backend === 'docker' && !window.confirm(
-      'Docker 容器当前使用桥接网络，不能提供按域名的出站网络审批。确定切换吗？',
-    )) {
-      return;
-    }
-    await onSave(
-      { default_backend: backend },
-      '任务运行方式',
-    );
-  };
-
   const setAiApproval = async (enabled: boolean) => {
     if (enabled && !window.confirm(
       '开启后，命令审批模型会审核联网和项目外文件请求。AI 可以批准、拒绝或转交给你；模型不可用时会默认拒绝。确定开启吗？',
@@ -97,9 +81,7 @@ export function SandboxPolicySettings({
         <Shield size={19} />
         <div>
           <strong>{view.recommended ? '推荐安全策略已启用' : '当前安全策略'}</strong>
-          <span>{view.backend === 'docker'
-            ? '任务仅挂载授权项目，并使用无公网出口的内部网络。'
-            : '默认只读写授权项目；联网或访问项目外文件时，关闭 AI 审批会先询问你。'}</span>
+          <span>默认只读写授权项目；联网或访问项目外文件时，关闭 AI 审批会先询问你。</span>
         </div>
         {!view.recommended && !view.customPermissionProfileActive ? (
           <button
@@ -114,26 +96,11 @@ export function SandboxPolicySettings({
       </div>
 
       <div className="sandboxSimpleSettingsGrid">
-        <label className="sandboxSimpleSetting">
+        <div className="sandboxSimpleSetting">
           <span className="settingLabel">任务运行方式</span>
-          <select
-            value={view.backend}
-            disabled={saving}
-            onChange={(event) => void setBackend(event.target.value as SandboxBackendKind)}
-          >
-            <BackendOption
-              backend="local_process"
-              label="本机进程隔离（推荐）"
-              available={view.backendCapabilities.get('local_process')?.selectable === true}
-            />
-            <BackendOption
-              backend="docker"
-              label="Docker 容器"
-              available={view.backendCapabilities.get('docker')?.status === 'ready'}
-            />
-          </select>
+          <strong>本机进程隔离</strong>
           <small>{sandboxBackendDescription(view.backend)}</small>
-        </label>
+        </div>
 
         <label className="sandboxSimpleSetting">
           <span className="settingLabel">本地文件访问</span>
@@ -179,16 +146,14 @@ export function SandboxPolicySettings({
             <div>
               <strong><Sparkles size={14} />AI 自动审批</strong>
               <small>
-                {view.backend === 'local_process'
-                  ? '开启后由命令审批模型审核联网请求；同时适用于项目外文件临时访问。'
-                  : 'Docker 模式暂不支持临时权限覆盖，无法使用 AI 联网审批。'}
+                开启后由命令审批模型审核联网请求；同时适用于项目外文件临时访问。
               </small>
             </div>
             <label className="switch" title="让 AI 审批联网和项目外文件请求">
               <input
                 type="checkbox"
                 checked={view.approvalMode === 'auto_review'}
-                disabled={saving || view.backend !== 'local_process'}
+                disabled={saving}
                 onChange={(event) => void setAiApproval(event.target.checked)}
               />
               <span />
@@ -203,22 +168,6 @@ export function SandboxPolicySettings({
 
       <SandboxTechnicalDetails status={status} settings={settings} backend={view.backend} />
     </>
-  );
-}
-
-function BackendOption({
-  backend,
-  label,
-  available,
-}: {
-  backend: SandboxBackendKind;
-  label: string;
-  available: boolean;
-}) {
-  return (
-    <option value={backend} disabled={!available}>
-      {label}{available ? '' : '（当前不可用）'}
-    </option>
   );
 }
 

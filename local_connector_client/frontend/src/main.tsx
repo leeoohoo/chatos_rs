@@ -309,7 +309,7 @@ function SettingsApp() {
           <section className="authIntro">
             <span className="pageEyebrow">SECURE DEVICE BRIDGE</span>
             <h2>让 Chat OS 安全地连接<br />这台电脑。</h2>
-            <p>本地目录、终端与 Docker 沙箱始终留在当前设备。云端只能通过已配对连接发起受控请求。</p>
+            <p>本地目录、终端与本机沙箱始终留在当前设备。云端只能通过已配对连接发起受控请求。</p>
             <div className="authFeatures">
               <div>
                 <FolderOpen size={17} />

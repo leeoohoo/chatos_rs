@@ -28,7 +28,6 @@ pub(crate) fn classify_command(command: &str) -> RiskSummary {
         "id_ed25519",
         "private_key",
         "kubectl ",
-        "docker ",
     ];
     if let Some(marker) = high_risk_markers
         .iter()
