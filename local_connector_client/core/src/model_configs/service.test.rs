@@ -83,14 +83,14 @@ mod tests {
     }
 
     #[test]
-    fn glm_provider_uses_glm_prompt_over_the_compatible_transport() {
+    fn glm_provider_keeps_glm_runtime_and_prompt_dialect() {
         let state =
             authenticated_state_with_model("glm", None, "https://open.bigmodel.cn/api/paas/v4");
 
         let runtime =
             resolve_local_model_runtime(&state, "user-1", "model-1").expect("model runtime");
 
-        assert_eq!(runtime.provider, "openai_compatible");
+        assert_eq!(runtime.provider, "glm");
         assert_eq!(runtime.prompt_vendor.as_deref(), Some("glm"));
     }
 
