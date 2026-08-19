@@ -373,7 +373,7 @@ pub async fn build_contextual_input(
     } else {
         current_input_items.to_vec()
     };
-    let has_durable_response_history = current_items.iter().any(is_responses_output_or_result_item);
+    let has_durable_response_history = current_items.iter().any(is_durable_history_item);
     let has_memory_context = memory_composer.is_some() && memory_scope.is_some();
     let excluded_memory_turn_id = if has_durable_response_history {
         None
@@ -440,11 +440,18 @@ fn compact_sticky_input_items(current_input_items: &[Value]) -> Vec<Value> {
         compacted.push(user_item.clone());
     }
 
-    let suffix_start = current_input_items
+    let response_suffix_start = current_input_items
         .iter()
         .rposition(is_non_tool_history_item)
-        .map(|index| index + 1)
-        .unwrap_or(0);
+        .map(|index| index + 1);
+    let suffix_start = [
+        response_suffix_start,
+        latest_chat_tool_batch_start(current_input_items),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+    .unwrap_or(0);
     for item in &current_input_items[suffix_start..] {
         if is_tool_exchange_item(item) && !compacted.contains(item) {
             compacted.push(item.clone());
@@ -480,6 +487,13 @@ fn is_tool_exchange_item(item: &Value) -> bool {
     ) || item.get("role").and_then(Value::as_str) == Some("tool")
         || (item.get("role").and_then(Value::as_str) == Some("assistant")
             && (item.get("tool_calls").is_some() || item.get("function_call").is_some()))
+}
+
+fn latest_chat_tool_batch_start(items: &[Value]) -> Option<usize> {
+    items.iter().rposition(|item| {
+        item.get("role").and_then(Value::as_str) == Some("assistant")
+            && (item.get("tool_calls").is_some() || item.get("function_call").is_some())
+    })
 }
 
 pub fn input_value_to_items(input: Value) -> Vec<Value> {
@@ -735,6 +749,84 @@ mod tests {
         assert!(input
             .to_string()
             .contains("backend directory was already inspected"));
+    }
+
+    #[tokio::test]
+    async fn chat_style_durable_history_keeps_current_turn_memory_records() {
+        async fn compose() -> Json<Value> {
+            Json(json!({
+                "thread_id": "thread-1",
+                "blocks": [],
+                "recent_records": [{
+                    "id": "record-current-run",
+                    "thread_id": "thread-1",
+                    "tenant_id": "tenant-1",
+                    "source_id": "task_runner",
+                    "external_record_id": null,
+                    "role": "system",
+                    "record_type": "message",
+                    "content": "backend file list was already read",
+                    "structured_payload": null,
+                    "metadata": {"conversation_turn_id": "run-1"},
+                    "summary_status": "pending",
+                    "summary_id": null,
+                    "summarized_at": null,
+                    "created_at": "2026-08-19T09:37:14Z"
+                }],
+                "meta": {"summary_count": 0, "recent_record_count": 1}
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind memory engine mock");
+        let address = listener.local_addr().expect("memory engine mock address");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                Router::new().route("/api/memory-engine/v1/context/compose", post(compose)),
+            )
+            .await;
+        });
+        let composer = MemoryContextComposer::new_direct(
+            format!("http://{address}"),
+            Duration::from_secs(1),
+            "task_runner",
+        )
+        .expect("memory composer");
+        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let durable = vec![
+            json!({"role":"user","content":"build the backend"}),
+            json!({
+                "role":"assistant",
+                "content":"",
+                "tool_calls":[{"id":"call-old","type":"function","function":{"name":"read_file","arguments":"{}"}}]
+            }),
+            json!({"role":"tool","tool_call_id":"call-old","content":"old huge file output"}),
+            json!({
+                "role":"assistant",
+                "content":"",
+                "tool_calls":[{"id":"call-1","type":"function","function":{"name":"list_dir","arguments":"{}"}}]
+            }),
+            json!({"role":"tool","tool_call_id":"call-1","content":"frontend backend"}),
+        ];
+
+        let input = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[],
+            durable.as_slice(),
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("contextual input");
+        server.abort();
+
+        assert!(input
+            .to_string()
+            .contains("backend file list was already read"));
+        assert!(!input.to_string().contains("old huge file output"));
     }
 
     #[tokio::test]
