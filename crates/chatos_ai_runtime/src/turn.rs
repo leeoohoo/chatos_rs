@@ -375,6 +375,11 @@ pub async fn build_contextual_input(
     };
     let has_durable_response_history = current_items.iter().any(is_responses_output_or_result_item);
     let has_memory_context = memory_composer.is_some() && memory_scope.is_some();
+    let excluded_memory_turn_id = if has_durable_response_history {
+        None
+    } else {
+        excluded_memory_turn_id
+    };
     let memory_items = if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
         composer
             .compose_input_items_excluding_turn(scope, excluded_memory_turn_id, None)
@@ -662,6 +667,137 @@ mod tests {
         assert_eq!(items[3]["call_id"].as_str(), Some("call-new"));
         assert_eq!(items[4]["call_id"].as_str(), Some("call-new"));
         assert!(!input.to_string().contains("old README"));
+    }
+
+    #[tokio::test]
+    async fn durable_history_keeps_current_turn_memory_records() {
+        async fn compose() -> Json<Value> {
+            Json(json!({
+                "thread_id": "thread-1",
+                "blocks": [],
+                "recent_records": [{
+                    "id": "record-current-run",
+                    "thread_id": "thread-1",
+                    "tenant_id": "tenant-1",
+                    "source_id": "task_runner",
+                    "external_record_id": null,
+                    "role": "system",
+                    "record_type": "message",
+                    "content": "backend directory was already inspected",
+                    "structured_payload": null,
+                    "metadata": {"conversation_turn_id": "run-1"},
+                    "summary_status": "pending",
+                    "summary_id": null,
+                    "summarized_at": null,
+                    "created_at": "2026-08-19T09:37:14Z"
+                }],
+                "meta": {"summary_count": 0, "recent_record_count": 1}
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind memory engine mock");
+        let address = listener.local_addr().expect("memory engine mock address");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                Router::new().route("/api/memory-engine/v1/context/compose", post(compose)),
+            )
+            .await;
+        });
+        let composer = MemoryContextComposer::new_direct(
+            format!("http://{address}"),
+            Duration::from_secs(1),
+            "task_runner",
+        )
+        .expect("memory composer");
+        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let durable = vec![
+            json!({"role":"user","content":"build the backend"}),
+            json!({"type":"reasoning","id":"rs-1","summary":[]}),
+            json!({"type":"function_call","id":"fc-1","call_id":"call-1","name":"list_dir","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"call-1","output":"frontend backend"}),
+        ];
+
+        let input = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[],
+            durable.as_slice(),
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("contextual input");
+        server.abort();
+
+        assert!(input
+            .to_string()
+            .contains("backend directory was already inspected"));
+    }
+
+    #[tokio::test]
+    async fn plain_current_input_excludes_current_turn_memory_records() {
+        async fn compose() -> Json<Value> {
+            Json(json!({
+                "thread_id": "thread-1",
+                "blocks": [],
+                "recent_records": [{
+                    "id": "record-current-run",
+                    "thread_id": "thread-1",
+                    "tenant_id": "tenant-1",
+                    "source_id": "task_runner",
+                    "external_record_id": null,
+                    "role": "system",
+                    "record_type": "message",
+                    "content": "current user prompt already persisted",
+                    "structured_payload": null,
+                    "metadata": {"conversation_turn_id": "run-1"},
+                    "summary_status": "pending",
+                    "summary_id": null,
+                    "summarized_at": null,
+                    "created_at": "2026-08-19T09:37:14Z"
+                }],
+                "meta": {"summary_count": 0, "recent_record_count": 1}
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind memory engine mock");
+        let address = listener.local_addr().expect("memory engine mock address");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                Router::new().route("/api/memory-engine/v1/context/compose", post(compose)),
+            )
+            .await;
+        });
+        let composer = MemoryContextComposer::new_direct(
+            format!("http://{address}"),
+            Duration::from_secs(1),
+            "task_runner",
+        )
+        .expect("memory composer");
+        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+
+        let input = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[],
+            &[user_text_item("build the backend")],
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("contextual input");
+        server.abort();
+
+        assert!(!input
+            .to_string()
+            .contains("current user prompt already persisted"));
+        assert!(input.to_string().contains("build the backend"));
     }
 
     #[test]
