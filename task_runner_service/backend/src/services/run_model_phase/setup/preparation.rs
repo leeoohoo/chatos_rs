@@ -283,9 +283,9 @@ fn build_memory_scope(service: &RunService, task: &TaskRecord, run: &TaskRunReco
     .with_policy(ComposeContextPolicy {
         include_recent_records: Some(true),
         include_thread_summary: Some(true),
-        include_subject_memory: Some(false),
+        include_subject_memory: Some(true),
         recent_record_limit: None,
-        summary_limit: None,
+        summary_limit: Some(2),
     })
 }
 
@@ -429,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn run_memory_scope_keeps_current_run_history_without_subject_recall() {
+    fn run_memory_scope_keeps_current_run_history_with_compact_memory_recall() {
         let service = test_run_service(test_config());
         let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
         let mut run = sample_run(&task);
@@ -441,7 +441,8 @@ mod tests {
         assert_eq!(scope.thread_id, run.memory_thread_id);
         assert_eq!(policy.include_recent_records, Some(true));
         assert_eq!(policy.include_thread_summary, Some(true));
-        assert_eq!(policy.include_subject_memory, Some(false));
+        assert_eq!(policy.include_subject_memory, Some(true));
+        assert_eq!(policy.summary_limit, Some(2));
     }
 
     #[test]

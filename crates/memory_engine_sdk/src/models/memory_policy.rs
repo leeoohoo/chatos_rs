@@ -51,10 +51,10 @@ impl MemoryPolicyKind {
             Self::Summary => ManagedMemoryPolicy {
                 job_type: Self::Summary,
                 enabled: true,
-                token_limit: Some(6_000),
-                target_summary_tokens: Some(700),
-                interval_seconds: Some(60),
-                max_threads_per_tick: Some(10),
+                token_limit: None,
+                target_summary_tokens: None,
+                interval_seconds: None,
+                max_threads_per_tick: None,
                 count_limit: None,
                 keep_level0_count: None,
                 max_level: None,
@@ -62,31 +62,31 @@ impl MemoryPolicyKind {
             Self::Rollup => ManagedMemoryPolicy {
                 job_type: Self::Rollup,
                 enabled: true,
-                token_limit: Some(6_000),
-                target_summary_tokens: Some(700),
-                interval_seconds: Some(120),
-                max_threads_per_tick: Some(8),
-                count_limit: Some(0),
-                keep_level0_count: Some(5),
-                max_level: Some(4),
+                token_limit: None,
+                target_summary_tokens: None,
+                interval_seconds: None,
+                max_threads_per_tick: None,
+                count_limit: None,
+                keep_level0_count: None,
+                max_level: None,
             },
             Self::SubjectMemory => ManagedMemoryPolicy {
                 job_type: Self::SubjectMemory,
                 enabled: true,
-                token_limit: Some(6_000),
-                target_summary_tokens: Some(700),
-                interval_seconds: Some(180),
-                max_threads_per_tick: Some(5),
-                count_limit: Some(0),
-                keep_level0_count: Some(5),
-                max_level: Some(4),
+                token_limit: None,
+                target_summary_tokens: None,
+                interval_seconds: None,
+                max_threads_per_tick: None,
+                count_limit: None,
+                keep_level0_count: None,
+                max_level: None,
             },
             Self::ThreadRepair => ManagedMemoryPolicy {
                 job_type: Self::ThreadRepair,
                 enabled: true,
-                token_limit: Some(200_000),
+                token_limit: None,
                 target_summary_tokens: None,
-                interval_seconds: Some(60),
+                interval_seconds: None,
                 max_threads_per_tick: None,
                 count_limit: None,
                 keep_level0_count: None,
@@ -345,7 +345,7 @@ mod tests {
         let policy = ManagedMemoryPolicy::from_config_values(kind, &values);
         assert!(!policy.enabled);
         assert_eq!(policy.token_limit, Some(9_000));
-        assert_eq!(policy.keep_level0_count, Some(5));
+        assert_eq!(policy.keep_level0_count, None);
     }
 
     #[test]

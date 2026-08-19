@@ -34,8 +34,7 @@ pub(crate) fn provider_requires_disabled_thinking(base_url: &str, model: &str) -
         || normalized_base_url.contains("moonshot.ai")
         || normalized_base_url.contains("api.kimi.com");
     is_kimi_endpoint
-        && (normalized_model.starts_with("kimi-k2.5")
-            || normalized_model.starts_with("kimi-k2.6"))
+        && (normalized_model.starts_with("kimi-k2.5") || normalized_model.starts_with("kimi-k2.6"))
 }
 
 pub(crate) fn provider_supports_optional_thinking(base_url: &str, model: &str) -> bool {

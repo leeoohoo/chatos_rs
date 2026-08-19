@@ -58,7 +58,7 @@ pub(super) fn default_compose_policy() -> Option<ComposeContextPolicy> {
         include_thread_summary: Some(true),
         include_subject_memory: Some(true),
         recent_record_limit: None,
-        summary_limit: None,
+        summary_limit: Some(2),
     })
 }
 

@@ -197,7 +197,7 @@ impl ContextualTurnRunner {
         let sticky_input_items = if current_input_items.is_empty() {
             input_value_to_items(fallback_input.clone())
         } else {
-            current_input_items.to_vec()
+            compact_sticky_input_items(current_input_items)
         };
 
         Some(
@@ -374,6 +374,7 @@ pub async fn build_contextual_input(
         current_input_items.to_vec()
     };
     let has_durable_response_history = current_items.iter().any(is_responses_output_or_result_item);
+    let has_memory_context = memory_composer.is_some() && memory_scope.is_some();
     let memory_items = if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
         composer
             .compose_input_items_excluding_turn(scope, excluded_memory_turn_id, None)
@@ -382,7 +383,7 @@ pub async fn build_contextual_input(
         Vec::new()
     };
 
-    let mut items = if has_durable_response_history {
+    let mut items = if has_durable_response_history && !has_memory_context {
         // The first request's exact input is now an immutable cacheable prefix.
         // Memory Engine is still composed on every turn; only genuinely new
         // items are appended so prior prompt-cache prefixes are never rewritten.
@@ -390,10 +391,14 @@ pub async fn build_contextual_input(
     } else {
         let mut initial = prefixed_input_items.to_vec();
         initial.extend(memory_items.iter().cloned());
-        initial.extend(current_items);
+        if has_durable_response_history {
+            initial.extend(compact_sticky_input_items(current_items.as_slice()));
+        } else {
+            initial.extend(current_items);
+        }
         initial
     };
-    if has_durable_response_history {
+    if has_durable_response_history && !has_memory_context {
         for item in prefixed_input_items.iter().chain(memory_items.iter()) {
             if !items.contains(item) {
                 items.push(item.clone());
@@ -416,6 +421,60 @@ fn is_responses_output_or_result_item(item: &Value) -> bool {
             | Some("web_search_call")
             | Some("file_search_call")
     ) || (item.get("type").and_then(Value::as_str) == Some("message") && item.get("id").is_some())
+}
+
+fn compact_sticky_input_items(current_input_items: &[Value]) -> Vec<Value> {
+    if !current_input_items.iter().any(is_durable_history_item) {
+        return current_input_items.to_vec();
+    }
+
+    let mut compacted = Vec::new();
+    if let Some(user_item) = current_input_items.iter().rev().find(|item| {
+        item.get("role").and_then(Value::as_str) == Some("user") && item.get("content").is_some()
+    }) {
+        compacted.push(user_item.clone());
+    }
+
+    let suffix_start = current_input_items
+        .iter()
+        .rposition(is_non_tool_history_item)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    for item in &current_input_items[suffix_start..] {
+        if is_tool_exchange_item(item) && !compacted.contains(item) {
+            compacted.push(item.clone());
+        }
+    }
+
+    if compacted.is_empty() {
+        current_input_items.to_vec()
+    } else {
+        compacted
+    }
+}
+
+fn is_durable_history_item(item: &Value) -> bool {
+    is_responses_output_or_result_item(item)
+        || matches!(
+            item.get("role").and_then(Value::as_str),
+            Some("assistant" | "tool")
+        )
+}
+
+fn is_non_tool_history_item(item: &Value) -> bool {
+    is_durable_history_item(item) && !is_tool_exchange_item(item)
+}
+
+fn is_tool_exchange_item(item: &Value) -> bool {
+    matches!(
+        item.get("type").and_then(Value::as_str),
+        Some("function_call")
+            | Some("function_call_output")
+            | Some("computer_call")
+            | Some("computer_call_output")
+    ) || item.get("role").and_then(Value::as_str) == Some("tool")
+        || (item.get("role").and_then(Value::as_str) == Some("assistant")
+            && (item.get("tool_calls").is_some() || item.get("function_call").is_some()))
 }
 
 pub fn input_value_to_items(input: Value) -> Vec<Value> {
@@ -451,8 +510,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        build_contextual_input, input_value_to_items, user_text_item, ContextualTurnRequest,
-        RuntimeTurnSpec,
+        build_contextual_input, compact_sticky_input_items, input_value_to_items, user_text_item,
+        ContextualTurnRequest, RuntimeTurnSpec,
     };
     use crate::{
         AiRuntime, AiRuntimeOptions, AiTurnStatus, MemoryContextComposer, MemoryScope,
@@ -539,6 +598,104 @@ mod tests {
 
         assert_eq!(&items[..durable.len()], durable.as_slice());
         assert_eq!(items.last().unwrap()["content"], "stable prompt");
+    }
+
+    #[tokio::test]
+    async fn memory_context_compacts_durable_history_behind_stable_prefix() {
+        async fn compose() -> Json<Value> {
+            Json(json!({
+                "thread_id": "thread-1",
+                "blocks": [{"block_type": "thread_summary_top_level", "text": "summary"}],
+                "recent_records": [],
+                "meta": {"summary_count": 1, "recent_record_count": 0}
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind memory engine mock");
+        let address = listener.local_addr().expect("memory engine mock address");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                Router::new().route("/api/memory-engine/v1/context/compose", post(compose)),
+            )
+            .await;
+        });
+        let composer = MemoryContextComposer::new_direct(
+            format!("http://{address}"),
+            Duration::from_secs(1),
+            "task_runner",
+        )
+        .expect("memory composer");
+        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let durable = vec![
+            json!({"role":"user","content":"implement inventory cli"}),
+            json!({"type":"reasoning","id":"rs-1","summary":[]}),
+            json!({"type":"function_call","id":"fc-old","call_id":"call-old","name":"read_file","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"call-old","output":"old README"}),
+            json!({"type":"reasoning","id":"rs-2","summary":[]}),
+            json!({"type":"function_call","id":"fc-new","call_id":"call-new","name":"run_tests","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"call-new","output":"cargo test"}),
+        ];
+
+        let input = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[json!({"role":"system","content":"stable prompt"})],
+            durable.as_slice(),
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("contextual input");
+        server.abort();
+
+        let items = input.as_array().expect("items");
+        assert_eq!(items[0]["content"].as_str(), Some("stable prompt"));
+        assert!(items[1].to_string().contains("thread_summary_top_level"));
+        assert!(items[1].to_string().contains("summary"));
+        assert_eq!(
+            items[2]["content"].as_str(),
+            Some("implement inventory cli")
+        );
+        assert_eq!(items[3]["call_id"].as_str(), Some("call-new"));
+        assert_eq!(items[4]["call_id"].as_str(), Some("call-new"));
+        assert!(!input.to_string().contains("old README"));
+    }
+
+    #[test]
+    fn compact_sticky_input_items_keeps_task_anchor_and_pending_tool_exchange() {
+        let durable = vec![
+            json!({"role":"user","content":"implement inventory cli"}),
+            json!({"type":"reasoning","id":"rs-1","summary":[]}),
+            json!({"type":"function_call","id":"fc-old","call_id":"call-old","name":"read_file","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"call-old","output":"old README"}),
+            json!({"type":"reasoning","id":"rs-2","summary":[]}),
+            json!({"type":"function_call","id":"fc-new","call_id":"call-new","name":"run_tests","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"call-new","output":"cargo test"}),
+        ];
+
+        let compacted = compact_sticky_input_items(durable.as_slice());
+
+        assert_eq!(compacted.len(), 3);
+        assert_eq!(compacted[0]["role"].as_str(), Some("user"));
+        assert_eq!(
+            compacted[0]["content"].as_str(),
+            Some("implement inventory cli")
+        );
+        assert_eq!(compacted[1]["call_id"].as_str(), Some("call-new"));
+        assert_eq!(compacted[2]["call_id"].as_str(), Some("call-new"));
+    }
+
+    #[test]
+    fn compact_sticky_input_items_leaves_plain_current_task_unchanged() {
+        let current = vec![
+            json!({"role":"system","content":"workspace fact"}),
+            json!({"role":"user","content":"current task"}),
+        ];
+
+        assert_eq!(compact_sticky_input_items(current.as_slice()), current);
     }
 
     #[tokio::test]

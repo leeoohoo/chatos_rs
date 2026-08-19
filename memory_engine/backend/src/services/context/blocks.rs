@@ -220,12 +220,12 @@ async fn load_subject_memory_blocks(
 ) -> Result<Vec<ComposeContextBlock>, String> {
     let mut blocks = Vec::new();
 
-    if let Some(level0_memory) = subject_memories::list_subject_memories_by_subject_ids(
+    if let Some(memory) = subject_memories::list_subject_memories_by_subject_ids(
         db,
         tenant_id,
         source_id,
         subject_ids,
-        Some(0),
+        None,
         FIXED_SUBJECT_MEMORY_LIMIT,
     )
     .await?
@@ -233,29 +233,9 @@ async fn load_subject_memory_blocks(
     .next()
     {
         blocks.push(ComposeContextBlock {
-            block_type: "subject_memory_level0".to_string(),
-            text: format_subject_memory(level0_memory),
+            block_type: "subject_memory".to_string(),
+            text: format_subject_memory(memory),
         });
-    }
-
-    if let Some(top_memory) = subject_memories::list_subject_memories_by_subject_ids(
-        db,
-        tenant_id,
-        source_id,
-        subject_ids,
-        None,
-        1,
-    )
-    .await?
-    .into_iter()
-    .next()
-    {
-        if top_memory.level > 0 {
-            blocks.push(ComposeContextBlock {
-                block_type: "subject_memory_top_level".to_string(),
-                text: format_subject_memory(top_memory),
-            });
-        }
     }
 
     Ok(blocks)

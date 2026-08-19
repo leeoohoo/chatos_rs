@@ -197,9 +197,6 @@ fn push_optional_integer_definition(
         "max_level" => defaults.max_level,
         _ => None,
     };
-    let Some(default_value) = default_value else {
-        return;
-    };
     definitions.push(memory_policy_definition(
         kind,
         field,
@@ -207,10 +204,10 @@ fn push_optional_integer_definition(
         description,
         category,
         "integer",
-        json!(default_value),
+        default_value.map_or(Value::Null, Value::from),
         Some(min),
         Some(max),
-        false,
+        true,
         ui_order,
         now,
     ));

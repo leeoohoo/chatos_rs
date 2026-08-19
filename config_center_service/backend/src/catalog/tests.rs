@@ -1185,11 +1185,13 @@ fn catalog_exposes_shared_memory_policies_for_server_and_client() {
         .all(|definition| !definition.key.ends_with("model_profile_id")));
     assert!(memory_definitions.iter().any(|definition| {
         definition.key == "memory_engine.policy.rollup.keep_level0_count"
-            && definition.default_value == json!(5)
+            && definition.default_value == json!(null)
+            && definition.nullable
     }));
     assert!(memory_definitions.iter().any(|definition| {
         definition.key == "memory_engine.policy.thread_repair.token_limit"
-            && definition.default_value == json!(200000)
+            && definition.default_value == json!(null)
+            && definition.nullable
     }));
 }
 
