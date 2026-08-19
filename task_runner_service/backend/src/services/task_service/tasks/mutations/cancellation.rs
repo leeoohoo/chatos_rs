@@ -229,6 +229,32 @@ impl TaskService {
             .filter(|run| matches!(run.status, TaskRunStatus::Queued | TaskRunStatus::Running))
         {
             active_run_ids.push(run.id.clone());
+            if run.is_waiting_for_workspace_integration() {
+                let cancel_message = format!("任务已取消，跳过等待中的代码集成：{reason}");
+                if !run.cancel_requested {
+                    self.store
+                        .append_run_event(TaskRunEventRecord::new(
+                            run.id.clone(),
+                            "cancel_requested",
+                            Some(format!("任务已取消，请求停止运行：{reason}")),
+                            Some(json!({ "reason": reason })),
+                        ))
+                        .await?;
+                }
+                let now = now_rfc3339();
+                run.cancel_before_workspace_integration(cancel_message.clone(), now.as_str());
+                let saved = self.store.save_run(run.clone()).await?;
+                self.store.clear_cancel_requested(saved.id.as_str());
+                self.store
+                    .append_run_event(TaskRunEventRecord::new(
+                        saved.id.clone(),
+                        "cancelled",
+                        Some(cancel_message),
+                        Some(json!({ "reason": reason })),
+                    ))
+                    .await?;
+                continue;
+            }
             if !run.cancel_requested {
                 let _ = self.store.mark_cancel_requested(run.id.as_str()).await?;
                 self.store
@@ -558,6 +584,88 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event.event_type == "cancel_requested"));
+    }
+
+    #[tokio::test]
+    async fn cancel_task_finishes_run_waiting_for_workspace_integration() {
+        let service = test_service().await;
+        let mut task =
+            create_task_with_status(&service, "integration wait", TaskStatus::Ready, Vec::new())
+                .await;
+        let now = now_rfc3339();
+        let mut run = TaskRunRecord::queued(
+            "run-integration-wait".to_string(),
+            task.id.clone(),
+            "model-1".to_string(),
+            task.memory_thread_id.clone(),
+            serde_json::json!({}),
+            now.clone(),
+        );
+        run.status = TaskRunStatus::Running;
+        run.started_at = Some(now.clone());
+        run.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
+        run.workspace_execution = Some(
+            serde_json::from_value(serde_json::json!({
+                "status": "ready",
+                "branch_target": {
+                    "kind": "run",
+                    "branch_id": "project:run-1",
+                    "branch_ref": "chatos/runs/run-1",
+                    "base_branch": "chatos/executions/group-1",
+                    "base_commit": "1111111111111111111111111111111111111111"
+                },
+                "execution_group_id": "group-1",
+                "execution_branch_ref": "chatos/executions/group-1",
+                "execution_base_commit": "1111111111111111111111111111111111111111",
+                "integration_status": "pending"
+            }))
+            .expect("workspace execution"),
+        );
+        service.store.save_run(run).await.expect("save active run");
+        task.status = TaskStatus::Running;
+        service
+            .store
+            .save_task(task.clone())
+            .await
+            .expect("save running task");
+
+        let response = service
+            .cancel_task(
+                task.id.as_str(),
+                CancelTaskRequest {
+                    reason: "user stopped the task".to_string(),
+                    replacement_task_ids: Vec::new(),
+                },
+                None,
+            )
+            .await
+            .expect("cancel task")
+            .expect("task exists");
+
+        assert_eq!(response.status, TaskStatus::Cancelled);
+        assert_eq!(
+            response.active_run_ids,
+            vec!["run-integration-wait".to_string()]
+        );
+        let run_after = service
+            .store
+            .get_run("run-integration-wait")
+            .await
+            .expect("load run")
+            .expect("run exists");
+        assert_eq!(run_after.status, TaskRunStatus::Cancelled);
+        assert_eq!(
+            run_after.model_phase_status,
+            crate::models::ModelPhaseStatus::Cancelled
+        );
+        assert!(!run_after.cancel_requested);
+        assert_eq!(
+            run_after
+                .workspace_execution
+                .as_ref()
+                .map(|workspace| workspace.integration_status),
+            Some(crate::models::WorkspaceIntegrationStatus::NotRequired)
+        );
     }
 
     #[tokio::test]

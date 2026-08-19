@@ -318,6 +318,32 @@ pub struct TaskRunRecord {
 }
 
 impl TaskRunRecord {
+    pub fn is_waiting_for_workspace_integration(&self) -> bool {
+        self.status == TaskRunStatus::Running
+            && self.model_phase_status.is_terminal()
+            && self
+                .workspace_execution
+                .as_ref()
+                .is_some_and(TaskRunWorkspaceExecution::integration_requires_post_process)
+    }
+
+    pub fn cancel_before_workspace_integration(&mut self, message: String, now: &str) {
+        self.status = TaskRunStatus::Cancelled;
+        self.model_phase_status = ModelPhaseStatus::Cancelled;
+        self.cancel_requested = false;
+        self.cancel_event_pending = false;
+        self.claim_token = None;
+        self.claim_until = None;
+        self.finished_at = Some(now.to_string());
+        self.updated_at = now.to_string();
+        self.error_message = Some(message.clone());
+        if let Some(execution) = self.workspace_execution.as_mut() {
+            execution.integration_status = WorkspaceIntegrationStatus::NotRequired;
+            execution.integration_started_at = None;
+            execution.integration_last_error = Some(message);
+        }
+    }
+
     pub fn requires_post_process(&self) -> bool {
         self.model_phase_status.is_terminal()
             && (matches!(

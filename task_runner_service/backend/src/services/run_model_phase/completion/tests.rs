@@ -443,6 +443,68 @@ async fn successful_write_run_waits_for_workspace_integration_before_business_su
 }
 
 #[tokio::test]
+async fn cancel_run_waiting_for_workspace_integration_finishes_as_cancelled() {
+    let (task_service, run_service) = test_services().await;
+    let mut task = create_task(&task_service, "write task", TaskStatus::Ready).await;
+    task.status = TaskStatus::Running;
+    run_service
+        .store
+        .save_task(task.clone())
+        .await
+        .expect("save running task");
+    let mut run = run_record(&task);
+    run.model_phase_status = crate::models::ModelPhaseStatus::Succeeded;
+    run.workspace_execution = Some(
+        serde_json::from_value(json!({
+            "status": "ready",
+            "branch_target": {
+                "kind": "run",
+                "branch_id": "project:run-1",
+                "branch_ref": "chatos/runs/run-1",
+                "base_branch": "chatos/executions/group-1",
+                "base_commit": "1111111111111111111111111111111111111111"
+            },
+            "execution_group_id": "group-1",
+            "execution_branch_ref": "chatos/executions/group-1",
+            "execution_base_commit": "1111111111111111111111111111111111111111",
+            "integration_status": "pending"
+        }))
+        .expect("workspace execution"),
+    );
+    run_service
+        .store
+        .save_run(run.clone())
+        .await
+        .expect("save run");
+
+    let cancelled = run_service
+        .cancel_run(run.id.as_str())
+        .await
+        .expect("cancel run")
+        .expect("run");
+
+    assert_eq!(cancelled.status, TaskRunStatus::Cancelled);
+    assert_eq!(
+        cancelled.model_phase_status,
+        crate::models::ModelPhaseStatus::Cancelled
+    );
+    assert!(!cancelled.cancel_requested);
+    assert_eq!(
+        cancelled
+            .workspace_execution
+            .as_ref()
+            .map(|workspace| workspace.integration_status),
+        Some(crate::models::WorkspaceIntegrationStatus::NotRequired)
+    );
+    let saved_task = task_service
+        .get_task(task.id.as_str())
+        .await
+        .expect("get task")
+        .expect("task");
+    assert_eq!(saved_task.status, TaskStatus::Cancelled);
+}
+
+#[tokio::test]
 async fn completed_runtime_without_structured_outcome_fails_closed() {
     let (task_service, run_service) = test_services().await;
     let task = create_task(&task_service, "missing outcome", TaskStatus::Ready).await;

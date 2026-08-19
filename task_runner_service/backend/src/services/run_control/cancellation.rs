@@ -24,6 +24,11 @@ impl RunService {
                 return Err("cannot cancel a blocked run".to_string());
             }
         }
+        if current_run.is_waiting_for_workspace_integration() {
+            return self
+                .cancel_workspace_integration_waiting_run(current_run)
+                .await;
+        }
         if current_run.cancel_requested {
             if let Err(err) = self.enqueue_run_cancel_event_if_needed(&current_run).await {
                 warn!(
@@ -107,6 +112,55 @@ impl RunService {
                 .await;
         }
         Ok(Some(run))
+    }
+
+    async fn cancel_workspace_integration_waiting_run(
+        &self,
+        mut run: TaskRunRecord,
+    ) -> Result<Option<TaskRunRecord>, String> {
+        if let Err(err) = self
+            .ask_user_prompt_service
+            .cancel_pending_prompts_for_run(run.id.as_str(), "run cancellation requested")
+            .await
+        {
+            warn!(
+                run_id = run.id.as_str(),
+                error = err.as_str(),
+                "failed to cancel pending ask user prompts"
+            );
+        }
+        let now = now_rfc3339();
+        let message = "run cancelled before workspace integration".to_string();
+        run.cancel_before_workspace_integration(message, now.as_str());
+
+        let saved = self.store.save_run(run.clone()).await?;
+        self.store.clear_cancel_requested(saved.id.as_str());
+        self.store
+            .append_run_event(TaskRunEventRecord::new(
+                saved.id.clone(),
+                "cancel_requested",
+                Some("run cancellation requested".to_string()),
+                None,
+            ))
+            .await?;
+        self.store
+            .append_run_event(TaskRunEventRecord::new(
+                saved.id.clone(),
+                "cancelled",
+                Some("run cancelled before workspace integration".to_string()),
+                None,
+            ))
+            .await?;
+        if let Some(mut task_record) = self.store.get_task(&saved.task_id).await? {
+            task_record.status = TaskStatus::Cancelled;
+            task_record.last_run_id = Some(saved.id.clone());
+            task_record.updated_at = now;
+            self.store.save_task(task_record).await?;
+        }
+        self.try_send_terminal_callback(saved.task_id.as_str(), &saved)
+            .await;
+
+        Ok(Some(saved))
     }
 
     pub async fn retry_run(&self, run_id: &str) -> Result<Option<TaskRunRecord>, String> {
