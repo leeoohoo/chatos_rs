@@ -25,7 +25,7 @@ pub use compose_items::{
 };
 pub use record_writer::{MemoryEngineRecordWriter, MemoryRecordScope};
 
-use compose_items::default_compose_policy;
+use compose_items::standard_compose_policy;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryScope {
@@ -115,7 +115,7 @@ impl MemoryContextComposer {
                     Some(scope.related_subject_ids.clone())
                 },
                 thread_id: scope.thread_id.clone(),
-                policy: scope.policy.clone().or_else(default_compose_policy),
+                policy: scope.policy.clone().or_else(standard_compose_policy),
             })
             .await
     }

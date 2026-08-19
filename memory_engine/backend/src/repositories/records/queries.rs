@@ -313,9 +313,10 @@ pub async fn list_context_records(
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
-    limit: i64,
+    limit: Option<i64>,
 ) -> Result<Vec<EngineRecord>, String> {
-    let cursor = record_collection(db)
+    let collection = record_collection(db);
+    let mut query = collection
         .find(doc! {
             "tenant_id": tenant_id,
             "source_id": source_id,
@@ -328,10 +329,11 @@ pub async fn list_context_records(
                 {"summary_status": ""},
             ],
         })
-        .sort(doc! {"created_at": 1})
-        .limit(limit)
-        .await
-        .map_err(|err| err.to_string())?;
+        .sort(doc! {"created_at": 1, "id": 1});
+    if let Some(limit) = limit {
+        query = query.limit(limit.max(1));
+    }
+    let cursor = query.await.map_err(|err| err.to_string())?;
 
     collect_records(cursor).await
 }

@@ -16,7 +16,7 @@ use super::super::selectors::{
 use super::super::settings::load_summary_job_settings;
 use super::super::{
     PendingRecordSelection, SummaryJobSettings, DEFAULT_PENDING_RECORD_SCAN_LIMIT,
-    DEFAULT_ROLLUP_TARGET_TOKENS, DEFAULT_ROLLUP_TOKEN_LIMIT,
+    MAX_THREAD_SUMMARY_TARGET_TOKENS,
 };
 use super::job::{
     create_thread_summary_job_run, done_metadata, failed_metadata, finish_thread_summary_job_run,
@@ -176,9 +176,9 @@ pub(crate) async fn start_thread_summary_job(
         ctx.thread.subject_id.as_str(),
         ctx.pending_before_count,
         ctx.settings.token_limit,
-        ctx.settings
-            .target_summary_tokens
-            .unwrap_or(DEFAULT_ROLLUP_TARGET_TOKENS),
+        ctx.settings.target_summary_tokens.ok_or_else(|| {
+            "summary job policy target_summary_tokens is not configured".to_string()
+        })?,
         trigger_type,
         &ctx.selection,
     )
@@ -388,10 +388,13 @@ pub(crate) async fn resume_cloud_summary_job(
         thread,
         settings: SummaryJobSettings {
             token_limit: metadata_i64(job_run.metadata.as_ref(), "policy_token_limit")
-                .unwrap_or(DEFAULT_ROLLUP_TOKEN_LIMIT),
+                .ok_or_else(|| "summary job metadata policy_token_limit is missing".to_string())?,
             target_summary_tokens: Some(
                 metadata_i64(job_run.metadata.as_ref(), "policy_target_summary_tokens")
-                    .unwrap_or(DEFAULT_ROLLUP_TARGET_TOKENS),
+                    .ok_or_else(|| {
+                        "summary job metadata policy_target_summary_tokens is missing".to_string()
+                    })?
+                    .clamp(128, MAX_THREAD_SUMMARY_TARGET_TOKENS),
             ),
             cloud_owner_entity_id: Some(job_run_id.to_string()),
             cloud_resume_kind: Some(job_run.trigger_type.clone()),

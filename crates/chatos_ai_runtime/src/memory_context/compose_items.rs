@@ -52,7 +52,7 @@ pub fn compose_response_to_input_items_with_budget(
     items
 }
 
-pub(super) fn default_compose_policy() -> Option<ComposeContextPolicy> {
+pub(super) fn standard_compose_policy() -> Option<ComposeContextPolicy> {
     Some(ComposeContextPolicy {
         include_recent_records: Some(true),
         include_thread_summary: Some(true),

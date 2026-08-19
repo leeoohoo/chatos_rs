@@ -3,14 +3,13 @@
 
 use crate::models::ComposeContextPolicy;
 
-const DEFAULT_PENDING_RECORD_LIMIT: i64 = 10_000;
-const DEFAULT_SUMMARY_LIMIT: i64 = 2;
+pub(crate) const STANDARD_LEVEL0_SUMMARY_LIMIT: i64 = 2;
 
 pub(crate) struct ResolvedComposeContextPolicy {
     pub(crate) include_recent_records: bool,
     pub(crate) include_thread_summary: bool,
     pub(crate) include_subject_memory: bool,
-    pub(crate) recent_limit: i64,
+    pub(crate) recent_limit: Option<i64>,
     pub(crate) summary_limit: i64,
 }
 
@@ -28,11 +27,10 @@ impl ResolvedComposeContextPolicy {
                 .unwrap_or(true),
             recent_limit: policy
                 .and_then(|item| item.recent_record_limit)
-                .unwrap_or(DEFAULT_PENDING_RECORD_LIMIT as usize)
-                .max(1) as i64,
+                .map(|value| value.max(1) as i64),
             summary_limit: policy
                 .and_then(|item| item.summary_limit)
-                .unwrap_or(DEFAULT_SUMMARY_LIMIT as usize)
+                .unwrap_or(STANDARD_LEVEL0_SUMMARY_LIMIT as usize)
                 .max(1) as i64,
         }
     }

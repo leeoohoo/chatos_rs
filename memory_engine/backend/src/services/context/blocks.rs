@@ -159,6 +159,32 @@ pub(crate) fn build_thread_summary_level0_text(rows: &[EngineSummary]) -> String
         .join("\n\n---\n\n")
 }
 
+pub(crate) fn build_thread_summary_blocks_from_rows(
+    level0_rows: Vec<EngineSummary>,
+    top_summary: Option<EngineSummary>,
+) -> (Vec<ComposeContextBlock>, usize) {
+    let mut blocks = Vec::new();
+    let mut summary_count = 0usize;
+
+    if let Some(top_summary) = top_summary.filter(|item| item.level > 0) {
+        summary_count += 1;
+        blocks.push(ComposeContextBlock {
+            block_type: "thread_summary_top_level".to_string(),
+            text: top_summary.summary_text,
+        });
+    }
+
+    if !level0_rows.is_empty() {
+        summary_count += level0_rows.len();
+        blocks.push(ComposeContextBlock {
+            block_type: "thread_summary_level0".to_string(),
+            text: build_thread_summary_level0_text(level0_rows.as_slice()),
+        });
+    }
+
+    (blocks, summary_count)
+}
+
 pub(crate) fn format_subject_memory(item: EngineSubjectMemory) -> String {
     format!(
         "[subject_id={}][memory_type={}][level={}][memory_key={}]\n{}",
@@ -173,9 +199,6 @@ async fn load_thread_summary_blocks(
     thread_id: &str,
     summary_limit: i64,
 ) -> Result<(Vec<ComposeContextBlock>, usize), String> {
-    let mut blocks = Vec::new();
-    let mut summary_count = 0usize;
-
     let level0_rows = summaries::list_latest_thread_summaries_at_level(
         db,
         tenant_id,
@@ -186,30 +209,16 @@ async fn load_thread_summary_blocks(
         summary_limit,
     )
     .await?;
-    if !level0_rows.is_empty() {
-        blocks.push(ComposeContextBlock {
-            block_type: "thread_summary_level0".to_string(),
-            text: build_thread_summary_level0_text(level0_rows.as_slice()),
-        });
-        summary_count += level0_rows.len();
-    }
-
-    if let Some(top_summary) =
+    let top_summary =
         summaries::list_latest_thread_summaries(db, tenant_id, source_id, thread_id, 1)
             .await?
             .into_iter()
-            .next()
-    {
-        if top_summary.level > 0 {
-            summary_count += 1;
-            blocks.push(ComposeContextBlock {
-                block_type: "thread_summary_top_level".to_string(),
-                text: top_summary.summary_text,
-            });
-        }
-    }
+            .next();
 
-    Ok((blocks, summary_count))
+    Ok(build_thread_summary_blocks_from_rows(
+        level0_rows,
+        top_summary,
+    ))
 }
 
 async fn load_subject_memory_blocks(

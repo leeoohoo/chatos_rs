@@ -35,7 +35,8 @@ pub async fn run_pending_summaries_once(
         &state.config,
         req.tenant_id.as_deref(),
         req.source_id.as_deref(),
-        crate::services::summary::effective_thread_summary_token_limit(policy.token_limit),
+        crate::services::summary::required_thread_summary_token_limit(policy.token_limit)
+            .map_err(internal_error)?,
         limit,
     )
     .await

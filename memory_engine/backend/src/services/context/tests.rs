@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::blocks::{
-    build_thread_summary_level0_text, format_subject_memory, subject_ids_for_context,
-    subject_memory_subject_ids_for_context, thread_agent_subject_id,
+    build_thread_summary_blocks_from_rows, build_thread_summary_level0_text, format_subject_memory,
+    subject_ids_for_context, subject_memory_subject_ids_for_context, thread_agent_subject_id,
 };
 use super::policy::ResolvedComposeContextPolicy;
 use crate::models::{EngineSubjectMemory, EngineSummary, EngineThread};
@@ -105,6 +105,29 @@ fn level0_summaries_are_rendered_in_chronological_order() {
 }
 
 #[test]
+fn thread_summary_blocks_keep_highest_level_before_recent_level0_summaries() {
+    let (blocks, summary_count) = build_thread_summary_blocks_from_rows(
+        vec![
+            summary("sum_3", 0, "2026-05-12T03:00:00Z", "third"),
+            summary("sum_2", 0, "2026-05-12T02:00:00Z", "second"),
+        ],
+        Some(summary(
+            "sum_top",
+            2,
+            "2026-05-12T04:00:00Z",
+            "highest level",
+        )),
+    );
+
+    assert_eq!(summary_count, 3);
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].block_type, "thread_summary_top_level");
+    assert_eq!(blocks[0].text, "highest level");
+    assert_eq!(blocks[1].block_type, "thread_summary_level0");
+    assert_eq!(blocks[1].text, "second\n\n---\n\nthird");
+}
+
+#[test]
 fn collect_subject_ids_keeps_primary_and_deduplicates_related_items() {
     let subject_ids = subject_ids_for_context(
         "session:abc",
@@ -197,12 +220,12 @@ fn subject_memory_lookup_preserves_explicit_non_session_related_subjects() {
 }
 
 #[test]
-fn compose_context_policy_defaults_match_expected_limits() {
+fn compose_context_policy_uses_standard_summary_rule_without_recent_record_cap() {
     let policy = ResolvedComposeContextPolicy::from_request(None);
 
     assert!(policy.include_recent_records);
     assert!(policy.include_thread_summary);
     assert!(policy.include_subject_memory);
     assert_eq!(policy.summary_limit, 2);
-    assert_eq!(policy.recent_limit, 10_000);
+    assert_eq!(policy.recent_limit, None);
 }

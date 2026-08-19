@@ -6,8 +6,7 @@ use crate::repositories::control_plane as cp_repo;
 use crate::services::ai_pipeline::MIN_TOKEN_LIMIT;
 
 use super::{
-    effective_thread_summary_token_limit, SummaryJobSettings, DEFAULT_ROLLUP_TARGET_TOKENS,
-    DEFAULT_ROLLUP_TOKEN_LIMIT, MAX_THREAD_SUMMARY_TARGET_TOKENS,
+    required_thread_summary_token_limit, SummaryJobSettings, MAX_THREAD_SUMMARY_TARGET_TOKENS,
 };
 
 const THREAD_REPAIR_JOB_TYPE: &str = "thread_repair";
@@ -19,12 +18,12 @@ pub(crate) async fn load_summary_job_settings(
     let policy = cp_repo::get_effective_job_policy(db, job_type).await?;
     let configured_token_limit = policy
         .token_limit
-        .unwrap_or(DEFAULT_ROLLUP_TOKEN_LIMIT)
-        .max(MIN_TOKEN_LIMIT);
+        .map(|value| value.max(MIN_TOKEN_LIMIT))
+        .ok_or_else(|| format!("{job_type} job policy token_limit is not configured"))?;
     let token_limit = if job_type == THREAD_REPAIR_JOB_TYPE {
         configured_token_limit
     } else {
-        effective_thread_summary_token_limit(Some(configured_token_limit))
+        required_thread_summary_token_limit(Some(configured_token_limit))?
     };
     Ok(SummaryJobSettings {
         token_limit,
@@ -34,7 +33,9 @@ pub(crate) async fn load_summary_job_settings(
             Some(
                 policy
                     .target_summary_tokens
-                    .unwrap_or(DEFAULT_ROLLUP_TARGET_TOKENS)
+                    .ok_or_else(|| {
+                        format!("{job_type} job policy target_summary_tokens is not configured")
+                    })?
                     .clamp(128, MAX_THREAD_SUMMARY_TARGET_TOKENS),
             )
         },

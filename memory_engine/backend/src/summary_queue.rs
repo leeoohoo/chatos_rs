@@ -341,7 +341,7 @@ async fn process_summary_event(
         return Ok(());
     }
 
-    let token_threshold = summary::effective_thread_summary_token_limit(policy.token_limit);
+    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
     let Some(thread) = threads::get_thread_by_id(
         &state.pool,
         envelope.tenant_id.as_str(),

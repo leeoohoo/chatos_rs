@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::super::{RollupSettings, DEFAULT_ROLLUP_TARGET_TOKENS, DEFAULT_ROLLUP_TOKEN_LIMIT};
+use super::super::RollupSettings;
+
+const ROLLUP_COMPAT_TOKEN_LIMIT: i64 = 6000;
+const ROLLUP_COMPAT_TARGET_TOKENS: i64 = 700;
 
 #[allow(dead_code)]
 pub fn default_rollup_settings() -> RollupSettings {
     RollupSettings {
-        token_limit: DEFAULT_ROLLUP_TOKEN_LIMIT,
-        target_summary_tokens: DEFAULT_ROLLUP_TARGET_TOKENS,
+        token_limit: ROLLUP_COMPAT_TOKEN_LIMIT,
+        target_summary_tokens: ROLLUP_COMPAT_TARGET_TOKENS,
         count_limit: 0,
         keep_level0_count: 5,
         max_level: 4,
