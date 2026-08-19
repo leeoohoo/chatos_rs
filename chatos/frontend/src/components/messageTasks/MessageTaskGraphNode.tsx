@@ -53,11 +53,27 @@ const relationshipTone = (graphNode: PositionedTaskNode['data']['graphNode']): s
   return 'border-border bg-muted/60 text-muted-foreground';
 };
 
-const displayStatusForTask = (
+const TERMINAL_DISPLAY_STATUSES = new Set([
+  'succeeded',
+  'success',
+  'completed',
+  'done',
+  'failed',
+  'error',
+  'cancelled',
+  'canceled',
+  'blocked',
+  'archived',
+]);
+
+export const displayStatusForTask = (
   task: PositionedTaskNode['data']['graphNode']['task'],
   prerequisiteCount: number,
 ): string | null | undefined => {
   const status = readString(task.status)?.toLowerCase();
+  if (status && TERMINAL_DISPLAY_STATUSES.has(status)) {
+    return task.status;
+  }
   const integrationStatus = readString(task.last_run?.workspace_execution?.integration_status)
     ?.toLowerCase();
   if (integrationStatus === 'pending') {

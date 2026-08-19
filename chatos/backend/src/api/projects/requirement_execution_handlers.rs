@@ -29,9 +29,9 @@ use super::requirement_execution::WorkItemPlanItem;
 use super::requirement_execution::{
     apply_task_runner_task_snapshot, collect_requirement_execution_scope,
     load_execution_links_for_work_items, load_requirement_execution_request_context,
-    mark_execution_messages_for_stop, parse_requirements, parse_work_items, project_plan_array,
-    project_plan_value, requirement_dependency_map, select_contact_runtime,
-    sync_execution_link_status, sync_requirement_execution_state,
+    mark_execution_message_for_stop_by_id, mark_execution_messages_for_stop, parse_requirements,
+    parse_work_items, project_plan_array, project_plan_value, requirement_dependency_map,
+    select_contact_runtime, sync_execution_link_status, sync_requirement_execution_state,
     task_runner_callback_event_for_status, task_runner_status_is_active,
     task_runner_status_is_cancelled, task_runner_status_is_success, value_string, ExecutionLink,
     HandlerError,
@@ -596,7 +596,7 @@ async fn stop_requirement_execution_inner(
     };
     mark_execution_messages_for_stop(&links, STATUS_STOPPED).await;
     if let Some((conversation_id, execution_group_id)) = precise_plan.as_ref() {
-        let status_result = set_task_runner_async_overall_status_for_session(
+        let status_result = mark_execution_message_for_stop_by_id(
             conversation_id.as_str(),
             execution_group_id.as_str(),
             STATUS_STOPPED,
@@ -607,11 +607,11 @@ async fn stop_requirement_execution_inner(
                 warn!(
                     conversation_id = conversation_id.as_str(),
                     execution_group_id = execution_group_id.as_str(),
-                    error = error.as_str(),
+                    error = error.error.as_str(),
                     "discarded requirement execution batch without a persisted planning message"
                 );
             } else {
-                return Err(HandlerError::internal("更新执行计划停止状态失败", error));
+                return Err(error);
             }
         }
     }

@@ -521,31 +521,79 @@ pub(in crate::api::projects) async fn mark_execution_messages_for_stop(
             *async_meta = json!({});
         }
         if let Some(async_meta) = async_meta.as_object_mut() {
-            let mut stopped_task_ids = async_meta
-                .get("stopped_task_ids")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect::<BTreeSet<_>>();
-            stopped_task_ids.extend(task_ids);
-            async_meta.insert(
-                "overall_status".to_string(),
-                Value::String(overall_status.to_string()),
-            );
-            async_meta.insert(
-                "confirmation_status".to_string(),
-                Value::String(overall_status.to_string()),
-            );
-            async_meta.insert("stopped_at".to_string(), Value::String(now_rfc3339()));
-            async_meta.insert(
-                "stopped_task_ids".to_string(),
-                Value::Array(stopped_task_ids.into_iter().map(Value::String).collect()),
-            );
+            apply_execution_stop_marker(async_meta, &task_ids, overall_status);
         }
         let _ = conversation_messages::upsert_message_in_session(&session, &message).await;
     }
+}
+
+pub(in crate::api::projects) async fn mark_execution_message_for_stop_by_id(
+    session_id: &str,
+    message_id: &str,
+    overall_status: &str,
+) -> Result<bool, HandlerError> {
+    let Some(session) = chatos_sessions::get_session_by_id(session_id)
+        .await
+        .map_err(|err| HandlerError::internal("读取需求执行会话失败", err))?
+    else {
+        return Ok(false);
+    };
+    let Some(mut message) =
+        conversation_messages::get_message_by_id_in_session_including_hidden(&session, message_id)
+            .await
+            .map_err(|err| HandlerError::internal("读取需求执行消息失败", err))?
+    else {
+        return Ok(false);
+    };
+    let metadata = ensure_message_metadata_object(&mut message);
+    let async_meta = metadata
+        .entry("task_runner_async".to_string())
+        .or_insert_with(|| json!({}));
+    if !async_meta.is_object() {
+        *async_meta = json!({});
+    }
+    if let Some(async_meta) = async_meta.as_object_mut() {
+        apply_execution_stop_marker(async_meta, &BTreeSet::new(), overall_status);
+    }
+    conversation_messages::upsert_message_in_session(&session, &message)
+        .await
+        .map_err(|err| HandlerError::internal("更新需求执行停止状态失败", err))?;
+    Ok(true)
+}
+
+fn apply_execution_stop_marker(
+    async_meta: &mut serde_json::Map<String, Value>,
+    task_ids: &BTreeSet<String>,
+    overall_status: &str,
+) {
+    let mut stopped_task_ids = read_string_set(async_meta.get("stopped_task_ids"));
+    stopped_task_ids.extend(task_ids.iter().cloned());
+    let clear_all_active_tasks = matches!(
+        overall_status.trim().to_ascii_lowercase().as_str(),
+        STATUS_STOPPED | "cancelled" | "canceled"
+    );
+    for key in ["running_task_ids", "queued_task_ids", "pending_task_ids"] {
+        let mut active_task_ids = read_string_set(async_meta.get(key));
+        if clear_all_active_tasks {
+            stopped_task_ids.extend(active_task_ids.iter().cloned());
+            active_task_ids.clear();
+        } else {
+            for task_id in task_ids {
+                active_task_ids.remove(task_id);
+            }
+        }
+        write_string_set(async_meta, key, &active_task_ids);
+    }
+    async_meta.insert(
+        "overall_status".to_string(),
+        Value::String(overall_status.to_string()),
+    );
+    async_meta.insert(
+        "confirmation_status".to_string(),
+        Value::String(overall_status.to_string()),
+    );
+    async_meta.insert("stopped_at".to_string(), Value::String(now_rfc3339()));
+    write_string_set(async_meta, "stopped_task_ids", &stopped_task_ids);
 }
 
 #[cfg(test)]
@@ -712,6 +760,68 @@ mod tests {
         assert_eq!(
             metadata.get("confirmation_status").and_then(Value::as_str),
             Some("stopped")
+        );
+    }
+
+    #[test]
+    fn stopping_marker_removes_stopped_tasks_from_active_sets() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("running_task_ids".to_string(), json!(["task-1", "task-2"]));
+        metadata.insert("queued_task_ids".to_string(), json!(["task-1", "task-3"]));
+        metadata.insert("pending_task_ids".to_string(), json!(["task-4", "task-2"]));
+
+        apply_execution_stop_marker(
+            &mut metadata,
+            &BTreeSet::from(["task-1".to_string(), "task-2".to_string()]),
+            "stopping",
+        );
+
+        assert_eq!(
+            read_string_set(metadata.get("running_task_ids")),
+            BTreeSet::new()
+        );
+        assert_eq!(
+            read_string_set(metadata.get("queued_task_ids")),
+            BTreeSet::from(["task-3".to_string()])
+        );
+        assert_eq!(
+            read_string_set(metadata.get("pending_task_ids")),
+            BTreeSet::from(["task-4".to_string()])
+        );
+        assert_eq!(
+            read_string_set(metadata.get("stopped_task_ids")),
+            BTreeSet::from(["task-1".to_string(), "task-2".to_string()])
+        );
+        assert_eq!(
+            metadata.get("overall_status").and_then(Value::as_str),
+            Some("stopping")
+        );
+    }
+
+    #[test]
+    fn stopped_marker_clears_stale_active_sets() {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("running_task_ids".to_string(), json!(["task-1", "task-2"]));
+        metadata.insert("queued_task_ids".to_string(), json!(["task-3"]));
+        metadata.insert("pending_task_ids".to_string(), json!(["task-4"]));
+
+        apply_execution_stop_marker(
+            &mut metadata,
+            &BTreeSet::from(["task-1".to_string()]),
+            "stopped",
+        );
+
+        assert!(read_string_set(metadata.get("running_task_ids")).is_empty());
+        assert!(read_string_set(metadata.get("queued_task_ids")).is_empty());
+        assert!(read_string_set(metadata.get("pending_task_ids")).is_empty());
+        assert_eq!(
+            read_string_set(metadata.get("stopped_task_ids")),
+            BTreeSet::from([
+                "task-1".to_string(),
+                "task-2".to_string(),
+                "task-3".to_string(),
+                "task-4".to_string()
+            ])
         );
     }
 
