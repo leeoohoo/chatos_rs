@@ -15,6 +15,7 @@ use std::time::Duration;
 use tracing::warn;
 
 use crate::api::projects::memory_sync::{sync_active_project, sync_archived_project};
+use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
@@ -23,6 +24,7 @@ use crate::models::project::{Project, ProjectService};
 use crate::models::remote_connection::RemoteConnection;
 use crate::services::realtime::publish_projects_updated;
 use crate::services::user_settings::{get_effective_user_settings, local_project_creation_enabled};
+use crate::services::{access_token_scope, project_management_api_client};
 
 mod connector_client;
 mod directory_payload;
@@ -60,6 +62,7 @@ const LOCAL_CONNECTOR_BINDING_MODE_MCP: &str = "local_mcp";
 const LOCAL_CONNECTOR_BINDING_MODE_TERMINAL: &str = "local_terminal";
 const LOCAL_CONNECTOR_DEVICE_ONLINE: &str = "online";
 const LOCAL_CONNECTOR_WORKSPACE_ACTIVE: &str = "active";
+const LOCAL_HARNESS_IMPORT_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 pub(crate) const LOCAL_CONNECTOR_BUILTIN_CODE_READ: &str = BUILTIN_KIND_CODE_MAINTAINER_READ;
 pub(crate) const LOCAL_CONNECTOR_BUILTIN_TERMINAL: &str = BUILTIN_KIND_TERMINAL_CONTROLLER;
 pub fn router() -> Router {
@@ -442,6 +445,23 @@ async fn create_project(
             id: saved_id.clone(),
             ..project
         });
+    if let Err(err) = import_local_project_to_harness(
+        saved.id.as_str(),
+        device_id.as_str(),
+        workspace_id.as_str(),
+        relative_path.as_deref(),
+    )
+    .await
+    {
+        let failure = error(
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "error": "导入本地项目到 Harness 失败",
+                "detail": err,
+            }),
+        );
+        return project_create_error_with_rollback(saved.clone(), &[], failure, true).await;
+    }
 
     let mut bindings = Vec::new();
     for mode in [
@@ -520,6 +540,127 @@ async fn validate_local_connector_directory(
         .map(|_| ())
 }
 
+pub(crate) async fn import_local_project_to_harness(
+    project_id: &str,
+    device_id: &str,
+    workspace_id: &str,
+    relative_path: Option<&str>,
+) -> Result<(), String> {
+    let sync_secret = project_sync_secret()?;
+    let access = project_management_api_client::get_project_harness_git_access(
+        sync_secret.as_str(),
+        project_id,
+        access_token_scope::get_current_access_token().as_deref(),
+    )
+    .await?;
+    if access.project_id.trim() != project_id.trim() {
+        return Err("Harness git access project identity mismatch".to_string());
+    }
+    if access.repo_path.trim().is_empty() || access.space_identifier.trim().is_empty() {
+        return Err("Harness git access metadata is incomplete".to_string());
+    }
+    let push_url = authenticated_harness_git_url(
+        access.git_url.as_str(),
+        access.access_username.as_str(),
+        access.access_token.as_str(),
+    )?;
+    let default_branch = access.default_branch.trim();
+    if default_branch.is_empty() {
+        return Err("Harness default branch is empty".to_string());
+    }
+    let _prefer_https_git_url = access.git_ssh_url.as_deref().is_none_or(str::is_empty);
+    let command = local_harness_import_command(push_url.as_str(), default_branch);
+    let value = call_local_mcp_tool(
+        device_id,
+        workspace_id,
+        relative_path,
+        &[LOCAL_CONNECTOR_BUILTIN_TERMINAL],
+        "execute_command",
+        json!({
+            "path": ".",
+            "common": command,
+            "background": false,
+            "timeout_ms": LOCAL_HARNESS_IMPORT_TIMEOUT_MS,
+        }),
+    )
+    .await
+    .map_err(|err| {
+        let message = response_summary(&err.1 .0);
+        scrub_sensitive(
+            message.as_str(),
+            &[push_url.as_str(), access.access_token.as_str()],
+        )
+    })?;
+    let success = value
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| value.get("exit_code").and_then(Value::as_i64) == Some(0));
+    if success {
+        return Ok(());
+    }
+    let message = value
+        .get("stderr")
+        .or_else(|| value.get("stdout"))
+        .or_else(|| value.get("output"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Local Connector Harness import command failed");
+    Err(scrub_sensitive(
+        message,
+        &[push_url.as_str(), access.access_token.as_str()],
+    ))
+}
+
+fn project_sync_secret() -> Result<String, String> {
+    let cfg = Config::try_get()?;
+    cfg.project_service_sync_secret
+        .as_deref()
+        .or(cfg.task_runner_callback_secret.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "project service sync secret is not configured".to_string())
+}
+
+fn authenticated_harness_git_url(
+    raw_url: &str,
+    username: &str,
+    token: &str,
+) -> Result<String, String> {
+    let mut url =
+        reqwest::Url::parse(raw_url).map_err(|err| format!("invalid harness git url: {err}"))?;
+    url.set_username(username.trim())
+        .map_err(|_| "failed to set harness git username".to_string())?;
+    url.set_password(Some(token.trim()))
+        .map_err(|_| "failed to set harness git token".to_string())?;
+    Ok(url.to_string())
+}
+
+fn local_harness_import_command(push_url: &str, default_branch: &str) -> String {
+    format!(
+        r#"set -e
+tmp="${{TMPDIR:-/tmp}}/chatos-harness-import-$(date +%s)-$$"
+rm -rf "$tmp"
+mkdir -p "$tmp"
+trap 'rm -rf "$tmp"' EXIT
+if command -v rsync >/dev/null 2>&1; then
+  rsync -a --delete --exclude='.git/' --exclude='.chatos/' ./ "$tmp/"
+else
+  tar --exclude='./.git' --exclude='./.git/*' --exclude='*/.git' --exclude='*/.git/*' --exclude='./.chatos' --exclude='./.chatos/*' --exclude='*/.chatos' --exclude='*/.chatos/*' -cf - . | (cd "$tmp" && tar -xf -)
+fi
+cd "$tmp"
+git init -b {branch} >/dev/null 2>&1 || {{ git init >/dev/null && git symbolic-ref HEAD refs/heads/{branch}; }}
+git add -A -- .
+git -c user.name=ChatOS -c user.email=chatos@example.invalid commit --allow-empty --no-verify -m 'Import local project into ChatOS Harness' >/dev/null
+git remote add origin {push_url}
+GIT_TERMINAL_PROMPT=0 git push --force origin HEAD:refs/heads/{branch}
+"#,
+        branch = shell_quote(default_branch),
+        push_url = shell_quote(push_url)
+    )
+}
+
 pub(crate) async fn call_local_mcp_tool(
     device_id: &str,
     workspace_id: &str,
@@ -551,6 +692,24 @@ pub(crate) async fn call_local_mcp_tool(
     )
     .await?;
     extract_mcp_tool_result(response)
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn scrub_sensitive(value: &str, secrets: &[&str]) -> String {
+    let mut output = value.to_string();
+    for secret in secrets {
+        let secret = secret.trim();
+        if !secret.is_empty() {
+            output = output.replace(secret, "***");
+        }
+    }
+    output
 }
 
 fn extract_mcp_tool_result(response: Value) -> Result<Value, (StatusCode, Json<Value>)> {

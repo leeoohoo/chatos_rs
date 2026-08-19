@@ -9,11 +9,15 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 use crate::api::fs::policy::{FsPathPolicy, FsPolicyError};
-use crate::api::local_connectors::parse_local_connector_root_path;
+use crate::api::local_connectors::{
+    import_local_project_to_harness, parse_local_connector_root_path,
+};
 use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
-use crate::models::project::harness_project_id_from_root_path;
+use crate::models::project::{
+    harness_project_id_from_root_path, harness_project_root_path, ProjectService,
+};
 use crate::services::git;
 use crate::services::git::{
     GitActionResult, GitCheckoutRequest, GitCommitRequest, GitCompareQuery, GitCreateBranchRequest,
@@ -47,8 +51,13 @@ async fn client() -> (StatusCode, Json<Value>) {
 }
 
 async fn summary(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    if let Some(project_id) = harness_project_id_from_root_path(query.root.as_str()) {
-        return harness_git_summary(&auth, project_id, query.root.as_str()).await;
+    match resolve_harness_project_id_for_git_root(&auth, query.root.as_str()).await {
+        Ok(Some(project_id)) => {
+            let root = harness_project_root_path(project_id.as_str());
+            return harness_git_summary(&auth, project_id.as_str(), root.as_str()).await;
+        }
+        Ok(None) => {}
+        Err(err) => return err,
     }
     let policy = match git_path_policy(&auth).await {
         Ok(policy) => policy,
@@ -79,8 +88,10 @@ async fn summary(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCo
 }
 
 async fn branches(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    if let Some(project_id) = harness_project_id_from_root_path(query.root.as_str()) {
-        return harness_git_branches(&auth, project_id).await;
+    match resolve_harness_project_id_for_git_root(&auth, query.root.as_str()).await {
+        Ok(Some(project_id)) => return harness_git_branches(&auth, project_id.as_str()).await,
+        Ok(None) => {}
+        Err(err) => return err,
     }
     let policy = match git_path_policy(&auth).await {
         Ok(policy) => policy,
@@ -97,11 +108,15 @@ async fn branches(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusC
 }
 
 async fn status(auth: AuthUser, Query(query): Query<GitRootQuery>) -> (StatusCode, Json<Value>) {
-    if let Some(project_id) = harness_project_id_from_root_path(query.root.as_str()) {
-        if let Err(err) = ensure_harness_git_project(&auth, project_id).await {
-            return err;
+    match resolve_harness_project_id_for_git_root(&auth, query.root.as_str()).await {
+        Ok(Some(project_id)) => {
+            if let Err(err) = ensure_harness_git_project(&auth, project_id.as_str()).await {
+                return err;
+            }
+            return (StatusCode::OK, Json(json!({ "files": [] })));
         }
-        return (StatusCode::OK, Json(json!({ "files": [] })));
+        Ok(None) => {}
+        Err(err) => return err,
     }
     let policy = match git_path_policy(&auth).await {
         Ok(policy) => policy,
@@ -360,6 +375,62 @@ async fn discard(
     }
 }
 
+async fn resolve_harness_project_id_for_git_root(
+    auth: &AuthUser,
+    root: &str,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    let root = root.trim();
+    if let Some(project_id) = harness_project_id_from_root_path(root) {
+        return ensure_owned_project(project_id, auth)
+            .await
+            .map(|_| Some(project_id.to_string()))
+            .map_err(map_project_access_error);
+    }
+    let Some(root_ref) = parse_local_connector_root_path(root) else {
+        return Ok(None);
+    };
+    let projects = ProjectService::list(Some(auth.user_id.clone()))
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err })),
+            )
+        })?;
+    let normalized_root = root.trim_end_matches('/');
+    let Some(project) = projects
+        .into_iter()
+        .find(|project| project.root_path.trim_end_matches('/') == normalized_root)
+    else {
+        return Ok(None);
+    };
+    if project_harness_metadata_ready(&project) {
+        return Ok(Some(project.id));
+    }
+    import_local_project_to_harness(
+        project.id.as_str(),
+        root_ref.device_id.as_str(),
+        root_ref.workspace_id.as_str(),
+        root_ref.relative_path.as_deref(),
+    )
+    .await
+    .map_err(|err| (StatusCode::BAD_GATEWAY, Json(json!({ "error": err }))))?;
+    Ok(Some(project.id))
+}
+
+fn project_harness_metadata_ready(project: &crate::models::project::Project) -> bool {
+    project
+        .harness_repo_identifier
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        || project
+            .harness_git_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+}
+
 async fn git_path_policy(auth: &AuthUser) -> Result<FsPathPolicy, (StatusCode, Json<Value>)> {
     FsPathPolicy::for_user(auth)
         .await
@@ -477,15 +548,16 @@ async fn ensure_harness_git_project(
     let project = ensure_owned_project(project_id, auth)
         .await
         .map_err(map_project_access_error)?;
+    let is_harness_managed = project_harness_metadata_ready(&project);
     let is_cloud = project
         .source_type
         .as_deref()
         .map(str::trim)
         .is_some_and(|value| value.eq_ignore_ascii_case("cloud"));
-    if !is_cloud {
+    if !is_cloud && !is_harness_managed {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "该项目不是云端项目" })),
+            Json(json!({ "error": "该项目没有绑定 Harness 代码仓库" })),
         ));
     }
     Ok(())

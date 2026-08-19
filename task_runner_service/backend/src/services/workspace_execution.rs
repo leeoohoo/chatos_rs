@@ -226,6 +226,65 @@ pub(crate) fn validate_project_execution_task_runtime_contract(
     Ok(())
 }
 
+fn single_owned_workspace_root(task: &TaskRecord) -> Result<Option<String>, String> {
+    let payload = task
+        .input_payload
+        .as_ref()
+        .unwrap_or(&serde_json::Value::Null);
+    single_owned_workspace_root_from_payload(payload)
+}
+
+fn single_owned_workspace_root_from_payload(
+    payload: &serde_json::Value,
+) -> Result<Option<String>, String> {
+    if payload.get("source").and_then(serde_json::Value::as_str)
+        != Some("chatos_project_requirement_execution")
+    {
+        return Ok(None);
+    }
+    let owned_paths = payload
+        .get("owned_paths")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(normalize_owned_workspace_root)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut owned_paths = owned_paths
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    owned_paths.sort();
+    owned_paths.dedup();
+    if owned_paths.len() == 1 {
+        Ok(owned_paths.pop())
+    } else {
+        Ok(None)
+    }
+}
+
+fn normalize_owned_workspace_root(path: &str) -> Result<String, String> {
+    let normalized = path.trim().trim_matches('/').to_string();
+    if normalized.is_empty() {
+        return Ok(String::new());
+    }
+    if normalized.starts_with(['/', '\\'])
+        || normalized.as_bytes().get(1) == Some(&b':')
+        || normalized.split('/').any(|segment| {
+            segment.is_empty()
+                || matches!(segment, "." | "..")
+                || segment
+                    .chars()
+                    .any(|value| value == '\\' || value.is_control())
+        })
+    {
+        return Err(format!(
+            "platform_task_capability_invalid: owned path is not a safe relative workspace root: {path}"
+        ));
+    }
+    Ok(normalized)
+}
+
 pub(crate) fn task_runtime_capability_fingerprint(task: &TaskRecord) -> String {
     let mut builtin_kinds = task
         .mcp_config
@@ -283,32 +342,35 @@ pub(crate) fn task_runtime_capability_fingerprint(task: &TaskRecord) -> String {
 }
 
 pub(crate) fn decide_workspace_route(
-    source_type: Option<&str>,
+    has_harness_repo: bool,
     tools: &EffectiveTaskToolSnapshot,
 ) -> Result<WorkspaceRouteDecision, String> {
     if !tools.uses_workspace() {
         return Ok(WorkspaceRouteDecision::None);
     }
-    match source_type
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("local_connector") | Some("local") => Ok(WorkspaceRouteDecision::LocalConnector),
-        Some("cloud") => {
-            if tools.terminal {
-                Ok(WorkspaceRouteDecision::CloudSandboxRunBranch)
-            } else if tools.workspace_write {
-                Ok(WorkspaceRouteDecision::HarnessRunBranch)
-            } else {
-                Ok(WorkspaceRouteDecision::HarnessDefaultBranch)
-            }
+    if has_harness_repo {
+        if tools.terminal {
+            return Ok(WorkspaceRouteDecision::CloudSandboxRunBranch);
         }
-        Some(value) => Err(format!(
-            "unsupported project source_type for workspace routing: {value}"
-        )),
-        None => Err("project source_type is required for workspace routing".to_string()),
+        if tools.workspace_write {
+            return Ok(WorkspaceRouteDecision::HarnessRunBranch);
+        }
+        return Ok(WorkspaceRouteDecision::HarnessDefaultBranch);
     }
+    Ok(WorkspaceRouteDecision::LocalConnector)
+}
+
+fn project_has_harness_repo(project: &crate::models::TaskProjectRecord) -> bool {
+    project
+        .harness_repo_identifier
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        || project
+            .harness_git_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
 }
 
 pub(crate) async fn model_execution_lane_key(
@@ -323,26 +385,13 @@ pub(crate) async fn model_execution_lane_key(
     if project_id == crate::models::PUBLIC_PROJECT_ID {
         return Ok(None);
     }
-    let project = super::project_management_api_client::sync_get_project(
+    let _project = super::project_management_api_client::sync_get_project(
         &service.config,
         project_id.as_str(),
     )
     .await?
     .ok_or_else(|| format!("project not found while resolving execution lane: {project_id}"))?;
-    match project
-        .source_type
-        .as_deref()
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("local_connector") | Some("local") => Ok(None),
-        Some("cloud") => Ok(None),
-        Some(value) => Err(format!(
-            "unsupported project source_type for execution lane: {value}"
-        )),
-        None => Err("project source_type is required for execution lane".to_string()),
-    }
+    Ok(None)
 }
 
 pub(crate) async fn prepare_task_run_workspace(
@@ -440,13 +489,16 @@ async fn prepare_workspace_inner(
     )
     .await?
     .ok_or_else(|| format!("project not found while preparing Task Run workspace: {project_id}"))?;
-    let decision = decide_workspace_route(project.source_type.as_deref(), &run.effective_tools)?;
+    let decision =
+        decide_workspace_route(project_has_harness_repo(&project), &run.effective_tools)?;
     match decision {
         WorkspaceRouteDecision::None => {
             Err("workspace preparation was requested without workspace tools".to_string())
         }
         WorkspaceRouteDecision::LocalConnector => Ok(PreparedWorkspaceExecution {
-            route: RuntimeWorkspaceRouteTarget::LocalConnector,
+            route: RuntimeWorkspaceRouteTarget::LocalConnector {
+                default_tool_root: single_owned_workspace_root(task)?,
+            },
             branch_target: TaskRunBranchTarget::Local,
             execution_group_id: run
                 .effective_tools
@@ -615,7 +667,7 @@ pub(crate) async fn load_task_run_workspace_changes(
         .ok_or_else(|| "当前运行没有代码变更上下文".to_string())?;
     if matches!(
         execution.route.as_ref(),
-        Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+        Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
     ) {
         return Ok(
             super::project_management_api_client::GetRunWorkspaceChangesResponse {
@@ -698,7 +750,7 @@ pub(crate) async fn finalize_task_run_workspace(
     }
     if matches!(
         execution.route.as_ref(),
-        Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+        Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
     ) {
         return Ok(());
     }
@@ -911,7 +963,7 @@ pub(crate) async fn apply_runtime_provider_finalization(
     };
     if !matches!(
         execution.route.as_ref(),
-        Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+        Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
     ) {
         return Ok(());
     }
@@ -1059,7 +1111,7 @@ mod tests {
     #[test]
     fn cloud_terminal_can_only_choose_cloud_sandbox() {
         assert_eq!(
-            decide_workspace_route(Some("cloud"), &tools(true, true, true)).unwrap(),
+            decide_workspace_route(true, &tools(true, true, true)).unwrap(),
             WorkspaceRouteDecision::CloudSandboxRunBranch
         );
     }
@@ -1083,7 +1135,7 @@ mod tests {
     #[test]
     fn cloud_write_uses_a_harness_run_branch_without_a_sandbox() {
         assert_eq!(
-            decide_workspace_route(Some("cloud"), &tools(true, true, false)).unwrap(),
+            decide_workspace_route(true, &tools(true, true, false)).unwrap(),
             WorkspaceRouteDecision::HarnessRunBranch
         );
     }
@@ -1091,16 +1143,67 @@ mod tests {
     #[test]
     fn cloud_read_only_uses_the_default_harness_branch() {
         assert_eq!(
-            decide_workspace_route(Some("cloud"), &tools(true, false, false)).unwrap(),
+            decide_workspace_route(true, &tools(true, false, false)).unwrap(),
             WorkspaceRouteDecision::HarnessDefaultBranch
         );
     }
 
     #[test]
-    fn local_projects_never_choose_a_cloud_sandbox() {
+    fn projects_without_harness_repo_use_local_connector_workspace() {
         assert_eq!(
-            decide_workspace_route(Some("local_connector"), &tools(true, true, true)).unwrap(),
+            decide_workspace_route(false, &tools(true, true, true)).unwrap(),
             WorkspaceRouteDecision::LocalConnector
         );
+    }
+
+    #[test]
+    fn projects_with_harness_repo_use_harness_workspaces() {
+        assert_eq!(
+            decide_workspace_route(true, &tools(true, true, false)).unwrap(),
+            WorkspaceRouteDecision::HarnessRunBranch
+        );
+        assert_eq!(
+            decide_workspace_route(true, &tools(true, false, false)).unwrap(),
+            WorkspaceRouteDecision::HarnessDefaultBranch
+        );
+    }
+
+    #[test]
+    fn single_owned_project_execution_path_becomes_workspace_root() {
+        let payload = serde_json::json!({
+            "source": "chatos_project_requirement_execution",
+            "owned_paths": ["backend"]
+        });
+
+        assert_eq!(
+            single_owned_workspace_root_from_payload(&payload)
+                .unwrap()
+                .as_deref(),
+            Some("backend")
+        );
+    }
+
+    #[test]
+    fn multiple_owned_project_execution_paths_keep_project_root() {
+        let payload = serde_json::json!({
+            "source": "chatos_project_requirement_execution",
+            "owned_paths": ["frontend", "backend"]
+        });
+
+        assert_eq!(
+            single_owned_workspace_root_from_payload(&payload).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn unsafe_owned_project_execution_path_is_rejected() {
+        let payload = serde_json::json!({
+            "source": "chatos_project_requirement_execution",
+            "owned_paths": ["../backend"]
+        });
+
+        let error = single_owned_workspace_root_from_payload(&payload).unwrap_err();
+        assert!(error.contains("owned path"));
     }
 }

@@ -84,7 +84,7 @@ pub(super) async fn resolve_runtime_session(
         .as_ref()
         .and_then(|workspace| workspace.device_id.clone());
     let runtime_provider = match request.workspace_route.as_ref() {
-        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
+        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector { .. }) => {
             "local_connector"
         }
         Some(

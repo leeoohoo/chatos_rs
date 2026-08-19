@@ -136,7 +136,11 @@ pub(super) fn normalize_runtime_workspace_route(
         return Ok(None);
     };
     let route = match route {
-        RuntimeWorkspaceRouteTarget::LocalConnector => RuntimeWorkspaceRouteTarget::LocalConnector,
+        RuntimeWorkspaceRouteTarget::LocalConnector { default_tool_root } => {
+            RuntimeWorkspaceRouteTarget::LocalConnector {
+                default_tool_root: normalized_default_tool_root(default_tool_root.as_deref())?,
+            }
+        }
         RuntimeWorkspaceRouteTarget::Harness { branch } => {
             let branch = match branch {
                 HarnessBranchTarget::Default { branch_ref } => {
@@ -208,7 +212,9 @@ pub(super) fn bind_runtime_workspace_routes(
         .filter(|route| runtime_resource_ids.contains(&route.resource_id.as_str()))
     {
         match workspace_route {
-            Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
+            Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector {
+                ..
+            }) => {
                 if let Some(provider_ref) = local_connector_workspace_provider_ref(project_context)
                 {
                     route.provider_kind = McpProviderKind::LocalConnector;
@@ -292,7 +298,7 @@ pub(super) fn validate_runtime_workspace_route_binding(
         }
 
         let valid = match workspace_route {
-            RuntimeWorkspaceRouteTarget::LocalConnector => {
+            RuntimeWorkspaceRouteTarget::LocalConnector { .. } => {
                 route.provider_kind == McpProviderKind::LocalConnector
                     && local_connector_workspace_provider_ref(project_context)
                         .as_deref()
@@ -435,7 +441,7 @@ pub(super) fn validate_context_overrides(
         ));
     }
     match request.workspace_route.as_ref() {
-        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector) => {
+        Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector { .. }) => {
             if context.workspace_provider != WorkspaceProviderKind::LocalConnector
                 || context.workspace.is_none()
             {
@@ -483,6 +489,31 @@ pub(super) fn validate_context_overrides(
         None => {}
     }
     Ok(())
+}
+
+fn normalized_default_tool_root(value: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let normalized = value.trim_matches('/').to_string();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    if normalized.starts_with(['/', '\\'])
+        || normalized.as_bytes().get(1) == Some(&b':')
+        || normalized.split('/').any(|segment| {
+            segment.is_empty()
+                || matches!(segment, "." | "..")
+                || segment
+                    .chars()
+                    .any(|value| value == '\\' || value.is_control())
+        })
+    {
+        return Err(ApiError::bad_request(
+            "Local Connector default_tool_root must be a safe relative path",
+        ));
+    }
+    Ok(Some(normalized))
 }
 
 pub(super) fn normalized(value: Option<String>) -> Option<String> {

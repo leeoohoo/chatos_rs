@@ -56,6 +56,18 @@ pub struct ProjectHarnessGitBranchesResponse {
     pub branches: Vec<ProjectHarnessGitBranch>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectHarnessGitAccessResponse {
+    pub project_id: String,
+    pub repo_path: String,
+    pub git_url: String,
+    pub git_ssh_url: Option<String>,
+    pub default_branch: String,
+    pub space_identifier: String,
+    pub access_username: String,
+    pub access_token: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CreateProjectServiceProjectRequest {
     pub name: String,
@@ -387,6 +399,37 @@ pub async fn get_project_harness_git_branches(
         PROJECT_HARNESS_SCOPE,
     )?
     .header("X-ChatOS-Owner-User-Id", owner_user_id.trim());
+    if let Some(user_access_token) = user_access_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        request = request.header(
+            "X-ChatOS-User-Authorization",
+            format!("Bearer {user_access_token}"),
+        );
+    }
+    send_json(request).await
+}
+
+pub async fn get_project_harness_git_access(
+    sync_secret: &str,
+    project_id: &str,
+    user_access_token: Option<&str>,
+) -> Result<ProjectHarnessGitAccessResponse, String> {
+    let config = crate::config::Config::try_get()?;
+    let endpoint = format!(
+        "{}/api/chatos-sync/projects/{}/harness/git-access",
+        config
+            .project_service_internal_base_url
+            .trim()
+            .trim_end_matches('/'),
+        urlencoding::encode(project_id.trim())
+    );
+    let mut request = signed_project_service_request(
+        config.project_service_internal_http_client.get(endpoint),
+        sync_secret,
+        PROJECT_HARNESS_SCOPE,
+    )?;
     if let Some(user_access_token) = user_access_token
         .map(str::trim)
         .filter(|value| !value.is_empty())

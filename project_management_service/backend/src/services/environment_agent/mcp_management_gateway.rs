@@ -143,7 +143,9 @@ fn runtime_session_request(
         workspace_route: Some(match project.source_type {
             crate::models::ProjectSourceType::Local
             | crate::models::ProjectSourceType::LocalConnector => {
-                RuntimeWorkspaceRouteTarget::LocalConnector
+                RuntimeWorkspaceRouteTarget::LocalConnector {
+                    default_tool_root: None,
+                }
             }
             crate::models::ProjectSourceType::Cloud => RuntimeWorkspaceRouteTarget::Harness {
                 branch: HarnessBranchTarget::Default {
@@ -247,9 +249,9 @@ mod tests {
             request.agent_key,
             SystemAgentKey::ProjectManagementLocalAgent.as_str()
         );
-        assert_eq!(
+        assert!(matches!(
             request.workspace_route,
-            Some(RuntimeWorkspaceRouteTarget::LocalConnector)
-        );
+            Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
+        ));
     }
 }

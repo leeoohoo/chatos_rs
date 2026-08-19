@@ -15,6 +15,7 @@ const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
 const MCP_RELAY_SCOPE: &str = "relay.mcp";
 const LOCAL_CONNECTOR_PROJECT_ID_HEADER: &str = "x-local-connector-project-id";
+const LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER: &str = "x-local-connector-default-tool-root";
 const MCP_MANAGEMENT_SESSION_ID_HEADER: &str = "x-mcp-management-session-id";
 const MCP_MANAGEMENT_RUN_ID_HEADER: &str = "x-mcp-management-run-id";
 const MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER: &str = "x-mcp-management-execution-group-id";

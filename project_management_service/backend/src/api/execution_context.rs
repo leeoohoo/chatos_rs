@@ -126,6 +126,19 @@ fn resolve_workspace_provider(
     project: &ProjectRecord,
     local_workspace: &Option<WorkspaceExecutionTarget>,
 ) -> WorkspaceProviderKind {
+    if project
+        .harness_repo_identifier
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        || project
+            .harness_git_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    {
+        return WorkspaceProviderKind::Harness;
+    }
     match project.source_type {
         ProjectSourceType::Local | ProjectSourceType::LocalConnector
             if local_workspace.is_some() =>

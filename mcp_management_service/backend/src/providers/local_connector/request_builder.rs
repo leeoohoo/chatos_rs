@@ -9,7 +9,8 @@ use crate::trace_context::InternalTraceContextExt;
 
 use super::binding::resolve_binding;
 use super::{
-    LocalConnectorProvider, ProviderCallError, CALLER_SERVICE, LOCAL_CONNECTOR_PROJECT_ID_HEADER,
+    LocalConnectorProvider, ProviderCallError, CALLER_SERVICE,
+    LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER, LOCAL_CONNECTOR_PROJECT_ID_HEADER,
     MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER, MCP_MANAGEMENT_RUN_ID_HEADER,
     MCP_MANAGEMENT_SCOPE_GENERATION_HEADER, MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER,
     MCP_MANAGEMENT_SESSION_ID_HEADER, MCP_MANAGEMENT_TASK_ID_HEADER, MCP_RELAY_SCOPE,
@@ -88,6 +89,9 @@ impl LocalConnectorProvider {
                 snapshot.expires_at_unix.to_string(),
             )
             .with_internal_trace_context();
+        if let Some(default_tool_root) = binding.default_tool_root {
+            request = request.header(LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER, default_tool_root);
+        }
         if let Some(run_id) = snapshot.run_id.as_deref() {
             request = request.header(MCP_MANAGEMENT_RUN_ID_HEADER, run_id);
         }

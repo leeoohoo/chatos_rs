@@ -10,7 +10,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp_management_sdk::{
     ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    SandboxProviderKind, WorkspaceExecutionTarget, WorkspaceProviderKind,
+    RuntimeWorkspaceRouteTarget, SandboxProviderKind, WorkspaceExecutionTarget,
+    WorkspaceProviderKind,
 };
 use chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER;
 use serde_json::{json, Value};
@@ -77,7 +78,9 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_model_config_id: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
-        workspace_route: None,
+        workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: Some("backend".to_string()),
+        }),
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
@@ -86,7 +89,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             workspace: Some(WorkspaceExecutionTarget {
                 device_id: Some("device-1".to_string()),
                 workspace_id: "workspace-1".to_string(),
-                relative_root: Some("apps/backend".to_string()),
+                relative_root: Some("apps".to_string()),
             }),
             sandbox_provider: SandboxProviderKind::None,
             sandbox_pairing_id: None,
@@ -188,6 +191,12 @@ async fn start_local_connector(
                 .and_then(|value| value.to_str().ok()),
             Some("CodeMaintainerRead")
         );
+        assert_eq!(
+            headers
+                .get(LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("backend")
+        );
         let token = headers
             .get("x-local-connector-internal-token")
             .and_then(|value| value.to_str().ok())
@@ -205,7 +214,7 @@ async fn start_local_connector(
             query.get("workspace_id").map(String::as_str),
             Some("workspace-1")
         );
-        assert_eq!(query.get("cwd").map(String::as_str), Some("apps/backend"));
+        assert_eq!(query.get("cwd").map(String::as_str), Some("apps"));
         let id = match mode {
             ResponseMode::WrongId => json!("different-invocation"),
             ResponseMode::Valid | ResponseMode::Oversized => {
@@ -265,7 +274,7 @@ async fn start_local_connector_lifecycle(
             query.get("workspace_id").map(String::as_str),
             Some("workspace-1")
         );
-        assert_eq!(query.get("cwd").map(String::as_str), Some("apps/backend"));
+        assert_eq!(query.get("cwd").map(String::as_str), Some("apps"));
         let token = headers
             .get("x-local-connector-internal-token")
             .and_then(|value| value.to_str().ok())

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::path::Path;
+
 use anyhow::Result;
 use chatos_mcp_service::{McpRequestContext, McpToolProvider};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::approval::{
     approval_project_key_from_request, ApprovalDecision, CommandApprovalRequest,
@@ -14,7 +16,9 @@ use crate::local_runtime::LocalDatabase;
 use crate::relay::RelayRequest;
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::terminal::controller::local_mcp_terminal_project_id;
-use crate::workspace::paths::{relative_to_workspace, workspace_for_request};
+use crate::workspace::paths::{
+    relative_to_workspace, request_default_tool_root, workspace_for_request,
+};
 use crate::LocalState;
 
 use super::selection::{
@@ -162,6 +166,14 @@ async fn call_builtin_compatible_local_tool_with_limit(
             selection.code_write,
         )?;
         let arguments = normalize_code_maintainer_arguments(workspace, request, name, arguments)?;
+        if default_tool_root_list_target_is_missing(
+            request,
+            project_root.as_path(),
+            name,
+            &arguments,
+        )? {
+            return Ok(Some(code_maintainer_empty_list_dir_result()));
+        }
         if let Some((http_client, sandbox_runtime)) = execution_runtime {
             return crate::mcp::execution_scope::call_local_execution_scope_tool(
                 request,
@@ -286,6 +298,38 @@ async fn call_builtin_compatible_local_tool_with_limit(
         return Ok(Some(result));
     }
     Ok(None)
+}
+
+fn default_tool_root_list_target_is_missing(
+    request: &RelayRequest,
+    project_root: &Path,
+    name: &str,
+    arguments: &Value,
+) -> Result<bool> {
+    if name != "list_dir" {
+        return Ok(false);
+    }
+    let Some(default_root) = request_default_tool_root(request)? else {
+        return Ok(false);
+    };
+    let path = arguments
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or(default_root.as_str());
+    Ok(path == default_root && !project_root.join(default_root).exists())
+}
+
+fn code_maintainer_empty_list_dir_result() -> Value {
+    let payload = json!({ "entries": [] });
+    json!({
+        "content": [
+            {
+                "type": "text",
+                "text": serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+            }
+        ],
+        "_structured_result": payload
+    })
 }
 
 fn browser_approval_denied_result(tool_name: &str, reason: &str) -> Value {

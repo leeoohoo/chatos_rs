@@ -152,6 +152,7 @@ pub fn project_harness_metadata_ready(project: &ProjectRecord) -> bool {
 
 fn apply_harness_repo_metadata(project: &mut ProjectRecord, repo: &HarnessProjectRepoResponse) {
     let now = now_rfc3339();
+    project.git_url = Some(repo.git_url.clone());
     project.harness_space_identifier = Some(repo.space_identifier.clone());
     project.harness_repo_identifier = Some(repo.repo_identifier.clone());
     project.harness_repo_path = Some(repo.repo_path.clone());

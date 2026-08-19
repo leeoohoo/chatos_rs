@@ -51,19 +51,12 @@ pub(in crate::api) async fn create_project(
         .create_project(input, &user)
         .await
         .map_err(ApiError::bad_request)?;
+    ensure_harness_repo_for_project(&state, access_token.0.as_str(), &mut project)
+        .await
+        .map_err(ApiError::bad_gateway)?;
     ensure_runtime_environment_for_project(&state.store, &project, sandbox_enabled)
         .await
         .map_err(ApiError::bad_request)?;
-    if let Err(err) =
-        ensure_harness_repo_for_project(&state, access_token.0.as_str(), &mut project).await
-    {
-        warn!(
-            project_id = project.id.as_str(),
-            source_type = ?project.source_type,
-            error = err.as_str(),
-            "provision internal Harness repo failed during local project creation"
-        );
-    }
     Ok((StatusCode::CREATED, Json(project)))
 }
 

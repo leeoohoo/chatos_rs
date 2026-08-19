@@ -37,3 +37,14 @@ pub(crate) fn request_cwd(request: &RelayRequest) -> Option<&str> {
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != ".")
 }
+
+pub(crate) fn request_default_tool_root(request: &RelayRequest) -> Result<Option<String>> {
+    request
+        .headers
+        .get("x-local-connector-default-tool-root")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != ".")
+        .map(normalize_relative_workspace_path)
+        .transpose()
+}

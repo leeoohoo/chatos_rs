@@ -13,6 +13,7 @@ pub(super) struct LocalConnectorBinding<'a> {
     pub(super) device_id: &'a str,
     pub(super) workspace_id: &'a str,
     pub(super) relative_root: Option<&'a str>,
+    pub(super) default_tool_root: Option<&'a str>,
     pub(super) enabled_builtin_kinds: String,
 }
 
@@ -72,10 +73,20 @@ pub(super) fn resolve_binding<'a>(
     if let Some(relative_root) = relative_root {
         validate_relative_root(relative_root)?;
     }
+    let default_tool_root = snapshot
+        .workspace_route
+        .as_ref()
+        .and_then(|route| route.local_connector_default_tool_root())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(default_tool_root) = default_tool_root {
+        validate_relative_root(default_tool_root)?;
+    }
     Ok(LocalConnectorBinding {
         device_id,
         workspace_id,
         relative_root,
+        default_tool_root,
         enabled_builtin_kinds,
     })
 }

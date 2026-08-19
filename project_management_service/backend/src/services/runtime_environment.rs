@@ -84,6 +84,19 @@ pub fn default_runtime_environment_for_project(
 }
 
 fn project_file_provider(project: &ProjectRecord) -> RuntimeEnvironmentProvider {
+    if project
+        .harness_repo_identifier
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        || project
+            .harness_git_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    {
+        return RuntimeEnvironmentProvider::Harness;
+    }
     match project.source_type {
         ProjectSourceType::Cloud
             if project

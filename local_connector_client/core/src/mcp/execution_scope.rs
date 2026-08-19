@@ -24,7 +24,7 @@ use crate::history::{
 };
 use crate::local_runtime::LocalDatabase;
 use crate::mcp::tools::{
-    code_maintainer_structured_result, normalize_request_project_relative_path,
+    code_maintainer_structured_result, normalize_request_task_existing_dir_relative_path,
     request_project_root,
 };
 use crate::relay::RelayRequest;
@@ -303,7 +303,12 @@ pub(crate) async fn call_local_execution_scope_terminal_tool(
         .clamp(1_000, MAX_TERMINAL_EXEC_TIMEOUT_MS);
     let normalized_path = if tool_name == "execute_command" {
         let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
-        let normalized = normalize_request_project_relative_path(workspace, request, path)?;
+        let normalized = normalize_request_task_existing_dir_relative_path(
+            workspace,
+            request,
+            project_root.as_path(),
+            path,
+        )?;
         if let Some(map) = arguments.as_object_mut() {
             map.insert("path".to_string(), Value::String(normalized.clone()));
         }

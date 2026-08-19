@@ -126,15 +126,22 @@ impl HarnessBranchTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeWorkspaceRouteTarget {
-    LocalConnector,
-    Harness { branch: HarnessBranchTarget },
-    CloudSandbox { target: SandboxExecutionTarget },
+    LocalConnector {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default_tool_root: Option<String>,
+    },
+    Harness {
+        branch: HarnessBranchTarget,
+    },
+    CloudSandbox {
+        target: SandboxExecutionTarget,
+    },
 }
 
 impl RuntimeWorkspaceRouteTarget {
     pub const fn provider_kind(&self) -> WorkspaceProviderKind {
         match self {
-            Self::LocalConnector => WorkspaceProviderKind::LocalConnector,
+            Self::LocalConnector { .. } => WorkspaceProviderKind::LocalConnector,
             Self::Harness { .. } => WorkspaceProviderKind::Harness,
             Self::CloudSandbox { .. } => WorkspaceProviderKind::CloudSandbox,
         }
@@ -143,14 +150,21 @@ impl RuntimeWorkspaceRouteTarget {
     pub fn sandbox_target(&self) -> Option<&SandboxExecutionTarget> {
         match self {
             Self::CloudSandbox { target } => Some(target),
-            Self::LocalConnector | Self::Harness { .. } => None,
+            Self::LocalConnector { .. } | Self::Harness { .. } => None,
         }
     }
 
     pub fn harness_branch(&self) -> Option<&HarnessBranchTarget> {
         match self {
             Self::Harness { branch } => Some(branch),
-            Self::LocalConnector | Self::CloudSandbox { .. } => None,
+            Self::LocalConnector { .. } | Self::CloudSandbox { .. } => None,
+        }
+    }
+
+    pub fn local_connector_default_tool_root(&self) -> Option<&str> {
+        match self {
+            Self::LocalConnector { default_tool_root } => default_tool_root.as_deref(),
+            Self::Harness { .. } | Self::CloudSandbox { .. } => None,
         }
     }
 }
@@ -466,7 +480,16 @@ pub struct RuntimeSessionRoutesResponse {
     pub agent_key: String,
     pub project_id: String,
     pub device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_route: Option<RuntimeWorkspaceRouteTarget>,
     pub policy_revision: String,
     pub route_revision: String,
     pub expires_at: String,

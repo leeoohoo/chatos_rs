@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::history::CommandHistoryRecorder;
 use crate::mcp::selection::local_mcp_tool_selection;
-use crate::mcp::tools::{normalize_request_project_relative_path, request_project_root};
+use crate::mcp::tools::{normalize_request_task_existing_dir_relative_path, request_project_root};
 use crate::relay::RelayRequest;
 use crate::terminal::controller::{
     local_terminal_controller_context_for_root, LocalConnectorTerminalControllerStore,
@@ -29,8 +29,12 @@ pub(crate) async fn handle_local_mcp_terminal_start(
     let body = &request.body;
     let params = body.get("params").cloned().unwrap_or_else(|| json!({}));
     let requested_path = params.get("path").and_then(Value::as_str).unwrap_or(".");
-    let normalized_path =
-        normalize_request_project_relative_path(workspace, request, requested_path)?;
+    let normalized_path = normalize_request_task_existing_dir_relative_path(
+        workspace,
+        request,
+        project_root.as_path(),
+        requested_path,
+    )?;
     let context = local_terminal_controller_context_for_root(
         project_root.as_path(),
         request,

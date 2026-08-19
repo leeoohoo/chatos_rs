@@ -144,7 +144,7 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         locale: None,
         workspace_route: None,
     })?;
-    let resolved = builder.resolve_existing(session_id).await?;
+    let resolved = builder.resolve_existing_unchecked(session_id).await?;
     build_resolved_gateway(resolved, "existing", "existing").await
 }
 

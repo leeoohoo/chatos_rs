@@ -22,7 +22,7 @@ use crate::{
 };
 
 use super::code::code_maintainer_structured_result;
-use super::project::{normalize_request_project_relative_path, request_project_root};
+use super::project::{normalize_request_task_existing_dir_relative_path, request_project_root};
 
 pub(crate) async fn call_local_terminal_controller_tool(
     request: &RelayRequest,
@@ -42,7 +42,12 @@ pub(crate) async fn call_local_terminal_controller_tool(
     let project_root = request_project_root(workspace, request)?;
     let normalized_path = if tool_name == "execute_command" {
         let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
-        let normalized_path = normalize_request_project_relative_path(workspace, request, path)?;
+        let normalized_path = normalize_request_task_existing_dir_relative_path(
+            workspace,
+            request,
+            project_root.as_path(),
+            path,
+        )?;
         if let Some(map) = arguments.as_object_mut() {
             map.insert("path".to_string(), Value::String(normalized_path.clone()));
         }

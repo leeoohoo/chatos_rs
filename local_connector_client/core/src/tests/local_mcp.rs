@@ -321,6 +321,114 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn code_maintainer_default_tool_root_scopes_missing_owned_path() {
+    let root = temp_test_dir("default-tool-root");
+    fs::create_dir_all(root.join("frontend").as_path()).expect("create existing sibling");
+    fs::write(root.join("frontend").join("package.json"), "{}\n").expect("write frontend");
+    let workspace = test_workspace(root.as_path());
+    let state = test_state_with_full_control_workspace(workspace);
+    let mut request = request_with_cwd_and_builtin_kinds(
+        ".",
+        "CodeMaintainerRead,CodeMaintainerWrite,TerminalController",
+    );
+    request.headers.insert(
+        "x-local-connector-default-tool-root".to_string(),
+        "backend".to_string(),
+    );
+    let recorder = CommandHistoryRecorder {
+        state_path: root.join("state.json"),
+        state: Arc::new(RwLock::new(state.clone())),
+    };
+
+    let listed = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "list_dir",
+        json!({ "path": ".", "max_entries": 20 }),
+        &recorder,
+    )
+    .await
+    .expect("list call")
+    .expect("list result");
+    let structured = code_maintainer_structured_result(listed);
+    assert_eq!(
+        structured.get("entries").and_then(Value::as_array).unwrap(),
+        &Vec::<Value>::new()
+    );
+
+    let opened = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "open_edit_session",
+        json!({}),
+        &recorder,
+    )
+    .await
+    .expect("open edit session")
+    .expect("open result");
+    let session_id = code_maintainer_structured_result(opened)["result"]["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+    call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "stage_edit_batch",
+        json!({
+            "session_id": session_id.clone(),
+            "operations": [{
+                "kind": "write",
+                "path": "pom.xml",
+                "content": "<project />\n",
+                "expected_sha256": null
+            }]
+        }),
+        &recorder,
+    )
+    .await
+    .expect("stage edit batch")
+    .expect("stage result");
+    call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "commit_edit_session",
+        json!({ "session_id": session_id }),
+        &recorder,
+    )
+    .await
+    .expect("commit edit session")
+    .expect("commit result");
+
+    assert_eq!(
+        fs::read_to_string(root.join("backend").join("pom.xml")).expect("read backend pom"),
+        "<project />\n"
+    );
+    assert!(!root.join("pom.xml").exists());
+
+    let cwd_command = if cfg!(windows) { "cd" } else { "pwd" };
+    let executed = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "execute_command",
+        json!({ "path": ".", "common": cwd_command, "background": false }),
+        &recorder,
+    )
+    .await
+    .expect("execute call")
+    .expect("execute result");
+    let structured = code_maintainer_structured_result(executed);
+    let stdout = structured
+        .get("stdout")
+        .or_else(|| structured.get("output"))
+        .and_then(Value::as_str)
+        .unwrap()
+        .replace('\\', "/");
+    assert!(stdout.contains("backend"));
+    assert!(!stdout.contains("frontend"));
+    fs::remove_dir_all(root.as_path()).expect("cleanup");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn full_browser_cdp_tool_tracks_the_device_runtime_setting() {
     let root = temp_test_dir("browser-full-cdp-setting");
     let workspace = test_workspace(root.as_path());

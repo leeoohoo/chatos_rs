@@ -33,7 +33,9 @@ fn request() -> CreateRuntimeSessionRequest {
         selected_plugins: Vec::new(),
         plugin_command_invocations: Vec::new(),
         locale: None,
-        workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector),
+        workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: None,
+        }),
     }
 }
 
@@ -612,7 +614,9 @@ fn local_connector_route_pins_all_workspace_tools_to_the_authorized_workspace() 
     let context = context();
     bind_runtime_workspace_routes(
         routes.as_mut_slice(),
-        Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        Some(&RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: None,
+        }),
         &context,
     );
 
@@ -625,7 +629,9 @@ fn local_connector_route_pins_all_workspace_tools_to_the_authorized_workspace() 
     }
     validate_runtime_workspace_route_binding(
         routes.as_slice(),
-        Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        Some(&RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: None,
+        }),
         &context,
     )
     .expect("local connector binding");
@@ -682,7 +688,9 @@ fn harness_default_branch_is_read_only() {
 
 #[test]
 fn workspace_route_binding_validation_rejects_provider_drift() {
-    let route = RuntimeWorkspaceRouteTarget::LocalConnector;
+    let route = RuntimeWorkspaceRouteTarget::LocalConnector {
+        default_tool_root: None,
+    };
     let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
     let context = context();
     bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context);
@@ -696,7 +704,9 @@ fn workspace_route_binding_validation_rejects_provider_drift() {
 
 #[test]
 fn workspace_route_binding_validation_rejects_local_connector_identity_drift() {
-    let route = RuntimeWorkspaceRouteTarget::LocalConnector;
+    let route = RuntimeWorkspaceRouteTarget::LocalConnector {
+        default_tool_root: None,
+    };
     let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
     let context = context();
     bind_runtime_workspace_routes(routes.as_mut_slice(), Some(&route), &context);
@@ -705,6 +715,30 @@ fn workspace_route_binding_validation_rejects_local_connector_identity_drift() {
     assert!(
         validate_runtime_workspace_route_binding(routes.as_slice(), Some(&route), &context)
             .is_err()
+    );
+}
+
+#[test]
+fn local_connector_default_tool_root_is_normalized_without_overriding_project_context() {
+    let mut context = context();
+    context.workspace.as_mut().expect("workspace").relative_root = Some("apps".to_string());
+    let normalized =
+        normalize_runtime_workspace_route(Some(RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: Some("/backend/".to_string()),
+        }))
+        .expect("normalize route")
+        .expect("route");
+
+    assert_eq!(
+        normalized.local_connector_default_tool_root(),
+        Some("backend")
+    );
+    assert_eq!(
+        context
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.relative_root.as_deref()),
+        Some("apps")
     );
 }
 
@@ -778,7 +812,9 @@ fn workspace_route_binding_does_not_overwrite_sandbox_images() {
         Some(crate::providers::sandbox_images_cloud_provider_ref().to_string());
     bind_runtime_workspace_routes(
         routes.as_mut_slice(),
-        Some(&RuntimeWorkspaceRouteTarget::LocalConnector),
+        Some(&RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: None,
+        }),
         &context(),
     );
 

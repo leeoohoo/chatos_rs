@@ -62,7 +62,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         && !matches!(
             workspace_route,
             Some(RuntimeWorkspaceRouteTarget::CloudSandbox { .. })
-                | Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+                | Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
         )
     {
         return Err(

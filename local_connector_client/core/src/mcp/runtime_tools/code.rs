@@ -13,7 +13,7 @@ use crate::{
     MAX_LOCAL_MCP_WRITE_BYTES,
 };
 
-use super::project::normalize_request_project_relative_path;
+use super::project::normalize_request_task_project_relative_path;
 
 pub(crate) fn code_maintainer_service_for_root(
     root: &Path,
@@ -59,14 +59,15 @@ pub(crate) fn normalize_code_maintainer_arguments(
                 let Some(path) = operation.get("path").and_then(Value::as_str) else {
                     continue;
                 };
-                let normalized = normalize_request_project_relative_path(workspace, request, path)?;
+                let normalized =
+                    normalize_request_task_project_relative_path(workspace, request, path)?;
                 operation.insert("path".to_string(), Value::String(normalized));
             }
         }
         return Ok(arguments);
     }
     if let Some(path) = map.get("path").and_then(Value::as_str) {
-        let normalized = normalize_request_project_relative_path(workspace, request, path)?;
+        let normalized = normalize_request_task_project_relative_path(workspace, request, path)?;
         map.insert("path".to_string(), Value::String(normalized));
     }
     Ok(arguments)

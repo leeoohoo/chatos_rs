@@ -275,11 +275,11 @@ mod tests {
     fn local_connector_tool_timeout_is_not_limited_by_short_control_plane_timeout() {
         assert_eq!(
             local_connector_tool_timeout(Duration::from_secs(5)),
-            Duration::from_secs(75)
+            Duration::from_secs(105)
         );
         assert_eq!(
             local_connector_tool_timeout(Duration::from_secs(90)),
-            Duration::from_secs(90)
+            Duration::from_secs(105)
         );
     }
 }

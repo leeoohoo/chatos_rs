@@ -17,7 +17,7 @@ impl ProviderDispatcher {
         if execution_scope_released
             && matches!(
                 snapshot.workspace_route.as_ref(),
-                Some(RuntimeWorkspaceRouteTarget::LocalConnector)
+                Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
             )
         {
             if let (Some(run_id), Some(generation)) = (
