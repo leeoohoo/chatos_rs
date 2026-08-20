@@ -16,6 +16,17 @@ impl MongoStore {
             .map_err(|err| err.to_string())
     }
 
+    pub(in crate::store) async fn get_run_event_by_type(
+        &self,
+        run_id: &str,
+        event_type: &str,
+    ) -> Result<Option<TaskRunEventRecord>, String> {
+        self.run_events
+            .find_one(doc! { "run_id": run_id, "event_type": event_type }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
     pub(in crate::store) async fn get_run_event(
         &self,
         run_id: &str,

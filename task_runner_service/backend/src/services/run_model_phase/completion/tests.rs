@@ -7,7 +7,9 @@ use crate::config::{AppConfig, StoreMode};
 use crate::models::{CreateTaskRequest, TaskClosureState, TaskManagerScope};
 use crate::services::TaskService;
 use crate::store::AppStore;
-use chatos_ai_runtime::{AiTurnStatus, TaskExecutionOutcome, TaskExecutionOutcomeStatus};
+use chatos_ai_runtime::{
+    AiTurnStatus, TaskAcceptanceEvidence, TaskExecutionOutcome, TaskExecutionOutcomeStatus,
+};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
@@ -961,6 +963,39 @@ fn execution_outcome_reference_validation_rejects_endpoint_credentials() {
     assert!(error.contains("must not contain credentials"));
 
     std::fs::remove_dir_all(workspace).expect("remove workspace");
+}
+
+#[test]
+fn invalid_evidence_receipts_are_dropped_without_changing_ai_reported_status() {
+    let mut outcome = TaskExecutionOutcome::succeeded(
+        "implementation verified",
+        vec!["AI explicitly reported succeeded".to_string()],
+    );
+    outcome.referenced_paths = vec!["src/main.rs".to_string(), "../outside.txt".to_string()];
+    outcome.referenced_endpoints = vec![
+        "http://127.0.0.1:4000/health".to_string(),
+        "https://admin:secret@example.com/health".to_string(),
+    ];
+    outcome.acceptance_evidence = vec![TaskAcceptanceEvidence {
+        criterion: "service works".to_string(),
+        evidence: vec!["reported complete".to_string()],
+        referenced_paths: vec!["src/main.rs".to_string(), "../../secret".to_string()],
+        commands: Vec::new(),
+        tool_names: Vec::new(),
+    }];
+
+    sanitize_task_execution_outcome_references(&mut outcome);
+
+    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Succeeded);
+    assert_eq!(outcome.referenced_paths, ["src/main.rs"]);
+    assert_eq!(
+        outcome.referenced_endpoints,
+        ["http://127.0.0.1:4000/health"]
+    );
+    assert_eq!(
+        outcome.acceptance_evidence[0].referenced_paths,
+        ["src/main.rs"]
+    );
 }
 
 #[test]

@@ -48,10 +48,10 @@ pub fn task_process_log_tool_definitions() -> Vec<Value> {
                     "reason": {
                         "type": "string",
                         "minLength": 1,
+                        "maxLength": 2000,
                         "description": "Short concrete reason for the reported status, grounded in the work and verification already performed."
                     }
-                }
-                ,
+                },
                 "required": ["status", "reason"],
                 "additionalProperties": false
             }

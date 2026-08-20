@@ -67,6 +67,12 @@ pub(super) async fn prepare_model_execution(
         }
         None => task_process_logging_enabled(&task.mcp_config),
     };
+    if !task_process_logging_enabled {
+        return Err(
+            "Task Process Log MCP is required because every Task Runner run must explicitly report its terminal outcome"
+                .to_string(),
+        );
+    }
     let tool_result_model_budget_limits = service
         .effective_tool_result_model_budget_limits()
         .await

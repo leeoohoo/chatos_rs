@@ -308,6 +308,17 @@ impl AppStore {
         }
     }
 
+    pub async fn get_run_event_by_type(
+        &self,
+        run_id: &str,
+        event_type: &str,
+    ) -> Result<Option<TaskRunEventRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.get_run_event_by_type(run_id, event_type)),
+            Self::Mongo(store) => store.get_run_event_by_type(run_id, event_type).await,
+        }
+    }
+
     pub async fn get_run_event(
         &self,
         run_id: &str,

@@ -90,13 +90,19 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
         self.progress.begin_iteration(context.iteration);
+        if self.reported_task_outcome().await?.is_some() {
+            return Ok(RuntimeBeforeModelRequest::unchanged()
+                .with_tools_enabled(false)
+                .with_input_items(vec![task_outcome_final_response_message()]));
+        }
         if context.reason == TASK_OUTCOME_REPORT_REQUIRED_REASON {
             return Ok(RuntimeBeforeModelRequest::unchanged());
         }
         let iteration = context.iteration;
         let mut before = self.finalization.before_model_request(context).await?;
         if !before.tools_enabled {
-            return Ok(before);
+            return Ok(RuntimeBeforeModelRequest::unchanged()
+                .with_input_items(vec![task_outcome_budget_exhausted_message()]));
         }
 
         let detected_checkpoint = self.progress.should_trigger_review(iteration);
@@ -172,10 +178,8 @@ impl TaskRunnerLifecycleHook {
     async fn reported_task_outcome(&self) -> Result<Option<AiReportedTaskOutcome>, String> {
         let event = self
             .store
-            .list_run_events(self.run_id.as_str())
-            .await?
-            .into_iter()
-            .find(|event| event.event_type == "task_outcome_reported");
+            .get_run_event_by_type(self.run_id.as_str(), "task_outcome_reported")
+            .await?;
         event.map(ai_reported_task_outcome_from_event).transpose()
     }
 }
@@ -220,6 +224,28 @@ fn task_outcome_report_required_message() -> Value {
     })
 }
 
+fn task_outcome_budget_exhausted_message() -> Value {
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": "[Task Runner Finalization]\nThe execution-tool budget is exhausted. Do not perform more implementation or verification work. Call `task_run_process_report_outcome` now exactly once with the actual status (`succeeded`, `failed`, or `blocked`) and a concrete reason. Do not call any other tool."
+        }]
+    })
+}
+
+fn task_outcome_final_response_message() -> Value {
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": "[Task Outcome Reported]\nThe task outcome has been recorded. Tools are now disabled. Provide the final user-facing response based on the completed work and the reported outcome. Do not perform more work or revise the reported status."
+        }]
+    })
+}
+
 fn task_execution_outcome_from_ai_report(
     content: &str,
     expected_acceptance_criteria: &[String],
@@ -239,10 +265,12 @@ fn task_execution_outcome_from_ai_report(
         task_execution_outcome_status_name(reported_outcome.status),
         reported_outcome.reason
     )];
-    verification_evidence.extend(commands
-        .iter()
-        .map(|command| format!("成功验证命令：{command}"))
-        .collect::<Vec<_>>());
+    verification_evidence.extend(
+        commands
+            .iter()
+            .map(|command| format!("成功验证命令：{command}"))
+            .collect::<Vec<_>>(),
+    );
     if !paths.is_empty() {
         verification_evidence.push(format!("已确认项目路径：{}", paths.join("、")));
     }
@@ -390,7 +418,6 @@ impl RunService {
         tool_result_model_budget_limits: ToolResultModelBudgetLimits,
         max_iterations: usize,
         review_policy: TaskExecutionReviewPolicy,
-        requires_execution: bool,
         effective_workspace_dir: &str,
         expected_acceptance_criteria: Vec<String>,
     ) -> RuntimeExecutionState {
@@ -426,7 +453,6 @@ impl RunService {
                 max_iterations,
                 Arc::clone(&progress),
                 Arc::clone(&lifecycle_state),
-                requires_execution,
                 self.store.clone(),
                 run.id.clone(),
                 expected_acceptance_criteria,

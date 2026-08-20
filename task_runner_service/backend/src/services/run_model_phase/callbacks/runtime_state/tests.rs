@@ -107,73 +107,164 @@ fn stale_write_review_directs_an_exact_rebased_edit() {
 }
 
 #[test]
-fn terminal_outcome_is_built_from_recorded_runtime_evidence() {
-    let outcome = task_execution_outcome_from_recorded_evidence(
+fn ai_reported_succeeded_outcome_is_authoritative() {
+    let outcome = task_execution_outcome_from_ai_report(
         "## 完成结果\n\n后端骨架已创建并验证。\n\n## 阻塞\n\n无阻塞。",
         &["backend skeleton exists".to_string()],
         vec!["backend/pom.xml".to_string()],
         vec!["mvn -q clean test".to_string()],
         Vec::new(),
-        true,
+        AiReportedTaskOutcome {
+            status: TaskExecutionOutcomeStatus::Succeeded,
+            reason: "实现和验证均已完成".to_string(),
+        },
     );
 
     assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Succeeded);
     assert_eq!(outcome.summary, "后端骨架已创建并验证。");
     assert_eq!(outcome.acceptance_evidence.len(), 1);
     assert_eq!(outcome.referenced_paths, ["backend/pom.xml"]);
-    assert!(outcome.verification_evidence[0].contains("mvn -q clean test"));
+    assert!(outcome.verification_evidence[0].contains("实现和验证均已完成"));
+    assert!(outcome
+        .verification_evidence
+        .iter()
+        .any(|evidence| evidence.contains("mvn -q clean test")));
 }
 
 #[test]
-fn execution_without_recorded_evidence_is_blocked_without_an_ai_repair_round() {
-    let outcome = task_execution_outcome_from_recorded_evidence(
-        "任务已经完成。",
-        &["build passes".to_string()],
+fn ai_reported_failed_outcome_is_authoritative_without_receipts() {
+    let outcome = task_execution_outcome_from_ai_report(
+        "实现未能完成。",
+        &[],
         Vec::new(),
         Vec::new(),
         Vec::new(),
-        true,
+        AiReportedTaskOutcome {
+            status: TaskExecutionOutcomeStatus::Failed,
+            reason: "编译错误无法在本轮修复".to_string(),
+        },
     );
 
-    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Blocked);
-    assert_eq!(outcome.unmet_acceptance_criteria, ["build passes"]);
-    assert!(outcome
-        .blocking_reason
-        .as_deref()
-        .is_some_and(|reason| reason.contains("未记录到")));
+    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Failed);
+    assert_eq!(
+        outcome.blocking_reason.as_deref(),
+        Some("编译错误无法在本轮修复")
+    );
+    assert_eq!(
+        outcome.unmet_acceptance_criteria,
+        ["编译错误无法在本轮修复"]
+    );
 }
 
 #[test]
-fn explicit_blocker_in_final_response_overrides_recorded_success_evidence() {
-    let outcome = task_execution_outcome_from_recorded_evidence(
-        "任务执行受阻：缺少上游凭据。",
+fn ai_reported_blocked_outcome_is_authoritative_even_with_success_receipts() {
+    let outcome = task_execution_outcome_from_ai_report(
+        "等待外部凭据。",
         &["integration passes".to_string()],
         vec!["src/main.rs".to_string()],
         vec!["cargo check".to_string()],
-        Vec::new(),
-        true,
+        vec!["browser_tools_browser_snapshot".to_string()],
+        AiReportedTaskOutcome {
+            status: TaskExecutionOutcomeStatus::Blocked,
+            reason: "缺少上游凭据".to_string(),
+        },
     );
 
     assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Blocked);
-    assert!(outcome
-        .blocking_reason
-        .as_deref()
-        .is_some_and(|reason| reason.contains("缺少上游凭据")));
+    assert_eq!(outcome.blocking_reason.as_deref(), Some("缺少上游凭据"));
+    assert_eq!(outcome.unmet_acceptance_criteria, ["integration passes"]);
+    assert!(outcome.verification_evidence.len() > 1);
 }
 
 #[test]
-fn planning_result_needs_no_runtime_tool_evidence() {
-    let outcome = task_execution_outcome_from_recorded_evidence(
-        "## 方案\n\n实施方案已整理完成。",
-        &["plan delivered".to_string()],
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        false,
-    );
+fn task_outcome_event_parser_accepts_all_supported_statuses() {
+    for (status, expected) in [
+        ("succeeded", TaskExecutionOutcomeStatus::Succeeded),
+        ("failed", TaskExecutionOutcomeStatus::Failed),
+        ("blocked", TaskExecutionOutcomeStatus::Blocked),
+    ] {
+        let event = TaskRunEventRecord::new(
+            "run-1",
+            "task_outcome_reported",
+            None,
+            Some(json!({"status": status, "reason": "concrete reason"})),
+        );
+        let parsed = ai_reported_task_outcome_from_event(event).expect("valid outcome event");
+        assert_eq!(parsed.status, expected);
+        assert_eq!(parsed.reason, "concrete reason");
+    }
+}
 
-    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Succeeded);
-    assert_eq!(outcome.acceptance_evidence.len(), 1);
+#[test]
+fn task_outcome_event_parser_rejects_invalid_or_incomplete_payloads() {
+    for payload in [
+        json!({"status": "cancelled", "reason": "not supported"}),
+        json!({"status": "succeeded"}),
+        json!({"status": "blocked", "reason": "  "}),
+    ] {
+        let event = TaskRunEventRecord::new("run-1", "task_outcome_reported", None, Some(payload));
+        assert!(ai_reported_task_outcome_from_event(event).is_err());
+    }
+}
+
+#[tokio::test]
+async fn missing_outcome_continuation_keeps_report_tool_available() {
+    let hook = task_runner_lifecycle_hook_for_test("run-missing");
+    let before = hook
+        .before_model_request(runtime_iteration_context(
+            TASK_OUTCOME_REPORT_REQUIRED_REASON,
+        ))
+        .await
+        .expect("before request");
+
+    assert!(before.tools_enabled);
+}
+
+#[tokio::test]
+async fn reported_outcome_disables_tools_for_the_final_response() {
+    let hook = task_runner_lifecycle_hook_for_test("run-reported");
+    hook.store
+        .append_run_event(TaskRunEventRecord::new(
+            "run-reported",
+            "task_outcome_reported",
+            None,
+            Some(json!({"status": "succeeded", "reason": "verified"})),
+        ))
+        .await
+        .expect("append outcome event");
+    let before = hook
+        .before_model_request(runtime_iteration_context("tool_result"))
+        .await
+        .expect("before request");
+
+    assert!(!before.tools_enabled);
+    assert!(before.input_items[0]
+        .to_string()
+        .contains("Task Outcome Reported"));
+}
+
+fn task_runner_lifecycle_hook_for_test(run_id: &str) -> TaskRunnerLifecycleHook {
+    let (sender, _) = tokio::sync::broadcast::channel(16);
+    TaskRunnerLifecycleHook::new(
+        10,
+        Arc::new(TaskExecutionProgressState::new(
+            TaskExecutionReviewPolicy::default(),
+        )),
+        Arc::new(parking_lot::Mutex::new(TaskRunnerLifecycleState::default())),
+        crate::store::AppStore::InMemory(crate::store::InMemoryStore::new(sender)),
+        run_id.to_string(),
+        Vec::new(),
+    )
+}
+
+fn runtime_iteration_context(reason: &str) -> RuntimeIterationContext {
+    RuntimeIterationContext {
+        conversation_id: None,
+        conversation_turn_id: None,
+        iteration: 1,
+        reason: reason.to_string(),
+        input: Value::Null,
+    }
 }
 
 #[test]

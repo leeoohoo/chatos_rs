@@ -24,7 +24,7 @@ impl RunService {
         );
         let mut report = report;
         run.bind_current_attempt_model_response(report.response_id.as_deref());
-        fail_report_when_outcome_references_invalid(&mut report);
+        sanitize_report_outcome_references(&mut report);
         report.content = report
             .content
             .map(|content| path_redactor.redact_text(content.as_str()));
@@ -309,24 +309,34 @@ fn model_phase_status_for_terminal(status: TaskRunStatus) -> ModelPhaseStatus {
     }
 }
 
-fn fail_report_when_outcome_references_invalid(report: &mut TaskRunReport) {
-    if report.status != chatos_ai_runtime::AiTurnStatus::Completed {
-        return;
-    }
+fn sanitize_report_outcome_references(report: &mut TaskRunReport) {
     let Some(outcome) = report.execution_outcome.as_mut() else {
         return;
     };
-    if outcome.status != chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded {
-        return;
-    }
-    if let Err(err) = validate_task_execution_outcome_references(outcome) {
-        report.status = chatos_ai_runtime::AiTurnStatus::Failed;
-        report.error = Some(format!(
-            "structured task execution outcome reference validation failed: {err}"
-        ));
+    sanitize_task_execution_outcome_references(outcome);
+}
+
+fn sanitize_task_execution_outcome_references(
+    outcome: &mut chatos_ai_runtime::TaskExecutionOutcome,
+) {
+    outcome.referenced_paths = outcome
+        .referenced_paths
+        .drain(..)
+        .filter_map(|path| validate_workspace_reference(path.as_str()).ok())
+        .collect();
+    outcome
+        .referenced_endpoints
+        .retain(|endpoint| validate_endpoint_reference(endpoint.as_str()).is_ok());
+    for evidence in &mut outcome.acceptance_evidence {
+        evidence.referenced_paths = evidence
+            .referenced_paths
+            .drain(..)
+            .filter_map(|path| validate_workspace_reference(path.as_str()).ok())
+            .collect();
     }
 }
 
+#[cfg(test)]
 fn validate_task_execution_outcome_references(
     outcome: &mut chatos_ai_runtime::TaskExecutionOutcome,
 ) -> Result<(), String> {

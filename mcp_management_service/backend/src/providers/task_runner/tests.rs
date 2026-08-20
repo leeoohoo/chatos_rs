@@ -136,6 +136,32 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
     provider
         .call_tool(
             &snapshot(),
+            &task_process_route,
+            "report_outcome",
+            json!({"status": "succeeded", "reason": "implementation verified"}),
+            "invocation-outcome",
+        )
+        .await
+        .expect("outcome provider call");
+    let (system_key, _, body) = captured
+        .0
+        .lock()
+        .expect("captured outcome request")
+        .clone()
+        .expect("outcome request was captured");
+    assert_eq!(system_key, SystemMcpKey::TaskProcessLog.as_str());
+    assert_eq!(body["params"]["name"], "report_outcome");
+    assert_eq!(body["params"]["arguments"]["status"], "succeeded");
+    assert_eq!(
+        body["params"]["arguments"]["reason"],
+        "implementation verified"
+    );
+    assert!(body["params"]["arguments"].get("task_id").is_none());
+    assert!(body["params"]["arguments"].get("run_id").is_none());
+
+    provider
+        .call_tool(
+            &snapshot(),
             &route(SystemMcpKey::AskUser),
             "prompt_choices",
             json!({

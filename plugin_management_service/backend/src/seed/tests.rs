@@ -328,4 +328,9 @@ fn task_process_log_is_a_seeded_task_runner_system_mcp() {
         tools[0].get("name").and_then(Value::as_str),
         Some("record_process")
     );
+    assert_eq!(tools.len(), 2);
+    assert_eq!(
+        tools[1].get("name").and_then(Value::as_str),
+        Some("report_outcome")
+    );
 }

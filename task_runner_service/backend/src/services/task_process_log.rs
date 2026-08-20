@@ -12,6 +12,7 @@ use super::RunService;
 pub(super) const TASK_PROCESS_LOG_INTERNAL_SERVER_NAME: &str = "task_run_process";
 const TASK_PROCESS_LOG_INTERNAL_TOOL_NAME: &str = "record_process";
 const TASK_OUTCOME_INTERNAL_TOOL_NAME: &str = "report_outcome";
+const TASK_OUTCOME_REASON_MAX_CHARS: usize = 2_000;
 
 pub(super) fn task_process_logging_enabled(mcp_config: &TaskMcpConfig) -> bool {
     mcp_config.enabled
@@ -76,12 +77,16 @@ impl RunService {
         if reason.is_empty() {
             return Err("task outcome reason must not be empty".to_string());
         }
+        let reason_chars = reason.chars().count();
+        if reason_chars > TASK_OUTCOME_REASON_MAX_CHARS {
+            return Err(format!(
+                "task outcome reason cannot exceed {TASK_OUTCOME_REASON_MAX_CHARS} characters; received {reason_chars}"
+            ));
+        }
         let existing = self
             .store
-            .list_run_events(run_id)
-            .await?
-            .into_iter()
-            .find(|event| event.event_type == "task_outcome_reported");
+            .get_run_event_by_type(run_id, "task_outcome_reported")
+            .await?;
         if let Some(existing) = existing {
             let same_status = existing
                 .payload

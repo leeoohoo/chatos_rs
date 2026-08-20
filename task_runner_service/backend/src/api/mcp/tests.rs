@@ -184,6 +184,32 @@ fn task_process_log_arguments_cannot_override_bound_identity() {
 }
 
 #[test]
+fn task_outcome_arguments_accept_only_the_explicit_terminal_contract() {
+    let input = serde_json::from_value::<BoundTaskOutcomeArgs>(json!({
+        "status": "failed",
+        "reason": "focused tests still fail"
+    }))
+    .expect("valid outcome arguments");
+    assert_eq!(input.status.as_str(), "failed");
+    assert_eq!(input.reason, "focused tests still fail");
+
+    let unknown_status = serde_json::from_value::<BoundTaskOutcomeArgs>(json!({
+        "status": "cancelled",
+        "reason": "not an AI-reportable outcome"
+    }))
+    .expect_err("unsupported status must be rejected");
+    assert!(unknown_status.to_string().contains("unknown variant"));
+
+    let identity_override = serde_json::from_value::<BoundTaskOutcomeArgs>(json!({
+        "status": "succeeded",
+        "reason": "done",
+        "run_id": "another-run"
+    }))
+    .expect_err("bound identity must not be overridable");
+    assert!(identity_override.to_string().contains("unknown field"));
+}
+
+#[test]
 fn request_context_reads_inherited_model_header() {
     let mut headers = HeaderMap::new();
     headers.insert(

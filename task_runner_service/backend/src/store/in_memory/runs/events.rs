@@ -12,6 +12,19 @@ impl InMemoryStore {
             .is_some_and(|events| events.iter().any(|event| event.event_type == event_type))
     }
 
+    pub(in crate::store) fn get_run_event_by_type(
+        &self,
+        run_id: &str,
+        event_type: &str,
+    ) -> Option<TaskRunEventRecord> {
+        self.inner
+            .read()
+            .run_events
+            .get(run_id)
+            .and_then(|events| events.iter().find(|event| event.event_type == event_type))
+            .cloned()
+    }
+
     pub(in crate::store) fn list_run_events(&self, run_id: &str) -> Vec<TaskRunEventRecord> {
         self.inner
             .read()

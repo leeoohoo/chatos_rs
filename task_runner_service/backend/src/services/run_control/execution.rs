@@ -159,7 +159,7 @@ impl RunService {
             let supply_chain_policy = self.effective_node_supply_chain_policy().await?;
             let supply_chain_report = supply_chain_evidence.evaluate(&supply_chain_policy);
             if supply_chain_report.applicable {
-                crate::services::run_model_phase::callbacks::execution::apply_supply_chain_outcome_gate(
+                crate::services::run_model_phase::callbacks::execution::attach_supply_chain_outcome_receipt(
                     &mut report,
                     &supply_chain_report,
                 );

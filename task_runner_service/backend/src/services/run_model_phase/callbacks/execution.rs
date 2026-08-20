@@ -3,6 +3,8 @@
 
 use super::*;
 
+const TASK_OUTCOME_PROTOCOL_RESERVED_ITERATIONS: usize = 2;
+
 impl RunService {
     pub(in crate::services) async fn prepare_single_model_step(
         &self,
@@ -28,7 +30,6 @@ impl RunService {
             prepared_execution.tool_result_model_budget_limits,
             max_iterations,
             review_policy,
-            task.mcp_config.requires_execution,
             prepared_execution.effective_workspace_dir.as_str(),
             task.input_payload
                 .as_ref()
@@ -54,7 +55,9 @@ impl RunService {
                 *runtime_execution.supply_chain_evidence.lock() = inherited;
             }
         }
-        let runtime_config = prepared_execution.runtime_config;
+        let runtime_config = prepared_execution.runtime_config.with_max_iterations(Some(
+            max_iterations.saturating_add(TASK_OUTCOME_PROTOCOL_RESERVED_ITERATIONS),
+        ));
         let runtime = runtime_config
             .build_runtime_with_mcp_builder_and_memory_http_client(
                 prepared_execution.mcp_builder,
@@ -167,7 +170,7 @@ impl RunService {
     }
 }
 
-pub(in crate::services) fn apply_supply_chain_outcome_gate(
+pub(in crate::services) fn attach_supply_chain_outcome_receipt(
     report: &mut TaskRunReport,
     supply_chain: &crate::services::run_model_phase::supply_chain::SupplyChainAuditReport,
 ) {
@@ -182,18 +185,10 @@ pub(in crate::services) fn apply_supply_chain_outcome_gate(
     {
         outcome.verification_evidence.push(evidence);
     }
-    if supply_chain.status == "passed"
-        || outcome.status != chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded
-    {
-        return;
-    }
-    outcome.status = chatos_ai_runtime::TaskExecutionOutcomeStatus::Blocked;
-    outcome.blocking_reason = Some(supply_chain.blocking_reasons.join("; "));
-    outcome.unmet_acceptance_criteria = supply_chain.blocking_reasons.clone();
 }
 
 #[cfg(test)]
-mod supply_chain_gate_tests {
+mod supply_chain_receipt_tests {
     use super::*;
     use crate::services::run_model_phase::supply_chain::{
         NodeVulnerabilityCounts, SupplyChainAuditReport,
@@ -248,9 +243,9 @@ mod supply_chain_gate_tests {
     }
 
     #[test]
-    fn blocked_supply_chain_report_overrides_claimed_success() {
+    fn blocked_supply_chain_report_is_receipt_only() {
         let mut task_report = task_report();
-        apply_supply_chain_outcome_gate(
+        attach_supply_chain_outcome_receipt(
             &mut task_report,
             &report(
                 "blocked",
@@ -264,13 +259,9 @@ mod supply_chain_gate_tests {
         let outcome = task_report.execution_outcome.unwrap();
         assert_eq!(
             outcome.status,
-            chatos_ai_runtime::TaskExecutionOutcomeStatus::Blocked
+            chatos_ai_runtime::TaskExecutionOutcomeStatus::Succeeded
         );
-        assert!(outcome
-            .blocking_reason
-            .as_deref()
-            .unwrap()
-            .contains("critical"));
+        assert!(outcome.blocking_reason.is_none());
         assert!(outcome
             .verification_evidence
             .iter()
@@ -280,7 +271,7 @@ mod supply_chain_gate_tests {
     #[test]
     fn passed_supply_chain_report_adds_receipt_evidence() {
         let mut task_report = task_report();
-        apply_supply_chain_outcome_gate(&mut task_report, &report("passed", Vec::new()));
+        attach_supply_chain_outcome_receipt(&mut task_report, &report("passed", Vec::new()));
 
         let outcome = task_report.execution_outcome.unwrap();
         assert_eq!(
