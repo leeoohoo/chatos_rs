@@ -127,7 +127,6 @@ pub(super) fn materialize_plugin_mcp_components(
             resource_kind: McpRouteResourceKind::Plugin,
             system_key: None,
             execution_host: Some(match component.execution_host {
-                PluginExecutionHost::Cloud => McpExecutionHost::Cloud,
                 PluginExecutionHost::Local => McpExecutionHost::Local,
                 PluginExecutionHost::Portable => McpExecutionHost::Portable,
             }),

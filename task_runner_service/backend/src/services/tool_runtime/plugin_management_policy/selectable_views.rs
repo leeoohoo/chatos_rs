@@ -196,7 +196,6 @@ fn plugin_execution_type(hosts: impl Iterator<Item = PluginExecutionHost>) -> St
         .next()
         .unwrap_or(PluginExecutionHost::Local)
     {
-        PluginExecutionHost::Cloud => "cloud",
         PluginExecutionHost::Local => "local",
         PluginExecutionHost::Portable => "portable",
     }

@@ -327,11 +327,7 @@ fn plugin_execution_hosts_runtime_targets(
     let mut targets = BTreeSet::new();
     for host in hosts {
         match host {
-            PluginExecutionHost::Cloud => {}
-            PluginExecutionHost::Local => {
-                targets.insert(PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string());
-            }
-            PluginExecutionHost::Portable => {
+            PluginExecutionHost::Local | PluginExecutionHost::Portable => {
                 targets.insert(PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string());
             }
         }

@@ -261,15 +261,6 @@ fn resolve_plugin_records(
             "Plugin catalog entry is disabled".to_string(),
         );
     }
-    if components
-        .iter()
-        .any(|component| component.component.execution_host == PluginExecutionHost::Cloud)
-    {
-        return unavailable(
-            PluginAvailabilityStatus::Unavailable,
-            "cloud Plugin execution is disabled; install a Local or Portable release".to_string(),
-        );
-    }
     if preference.is_none() && portable_uses_local {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
@@ -525,14 +516,6 @@ fn resolve_components(
         .iter()
         .filter(|component| selected.contains(&component.component_key))
         .map(|component| {
-            if component.execution_host == PluginExecutionHost::Cloud {
-                return ResolvedPluginComponent {
-                    component: component.clone(),
-                    available: false,
-                    status: PluginAvailabilityStatus::Unavailable,
-                    reason: Some("cloud Plugin execution is disabled".to_string()),
-                };
-            }
             match statuses.get(component.component_key.as_str()) {
                 Some(status) if status.kind == component.kind => ResolvedPluginComponent {
                     component: component.clone(),

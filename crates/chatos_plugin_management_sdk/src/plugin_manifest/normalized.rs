@@ -19,7 +19,6 @@ pub const PLUGIN_MANIFEST_SCHEMA_VERSION_V2: u32 = 2;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PluginExecutionHost {
-    Cloud,
     #[default]
     Local,
     Portable,

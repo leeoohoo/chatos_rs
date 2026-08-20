@@ -192,9 +192,6 @@ impl PluginSkillLoader {
             .context("Plugin Skill component is missing from the signed installation inventory")?;
         match component.execution_host {
             chatos_plugin_management_sdk::PluginExecutionHost::Local => return Ok(()),
-            chatos_plugin_management_sdk::PluginExecutionHost::Cloud => {
-                bail!("cloud-only Plugin Skill cannot execute through Local Connector")
-            }
             chatos_plugin_management_sdk::PluginExecutionHost::Portable => {}
         }
         let expected = expected_content_sha256

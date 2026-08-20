@@ -155,7 +155,6 @@ fn classify_runtime(kind: &str) -> (McpRouteResourceKind, Option<McpExecutionHos
             McpRouteResourceKind::ExternalHttp,
             Some(McpExecutionHost::Local),
         ),
-        "stdio_cloud" => (McpRouteResourceKind::Stdio, Some(McpExecutionHost::Cloud)),
         "local_connector_stdio" | "local_connector_http" | "local_connector_builtin_proxy" => (
             McpRouteResourceKind::LocalConnector,
             Some(McpExecutionHost::Local),
@@ -179,7 +178,6 @@ fn plugin_execution_host(
                 && snapshot.component.component_key == component_key
         })
         .map(|snapshot| match snapshot.component.execution_host {
-            PluginExecutionHost::Cloud => McpExecutionHost::Cloud,
             PluginExecutionHost::Local => McpExecutionHost::Local,
             PluginExecutionHost::Portable => McpExecutionHost::Portable,
         })

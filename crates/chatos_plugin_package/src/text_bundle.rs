@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chatos_plugin_management_sdk::{
-    normalized_plugin_manifest_sha256, PluginCloudComponentBundle, PluginCloudTextResource,
+    normalized_plugin_manifest_sha256, PluginPortableComponentBundle, PluginPortableTextResource,
     PluginComponentDescriptor, PluginComponentKind, PluginExecutionHost, PluginReleaseRecord,
 };
 use serde::Serialize;
@@ -27,16 +27,16 @@ struct BundleHashInput<'a> {
     execution_host: PluginExecutionHost,
     entrypoint: &'a str,
     primary_sha256: &'a str,
-    resources: &'a [PluginCloudTextResource],
+    resources: &'a [PluginPortableTextResource],
     artifact_sha256: &'a str,
     normalized_manifest_sha256: &'a str,
 }
 
-pub fn build_cloud_component_bundles(
+pub fn build_portable_component_bundles(
     release: &PluginReleaseRecord,
     package: &VerifiedPluginPackage,
     ingested_at: &str,
-) -> Result<Vec<PluginCloudComponentBundle>, PluginPackageError> {
+) -> Result<Vec<PluginPortableComponentBundle>, PluginPackageError> {
     let mut bundles = release
         .components
         .iter()
@@ -74,7 +74,7 @@ pub fn build_component_text_bundle(
     package: &VerifiedPluginPackage,
     component: &PluginComponentDescriptor,
     ingested_at: &str,
-) -> Result<PluginCloudComponentBundle, PluginPackageError> {
+) -> Result<PluginPortableComponentBundle, PluginPackageError> {
     let manifest_sha256 = normalized_plugin_manifest_sha256(&package.manifest)
         .map_err(|error| PluginPackageError::Invalid(error.to_string()))?;
     build_bundle(
@@ -89,8 +89,8 @@ pub fn build_component_text_bundle(
     )
 }
 
-pub fn plugin_cloud_bundle_sha256(
-    bundle: &PluginCloudComponentBundle,
+pub fn plugin_portable_bundle_sha256(
+    bundle: &PluginPortableComponentBundle,
 ) -> Result<String, PluginPackageError> {
     if sha256(bundle.primary_text.as_bytes()) != bundle.primary_sha256
         || bundle.resources.iter().any(|resource| {
@@ -98,7 +98,7 @@ pub fn plugin_cloud_bundle_sha256(
                 || resource.text.len() as u64 != resource.size_bytes
         })
     {
-        return invalid("Plugin cloud Bundle text does not match its immutable hashes");
+        return invalid("Plugin portable Bundle text does not match its immutable hashes");
     }
     bundle_hash(
         bundle.plugin_id.as_str(),
@@ -124,7 +124,7 @@ fn build_bundle(
     component: &PluginComponentDescriptor,
     manifest_sha256: &str,
     ingested_at: &str,
-) -> Result<PluginCloudComponentBundle, PluginPackageError> {
+) -> Result<PluginPortableComponentBundle, PluginPackageError> {
     if !matches!(
         component.kind,
         PluginComponentKind::SkillCollection
@@ -132,20 +132,20 @@ fn build_bundle(
             | PluginComponentKind::Agent
     ) {
         return invalid(format!(
-            "component {} cannot execute in the cloud",
+            "component {} cannot execute as a portable text component",
             component.component_key
         ));
     }
     if !component.permissions.is_empty() {
         return invalid(format!(
-            "cloud component {} requests runtime permissions",
+            "portable text component {} requests runtime permissions",
             component.component_key
         ));
     }
     let declared_entrypoint = component
         .entrypoint
         .as_ref()
-        .ok_or_else(|| PluginPackageError::Invalid("cloud component has no entrypoint".into()))?
+        .ok_or_else(|| PluginPackageError::Invalid("portable component has no entrypoint".into()))?
         .path
         .trim_start_matches("./")
         .trim_end_matches('/')
@@ -186,7 +186,7 @@ fn build_bundle(
             .sum::<usize>();
     if resources.len() > MAX_COMPONENT_RESOURCES || total_bytes > MAX_COMPONENT_BYTES {
         return invalid(format!(
-            "cloud component {} exceeds its text Bundle limits",
+            "portable component {} exceeds its text Bundle limits",
             component.component_key
         ));
     }
@@ -203,7 +203,7 @@ fn build_bundle(
         artifact_sha256,
         manifest_sha256,
     )?;
-    Ok(PluginCloudComponentBundle {
+    Ok(PluginPortableComponentBundle {
         plugin_id: plugin_id.to_string(),
         release_id: release_id.to_string(),
         version: version.to_string(),
@@ -225,7 +225,7 @@ fn reachable_skill_resources(
     package: &VerifiedPluginPackage,
     entrypoint: &str,
     primary_text: &str,
-) -> Result<Vec<PluginCloudTextResource>, PluginPackageError> {
+) -> Result<Vec<PluginPortableTextResource>, PluginPackageError> {
     let mut visiting = BTreeSet::from([entrypoint.to_string()]);
     let mut visited = BTreeSet::new();
     let mut resources = BTreeMap::new();
@@ -246,7 +246,7 @@ fn visit_skill_references(
     current_text: &str,
     visiting: &mut BTreeSet<String>,
     visited: &mut BTreeSet<String>,
-    resources: &mut BTreeMap<String, PluginCloudTextResource>,
+    resources: &mut BTreeMap<String, PluginPortableTextResource>,
 ) -> Result<(), PluginPackageError> {
     for path in extract_references(current_path, current_text)? {
         if visiting.contains(path.as_str()) {
@@ -257,7 +257,7 @@ fn visit_skill_references(
         if visited.contains(path.as_str()) {
             continue;
         }
-        ensure_cloud_text_path(path.as_str())?;
+        ensure_portable_text_path(path.as_str())?;
         let text = read_text(package, path.as_str())?;
         visiting.insert(path.clone());
         visit_skill_references(
@@ -272,7 +272,7 @@ fn visit_skill_references(
         visited.insert(path.clone());
         resources.insert(
             path.clone(),
-            PluginCloudTextResource {
+            PluginPortableTextResource {
                 path,
                 sha256: sha256(text.as_bytes()),
                 size_bytes: text.len() as u64,
@@ -342,15 +342,15 @@ fn resolve_reference(current_file: &str, raw: &str) -> Result<Option<String>, Pl
         }
     }
     let path = parts.join("/");
-    ensure_cloud_text_path(path.as_str())?;
+    ensure_portable_text_path(path.as_str())?;
     Ok(Some(path))
 }
 
-fn ensure_cloud_text_path(path: &str) -> Result<(), PluginPackageError> {
+fn ensure_portable_text_path(path: &str) -> Result<(), PluginPackageError> {
     let root = path.split('/').next().unwrap_or_default();
     if !matches!(root, "skills" | "references" | "schemas" | "licenses") {
         return invalid(format!(
-            "cloud Plugin text reference uses a forbidden root: {path}"
+            "portable Plugin text reference uses a forbidden root: {path}"
         ));
     }
     let extension = path.rsplit_once('.').map(|(_, extension)| extension);
@@ -358,7 +358,7 @@ fn ensure_cloud_text_path(path: &str) -> Result<(), PluginPackageError> {
         extension,
         Some("md" | "txt" | "json" | "yaml" | "yml" | "toml" | "csv")
     ) {
-        return invalid(format!("cloud Plugin resource is not text: {path}"));
+        return invalid(format!("portable Plugin resource is not text: {path}"));
     }
     Ok(())
 }
@@ -373,24 +373,24 @@ fn read_primary_text(
         PluginComponentKind::SkillCollection => "skills",
         PluginComponentKind::Command => "commands",
         PluginComponentKind::Agent => "agents",
-        _ => return invalid("unsupported cloud Plugin primary text component"),
+        _ => return invalid("unsupported portable Plugin primary text component"),
     };
     if root != expected_root {
         return invalid(format!(
-            "cloud Plugin primary text must be under {expected_root}/: {path}"
+            "portable Plugin primary text must be under {expected_root}/: {path}"
         ));
     }
     let extension = path.rsplit_once('.').map(|(_, extension)| extension);
     if !matches!(extension, Some("md" | "txt")) {
         return invalid(format!(
-            "cloud Plugin primary text is not Markdown/text: {path}"
+            "portable Plugin primary text is not Markdown/text: {path}"
         ));
     }
     read_utf8_text(package, path)
 }
 
 fn read_text(package: &VerifiedPluginPackage, path: &str) -> Result<String, PluginPackageError> {
-    ensure_cloud_text_path(path)?;
+    ensure_portable_text_path(path)?;
     read_utf8_text(package, path)
 }
 
@@ -420,12 +420,12 @@ fn bundle_hash(
     execution_host: PluginExecutionHost,
     entrypoint: &str,
     primary_sha256: &str,
-    resources: &[PluginCloudTextResource],
+    resources: &[PluginPortableTextResource],
     artifact_sha256: &str,
     normalized_manifest_sha256: &str,
 ) -> Result<String, PluginPackageError> {
     let payload = BundleHashInput {
-        purpose: "chatos.plugin.cloud-component-bundle.v1",
+        purpose: "chatos.plugin.portable-component-bundle.v1",
         plugin_id,
         release_id,
         version,

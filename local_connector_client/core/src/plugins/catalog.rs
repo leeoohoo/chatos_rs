@@ -433,7 +433,6 @@ fn plugin_execution_type(hosts: impl IntoIterator<Item = PluginExecutionHost>) -
         .copied()
         .unwrap_or(PluginExecutionHost::Local)
     {
-        PluginExecutionHost::Cloud => "cloud".to_string(),
         PluginExecutionHost::Local => "local".to_string(),
         PluginExecutionHost::Portable => "portable".to_string(),
     }

@@ -7,11 +7,11 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 
 use chatos_plugin_management_sdk::{
-    build_plugin_mcp_cloud_runtime_bundle,
-    build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime, normalize_plugin_relative_path,
+    build_plugin_mcp_portable_runtime_bundle,
+    build_plugin_mcp_portable_runtime_bundle_with_resolved_runtime, normalize_plugin_relative_path,
     normalized_plugin_manifest_sha256, parse_plugin_manifest, parse_plugin_mcp_config_servers,
-    plugin_mcp_cloud_runtime_bundle_sha256, PluginComponentKind, PluginExecutionHost,
-    PluginManifest, PluginManifestSource, PluginMcpCloudRuntimeBundle, PluginMcpServer,
+    plugin_mcp_portable_runtime_bundle_sha256, PluginComponentKind, PluginExecutionHost,
+    PluginManifest, PluginManifestSource, PluginMcpPortableRuntimeBundle, PluginMcpServer,
     PluginReleaseRecord,
 };
 use serde::Deserialize;
@@ -93,32 +93,32 @@ pub fn verify_plugin_archive_bytes(
     Ok(package)
 }
 
-pub fn verify_plugin_mcp_cloud_artifact_bytes(
+pub fn verify_plugin_mcp_portable_artifact_bytes(
     bytes: &[u8],
-    bundle: &PluginMcpCloudRuntimeBundle,
+    bundle: &PluginMcpPortableRuntimeBundle,
     limits: PluginPackageLimits,
 ) -> Result<VerifiedPluginPackage, PluginPackageError> {
     let package =
         read_verified_plugin_archive_bytes(bytes, bundle.artifact_sha256.as_str(), limits)?;
-    verify_plugin_mcp_cloud_package(&package, bundle)?;
+    verify_plugin_mcp_portable_package(&package, bundle)?;
     Ok(package)
 }
 
-pub fn verify_plugin_mcp_cloud_package(
+pub fn verify_plugin_mcp_portable_package(
     package: &VerifiedPluginPackage,
-    bundle: &PluginMcpCloudRuntimeBundle,
+    bundle: &PluginMcpPortableRuntimeBundle,
 ) -> Result<(), PluginPackageError> {
     if package.artifact_sha256 != bundle.artifact_sha256
         || bundle.component.kind != PluginComponentKind::McpServer
-        || bundle.component.execution_host == PluginExecutionHost::Local
+        || bundle.component.execution_host != PluginExecutionHost::Portable
         || bundle.component.component_key != bundle.runtime.component_key()
         || bundle.server_key.trim().is_empty()
         || bundle.resolved_runtime.component_key() != bundle.server_key
         || matches!(bundle.resolved_runtime, PluginMcpServer::ConfigFile { .. })
-        || plugin_mcp_cloud_runtime_bundle_sha256(bundle).map_err(PluginPackageError::Invalid)?
+        || plugin_mcp_portable_runtime_bundle_sha256(bundle).map_err(PluginPackageError::Invalid)?
             != bundle.bundle_sha256
     {
-        return invalid("Plugin MCP cloud runtime Bundle identity is invalid");
+        return invalid("Plugin MCP portable runtime Bundle identity is invalid");
     }
     let manifest_sha256 = normalized_plugin_manifest_sha256(&package.manifest)
         .map_err(|error| PluginPackageError::Invalid(error.to_string()))?;
@@ -167,11 +167,11 @@ pub fn verify_plugin_mcp_cloud_package(
     Ok(())
 }
 
-pub fn build_plugin_mcp_cloud_runtime_bundles_from_package(
+pub fn build_plugin_mcp_portable_runtime_bundles_from_package(
     release: &PluginReleaseRecord,
     component_key: &str,
     package: &VerifiedPluginPackage,
-) -> Result<Vec<PluginMcpCloudRuntimeBundle>, PluginPackageError> {
+) -> Result<Vec<PluginMcpPortableRuntimeBundle>, PluginPackageError> {
     if package.artifact_sha256 != release.artifact_sha256
         || package.manifest != release.normalized_manifest
     {
@@ -199,7 +199,7 @@ pub fn build_plugin_mcp_cloud_runtime_bundles_from_package(
                 .into_iter()
                 .map(|resolved_runtime| {
                     let server_key = resolved_runtime.component_key().to_string();
-                    build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
+                    build_plugin_mcp_portable_runtime_bundle_with_resolved_runtime(
                         release,
                         component_key,
                         resolved_runtime,
@@ -210,13 +210,13 @@ pub fn build_plugin_mcp_cloud_runtime_bundles_from_package(
                 .collect::<Result<Vec<_>, _>>()?
         }
         _ => vec![
-            build_plugin_mcp_cloud_runtime_bundle(release, component_key)
+            build_plugin_mcp_portable_runtime_bundle(release, component_key)
                 .map_err(PluginPackageError::Invalid)?,
         ],
     };
     bundles.sort_by(|left, right| left.server_key.cmp(&right.server_key));
     for bundle in &bundles {
-        verify_plugin_mcp_cloud_package(package, bundle)?;
+        verify_plugin_mcp_portable_package(package, bundle)?;
     }
     Ok(bundles)
 }
@@ -281,7 +281,7 @@ fn read_verified_plugin_archive_bytes(
 ///
 /// The Release artifact hash remains the identity of the separately reproducible ZIP. This
 /// function verifies the embedded source file set, exact checksum index, Manifest, and SBOM so a
-/// bundled cloud runtime can materialize the same canonical component Bundles without network I/O.
+/// portable runtime can materialize the same canonical component Bundles without network I/O.
 pub fn verify_embedded_plugin_package_files(
     files: BTreeMap<String, Vec<u8>>,
     release: &PluginReleaseRecord,

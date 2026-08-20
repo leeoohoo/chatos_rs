@@ -275,7 +275,7 @@ pub struct PluginComponentSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginCloudTextResource {
+pub struct PluginPortableTextResource {
     pub path: String,
     pub text: String,
     pub sha256: String,
@@ -283,7 +283,7 @@ pub struct PluginCloudTextResource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginCloudComponentBundle {
+pub struct PluginPortableComponentBundle {
     pub plugin_id: String,
     pub release_id: String,
     pub version: String,
@@ -294,7 +294,7 @@ pub struct PluginCloudComponentBundle {
     pub primary_text: String,
     pub primary_sha256: String,
     #[serde(default)]
-    pub resources: Vec<PluginCloudTextResource>,
+    pub resources: Vec<PluginPortableTextResource>,
     pub bundle_sha256: String,
     pub artifact_sha256: String,
     pub normalized_manifest_sha256: String,
@@ -302,7 +302,7 @@ pub struct PluginCloudComponentBundle {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PluginMcpCloudRuntimeBundle {
+pub struct PluginMcpPortableRuntimeBundle {
     pub plugin_id: String,
     pub release_id: String,
     pub version: String,
@@ -320,187 +320,14 @@ pub struct PluginMcpCloudRuntimeBundle {
     pub bundle_sha256: String,
 }
 
-impl PluginMcpCloudRuntimeBundle {
+impl PluginMcpPortableRuntimeBundle {
     pub fn effective_runtime(&self) -> &PluginMcpServer {
         &self.resolved_runtime
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginMcpCloudRuntimeMetadata {
-    pub plugin_id: String,
-    pub release_id: String,
-    pub component_key: String,
-    pub server_key: String,
-    pub transport: String,
-    #[serde(default)]
-    pub secret_names: Vec<String>,
-    #[serde(default)]
-    pub oauth_resource: Option<String>,
-    pub bundle_sha256: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginCloudCredentialMetadata {
-    pub id: String,
-    pub owner_user_id: String,
-    pub plugin_id: String,
-    pub release_id: String,
-    pub component_key: String,
-    pub secret_name: String,
-    pub revision: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginCloudOAuthConnectionRecord {
-    pub id: String,
-    pub owner_user_id: String,
-    pub plugin_id: String,
-    pub release_id: String,
-    pub component_key: String,
-    pub provider: String,
-    pub resource: String,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-    pub connected: bool,
-    #[serde(default)]
-    pub needs_auth: bool,
-    #[serde(default)]
-    pub refreshable: bool,
-    #[serde(default)]
-    pub expires_at: Option<String>,
-    #[serde(default)]
-    pub account_display: Option<String>,
-    pub revision: String,
-    pub updated_at: String,
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BeginPluginCloudOAuthAuthorizationRequest {
-    pub provider: String,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-    #[serde(default)]
-    pub authorization_server: Option<String>,
-    #[serde(default)]
-    pub client_id: Option<String>,
-    #[serde(default)]
-    pub client_secret: Option<String>,
-    #[serde(default)]
-    pub token_endpoint_auth_method: Option<String>,
-}
-
-impl std::fmt::Debug for BeginPluginCloudOAuthAuthorizationRequest {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("BeginPluginCloudOAuthAuthorizationRequest")
-            .field("provider", &self.provider)
-            .field("scopes", &self.scopes)
-            .field("authorization_server", &self.authorization_server)
-            .field(
-                "client_id",
-                &self.client_id.as_ref().map(|_| "[configured]"),
-            )
-            .field(
-                "client_secret",
-                &self.client_secret.as_ref().map(|_| "[redacted]"),
-            )
-            .field(
-                "token_endpoint_auth_method",
-                &self.token_endpoint_auth_method,
-            )
-            .finish()
-    }
-}
-
-impl Drop for BeginPluginCloudOAuthAuthorizationRequest {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-
-        if let Some(value) = self.client_secret.as_mut() {
-            value.zeroize();
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BeginPluginCloudOAuthAuthorizationResponse {
-    pub flow_id: String,
-    pub authorization_url: String,
-    pub callback_origin: String,
-    pub expires_at: String,
-}
-
-impl std::fmt::Debug for BeginPluginCloudOAuthAuthorizationResponse {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("BeginPluginCloudOAuthAuthorizationResponse")
-            .field("flow_id", &self.flow_id)
-            .field("authorization_url", &"[redacted]")
-            .field("callback_origin", &self.callback_origin)
-            .field("expires_at", &self.expires_at)
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResolvePluginMcpCloudCredentialsRequest {
-    pub owner_user_id: String,
-    pub expected_component_content_sha256: String,
-    #[serde(default)]
-    pub permission_snapshot: Vec<String>,
-    #[serde(default)]
-    pub auth_connection_ids: Vec<String>,
-    #[serde(default)]
-    pub minimum_valid_until_unix: Option<i64>,
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResolvedPluginMcpCloudCredentials {
-    pub credential_snapshot_sha256: String,
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    #[serde(default)]
-    pub environment: BTreeMap<String, String>,
-    #[serde(default)]
-    pub oauth_connection_id: Option<String>,
-}
-
-impl std::fmt::Debug for ResolvedPluginMcpCloudCredentials {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ResolvedPluginMcpCloudCredentials")
-            .field(
-                "credential_snapshot_sha256",
-                &self.credential_snapshot_sha256,
-            )
-            .field("header_count", &self.headers.len())
-            .field("environment_count", &self.environment.len())
-            .field("oauth_connection_id", &self.oauth_connection_id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Drop for ResolvedPluginMcpCloudCredentials {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-
-        for value in self.headers.values_mut() {
-            value.zeroize();
-        }
-        for value in self.environment.values_mut() {
-            value.zeroize();
-        }
-    }
-}
-
 #[derive(Serialize)]
-struct PluginMcpCloudRuntimeBundleHashInput<'a> {
+struct PluginMcpPortableRuntimeBundleHashInput<'a> {
     purpose: &'static str,
     plugin_id: &'a str,
     release_id: &'a str,
@@ -514,10 +341,10 @@ struct PluginMcpCloudRuntimeBundleHashInput<'a> {
     server_key: &'a str,
 }
 
-pub fn build_plugin_mcp_cloud_runtime_bundle(
+pub fn build_plugin_mcp_portable_runtime_bundle(
     release: &PluginReleaseRecord,
     component_key: &str,
-) -> Result<PluginMcpCloudRuntimeBundle, String> {
+) -> Result<PluginMcpPortableRuntimeBundle, String> {
     let component = release
         .components
         .iter()
@@ -525,10 +352,10 @@ pub fn build_plugin_mcp_cloud_runtime_bundle(
         .cloned()
         .ok_or_else(|| format!("Plugin MCP component is missing: {component_key}"))?;
     if component.kind != PluginComponentKind::McpServer
-        || component.execution_host == PluginExecutionHost::Local
+        || component.execution_host != PluginExecutionHost::Portable
     {
         return Err(format!(
-            "Plugin component is not a cloud-capable MCP Server: {component_key}"
+            "Plugin component is not a portable MCP Server: {component_key}"
         ));
     }
     let runtime = release
@@ -544,7 +371,7 @@ pub fn build_plugin_mcp_cloud_runtime_bundle(
         ));
     }
     let server_key = runtime.component_key().to_string();
-    build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
+    build_plugin_mcp_portable_runtime_bundle_with_resolved_runtime(
         release,
         component_key,
         runtime.clone(),
@@ -552,12 +379,12 @@ pub fn build_plugin_mcp_cloud_runtime_bundle(
     )
 }
 
-pub fn build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
+pub fn build_plugin_mcp_portable_runtime_bundle_with_resolved_runtime(
     release: &PluginReleaseRecord,
     component_key: &str,
     resolved_runtime: PluginMcpServer,
     server_key: &str,
-) -> Result<PluginMcpCloudRuntimeBundle, String> {
+) -> Result<PluginMcpPortableRuntimeBundle, String> {
     let component = release
         .components
         .iter()
@@ -565,10 +392,10 @@ pub fn build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
         .cloned()
         .ok_or_else(|| format!("Plugin MCP component is missing: {component_key}"))?;
     if component.kind != PluginComponentKind::McpServer
-        || component.execution_host == PluginExecutionHost::Local
+        || component.execution_host != PluginExecutionHost::Portable
     {
         return Err(format!(
-            "Plugin component is not a cloud-capable MCP Server: {component_key}"
+            "Plugin component is not a portable MCP Server: {component_key}"
         ));
     }
     let runtime = release
@@ -592,7 +419,7 @@ pub fn build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
     let normalized_manifest_sha256 =
         normalized_plugin_manifest_sha256(&release.normalized_manifest)
             .map_err(|error| format!("hash normalized Plugin Manifest failed: {error}"))?;
-    let bundle_sha256 = plugin_mcp_cloud_runtime_bundle_sha256_parts(
+    let bundle_sha256 = plugin_mcp_portable_runtime_bundle_sha256_parts(
         release.plugin_id.as_str(),
         release.id.as_str(),
         release.version.as_str(),
@@ -604,7 +431,7 @@ pub fn build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
         &resolved_runtime,
         server_key,
     )?;
-    Ok(PluginMcpCloudRuntimeBundle {
+    Ok(PluginMcpPortableRuntimeBundle {
         plugin_id: release.plugin_id.clone(),
         release_id: release.id.clone(),
         version: release.version.clone(),
@@ -619,10 +446,10 @@ pub fn build_plugin_mcp_cloud_runtime_bundle_with_resolved_runtime(
     })
 }
 
-pub fn plugin_mcp_cloud_runtime_bundle_sha256(
-    bundle: &PluginMcpCloudRuntimeBundle,
+pub fn plugin_mcp_portable_runtime_bundle_sha256(
+    bundle: &PluginMcpPortableRuntimeBundle,
 ) -> Result<String, String> {
-    plugin_mcp_cloud_runtime_bundle_sha256_parts(
+    plugin_mcp_portable_runtime_bundle_sha256_parts(
         bundle.plugin_id.as_str(),
         bundle.release_id.as_str(),
         bundle.version.as_str(),
@@ -636,7 +463,7 @@ pub fn plugin_mcp_cloud_runtime_bundle_sha256(
     )
 }
 
-fn plugin_mcp_cloud_runtime_bundle_sha256_parts(
+fn plugin_mcp_portable_runtime_bundle_sha256_parts(
     plugin_id: &str,
     release_id: &str,
     version: &str,
@@ -648,8 +475,8 @@ fn plugin_mcp_cloud_runtime_bundle_sha256_parts(
     resolved_runtime: &PluginMcpServer,
     server_key: &str,
 ) -> Result<String, String> {
-    let payload = PluginMcpCloudRuntimeBundleHashInput {
-        purpose: "chatos.plugin.cloud-mcp-runtime-bundle.v2",
+    let payload = PluginMcpPortableRuntimeBundleHashInput {
+        purpose: "chatos.plugin.portable-mcp-runtime-bundle.v1",
         plugin_id,
         release_id,
         version,
@@ -663,7 +490,7 @@ fn plugin_mcp_cloud_runtime_bundle_sha256_parts(
     };
     serde_json::to_vec(&payload)
         .map(|bytes| hex::encode(Sha256::digest(bytes)))
-        .map_err(|error| format!("serialize Plugin MCP cloud runtime Bundle failed: {error}"))
+        .map_err(|error| format!("serialize Plugin MCP portable runtime Bundle failed: {error}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

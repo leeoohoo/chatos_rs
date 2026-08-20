@@ -3,7 +3,7 @@
 
 use anyhow::{bail, Context, Result};
 use chatos_plugin_management_sdk::{
-    PluginCloudComponentBundle, PluginExecutionHost, PluginManifest,
+    PluginExecutionHost, PluginManifest, PluginPortableComponentBundle,
     PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
 };
 use chatos_plugin_package::{
@@ -16,7 +16,7 @@ pub(super) fn load_local_portable_bundle(
     installation: &ActivePluginInstallation,
     manifest: &PluginManifest,
     component_key: &str,
-) -> Result<Option<PluginCloudComponentBundle>> {
+) -> Result<Option<PluginPortableComponentBundle>> {
     let component = installation
         .version
         .inventory
@@ -26,9 +26,6 @@ pub(super) fn load_local_portable_bundle(
         .context("Plugin component is missing from the signed installation inventory")?;
     match component.execution_host {
         PluginExecutionHost::Local => return Ok(None),
-        PluginExecutionHost::Cloud => {
-            bail!("cloud-only Plugin components cannot execute through Local Connector")
-        }
         PluginExecutionHost::Portable => {}
     }
     if manifest.schema_version < PLUGIN_MANIFEST_SCHEMA_VERSION_V2 {
@@ -64,7 +61,7 @@ pub(super) fn validate_local_portable_bundle(
     manifest: &PluginManifest,
     component_key: &str,
     expected_content_sha256: &str,
-) -> Result<Option<PluginCloudComponentBundle>> {
+) -> Result<Option<PluginPortableComponentBundle>> {
     let bundle = load_local_portable_bundle(installation, manifest, component_key)?;
     if bundle
         .as_ref()

@@ -215,10 +215,6 @@ impl RoutingEngine {
                 resource.allow_writes,
                 "stdio MCP is executed through Local Connector",
             ),
-            McpExecutionHost::Cloud => unavailable_route(
-                resource,
-                "cloud stdio execution is no longer supported; use Local Connector",
-            ),
         }
     }
 
@@ -231,10 +227,6 @@ impl RoutingEngine {
             return unavailable_route(resource, "plugin MCP execution host is not resolved");
         };
         match execution_host {
-            McpExecutionHost::Cloud => unavailable_route(
-                resource,
-                "cloud Plugin execution is no longer supported; install it on Local Connector",
-            ),
             McpExecutionHost::Local => plugin_local_route(
                 context,
                 resource,
@@ -243,7 +235,7 @@ impl RoutingEngine {
             McpExecutionHost::Portable => plugin_local_route(
                 context,
                 resource,
-                "portable plugin is pinned to Local Connector; cloud fallback is disabled",
+                "portable plugin is pinned to Local Connector",
             ),
         }
     }
