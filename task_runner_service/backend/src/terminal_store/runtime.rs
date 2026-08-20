@@ -30,11 +30,11 @@ pub(super) fn terminal_state() -> &'static Arc<TerminalRuntimeState> {
     }
     #[cfg(test)]
     {
-        return TERMINAL_STATE.get_or_init(|| {
+        TERMINAL_STATE.get_or_init(|| {
             Arc::new(TerminalRuntimeState::new(
                 super::TaskTerminalRetentionPolicy::test_default(),
             ))
-        });
+        })
     }
     #[cfg(not(test))]
     panic!("task terminal runtime must be configured before use");

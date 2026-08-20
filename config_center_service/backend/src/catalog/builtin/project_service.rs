@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS"],
             352,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -30,7 +30,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             353,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -43,7 +43,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             354,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_SELF_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -56,7 +56,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_SELF_INTERNAL_API_SECRET"],
             355,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -69,7 +69,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             356,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -82,7 +82,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             356,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET_CONFIG_KEY,
@@ -95,7 +95,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET"],
             357,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
@@ -112,7 +112,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT"],
             358,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
@@ -129,7 +129,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_OTEL_TRACE_SAMPLE_RATIO"],
             359,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
@@ -146,7 +146,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_OTEL_EXPORT_TIMEOUT_MS"],
             360,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_HOST_CONFIG_KEY,
@@ -163,7 +163,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_HOST"],
             357,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_PORT_CONFIG_KEY,
@@ -180,7 +180,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_PORT"],
             357,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -197,7 +197,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_INTERNAL_MTLS_PORT"],
             358,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY,
@@ -212,7 +212,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_DATABASE_URL"],
             357,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -229,7 +229,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_USER_SERVICE_BASE_URL"],
             358,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -246,7 +246,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL"],
             358,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -263,7 +263,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS"],
             359,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET_CONFIG_KEY,
@@ -276,7 +276,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET"],
             360,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
@@ -293,7 +293,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_TASK_RUNNER_BASE_URL"],
             361,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -310,7 +310,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_TASK_RUNNER_REQUEST_TIMEOUT_MS"],
             362,
-            &now,
+            now,
         ),
         secret_definition(
             PROJECT_SERVICE_SYNC_SECRET_CONFIG_KEY,
@@ -323,7 +323,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_SYNC_SECRET"],
             363,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
@@ -340,7 +340,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL"],
             364,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -357,7 +357,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS"],
             365,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED_CONFIG_KEY,
@@ -374,7 +374,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED"],
             373,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES_CONFIG_KEY,
@@ -391,7 +391,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES"],
             373,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_CLOUD_PROJECT_MAX_UNPACKED_BYTES_CONFIG_KEY,
@@ -408,7 +408,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_CLOUD_PROJECT_MAX_UNPACKED_BYTES"],
             373,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES_CONFIG_KEY,
@@ -425,7 +425,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES"],
             373,
-            &now,
+            now,
         ),
         definition(
             PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS_CONFIG_KEY,
@@ -442,7 +442,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS"],
             373,
-            &now,
+            now,
         ),
         definition(
             CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
@@ -459,7 +459,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "immediate",
             &["CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL"],
             357,
-            &now,
+            now,
         ),
         definition(
             CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY,
@@ -476,7 +476,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "immediate",
             &[],
             358,
-            &now,
+            now,
         ),
         definition(
             CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
@@ -493,7 +493,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "immediate",
             &["CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL"],
             359,
-            &now,
+            now,
         ),
         secret_definition(
             CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -506,7 +506,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "immediate",
             &[],
             3591,
-            &now,
+            now,
         ),
     ]
 }

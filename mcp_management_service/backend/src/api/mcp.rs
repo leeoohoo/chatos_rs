@@ -631,14 +631,13 @@ pub(crate) async fn execute_tool_batch_invocation(
                     .await?;
             }
             RuntimeExecutionTurnState::Acquired => {
-                if record.status == RuntimeInvocationStatus::Queued {
-                    if !state
+                if record.status == RuntimeInvocationStatus::Queued
+                    && !state
                         .runtime_invocations
                         .mark_running(call.invocation_id.as_str())
                         .await?
-                    {
-                        return Ok(batch);
-                    }
+                {
+                    return Ok(batch);
                 }
                 let waiting = match state
                     .providers

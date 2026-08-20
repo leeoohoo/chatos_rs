@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &["CHAT_MAX_TOKENS"],
             110,
-            &now,
+            now,
         ),
         definition(
             "chatos.task.follow_up_max_rounds",
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &["TASK_FOLLOW_UP_MAX_ROUNDS"],
             120,
-            &now,
+            now,
         ),
         definition(
             "chatos.conversation.history_limit",
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &["HISTORY_LIMIT"],
             130,
-            &now,
+            now,
         ),
         definition(
             "chatos.attachment.total_max_bytes",
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &["ATTACHMENT_TOTAL_MAX_BYTES"],
             140,
-            &now,
+            now,
         ),
         definition(
             "chatos.ui.terminal_enabled",
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &["TERMINAL_UI_ENABLED"],
             150,
-            &now,
+            now,
         ),
         definition(
             CHATOS_NODE_ENV_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["NODE_ENV"],
             160,
-            &now,
+            now,
         ),
         definition(
             CHATOS_HOST_CONFIG_KEY,
@@ -119,7 +119,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["HOST"],
             160,
-            &now,
+            now,
         ),
         definition(
             CHATOS_BACKEND_PORT_CONFIG_KEY,
@@ -136,7 +136,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["BACKEND_PORT"],
             160,
-            &now,
+            now,
         ),
         definition(
             CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -153,7 +153,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_INTERNAL_MTLS_PORT"],
             160,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_DATABASE_URL_CONFIG_KEY,
@@ -166,7 +166,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MONGODB_CONNECTION_STRING"],
             161,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MONGODB_DATABASE_CONFIG_KEY,
@@ -183,7 +183,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MONGODB_DB"],
             162,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY,
@@ -196,7 +196,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LEGACY_AUTH_MONGODB_URI"],
             163,
-            &now,
+            now,
         ),
         definition(
             CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY,
@@ -213,7 +213,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LEGACY_AUTH_MONGODB_DATABASE"],
             164,
-            &now,
+            now,
         ),
         definition(
             CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -230,7 +230,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_USER_SERVICE_BASE_URL"],
             161,
-            &now,
+            now,
         ),
         definition(
             CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -247,7 +247,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS"],
             162,
-            &now,
+            now,
         ),
         definition(
             CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
@@ -264,7 +264,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_PROJECT_SERVICE_BASE_URL"],
             163,
-            &now,
+            now,
         ),
         definition(
             CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -281,7 +281,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL"],
             164,
-            &now,
+            now,
         ),
         definition(
             CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -298,7 +298,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS"],
             164,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -311,7 +311,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             165,
-            &now,
+            now,
         ),
         definition(
             CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
@@ -328,7 +328,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_TASK_RUNNER_BASE_URL"],
             166,
-            &now,
+            now,
         ),
         definition(
             CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -345,7 +345,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_TASK_RUNNER_INTERNAL_BASE_URL"],
             167,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -358,7 +358,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_TASK_RUNNER_INTERNAL_API_SECRET"],
             167,
-            &now,
+            now,
         ),
         definition(
             CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -375,7 +375,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS"],
             168,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -388,7 +388,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"],
             169,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -401,7 +401,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"],
             169,
-            &now,
+            now,
         ),
         definition(
             CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
@@ -418,7 +418,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"],
             170,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -431,7 +431,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"],
             171,
-            &now,
+            now,
         ),
         definition(
             CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -448,7 +448,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS"],
             172,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
@@ -465,7 +465,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_MEMORY_ENGINE_BASE_URL"],
             173,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -478,7 +478,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             174,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -495,7 +495,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_MEMORY_ENGINE_REQUEST_TIMEOUT_MS"],
             175,
-            &now,
+            now,
         ),
     ]
 }

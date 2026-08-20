@@ -487,7 +487,7 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
     let internal_api_secrets = internal_api_secret
         .map(|secret| {
             ALLOWED_INTERNAL_CALLER_SERVICES
-                .into_iter()
+                .iter()
                 .map(|caller| (caller.to_string(), secret.to_string()))
                 .collect()
         })

@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_PORT"],
             371,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_INTERNAL_MTLS_PORT"],
             371,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_OTLP_ENDPOINT_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT"],
             372,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_OTEL_TRACE_SAMPLE_RATIO"],
             373,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_OTEL_EXPORT_TIMEOUT_MS"],
             374,
-            &now,
+            now,
         ),
         secret_definition(
             USER_SERVICE_JWT_SECRET_CONFIG_KEY,
@@ -98,7 +98,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_JWT_SECRET"],
             372,
-            &now,
+            now,
         ),
         secret_definition(
             USER_SERVICE_SECRET_KEY_CONFIG_KEY,
@@ -111,7 +111,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SECRET_KEY"],
             373,
-            &now,
+            now,
         ),
         nullable_secret_definition(
             USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY,
@@ -124,7 +124,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_PREVIOUS_SECRET_KEYS"],
             3731,
-            &now,
+            now,
         ),
         secret_definition(
             USER_SERVICE_PROJECT_SERVICE_INTERNAL_SECRET_CONFIG_KEY,
@@ -137,7 +137,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET"],
             374,
-            &now,
+            now,
         ),
         secret_definition(
             USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -150,7 +150,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             375,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY,
@@ -167,7 +167,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SUPER_ADMIN_USERNAME"],
             37501,
-            &now,
+            now,
         ),
         secret_definition(
             USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
@@ -180,7 +180,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SUPER_ADMIN_PASSWORD"],
             37502,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
@@ -197,7 +197,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME"],
             37503,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
@@ -214,7 +214,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_JWT_ISSUER"],
             37504,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
@@ -231,7 +231,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_USER_AUDIENCE"],
             37505,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY,
@@ -248,7 +248,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_TASK_RUNNER_AUDIENCE"],
             37506,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
@@ -265,7 +265,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_USER_ACCESS_TTL_SECONDS"],
             37507,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
@@ -282,7 +282,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS"],
             37508,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY,
@@ -299,7 +299,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_REGISTER_CODE_TTL_SECONDS"],
             37509,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
@@ -316,7 +316,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_REGISTER_CODE_RESEND_SECONDS"],
             37510,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT_CONFIG_KEY,
@@ -333,7 +333,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT"],
             37511,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS_CONFIG_KEY,
@@ -350,7 +350,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS"],
             37512,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS_CONFIG_KEY,
@@ -367,7 +367,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS"],
             37513,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY,
@@ -384,7 +384,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS"],
             37514,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY,
@@ -401,7 +401,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_LOGIN_LOCKOUT_SECONDS"],
             37515,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
@@ -418,7 +418,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_MEMORY_ENGINE_BASE_URL"],
             3751,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
@@ -435,7 +435,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_TASK_RUNNER_BASE_URL"],
             3752,
-            &now,
+            now,
         ),
         secret_definition(
             USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -448,7 +448,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"],
             3753,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -465,7 +465,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS"],
             3754,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
@@ -482,7 +482,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_HARNESS_PROVISIONING_ENABLED"],
             3755,
-            &now,
+            now,
         ),
         nullable_definition(
             USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
@@ -499,7 +499,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_HARNESS_BASE_URL"],
             3756,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_HARNESS_SYNTHETIC_EMAIL_DOMAIN_CONFIG_KEY,
@@ -516,7 +516,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_HARNESS_SYNTHETIC_EMAIL_DOMAIN"],
             3757,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_HARNESS_SPACE_PREFIX_CONFIG_KEY,
@@ -533,7 +533,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_HARNESS_SPACE_PREFIX"],
             3758,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_HARNESS_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -550,7 +550,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_HARNESS_REQUEST_TIMEOUT_MS"],
             3759,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX_CONFIG_KEY,
@@ -567,7 +567,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX"],
             3760,
-            &now,
+            now,
         ),
         nullable_definition(
             USER_SERVICE_SMTP_HOST_CONFIG_KEY,
@@ -584,7 +584,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SMTP_HOST"],
             360,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_SMTP_PORT_CONFIG_KEY,
@@ -601,7 +601,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SMTP_PORT"],
             362,
-            &now,
+            now,
         ),
         nullable_definition(
             USER_SERVICE_SMTP_USERNAME_CONFIG_KEY,
@@ -618,7 +618,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SMTP_USERNAME"],
             364,
-            &now,
+            now,
         ),
         nullable_secret_definition(
             USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY,
@@ -631,7 +631,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_SMTP_PASSWORD"],
             365,
-            &now,
+            now,
         ),
         nullable_definition(
             USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
@@ -648,7 +648,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_EMAIL_FROM"],
             366,
-            &now,
+            now,
         ),
         definition(
             USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY,
@@ -665,7 +665,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_EMAIL_FROM_NAME"],
             368,
-            &now,
+            now,
         ),
     ]
 }

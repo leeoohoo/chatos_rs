@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOG_LEVEL"],
             30,
-            &now,
+            now,
         ),
         definition(
             PLATFORM_PRESSURE_LEVEL_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             40,
-            &now,
+            now,
         ),
         definition(
             PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             41,
-            &now,
+            now,
         ),
         definition(
             PLATFORM_PRESSURE_CONTROLLER_INTERVAL_MS_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             42,
-            &now,
+            now,
         ),
         definition(
             PLATFORM_PRESSURE_SIGNAL_TTL_SECONDS_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             43,
-            &now,
+            now,
         ),
         definition(
             PLATFORM_PRESSURE_ESCALATION_STABLE_SECONDS_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             44,
-            &now,
+            now,
         ),
         definition(
             PLATFORM_PRESSURE_RECOVERY_STABLE_SECONDS_CONFIG_KEY,
@@ -119,7 +119,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             45,
-            &now,
+            now,
         ),
         definition(
             AGENT_MAX_ITERATIONS_CONFIG_KEY,
@@ -136,7 +136,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &[],
             100,
-            &now,
+            now,
         ),
         definition(
             SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
@@ -153,7 +153,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_URL"],
             101,
-            &now,
+            now,
         ),
         definition(
             SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
@@ -170,7 +170,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL"],
             1011,
-            &now,
+            now,
         ),
         definition(
             SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -187,7 +187,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS"],
             102,
-            &now,
+            now,
         ),
         definition(
             SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
@@ -204,7 +204,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_SERVICE_BASE_URL"],
             103,
-            &now,
+            now,
         ),
         definition(
             SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -221,7 +221,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_REQUEST_TIMEOUT_MS"],
             104,
-            &now,
+            now,
         ),
     ]
 }

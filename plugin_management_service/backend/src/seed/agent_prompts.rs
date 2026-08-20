@@ -319,7 +319,8 @@ mod tests {
 
     #[test]
     fn chatos_agents_publish_distinct_default_and_plan_profiles() {
-        for agent_key in [SystemAgentKey::ChatosConversationAgent.as_str()] {
+        {
+            let agent_key = SystemAgentKey::ChatosConversationAgent.as_str();
             assert_eq!(
                 agent_prompt_profiles_for_agent(agent_key),
                 vec![
@@ -342,7 +343,8 @@ mod tests {
     #[test]
     fn execution_planner_prompts_require_terminal_for_dependency_manifests() {
         let prompts = baseline_prompts();
-        for agent_key in [SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str()] {
+        {
+            let agent_key = SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str();
             let content = prompts
                 .iter()
                 .find(|(key, profile, _)| {

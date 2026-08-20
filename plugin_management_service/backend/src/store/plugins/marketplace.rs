@@ -58,36 +58,6 @@ fn plugin_marketplace_update(
     Ok(update)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::plugin_catalog_sync_event_from_document;
-    use mongodb::bson::doc;
-
-    #[test]
-    fn parses_versioned_scheduled_catalog_sync_outbox() {
-        let event = plugin_catalog_sync_event_from_document(doc! {
-            "id": "marketplace-1",
-            "catalog_sync_event_version": 3_i64,
-            "catalog_sync_event_requested_at": "2026-08-05T00:00:00Z",
-            "catalog_sync_event_scheduled": true,
-        })
-        .expect("parse Catalog sync Outbox");
-        assert_eq!(event.marketplace_id, "marketplace-1");
-        assert_eq!(event.event_version, 3);
-        assert!(event.scheduled);
-    }
-
-    #[test]
-    fn rejects_catalog_sync_outbox_without_version() {
-        let error = plugin_catalog_sync_event_from_document(doc! {
-            "id": "marketplace-1",
-            "catalog_sync_event_requested_at": "2026-08-05T00:00:00Z",
-        })
-        .expect_err("missing event version must fail");
-        assert!(error.contains("event version"));
-    }
-}
-
 impl AppStore {
     pub async fn list_plugin_marketplaces(&self) -> Result<Vec<PluginMarketplaceRecord>, String> {
         let options = FindOptions::builder()
@@ -578,5 +548,35 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(result.modified_count == 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plugin_catalog_sync_event_from_document;
+    use mongodb::bson::doc;
+
+    #[test]
+    fn parses_versioned_scheduled_catalog_sync_outbox() {
+        let event = plugin_catalog_sync_event_from_document(doc! {
+            "id": "marketplace-1",
+            "catalog_sync_event_version": 3_i64,
+            "catalog_sync_event_requested_at": "2026-08-05T00:00:00Z",
+            "catalog_sync_event_scheduled": true,
+        })
+        .expect("parse Catalog sync Outbox");
+        assert_eq!(event.marketplace_id, "marketplace-1");
+        assert_eq!(event.event_version, 3);
+        assert!(event.scheduled);
+    }
+
+    #[test]
+    fn rejects_catalog_sync_outbox_without_version() {
+        let error = plugin_catalog_sync_event_from_document(doc! {
+            "id": "marketplace-1",
+            "catalog_sync_event_requested_at": "2026-08-05T00:00:00Z",
+        })
+        .expect_err("missing event version must fail");
+        assert!(error.contains("event version"));
     }
 }

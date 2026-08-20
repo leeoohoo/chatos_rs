@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             200,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             202,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             204,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             206,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             210,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_SUPPLY_CHAIN_BASELINE_REVISION_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             216,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_LEVEL_CONFIG_KEY,
@@ -119,7 +119,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             217,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_SUPPLY_CHAIN_INSTALL_SCRIPT_ALLOWLIST_CONFIG_KEY,
@@ -136,7 +136,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             218,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_SUPPLY_CHAIN_NODE_DEPENDENCY_REQUIREMENTS_CONFIG_KEY,
@@ -165,7 +165,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             219,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_SUPPLY_CHAIN_NODE_INSTALL_REGISTRY_CONFIG_KEY,
@@ -182,7 +182,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             220,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_SUPPLY_CHAIN_NODE_AUDIT_REGISTRY_CONFIG_KEY,
@@ -199,7 +199,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             221,
-            &now,
+            now,
         ),
     ]
 }

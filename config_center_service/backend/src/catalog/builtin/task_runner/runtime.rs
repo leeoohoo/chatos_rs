@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_HOST"],
             294,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PORT_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_PORT"],
             294,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_INTERNAL_MTLS_PORT"],
             295,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_DATABASE_URL_CONFIG_KEY,
@@ -64,7 +64,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_DATABASE_URL"],
             294,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY,
@@ -81,7 +81,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_MONGODB_DATABASE"],
             294,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY,
@@ -98,7 +98,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_WORKSPACE_DIR"],
             294,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY,
@@ -115,7 +115,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_ADMIN_USERNAME"],
             294,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY,
@@ -128,7 +128,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_ADMIN_PASSWORD"],
             295,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
@@ -145,7 +145,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_ADMIN_DISPLAY_NAME"],
             296,
-            &now,
+            now,
         ),
     ]
 }

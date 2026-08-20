@@ -108,14 +108,12 @@ pub fn apply_edit_text(original: &str, req: EditRequest<'_>) -> Result<EditOutpu
         candidates.push(all_matches[0]);
     }
 
-    if req.expected_matches.is_some() {
-        if candidates.len() != expected {
-            return Err(format!(
-                "expected_matches mismatch: expected {}, got {}",
-                expected,
-                candidates.len()
-            ));
-        }
+    if req.expected_matches.is_some() && candidates.len() != expected {
+        return Err(format!(
+            "expected_matches mismatch: expected {}, got {}",
+            expected,
+            candidates.len()
+        ));
     }
 
     if candidates.is_empty() {

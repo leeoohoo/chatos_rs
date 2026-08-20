@@ -965,10 +965,10 @@ fn commit_conflict_for_state(
     state: &SessionFileState,
 ) -> Option<Value> {
     let current = load_entry_snapshot(fs_ops, state.path.as_str()).ok()?;
-    if state.base.kind == current.kind {
-        if state.base.kind != EntryKind::File || state.base.sha256 == current.sha256 {
-            return None;
-        }
+    if state.base.kind == current.kind
+        && (state.base.kind != EntryKind::File || state.base.sha256 == current.sha256)
+    {
+        return None;
     }
     if matches!(state.base.kind, EntryKind::File) || matches!(current.kind, EntryKind::File) {
         mark_failed_modification(revision_guard, ctx, state.path.as_str());
@@ -1037,7 +1037,7 @@ fn load_entry_snapshot(fs_ops: &FsOps, path: &str) -> Result<EntrySnapshot, Stri
 }
 
 fn enforce_write_size(content: &str, max_write_bytes: i64) -> Result<(), String> {
-    if content.as_bytes().len() as i64 > max_write_bytes {
+    if content.len() as i64 > max_write_bytes {
         return Err("Write exceeds max-write-bytes limit.".to_string());
     }
     Ok(())

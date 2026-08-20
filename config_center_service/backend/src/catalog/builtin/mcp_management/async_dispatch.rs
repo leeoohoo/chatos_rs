@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS"],
             336,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE"],
             340,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY"],
             342,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL"],
             346,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE"],
             348,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE"],
             349,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
@@ -119,7 +119,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE"],
             350,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY,
@@ -136,7 +136,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH"],
             3501,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY,
@@ -153,7 +153,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES"],
             3502,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_PERCENT_CONFIG_KEY,
@@ -170,7 +170,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             35021,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_PERCENT_CONFIG_KEY,
@@ -187,7 +187,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             35022,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
@@ -204,7 +204,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             35023,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
@@ -221,7 +221,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS"],
             3503,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
@@ -238,7 +238,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS"],
             3506,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY,
@@ -255,7 +255,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS"],
             3507,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY,
@@ -272,7 +272,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE"],
             3508,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
@@ -289,7 +289,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE"],
             3509,
-            &now,
+            now,
         ),
     ]
 }

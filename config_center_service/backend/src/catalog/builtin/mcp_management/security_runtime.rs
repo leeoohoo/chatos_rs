@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS"],
             352,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -30,7 +30,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET"],
             3521,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -43,7 +43,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET"],
             353,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -56,7 +56,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             354,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -69,7 +69,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"],
             355,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -82,7 +82,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"],
             356,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -95,7 +95,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET"],
             357,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_RUNTIME_GRANT_SECRET_CONFIG_KEY,
@@ -108,7 +108,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_RUNTIME_GRANT_SECRET"],
             359,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET_CONFIG_KEY,
@@ -121,7 +121,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET"],
             360,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_HOST_CONFIG_KEY,
@@ -138,7 +138,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_HOST"],
             3600,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PORT_CONFIG_KEY,
@@ -155,7 +155,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PORT"],
             3600,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -172,7 +172,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_INTERNAL_MTLS_PORT"],
             3601,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_OTLP_ENDPOINT_CONFIG_KEY,
@@ -189,7 +189,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_OTEL_EXPORTER_OTLP_ENDPOINT"],
             3602,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
@@ -206,7 +206,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_OTEL_TRACE_SAMPLE_RATIO"],
             3603,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
@@ -223,7 +223,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_OTEL_EXPORT_TIMEOUT_MS"],
             3604,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
@@ -240,7 +240,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_DATABASE_URL"],
             3600,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_EMBEDDED_WORK_DIR_CONFIG_KEY,
@@ -257,7 +257,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_EMBEDDED_WORK_DIR"],
             3600,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -274,7 +274,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS"],
             3601,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS_CONFIG_KEY,
@@ -291,7 +291,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS"],
             36011,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY,
@@ -308,7 +308,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS"],
             3602,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY,
@@ -325,7 +325,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS"],
             3603,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY,
@@ -342,7 +342,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             3603,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY,
@@ -359,7 +359,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             3603,
-            &now,
+            now,
         ),
         secret_definition(
             MCP_MANAGEMENT_INVOCATION_QUOTA_VALKEY_URL_CONFIG_KEY,
@@ -372,7 +372,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             36031,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_INVOCATION_QUOTA_KEY_PREFIX_CONFIG_KEY,
@@ -389,7 +389,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             36032,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_INVOCATION_TENANT_ACTIVE_LIMIT_CONFIG_KEY,
@@ -406,7 +406,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             36033,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_INVOCATION_USER_ACTIVE_LIMIT_CONFIG_KEY,
@@ -423,7 +423,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             36034,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY,
@@ -440,7 +440,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             36035,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY,
@@ -457,7 +457,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             36036,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS_CONFIG_KEY,
@@ -474,7 +474,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS"],
             3606,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY,
@@ -491,7 +491,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS"],
             3607,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY,
@@ -508,7 +508,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS"],
             3608,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS_CONFIG_KEY,
@@ -525,7 +525,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS"],
             3609,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES_CONFIG_KEY,
@@ -542,7 +542,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES"],
             3610,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
@@ -559,7 +559,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PUBLIC_BASE_URL"],
             3611,
-            &now,
+            now,
         ),
     ]
 }

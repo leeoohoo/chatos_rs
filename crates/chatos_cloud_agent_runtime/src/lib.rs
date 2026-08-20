@@ -498,6 +498,7 @@ impl CloudAgentSingleStepOutput {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum CloudAgentSingleStepExecution {
     Apply(CloudAgentSingleStepOutput),
     AckWithoutTransition,

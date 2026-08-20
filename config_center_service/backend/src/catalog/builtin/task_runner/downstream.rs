@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_USER_SERVICE_BASE_URL"],
             281,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS"],
             281,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_PROJECT_SERVICE_BASE_URL"],
             281,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL"],
             281,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS"],
             281,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_MEMORY_ENGINE_BASE_URL"],
             281,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -115,7 +115,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             282,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -128,7 +128,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"],
             282,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -141,7 +141,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             283,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY,
@@ -154,7 +154,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"],
             286,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -167,7 +167,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_TASK_RUNNER_INTERNAL_API_SECRET"],
             287,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -180,7 +180,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"],
             288,
-            &now,
+            now,
         ),
         secret_definition(
             TASK_RUNNER_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -193,7 +193,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"],
             289,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
@@ -210,7 +210,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_CHATOS_CALLBACK_URL"],
             293,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY,
@@ -227,7 +227,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_CALLBACK_TIMEOUT_MS"],
             294,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_OTLP_ENDPOINT_CONFIG_KEY,
@@ -244,7 +244,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_OTEL_EXPORTER_OTLP_ENDPOINT"],
             295,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
@@ -261,7 +261,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_OTEL_TRACE_SAMPLE_RATIO"],
             296,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
@@ -278,7 +278,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_OTEL_EXPORT_TIMEOUT_MS"],
             297,
-            &now,
+            now,
         ),
     ]
 }

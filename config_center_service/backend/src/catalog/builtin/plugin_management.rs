@@ -13,7 +13,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"],
             361,
-            &now,
+            now,
         ),
         secret_definition(
             PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -26,7 +26,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"],
             361,
-            &now,
+            now,
         ),
         secret_definition(
             PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -39,7 +39,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET"],
             362,
-            &now,
+            now,
         ),
         secret_definition(
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -52,7 +52,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET"],
             363,
-            &now,
+            now,
         ),
         secret_definition(
             PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -65,7 +65,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             364,
-            &now,
+            now,
         ),
         secret_definition(
             PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -78,7 +78,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET"],
             365,
-            &now,
+            now,
         ),
         secret_definition(
             PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET_CONFIG_KEY,
@@ -91,7 +91,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET"],
             366,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
@@ -108,7 +108,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS"],
             368,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -125,7 +125,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL"],
             369,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -142,7 +142,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS"],
             370,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
@@ -159,7 +159,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL"],
             371,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
@@ -176,7 +176,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_HOST"],
             371,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
@@ -193,7 +193,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_PORT"],
             371,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -210,7 +210,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT"],
             3711,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
@@ -229,7 +229,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL"],
             371,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY,
@@ -246,7 +246,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE"],
             371,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY,
@@ -263,7 +263,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CORS_ORIGINS"],
             371,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
@@ -280,7 +280,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_PUBLIC_BASE_URL"],
             372,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY,
@@ -297,7 +297,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_FRONTEND_ORIGIN"],
             373,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS_CONFIG_KEY,
@@ -314,7 +314,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS"],
             374,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY,
@@ -331,7 +331,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS"],
             375,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -348,7 +348,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS"],
             376,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY,
@@ -365,7 +365,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES"],
             377,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
@@ -382,7 +382,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS"],
             378,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY,
@@ -399,7 +399,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES"],
             379,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED_CONFIG_KEY,
@@ -416,7 +416,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED"],
             380,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY,
@@ -433,7 +433,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS"],
             381,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -450,7 +450,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS"],
             382,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
@@ -467,7 +467,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES"],
             383,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
@@ -484,7 +484,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3831,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
@@ -501,7 +501,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3832,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
@@ -518,7 +518,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3833,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
@@ -535,7 +535,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL"],
             390,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY,
@@ -552,7 +552,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE"],
             391,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY,
@@ -569,7 +569,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_QUEUE"],
             392,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
@@ -586,7 +586,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE"],
             393,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY,
@@ -603,7 +603,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE"],
             394,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
@@ -620,7 +620,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE"],
             395,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
@@ -637,7 +637,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS"],
             396,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY,
@@ -654,7 +654,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS"],
             397,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
@@ -671,7 +671,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS"],
             398,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
@@ -688,7 +688,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY"],
             399,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY,
@@ -705,7 +705,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS"],
             400,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY,
@@ -722,7 +722,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE"],
             401,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY,
@@ -739,7 +739,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS"],
             402,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_SUPER_ADMIN_USERNAME_CONFIG_KEY,
@@ -756,7 +756,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME"],
             384,
-            &now,
+            now,
         ),
         secret_definition(
             PLUGIN_MANAGEMENT_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
@@ -769,7 +769,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD"],
             385,
-            &now,
+            now,
         ),
         definition(
             PLUGIN_MANAGEMENT_SEED_SYSTEM_RESOURCES_CONFIG_KEY,
@@ -786,7 +786,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES"],
             386,
-            &now,
+            now,
         ),
     ]
 }

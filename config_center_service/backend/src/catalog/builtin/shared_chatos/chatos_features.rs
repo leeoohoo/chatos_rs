@@ -13,7 +13,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["OPENAI_API_KEY"],
             176,
-            &now,
+            now,
         ),
         definition(
             CHATOS_OPENAI_BASE_URL_CONFIG_KEY,
@@ -30,7 +30,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["OPENAI_BASE_URL"],
             177,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_ENABLED_CONFIG_KEY,
@@ -47,7 +47,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_ENABLED"],
             178,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_MESSAGE_LIMIT_CONFIG_KEY,
@@ -64,7 +64,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_MESSAGE_LIMIT"],
             179,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_MAX_CONTEXT_TOKENS_CONFIG_KEY,
@@ -81,7 +81,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_MAX_CONTEXT_TOKENS"],
             180,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_KEEP_LAST_N_CONFIG_KEY,
@@ -98,7 +98,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_KEEP_LAST_N"],
             181,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_TARGET_TOKENS_CONFIG_KEY,
@@ -115,7 +115,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_TARGET_TOKENS"],
             182,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_MERGE_TARGET_TOKENS_CONFIG_KEY,
@@ -132,7 +132,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_MERGE_TARGET_TOKENS"],
             183,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_TEMPERATURE_CONFIG_KEY,
@@ -149,7 +149,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_TEMPERATURE"],
             184,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_COOLDOWN_SECONDS_CONFIG_KEY,
@@ -166,7 +166,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_COOLDOWN_SECONDS"],
             185,
-            &now,
+            now,
         ),
         definition(
             CHATOS_DYNAMIC_SUMMARY_ENABLED_CONFIG_KEY,
@@ -183,7 +183,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["DYNAMIC_SUMMARY_ENABLED"],
             186,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_BISECT_ENABLED_CONFIG_KEY,
@@ -200,7 +200,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_BISECT_ENABLED"],
             187,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_BISECT_MAX_DEPTH_CONFIG_KEY,
@@ -217,7 +217,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_BISECT_MAX_DEPTH"],
             188,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_BISECT_MIN_MESSAGES_CONFIG_KEY,
@@ -234,7 +234,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_BISECT_MIN_MESSAGES"],
             189,
-            &now,
+            now,
         ),
         definition(
             CHATOS_SUMMARY_RETRY_ON_CONTEXT_OVERFLOW_CONFIG_KEY,
@@ -251,7 +251,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["SUMMARY_RETRY_ON_CONTEXT_OVERFLOW"],
             190,
-            &now,
+            now,
         ),
         secret_definition(
             CHATOS_AUTH_JWT_SECRET_CONFIG_KEY,
@@ -264,7 +264,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["AUTH_JWT_SECRET"],
             191,
-            &now,
+            now,
         ),
         nullable_secret_definition(
             CHATOS_AUTH_COMPAT_SECRET_CONFIG_KEY,
@@ -277,7 +277,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["AUTH_COMPAT_SECRET"],
             192,
-            &now,
+            now,
         ),
         definition(
             CHATOS_AUTH_ACCESS_TOKEN_TTL_SECONDS_CONFIG_KEY,
@@ -294,7 +294,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["AUTH_ACCESS_TOKEN_TTL_SECONDS"],
             193,
-            &now,
+            now,
         ),
         definition(
             CHATOS_LOG_MAX_FILES_CONFIG_KEY,
@@ -311,7 +311,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOG_MAX_FILES"],
             193,
-            &now,
+            now,
         ),
         definition(
             CHATOS_OTLP_ENDPOINT_CONFIG_KEY,
@@ -328,7 +328,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_OTEL_EXPORTER_OTLP_ENDPOINT"],
             194,
-            &now,
+            now,
         ),
         definition(
             CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY,
@@ -345,7 +345,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_OTEL_TRACE_SAMPLE_RATIO"],
             195,
-            &now,
+            now,
         ),
         definition(
             CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY,
@@ -362,7 +362,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_OTEL_EXPORT_TIMEOUT_MS"],
             196,
-            &now,
+            now,
         ),
         definition(
             CHATOS_CORS_ORIGINS_CONFIG_KEY,
@@ -379,7 +379,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CORS_ORIGINS"],
             193,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY,
@@ -396,7 +396,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_MCP_RESULT_RABBITMQ_URL"],
             194,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
@@ -413,7 +413,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_MCP_RESULT_QUEUE_PREFIX"],
             196,
-            &now,
+            now,
         ),
         nullable_definition(
             CHATOS_PLUGIN_UI_PARENT_ORIGIN_CONFIG_KEY,
@@ -430,7 +430,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_PLUGIN_UI_PARENT_ORIGIN"],
             194,
-            &now,
+            now,
         ),
         nullable_definition(
             CHATOS_PLUGIN_UI_RESOURCE_ORIGIN_CONFIG_KEY,
@@ -447,7 +447,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_PLUGIN_UI_RESOURCE_ORIGIN"],
             195,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS_CONFIG_KEY,
@@ -464,7 +464,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS"],
             196,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS_CONFIG_KEY,
@@ -481,7 +481,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS"],
             197,
-            &now,
+            now,
         ),
         definition(
             CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS_CONFIG_KEY,
@@ -498,7 +498,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS"],
             198,
-            &now,
+            now,
         ),
     ]
 }

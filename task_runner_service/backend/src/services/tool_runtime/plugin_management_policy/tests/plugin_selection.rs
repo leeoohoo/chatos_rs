@@ -194,7 +194,6 @@ fn command_invocation_arguments_must_reference_one_exact_selected_command() {
             command_id: "unknown".to_string(),
             arguments: Some("src/lib.rs".to_string()),
         }],
-        ..TaskPluginConfig::default()
     };
     assert!(policy
         .validate_plugin_config(&config)

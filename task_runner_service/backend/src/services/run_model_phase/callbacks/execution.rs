@@ -187,6 +187,76 @@ pub(in crate::services) fn attach_supply_chain_outcome_receipt(
     }
 }
 
+fn append_external_mcp_runtime_notice(
+    run_spec: &mut TaskRunSpec,
+    task: &TaskRecord,
+    runtime: &TaskRuntime,
+) {
+    if task.mcp_config.external_mcp_config_ids.is_empty() {
+        return;
+    }
+    let Some(executor) = runtime.mcp_executor() else {
+        return;
+    };
+    let external_tool_names = executor
+        .tool_metadata()
+        .iter()
+        .filter(|&(_name, info)| is_user_configured_external_tool(info))
+        .map(|(name, _info)| name.clone())
+        .collect::<Vec<_>>();
+    if !external_tool_names.is_empty() {
+        return;
+    }
+    let unavailable_tools = executor.unavailable_tools();
+    if unavailable_tools.is_empty() {
+        return;
+    }
+
+    let unavailable_summary = unavailable_tools
+        .iter()
+        .filter_map(|item| {
+            let server_name = item.get("server_name").and_then(Value::as_str)?;
+            let server_type = item
+                .get("server_type")
+                .and_then(Value::as_str)
+                .unwrap_or("-");
+            let reason = item.get("reason").and_then(Value::as_str).unwrap_or("-");
+            Some(format!("- {server_name} ({server_type}): {reason}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if unavailable_summary.is_empty() {
+        return;
+    }
+
+    let text = if task.mcp_config.locale().is_english() {
+        format!(
+            "[External MCP unavailable]\nThe Agent binding resolved external MCP resources for this run, but no corresponding tools were registered. Do not claim that the external system was searched. Report this as a runtime MCP availability problem.\n\nUnavailable MCP servers:\n{unavailable_summary}"
+        )
+    } else {
+        format!(
+            "[外部 MCP 不可用]\nAgent Binding 为本次运行解析出了外部 MCP 资源，但没有注册到对应工具。不要声称已经检索过外部系统；请把它作为运行时 MCP 可用性问题说明。\n\n不可用 MCP 服务：\n{unavailable_summary}"
+        )
+    };
+    run_spec.prefixed_input_items.push(json!({
+        "type": "message",
+        "role": "system",
+        "content": [{
+            "type": "input_text",
+            "text": text
+        }]
+    }));
+}
+
+fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool {
+    matches!(info.server_type.as_str(), "http" | "stdio")
+        && info.server_name
+            != chatos_mcp::system_mcp_descriptor(
+                chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
+            )
+            .server_name
+}
+
 #[cfg(test)]
 mod supply_chain_receipt_tests {
     use super::*;
@@ -283,74 +353,4 @@ mod supply_chain_receipt_tests {
             .iter()
             .any(|evidence| evidence.contains("high=0, critical=0")));
     }
-}
-
-fn append_external_mcp_runtime_notice(
-    run_spec: &mut TaskRunSpec,
-    task: &TaskRecord,
-    runtime: &TaskRuntime,
-) {
-    if task.mcp_config.external_mcp_config_ids.is_empty() {
-        return;
-    }
-    let Some(executor) = runtime.mcp_executor() else {
-        return;
-    };
-    let external_tool_names = executor
-        .tool_metadata()
-        .iter()
-        .filter(|&(_name, info)| is_user_configured_external_tool(info))
-        .map(|(name, _info)| name.clone())
-        .collect::<Vec<_>>();
-    if !external_tool_names.is_empty() {
-        return;
-    }
-    let unavailable_tools = executor.unavailable_tools();
-    if unavailable_tools.is_empty() {
-        return;
-    }
-
-    let unavailable_summary = unavailable_tools
-        .iter()
-        .filter_map(|item| {
-            let server_name = item.get("server_name").and_then(Value::as_str)?;
-            let server_type = item
-                .get("server_type")
-                .and_then(Value::as_str)
-                .unwrap_or("-");
-            let reason = item.get("reason").and_then(Value::as_str).unwrap_or("-");
-            Some(format!("- {server_name} ({server_type}): {reason}"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if unavailable_summary.is_empty() {
-        return;
-    }
-
-    let text = if task.mcp_config.locale().is_english() {
-        format!(
-            "[External MCP unavailable]\nThe Agent binding resolved external MCP resources for this run, but no corresponding tools were registered. Do not claim that the external system was searched. Report this as a runtime MCP availability problem.\n\nUnavailable MCP servers:\n{unavailable_summary}"
-        )
-    } else {
-        format!(
-            "[外部 MCP 不可用]\nAgent Binding 为本次运行解析出了外部 MCP 资源，但没有注册到对应工具。不要声称已经检索过外部系统；请把它作为运行时 MCP 可用性问题说明。\n\n不可用 MCP 服务：\n{unavailable_summary}"
-        )
-    };
-    run_spec.prefixed_input_items.push(json!({
-        "type": "message",
-        "role": "system",
-        "content": [{
-            "type": "input_text",
-            "text": text
-        }]
-    }));
-}
-
-fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool {
-    matches!(info.server_type.as_str(), "http" | "stdio")
-        && info.server_name
-            != chatos_mcp::system_mcp_descriptor(
-                chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
-            )
-            .server_name
 }

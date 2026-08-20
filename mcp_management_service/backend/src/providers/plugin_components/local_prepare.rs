@@ -326,7 +326,7 @@ fn plugin_result_instruction_items(result: &Value) -> Vec<Value> {
         .into_iter()
         .flatten()
         .filter_map(|item| item.get("text").and_then(Value::as_str))
-        .map(|text| plugin_message_item(text))
+        .map(plugin_message_item)
         .collect()
 }
 

@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL"],
             3612,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL"],
             3613,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL"],
             3614,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL"],
             3615,
-            &now,
+            now,
         ),
         definition(
             MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL"],
             3616,
-            &now,
+            now,
         ),
     ]
 }

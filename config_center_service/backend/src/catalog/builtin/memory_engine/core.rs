@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS"],
             358,
-            &now,
+            now,
         ),
         secret_definition(
             MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -30,7 +30,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             359,
-            &now,
+            now,
         ),
         secret_definition(
             MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -43,7 +43,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             360,
-            &now,
+            now,
         ),
         secret_definition(
             MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -56,7 +56,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             362,
-            &now,
+            now,
         ),
         secret_definition(
             MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -69,7 +69,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CONFIGURATION_CENTER_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             363,
-            &now,
+            now,
         ),
         secret_definition(
             MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -82,7 +82,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET"],
             363,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_HOST_CONFIG_KEY,
@@ -99,7 +99,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_HOST"],
             3630,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_PORT_CONFIG_KEY,
@@ -116,7 +116,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_PORT"],
             3630,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -133,7 +133,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_INTERNAL_MTLS_PORT"],
             3630,
-            &now,
+            now,
         ),
         secret_definition(
             MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY,
@@ -146,7 +146,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_MONGODB_URI"],
             3630,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY,
@@ -163,7 +163,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_MONGODB_DATABASE"],
             3630,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -180,7 +180,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_USER_SERVICE_BASE_URL"],
             3631,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -197,7 +197,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS"],
             3632,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
@@ -214,7 +214,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_AI_TIMEOUT_SECS"],
             3633,
-            &now,
+            now,
         ),
         nullable_secret_definition(
             MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY,
@@ -227,7 +227,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_OPENAI_API_KEY"],
             3634,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY,
@@ -244,7 +244,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_OPENAI_BASE_URL"],
             3635,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY,
@@ -261,7 +261,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_OPENAI_MODEL"],
             3636,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY,
@@ -278,7 +278,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_OPENAI_TEMPERATURE"],
             3637,
-            &now,
+            now,
         ),
     ]
 }

@@ -164,8 +164,10 @@ fn policy_rejects_mutating_mcp_when_required_read_dependency_is_not_bound() {
 
     let policy = TaskRunnerCapabilityPolicy::new(capabilities)
         .expect("Plugin Management configuration is authoritative");
-    let mut config = TaskMcpConfig::default();
-    config.enabled_builtin_kinds = vec!["CodeMaintainerWrite".to_string()];
+    let config = TaskMcpConfig {
+        enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
+        ..TaskMcpConfig::default()
+    };
     assert!(policy.validate_optional_config(&config).is_err());
 }
 

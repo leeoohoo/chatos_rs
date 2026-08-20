@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             225,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             230,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             240,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             241,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_run",
             &[],
             242,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_MEMORY_TIMEOUT_MS"],
             245,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY,
@@ -119,7 +119,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_SCHEDULER_POLL_MS"],
             246,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY,
@@ -136,7 +136,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_EVENT_RETENTION_DAYS"],
             2461,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
@@ -153,7 +153,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS"],
             2462,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
@@ -170,7 +170,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE"],
             2463,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY,
@@ -187,7 +187,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES"],
             2464,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
@@ -204,7 +204,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_TERMINAL_MAX_SESSIONS"],
             2465,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
@@ -221,7 +221,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS"],
             2466,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY,
@@ -238,7 +238,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS"],
             2467,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY,
@@ -255,7 +255,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS"],
             2468,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
@@ -272,7 +272,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS"],
             2469,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
@@ -289,7 +289,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE"],
             2470,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY,
@@ -306,7 +306,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_AUTO_MEMORY_SUMMARY"],
             247,
-            &now,
+            now,
         ),
         definition(
             "task_runner.worker.concurrency",
@@ -323,7 +323,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_WORKER_CONCURRENCY"],
             260,
-            &now,
+            now,
         ),
         definition(
             "task_runner.worker.claim_ttl_ms",
@@ -340,7 +340,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_WORKER_CLAIM_TTL_MS"],
             270,
-            &now,
+            now,
         ),
     ]
 }

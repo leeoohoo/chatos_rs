@@ -277,44 +277,6 @@ fn ensure_callback_publish_confirmed(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lifecycle_run_callbacks_track_delivery_state() {
-        for event in [
-            "task.run.started",
-            "task.completed",
-            "task.failed",
-            "task.cancelled",
-            "task.blocked",
-        ] {
-            assert!(callback_event_tracks_delivery_state(event));
-        }
-        assert!(!callback_event_tracks_delivery_state("task.created"));
-    }
-
-    #[test]
-    fn callback_outbox_requires_confirmed_routing() {
-        assert!(ensure_callback_publish_confirmed(
-            "task_runner.callback.delivery",
-            Confirmation::Ack(None),
-        )
-        .is_ok());
-        assert!(ensure_callback_publish_confirmed(
-            "task_runner.callback.delivery",
-            Confirmation::Nack(None),
-        )
-        .is_err());
-        assert!(ensure_callback_publish_confirmed(
-            "task_runner.callback.delivery",
-            Confirmation::NotRequested,
-        )
-        .is_err());
-    }
-}
-
 async fn ensure_callback_queue_topology(
     channel: &Channel,
     task_queue_topology: &crate::platform_queue::TaskQueueTopology,
@@ -353,4 +315,42 @@ async fn ensure_callback_queue_topology(
         .await
         .map_err(|err| ChatosCallbackDeliveryError::retryable(err.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lifecycle_run_callbacks_track_delivery_state() {
+        for event in [
+            "task.run.started",
+            "task.completed",
+            "task.failed",
+            "task.cancelled",
+            "task.blocked",
+        ] {
+            assert!(callback_event_tracks_delivery_state(event));
+        }
+        assert!(!callback_event_tracks_delivery_state("task.created"));
+    }
+
+    #[test]
+    fn callback_outbox_requires_confirmed_routing() {
+        assert!(ensure_callback_publish_confirmed(
+            "task_runner.callback.delivery",
+            Confirmation::Ack(None),
+        )
+        .is_ok());
+        assert!(ensure_callback_publish_confirmed(
+            "task_runner.callback.delivery",
+            Confirmation::Nack(None),
+        )
+        .is_err());
+        assert!(ensure_callback_publish_confirmed(
+            "task_runner.callback.delivery",
+            Confirmation::NotRequested,
+        )
+        .is_err());
+    }
 }

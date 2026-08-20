@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_CALLBACK_DELIVERY_MODE"],
             217,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RABBITMQ_URL"],
             218,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RABBITMQ_EXCHANGE"],
             219,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RABBITMQ_RECONNECT_MS"],
             219,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_EVENT_OUTBOX_RECONCILE_MS_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_EVENT_OUTBOX_RECONCILE_MS"],
             223,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_EVENT_OUTBOX_BATCH_SIZE_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE"],
             224,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_WORKER_CONTROL_QUEUE_PREFIX_CONFIG_KEY,
@@ -119,7 +119,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_WORKER_CONTROL_QUEUE_PREFIX"],
             225,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_POST_PROCESS_QUEUE_CONFIG_KEY,
@@ -136,7 +136,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_POST_PROCESS_QUEUE"],
             226,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_POST_PROCESS_RETRY_QUEUE_CONFIG_KEY,
@@ -153,7 +153,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_POST_PROCESS_RETRY_QUEUE"],
             227,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_POST_PROCESS_DEAD_LETTER_QUEUE_CONFIG_KEY,
@@ -170,7 +170,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_POST_PROCESS_DEAD_LETTER_QUEUE"],
             228,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_POST_PROCESS_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
@@ -187,7 +187,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_POST_PROCESS_MAX_DELIVERY_ATTEMPTS"],
             229,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_POST_PROCESS_RETRY_DELAY_MS_CONFIG_KEY,
@@ -204,7 +204,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_POST_PROCESS_RETRY_DELAY_MS"],
             228,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_POST_PROCESS_OUTBOX_RECONCILE_MS_CONFIG_KEY,
@@ -221,7 +221,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_RECONCILE_MS"],
             229,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_POST_PROCESS_OUTBOX_BATCH_SIZE_CONFIG_KEY,
@@ -238,7 +238,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_BATCH_SIZE"],
             230,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY,
@@ -255,7 +255,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_CALLBACK_DELIVERY_QUEUE"],
             221,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
@@ -272,7 +272,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_EVENTS_PUBLISH_MODE"],
             222,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY,
@@ -289,7 +289,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_RUN_EVENTS_ROUTING_KEY"],
             223,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
@@ -306,7 +306,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["TASK_RUNNER_MCP_RESULT_QUEUE_PREFIX"],
             225,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
@@ -323,7 +323,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             2251,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
@@ -340,7 +340,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             2252,
-            &now,
+            now,
         ),
         definition(
             TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
@@ -357,7 +357,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             2253,
-            &now,
+            now,
         ),
     ]
 }

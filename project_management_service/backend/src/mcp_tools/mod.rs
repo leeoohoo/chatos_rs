@@ -275,8 +275,8 @@ fn uuid_damerau_levenshtein(left: &str, right: &str) -> Option<usize> {
     for (index, row) in distance.iter_mut().enumerate() {
         row[0] = index;
     }
-    for index in 0..=right.len() {
-        distance[0][index] = index;
+    for (index, value) in distance[0].iter_mut().enumerate() {
+        *value = index;
     }
     for left_index in 1..=left.len() {
         for right_index in 1..=right.len() {

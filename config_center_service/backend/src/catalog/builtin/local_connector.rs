@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS"],
             315,
-            &now,
+            now,
         ),
         secret_definition(
             LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -30,7 +30,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET"],
             316,
-            &now,
+            now,
         ),
         secret_definition(
             LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -43,7 +43,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET"],
             318,
-            &now,
+            now,
         ),
         secret_definition(
             LOCAL_CONNECTOR_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -56,7 +56,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET"],
             319,
-            &now,
+            now,
         ),
         secret_definition(
             LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -69,7 +69,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET"],
             319,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_HOST_CONFIG_KEY,
@@ -86,7 +86,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_SERVICE_HOST"],
             319,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_PORT_CONFIG_KEY,
@@ -103,7 +103,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_SERVICE_PORT"],
             319,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -120,7 +120,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_INTERNAL_MTLS_PORT"],
             319,
-            &now,
+            now,
         ),
         secret_definition(
             LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
@@ -133,7 +133,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_DATABASE_URL"],
             319,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY,
@@ -150,7 +150,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_USER_SERVICE_BASE_URL"],
             319,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -167,7 +167,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS"],
             319,
-            &now,
+            now,
         ),
         nullable_definition(
             LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
@@ -184,7 +184,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_PUBLIC_BASE_URL"],
             319,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY,
@@ -201,7 +201,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             320,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -218,7 +218,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS"],
             321,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_RELAY_SIGNING_KEY_ID_CONFIG_KEY,
@@ -235,7 +235,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             322,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -252,7 +252,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS"],
             323,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_REMOTE_CONTROL_REQUIRE_SIGNED_CONFIG_KEY,
@@ -269,7 +269,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &[],
             324,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_REMOTE_CONTROL_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
@@ -286,7 +286,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &[],
             326,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
@@ -303,7 +303,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS"],
             327,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY,
@@ -320,7 +320,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE"],
             327,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_REMOTE_CONTROL_TRUSTED_RELAY_PUBLIC_KEYS_CONFIG_KEY,
@@ -337,7 +337,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &[],
             328,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
@@ -354,7 +354,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS"],
             329,
-            &now,
+            now,
         ),
         secret_definition(
             LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY,
@@ -367,7 +367,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_VALKEY_URL"],
             3291,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY,
@@ -384,7 +384,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_VALKEY_KEY_PREFIX"],
             3292,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY,
@@ -401,7 +401,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS"],
             3293,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
@@ -418,7 +418,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_VALKEY_RECONNECT_MS"],
             3294,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY,
@@ -435,7 +435,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS"],
             3295,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY,
@@ -452,7 +452,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS"],
             3296,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY,
@@ -469,7 +469,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS"],
             3297,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY,
@@ -486,7 +486,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS"],
             3298,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_RELAY_MAX_PENDING_REQUESTS_PER_DEVICE_CONFIG_KEY,
@@ -503,7 +503,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             330,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY,
@@ -520,7 +520,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS"],
             331,
-            &now,
+            now,
         ),
         nullable_definition(
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY,
@@ -537,7 +537,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH"],
             332,
-            &now,
+            now,
         ),
         nullable_definition(
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY,
@@ -554,7 +554,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH"],
             333,
-            &now,
+            now,
         ),
         nullable_definition(
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY,
@@ -571,7 +571,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID"],
             334,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_TERMINAL_MAX_EVENT_BYTES_CONFIG_KEY,
@@ -588,7 +588,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             332,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_TERMINAL_EVENT_CHANNEL_CAPACITY_CONFIG_KEY,
@@ -605,7 +605,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &[],
             334,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_TERMINAL_MAX_ACTIVE_SESSIONS_CONFIG_KEY,
@@ -622,7 +622,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &[],
             335,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_TERMINAL_NEW_SESSION_SOFT_LIMIT_CONFIG_KEY,
@@ -639,7 +639,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &[],
             3351,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_TERMINAL_MAX_SUBSCRIBERS_PER_SESSION_CONFIG_KEY,
@@ -656,7 +656,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "next_request",
             &[],
             336,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY,
@@ -673,7 +673,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3361,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
@@ -690,7 +690,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3362,
-            &now,
+            now,
         ),
         definition(
             LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
@@ -707,7 +707,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3363,
-            &now,
+            now,
         ),
     ]
 }

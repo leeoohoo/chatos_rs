@@ -17,7 +17,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_WORKER_ENABLED"],
             3638,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY,
@@ -34,7 +34,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_WORKER_INTERVAL_SECS"],
             3639,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_MAX_THREADS_PER_TICK_CONFIG_KEY,
@@ -51,7 +51,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_WORKER_MAX_THREADS_PER_TICK"],
             3640,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY,
@@ -68,7 +68,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY"],
             3641,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_PRESSURE_SUMMARY_CONCURRENCY_CONFIG_KEY,
@@ -85,7 +85,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3642,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_PRESSURE_REFRESH_INTERVAL_MS_CONFIG_KEY,
@@ -102,7 +102,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3643,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
@@ -119,7 +119,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3644,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
@@ -136,7 +136,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "hot_reload",
             &[],
             3645,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY,
@@ -153,7 +153,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY"],
             3646,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY,
@@ -170,7 +170,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY"],
             3647,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY_CONFIG_KEY,
@@ -187,7 +187,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY"],
             3648,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
@@ -204,7 +204,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_RABBITMQ_URL"],
             3645,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
@@ -221,7 +221,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_RABBITMQ_EXCHANGE"],
             3646,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY,
@@ -238,7 +238,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS"],
             3647,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY,
@@ -255,7 +255,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUMMARY_QUEUE"],
             3647,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY,
@@ -272,7 +272,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUMMARY_RETRY_QUEUE"],
             3648,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY,
@@ -289,7 +289,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE"],
             3649,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
@@ -306,7 +306,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS"],
             3650,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY,
@@ -323,7 +323,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS"],
             3651,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
@@ -340,7 +340,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS"],
             3652,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
@@ -357,7 +357,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE"],
             3653,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
@@ -374,7 +374,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS"],
             3654,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY,
@@ -391,7 +391,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS"],
             3655,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY,
@@ -408,7 +408,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_QUEUE"],
             3656,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
@@ -425,7 +425,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_RETRY_QUEUE"],
             3657,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
@@ -442,7 +442,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE"],
             3658,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
@@ -459,7 +459,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS"],
             3659,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY,
@@ -476,7 +476,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS"],
             3660,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY,
@@ -493,7 +493,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS"],
             3661,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
@@ -510,7 +510,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE"],
             3662,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
@@ -527,7 +527,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE"],
             3663,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
@@ -544,7 +544,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE"],
             3664,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
@@ -561,7 +561,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE"],
             3665,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
@@ -578,7 +578,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS"],
             3666,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY,
@@ -595,7 +595,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS"],
             3667,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
@@ -612,7 +612,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS"],
             3668,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
@@ -629,7 +629,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE"],
             3669,
-            &now,
+            now,
         ),
         definition(
             MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY,
@@ -646,7 +646,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS"],
             3670,
-            &now,
+            now,
         ),
     ]
 }

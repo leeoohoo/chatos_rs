@@ -504,9 +504,7 @@ impl CloudAgentProfile for TaskRunnerSingleStepResolver {
     }
 }
 
-pub(crate) fn cloud_agent_profile(
-    service: RunService,
-) -> impl CloudAgentProfile + Clone + Send + Sync + 'static {
+pub(crate) fn cloud_agent_profile(service: RunService) -> impl CloudAgentProfile + Clone + 'static {
     TaskRunnerSingleStepResolver { service }
 }
 

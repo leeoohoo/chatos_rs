@@ -973,7 +973,8 @@ impl AppState {
 
         for mut draft in self.store.list_drafts().await? {
             let mut changed = false;
-            for key in [PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY] {
+            {
+                let key = PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY;
                 let replacement = defaults
                     .get(key)
                     .ok_or_else(|| format!("Project Service HTTPS default is missing: {key}"))?;

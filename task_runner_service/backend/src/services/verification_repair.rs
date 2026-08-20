@@ -71,11 +71,11 @@ impl RunService {
         let repair = &persisted.repair;
         let reverify = &persisted.reverify;
 
-        self.sync_repair_chain_links(verification, verification_run, &plan, &repair, &reverify)
+        self.sync_repair_chain_links(verification, verification_run, &plan, repair, reverify)
             .await?;
 
         let dispatched = self
-            .dispatch_ready_chatos_async_tasks_for_source_task(&repair)
+            .dispatch_ready_chatos_async_tasks_for_source_task(repair)
             .await?;
         let event_id = verification_repair_chain_event_id(verification_run.id.as_str());
         if persisted.created_event_required()
