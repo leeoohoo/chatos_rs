@@ -6,11 +6,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { EventEmitter } = require('node:events');
 
 const {
   coreRestartDelayMs,
   createCoreRuntime,
   discoverUserShellPath,
+  readCachedUserShellPath,
+  writeCachedUserShellPath,
 } = require('../electron/core-runtime.cjs');
 
 test('backs off unexpected Core restarts without growing past five seconds', () => {
@@ -37,7 +40,7 @@ test('discovers and validates PATH entries from the interactive login shell', ()
         '-ilc',
         'printf "__CHATOS_PATH_BEGIN__%s__CHATOS_PATH_END__" "$PATH"',
       ]);
-      assert.equal(options.timeout, 2_000);
+      assert.equal(options.timeout, 10_000);
       return {
         status: 0,
         stdout: [
@@ -58,12 +61,102 @@ test('discovers and validates PATH entries from the interactive login shell', ()
 });
 
 test('falls back cleanly when user shell PATH discovery fails', () => {
+  let diagnostic = null;
   assert.deepEqual(discoverUserShellPath({
     platform: 'darwin',
     env: { SHELL: '/bin/zsh' },
     fileExists: () => true,
     spawnSyncImpl: () => ({ status: null, error: new Error('timeout') }),
+    onDiagnostic: (value) => {
+      diagnostic = value;
+    },
   }), []);
+  assert.equal(diagnostic.status, 'spawn-error');
+  assert.equal(diagnostic.errorCode, 'Error');
+});
+
+test('persists and validates the last successful user shell PATH', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-shell-path-cache-'));
+  try {
+    const dockerBin = path.join(tempRoot, '.docker', 'bin');
+    const localBin = path.join(tempRoot, '.local', 'bin');
+    fs.mkdirSync(dockerBin, { recursive: true });
+    fs.mkdirSync(localBin, { recursive: true });
+    const cachePath = path.join(tempRoot, 'state', 'user-shell-path-cache.json');
+
+    assert.equal(writeCachedUserShellPath(cachePath, [dockerBin, localBin, '/missing']), true);
+    assert.deepEqual(readCachedUserShellPath(cachePath), [dockerBin, localBin]);
+    assert.equal(fs.statSync(cachePath).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('passes cached user shell PATH to the spawned Core when discovery fails', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-core-path-fallback-'));
+  const previousResourcesPath = process.resourcesPath;
+  let spawned = null;
+  try {
+    process.resourcesPath = path.join(tempRoot, 'resources');
+    fs.mkdirSync(process.resourcesPath, { recursive: true });
+    fs.writeFileSync(path.join(process.resourcesPath, 'local_connector_client_core'), '');
+    const cachedBin = path.join(tempRoot, 'user-bin');
+    fs.mkdirSync(cachedBin, { recursive: true });
+    const userData = path.join(tempRoot, 'user-data');
+    assert.equal(
+      writeCachedUserShellPath(
+        path.join(userData, 'user-shell-path-cache.json'),
+        [cachedBin],
+      ),
+      true,
+    );
+
+    const child = new EventEmitter();
+    child.pid = 12345;
+    child.exitCode = null;
+    child.signalCode = null;
+    child.kill = () => {};
+    const runtime = createCoreRuntime({
+      app: {
+        getPath: (name) => ({
+          userData,
+          temp: path.join(tempRoot, 'temp'),
+          logs: path.join(tempRoot, 'logs'),
+        })[name],
+        isPackaged: false,
+      },
+      desktopAuthToken: 'test-token',
+      discoverUserShellPathImpl: ({ onDiagnostic }) => {
+        onDiagnostic({ status: 'spawn-error', elapsedMs: 10_000, errorCode: 'ETIMEDOUT' });
+        return [];
+      },
+      spawnImpl: (command, args, options) => {
+        spawned = { command, args, options };
+        return child;
+      },
+    });
+
+    runtime.startCore();
+    assert.ok(spawned.options.env.PATH.split(path.delimiter).includes(cachedBin));
+    const log = fs.readFileSync(
+      path.join(tempRoot, 'logs', 'local-connector-core.log'),
+      'utf8',
+    );
+    assert.match(
+      log,
+      /core PATH source=cache .*shell_discovery=spawn-error .*shell_error_code=ETIMEDOUT/,
+    );
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+    runtime.cleanupIpcEndpoint();
+  } finally {
+    if (previousResourcesPath === undefined) {
+      delete process.resourcesPath;
+    } else {
+      process.resourcesPath = previousResourcesPath;
+    }
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test('prepares Chrome extension in a visible user-home directory', () => {

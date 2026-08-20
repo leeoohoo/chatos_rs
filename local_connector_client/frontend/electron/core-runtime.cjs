@@ -11,9 +11,11 @@ const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const CORE_RESTART_BASE_DELAY_MS = 250;
 const CORE_RESTART_MAX_DELAY_MS = 5_000;
 const CORE_RESTART_STABLE_WINDOW_MS = 10_000;
-const USER_SHELL_PATH_TIMEOUT_MS = 2_000;
+const USER_SHELL_PATH_TIMEOUT_MS = 10_000;
 const USER_SHELL_PATH_PREFIX = '__CHATOS_PATH_BEGIN__';
 const USER_SHELL_PATH_SUFFIX = '__CHATOS_PATH_END__';
+const USER_SHELL_PATH_CACHE_VERSION = 1;
+const USER_SHELL_PATH_CACHE_FILE = 'user-shell-path-cache.json';
 const UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER = 'computer-use-unsigned-local-dev.json';
 
 function existingPathDirectories(value, directoryExists = defaultDirectoryExists) {
@@ -31,14 +33,51 @@ function defaultDirectoryExists(candidate) {
   }
 }
 
+function readCachedUserShellPath(cachePath, directoryExists = defaultDirectoryExists) {
+  try {
+    const payload = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    if (payload?.version !== USER_SHELL_PATH_CACHE_VERSION || !Array.isArray(payload.entries)) {
+      return [];
+    }
+    return existingPathDirectories(payload.entries.join(path.delimiter), directoryExists);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function writeCachedUserShellPath(cachePath, entries) {
+  try {
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(
+      cachePath,
+      `${JSON.stringify({ version: USER_SHELL_PATH_CACHE_VERSION, entries }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    fs.chmodSync(cachePath, 0o600);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
 function discoverUserShellPath({
   platform = process.platform,
   env = process.env,
   spawnSyncImpl = spawnSync,
   fileExists = fs.existsSync,
   directoryExists = defaultDirectoryExists,
+  onDiagnostic = () => {},
 } = {}) {
+  const startedAt = Date.now();
+  const report = (status, details = {}) => {
+    onDiagnostic({
+      status,
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+      ...details,
+    });
+  };
   if (platform === 'win32') {
+    report('unsupported-platform');
     return [];
   }
   const configuredShell = String(env.SHELL || '').trim();
@@ -47,6 +86,7 @@ function discoverUserShellPath({
     ? configuredShell
     : fallbackShell;
   if (!fileExists(shell)) {
+    report('shell-missing');
     return [];
   }
   try {
@@ -62,7 +102,17 @@ function discoverUserShellPath({
         stdio: ['ignore', 'pipe', 'ignore'],
       },
     );
-    if (result.error || result.status !== 0) {
+    if (result.error) {
+      report('spawn-error', {
+        errorCode: String(result.error.code || result.error.name || 'unknown'),
+      });
+      return [];
+    }
+    if (result.status !== 0) {
+      report('shell-exit', {
+        exitCode: Number.isInteger(result.status) ? result.status : null,
+        signal: result.signal ? String(result.signal) : null,
+      });
       return [];
     }
     const stdout = String(result.stdout || '');
@@ -72,14 +122,22 @@ function discoverUserShellPath({
       prefixIndex + USER_SHELL_PATH_PREFIX.length,
     );
     if (prefixIndex < 0 || suffixIndex < 0) {
+      report('markers-missing');
       return [];
     }
     const discoveredPath = stdout.slice(
       prefixIndex + USER_SHELL_PATH_PREFIX.length,
       suffixIndex,
     );
-    return existingPathDirectories(discoveredPath, directoryExists);
-  } catch (_error) {
+    const entries = existingPathDirectories(discoveredPath, directoryExists);
+    report(entries.length > 0 ? 'success' : 'no-valid-entries', {
+      entryCount: entries.length,
+    });
+    return entries;
+  } catch (error) {
+    report('exception', {
+      errorCode: String(error?.code || error?.name || 'unknown'),
+    });
     return [];
   }
 }
@@ -92,7 +150,12 @@ function coreRestartDelayMs(attempt) {
   );
 }
 
-function createCoreRuntime({ app, desktopAuthToken }) {
+function createCoreRuntime({
+  app,
+  desktopAuthToken,
+  spawnImpl = spawn,
+  discoverUserShellPathImpl = discoverUserShellPath,
+}) {
   let coreProcess = null;
   let ipcEndpoint = null;
   let ipcSocketDir = null;
@@ -101,6 +164,8 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   let stableTimer = null;
   let stopRequested = false;
   let cachedCoreExecutablePath = null;
+  let coreExecutablePathSource = 'fallback';
+  let coreExecutablePathDiagnostic = { status: 'not-run', elapsedMs: 0 };
 
   function resourcePath(...segments) {
     const packagedPath = path.join(process.resourcesPath, ...segments);
@@ -209,7 +274,20 @@ function createCoreRuntime({ app, desktopAuthToken }) {
       return cachedCoreExecutablePath;
     }
     const existing = existingPathDirectories(process.env.PATH);
-    const userShellPath = discoverUserShellPath();
+    const shellPathCache = path.join(app.getPath('userData'), USER_SHELL_PATH_CACHE_FILE);
+    const discoveredUserShellPath = discoverUserShellPathImpl({
+      onDiagnostic: (diagnostic) => {
+        coreExecutablePathDiagnostic = diagnostic;
+      },
+    });
+    let userShellPath = discoveredUserShellPath;
+    if (discoveredUserShellPath.length > 0) {
+      coreExecutablePathSource = 'shell';
+      writeCachedUserShellPath(shellPathCache, discoveredUserShellPath);
+    } else {
+      userShellPath = readCachedUserShellPath(shellPathCache);
+      coreExecutablePathSource = userShellPath.length > 0 ? 'cache' : 'fallback';
+    }
     const candidates = [bundledBrowserRuntime().toolsDir];
     if (process.platform === 'darwin') {
       candidates.push(
@@ -276,8 +354,23 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;
 
     const coreLog = openCoreLog();
+    appendCoreLog(
+      coreLog.path,
+      [
+        `core PATH source=${coreExecutablePathSource}`,
+        `entries=${env.PATH.split(path.delimiter).length}`,
+        `shell_discovery=${coreExecutablePathDiagnostic.status}`,
+        `shell_elapsed_ms=${coreExecutablePathDiagnostic.elapsedMs}`,
+        coreExecutablePathDiagnostic.errorCode
+          ? `shell_error_code=${coreExecutablePathDiagnostic.errorCode}`
+          : null,
+        Number.isInteger(coreExecutablePathDiagnostic.exitCode)
+          ? `shell_exit_code=${coreExecutablePathDiagnostic.exitCode}`
+          : null,
+      ].filter(Boolean).join(' '),
+    );
     try {
-      coreProcess = spawn(corePath, [], {
+      coreProcess = spawnImpl(corePath, [], {
         cwd: path.dirname(corePath),
         env,
         stdio: coreLog.fd === null ? 'ignore' : ['ignore', coreLog.fd, coreLog.fd],
@@ -424,7 +517,7 @@ function createCoreRuntime({ app, desktopAuthToken }) {
 
   function runHiddenProcess(command, args) {
     return new Promise((resolve) => {
-      const child = spawn(command, args, {
+      const child = spawnImpl(command, args, {
         stdio: 'ignore',
         windowsHide: true,
       });
@@ -483,4 +576,10 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   };
 }
 
-module.exports = { coreRestartDelayMs, createCoreRuntime, discoverUserShellPath };
+module.exports = {
+  coreRestartDelayMs,
+  createCoreRuntime,
+  discoverUserShellPath,
+  readCachedUserShellPath,
+  writeCachedUserShellPath,
+};
