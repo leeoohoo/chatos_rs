@@ -37,11 +37,11 @@ mac:
   entitlementsInherit: ../entitlements.mac.plist
   extendInfo:
     NSAppleEventsUsageDescription: Chat OS Local Connector 仅在用户启用对应 Skill 后控制 Microsoft Excel 等明确授权的应用。
-    NSDesktopFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的桌面目录。
-    NSDocumentsFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的文稿目录。
-    NSDownloadsFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的下载目录。
-    NSNetworkVolumesUsageDescription: Chat OS Local Connector 仅访问用户主动开放的网络卷目录。
-    NSRemovableVolumesUsageDescription: Chat OS Local Connector 仅访问用户主动开放的可移动卷目录。
+    NSDesktopFolderUsageDescription: Chat OS Local Connector 在任务权限允许时访问桌面目录，实际访问仍受 macOS 系统权限控制。
+    NSDocumentsFolderUsageDescription: Chat OS Local Connector 在任务权限允许时访问文稿目录，实际访问仍受 macOS 系统权限控制。
+    NSDownloadsFolderUsageDescription: Chat OS Local Connector 在任务权限允许时访问下载目录，实际访问仍受 macOS 系统权限控制。
+    NSNetworkVolumesUsageDescription: Chat OS Local Connector 在任务权限允许时访问网络卷，实际访问仍受 macOS 系统权限控制。
+    NSRemovableVolumesUsageDescription: Chat OS Local Connector 在任务权限允许时访问可移动卷，实际访问仍受 macOS 系统权限控制。
   target:
     - dmg
   artifactName: Chat-OS-Local-Connector-${version}-${arch}.${ext}

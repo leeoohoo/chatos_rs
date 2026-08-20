@@ -5,9 +5,9 @@ This directory contains the local-side Connector implementation.
 Current status:
 
 1. `core` is a Rust local daemon.
-2. `frontend` is the local React client UI for login, workspace grants, Skill enablement, terminal testing, permission controls, and image creation.
+2. `frontend` is the local React client UI for login, Skill enablement, terminal testing, permission controls, and image creation.
 3. The daemon registers a device against `local_connector_service`.
-4. It stores the local-only mapping from cloud `workspace_id` to the real local root.
+4. It automatically registers a device-scoped local filesystem route while preserving existing workspace mappings for project compatibility.
 5. It opens an outbound WebSocket to the cloud service.
 6. It handles MCP, Skill prepare/execute/cancel, terminal PTY, terminal exec, and compatibility permission-lease relay messages from the cloud service.
 7. One owner can hold only one active Local Connector session lease; a second client is rejected with `409 connector_already_active`.
