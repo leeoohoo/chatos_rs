@@ -199,11 +199,6 @@ impl RunService {
         let deadline_at = Utc::now()
             .checked_add_signed(execution_timeout)
             .ok_or_else(|| "Task Runner execution deadline exceeds supported range".to_string())?;
-        let skill_snapshots = capability_policy
-            .as_ref()
-            .map(|policy| policy.skill_snapshots(&runtime_task))
-            .transpose()?
-            .unwrap_or_default();
         let input_snapshot = json!({
             "agent_key": agent_key.as_str(),
             "task_id": task.id,
@@ -216,7 +211,6 @@ impl RunService {
             "model_config_id": model_config_id,
             "plugin_config": runtime_task.plugin_config,
             "mcp_config": runtime_task.mcp_config,
-            "skill_snapshots": skill_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
             "task_runtime_capability_fingerprint": task_runtime_capability_fingerprint,
             "retry_of_run_id": retry_of_run_id,

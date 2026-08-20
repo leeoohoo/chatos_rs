@@ -14,16 +14,11 @@ use chatos_mcp_management_sdk::{
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
-    plugin_command_snapshot_sha256, PluginComponentDescriptor, PluginComponentKind,
-    PluginExecutionHost, PluginPathRef,
+    plugin_command_snapshot_sha256, PluginComponentDescriptor, PluginComponentKind, PluginPathRef,
 };
 use serde_json::json;
-use sha2::{Digest, Sha256};
 
-use super::validation::{
-    sha256_text, validate_command_snapshot, validate_native_skill_snapshot,
-    validate_native_tool_snapshot_hash, validate_tool_snapshot,
-};
+use super::validation::{sha256_text, validate_command_snapshot};
 use super::*;
 use crate::runtime::{
     PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
@@ -31,7 +26,7 @@ use crate::runtime::{
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
-fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBinding {
+fn command_binding() -> PluginToolComponentRuntimeBinding {
     PluginToolComponentRuntimeBinding {
         provider_ref: format!("plugin-tool-binding:{}", "d".repeat(64)),
         resource_id: "plugin_component_review".to_string(),
@@ -44,7 +39,6 @@ fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBindi
             component_key: "review".to_string(),
             kind: PluginComponentKind::Command,
             display_name: "Review".to_string(),
-            execution_host: host,
             runtime_kind: "command".to_string(),
             entrypoint: Some(PluginPathRef::new("./commands/review.md")),
             required: false,
@@ -64,8 +58,7 @@ fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBindi
             ]),
         },
         component_content_sha256: "c".repeat(64),
-        installation_device_id: (host == PluginExecutionHost::Local)
-            .then(|| "device-1".to_string()),
+        installation_device_id: Some("device-1".to_string()),
         permission_snapshot: vec!["workspace.read".to_string()],
         auth_connection_ids: Vec::new(),
         required: true,
@@ -87,7 +80,6 @@ fn prompt_skill_binding() -> PluginToolComponentRuntimeBinding {
             component_key: "review-skill".to_string(),
             kind: PluginComponentKind::SkillCollection,
             display_name: "Review Skill".to_string(),
-            execution_host: PluginExecutionHost::Local,
             runtime_kind: "prompt".to_string(),
             entrypoint: Some(PluginPathRef::new("./skills/review/SKILL.md")),
             required: false,
@@ -118,7 +110,6 @@ fn command_snapshot(
         binding.plugin_id.as_str(),
         binding.release_id.as_str(),
         binding.component.component_key.as_str(),
-        binding.component.execution_host,
         binding.component.entrypoint.as_ref().unwrap().path.as_str(),
         Some("Review the current change"),
         Some("[path]"),
@@ -156,11 +147,7 @@ fn route(binding: &PluginToolComponentRuntimeBinding) -> ResolvedMcpRoute {
     ResolvedMcpRoute {
         resource_id: binding.resource_id.clone(),
         server_name: "plugin_review_review".to_string(),
-        provider_kind: match binding.component.execution_host {
-            PluginExecutionHost::Local | PluginExecutionHost::Portable => {
-                McpProviderKind::PluginLocal
-            }
-        },
+        provider_kind: McpProviderKind::PluginLocal,
         provider_ref: Some(binding.provider_ref.clone()),
         tool_namespace: "plugin_review_review".to_string(),
         allow_writes: binding.allow_writes,
@@ -344,7 +331,7 @@ async fn start_local_connector(
 #[tokio::test]
 async fn local_command_is_approved_once_during_prepare_and_reused_without_duplicate_execution() {
     const SECRET: &str = "plugin-component-local-test-secret";
-    let mut immutable = command_binding(PluginExecutionHost::Local);
+    let mut immutable = command_binding();
     immutable.command_arguments = Some("src/lib.rs".to_string());
     let (base_url, requests, server) = start_local_connector(SECRET, immutable.clone()).await;
     let provider = PluginComponentProvider::new(
@@ -452,7 +439,6 @@ async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapte
                             "instructions_sha256": instructions_sha256,
                             "snapshot_sha256": "d".repeat(64)
                         }],
-                        "native_skill": null,
                         "operations": ["load_skill_resource"],
                         "adapter_session_id": "adapter-skill-1",
                         "session_sha256": "e".repeat(64),
@@ -513,7 +499,7 @@ async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapte
 
 #[test]
 fn command_snapshot_validation_binds_argument_presence_and_hash() {
-    let binding = command_binding(PluginExecutionHost::Local);
+    let binding = command_binding();
     let command = command_snapshot(&binding, Some("src/lib.rs"), true);
     validate_command_snapshot(&binding, &command, Some("src/lib.rs"), true).unwrap();
 
@@ -523,68 +509,4 @@ fn command_snapshot_validation_binds_argument_presence_and_hash() {
         validate_command_snapshot(&binding, &wrong_presence, Some("src/lib.rs"), true).is_err()
     );
     assert!(validate_command_snapshot(&binding, &command, Some("README.md"), true).is_err());
-}
-
-#[test]
-fn native_skill_live_tool_snapshot_is_hash_bound() {
-    let mut binding = command_binding(PluginExecutionHost::Local);
-    binding.component.kind = PluginComponentKind::SkillCollection;
-    binding.component.component_key = "documents".to_string();
-    binding.component.runtime_kind = "native_adapter".to_string();
-    binding.component.entrypoint = Some(PluginPathRef::new("./skills/documents"));
-    binding.component.metadata = BTreeMap::from([
-        ("skill_id".to_string(), json!("internal_skill_documents")),
-        ("bundle_id".to_string(), json!("chatos.internal.documents")),
-    ]);
-    let tools = vec![json!({
-        "name": "document_inspect",
-        "description": "Inspect a document",
-        "inputSchema": {"type": "object"}
-    })];
-    let skill_snapshot_sha256 = "f".repeat(64);
-    let native_snapshot_sha256 = hex::encode(Sha256::digest(
-        format!(
-            "chatos.plugin.native-skill.snapshot.v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-            binding.plugin_id,
-            binding.release_id,
-            binding.version,
-            binding.artifact_sha256,
-            binding.component.component_key,
-            skill_snapshot_sha256,
-            "internal_skill_documents",
-            "chatos.internal.documents",
-            "1.0.0",
-            binding.component_content_sha256,
-        )
-        .as_bytes(),
-    ));
-    let mut tool_payload =
-        format!("chatos.plugin.native-tools.snapshot.v1\n{native_snapshot_sha256}");
-    for tool in &tools {
-        tool_payload.push('\n');
-        tool_payload.push_str(serde_json::to_string(tool).unwrap().as_str());
-    }
-    let native_skill = json!({
-        "plugin_id": binding.plugin_id,
-        "release_id": binding.release_id,
-        "plugin_version": binding.version,
-        "artifact_sha256": binding.artifact_sha256,
-        "component_key": binding.component.component_key,
-        "bundle_hash": binding.component_content_sha256,
-        "skill_id": "internal_skill_documents",
-        "bundle_id": "chatos.internal.documents",
-        "bundle_version": "1.0.0",
-        "skill_snapshot_sha256": skill_snapshot_sha256,
-        "snapshot_sha256": native_snapshot_sha256,
-        "tool_snapshot_sha256": hex::encode(Sha256::digest(tool_payload.as_bytes())),
-        "tools": tools,
-    });
-    validate_native_skill_snapshot(&binding, &native_skill).unwrap();
-    let tools = native_skill["tools"].as_array().unwrap();
-    validate_tool_snapshot(tools).unwrap();
-    validate_native_tool_snapshot_hash(&native_skill, tools).unwrap();
-
-    let mut drifted_tools = tools.clone();
-    drifted_tools[0]["inputSchema"]["required"] = json!(["path"]);
-    assert!(validate_native_tool_snapshot_hash(&native_skill, &drifted_tools).is_err());
 }

@@ -328,16 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_mcp_configs_are_not_persisted_back_to_state_json() {
-        let state = serde_json::from_value::<LocalState>(serde_json::json!({
-            "mcp_configs": {"manifests": [{"manifest_id": "legacy"}]}
-        }))
-        .expect("legacy state remains readable");
-        let value = serde_json::to_value(state).expect("serialize current state");
-        assert!(value.get("mcp_configs").is_none());
-    }
-
-    #[test]
     fn incompatible_managed_runtime_cache_is_dropped_during_load() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("state.json");

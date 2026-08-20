@@ -49,8 +49,12 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
   });
   const createMutation = useMutation({
     mutationFn: (values: Record<string, unknown>) => api.createPluginRelease(pluginId, {
-      manifest_source: values.manifest_source,
       manifest: parseJsonObject(values.manifest_json),
+      npm_package: {
+        name: values.npm_package_name,
+        version: values.npm_package_version,
+        integrity: values.npm_package_integrity,
+      },
       artifact_ref: values.artifact_ref,
       artifact_sha256: values.artifact_sha256,
       signature: parseJsonObject(values.signature_json),
@@ -178,7 +182,6 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
           disabled={!pluginId}
           onClick={() => {
             form.setFieldsValue({
-              manifest_source: 'chatos',
               manifest_json: '{}',
               signature_json: '{}',
               release_channel: 'stable',
@@ -208,13 +211,15 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
       >
         <Form form={form} layout="vertical" onFinish={(values) => createMutation.mutate(values)}>
           <div className="form-grid">
-            <Form.Item name="manifest_source" label={t('pluginRelease.manifestSource')} rules={[{ required: true }]}>
-              <Select options={['codex', 'chatos'].map((value) => ({ value, label: value }))} />
-            </Form.Item>
             <Form.Item name="release_channel" label={t('pluginRelease.channel')} rules={[{ required: true }]}>
               <Select options={['stable', 'beta', 'canary'].map((value) => ({ value, label: value }))} />
             </Form.Item>
           </div>
+          <div className="form-grid">
+            <Form.Item name="npm_package_name" label={t('pluginRelease.npmPackageName')} rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="npm_package_version" label={t('pluginRelease.npmPackageVersion')} rules={[{ required: true }]}><Input /></Form.Item>
+          </div>
+          <Form.Item name="npm_package_integrity" label={t('pluginRelease.npmPackageIntegrity')} rules={[{ required: true }]}><Input className="code-input" /></Form.Item>
           <Form.Item name="artifact_ref" label={t('pluginRelease.artifactRef')} rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="artifact_sha256" label={t('pluginRelease.artifactHash')} rules={[{ required: true }]}><Input className="code-input" /></Form.Item>
           <Form.Item name="sbom_ref" label={t('pluginRelease.sbomRef')}><Input /></Form.Item>

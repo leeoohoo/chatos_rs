@@ -24,7 +24,7 @@ import { useI18n } from '../../i18n/I18nProvider';
 import { mcpDisplayName, runtimeKindLabel } from '../../i18n/labels';
 import type { McpProviderSkill, McpRecord, McpToolDescriptor, RuntimeKind } from '../../types';
 import { CatalogIdentityFields } from '../catalogForm/CatalogIdentityFields';
-import { runtimeUsesCommand, runtimeUsesHttp, runtimeUsesLocalConnector } from './support';
+import { runtimeUsesHttp } from './support';
 
 type DescriptorData = Awaited<ReturnType<typeof api.getMcpDescriptor>>;
 type AdminAiModels = Awaited<ReturnType<typeof api.listAdminAiModels>>;
@@ -156,22 +156,6 @@ export function McpCatalogDialogs({
                   options={runtimeKinds.map((value) => ({ value, label: runtimeKindLabel(value, t) }))}
                 />
               </Form.Item>
-              {runtimeUsesCommand(runtimeKind) ? (
-                <div className="form-grid two">
-                  <Form.Item name="command" label={t('field.command')} rules={[{ required: true }]}>
-                    <Input />
-                  </Form.Item>
-                  <Form.Item name="cwd" label={t('field.cwd')}>
-                    <Input />
-                  </Form.Item>
-                  <Form.Item name="args_json" label={t('field.argsJson')}>
-                    <Input.TextArea rows={4} />
-                  </Form.Item>
-                  <Form.Item name="env_json" label={t('field.envJson')}>
-                    <Input.TextArea rows={4} />
-                  </Form.Item>
-                </div>
-              ) : null}
               {runtimeUsesHttp(runtimeKind) ? (
                 <div className="form-grid two">
                   <Form.Item name="url" label={t('field.url')} rules={[{ required: true }]}>
@@ -181,15 +165,6 @@ export function McpCatalogDialogs({
                     <Input.TextArea rows={4} />
                   </Form.Item>
                 </div>
-              ) : null}
-              {runtimeUsesLocalConnector(runtimeKind) ? (
-                <Form.Item
-                  name="local_connector_json"
-                  label={t('field.localConnectorJson')}
-                  rules={[{ required: true }]}
-                >
-                  <Input.TextArea rows={4} />
-                </Form.Item>
               ) : null}
             </>
           )}

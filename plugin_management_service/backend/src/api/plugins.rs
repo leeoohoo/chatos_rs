@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use chatos_plugin_management_sdk::normalize_plugin_relative_path;
+use chatos_plugin_management_sdk::{normalize_plugin_relative_path, PluginComponentDescriptor};
 
 use super::plugin_publishers::require_approved_publisher_identity;
 use super::*;
@@ -56,7 +56,7 @@ pub(super) async fn list_admin_plugins(
         .map(|catalog| {
             let runtime_targets = releases_by_id
                 .get(catalog.latest_release_id.as_str())
-                .map(plugin_release_runtime_targets)
+                .map(|release| plugin_release_runtime_targets(&release.components))
                 .unwrap_or_default();
             PluginCatalogListItem {
                 catalog,
@@ -312,27 +312,10 @@ fn is_disabled_transition(previous_enabled: Option<bool>, enabled: bool) -> bool
     previous_enabled == Some(true) && !enabled
 }
 
-fn plugin_release_runtime_targets(release: &PluginReleaseRecord) -> Vec<String> {
-    plugin_execution_hosts_runtime_targets(
-        release
-            .components
-            .iter()
-            .map(|component| component.execution_host),
-    )
-}
-
-fn plugin_execution_hosts_runtime_targets(
-    hosts: impl IntoIterator<Item = PluginExecutionHost>,
-) -> Vec<String> {
-    let mut targets = BTreeSet::new();
-    for host in hosts {
-        match host {
-            PluginExecutionHost::Local | PluginExecutionHost::Portable => {
-                targets.insert(PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string());
-            }
-        }
-    }
-    targets.into_iter().collect()
+fn plugin_release_runtime_targets(components: &[PluginComponentDescriptor]) -> Vec<String> {
+    (!components.is_empty())
+        .then(|| vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()])
+        .unwrap_or_default()
 }
 
 fn normalize_catalog_payload(payload: &mut PluginCatalogPayload) -> Result<(), ApiError> {
@@ -469,15 +452,18 @@ mod tests {
 
     #[test]
     fn release_runtime_targets_expose_only_local_connector_execution() {
+        let components = vec![PluginComponentDescriptor {
+            component_key: "mcp".to_string(),
+            kind: PluginComponentKind::McpServer,
+            display_name: "Mcp".to_string(),
+            runtime_kind: "npm_stdio".to_string(),
+            entrypoint: None,
+            required: true,
+            permissions: Vec::new(),
+            metadata: BTreeMap::new(),
+        }];
         assert_eq!(
-            plugin_execution_hosts_runtime_targets([
-                PluginExecutionHost::Portable,
-                PluginExecutionHost::Local,
-            ]),
-            vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()],
-        );
-        assert_eq!(
-            plugin_execution_hosts_runtime_targets([PluginExecutionHost::Local]),
+            plugin_release_runtime_targets(&components),
             vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()],
         );
     }

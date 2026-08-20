@@ -11,7 +11,7 @@ use super::result::{plugin_agent_result, plugin_command_result};
 use super::validation::*;
 use super::{
     PluginComponentProvider, PluginPrepareResponse, AGENT_APPLY_OPERATION,
-    COMMAND_INVOKE_OPERATION, LOCAL_SKILL_APPLY_OPERATION, NATIVE_SKILL_TOOL_CALL_OPERATION,
+    COMMAND_INVOKE_OPERATION, LOCAL_SKILL_APPLY_OPERATION,
 };
 use crate::providers::ProviderCallError;
 use crate::runtime::{PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding};
@@ -85,14 +85,6 @@ impl PluginComponentProvider {
                     "skill_keys".to_string(),
                     json!([immutable.component.component_key]),
                 );
-                body.insert(
-                    "runtime_kind".to_string(),
-                    json!(immutable.component.runtime_kind),
-                );
-                body.insert(
-                    "runtime_metadata".to_string(),
-                    Value::Object(immutable.component.metadata.clone().into_iter().collect()),
-                );
             }
             PluginComponentKind::Command | PluginComponentKind::Agent => {
                 body.insert("catalog_only".to_string(), json!(true));
@@ -150,35 +142,15 @@ impl PluginComponentProvider {
                         ))
                     })
                     .collect();
-                if let Some(native_skill) = prepared.native_skill.as_ref() {
-                    validate_native_skill_snapshot(immutable, native_skill)?;
-                    let operation = required_operation(
-                        prepared.operations.as_slice(),
-                        NATIVE_SKILL_TOOL_CALL_OPERATION,
-                    )?;
-                    let tools = native_skill
-                        .get("tools")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .ok_or_else(|| {
-                            ProviderCallError::invalid_response(
-                                "native Plugin Skill prepare response is missing tools",
-                            )
-                        })?;
-                    validate_tool_snapshot(tools.as_slice())?;
-                    validate_native_tool_snapshot_hash(native_skill, tools.as_slice())?;
-                    (operation, tools, instruction_items, None)
-                } else {
-                    required_operation(prepared.operations.as_slice(), "load_skill_resource")?;
-                    let result =
-                        super::result::plugin_skill_result_from_local_snapshot(immutable, skill)?;
-                    (
-                        LOCAL_SKILL_APPLY_OPERATION.to_string(),
-                        vec![skill_tool_definition(immutable)],
-                        instruction_items,
-                        Some(result),
-                    )
-                }
+                required_operation(prepared.operations.as_slice(), "load_skill_resource")?;
+                let result =
+                    super::result::plugin_skill_result_from_local_snapshot(immutable, skill)?;
+                (
+                    LOCAL_SKILL_APPLY_OPERATION.to_string(),
+                    vec![skill_tool_definition(immutable)],
+                    instruction_items,
+                    Some(result),
+                )
             }
             PluginComponentKind::Command => {
                 if prepared.commands.len() != 1 {

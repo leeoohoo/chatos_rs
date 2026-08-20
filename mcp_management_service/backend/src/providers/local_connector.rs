@@ -18,7 +18,6 @@ const MCP_RELAY_SCOPE: &str = "relay.mcp";
 const LOCAL_CONNECTOR_PROJECT_ID_HEADER: &str = "x-local-connector-project-id";
 const LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER: &str = "x-local-connector-default-tool-root";
 const LOCAL_CONNECTOR_OWNED_PATHS_HEADER: &str = "x-local-connector-owned-paths";
-const LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER: &str = "x-local-connector-mcp-manifest-id";
 const LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER: &str = "x-local-connector-inline-mcp-runtime";
 const PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER: &str = "x-plugin-management-resource-id";
 const MCP_MANAGEMENT_SESSION_ID_HEADER: &str = "x-mcp-management-session-id";

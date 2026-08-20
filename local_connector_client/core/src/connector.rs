@@ -18,10 +18,6 @@ use uuid::Uuid;
 use crate::config::api_url;
 use crate::device_keys::sign_device_message;
 use crate::history::CommandHistoryRecorder;
-use crate::local_runtime::LocalDatabase;
-use crate::mcp::configs::refresh_enabled_local_mcp_checks;
-use crate::mcp::manifest::mcp_status_message;
-use crate::mcp::repository::state_identity;
 use crate::mcp::service::handle_mcp_request;
 use crate::model_configs::handle_model_runtime_request;
 use crate::plugins::{
@@ -36,12 +32,10 @@ use crate::remote_connection::{
     RemoteTerminalManager,
 };
 use crate::remote_control_auth::RemoteControlVerifier;
+use crate::runtime::state_identity;
 use crate::sandbox::pairing::reconcile_sandbox_pairings;
 use crate::sandbox::relay::handle_lease_request;
 use crate::sandbox::types::LocalSandboxRuntime;
-use crate::skills::{
-    handle_skill_cancel, handle_skill_execute, handle_skill_prepare, skill_inventory_status_message,
-};
 use crate::terminal::exec::handle_terminal_exec_request;
 use crate::terminal::relay::{
     handle_terminal_close, handle_terminal_command, handle_terminal_input, handle_terminal_resize,
@@ -55,13 +49,11 @@ use crate::workspace::relay::{
 use crate::{config::ClientConfig, tracing_stdout, LocalState};
 
 const HEARTBEAT_INTERVAL_SECONDS: u64 = 15;
-const MCP_CHECK_INTERVAL_SECONDS: u64 = 45;
 const MANAGED_RUNTIME_CONFIG_SYNC_INTERVAL_SECONDS: u64 = 60;
 
 pub(crate) async fn connect_loop(
     config: ClientConfig,
     state: Arc<RwLock<LocalState>>,
-    database: LocalDatabase,
     sandbox_runtime: LocalSandboxRuntime,
     plugin_runtime: PluginRuntimeHost,
     plugin_oauth: PluginOAuthBroker,
@@ -106,13 +98,11 @@ pub(crate) async fn connect_loop(
     };
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Value>();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECONDS));
-    let mut mcp_check = tokio::time::interval(Duration::from_secs(MCP_CHECK_INTERVAL_SECONDS));
     let mut managed_runtime_config_sync = tokio::time::interval(Duration::from_secs(
         MANAGED_RUNTIME_CONFIG_SYNC_INTERVAL_SECONDS,
     ));
     let mut remote_terminal_cleanup = tokio::time::interval(Duration::from_secs(60));
     let mut relay_tasks = tokio::task::JoinSet::new();
-    mcp_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     managed_runtime_config_sync.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     remote_terminal_cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing_stdout("connected to local_connector_service");
@@ -146,11 +136,6 @@ pub(crate) async fn connect_loop(
                     ),
                 }
             }
-            _ = mcp_check.tick() => {
-                if let Err(err) = refresh_enabled_local_mcp_checks(&database, state.as_ref()).await {
-                    tracing_stdout(format!("refresh local MCP checks failed: {err}").as_str());
-                }
-            }
             _ = heartbeat.tick() => {
                 write
                     .send(Message::Text(json!({"type": "heartbeat"}).to_string().into()))
@@ -159,20 +144,6 @@ pub(crate) async fn connect_loop(
                 let state_guard = state.read().await;
                 let (owner_user_id, current_device_id) = state_identity(&state_guard)?;
                 drop(state_guard);
-                let manifests = database
-                    .list_mcp_manifests(owner_user_id.as_str(), current_device_id.as_str())
-                    .await
-                    .context("load MCP manifest status")?;
-                write
-                    .send(Message::Text(mcp_status_message(&manifests).to_string().into()))
-                    .await
-                    .context("send MCP manifest status")?;
-                let skill_inventory = skill_inventory_status_message()
-                    .context("build Skill inventory status")?;
-                write
-                    .send(Message::Text(skill_inventory.to_string().into()))
-                    .await
-                    .context("send Skill inventory status")?;
                 let plugin_runtime_for_status = plugin_runtime.clone();
                 let plugin_status = tokio::task::spawn_blocking(move || {
                     plugin_runtime_for_status.installation_status_snapshot()
@@ -234,7 +205,6 @@ pub(crate) async fn connect_loop(
                             .is_some_and(is_async_relay_request)
                         {
                             let text = text.to_string();
-                            let database = database.clone();
                             let http_client = http_client.clone();
                             let sandbox_runtime = sandbox_runtime.clone();
                             let terminal_manager = terminal_manager.clone();
@@ -249,7 +219,6 @@ pub(crate) async fn connect_loop(
                                 if let Some(response) = handle_text_message(
                                     text.as_str(),
                                     &state_snapshot,
-                                    &database,
                                     &http_client,
                                     &sandbox_runtime,
                                     &terminal_manager,
@@ -269,7 +238,6 @@ pub(crate) async fn connect_loop(
                             handle_text_message(
                                 text.as_str(),
                                 &state_snapshot,
-                                &database,
                                 &http_client,
                                 &sandbox_runtime,
                                 &terminal_manager,
@@ -369,7 +337,6 @@ fn safe_runtime_config_error(body: &str) -> String {
 async fn handle_text_message(
     text: &str,
     state: &LocalState,
-    database: &LocalDatabase,
     http_client: &reqwest::Client,
     sandbox_runtime: &LocalSandboxRuntime,
     terminal_manager: &LocalTerminalManager,
@@ -398,24 +365,12 @@ async fn handle_text_message(
         "connected"
         | "pong"
         | "ack"
-        | "mcp_manifest_status_ack"
-        | "skill_inventory_status_ack"
         | "plugin_installation_status_ack"
         | "plugin_oauth_status_ack" => {
             tracing_stdout(format!("service message: {message_type}").as_str());
             None
         }
-        MCP_RELAY_MESSAGE_TYPE => Some(
-            handle_mcp_request(
-                value,
-                state,
-                database,
-                http_client,
-                sandbox_runtime,
-                history_recorder,
-            )
-            .await,
-        ),
+        MCP_RELAY_MESSAGE_TYPE => Some(handle_mcp_request(value, state, history_recorder).await),
         "lease_request" => Some(
             handle_lease_request(value, state, http_client, sandbox_runtime, history_recorder)
                 .await,
@@ -449,9 +404,6 @@ async fn handle_text_message(
             None
         }
         "model_runtime_request" => Some(handle_model_runtime_request(value, state).await),
-        "skill_prepare_request" => Some(handle_skill_prepare(value, state)),
-        "skill_execute_request" => Some(handle_skill_execute(value, state)),
-        "skill_cancel_request" => Some(handle_skill_cancel(value)),
         "plugin_prepare_request" => Some(plugin_runtime.handle_prepare(value).await),
         "plugin_execute_request" => Some(plugin_runtime.handle_execute(value).await),
         "plugin_cancel_request" => Some(plugin_runtime.handle_cancel(value).await),
@@ -525,9 +477,6 @@ fn is_remote_control_message(message_type: &str) -> bool {
             | "remote_terminal_resize"
             | "remote_terminal_close"
             | "model_runtime_request"
-            | "skill_prepare_request"
-            | "skill_execute_request"
-            | "skill_cancel_request"
             | "plugin_prepare_request"
             | "plugin_execute_request"
             | "plugin_cancel_request"
@@ -559,9 +508,6 @@ fn is_async_relay_request(message_type: &str) -> bool {
             | "remote_sftp_request"
             | "remote_terminal_session_create_request"
             | "model_runtime_request"
-            | "skill_prepare_request"
-            | "skill_execute_request"
-            | "skill_cancel_request"
             | "plugin_prepare_request"
             | "plugin_execute_request"
             | "plugin_cancel_request"
@@ -630,10 +576,7 @@ fn relay_allows_empty_workspace(message_type: &str, request: &RelayRequest) -> b
     }
     if matches!(
         message_type,
-        "skill_prepare_request"
-            | "skill_execute_request"
-            | "skill_cancel_request"
-            | "plugin_prepare_request"
+        "plugin_prepare_request"
             | "plugin_execute_request"
             | "plugin_cancel_request"
             | "plugin_ui_asset_request"
@@ -645,10 +588,10 @@ fn relay_allows_empty_workspace(message_type: &str, request: &RelayRequest) -> b
         return true;
     }
     message_type == MCP_RELAY_MESSAGE_TYPE
-        && request.headers.keys().any(|key| {
-            key.eq_ignore_ascii_case("x-local-connector-mcp-manifest-id")
-                || key.eq_ignore_ascii_case("x-local-connector-inline-mcp-runtime")
-        })
+        && request
+            .headers
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("x-local-connector-inline-mcp-runtime"))
 }
 
 fn local_owner_user_id(state: &LocalState) -> Option<&str> {
@@ -696,9 +639,6 @@ fn remote_control_error_response(
         "workspace_directory_list_request" => "workspace_directory_list_response",
         "workspace_filesystem_request" => "workspace_filesystem_response",
         "model_runtime_request" => "model_runtime_response",
-        "skill_prepare_request" => "skill_prepare_response",
-        "skill_execute_request" => "skill_execute_response",
-        "skill_cancel_request" => "skill_cancel_response",
         "plugin_prepare_request" => "plugin_prepare_response",
         "plugin_execute_request" => "plugin_execute_response",
         "plugin_cancel_request" => "plugin_cancel_response",

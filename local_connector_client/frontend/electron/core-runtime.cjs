@@ -16,7 +16,6 @@ const USER_SHELL_PATH_PREFIX = '__CHATOS_PATH_BEGIN__';
 const USER_SHELL_PATH_SUFFIX = '__CHATOS_PATH_END__';
 const USER_SHELL_PATH_CACHE_VERSION = 1;
 const USER_SHELL_PATH_CACHE_FILE = 'user-shell-path-cache.json';
-const UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER = 'computer-use-unsigned-local-dev.json';
 
 function existingPathDirectories(value, directoryExists = defaultDirectoryExists) {
   return String(value || '')
@@ -252,23 +251,6 @@ function createCoreRuntime({
     };
   }
 
-  function unsignedComputerUseLocalDevAllowed() {
-    const envValue = String(process.env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV || '').trim();
-    if (['1', 'true', 'TRUE', 'yes', 'YES'].includes(envValue)) {
-      return true;
-    }
-    const markerPath = resourcePath(UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER);
-    if (!fs.existsSync(markerPath)) {
-      return false;
-    }
-    try {
-      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
-      return marker && marker.allowUnsignedComputerUseLocalDev === true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
   function coreExecutablePath() {
     if (cachedCoreExecutablePath) {
       return cachedCoreExecutablePath;
@@ -317,9 +299,6 @@ function createCoreRuntime({
     const chromeNativeHostName = process.platform === 'win32'
       ? 'chatos_chrome_native_host.exe'
       : 'chatos_chrome_native_host';
-    const computerUseHelperName = process.platform === 'win32'
-      ? 'chatos_computer_use_helper.exe'
-      : 'chatos_computer_use_helper';
     const corePath = resourcePath(coreName);
     const browserRuntime = bundledBrowserRuntime();
     const browserStateDir = process.platform === 'win32'
@@ -330,9 +309,6 @@ function createCoreRuntime({
       ...process.env,
       PATH: coreExecutablePath(),
       CHATOS_BUNDLED_TOOLS_DIR: resourcePath('bundled-tools'),
-      CHATOS_DOCUMENT_RUNTIME_DIR: path.join(browserRuntime.toolsDir, 'documents-runtime'),
-      CHATOS_BUNDLED_SKILLS_DIR: resourcePath('skill-bundles'),
-      CHATOS_BUNDLED_PLUGINS_DIR: resourcePath('plugin-bundles'),
       CHATOS_CHROME_NATIVE_HOST_PATH: resourcePath(chromeNativeHostName),
       CHATOS_CHROME_EXTENSION_DIR: chromeExtensionPath(),
       LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
@@ -341,14 +317,6 @@ function createCoreRuntime({
       LOCAL_CONNECTOR_OPEN_UI: '0',
       LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
     };
-    if (process.platform === 'darwin') {
-      env.CHATOS_COMPUTER_USE_HELPER_PATH = resourcePath(computerUseHelperName);
-      if (unsignedComputerUseLocalDevAllowed()) {
-        env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV = '1';
-      } else if (app.isPackaged) {
-        env.CHATOS_COMPUTER_USE_HELPER_REQUIRE_SIGNED = '1';
-      }
-    }
     env.AGENT_BROWSER_BIN = browserRuntime.agentBrowser;
     env.AGENT_BROWSER_EXECUTABLE_PATH = browserRuntime.browserExecutable;
     env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;

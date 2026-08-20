@@ -108,13 +108,6 @@ pub enum McpRouteResourceKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum McpExecutionHost {
-    Local,
-    Portable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum McpRetryClass {
     IdempotentRead,
     ProviderDeclared,
@@ -127,7 +120,6 @@ pub struct McpRouteCandidate {
     pub server_name: String,
     pub resource_kind: McpRouteResourceKind,
     pub system_key: Option<String>,
-    pub execution_host: Option<McpExecutionHost>,
     pub provider_ref: Option<String>,
     #[serde(default)]
     pub required: bool,

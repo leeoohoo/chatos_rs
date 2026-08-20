@@ -130,7 +130,7 @@ pub(super) async fn sync_plugin_installation_internal(
                 owner_user_id: record.owner_user_id.clone(),
                 plugin_id: record.plugin_id.clone(),
                 enabled: record.active,
-                auto_update: record.plugin_id.starts_with("bundled-plugin-"),
+                auto_update: true,
                 release_channel: release.release_channel.clone(),
                 enabled_components: Vec::new(),
                 updated_at: now.clone(),

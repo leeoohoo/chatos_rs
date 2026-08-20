@@ -141,17 +141,12 @@ pub(super) fn validate_client_managed_mcp_payload(
 }
 
 pub(super) fn validate_client_managed_mcp_runtime(
-    runtime: &McpRuntime,
+    _runtime: &McpRuntime,
     user: &CurrentUser,
 ) -> Result<(), ApiError> {
-    if !user.is_super_admin()
-        && !matches!(
-            runtime.kind.as_str(),
-            RUNTIME_KIND_LOCAL_CONNECTOR_STDIO | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-        )
-    {
+    if !user.is_super_admin() {
         return Err(ApiError::forbidden(
-            "user-created MCPs must run through Local Connector",
+            "MCP runtimes must be installed from the Plugin Marketplace",
         ));
     }
     Ok(())
@@ -266,13 +261,8 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
             }
             validate_external_http_headers(&runtime.headers)?;
         }
-        RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
-        | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-        | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY => validate_local_connector_ref(runtime)?,
         _ => {
-            return Err(ApiError::bad_request(
-                "runtime.kind must be system, http, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
-            ));
+            return Err(ApiError::bad_request("runtime.kind must be system or http"));
         }
     }
     Ok(())
@@ -354,69 +344,6 @@ fn validate_external_http_headers(
                 name.as_str()
             )));
         }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_local_connector_ref(runtime: &McpRuntime) -> Result<(), ApiError> {
-    let local = runtime
-        .local_connector
-        .as_ref()
-        .ok_or_else(|| ApiError::bad_request("local connector runtime requires local_connector"))?;
-    for (value, field) in [
-        (local.device_id.as_deref(), "device_id"),
-        (local.manifest_id.as_deref(), "manifest_id"),
-    ] {
-        if value.and_then(|value| normalized(Some(value))).is_none() {
-            return Err(ApiError::bad_request(format!(
-                "local connector runtime requires {field}"
-            )));
-        }
-    }
-    if runtime.kind == RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY
-        && local
-            .workspace_id
-            .as_deref()
-            .and_then(|value| normalized(Some(value)))
-            .is_none()
-    {
-        return Err(ApiError::bad_request(
-            "local connector builtin proxy requires workspace_id",
-        ));
-    }
-    if !local.requires_online {
-        return Err(ApiError::bad_request(
-            "local connector runtime requires requires_online=true",
-        ));
-    }
-    if runtime.command.is_some()
-        || !runtime.args.is_empty()
-        || !runtime.env.is_empty()
-        || runtime.cwd.is_some()
-        || runtime.url.is_some()
-        || !runtime.headers.is_empty()
-    {
-        return Err(ApiError::bad_request(
-            "local connector runtime secrets and execution config must remain on the client",
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_mcp_visibility_for_runtime(
-    visibility: &str,
-    runtime: &McpRuntime,
-) -> Result<(), ApiError> {
-    if matches!(
-        runtime.kind.as_str(),
-        RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
-            | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-            | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY
-    ) && visibility != VISIBILITY_PRIVATE
-    {
-        return Err(ApiError::bad_request(
-            "local connector MCPs must use private visibility",
-        ));
     }
     Ok(())
 }

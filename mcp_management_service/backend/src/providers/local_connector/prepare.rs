@@ -18,8 +18,8 @@ use crate::trace_context::InternalTraceContextExt;
 
 use super::{
     LocalConnectorProvider, ProviderCallError, CALLER_SERVICE,
-    LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER, LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER,
-    MCP_RELAY_SCOPE, PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER, TOKEN_AUDIENCE,
+    LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER, MCP_RELAY_SCOPE,
+    PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER, TOKEN_AUDIENCE,
 };
 
 const DEFAULT_INLINE_HTTP_TIMEOUT_MS: u64 = 30_000;
@@ -119,9 +119,6 @@ impl LocalConnectorProvider {
             .header("x-local-connector-owner-user-id", owner_user_id)
             .header(PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER, resource_id)
             .with_internal_trace_context();
-        if let Some(manifest_id) = binding.manifest_id.as_deref() {
-            request = request.header(LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER, manifest_id);
-        }
         if let Some(inline_http) = binding.inline_http.as_ref() {
             let encoded = serde_json::to_string(inline_http).map_err(|error| {
                 ProviderCallError::provider_unavailable(format!(
@@ -217,12 +214,7 @@ fn prepare_binding(
         return Err("read-only MCP requires an explicit allowed_tool_names policy".to_string());
     }
     let runtime_kind = resolved.resource.runtime.kind.trim();
-    let (manifest_id, inline_http) = match runtime_kind {
-        "local_connector_stdio" | "local_connector_http" | "local_connector_builtin_proxy" => {
-            let manifest_id = normalized(local.and_then(|item| item.manifest_id.as_deref()))
-                .ok_or_else(|| "Local Connector MCP manifest id is missing".to_string())?;
-            (Some(manifest_id.to_string()), None)
-        }
+    let inline_http = match runtime_kind {
         "http" => {
             let url = resolved
                 .resource
@@ -234,14 +226,11 @@ fn prepare_binding(
                 .ok_or_else(|| "HTTP MCP URL is missing".to_string())?;
             validate_inline_http_url(url)?;
             validate_inline_http_headers(&resolved.resource.runtime.headers)?;
-            (
-                None,
-                Some(LocalConnectorInlineHttpRuntime {
-                    url: url.to_string(),
-                    headers: resolved.resource.runtime.headers.clone(),
-                    timeout_ms: DEFAULT_INLINE_HTTP_TIMEOUT_MS,
-                }),
-            )
+            Some(LocalConnectorInlineHttpRuntime {
+                url: url.to_string(),
+                headers: resolved.resource.runtime.headers.clone(),
+                timeout_ms: DEFAULT_INLINE_HTTP_TIMEOUT_MS,
+            })
         }
         _ => {
             return Err(format!(
@@ -253,7 +242,6 @@ fn prepare_binding(
         provider_ref,
         device_id: device_id.to_string(),
         workspace_id,
-        manifest_id,
         inline_http,
         allow_writes: route.allow_writes,
         allowed_tool_names,
@@ -329,7 +317,6 @@ fn managed_or_unsafe_header(name: &str) -> bool {
             | "transfer-encoding"
             | "upgrade"
             | "x-local-connector-inline-mcp-runtime"
-            | "x-local-connector-mcp-manifest-id"
             | "x-plugin-management-resource-id"
     )
 }

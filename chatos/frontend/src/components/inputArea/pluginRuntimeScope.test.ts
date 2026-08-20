@@ -20,10 +20,7 @@ const project = (overrides: Partial<Project> = {}): Project => ({
   ...overrides,
 });
 
-const plugin = (
-  id: string,
-  hosts: Array<'local' | 'portable'>,
-): TaskRunnerSelectablePluginResponse => ({
+const plugin = (id: string): TaskRunnerSelectablePluginResponse => ({
   id,
   plugin_key: id,
   display_name: id,
@@ -31,19 +28,16 @@ const plugin = (
   version: '1.0.0',
   release_id: `release-${id}`,
   artifact_sha256: 'a'.repeat(64),
-  execution_type: hosts.every((host) => host === 'portable') ? 'portable' : 'local',
   requires_device: false,
-  component_hosts: {},
-  component_keys: hosts.map((_, index) => `component-${index}`),
-  components: hosts.map((host, index) => ({
-    component_key: `component-${index}`,
+  component_keys: ['component-0'],
+  components: [{
+    component_key: 'component-0',
     kind: 'mcp_server',
-    execution_host: host,
     available: true,
     status: 'ready',
     prepare_provider: 'mcp_management',
-    requires_workspace: host === 'local',
-  })),
+    requires_workspace: true,
+  }],
   commands: [],
 });
 
@@ -80,12 +74,12 @@ describe('Plugin runtime scope', () => {
   });
 
   it('keeps Plugins with an available component for Local Connector execution', () => {
-    const local = plugin('local', ['local']);
-    const portable = plugin('portable', ['portable']);
-    const unavailable = plugin('unavailable', ['local']);
+    const first = plugin('first');
+    const second = plugin('second');
+    const unavailable = plugin('unavailable');
     unavailable.components[0].available = false;
 
-    expect(filterPluginsForProjectRuntime([local, portable, unavailable], 'local_connector'))
-      .toEqual([local, portable]);
+    expect(filterPluginsForProjectRuntime([first, second, unavailable], 'local_connector'))
+      .toEqual([first, second]);
   });
 });

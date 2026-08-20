@@ -10,9 +10,6 @@ FRONTEND_DIR="$CLIENT_DIR/frontend"
 STAGING_DIR="$CLIENT_DIR/.package/linux"
 DIST_DIR="$CLIENT_DIR/dist/electron-linux"
 BUILDER_CONFIG="$CLIENT_DIR/electron-builder-linux.yml"
-SKILL_CATALOG="$CLIENT_DIR/skill_bundles/catalog/internal-skill-catalog.json"
-PLUGIN_CATALOG="$CLIENT_DIR/plugin_bundles/catalog/bundled-plugin-catalog.json"
-PLUGIN_BUNDLE_TOOL="$CLIENT_DIR/prepare-plugin-bundles.mjs"
 INSTALLED_PACKAGE_VERIFIER="$CLIENT_DIR/verify-installed-package.mjs"
 PACKAGE_TARGET_OWNED=0
 
@@ -128,27 +125,11 @@ fi
 mkdir -p \
   "$STAGING_DIR/bundled-tools" \
   "$STAGING_DIR/chrome-extension" \
-  "$STAGING_DIR/skill-bundles" \
-  "$STAGING_DIR/plugin-bundles" \
   "$STAGING_DIR/sqlite-migrations"
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
 cp "$CHROME_NATIVE_HOST_BIN" "$STAGING_DIR/chatos_chrome_native_host"
 cp -R "$CLIENT_DIR/chrome_extension/." "$STAGING_DIR/chrome-extension/"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
-cp -R "$CLIENT_DIR/skill_bundles/." "$STAGING_DIR/skill-bundles/"
-node "$PLUGIN_BUNDLE_TOOL" \
-  --plugin-catalog "$PLUGIN_CATALOG" \
-  --skill-catalog "$SKILL_CATALOG" \
-  --skill-root "$CLIENT_DIR/skill_bundles/internal" \
-  --output "$STAGING_DIR/plugin-bundles" \
-  --platform "$TOOLS_PLATFORM"
-node "$PLUGIN_BUNDLE_TOOL" \
-  --verify-only \
-  --plugin-catalog "$PLUGIN_CATALOG" \
-  --skill-catalog "$SKILL_CATALOG" \
-  --skill-root "$CLIENT_DIR/skill_bundles/internal" \
-  --output "$STAGING_DIR/plugin-bundles" \
-  --platform "$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
 chmod 755 \
   "$STAGING_DIR/local_connector_client_core" \
@@ -180,8 +161,6 @@ node "$INSTALLED_PACKAGE_VERIFIER" \
   --platform "$TOOLS_PLATFORM" \
   --runtime-profile linux-browser \
   --resources "$RESOURCES_PATH" \
-  --plugin-catalog "$PLUGIN_CATALOG" \
-  --skill-catalog "$SKILL_CATALOG" \
   --electron-runtime-source "$FRONTEND_DIR/electron/core-runtime.cjs" \
   --report "$VERIFICATION_REPORT" \
   >/dev/null

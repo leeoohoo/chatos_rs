@@ -150,7 +150,7 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     assert_eq!(identity.scope, CAPABILITIES_RESOLVE_SCOPE);
     uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("signed trace id");
     let err =
-        require_internal_api_secret(&state, &headers, "task-runner", LOCAL_CONNECTOR_WRITE_SCOPE)
+        require_internal_api_secret(&state, &headers, "task-runner", PLUGIN_INSTALL_MANAGE_SCOPE)
             .expect_err("scope mismatch must be rejected");
     assert_eq!(err.status, StatusCode::UNAUTHORIZED);
 

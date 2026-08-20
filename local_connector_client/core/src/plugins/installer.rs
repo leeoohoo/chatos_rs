@@ -16,7 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::archive::PluginArchiveLimits;
+use super::archive::PluginPackageLimits;
 use super::credentials::PluginCredentialVault;
 use super::journal::{
     begin_transaction, finish_transaction, load_journal, transition_transaction,
@@ -28,7 +28,7 @@ use super::state::{
     load_registry, InstalledPluginVersion, LocalInstalledPlugin, LocalPluginRegistry,
 };
 use super::verifier::{
-    verify_plugin_artifact, verify_plugin_install_source_records, PluginArtifactVerificationRequest,
+    verify_plugin_install_source_records, verify_plugin_package, PluginPackageVerificationRequest,
 };
 
 const INSTALLATION_METADATA_PATH: &str = ".chatos-installation.json";
@@ -38,7 +38,7 @@ pub struct PluginInstallRequest<'a> {
     pub marketplace: &'a PluginMarketplaceRecord,
     pub catalog: &'a PluginCatalogRecord,
     pub release: &'a PluginReleaseRecord,
-    pub archive_path: &'a Path,
+    pub package_path: &'a Path,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +70,7 @@ pub struct ActivePluginInstallation {
 #[derive(Debug, Clone)]
 pub struct PluginInstaller {
     pub(super) plugin_root: PathBuf,
-    pub(super) limits: PluginArchiveLimits,
+    pub(super) limits: PluginPackageLimits,
     pub(super) operation_lock: Arc<Mutex<()>>,
     pub(super) credential_vault: Option<PluginCredentialVault>,
 }
@@ -79,7 +79,7 @@ impl PluginInstaller {
     pub fn new(plugin_root: PathBuf) -> Self {
         Self {
             plugin_root,
-            limits: PluginArchiveLimits::default(),
+            limits: PluginPackageLimits::default(),
             operation_lock: Arc::new(Mutex::new(())),
             credential_vault: None,
         }
@@ -90,7 +90,7 @@ impl PluginInstaller {
         Self::new(app_data.join("plugins"))
     }
 
-    pub fn with_limits(mut self, limits: PluginArchiveLimits) -> Self {
+    pub fn with_limits(mut self, limits: PluginPackageLimits) -> Self {
         self.limits = limits;
         self
     }
@@ -104,7 +104,7 @@ impl PluginInstaller {
         self.plugin_root.as_path()
     }
 
-    pub fn archive_limits(&self) -> PluginArchiveLimits {
+    pub fn package_limits(&self) -> PluginPackageLimits {
         self.limits
     }
 
@@ -129,7 +129,7 @@ impl PluginInstaller {
         recover_incomplete_transactions(self.plugin_root.as_path(), self.limits)
     }
 
-    pub fn install_archive(
+    pub fn install_package(
         &self,
         request: PluginInstallRequest<'_>,
     ) -> Result<PluginInstallOutcome> {
@@ -189,7 +189,7 @@ impl PluginInstaller {
                 last_error: None,
             },
         )?;
-        let result = self.install_archive_inner(
+        let result = self.install_package_inner(
             request,
             transaction_id.as_str(),
             operation,
@@ -244,7 +244,7 @@ impl PluginInstaller {
         };
         let transaction_id = Uuid::new_v4().to_string();
         let relative_staging_path = format!(".staging/install-{transaction_id}");
-        let relative_download_path = format!(".downloads/{transaction_id}.zip");
+        let relative_download_path = format!(".downloads/{transaction_id}.tgz");
         let relative_final_path = self.relative_installation_path(
             catalog.id.as_str(),
             catalog.name.as_str(),
@@ -293,10 +293,10 @@ impl PluginInstaller {
         total_bytes: Option<u64>,
     ) -> Result<()> {
         let _guard = self.operation_guard()?;
-        if downloaded_bytes > self.limits.max_archive_bytes
-            || total_bytes.is_some_and(|total| total > self.limits.max_archive_bytes)
+        if downloaded_bytes > self.limits.max_package_bytes
+            || total_bytes.is_some_and(|total| total > self.limits.max_package_bytes)
         {
-            bail!("Plugin download progress exceeds the archive size limit");
+            bail!("Plugin download progress exceeds the npm package size limit");
         }
         let journal = load_journal(self.plugin_root.as_path())?;
         let record = journal
@@ -347,7 +347,7 @@ impl PluginInstaller {
         )
     }
 
-    pub(crate) fn install_downloaded_archive(
+    pub(crate) fn install_downloaded_package(
         &self,
         pending: PendingPluginInstall,
         request: PluginInstallRequest<'_>,
@@ -358,7 +358,7 @@ impl PluginInstaller {
                 || pending.release_id != request.release.id
                 || pending.relative_download_path
                     != request
-                        .archive_path
+                        .package_path
                         .strip_prefix(self.plugin_root.as_path())
                         .ok()
                         .map(|path| path.to_string_lossy().replace('\\', "/"))
@@ -379,12 +379,12 @@ impl PluginInstaller {
             {
                 bail!("Plugin download transaction identity or state changed");
             }
-            let archive_bytes = fs::metadata(request.archive_path)
-                .context("read downloaded Plugin artifact metadata")?
+            let package_bytes = fs::metadata(request.package_path)
+                .context("read downloaded npm package metadata")?
                 .len();
-            if record.downloaded_bytes != archive_bytes || record.total_bytes != Some(archive_bytes)
+            if record.downloaded_bytes != package_bytes || record.total_bytes != Some(package_bytes)
             {
-                bail!("Plugin download progress does not match the completed artifact");
+                bail!("Plugin download progress does not match the completed npm package");
             }
             transition_transaction(
                 self.plugin_root.as_path(),
@@ -392,7 +392,7 @@ impl PluginInstaller {
                 PluginInstallStatus::Verifying,
                 Utc::now().to_rfc3339(),
             )?;
-            self.install_archive_inner(
+            self.install_package_inner(
                 request,
                 pending.transaction_id.as_str(),
                 pending.operation,
@@ -414,7 +414,7 @@ impl PluginInstaller {
         Ok(outcome)
     }
 
-    fn install_archive_inner(
+    fn install_package_inner(
         &self,
         request: PluginInstallRequest<'_>,
         transaction_id: &str,
@@ -425,12 +425,12 @@ impl PluginInstaller {
         let transaction =
             StagingTransaction::new(self.create_transaction_directory(relative_staging_path)?);
         let extraction_root = transaction.root().join("payload");
-        let verification = verify_plugin_artifact(
-            PluginArtifactVerificationRequest {
+        let verification = verify_plugin_package(
+            PluginPackageVerificationRequest {
                 marketplace: request.marketplace,
                 catalog: request.catalog,
                 release: request.release,
-                archive_path: request.archive_path,
+                package_path: request.package_path,
                 extraction_root: extraction_root.as_path(),
             },
             self.limits,
@@ -462,6 +462,7 @@ impl PluginInstaller {
             artifact_sha256: verified.artifact_sha256,
             manifest_sha256: normalized_plugin_manifest_sha256(&verified.manifest)
                 .context("hash installed Plugin Manifest")?,
+            manifest: verified.manifest,
             signature_key_id: request.release.signature.key_id.clone(),
             relative_installation_path: relative_path.clone(),
             installed_at: Utc::now().to_rfc3339(),

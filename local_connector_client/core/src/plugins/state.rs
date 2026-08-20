@@ -7,13 +7,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use chatos_plugin_management_sdk::PluginManifest;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 use super::verifier::PluginRequirementInventory;
 
-const REGISTRY_SCHEMA_VERSION: u32 = 1;
+const REGISTRY_SCHEMA_VERSION: u32 = 2;
 const MAX_REGISTRY_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -23,6 +24,7 @@ pub struct InstalledPluginVersion {
     pub version: String,
     pub artifact_sha256: String,
     pub manifest_sha256: String,
+    pub manifest: PluginManifest,
     pub signature_key_id: String,
     pub relative_installation_path: String,
     pub installed_at: String,

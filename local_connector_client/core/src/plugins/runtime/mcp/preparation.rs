@@ -4,7 +4,6 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -13,7 +12,7 @@ use chatos_plugin_management_sdk::{
     normalize_plugin_relative_path, PluginComponentKind, PluginMcpServer,
 };
 use chrono::{SecondsFormat, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -68,16 +67,7 @@ pub(super) fn prepare_transport(
     oauth_broker: Option<PluginOAuthBroker>,
 ) -> Result<PreparedPluginMcpTransport> {
     match server {
-        PluginMcpServer::ConfigFile { .. } => {
-            bail!("Plugin MCP config-file components are not supported yet")
-        }
-        PluginMcpServer::Stdio {
-            command,
-            args,
-            env,
-            cwd,
-            ..
-        } => {
+        PluginMcpServer::Stdio { bin, args, env, .. } => {
             if !permission_snapshot.contains("process.spawn") {
                 bail!("Plugin stdio MCP requires process.spawn in the permission snapshot");
             }
@@ -99,17 +89,23 @@ pub(super) fn prepare_transport(
                 environment.secret_names(),
             )?;
             validate_arguments(args)?;
-            let command = resolve_signed_command(installation, command)?;
-            let cwd = resolve_cwd(installation, cwd.as_ref().map(|path| path.path.as_str()))?;
+            let resolved = resolve_npm_bin(installation, bin)?;
             let server_name = format!(
                 "plugin:{}:{}:{}",
                 installation.plugin_id,
                 installation.version.release_id,
                 server.component_key()
             );
-            let server = McpStdioServer::new(server_name, command.to_string_lossy().into_owned())
-                .with_args(args.clone())
-                .with_cwd(cwd.to_string_lossy().into_owned())
+            let mut launch_args = resolved.prefix_args;
+            launch_args.extend(args.clone());
+            let server = McpStdioServer::new(server_name, resolved.command)
+                .with_args(launch_args)
+                .with_cwd(
+                    installation
+                        .installation_path
+                        .to_string_lossy()
+                        .into_owned(),
+                )
                 .with_env(HashMap::from([(
                     "CHATOS_PLUGIN_ROOT".to_string(),
                     installation
@@ -191,52 +187,88 @@ pub(super) fn prepare_transport(
     }
 }
 
-fn resolve_signed_command(
-    installation: &ActivePluginInstallation,
-    command: &str,
-) -> Result<PathBuf> {
-    if !command.contains('/') {
-        bail!("reviewed Plugin MCP command identifiers are not enabled yet");
-    }
-    let relative = normalize_plugin_relative_path(command)
-        .map_err(|message| anyhow!("invalid Plugin MCP command path: {message}"))?;
+#[derive(Debug, Deserialize)]
+struct InstalledNpmPackage {
+    name: String,
+    bin: InstalledNpmBin,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum InstalledNpmBin {
+    One(String),
+    Many(std::collections::BTreeMap<String, String>),
+}
+
+struct ResolvedNpmBin {
+    command: String,
+    prefix_args: Vec<String>,
+}
+
+fn resolve_npm_bin(installation: &ActivePluginInstallation, bin: &str) -> Result<ResolvedNpmBin> {
+    let package_json_path = installation.installation_path.join("package.json");
+    let package_json =
+        fs::read(package_json_path.as_path()).context("read installed package.json")?;
+    let package: InstalledNpmPackage =
+        serde_json::from_slice(package_json.as_slice()).context("parse installed package.json")?;
+    let bins = match package.bin {
+        InstalledNpmBin::One(path) => std::collections::BTreeMap::from([(
+            package
+                .name
+                .rsplit('/')
+                .next()
+                .unwrap_or(package.name.as_str())
+                .to_string(),
+            path,
+        )]),
+        InstalledNpmBin::Many(values) => values,
+    };
+    let declared_path = bins
+        .get(bin)
+        .with_context(|| format!("installed npm package does not publish bin: {bin}"))?;
+    let relative = normalize_plugin_relative_path(declared_path)
+        .map_err(|message| anyhow!("invalid npm MCP bin path: {message}"))?;
     let relative = relative.trim_start_matches("./");
     if !installation
         .version
         .package_file_sha256
         .contains_key(relative)
     {
-        bail!("Plugin MCP command is not covered by package checksums");
+        bail!("npm MCP bin is not covered by package checksums");
     }
     let path = installation.installation_path.join(relative);
-    let metadata = fs::symlink_metadata(path.as_path()).context("read Plugin MCP command")?;
+    let metadata = fs::symlink_metadata(path.as_path()).context("read npm MCP bin")?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
-        bail!("Plugin MCP command is not a safe regular file");
+        bail!("npm MCP bin is not a safe regular file");
+    }
+    let prefix = fs::read(path.as_path())?
+        .into_iter()
+        .take(256)
+        .collect::<Vec<_>>();
+    let node_launcher = matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("js" | "cjs" | "mjs")
+    ) || String::from_utf8_lossy(prefix.as_slice())
+        .lines()
+        .next()
+        .is_some_and(|line| line.starts_with("#!") && line.contains("node"));
+    if node_launcher {
+        return Ok(ResolvedNpmBin {
+            command: "node".to_string(),
+            prefix_args: vec![path.to_string_lossy().into_owned()],
+        });
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if metadata.permissions().mode() & 0o111 == 0 {
-            bail!("Plugin MCP command is not executable");
+            bail!("npm MCP native bin is not executable");
         }
     }
-    Ok(path)
-}
-
-fn resolve_cwd(installation: &ActivePluginInstallation, cwd: Option<&str>) -> Result<PathBuf> {
-    let Some(cwd) = cwd else {
-        return Ok(installation.installation_path.clone());
-    };
-    let relative = normalize_plugin_relative_path(cwd)
-        .map_err(|message| anyhow!("invalid Plugin MCP cwd: {message}"))?;
-    let path = installation
-        .installation_path
-        .join(relative.trim_start_matches("./"));
-    let metadata = fs::symlink_metadata(path.as_path()).context("read Plugin MCP cwd")?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        bail!("Plugin MCP cwd is not a safe directory");
-    }
-    Ok(path)
+    Ok(ResolvedNpmBin {
+        command: path.to_string_lossy().into_owned(),
+        prefix_args: Vec::new(),
+    })
 }
 
 fn validate_arguments(args: &[String]) -> Result<()> {

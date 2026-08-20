@@ -5,11 +5,11 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::mcp::repository::runtime_identity;
 use crate::plugins::{
     ActivePluginInstallation, LocalPluginOAuthConnection, PluginCredentialMetadata,
     PluginCredentialScope, PluginOAuthAuthorizationStart,
 };
+use crate::runtime::runtime_identity;
 use crate::{tracing_stdout, LocalRuntime};
 
 use super::super::super::types::{

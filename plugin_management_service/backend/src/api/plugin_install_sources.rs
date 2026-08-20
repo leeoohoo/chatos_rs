@@ -292,11 +292,21 @@ mod tests {
 
     #[test]
     fn artifact_urls_must_be_plain_https_urls() {
-        assert!(validate_https_url("https://plugins.example.com/demo.zip", "artifact").is_ok());
-        assert!(validate_https_url("http://plugins.example.com/demo.zip", "artifact").is_err());
-        assert!(
-            validate_https_url("https://user@plugins.example.com/demo.zip", "artifact").is_err()
-        );
+        assert!(validate_https_url(
+            "https://registry.npmjs.org/demo/-/demo-1.0.0.tgz",
+            "artifact"
+        )
+        .is_ok());
+        assert!(validate_https_url(
+            "http://registry.npmjs.org/demo/-/demo-1.0.0.tgz",
+            "artifact"
+        )
+        .is_err());
+        assert!(validate_https_url(
+            "https://user@registry.npmjs.org/demo/-/demo-1.0.0.tgz",
+            "artifact"
+        )
+        .is_err());
         assert!(
             validate_https_url("https://plugins.example.com/demo.zip#fragment", "artifact")
                 .is_err()
@@ -304,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_and_local_marketplaces_are_not_network_install_sources() {
+    fn only_enabled_trusted_registry_marketplaces_are_network_install_sources() {
         let mut marketplace = PluginMarketplaceRecord {
             id: "marketplace".to_string(),
             name: "marketplace".to_string(),
@@ -319,10 +329,10 @@ mod tests {
             last_synced_at: Some("2026-07-25T00:00:00Z".to_string()),
         };
         assert!(is_network_marketplace(&marketplace));
-        marketplace.trust_level = PLUGIN_TRUST_BUNDLED.to_string();
+        marketplace.trust_level = PLUGIN_TRUST_UNTRUSTED.to_string();
         assert!(!is_network_marketplace(&marketplace));
         marketplace.trust_level = PLUGIN_TRUST_TRUSTED.to_string();
-        marketplace.source_kind = PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY.to_string();
+        marketplace.enabled = false;
         assert!(!is_network_marketplace(&marketplace));
     }
 }

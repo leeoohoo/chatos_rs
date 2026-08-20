@@ -42,8 +42,6 @@ fn runtime_preserves_agent_selection_and_adds_required_mcps() {
         .external_mcp_config_ids
         .contains(&chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID.to_string()));
     assert!(task.mcp_config.selected_skill_ids.is_empty());
-    let snapshots = policy().skill_snapshots(&task).expect("skill snapshots");
-    assert!(snapshots.is_empty());
 }
 
 #[test]
@@ -194,9 +192,7 @@ fn write_validation_rejects_removed_builtins_but_accepts_configured_offline_reso
 }
 
 #[test]
-fn policy_exposes_http_and_local_connector_mcps_exactly_as_configured() {
-    let mut local = resolved_mcp("local-user", "local_connector_http", None, false, true);
-    local.resource.source_kind = "local_connector_discovered".to_string();
+fn policy_exposes_http_mcps_exactly_as_configured() {
     let http = resolved_mcp("external-http", "http", None, false, true);
     let policy = TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
@@ -204,7 +200,7 @@ fn policy_exposes_http_and_local_connector_mcps_exactly_as_configured() {
         policy_revision: "revision-local".to_string(),
         generated_at: "now".to_string(),
         agent_enabled: true,
-        mcps: vec![local, http],
+        mcps: vec![http],
         skills: Vec::new(),
         plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
@@ -213,6 +209,6 @@ fn policy_exposes_http_and_local_connector_mcps_exactly_as_configured() {
 
     assert_eq!(
         policy.selectable_external_mcp_ids(),
-        vec!["local-user".to_string(), "external-http".to_string()]
+        vec!["external-http".to_string()]
     );
 }

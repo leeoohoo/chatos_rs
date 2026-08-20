@@ -21,9 +21,7 @@ const plugins: TaskRunnerSelectablePluginResponse[] = [{
   release_id: 'release-1',
   artifact_sha256: 'a'.repeat(64),
   device_id: 'device-1',
-  execution_type: 'local',
   requires_device: true,
-  component_hosts: { review: 'local' },
   component_keys: ['review'],
   components: [],
   commands: [{

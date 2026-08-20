@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::path::Path;
-
-use super::parser::PluginManifestSource;
-
 pub fn normalize_plugin_relative_path(value: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -36,21 +32,6 @@ pub fn normalize_plugin_relative_path(value: &str) -> Result<String, String> {
         return Err("path must reference content inside the plugin root".to_string());
     }
     Ok(format!("./{}", segments.join("/")))
-}
-
-pub fn plugin_manifest_source_from_path(path: &Path) -> Option<PluginManifestSource> {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if normalized.ends_with("/.codex-plugin/plugin.json")
-        || normalized == ".codex-plugin/plugin.json"
-    {
-        Some(PluginManifestSource::Codex)
-    } else if normalized.ends_with("/.chatos-plugin/plugin.json")
-        || normalized == ".chatos-plugin/plugin.json"
-    {
-        Some(PluginManifestSource::Chatos)
-    } else {
-        None
-    }
 }
 
 fn has_windows_drive_prefix(value: &str) -> bool {

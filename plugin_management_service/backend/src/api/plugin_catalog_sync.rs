@@ -304,38 +304,28 @@ async fn sync_plugin_marketplace_inner(
     validate_catalog_against_store(state, &document, unchanged).await?;
 
     for release in &document.releases {
-        let bundles =
-            super::plugin_portable_bundles::stage_release_portable_bundles(state, release).await?;
-        for bundle in &bundles {
+        for component in &release.components {
             let snapshot = document
                 .component_snapshots
                 .iter()
                 .find(|snapshot| {
-                    snapshot.plugin_id == bundle.plugin_id
-                        && snapshot.release_id == bundle.release_id
-                        && snapshot.component.component_key == bundle.component_key
+                    snapshot.plugin_id == release.plugin_id
+                        && snapshot.release_id == release.id
+                        && snapshot.component == *component
                 })
                 .ok_or_else(|| {
                     ApiError::conflict(format!(
-                        "Catalog is missing portable component snapshot {}/{}/{}",
-                        bundle.plugin_id, bundle.release_id, bundle.component_key
+                        "Catalog is missing npm MCP component snapshot {}/{}/{}",
+                        release.plugin_id, release.id, component.component_key
                     ))
                 })?;
-            if snapshot.content_sha256 != bundle.bundle_sha256
-                || snapshot.component.execution_host != bundle.execution_host
-            {
+            if snapshot.content_sha256 != release.artifact_sha256 {
                 return Err(ApiError::conflict(format!(
-                    "Catalog portable component snapshot does not match artifact Bundle {}/{}/{}",
-                    bundle.plugin_id, bundle.release_id, bundle.component_key
+                    "Catalog npm MCP component snapshot does not match package artifact {}/{}/{}",
+                    release.plugin_id, release.id, component.component_key
                 )));
             }
         }
-        super::plugin_portable_bundles::stage_release_portable_mcp_runtime_bundles(
-            state,
-            release,
-            Some(document.component_snapshots.as_slice()),
-        )
-        .await?;
     }
 
     let synced_at = now_rfc3339();

@@ -24,7 +24,6 @@ import {
   type LocalPluginTransactionRecord,
   type PluginRuntimeTelemetrySnapshot,
 } from '../../api';
-import { SkillSettingsPanel } from '../SkillSettingsPanel';
 
 type DetailTab = 'overview' | 'components' | 'permissions' | 'connections' | 'diagnostics';
 
@@ -196,9 +195,7 @@ export function PluginDetailDrawer({
                   <div>
                     <strong>尚未安装到本机 Plugin Registry</strong>
                     <p>{installAvailable
-                      ? plugin.install_source === 'network'
-                        ? '可经已认证的 Local Connector Service 代理下载；本机仍会逐项校验 Marketplace、Release 签名、artifact hash、Manifest、SBOM 和 checksums。'
-                        : '可从当前客户端内经过 Catalog、Manifest、SBOM、checksum 和内置 Skill 快照校验的 bundled 资源安装。'
+                      ? '可经已认证的 Local Connector Service 代理下载 npm tgz；本机仍会校验 Marketplace、Release 签名、SHA-512 integrity、artifact SHA-256、package.json 和发布的 bin。'
                       : '当前受信安装来源不可用；不会开放任意 URL 或本地路径安装作为替代。'}</p>
                   </div>
                 </div>
@@ -220,13 +217,6 @@ export function PluginDetailDrawer({
                   </label>
                   {!autoUpdateAvailable ? <small>需要当前 Plugin 仍存在于已登录用户的可信 Marketplace Catalog。</small> : null}
                 </section>
-              ) : null}
-              {plugin.skill_ids.length > 0 ? (
-                <SkillSettingsPanel
-                  embedded
-                  skillIds={plugin.skill_ids}
-                  onOpenPermissions={onOpenPermissions}
-                />
               ) : null}
             </div>
           ) : null}
@@ -409,7 +399,7 @@ export function PluginDetailDrawer({
               </button>
             </>
           ) : (
-            <button type="button" className="primaryButton compact" disabled={!installAvailable || busy} onClick={() => onInstall(plugin)} title={installAvailable ? (plugin.install_source === 'network' ? '通过可信 Marketplace 代理下载并安装' : '从安装包内的受控 Plugin 资源安装') : '当前受信安装来源不可用'}>
+            <button type="button" className="primaryButton compact" disabled={!installAvailable || busy} onClick={() => onInstall(plugin)} title={installAvailable ? '通过可信 Marketplace 代理下载 npm tgz 并在本机安装' : '当前受信安装来源不可用'}>
               {busy ? '安装中' : installAvailable ? '安装' : '安装资源不可用'}
             </button>
           )}

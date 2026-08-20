@@ -3,7 +3,7 @@
 
 use chatos_mcp::{system_mcp_catalog, SystemMcpDescriptor, SystemMcpKey};
 use chatos_mcp_management_sdk::{
-    McpExecutionHost, McpProviderKind, McpRetryClass, McpRouteCandidate, McpRouteResourceKind,
+    McpProviderKind, McpRetryClass, McpRouteCandidate, McpRouteResourceKind,
     ProjectExecutionContext, ResolveMcpRoutesRequest, ResolveMcpRoutesResponse, ResolvedMcpRoute,
     WorkspaceProviderKind,
 };
@@ -205,17 +205,12 @@ impl RoutingEngine {
         _context: &ProjectExecutionContext,
         resource: &McpRouteCandidate,
     ) -> ResolvedMcpRoute {
-        let Some(execution_host) = resource.execution_host else {
-            return unavailable_route(resource, "stdio MCP execution host is not resolved");
-        };
-        match execution_host {
-            McpExecutionHost::Local | McpExecutionHost::Portable => resource_local_connector_route(
-                resource,
-                McpProviderKind::LocalConnector,
-                resource.allow_writes,
-                "stdio MCP is executed through Local Connector",
-            ),
-        }
+        resource_local_connector_route(
+            resource,
+            McpProviderKind::LocalConnector,
+            resource.allow_writes,
+            "stdio MCP is executed through Local Connector",
+        )
     }
 
     fn resolve_plugin(
@@ -223,21 +218,11 @@ impl RoutingEngine {
         context: &ProjectExecutionContext,
         resource: &McpRouteCandidate,
     ) -> ResolvedMcpRoute {
-        let Some(execution_host) = resource.execution_host else {
-            return unavailable_route(resource, "plugin MCP execution host is not resolved");
-        };
-        match execution_host {
-            McpExecutionHost::Local => plugin_local_route(
-                context,
-                resource,
-                "plugin component is pinned to its local execution host",
-            ),
-            McpExecutionHost::Portable => plugin_local_route(
-                context,
-                resource,
-                "portable plugin is pinned to Local Connector",
-            ),
-        }
+        plugin_local_route(
+            context,
+            resource,
+            "plugin component is executed through Local Connector",
+        )
     }
 }
 

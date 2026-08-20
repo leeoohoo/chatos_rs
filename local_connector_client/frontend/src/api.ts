@@ -10,8 +10,6 @@ import type {
   CommandExecutionApprovalDecision,
   CommandHistoryResponse,
   ConnectorStatus,
-  LocalMcpConfig,
-  LocalMcpConfigDraft,
   LocalModelConfigListResponse,
   LocalModelSettings,
   LocalRuntimeSettings,
@@ -24,9 +22,6 @@ import type {
   UserPluginPreferenceRecord,
   ChromeIntegrationStatus,
   UpdateLocalRuntimeSettingsPayload,
-  LocalSkillCatalogItem,
-  LocalSkillCatalogResponse,
-  LocalSkillInstallation,
   PendingApprovalsResponse,
   SandboxCapabilities,
   SandboxLease,
@@ -211,7 +206,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  mcpConfigs: () => request<LocalMcpConfig[]>('/api/local/mcp-configs'),
   plugins: () => request<LocalPluginStoreSnapshot>('/api/local/plugins/catalog'),
   pluginStatus: () => request<LocalPluginStatusSnapshot>('/api/local/plugins'),
   pluginEvents: (cursor?: string) => {
@@ -273,43 +267,6 @@ export const api = {
       `/api/local/plugins/${encodeURIComponent(pluginId)}/components/${encodeURIComponent(componentKey)}/oauth/${encodeURIComponent(provider)}`,
       { method: 'DELETE' },
     ),
-  skills: () => request<LocalSkillCatalogResponse>('/api/local/skills'),
-  syncSkills: () => request<LocalSkillInstallation[]>('/api/local/skills/sync', { method: 'POST' }),
-  setSkillEnabled: (skillId: string, enabled: boolean) =>
-    request<LocalSkillCatalogItem>(
-      `/api/local/skills/${encodeURIComponent(skillId)}/preference`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ enabled }),
-      },
-    ),
-  saveMcpConfig: (draft: LocalMcpConfigDraft) =>
-    request<LocalMcpConfig>('/api/local/mcp-configs', {
-      method: 'POST',
-      body: JSON.stringify(draft),
-    }),
-  updateMcpConfig: (manifestId: string, draft: LocalMcpConfigDraft) =>
-    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}`, {
-      method: 'POST',
-      body: JSON.stringify(draft),
-    }),
-  testMcpConfig: (manifestId: string) =>
-    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}/test`, {
-      method: 'POST',
-    }),
-  setMcpConfigEnabled: (manifestId: string, enabled: boolean) =>
-    request<LocalMcpConfig>(
-      `/api/local/mcp-configs/${encodeURIComponent(manifestId)}/${enabled ? 'enable' : 'disable'}`,
-      { method: 'POST' },
-    ),
-  syncMcpConfig: (manifestId: string) =>
-    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}/sync`, {
-      method: 'POST',
-    }),
-  deleteMcpConfig: (manifestId: string) =>
-    request<{ ok: boolean }>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}`, {
-      method: 'DELETE',
-    }),
 };
 
 function isCoreBridgeUnavailable(error: unknown): boolean {

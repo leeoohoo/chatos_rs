@@ -6,14 +6,11 @@ use serde_json::Value;
 
 use super::{
     PluginCatalogDocument, PluginCatalogRecord, PluginInterfaceMetadata, PluginLicenseMetadata,
-    PluginManifestSource, PluginPublisher, PluginReleaseSignature, SigningKeyRef,
+    PluginNpmPackage, PluginPublisher, PluginReleaseSignature, SigningKeyRef,
 };
 
 pub const PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY: &str = "official_registry";
 pub const PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY: &str = "admin_registry";
-pub const PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY: &str = "local_directory";
-
-pub const PLUGIN_TRUST_BUNDLED: &str = "bundled";
 pub const PLUGIN_TRUST_TRUSTED: &str = "trusted";
 pub const PLUGIN_TRUST_UNTRUSTED: &str = "untrusted";
 
@@ -175,11 +172,10 @@ pub struct PluginCatalogListItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginReleasePayload {
-    #[serde(default)]
-    pub manifest_source: Option<PluginManifestSource>,
     pub manifest: Value,
     #[serde(default)]
     pub version: Option<String>,
+    pub npm_package: PluginNpmPackage,
     pub artifact_ref: String,
     pub artifact_sha256: String,
     pub signature: PluginReleaseSignature,

@@ -14,8 +14,7 @@ use chatos_mcp_service::{
 use serde::Serialize;
 use tokio::process::Command;
 
-use crate::skills::internal_skill_catalog;
-use crate::{select_local_shell, tracing_stdout, LocalState};
+use crate::{select_local_shell, LocalState};
 
 const PERMISSION_WORKSPACE_FILES: &str = "workspace_files";
 const PERMISSION_TERMINAL_EXECUTION: &str = "terminal_execution";
@@ -45,7 +44,6 @@ pub(crate) struct SystemPermissionItem {
     pub(crate) request_label: String,
     pub(crate) settings_target: Option<String>,
     pub(crate) builtin_kinds: Vec<String>,
-    pub(crate) skill_ids: Vec<String>,
     pub(crate) note: String,
     pub(crate) last_error: Option<String>,
 }
@@ -69,12 +67,6 @@ pub(crate) async fn system_permissions_response(state: &LocalState) -> SystemPer
 }
 
 pub(crate) async fn open_system_permission_settings(permission_id: &str) -> Result<bool> {
-    if matches!(
-        permission_id,
-        PERMISSION_ACCESSIBILITY_CONTROL | PERMISSION_SCREEN_RECORDING
-    ) {
-        request_computer_use_permission_prompt(permission_id)?;
-    }
     let target = settings_target_for_permission(permission_id)
         .ok_or_else(|| anyhow!("system settings are not available for {permission_id}"))?;
     match target.kind {
@@ -86,21 +78,6 @@ pub(crate) async fn open_system_permission_settings(permission_id: &str) -> Resu
         }
     }
     Ok(true)
-}
-
-fn request_computer_use_permission_prompt(permission_id: &str) -> Result<()> {
-    match crate::skills::native::request_computer_use_permission(permission_id) {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            tracing_stdout(
-                format!(
-                    "Computer Use permission prompt request failed for {permission_id}: {error}"
-                )
-                .as_str(),
-            );
-            Ok(())
-        }
-    }
 }
 
 fn workspace_files_permission(state: &LocalState) -> SystemPermissionItem {
@@ -140,7 +117,6 @@ fn workspace_files_permission(state: &LocalState) -> SystemPermissionItem {
             BUILTIN_KIND_CODE_MAINTAINER_READ.to_string(),
             BUILTIN_KIND_CODE_MAINTAINER_WRITE.to_string(),
         ],
-        skill_ids: workspace_skill_ids(),
         note: workspace_files_note(),
         last_error,
     }
@@ -163,7 +139,6 @@ async fn terminal_execution_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_TERMINAL_EXECUTION).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_TERMINAL_EXECUTION),
         builtin_kinds: vec![BUILTIN_KIND_TERMINAL_CONTROLLER.to_string()],
-        skill_ids: skill_ids_requiring(&["process.spawn"]),
         note: terminal_execution_note(),
         last_error,
     }
@@ -189,7 +164,6 @@ fn browser_automation_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_BROWSER_AUTOMATION).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_BROWSER_AUTOMATION),
         builtin_kinds: vec![BUILTIN_KIND_BROWSER_TOOLS.to_string()],
-        skill_ids: skill_ids_requiring(&["browser.control"]),
         note: browser_automation_note(browser_runtime_available),
         last_error,
     }
@@ -229,7 +203,6 @@ fn chrome_existing_session_permission() -> SystemPermissionItem {
         request_label: "请在 Chrome 整合面板设置".to_string(),
         settings_target: None,
         builtin_kinds: Vec::new(),
-        skill_ids: skill_ids_requiring(&["browser.chrome.control"]),
         note:
             "扩展不申请 Cookie、历史记录、下载、书签或全站静默权限；敏感页面读取还需本机逐次批准。"
                 .to_string(),
@@ -249,7 +222,6 @@ fn network_access_permission() -> SystemPermissionItem {
         request_label: "无需设置".to_string(),
         settings_target: None,
         builtin_kinds: Vec::new(),
-        skill_ids: skill_ids_requiring(&["network.https"]),
         note: "公网 HTTPS 由当前用户网络环境、防火墙和代理策略控制；Local Connector 不绕过系统网络策略。".to_string(),
         last_error: None,
     }
@@ -257,44 +229,29 @@ fn network_access_permission() -> SystemPermissionItem {
 
 fn accessibility_control_permission() -> SystemPermissionItem {
     let (status, status_label, note, last_error) = match std::env::consts::OS {
-        "macos" => match crate::skills::native::dependency_error("internal_skill_computer_use") {
-            None => (
-                "ready",
-                "已授权",
-                "macOS 已允许 Computer Use helper 观察窗口/控件树；每个输入动作仍会强制进入独立人工审批。",
-                None,
-            ),
-            Some(error) if error.contains("Screen Recording permission") => (
-                "ready",
-                "已授权",
-                "macOS 已允许 Computer Use helper 观察窗口/控件树；屏幕录制权限会在单独条目中显示。",
-                None,
-            ),
-            Some(error) => (
-                "needs_attention",
-                "需要授权",
-                "macOS 的窗口/控件树观察和受限输入需要给实际运行 Computer Use 的 helper/core 授权“辅助功能”；每个输入动作还会强制进入独立人工审批。",
-                Some(error),
-            ),
-        },
+        "macos" => (
+            "on_demand",
+            "按需授权",
+            "安装的桌面控制 MCP 首次使用辅助功能能力时，由 macOS 按实际执行进程请求授权。",
+            None,
+        ),
         "windows" => (
             "not_applicable",
             "无需单独授权",
-            "Windows 当前支持窗口/显示器观察与审批式非文本输入，通常不需要单独隐私权限，但仍受当前用户桌面、前台策略、受保护内容、UAC 和应用完整性级别限制；UI Automation 控件树与安全文本输入尚未开放。",
+            "桌面控制 MCP 仍受当前用户桌面、前台策略、受保护内容、UAC 和应用完整性级别限制。",
             None,
         ),
         _ => (
             "not_applicable",
             "当前平台未启用",
-            "当前版本尚未提供该平台的桌面控制 Adapter。",
+            "由所安装 MCP 包声明并检查该平台的桌面控制能力。",
             None,
         ),
     };
     SystemPermissionItem {
         id: PERMISSION_ACCESSIBILITY_CONTROL.to_string(),
         label: "辅助功能控制".to_string(),
-        summary: "用于 Computer Use 观察桌面窗口和控件树，并在强制人工审批后执行受限输入。"
-            .to_string(),
+        summary: "用于经插件市场安装的桌面控制 MCP 观察窗口和执行受控输入。".to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
@@ -302,7 +259,6 @@ fn accessibility_control_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_ACCESSIBILITY_CONTROL).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_ACCESSIBILITY_CONTROL),
         builtin_kinds: Vec::new(),
-        skill_ids: skill_ids_requiring(&["system.accessibility", "desktop.control"]),
         note: note.to_string(),
         last_error,
     }
@@ -310,37 +266,29 @@ fn accessibility_control_permission() -> SystemPermissionItem {
 
 fn screen_recording_permission() -> SystemPermissionItem {
     let (status, status_label, note, last_error) = match std::env::consts::OS {
-        "macos" => match crate::skills::native::computer_use_screen_capture_dependency_error() {
-            None => (
-                "ready",
-                "已授权",
-                "macOS 已允许 Local Connector 捕获主显示器画面；截图只作为下一轮模型的瞬时输入。",
-                None,
-            ),
-            Some(error) => (
-                "needs_attention",
-                "需要授权",
-                "macOS 读取其他应用画面需要“屏幕与系统音频录制”权限。",
-                Some(error),
-            ),
-        },
+        "macos" => (
+            "on_demand",
+            "按需授权",
+            "安装的桌面观察 MCP 首次读取其他应用画面时，由 macOS 按实际执行进程请求授权。",
+            None,
+        ),
         "windows" => (
             "not_applicable",
             "无需单独授权",
-            "Windows 当前使用 GDI 做有界瞬时显示器 PNG 捕获，通常不需要单独隐私开关，但受系统策略、受保护内容和当前用户桌面限制。",
+            "桌面观察 MCP 通常不需要单独隐私开关，但仍受系统策略、受保护内容和当前用户桌面限制。",
             None,
         ),
         _ => (
             "not_applicable",
             "当前平台未启用",
-            "当前版本尚未提供该平台的桌面观察 Adapter。",
+            "由所安装 MCP 包声明并检查该平台的桌面观察能力。",
             None,
         ),
     };
     SystemPermissionItem {
         id: PERMISSION_SCREEN_RECORDING.to_string(),
         label: "屏幕录制".to_string(),
-        summary: "用于 Computer Use 只读主显示器截图；截图不写入工具历史或工作区。".to_string(),
+        summary: "用于经插件市场安装的桌面观察 MCP 获取屏幕画面。".to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
@@ -348,7 +296,6 @@ fn screen_recording_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_SCREEN_RECORDING).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_SCREEN_RECORDING),
         builtin_kinds: Vec::new(),
-        skill_ids: skill_ids_requiring(&["desktop.observe"]),
         note: note.to_string(),
         last_error,
     }
@@ -375,9 +322,7 @@ fn office_automation_permission() -> SystemPermissionItem {
     SystemPermissionItem {
         id: PERMISSION_OFFICE_AUTOMATION.to_string(),
         label: "Office 自动化".to_string(),
-        summary:
-            "用于 Excel Live Control Skill 只读发现已运行 Microsoft Excel 的工作簿和工作表元数据。"
-                .to_string(),
+        summary: "用于经插件市场安装的 Office MCP 控制本机 Office 应用。".to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
@@ -385,32 +330,9 @@ fn office_automation_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_OFFICE_AUTOMATION).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_OFFICE_AUTOMATION),
         builtin_kinds: Vec::new(),
-        skill_ids: skill_ids_requiring(&["office.excel.control"]),
         note: note.to_string(),
         last_error: None,
     }
-}
-
-fn workspace_skill_ids() -> Vec<String> {
-    skill_ids_requiring(&["workspace.read", "workspace.write"])
-}
-
-fn skill_ids_requiring(permission_names: &[&str]) -> Vec<String> {
-    let Ok(catalog) = internal_skill_catalog() else {
-        return Vec::new();
-    };
-    catalog
-        .skills
-        .into_iter()
-        .filter(|item| {
-            item.permissions.iter().any(|permission| {
-                permission_names
-                    .iter()
-                    .any(|candidate| permission == candidate)
-            })
-        })
-        .map(|item| item.skill_id)
-        .collect()
 }
 
 async fn probe_shell_execution() -> std::result::Result<(), String> {
@@ -648,58 +570,16 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn system_permissions_include_skill_capability_mappings() {
+    async fn system_permissions_include_platform_capabilities() {
         let response = system_permissions_response(&LocalState::default()).await;
         assert_eq!(response.items.len(), 8);
-        let workspace = response
+        assert!(response
             .items
             .iter()
-            .find(|item| item.id == PERMISSION_WORKSPACE_FILES)
-            .expect("workspace permission");
-        assert!(workspace
-            .skill_ids
-            .iter()
-            .any(|skill_id| skill_id == "internal_skill_documents"));
-        let browser = response
+            .any(|item| item.id == PERMISSION_WORKSPACE_FILES));
+        assert!(response
             .items
             .iter()
-            .find(|item| item.id == PERMISSION_BROWSER_AUTOMATION)
-            .expect("browser permission");
-        assert_eq!(browser.skill_ids, vec!["internal_skill_browser"]);
-        let chrome = response
-            .items
-            .iter()
-            .find(|item| item.id == PERMISSION_CHROME_EXISTING_SESSION)
-            .expect("Chrome existing-session permission");
-        assert_eq!(chrome.skill_ids, vec!["internal_skill_chrome"]);
-        let accessibility = response
-            .items
-            .iter()
-            .find(|item| item.id == PERMISSION_ACCESSIBILITY_CONTROL)
-            .expect("accessibility permission");
-        assert_eq!(accessibility.skill_ids, vec!["internal_skill_computer_use"]);
-    }
-
-    #[test]
-    fn permission_mappings_follow_the_embedded_skill_catalog() {
-        assert!(skill_ids_requiring(&["workspace.read"])
-            .iter()
-            .any(|skill_id| skill_id == "internal_skill_openai_docs"));
-        assert_eq!(
-            skill_ids_requiring(&["process.spawn"]),
-            vec!["internal_skill_browser"]
-        );
-        assert_eq!(
-            skill_ids_requiring(&["desktop.observe"]),
-            vec!["internal_skill_computer_use"]
-        );
-        assert_eq!(
-            skill_ids_requiring(&["system.accessibility"]),
-            vec!["internal_skill_computer_use"]
-        );
-        assert_eq!(
-            skill_ids_requiring(&["office.excel.control"]),
-            vec!["internal_skill_excel_live_control"]
-        );
+            .any(|item| item.id == PERMISSION_ACCESSIBILITY_CONTROL));
     }
 }

@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-export type PluginTrustLevel = 'bundled' | 'trusted' | 'untrusted';
+export type PluginTrustLevel = 'trusted' | 'untrusted';
 export type PluginMarketplaceSource =
   | 'official_registry'
-  | 'admin_registry'
-  | 'local_directory';
+  | 'admin_registry';
 export type PluginVisibility = 'public' | 'private';
 export type PluginReleaseChannel = 'stable' | 'beta' | 'canary';
-export type PluginExecutionHost = 'local' | 'portable';
 export type PluginRuntimeTarget = 'local_connector';
 export type PluginPublisherStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 export type PluginInstallStatus =
@@ -180,7 +178,6 @@ export interface PluginPermissionRequirement {
 export interface PluginComponentDescriptor {
   component_key: string;
   kind: PluginComponentKind;
-  execution_host: PluginExecutionHost;
   display_name: string;
   runtime_kind: string;
   entrypoint?: { path: string } | null;
@@ -205,6 +202,11 @@ export interface PluginReleaseRecord {
   version: string;
   manifest_schema_version: number;
   normalized_manifest: Record<string, unknown>;
+  npm_package: {
+    name: string;
+    version: string;
+    integrity: string;
+  };
   artifact_ref: string;
   artifact_sha256: string;
   signature: PluginReleaseSignature;

@@ -13,7 +13,7 @@ use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
-use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
+use chatos_plugin_management_sdk::PluginMcpServer;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -35,7 +35,6 @@ fn immutable_binding() -> PluginMcpRuntimeBinding {
         normalized_manifest_sha256: "b".repeat(64),
         component_key: "workspace".to_string(),
         component_content_sha256: "c".repeat(64),
-        declared_execution_host: PluginExecutionHost::Local,
         installation_device_id: Some("device-1".to_string()),
         permission_snapshot: vec!["workspace.read".to_string()],
         auth_connection_ids: vec!["oauth-workspace".to_string()],

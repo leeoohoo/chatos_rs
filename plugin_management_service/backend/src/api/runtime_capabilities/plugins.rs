@@ -37,15 +37,7 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     owner_user_id: &str,
     device_id: Option<&str>,
     runtime_provider: Option<&str>,
-) -> Result<
-    (
-        bool,
-        String,
-        Option<String>,
-        Option<SkillInstallationRecord>,
-    ),
-    ApiError,
-> {
+) -> Result<(bool, String, Option<String>), ApiError> {
     match plugin_component_gate(
         state,
         &resource.plugin_component,
@@ -55,9 +47,7 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     )
     .await?
     {
-        Some(gate) if !gate.available => {
-            Ok((false, "plugin_unavailable".to_string(), gate.reason, None))
-        }
+        Some(gate) if !gate.available => Ok((false, "plugin_unavailable".to_string(), gate.reason)),
         _ => super::availability_for_skill(state, resource, owner_user_id).await,
     }
 }
@@ -309,10 +299,7 @@ fn resolve_plugin_records(
             return unavailable(PluginAvailabilityStatus::Unavailable, reason);
         }
     };
-    let requires_local = components.iter().any(|component| {
-        component.component.execution_host == PluginExecutionHost::Local
-            || component.component.execution_host == PluginExecutionHost::Portable
-    });
+    let requires_local = !components.is_empty();
     if requires_local {
         let Some(device_id) = device_id else {
             return unavailable(

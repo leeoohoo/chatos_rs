@@ -19,10 +19,6 @@ extraResources:
     to: chatos_chrome_native_host
   - from: ../.package/linux/bundled-tools
     to: bundled-tools
-  - from: ../.package/linux/skill-bundles
-    to: skill-bundles
-  - from: ../.package/linux/plugin-bundles
-    to: plugin-bundles
   - from: ../.package/linux/chrome-extension
     to: chrome-extension
   - from: ../.package/linux/sqlite-migrations

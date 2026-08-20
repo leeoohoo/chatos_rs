@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex as AsyncMutex, RwLock};
 use uuid::Uuid;
 
-use super::artifact_store::{PluginArtifactProducer, PluginArtifactStore, PluginUiArtifactGrant};
+use super::artifact_store::{PluginArtifactStore, PluginUiArtifactGrant};
 use super::hook_loader::PluginHookWorkspaceWriteDecision;
 use super::mcp_runtime::{PluginMcpAdapter, PluginMcpInvocationCancelOutcome, PreparedPluginMcp};
 use super::protocol::*;
@@ -36,8 +36,8 @@ use super::telemetry::{
 };
 use super::{
     PluginAgentLoader, PluginAgentSnapshot, PluginCommandLoader, PluginCommandSnapshot,
-    PluginHookLoader, PluginHookSetSnapshot, PluginNativeSkillBindingSnapshot, PluginSkillLoader,
-    PluginSkillSnapshot, PluginUiLoader,
+    PluginHookLoader, PluginHookSetSnapshot, PluginSkillLoader, PluginSkillSnapshot,
+    PluginUiLoader,
 };
 use crate::approval::{
     approval_project_key_for_relay_scope, cancel_pending_approvals_for_session,
@@ -49,7 +49,6 @@ use crate::LocalState;
 
 const PLUGIN_SESSION_TTL_SECONDS: i64 = 2 * 60 * 60;
 const LOAD_SKILL_RESOURCE_OPERATION: &str = "load_skill_resource";
-const NATIVE_SKILL_TOOL_CALL_OPERATION: &str = "native_skill_tool_call";
 const COMMAND_INVOKE_OPERATION: &str = "command_invoke";
 const AGENT_APPLY_OPERATION: &str = "agent_apply";
 
@@ -94,20 +93,11 @@ struct PreparedPluginSession {
     commands: BTreeMap<String, PluginCommandSnapshot>,
     hooks: BTreeMap<String, PluginHookSetSnapshot>,
     ui: Option<PluginUiSnapshot>,
-    native_skill: Option<PreparedPluginNativeSkill>,
     native_action_lock: Arc<AsyncMutex<()>>,
     hook_dispatch_lock: Arc<AsyncMutex<()>>,
     native_action_cancelled: Arc<AtomicBool>,
     mcp: Option<PreparedPluginMcp>,
     expires_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct PreparedPluginNativeSkill {
-    #[serde(flatten)]
-    binding: PluginNativeSkillBindingSnapshot,
-    tools: Vec<Value>,
-    tool_snapshot_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,14 +114,6 @@ pub struct PluginDisabledHookReport {
     pub dispatches: Vec<super::PluginHookDispatchResult>,
     #[serde(default)]
     pub errors: Vec<String>,
-}
-
-impl PreparedPluginNativeSkill {
-    fn publishes_tool(&self, tool_name: &str) -> bool {
-        self.tools
-            .iter()
-            .any(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
-    }
 }
 
 impl PluginRuntimeHost {
@@ -175,17 +157,6 @@ impl PluginRuntimeHost {
         &self,
     ) -> Result<crate::plugins::LocalPluginStatusSnapshot> {
         self.skill_loader.installer().status_snapshot()
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_artifact_persistence_for_tests(
-        mut self,
-        state_path: PathBuf,
-        storage: crate::secure_storage::SecureStorage,
-    ) -> Self {
-        self.artifact_store =
-            PluginArtifactStore::for_state_path_with_storage(state_path.as_path(), storage);
-        self
     }
 
     pub async fn handle_prepare(&self, value: Value) -> Value {

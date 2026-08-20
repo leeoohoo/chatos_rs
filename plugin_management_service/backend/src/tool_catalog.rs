@@ -11,10 +11,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::config::AppConfig;
-use crate::models::{
-    McpProviderSkill, McpRecord, RUNTIME_KIND_HTTP, RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY,
-    RUNTIME_KIND_LOCAL_CONNECTOR_HTTP, RUNTIME_KIND_LOCAL_CONNECTOR_STDIO,
-};
+use crate::models::{McpProviderSkill, McpRecord, RUNTIME_KIND_HTTP};
 
 #[derive(Debug, Default)]
 pub(crate) struct LiveMcpDescriptor {
@@ -42,9 +39,6 @@ pub(crate) async fn live_mcp_descriptor(
         // Connector Client. Plugin Management may return a previously synced
         // tool snapshot, but it must never connect to the MCP endpoint itself.
         RUNTIME_KIND_HTTP => Ok(None),
-        RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
-        | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-        | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY => Ok(None),
         _ => Ok(None),
     }
 }

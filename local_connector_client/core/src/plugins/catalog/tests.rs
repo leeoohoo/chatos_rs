@@ -7,43 +7,15 @@ use crate::plugins::{LocalPluginRegistry, PluginTransactionJournal};
 use tempfile::TempDir;
 
 #[test]
-fn bundled_store_catalog_covers_featured_categories_and_all_internal_skills() {
+fn local_store_catalog_has_no_bundled_plugins() {
     let snapshot = local_plugin_store_snapshot(LocalPluginStatusSnapshot {
         registry: LocalPluginRegistry::default(),
         transactions: PluginTransactionJournal::default(),
         runtime: Default::default(),
     })
     .expect("Plugin store snapshot");
-    assert_eq!(snapshot.items.len(), 12);
-    assert_eq!(
-        snapshot
-            .items
-            .iter()
-            .flat_map(|plugin| plugin.skill_ids.iter())
-            .count(),
-        28
-    );
-    assert_eq!(
-        snapshot
-            .items
-            .iter()
-            .filter(|plugin| plugin.featured)
-            .count(),
-        4
-    );
-    assert!(snapshot.items.iter().all(|plugin| {
-        plugin.visibility == "public" && plugin.lifecycle_status == "not_installed"
-    }));
-    let presentations = snapshot
-        .items
-        .iter()
-        .find(|plugin| plugin.name == "presentations")
-        .expect("Presentations Plugin");
-    assert_eq!(presentations.latest_version, "1.32.0");
-    assert_eq!(
-        presentations.latest_release_id,
-        "bundled-release-presentations-1-32-0"
-    );
+    assert!(snapshot.items.is_empty());
+    assert!(!snapshot.network_install_available);
 }
 
 #[test]
@@ -80,7 +52,7 @@ fn trusted_network_source_merges_with_the_local_registry_catalog() {
         .iter()
         .find(|item| item.plugin_id == "plugin-demo")
         .expect("network Plugin item");
-    assert_eq!(snapshot.items.len(), 13);
+    assert_eq!(snapshot.items.len(), 1);
     assert!(snapshot.network_install_available);
     assert_eq!(item.install_source, "network");
     assert!(item.install_available);
@@ -111,5 +83,5 @@ fn network_source_signature_tampering_is_rejected() {
         },
     )
     .is_err());
-    assert_eq!(snapshot.items.len(), 12);
+    assert!(snapshot.items.is_empty());
 }

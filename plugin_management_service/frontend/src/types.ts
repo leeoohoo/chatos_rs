@@ -8,13 +8,7 @@ import type {
 } from './pluginTypes';
 
 export type Visibility = 'private' | 'public' | 'system_private';
-export type RuntimeKind =
-  | 'system'
-  | 'builtin'
-  | 'http'
-  | 'local_connector_stdio'
-  | 'local_connector_http'
-  | 'local_connector_builtin_proxy';
+export type RuntimeKind = 'system' | 'builtin' | 'http';
 export type ResourceKind = 'mcp' | 'skill' | 'skill_package' | 'plugin' | 'plugin_component';
 export type BindingScope =
   | 'admin_override'
@@ -51,9 +45,6 @@ export interface ListResponse<T> {
 export interface LocalConnectorRef {
   device_id?: string | null;
   workspace_id?: string | null;
-  manifest_id?: string | null;
-  relative_path?: string | null;
-  requires_online?: boolean;
 }
 
 export interface McpRuntime {
@@ -169,22 +160,12 @@ export interface McpDescriptorResponse {
 }
 
 export interface SkillContent {
-  kind:
-    | 'local_connector_bundle'
-    | 'inline_content'
-    | 'git_package'
-    | 'local_connector_file'
-    | 'local_connector_package';
+  kind: 'inline_content' | 'git_package';
   inline?: string | null;
   package_id?: string | null;
   source_path?: string | null;
   repository?: string | null;
   branch?: string | null;
-  local_connector?: LocalConnectorRef | null;
-  bundle_id?: string | null;
-  bundle_version?: string | null;
-  bundle_hash?: string | null;
-  entrypoint_kind?: string | null;
 }
 
 export interface SkillRecord extends PluginComponentOwnership {

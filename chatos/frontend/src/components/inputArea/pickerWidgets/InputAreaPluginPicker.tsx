@@ -117,13 +117,6 @@ export const InputAreaPluginPicker = ({
                             Browser
                           </span>
                         ) : null}
-                        <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-700 dark:text-violet-300">
-                          {plugin.execution_type === 'portable'
-                            ? '可移植'
-                            : plugin.execution_type === 'hybrid'
-                              ? '本地混合'
-                              : '本地'}
-                        </span>
                         {plugin.requires_device ? (
                           <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
                             需要设备
@@ -150,9 +143,6 @@ export const InputAreaPluginPicker = ({
                                   {component.component_key}
                                 </span>
                                 <span>{component.kind}</span>
-                                <span>
-                                  {component.execution_host === 'portable' ? '可移植' : '本地'}
-                                </span>
                                 <span>{component.available ? 'ready' : component.status}</span>
                                 <span>
                                   MCP Management → Local Connector

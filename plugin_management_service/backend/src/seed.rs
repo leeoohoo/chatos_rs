@@ -16,8 +16,6 @@ use crate::store::{now_rfc3339, AppStore};
 mod agent_bindings;
 mod agent_prompts;
 mod agents;
-mod internal_skills;
-mod plugins;
 mod system_mcps;
 
 use agent_bindings::seed_agent_bindings;
@@ -31,8 +29,6 @@ use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 #[cfg(test)]
 use agents::system_agent_specs;
 use agents::{remove_retired_system_agents, seed_agents};
-use internal_skills::{internal_skill_catalog, seed_internal_skills};
-use plugins::{seed_bundled_plugins, BUNDLED_PONYTAIL_AGENT_KEYS, BUNDLED_PONYTAIL_PLUGIN_ID};
 #[cfg(test)]
 use system_mcps::{
     builtin_kinds, provider_skills_for_builtin_mcp, provider_skills_for_system_mcp,
@@ -89,11 +85,11 @@ const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[CHATOS_CONVERSATION_AGENT_KEY];
 const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] =
     &[TASK_RUNNER_PLAN_AGENT_KEY, TASK_RUNNER_RUN_AGENT_KEY];
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
+    store.remove_retired_direct_local_mcps().await?;
+    store.remove_retired_builtin_skills().await?;
     remove_retired_system_agents(store).await?;
     remove_retired_system_mcps(store).await?;
     seed_system_mcps(store, admin_user_id).await?;
-    seed_internal_skills(store, admin_user_id).await?;
-    seed_bundled_plugins(store, admin_user_id).await?;
     seed_agents(store).await?;
     seed_agent_prompts(store, admin_user_id).await?;
     seed_agent_bindings(store, admin_user_id).await?;

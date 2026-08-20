@@ -3,8 +3,7 @@
 
 use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
-    parse_plugin_manifest, plugin_component_descriptors, PluginManifestSource,
-    PLUGIN_SIGNATURE_ALGORITHM_ED25519,
+    parse_plugin_manifest, plugin_component_descriptors, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
 };
 
 use super::*;
@@ -185,7 +184,7 @@ fn component_snapshots(records: &PluginRecords) -> Vec<PluginComponentSnapshot> 
 fn plugin_records() -> PluginRecords {
     let manifest = parse_plugin_manifest(
         r#"{
-            "schemaVersion": 1,
+            "schemaVersion": 3,
             "name": "demo-plugin",
             "version": "1.0.0",
             "description": "Demo plugin",
@@ -205,7 +204,6 @@ fn plugin_records() -> PluginRecords {
             },
             "permissions": ["network.domain:mcp.example.com"]
         }"#,
-        PluginManifestSource::Chatos,
     )
     .expect("valid test manifest");
     let components = plugin_component_descriptors(&manifest);
@@ -244,7 +242,12 @@ fn plugin_records() -> PluginRecords {
         version: manifest.version.clone(),
         manifest_schema_version: manifest.schema_version,
         normalized_manifest: manifest.clone(),
-        artifact_ref: "https://plugins.example.com/demo-plugin.zip".to_string(),
+        npm_package: chatos_plugin_management_sdk::PluginNpmPackage {
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            integrity: "sha512-dGVzdA==".to_string(),
+        },
+        artifact_ref: "https://registry.npmjs.org/demo-plugin/-/demo-plugin-1.0.0.tgz".to_string(),
         artifact_sha256: "a".repeat(64),
         signature: PluginReleaseSignature {
             key_id: "key-1".to_string(),

@@ -4,16 +4,16 @@
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, plugin_component_descriptors, AgentBindingRecord, BindingConditions,
     PluginAvailabilityStatus, PluginCatalogRecord, PluginComponentSnapshot, PluginComponentStatus,
-    PluginInstallStatus, PluginInstallationRecord, PluginLicenseMetadata, PluginManifestSource,
-    PluginPublisher, PluginReleaseRecord, PluginReleaseSignature, PluginRequirementStatus,
-    ResolvedPlugin, ResolvedPluginComponent, SystemAgentKey, UserPluginPreferenceRecord,
+    PluginInstallStatus, PluginInstallationRecord, PluginLicenseMetadata, PluginPublisher,
+    PluginReleaseRecord, PluginReleaseSignature, PluginRequirementStatus, ResolvedPlugin,
+    ResolvedPluginComponent, SystemAgentKey, UserPluginPreferenceRecord,
     PLUGIN_SIGNATURE_ALGORITHM_ED25519,
 };
 
 pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
     let manifest = parse_plugin_manifest(
         r#"{
-            "schemaVersion": 1,
+            "schemaVersion": 3,
             "name": "browser",
             "version": "1.0.0",
             "description": "Browser control plugin",
@@ -33,7 +33,6 @@ pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
             },
             "permissions": ["browser.control"]
         }"#,
-        PluginManifestSource::Chatos,
     )
     .expect("Plugin Manifest");
     let components = plugin_component_descriptors(&manifest);
@@ -72,7 +71,12 @@ pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
         version: manifest.version.clone(),
         manifest_schema_version: manifest.schema_version,
         normalized_manifest: manifest.clone(),
-        artifact_ref: "https://plugins.example.com/browser.zip".to_string(),
+        npm_package: chatos_plugin_management_sdk::PluginNpmPackage {
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            integrity: "sha512-dGVzdA==".to_string(),
+        },
+        artifact_ref: "https://registry.npmjs.org/browser/-/browser-1.0.0.tgz".to_string(),
         artifact_sha256: "a".repeat(64),
         signature: PluginReleaseSignature {
             key_id: "key-1".to_string(),

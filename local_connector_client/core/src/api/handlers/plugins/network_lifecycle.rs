@@ -289,7 +289,7 @@ pub(super) async fn download_remote_plugin_artifact(
         "x-chatos-plugin-artifact-sha256",
         source.release.artifact_sha256.as_str(),
     )?;
-    let limit = runtime.plugin_installer.archive_limits().max_archive_bytes;
+    let limit = runtime.plugin_installer.package_limits().max_package_bytes;
     let expected_total = response.content_length();
     if expected_total.is_some_and(|length| length > limit) {
         return Err(LocalApiError::bad_gateway(

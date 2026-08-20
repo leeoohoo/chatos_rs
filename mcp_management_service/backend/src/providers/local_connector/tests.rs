@@ -277,9 +277,6 @@ async fn user_http_mcp_is_relayed_to_local_connector_with_inline_runtime() {
                 .and_then(|value| value.to_str().ok()),
             Some("http-mcp-1")
         );
-        assert!(headers
-            .get(LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER)
-            .is_none());
         let encoded = headers
             .get(LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER)
             .and_then(|value| value.to_str().ok())
@@ -314,7 +311,6 @@ async fn user_http_mcp_is_relayed_to_local_connector_with_inline_runtime() {
             provider_ref: route.provider_ref.clone().unwrap(),
             device_id: "device-1".to_string(),
             workspace_id: None,
-            manifest_id: None,
             inline_http: Some(LocalConnectorInlineHttpRuntime {
                 url: "https://mcp.example.com/rpc".to_string(),
                 headers: BTreeMap::from([(

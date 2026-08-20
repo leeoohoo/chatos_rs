@@ -8,7 +8,6 @@ mod hook_loader;
 mod host;
 mod mcp_runtime;
 mod oauth_broker;
-mod portable_bundle;
 mod protocol;
 mod skill_document;
 mod skill_loader;
@@ -27,9 +26,8 @@ pub use oauth_broker::{
     PluginOAuthBroker,
 };
 pub use skill_loader::{
-    PluginNativeSkillBindingSnapshot, PluginSkillLoader, PluginSkillLoaderLimits,
-    PluginSkillMetadata, PluginSkillResourceDescriptor, PluginSkillResourceKind,
-    PluginSkillSnapshot,
+    PluginSkillLoader, PluginSkillLoaderLimits, PluginSkillMetadata, PluginSkillResourceDescriptor,
+    PluginSkillResourceKind, PluginSkillSnapshot,
 };
 pub use telemetry::{
     PluginRuntimeSessionStatus, PluginRuntimeSessionTelemetry, PluginRuntimeTelemetryEvent,

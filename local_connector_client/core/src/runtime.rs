@@ -280,7 +280,6 @@ impl LocalRuntime {
             state.save(self.state_path.as_path())?;
             device_id
         };
-        let database = self.local_database()?.clone();
         let identity = ConnectorIdentity::new(&config, device_id.as_str());
 
         let mut current = self.connector_task.lock().await;
@@ -310,7 +309,6 @@ impl LocalRuntime {
                 if let Err(err) = connect_loop(
                     config,
                     runtime.state.clone(),
-                    database.clone(),
                     runtime.sandbox_runtime.clone(),
                     runtime.plugin_runtime.clone(),
                     runtime.plugin_oauth.clone(),
@@ -344,6 +342,33 @@ impl LocalRuntime {
         *current = Some(ConnectorTask { identity, handle });
         Ok(())
     }
+}
+
+pub(crate) fn state_identity(state: &LocalState) -> Result<(String, String)> {
+    let owner_user_id = state
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.user.as_ref())
+        .map(|user| user.id.trim())
+        .filter(|value| !value.is_empty())
+        .or(state
+            .paired_user_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()))
+        .ok_or_else(|| anyhow!("Local Connector login is required"))?;
+    let device_id = state
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("Local Connector device is not registered"))?;
+    Ok((owner_user_id.to_string(), device_id.to_string()))
+}
+
+pub(crate) async fn runtime_identity(runtime: &LocalRuntime) -> Result<(String, String)> {
+    let state = runtime.state.read().await;
+    state_identity(&state)
 }
 
 #[cfg(test)]

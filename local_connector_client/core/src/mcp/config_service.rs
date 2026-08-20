@@ -9,21 +9,15 @@ use chatos_mcp_service::{JsonRpcRequest, McpJsonRpcService, McpServerInfo};
 use serde_json::{json, Value};
 
 use crate::history::CommandHistoryRecorder;
-use crate::local_runtime::LocalDatabase;
 use crate::mcp::terminal::{handle_local_mcp_terminal_cleanup, handle_local_mcp_terminal_start};
 use crate::relay::{relay_error_response, RelayRequest, RelayResponse, MCP_RELAY_MESSAGE_TYPE};
-use crate::sandbox::types::LocalSandboxRuntime;
 use crate::LocalState;
 
+use super::http_runtime::{handle_inline_http_mcp_body, is_inline_http_mcp_request};
 use super::provider::LocalConnectorMcpToolProvider;
-use super::user_runtime::{handle_user_mcp_body, is_user_mcp_request};
-
 pub(crate) async fn handle_mcp_request(
     value: Value,
     state: &LocalState,
-    database: &LocalDatabase,
-    http_client: &reqwest::Client,
-    sandbox_runtime: &LocalSandboxRuntime,
     history_recorder: &CommandHistoryRecorder,
 ) -> Value {
     let request = match serde_json::from_value::<RelayRequest>(value) {
@@ -32,16 +26,7 @@ pub(crate) async fn handle_mcp_request(
             return relay_error_response(MCP_RELAY_MESSAGE_TYPE, "", 400, err.to_string());
         }
     };
-    let body = match handle_mcp_body_with_database(
-        &request,
-        state,
-        database,
-        http_client,
-        sandbox_runtime,
-        history_recorder,
-    )
-    .await
-    {
+    let body = match handle_mcp_body_without_user_runtime(&request, state, history_recorder).await {
         Ok(body) => body,
         Err(err) => {
             return RelayResponse {
@@ -70,19 +55,8 @@ pub(crate) async fn handle_mcp_body(
     state: &LocalState,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Value> {
-    handle_mcp_body_without_user_runtime(request, state, history_recorder).await
-}
-
-async fn handle_mcp_body_with_database(
-    request: &RelayRequest,
-    state: &LocalState,
-    database: &LocalDatabase,
-    _http_client: &reqwest::Client,
-    _sandbox_runtime: &LocalSandboxRuntime,
-    history_recorder: &CommandHistoryRecorder,
-) -> Result<Value> {
-    if is_user_mcp_request(request) {
-        return handle_user_mcp_body(request, database).await;
+    if is_inline_http_mcp_request(request) {
+        return handle_inline_http_mcp_body(request).await;
     }
     handle_mcp_body_without_user_runtime(request, state, history_recorder).await
 }
@@ -92,6 +66,9 @@ async fn handle_mcp_body_without_user_runtime(
     state: &LocalState,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Value> {
+    if is_inline_http_mcp_request(request) {
+        return handle_inline_http_mcp_body(request).await;
+    }
     let body = &request.body;
     let method = body
         .get("method")
@@ -122,11 +99,6 @@ pub(crate) async fn handle_standard_local_mcp_body(
     state: &LocalState,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<Value> {
-    if is_user_mcp_request(request) {
-        return Err(anyhow::anyhow!(
-            "user MCP execution requires the local SQLite runtime"
-        ));
-    }
     let rpc_request = serde_json::from_value::<JsonRpcRequest>(request.body.clone())
         .context("parse local connector MCP JSON-RPC request")?;
     let provider = LocalConnectorMcpToolProvider {

@@ -179,7 +179,11 @@ export const ProjectRunSettingsPanel: React.FC<ProjectRunSettingsPanelProps> = (
 
         <div className="rounded border border-border/70 bg-background/50 p-3">
           <div className="mb-2 text-[11px] text-muted-foreground">{t('runSettings.preflight')}</div>
-          {selectedTargetIssues.length === 0 && otherTargetIssues.length === 0 ? (
+          {runTargets.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              {t('runSettings.preflightUnavailable')}
+            </div>
+          ) : selectedTargetIssues.length === 0 && otherTargetIssues.length === 0 ? (
             <div className="text-sm text-emerald-700">
               {t('runSettings.preflightClean')}
             </div>

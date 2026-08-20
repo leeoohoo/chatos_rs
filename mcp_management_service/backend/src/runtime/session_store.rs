@@ -33,7 +33,7 @@ use self::cache::{
     cache_snapshot, cache_snapshot_arc, estimate_snapshot_cache_bytes, saturating_u64_to_usize,
     summarize_snapshot_sizes, RuntimeSessionCache,
 };
-const SNAPSHOT_SCHEMA_VERSION: i32 = 10;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 11;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_SNAPSHOT_BYTES: usize = 12 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,8 +50,6 @@ pub struct LocalConnectorMcpProviderBinding {
     pub device_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_http: Option<LocalConnectorInlineHttpRuntime>,
     pub allow_writes: bool,

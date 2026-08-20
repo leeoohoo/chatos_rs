@@ -4,8 +4,7 @@
 use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, plugin_component_descriptors, PluginAvailabilityStatus,
-    PluginComponentSnapshot, PluginComponentStatus, PluginManifestSource, ResolvedPlugin,
-    ResolvedPluginComponent,
+    PluginComponentSnapshot, PluginComponentStatus, ResolvedPlugin, ResolvedPluginComponent,
 };
 
 use super::base_plugin::resolved_plugin;
@@ -16,7 +15,7 @@ pub(in super::super) fn resolved_command_plugin(requires_confirmation: bool) -> 
     let manifest = parse_plugin_manifest(
         format!(
             r#"{{
-                "schemaVersion": 1,
+                "schemaVersion": 3,
                 "name": "review-command",
                 "version": "1.0.0",
                 "description": "Signed review command",
@@ -44,7 +43,6 @@ pub(in super::super) fn resolved_command_plugin(requires_confirmation: bool) -> 
             }}"#
         )
         .as_str(),
-        PluginManifestSource::Chatos,
     )
     .expect("Command Plugin Manifest");
     let components = plugin_component_descriptors(&manifest);
@@ -101,7 +99,7 @@ pub(in super::super) fn resolved_agent_plugin(base_agent: &str) -> ResolvedPlugi
     let manifest = parse_plugin_manifest(
         format!(
             r#"{{
-                "schemaVersion": 1,
+                "schemaVersion": 3,
                 "name": "review-agent",
                 "version": "1.0.0",
                 "description": "Signed review Agent",
@@ -128,7 +126,6 @@ pub(in super::super) fn resolved_agent_plugin(base_agent: &str) -> ResolvedPlugi
             }}"#
         )
         .as_str(),
-        PluginManifestSource::Chatos,
     )
     .expect("Agent Plugin Manifest");
     let components = plugin_component_descriptors(&manifest);

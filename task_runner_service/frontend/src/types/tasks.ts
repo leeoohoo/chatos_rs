@@ -70,9 +70,7 @@ export interface SelectableTaskPlugin {
   release_id: string;
   artifact_sha256: string;
   device_id?: string | null;
-  execution_type: string;
   requires_device: boolean;
-  component_hosts: Record<string, 'local' | 'portable'>;
   component_keys: string[];
   commands: SelectableTaskPluginCommand[];
 }

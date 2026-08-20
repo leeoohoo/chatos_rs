@@ -5,7 +5,7 @@ use chatos_mcp_management_sdk::{
     ProjectExecutionContext, RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget,
     WorkspaceProviderKind,
 };
-use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
+use chatos_plugin_management_sdk::PluginMcpServer;
 
 use super::*;
 
@@ -20,7 +20,6 @@ fn plugin_runtime_binding() -> PluginMcpRuntimeBinding {
         normalized_manifest_sha256: "b".repeat(64),
         component_key: "workspace".to_string(),
         component_content_sha256: "c".repeat(64),
-        declared_execution_host: PluginExecutionHost::Local,
         installation_device_id: Some("device-private-1".to_string()),
         permission_snapshot: vec!["workspace.read".to_string()],
         auth_connection_ids: vec!["oauth-private-reference".to_string()],
@@ -122,7 +121,6 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
                 provider_ref: "mcp-resource:external-1".to_string(),
                 device_id: "device-private-1".to_string(),
                 workspace_id: None,
-                manifest_id: None,
                 inline_http: Some(LocalConnectorInlineHttpRuntime {
                     url: "https://mcp.example.com/rpc".to_string(),
                     headers: std::collections::BTreeMap::from([(

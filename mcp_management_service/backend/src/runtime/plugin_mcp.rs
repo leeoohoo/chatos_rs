@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::{
-    PluginComponentDescriptor, PluginExecutionHost, PluginMcpServer,
-};
+use chatos_plugin_management_sdk::{PluginComponentDescriptor, PluginMcpServer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -18,7 +16,6 @@ pub struct PluginMcpRuntimeBinding {
     pub normalized_manifest_sha256: String,
     pub component_key: String,
     pub component_content_sha256: String,
-    pub declared_execution_host: PluginExecutionHost,
     pub installation_device_id: Option<String>,
     pub permission_snapshot: Vec<String>,
     pub auth_connection_ids: Vec<String>,

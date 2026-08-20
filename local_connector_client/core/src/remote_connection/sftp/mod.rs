@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::relay::{relay_error_response, RelayRequest, RelayResponse};
-use crate::skills::native::safe_workspace_path;
+use crate::workspace::paths::safe_workspace_path;
 use crate::LocalState;
 
 use super::runtime::{connect_session, RemoteConnectionSpec};

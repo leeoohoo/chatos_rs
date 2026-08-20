@@ -8,16 +8,14 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::plugin_manifest::{
-    component_key_from_path, PluginComponentKind, PluginExecutionHost, PluginManifest,
-    PluginMcpServer, PluginPathRef, PluginPermissionRequirement,
+    component_key_from_path, PluginComponentKind, PluginManifest, PluginMcpServer, PluginPathRef,
+    PluginPermissionRequirement,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginComponentDescriptor {
     pub component_key: String,
     pub kind: PluginComponentKind,
-    #[serde(default)]
-    pub execution_host: PluginExecutionHost,
     pub display_name: String,
     pub runtime_kind: String,
     #[serde(default)]
@@ -44,17 +42,16 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
         ));
     }
     for server in &manifest.mcp_servers {
-        let (runtime_kind, entrypoint) = match server {
-            PluginMcpServer::ConfigFile { path, .. } => ("config_file", Some(path.clone())),
-            PluginMcpServer::Stdio { .. } => ("stdio", None),
-            PluginMcpServer::Http { .. } => ("http", None),
+        let runtime_kind = match server {
+            PluginMcpServer::Stdio { .. } => "npm_stdio",
+            PluginMcpServer::Http { .. } => "http",
         };
         descriptors.push(component_descriptor(
             manifest,
             server.component_key().to_string(),
             PluginComponentKind::McpServer,
             runtime_kind,
-            entrypoint,
+            None,
             true,
         ));
     }
@@ -228,7 +225,6 @@ struct PluginCommandSnapshotHashInput<'a> {
     plugin_id: &'a str,
     release_id: &'a str,
     component_key: &'a str,
-    execution_host: PluginExecutionHost,
     source_path: &'a str,
     description: Option<&'a str>,
     argument_hint: Option<&'a str>,
@@ -245,7 +241,6 @@ pub fn plugin_command_snapshot_sha256(
     plugin_id: &str,
     release_id: &str,
     component_key: &str,
-    execution_host: PluginExecutionHost,
     source_path: &str,
     description: Option<&str>,
     argument_hint: Option<&str>,
@@ -261,7 +256,6 @@ pub fn plugin_command_snapshot_sha256(
         plugin_id,
         release_id,
         component_key,
-        execution_host,
         source_path,
         description,
         argument_hint,
@@ -281,7 +275,6 @@ struct PluginAgentSnapshotHashInput<'a> {
     plugin_id: &'a str,
     release_id: &'a str,
     component_key: &'a str,
-    execution_host: PluginExecutionHost,
     source_path: &'a str,
     description: Option<&'a str>,
     base_agent: &'a str,
@@ -296,7 +289,6 @@ pub fn plugin_agent_snapshot_sha256(
     plugin_id: &str,
     release_id: &str,
     component_key: &str,
-    execution_host: PluginExecutionHost,
     source_path: &str,
     description: Option<&str>,
     base_agent: &str,
@@ -310,7 +302,6 @@ pub fn plugin_agent_snapshot_sha256(
         plugin_id,
         release_id,
         component_key,
-        execution_host,
         source_path,
         description,
         base_agent,
@@ -344,7 +335,6 @@ fn component_descriptor(
         .collect();
     PluginComponentDescriptor {
         display_name: display_name_from_key(component_key.as_str()),
-        execution_host: manifest.execution.host_for(component_key.as_str()),
         component_key,
         kind,
         runtime_kind: runtime_kind.to_string(),

@@ -13,10 +13,6 @@ import { fileURLToPath } from 'node:url';
 
 const CLIENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const VERIFIER = path.join(CLIENT_DIR, 'verify-installed-package.mjs');
-const PLUGIN_BUNDLE_TOOL = path.join(CLIENT_DIR, 'prepare-plugin-bundles.mjs');
-const PLUGIN_CATALOG = path.join(CLIENT_DIR, 'plugin_bundles', 'catalog', 'bundled-plugin-catalog.json');
-const SKILL_CATALOG = path.join(CLIENT_DIR, 'skill_bundles', 'catalog', 'internal-skill-catalog.json');
-const SKILL_ROOT = path.join(CLIENT_DIR, 'skill_bundles', 'internal');
 const ELECTRON_RUNTIME = path.join(CLIENT_DIR, 'frontend', 'electron', 'core-runtime.cjs');
 const CHROME_EXTENSION = path.join(CLIENT_DIR, 'chrome_extension');
 
@@ -112,30 +108,6 @@ function binaryHeader(platform, architecture) {
   return elfHeader(architecture);
 }
 
-function copyActiveSkillBundles(resources) {
-  const catalog = JSON.parse(fs.readFileSync(SKILL_CATALOG, 'utf8'));
-  const packagedCatalog = path.join(resources, 'skill-bundles', 'catalog', 'internal-skill-catalog.json');
-  fs.mkdirSync(path.dirname(packagedCatalog), { recursive: true });
-  fs.copyFileSync(SKILL_CATALOG, packagedCatalog);
-  for (const skill of catalog.skills) {
-    const source = path.join(SKILL_ROOT, skill.name, skill.version);
-    const destination = path.join(resources, 'skill-bundles', 'internal', skill.name, skill.version);
-    fs.cpSync(source, destination, { recursive: true });
-  }
-}
-
-function stagePluginBundles(resources, platform) {
-  const result = spawnSync(process.execPath, [
-    PLUGIN_BUNDLE_TOOL,
-    '--plugin-catalog', PLUGIN_CATALOG,
-    '--skill-catalog', path.join(resources, 'skill-bundles', 'catalog', 'internal-skill-catalog.json'),
-    '--skill-root', path.join(resources, 'skill-bundles', 'internal'),
-    '--output', path.join(resources, 'plugin-bundles'),
-    '--platform', platform,
-  ], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-}
-
 function createFixture(platform, runtimeProfile = 'full') {
   const fixtureRoot = path.join(temporaryRoot, `base-${platform}-${runtimeProfile}`);
   const resources = path.join(fixtureRoot, 'resources');
@@ -150,12 +122,9 @@ function createFixture(platform, runtimeProfile = 'full') {
   if (runtimeProfile === 'full' || runtimeProfile === 'linux-browser') {
     fs.cpSync(CHROME_EXTENSION, path.join(resources, 'chrome-extension'), { recursive: true });
   }
-  copyActiveSkillBundles(resources);
-  stagePluginBundles(resources, platform);
-
   const packageArchitecture = platform.endsWith('-arm64') ? 'arm64' : 'x64';
   const executableNames = platform.startsWith('macos-')
-    ? ['local_connector_client_core', 'chatos_chrome_native_host', 'chatos_computer_use_helper']
+    ? ['local_connector_client_core', 'chatos_chrome_native_host']
     : platform.startsWith('windows-')
       ? ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe']
       : [
@@ -190,41 +159,6 @@ function createFixture(platform, runtimeProfile = 'full') {
   writeExecutable(chrome, binaryHeader(platform, browserArchitecture));
   fs.writeFileSync(path.join(platformRoot, 'agent-browser.LICENSE'), 'test license\n');
 
-  const documentRoot = path.join(platformRoot, 'documents-runtime');
-  const sofficeRelative = platform.startsWith('macos-')
-    ? 'libreoffice/LibreOffice.app/Contents/MacOS/soffice'
-    : 'libreoffice/program/soffice.exe';
-  const pdftoppmRelative = platform.startsWith('macos-')
-    ? 'poppler/bin/pdftoppm'
-    : 'poppler/Library/bin/pdftoppm.exe';
-  const fontRelative = 'fonts/NotoSansSC-Regular.ttf';
-  writeExecutable(path.join(documentRoot, ...sofficeRelative.split('/')), 'soffice-test\n');
-  writeExecutable(path.join(documentRoot, ...pdftoppmRelative.split('/')), 'pdftoppm-test\n');
-  fs.mkdirSync(path.join(documentRoot, 'fonts'), { recursive: true });
-  fs.writeFileSync(path.join(documentRoot, fontRelative), 'font-test\n');
-  fs.writeFileSync(path.join(documentRoot, 'fonts', 'NotoSansSC-OFL.txt'), 'font license\n');
-  if (platform.startsWith('macos-')) {
-    fs.mkdirSync(path.join(documentRoot, 'poppler', 'lib'), { recursive: true });
-  }
-  const manifest = {
-    schema_version: 1,
-    runtime_revision: 'test-runtime-1',
-    platform,
-    soffice: {
-      path: sofficeRelative,
-      sha256: sha256File(path.join(documentRoot, ...sofficeRelative.split('/'))),
-      version: 'LibreOffice test',
-    },
-    pdftoppm: {
-      path: pdftoppmRelative,
-      sha256: sha256File(path.join(documentRoot, ...pdftoppmRelative.split('/'))),
-      version: 'pdftoppm version test',
-    },
-    poppler_library_dir: platform.startsWith('macos-') ? 'poppler/lib' : null,
-    font_directory: 'fonts',
-    fonts: [{ path: fontRelative, sha256: sha256File(path.join(documentRoot, fontRelative)) }],
-  };
-  fs.writeFileSync(path.join(documentRoot, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   return resources;
 }
 
@@ -241,8 +175,6 @@ function verify(resources, platform, runtimeProfile = 'full') {
     '--platform', platform,
     '--runtime-profile', runtimeProfile,
     '--resources', resources,
-    '--plugin-catalog', PLUGIN_CATALOG,
-    '--skill-catalog', SKILL_CATALOG,
     '--electron-runtime-source', ELECTRON_RUNTIME,
     '--chrome-extension-source', CHROME_EXTENSION,
     '--report', report,
@@ -271,8 +203,6 @@ test('verifies a complete macOS arm64 installed package contract', () => {
   const report = JSON.parse(fs.readFileSync(result.report, 'utf8'));
   assert.equal(report.result, 'verified');
   assert.equal(report.platform, 'macos-arm64');
-  assert.equal(report.plugin_bundles.plugins, 12);
-  assert.equal(report.plugin_bundles.skills, 28);
   assert.equal(report.code_signing.required, false);
   assert.equal(fs.readFileSync(result.report, 'utf8').includes(temporaryRoot), false);
 });
@@ -306,7 +236,6 @@ test('verifies a Linux arm64 core-profile installed package contract', () => {
   assert.equal(report.runtime_profile, 'linux-core');
   assert.deepEqual(report.executables[0].architectures, ['arm64']);
   assert.equal(report.browser_runtime.verified, false);
-  assert.equal(report.document_runtime.verified, false);
 });
 
 test('verifies a Linux arm64 browser-profile package with Native Messaging assets', () => {
@@ -319,7 +248,6 @@ test('verifies a Linux arm64 browser-profile package with Native Messaging asset
   assert.equal(report.chrome_extension.manifest_version, 3);
   assert.ok(report.executables.some((executable) => executable.name === 'chatos_chrome_native_host'));
   assert.equal(report.browser_runtime.verified, false);
-  assert.equal(report.document_runtime.verified, false);
 });
 
 test('rejects a symlink substituted for a critical executable', () => {
@@ -332,15 +260,12 @@ test('rejects a symlink substituted for a critical executable', () => {
   assert.match(result.stderr, /must not contain symlink components/);
 });
 
-test('rejects a document runtime file whose manifest hash no longer matches', () => {
-  const resources = copyFixture('macos-arm64', 'document-hash-negative');
-  fs.appendFileSync(
-    path.join(resources, 'bundled-tools', 'macos-arm64', 'documents-runtime', 'fonts', 'NotoSansSC-Regular.ttf'),
-    'tampered',
-  );
+test('rejects removed built-in capability resources', () => {
+  const resources = copyFixture('macos-arm64', 'removed-builtins-negative');
+  fs.mkdirSync(path.join(resources, 'skill-bundles'), { recursive: true });
   const result = verify(resources, 'macos-arm64');
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /fallback font SHA-256 does not match/);
+  assert.match(result.stderr, /removed built-in capability/);
 });
 
 test('rejects a critical executable built for the wrong architecture', () => {

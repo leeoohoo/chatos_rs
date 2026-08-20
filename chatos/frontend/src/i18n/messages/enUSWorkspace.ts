@@ -214,6 +214,7 @@ export const enUSWorkspaceMessages: MessageDictionary = {
   'runSettings.suggestions': 'Suggested actions',
   'runSettings.preflight': 'Preflight check',
   'runSettings.preflightClean': 'No obvious local runtime configuration issues were found.',
+  'runSettings.preflightUnavailable': 'Preflight checks will run after a runnable target is detected.',
   'runSettings.issueHint': 'Suggestion: {hint}',
   'runSettings.otherTargetIssues': 'View issues for other run entries ({count})',
   'runSettings.runTargets': 'Run targets',

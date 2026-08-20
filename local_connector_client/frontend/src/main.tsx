@@ -11,7 +11,6 @@ import {
   LockKeyhole,
   Moon,
   PackageCheck,
-  Plug,
   RefreshCw,
   Server,
   Settings2,
@@ -33,7 +32,6 @@ import {
 } from './components/ConnectionPanels';
 import { GlobalApprovalTray } from './components/GlobalApprovalTray';
 import { ModelConfigPanel } from './components/ModelConfigPanel';
-import { McpConfigPanel } from './components/McpConfigPanel';
 import { RuntimeSettingsPanel } from './components/RuntimeSettingsPanel';
 import { SandboxPanel } from './components/SandboxPanel';
 import { PluginMarketplacePanel } from './components/plugins/PluginMarketplacePanel';
@@ -43,14 +41,13 @@ import './styles-controls.css';
 import './styles-terminal.css';
 import './styles-approval.css';
 import './styles-models.css';
-import './styles-mcp.css';
 import './styles-command-history.css';
 import './styles-sandbox.css';
 import './styles-skills.css';
 import './styles-plugins.css';
 import './styles-responsive.css';
 
-type AppTab = 'overview' | 'mcps' | 'plugins' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
+type AppTab = 'overview' | 'plugins' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
 type LocalIcon = typeof Server;
 type ThemeMode = 'light' | 'dark';
 
@@ -67,13 +64,6 @@ const TABS: Array<{
     eyebrow: 'CONNECTION',
     description: '查看本机设备、云端连接与安全边界。',
     icon: Server,
-  },
-  {
-    id: 'mcps',
-    label: 'MCP 配置',
-    eyebrow: 'LOCAL MCP',
-    description: '管理仅由当前设备执行的个人 MCP 工具。',
-    icon: Plug,
   },
   {
     id: 'plugins',
@@ -359,7 +349,6 @@ function SettingsApp() {
                   <LocalBoundaryPanel />
                 </div>
               ) : null}
-              {activeTab === 'mcps' ? <McpConfigPanel /> : null}
               {activeTab === 'plugins' ? (
                 <PluginMarketplacePanel onOpenPermissions={() => setActiveTab('settings')} />
               ) : null}

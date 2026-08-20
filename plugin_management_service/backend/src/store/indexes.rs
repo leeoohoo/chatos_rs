@@ -22,20 +22,6 @@ impl AppStore {
             doc! { "plugin_id": 1, "release_id": 1, "component_key": 1 },
         )
         .await?;
-        create_index(
-            &self.mcps,
-            doc! { "runtime.local_connector.device_id": 1, "runtime.local_connector.workspace_id": 1 },
-        )
-        .await?;
-        create_local_manifest_unique_index(
-            &self.mcps,
-            doc! {
-                "owner_user_id": 1,
-                "runtime.local_connector.device_id": 1,
-                "runtime.local_connector.manifest_id": 1,
-            },
-        )
-        .await?;
 
         create_unique_index(&self.skills, doc! { "id": 1 }).await?;
         create_index(
@@ -99,27 +85,6 @@ impl AppStore {
 
         create_unique_index(&self.checks, doc! { "id": 1 }).await?;
         create_index(&self.checks, doc! { "resource_kind": 1, "resource_id": 1 }).await?;
-        create_unique_index(
-            &self.skill_preferences,
-            doc! { "owner_user_id": 1, "skill_id": 1 },
-        )
-        .await?;
-        create_index(
-            &self.skill_preferences,
-            doc! { "owner_user_id": 1, "enabled": 1 },
-        )
-        .await?;
-        create_unique_index(
-            &self.skill_installations,
-            doc! { "owner_user_id": 1, "device_id": 1, "skill_id": 1 },
-        )
-        .await?;
-        create_index(
-            &self.skill_installations,
-            doc! { "owner_user_id": 1, "skill_id": 1, "status": 1 },
-        )
-        .await?;
-
         create_unique_index(&self.plugin_marketplaces, doc! { "id": 1 }).await?;
         create_unique_index(&self.plugin_marketplaces, doc! { "name": 1 }).await?;
         create_index(
@@ -288,26 +253,5 @@ where
         .create_index(model, None)
         .await
         .map_err(|err| format!("create mongodb unique index failed: {err}"))?;
-    Ok(())
-}
-
-async fn create_local_manifest_unique_index<T>(
-    collection: &Collection<T>,
-    keys: mongodb::bson::Document,
-) -> Result<(), String>
-where
-    T: Send + Sync,
-{
-    let options = IndexOptions::builder()
-        .unique(true)
-        .partial_filter_expression(doc! {
-            "runtime.local_connector.manifest_id": { "$type": "string" }
-        })
-        .build();
-    let model = IndexModel::builder().keys(keys).options(options).build();
-    collection
-        .create_index(model, None)
-        .await
-        .map_err(|err| format!("create local manifest MongoDB unique index failed: {err}"))?;
     Ok(())
 }

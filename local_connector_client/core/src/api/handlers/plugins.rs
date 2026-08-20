@@ -1,27 +1,22 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeSet;
-
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use chatos_plugin_management_sdk::{
-    PluginComponentKind, PluginInstallSource, UpdateUserPluginPreferenceResponse,
-    UserPluginPreferenceRecord,
+    PluginInstallSource, UpdateUserPluginPreferenceResponse, UserPluginPreferenceRecord,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::config::api_url;
-use crate::local_runtime::sync_local_capability_snapshots;
 use crate::plugins::{
     local_plugin_store_snapshot, merge_auto_update_state, merge_network_plugin_sources,
     verify_plugin_install_source, LocalPluginStatusSnapshot, LocalPluginStoreSnapshot,
     PluginAutoUpdateState, PluginInstallRequest, PluginRecoveryReport,
 };
-use crate::skills::{sync_skill_inventory, update_user_skill_preference};
 use crate::{tracing_stdout, LocalRuntime};
 
 use super::super::types::{
@@ -156,13 +151,6 @@ pub(crate) async fn local_plugin_catalog(
         .map_err(|error| anyhow::anyhow!("join Plugin catalog task failed: {error}"))??;
     status.runtime = runtime.plugin_runtime.telemetry_snapshot();
     let mut snapshot = local_plugin_store_snapshot(status)?;
-    snapshot.bundled_install_available = bundled_plugin_root()
-        .is_some_and(|root| root.is_dir() && root.join("plugin-bundle-index.json").is_file());
-    for item in &mut snapshot.items {
-        if item.install_source == "bundled" {
-            item.install_available = snapshot.bundled_install_available;
-        }
-    }
     match fetch_remote_plugin_sources(&runtime).await {
         Ok(Some(sources)) => {
             if let Err(error) = merge_network_plugin_sources(&mut snapshot, sources) {
@@ -190,26 +178,7 @@ pub(crate) async fn local_install_plugin(
     Path(plugin_id): Path<String>,
 ) -> Result<Json<LocalPluginStatusSnapshot>, LocalApiError> {
     validate_plugin_id(plugin_id.as_str())?;
-    if !plugin_id.starts_with("bundled-plugin-") {
-        return local_install_network_plugin(runtime, plugin_id).await;
-    }
-    let bundled_root = bundled_plugin_root().ok_or_else(|| {
-        LocalApiError::conflict(
-            "Bundled Plugin resources are unavailable in this Local Connector installation",
-        )
-    })?;
-    let installer = runtime.plugin_installer.clone();
-    let plugin_id_for_install = plugin_id.clone();
-    let snapshot = tokio::task::spawn_blocking(move || {
-        installer
-            .install_bundled_directory(bundled_root.as_path(), plugin_id_for_install.as_str())?;
-        installer.status_snapshot()
-    })
-    .await
-    .map_err(|error| anyhow::anyhow!("join bundled Plugin install task failed: {error}"))?
-    .map_err(|error: anyhow::Error| LocalApiError::conflict(error.to_string()))?;
-    publish_installed_plugin_skills(&runtime, &snapshot, plugin_id.as_str()).await;
-    Ok(Json(snapshot))
+    local_install_network_plugin(runtime, plugin_id).await
 }
 
 async fn local_install_network_plugin(
@@ -233,20 +202,7 @@ async fn local_install_network_plugin(
         .map_err(|error| LocalApiError::conflict(error.to_string()))?;
     install_network_plugin_source(&runtime, source)
         .await
-        .map(|snapshot| {
-            let runtime = runtime.clone();
-            let plugin_id = plugin_id.clone();
-            let snapshot_for_publish = snapshot.clone();
-            tokio::spawn(async move {
-                publish_installed_plugin_skills(
-                    &runtime,
-                    &snapshot_for_publish,
-                    plugin_id.as_str(),
-                )
-                .await;
-            });
-            Json(snapshot)
-        })
+        .map(Json)
 }
 
 async fn install_network_plugin_source(
@@ -282,15 +238,15 @@ async fn install_network_plugin_source(
             }
         };
     let installer = runtime.plugin_installer.clone();
-    let archive_path = artifact.path.clone();
+    let package_path = artifact.path.clone();
     let snapshot = tokio::task::spawn_blocking(move || {
-        installer.install_downloaded_archive(
+        installer.install_downloaded_package(
             pending,
             PluginInstallRequest {
                 marketplace: &source.marketplace,
                 catalog: &source.catalog,
                 release: &source.release,
-                archive_path: archive_path.as_path(),
+                package_path: package_path.as_path(),
             },
         )?;
         installer.status_snapshot()
@@ -302,91 +258,12 @@ async fn install_network_plugin_source(
     Ok(snapshot)
 }
 
-async fn publish_installed_plugin_skills(
-    runtime: &LocalRuntime,
-    snapshot: &LocalPluginStatusSnapshot,
-    plugin_id: &str,
-) {
-    let skill_ids = installed_plugin_skill_ids(snapshot, plugin_id);
-    if skill_ids.is_empty() {
-        return;
-    }
-    if let Err(error) = sync_skill_inventory(runtime).await {
-        tracing_stdout(
-            format!("post-install Skill inventory sync failed for {plugin_id}: {error}").as_str(),
-        );
-    }
-    let mut enabled = 0usize;
-    for skill_id in &skill_ids {
-        match update_user_skill_preference(runtime, skill_id.as_str(), true).await {
-            Ok(_) => enabled += 1,
-            Err(error) => tracing_stdout(
-                format!(
-                    "post-install Skill preference enable skipped for {plugin_id}/{skill_id}: {error}"
-                )
-                .as_str(),
-            ),
-        }
-    }
-    if enabled > 0 {
-        match sync_local_capability_snapshots(runtime).await {
-            Ok(_) => tracing_stdout(
-                format!(
-                    "post-install enabled {enabled}/{} Skills for {plugin_id} and refreshed capability snapshots",
-                    skill_ids.len()
-                )
-                .as_str(),
-            ),
-            Err(error) => tracing_stdout(
-                format!("post-install capability refresh failed for {plugin_id}: {error}")
-                    .as_str(),
-            ),
-        }
-    }
-}
-
-fn installed_plugin_skill_ids(
-    snapshot: &LocalPluginStatusSnapshot,
-    plugin_id: &str,
-) -> Vec<String> {
-    let Some(plugin) = snapshot.registry.plugins.get(plugin_id) else {
-        return Vec::new();
-    };
-    let Some(active_version) = plugin.active_version.as_deref() else {
-        return Vec::new();
-    };
-    let Some(version) = plugin.versions.get(active_version) else {
-        return Vec::new();
-    };
-    let mut ids = BTreeSet::new();
-    for component in &version.inventory.components {
-        if component.kind != PluginComponentKind::SkillCollection {
-            continue;
-        }
-        if let Some(skill_id) = component
-            .metadata
-            .get("skill_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            ids.insert(skill_id.to_string());
-        }
-    }
-    ids.into_iter().collect()
-}
-
 pub(crate) async fn local_update_plugin_preference(
     State(runtime): State<LocalRuntime>,
     Path(plugin_id): Path<String>,
     Json(request): Json<UpdatePluginPreferenceRequest>,
 ) -> Result<Json<UserPluginPreferenceRecord>, LocalApiError> {
     validate_plugin_id(plugin_id.as_str())?;
-    if plugin_id.starts_with("bundled-plugin-") {
-        return Err(LocalApiError::bad_request(
-            "bundled Plugins are updated with the Local Connector application",
-        ));
-    }
     if request.auto_update == Some(true)
         && request.release_channel.as_deref().unwrap_or("stable") != "stable"
     {
@@ -584,12 +461,6 @@ fn validate_plugin_id(plugin_id: &str) -> Result<(), LocalApiError> {
         return Err(LocalApiError::bad_request("Plugin ID is invalid"));
     }
     Ok(())
-}
-
-fn bundled_plugin_root() -> Option<std::path::PathBuf> {
-    std::env::var_os("CHATOS_BUNDLED_PLUGINS_DIR")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
 }
 
 pub(crate) async fn local_recover_plugin_transactions(

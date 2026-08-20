@@ -136,33 +136,6 @@ pub(super) async fn seed_agent_bindings(
             .await?;
         }
     }
-    for agent_key in BUNDLED_PONYTAIL_AGENT_KEYS {
-        seed_agent_resource_binding(
-            store,
-            admin_user_id,
-            agent_key,
-            RESOURCE_KIND_PLUGIN,
-            BUNDLED_PONYTAIL_PLUGIN_ID,
-            false,
-            800,
-        )
-        .await?;
-    }
-    let catalog = internal_skill_catalog()?;
-    for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
-        for (index, item) in catalog.skills.iter().enumerate() {
-            seed_agent_resource_binding(
-                store,
-                admin_user_id,
-                agent_key,
-                RESOURCE_KIND_SKILL,
-                item.skill_id.as_str(),
-                false,
-                300 + index as i64,
-            )
-            .await?;
-        }
-    }
     for (resource_id, priority) in [
         (builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead), 10),
         (LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID.to_string(), 20),
@@ -243,31 +216,6 @@ async fn seed_agent_mcp_binding_with_tool_policy(
             .iter()
             .map(|value| (*value).to_string())
             .collect(),
-    )
-    .await
-}
-
-async fn seed_agent_resource_binding(
-    store: &AppStore,
-    admin_user_id: &str,
-    agent_key: &str,
-    resource_kind: &str,
-    resource_id: &str,
-    required: bool,
-    priority: i64,
-) -> Result<(), String> {
-    seed_agent_resource_binding_with_policy(
-        store,
-        admin_user_id,
-        agent_key,
-        resource_kind,
-        resource_id,
-        required,
-        priority,
-        BindingConditions::default(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
     )
     .await
 }

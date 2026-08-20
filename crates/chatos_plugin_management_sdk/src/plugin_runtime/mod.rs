@@ -5,15 +5,12 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::plugin_manifest::{
-    PluginComponentKind, PluginDependencySpec, PluginExecutionHost, PluginInterfaceMetadata,
-    PluginManifest, PluginMcpServer, PluginPermissionRequirement,
+    PluginComponentKind, PluginDependencySpec, PluginInterfaceMetadata, PluginManifest,
+    PluginPermissionRequirement,
 };
-use crate::plugin_signing::{
-    normalized_plugin_manifest_sha256, PluginReleaseSignature, SigningKeyRef,
-};
+use crate::plugin_signing::{PluginReleaseSignature, SigningKeyRef};
 
 mod components;
 mod ui_artifacts;
@@ -142,6 +139,14 @@ fn default_plugin_marketplace_visibility() -> String {
     "public".to_string()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginNpmPackage {
+    pub name: String,
+    pub version: String,
+    pub integrity: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginReleaseRecord {
     pub id: String,
@@ -149,6 +154,7 @@ pub struct PluginReleaseRecord {
     pub version: String,
     pub manifest_schema_version: u32,
     pub normalized_manifest: PluginManifest,
+    pub npm_package: PluginNpmPackage,
     pub artifact_ref: String,
     pub artifact_sha256: String,
     pub signature: PluginReleaseSignature,
@@ -275,225 +281,6 @@ pub struct PluginComponentSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginPortableTextResource {
-    pub path: String,
-    pub text: String,
-    pub sha256: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginPortableComponentBundle {
-    pub plugin_id: String,
-    pub release_id: String,
-    pub version: String,
-    pub component_key: String,
-    pub kind: PluginComponentKind,
-    pub execution_host: PluginExecutionHost,
-    pub entrypoint: String,
-    pub primary_text: String,
-    pub primary_sha256: String,
-    #[serde(default)]
-    pub resources: Vec<PluginPortableTextResource>,
-    pub bundle_sha256: String,
-    pub artifact_sha256: String,
-    pub normalized_manifest_sha256: String,
-    pub ingested_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PluginMcpPortableRuntimeBundle {
-    pub plugin_id: String,
-    pub release_id: String,
-    pub version: String,
-    pub artifact_ref: String,
-    pub artifact_sha256: String,
-    pub normalized_manifest_sha256: String,
-    pub component: PluginComponentDescriptor,
-    /// Runtime declared directly by the signed Plugin Manifest. Config-file
-    /// components keep the immutable config path here.
-    pub runtime: PluginMcpServer,
-    /// Concrete runtime frozen from the verified artifact. Inline runtimes are
-    /// identical to `runtime`; config-file runtimes resolve to stdio or HTTP.
-    pub resolved_runtime: PluginMcpServer,
-    pub server_key: String,
-    pub bundle_sha256: String,
-}
-
-impl PluginMcpPortableRuntimeBundle {
-    pub fn effective_runtime(&self) -> &PluginMcpServer {
-        &self.resolved_runtime
-    }
-}
-
-#[derive(Serialize)]
-struct PluginMcpPortableRuntimeBundleHashInput<'a> {
-    purpose: &'static str,
-    plugin_id: &'a str,
-    release_id: &'a str,
-    version: &'a str,
-    artifact_ref: &'a str,
-    artifact_sha256: &'a str,
-    normalized_manifest_sha256: &'a str,
-    component: &'a PluginComponentDescriptor,
-    runtime: &'a PluginMcpServer,
-    resolved_runtime: &'a PluginMcpServer,
-    server_key: &'a str,
-}
-
-pub fn build_plugin_mcp_portable_runtime_bundle(
-    release: &PluginReleaseRecord,
-    component_key: &str,
-) -> Result<PluginMcpPortableRuntimeBundle, String> {
-    let component = release
-        .components
-        .iter()
-        .find(|component| component.component_key == component_key)
-        .cloned()
-        .ok_or_else(|| format!("Plugin MCP component is missing: {component_key}"))?;
-    if component.kind != PluginComponentKind::McpServer
-        || component.execution_host != PluginExecutionHost::Portable
-    {
-        return Err(format!(
-            "Plugin component is not a portable MCP Server: {component_key}"
-        ));
-    }
-    let runtime = release
-        .normalized_manifest
-        .mcp_servers
-        .iter()
-        .find(|runtime| runtime.component_key() == component_key)
-        .cloned()
-        .ok_or_else(|| format!("Plugin MCP runtime is missing: {component_key}"))?;
-    if matches!(runtime, PluginMcpServer::ConfigFile { .. }) {
-        return Err(format!(
-            "Plugin MCP config-file runtime requires verified artifact resolution: {component_key}"
-        ));
-    }
-    let server_key = runtime.component_key().to_string();
-    build_plugin_mcp_portable_runtime_bundle_with_resolved_runtime(
-        release,
-        component_key,
-        runtime.clone(),
-        server_key.as_str(),
-    )
-}
-
-pub fn build_plugin_mcp_portable_runtime_bundle_with_resolved_runtime(
-    release: &PluginReleaseRecord,
-    component_key: &str,
-    resolved_runtime: PluginMcpServer,
-    server_key: &str,
-) -> Result<PluginMcpPortableRuntimeBundle, String> {
-    let component = release
-        .components
-        .iter()
-        .find(|component| component.component_key == component_key)
-        .cloned()
-        .ok_or_else(|| format!("Plugin MCP component is missing: {component_key}"))?;
-    if component.kind != PluginComponentKind::McpServer
-        || component.execution_host != PluginExecutionHost::Portable
-    {
-        return Err(format!(
-            "Plugin component is not a portable MCP Server: {component_key}"
-        ));
-    }
-    let runtime = release
-        .normalized_manifest
-        .mcp_servers
-        .iter()
-        .find(|runtime| runtime.component_key() == component_key)
-        .cloned()
-        .ok_or_else(|| format!("Plugin MCP runtime is missing: {component_key}"))?;
-    let server_key = server_key.trim();
-    if server_key.is_empty()
-        || resolved_runtime.component_key() != server_key
-        || matches!(resolved_runtime, PluginMcpServer::ConfigFile { .. })
-        || (!matches!(runtime, PluginMcpServer::ConfigFile { .. })
-            && (runtime != resolved_runtime || runtime.component_key() != server_key))
-    {
-        return Err(format!(
-            "resolved Plugin MCP runtime does not match the declared component: {component_key}"
-        ));
-    }
-    let normalized_manifest_sha256 =
-        normalized_plugin_manifest_sha256(&release.normalized_manifest)
-            .map_err(|error| format!("hash normalized Plugin Manifest failed: {error}"))?;
-    let bundle_sha256 = plugin_mcp_portable_runtime_bundle_sha256_parts(
-        release.plugin_id.as_str(),
-        release.id.as_str(),
-        release.version.as_str(),
-        release.artifact_ref.as_str(),
-        release.artifact_sha256.as_str(),
-        normalized_manifest_sha256.as_str(),
-        &component,
-        &runtime,
-        &resolved_runtime,
-        server_key,
-    )?;
-    Ok(PluginMcpPortableRuntimeBundle {
-        plugin_id: release.plugin_id.clone(),
-        release_id: release.id.clone(),
-        version: release.version.clone(),
-        artifact_ref: release.artifact_ref.clone(),
-        artifact_sha256: release.artifact_sha256.clone(),
-        normalized_manifest_sha256,
-        component,
-        runtime,
-        resolved_runtime,
-        server_key: server_key.to_string(),
-        bundle_sha256,
-    })
-}
-
-pub fn plugin_mcp_portable_runtime_bundle_sha256(
-    bundle: &PluginMcpPortableRuntimeBundle,
-) -> Result<String, String> {
-    plugin_mcp_portable_runtime_bundle_sha256_parts(
-        bundle.plugin_id.as_str(),
-        bundle.release_id.as_str(),
-        bundle.version.as_str(),
-        bundle.artifact_ref.as_str(),
-        bundle.artifact_sha256.as_str(),
-        bundle.normalized_manifest_sha256.as_str(),
-        &bundle.component,
-        &bundle.runtime,
-        &bundle.resolved_runtime,
-        bundle.server_key.as_str(),
-    )
-}
-
-fn plugin_mcp_portable_runtime_bundle_sha256_parts(
-    plugin_id: &str,
-    release_id: &str,
-    version: &str,
-    artifact_ref: &str,
-    artifact_sha256: &str,
-    normalized_manifest_sha256: &str,
-    component: &PluginComponentDescriptor,
-    runtime: &PluginMcpServer,
-    resolved_runtime: &PluginMcpServer,
-    server_key: &str,
-) -> Result<String, String> {
-    let payload = PluginMcpPortableRuntimeBundleHashInput {
-        purpose: "chatos.plugin.portable-mcp-runtime-bundle.v1",
-        plugin_id,
-        release_id,
-        version,
-        artifact_ref,
-        artifact_sha256,
-        normalized_manifest_sha256,
-        component,
-        runtime,
-        resolved_runtime,
-        server_key,
-    };
-    serde_json::to_vec(&payload)
-        .map(|bytes| hex::encode(Sha256::digest(bytes)))
-        .map_err(|error| format!("serialize Plugin MCP portable runtime Bundle failed: {error}"))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginOAuthConnectionRecord {
     pub id: String,
     pub owner_user_id: String,
@@ -584,8 +371,6 @@ pub struct TaskPluginConfig {
 pub struct RunPluginComponentSnapshot {
     pub component_key: String,
     pub kind: PluginComponentKind,
-    #[serde(default)]
-    pub execution_host: PluginExecutionHost,
     pub content_sha256: String,
     #[serde(default)]
     pub runtime: BTreeMap<String, Value>,

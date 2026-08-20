@@ -56,7 +56,7 @@ pub(super) fn policy() -> TaskRunnerCapabilityPolicy {
             ),
             resolved_mcp("external-1", "http", None, false, true),
         ],
-        skills: vec![resolved_skill("internal_skill_remotion", false, true)],
+        skills: vec![resolved_skill("plugin_skill_rendering", false, true)],
         plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
     })
@@ -106,7 +106,7 @@ pub(super) fn task() -> TaskRecord {
             ],
             external_mcp_config_ids: vec!["external-1".to_string()],
             selected_skill_ids: vec![
-                "internal_skill_remotion".to_string(),
+                "plugin_skill_rendering".to_string(),
                 "revoked-skill".to_string(),
             ],
             ..TaskMcpConfig::default()

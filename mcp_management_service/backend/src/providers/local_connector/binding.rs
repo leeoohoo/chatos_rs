@@ -16,7 +16,6 @@ pub(super) struct LocalConnectorBinding<'a> {
     pub(super) default_tool_root: Option<&'a str>,
     pub(super) owned_paths: &'a [String],
     pub(super) enabled_builtin_kinds: Option<String>,
-    pub(super) manifest_id: Option<&'a str>,
     pub(super) inline_http: Option<&'a LocalConnectorInlineHttpRuntime>,
     pub(super) resource_id: Option<&'a str>,
 }
@@ -104,7 +103,6 @@ pub(super) fn resolve_binding<'a>(
         default_tool_root,
         owned_paths,
         enabled_builtin_kinds: Some(enabled_builtin_kinds),
-        manifest_id: None,
         inline_http: None,
         resource_id: None,
     })
@@ -140,14 +138,9 @@ fn resolve_user_mcp_binding<'a>(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let manifest_id = binding
-        .manifest_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if manifest_id.is_some() == binding.inline_http.is_some() {
+    if binding.inline_http.is_none() {
         return Err(ProviderCallError::provider_unavailable(
-            "Local Connector MCP binding must contain exactly one local runtime",
+            "Local Connector MCP binding is missing its HTTP runtime",
         ));
     }
     Ok(LocalConnectorBinding {
@@ -157,7 +150,6 @@ fn resolve_user_mcp_binding<'a>(
         default_tool_root: None,
         owned_paths: &[],
         enabled_builtin_kinds: None,
-        manifest_id,
         inline_http: binding.inline_http.as_ref(),
         resource_id: Some(resource_id.as_str()),
     })

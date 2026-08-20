@@ -30,8 +30,6 @@ mod availability;
 #[path = "api/runtime_capabilities.rs"]
 mod capabilities;
 mod internal_auth;
-mod local_connector;
-mod local_connector_skills;
 #[path = "api/catalog/mcps.rs"]
 mod mcps;
 mod plugin_audit;
@@ -42,7 +40,6 @@ mod plugin_installations;
 mod plugin_marketplaces;
 #[path = "api/oauth/plugin_oauth.rs"]
 mod plugin_oauth;
-mod plugin_portable_bundles;
 mod plugin_publishers;
 mod plugin_releases;
 mod plugin_support;
@@ -70,19 +67,6 @@ use availability::*;
 use capabilities::automatic_user_binding;
 use capabilities::{resolve_agent_capabilities, resolve_agent_capabilities_internal};
 use internal_auth::*;
-use local_connector::{
-    delete_local_connector_mcp_internal, list_local_connector_mcps_internal,
-    sync_local_connector_mcp_internal, truncate_text, update_local_connector_mcp_internal,
-    update_local_connector_mcp_status_batch_internal, update_local_connector_mcp_status_internal,
-};
-#[cfg(test)]
-use local_connector::{
-    ensure_local_connector_manifest_hash_matches, ensure_local_connector_record_scope,
-};
-use local_connector_skills::{
-    list_user_skill_catalog_internal, sync_skill_inventory_internal,
-    update_user_skill_preference_internal,
-};
 use mcps::{
     check_mcp, create_mcp, delete_mcp, get_mcp, get_mcp_descriptor, list_admin_ai_models,
     list_mcps, optimize_mcp_provider_skill, optimize_mcp_provider_skill_stream, update_mcp,
@@ -130,6 +114,10 @@ const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
     "memory-engine",
     "mcp-management-service",
 ];
+
+fn truncate_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -374,22 +362,6 @@ pub fn build_internal_router(state: AppState) -> Router {
             post(resolve_agent_capabilities_internal),
         )
         .route(
-            "/api/internal/local-connector/mcps",
-            get(list_local_connector_mcps_internal).post(sync_local_connector_mcp_internal),
-        )
-        .route(
-            "/api/internal/local-connector/skills/catalog",
-            get(list_user_skill_catalog_internal),
-        )
-        .route(
-            "/api/internal/local-connector/skills/inventory",
-            axum::routing::put(sync_skill_inventory_internal),
-        )
-        .route(
-            "/api/internal/local-connector/skills/{skill_id}/preference",
-            axum::routing::put(update_user_skill_preference_internal),
-        )
-        .route(
             "/api/internal/local-connector/plugins/installations",
             axum::routing::put(sync_plugin_installation_internal),
         )
@@ -408,18 +380,6 @@ pub fn build_internal_router(state: AppState) -> Router {
         .route(
             "/api/internal/local-connector/plugins/oauth",
             axum::routing::put(sync_plugin_oauth_status_internal),
-        )
-        .route(
-            "/api/internal/local-connector/mcps/{mcp_id}",
-            patch(update_local_connector_mcp_internal).delete(delete_local_connector_mcp_internal),
-        )
-        .route(
-            "/api/internal/local-connector/mcps/{mcp_id}/status",
-            axum::routing::put(update_local_connector_mcp_status_internal),
-        )
-        .route(
-            "/api/internal/local-connector/mcps/status/batch",
-            axum::routing::put(update_local_connector_mcp_status_batch_internal),
         );
 
     apply_common_layers(internal_api.with_state(state))
