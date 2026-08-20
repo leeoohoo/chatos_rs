@@ -417,7 +417,7 @@ fn required_route_without_registered_provider_adapter_is_blocked() {
     let routes = vec![chatos_mcp_management_sdk::ResolvedMcpRoute {
         resource_id: "required-mcp".to_string(),
         server_name: "required".to_string(),
-        provider_kind: chatos_mcp_management_sdk::McpProviderKind::ExternalHttp,
+        provider_kind: chatos_mcp_management_sdk::McpProviderKind::LocalConnector,
         provider_ref: Some("mcp-resource:required-mcp".to_string()),
         tool_namespace: "required".to_string(),
         allow_writes: false,

@@ -92,7 +92,15 @@ pub(crate) fn relative_to_workspace(workspace: &WorkspaceState, path: &Path) -> 
 }
 
 pub(crate) fn workspace_fingerprint(path: &Path) -> String {
+    workspace_fingerprint_with_salt(path, None)
+}
+
+pub(crate) fn workspace_fingerprint_with_salt(path: &Path, salt: Option<&str>) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.display().to_string().as_bytes());
+    if let Some(salt) = salt {
+        hasher.update(b"\0");
+        hasher.update(salt.as_bytes());
+    }
     hex::encode(hasher.finalize())
 }

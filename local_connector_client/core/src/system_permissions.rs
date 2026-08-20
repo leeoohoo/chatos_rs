@@ -104,32 +104,32 @@ fn request_computer_use_permission_prompt(permission_id: &str) -> Result<()> {
 }
 
 fn workspace_files_permission(state: &LocalState) -> SystemPermissionItem {
-    let unreadable = state
+    let default_root = crate::config::default_filesystem_root();
+    let default_workspace = state
         .workspaces
         .iter()
-        .filter_map(|workspace| {
-            fs::read_dir(workspace.absolute_root.as_path())
-                .err()
-                .map(|err| format!("{}: {err}", workspace.absolute_root.display()))
-        })
-        .collect::<Vec<_>>();
-    let has_workspaces = !state.workspaces.is_empty();
-    let (status, status_label, last_error) = if !has_workspaces {
+        .find(|workspace| workspace.absolute_root == default_root);
+    let (status, status_label, last_error) = if default_workspace.is_none() {
         (
             "needs_attention",
-            "未开放目录",
-            Some("请先在开放目录页面授权至少一个工作目录".to_string()),
+            "等待初始化",
+            Some("本机文件系统路由尚未完成注册，请检查设备连接后重试".to_string()),
         )
-    } else if unreadable.is_empty() {
-        ("ready", "已就绪", None)
     } else {
-        ("needs_attention", "需要处理", Some(unreadable.join("; ")))
+        match fs::read_dir(default_root.as_path()) {
+            Ok(_) => ("ready", "已就绪", None),
+            Err(err) => (
+                "needs_attention",
+                "需要处理",
+                Some(format!("{}: {err}", default_root.display())),
+            ),
+        }
     };
 
     SystemPermissionItem {
         id: PERMISSION_WORKSPACE_FILES.to_string(),
         label: "本地目录读写".to_string(),
-        summary: "用于 MCP 读取、搜索、写入、补丁和删除已开放工作目录内的文件。".to_string(),
+        summary: "用于 MCP 读取、搜索、写入、补丁和删除本机文件；实际访问仍受任务权限和操作系统权限约束。".to_string(),
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: true,
@@ -573,9 +573,9 @@ fn request_label_for_permission(permission_id: &str) -> &'static str {
 
 fn workspace_files_note() -> String {
     match std::env::consts::OS {
-        "macos" => "普通项目目录由“开放目录”控制；若访问桌面、文稿、下载、iCloud、外接盘或跨目录内容，macOS 可能需要为 Local Connector 授予完全磁盘访问权限。".to_string(),
-        "windows" => "Windows 桌面程序通常没有单独的文件系统授权开关；实际访问受开放目录、NTFS ACL，以及 Windows 安全中心的受控文件夹访问影响。".to_string(),
-        _ => "普通项目目录由“开放目录”控制；系统级文件权限由当前用户和系统安全策略决定。".to_string(),
+        "macos" => "Local Connector 默认连接本机文件系统；访问桌面、文稿、下载、iCloud、外接盘或其他受保护位置时，macOS 仍可能要求完全磁盘访问权限。任务自身的文件权限与沙箱策略继续生效。".to_string(),
+        "windows" => "Local Connector 默认连接本机系统盘；实际访问仍受任务文件权限、NTFS ACL，以及 Windows 安全中心的受控文件夹访问影响。".to_string(),
+        _ => "Local Connector 默认连接本机文件系统；实际访问仍受任务文件权限、当前用户权限和系统安全策略约束。".to_string(),
     }
 }
 

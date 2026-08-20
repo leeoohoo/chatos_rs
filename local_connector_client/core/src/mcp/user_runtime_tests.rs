@@ -89,6 +89,136 @@ async fn executes_user_mcp_from_sqlite_manifest() {
     fs::remove_dir_all(root).expect("cleanup user MCP database");
 }
 
+#[tokio::test]
+async fn executes_inline_http_mcp_locally_without_leaking_relay_headers() {
+    let app = Router::new().route(
+        "/mcp",
+        post(
+            |headers: axum::http::HeaderMap, Json(request): Json<Value>| async move {
+                assert_eq!(
+                    headers
+                        .get("x-api-key")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("local-secret")
+                );
+                assert!(headers
+                    .get("x-local-connector-inline-mcp-runtime")
+                    .is_none());
+                assert!(headers.get("x-plugin-management-resource-id").is_none());
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": request.get("id").cloned().unwrap_or(Value::Null),
+                    "result": {"content": [{"type": "text", "text": "local-http-ok"}]}
+                }))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind inline HTTP MCP server");
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let root = std::env::temp_dir().join(format!("chatos-inline-mcp-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open inline MCP database");
+    let runtime = json!({
+        "url": url,
+        "headers": {"x-api-key": "local-secret"},
+        "timeout_ms": 5_000
+    });
+    let request = RelayRequest {
+        _message_type: "mcp_request".to_string(),
+        request_id: "request-inline-1".to_string(),
+        owner_user_id: Some("owner-1".to_string()),
+        device_id: Some("device-1".to_string()),
+        workspace_id: String::new(),
+        method: None,
+        path: None,
+        headers: BTreeMap::from([
+            (
+                "x-local-connector-inline-mcp-runtime".to_string(),
+                urlencoding::encode(runtime.to_string().as_str()).into_owned(),
+            ),
+            (
+                "x-plugin-management-resource-id".to_string(),
+                "http-mcp-1".to_string(),
+            ),
+        ]),
+        body: json!({
+            "jsonrpc":"2.0",
+            "id":"rpc-inline-1",
+            "method":"tools/call",
+            "params":{"name":"demo_tool","arguments":{}}
+        }),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
+    };
+    let response = handle_user_mcp_body(&request, &database)
+        .await
+        .expect("execute inline HTTP MCP locally");
+    assert_eq!(
+        response
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str),
+        Some("local-http-ok")
+    );
+
+    server.abort();
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup inline MCP database");
+}
+
+#[tokio::test]
+async fn rejects_unsafe_inline_http_runtime() {
+    let root = std::env::temp_dir().join(format!("chatos-inline-mcp-{}", Uuid::new_v4()));
+    let database = LocalDatabase::open(root.join("runtime.sqlite3"))
+        .await
+        .expect("open inline MCP database");
+    let runtime = json!({
+        "url": "http://10.0.0.8:3000/mcp",
+        "headers": {},
+        "timeout_ms": 5_000
+    });
+    let request = RelayRequest {
+        _message_type: "mcp_request".to_string(),
+        request_id: "request-inline-unsafe".to_string(),
+        owner_user_id: Some("owner-1".to_string()),
+        device_id: Some("device-1".to_string()),
+        workspace_id: String::new(),
+        method: None,
+        path: None,
+        headers: BTreeMap::from([
+            (
+                "x-local-connector-inline-mcp-runtime".to_string(),
+                urlencoding::encode(runtime.to_string().as_str()).into_owned(),
+            ),
+            (
+                "x-plugin-management-resource-id".to_string(),
+                "http-mcp-1".to_string(),
+            ),
+        ]),
+        body: json!({"jsonrpc":"2.0","id":"rpc-1","method":"tools/list"}),
+        platform_signature: None,
+        platform_signature_key_id: None,
+        platform_signature_alg: None,
+        platform_timestamp: None,
+        platform_nonce: None,
+    };
+    let error = handle_user_mcp_body(&request, &database)
+        .await
+        .expect_err("non-loopback HTTP must be rejected");
+    assert!(error.to_string().contains("HTTPS"));
+
+    database.close().await;
+    fs::remove_dir_all(root).expect("cleanup inline MCP database");
+}
+
 fn manifest(url: String) -> LocalMcpManifestRecord {
     LocalMcpManifestRecord {
         manifest_id: "manifest-1".to_string(),

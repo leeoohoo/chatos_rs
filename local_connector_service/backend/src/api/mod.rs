@@ -294,9 +294,7 @@ async fn mcp_relay(
     let workspace_id = normalize_optional_text(query.workspace_id);
     if let Some(workspace_id) = workspace_id.as_deref() {
         validate_device_workspace(&state, &user, device_id.as_str(), workspace_id).await?;
-    } else if has_nonempty_header(&headers, "x-local-connector-mcp-manifest-id")
-        || has_nonempty_header(&headers, "x-local-connector-inline-mcp-runtime")
-    {
+    } else if has_user_mcp_runtime_header(&headers) {
         let device = load_owned_device(&state, &user, device_id.as_str(), true).await?;
         ensure_device_active_lease(&state, user.effective_owner_user_id(), device.id.as_str())
             .await?;
@@ -839,6 +837,11 @@ fn has_nonempty_header(headers: &HeaderMap, name: &str) -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
+fn has_user_mcp_runtime_header(headers: &HeaderMap) -> bool {
+    has_nonempty_header(headers, "x-local-connector-mcp-manifest-id")
+        || has_nonempty_header(headers, "x-local-connector-inline-mcp-runtime")
+}
+
 fn relay_body(body: &[u8]) -> Value {
     if body.is_empty() {
         return Value::Null;
@@ -919,10 +922,22 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout,
-        STANDARD_MCP_RELAY_TIMEOUT,
+        has_user_mcp_runtime_header, is_local_sandbox_mcp_path, is_plugin_hook_dispatch,
+        mcp_relay_timeout, STANDARD_MCP_RELAY_TIMEOUT,
     };
+    use axum::http::{HeaderMap, HeaderValue};
     use serde_json::json;
+
+    #[test]
+    fn user_mcp_runtime_headers_allow_device_scoped_relay_without_workspace() {
+        let mut headers = HeaderMap::new();
+        assert!(!has_user_mcp_runtime_header(&headers));
+        headers.insert(
+            "x-local-connector-inline-mcp-runtime",
+            HeaderValue::from_static("%7B%7D"),
+        );
+        assert!(has_user_mcp_runtime_header(&headers));
+    }
 
     #[test]
     fn only_hook_dispatch_uses_the_extended_interactive_relay_window() {

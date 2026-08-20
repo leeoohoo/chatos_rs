@@ -82,6 +82,7 @@ pub(crate) async fn local_add_workspace(
             device_id.as_str(),
             workspace_path,
             false,
+            None,
         )
         .await?;
         state.save(runtime.state_path.as_path())?;

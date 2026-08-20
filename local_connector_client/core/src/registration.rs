@@ -11,9 +11,14 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
 
-use crate::config::{api_url, optional_env, ClientConfig};
+use crate::config::{
+    api_url, default_filesystem_root, optional_env, ClientConfig,
+    DEFAULT_FILESYSTEM_WORKSPACE_ALIAS,
+};
 use crate::device_keys::ensure_device_keypair;
-use crate::workspace::paths::{canonicalize_existing_dir, workspace_fingerprint};
+use crate::workspace::paths::{
+    canonicalize_existing_dir, workspace_fingerprint, workspace_fingerprint_with_salt,
+};
 use crate::{AuthState, LocalState, WorkspaceState};
 
 #[derive(Debug, Deserialize)]
@@ -81,9 +86,12 @@ pub(crate) async fn ensure_workspace_registered(
     device_id: &str,
     workspace_path: PathBuf,
     force_register: bool,
+    fingerprint_override: Option<&str>,
 ) -> Result<String> {
     let absolute_root = canonicalize_existing_dir(workspace_path.as_path())?;
-    let fingerprint = workspace_fingerprint(absolute_root.as_path());
+    let fingerprint = fingerprint_override
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| workspace_fingerprint(absolute_root.as_path()));
     let existing_index = state.workspace_index_by_fingerprint(fingerprint.as_str());
     if let Some(mut workspace) =
         find_registered_workspace(client, config, fingerprint.as_str()).await?
@@ -147,6 +155,41 @@ pub(crate) async fn ensure_workspace_registered(
         state.workspaces.push(workspace_state);
     }
     Ok(workspace.id)
+}
+
+pub(crate) async fn ensure_default_filesystem_workspace_registered(
+    client: &reqwest::Client,
+    config: &ClientConfig,
+    state: &mut LocalState,
+    device_id: &str,
+) -> Result<String> {
+    let absolute_root = canonicalize_existing_dir(default_filesystem_root().as_path())?;
+    if let Some(workspace) = state
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.absolute_root == absolute_root)
+    {
+        return Ok(workspace.id.clone());
+    }
+    let identity_salt = state
+        .device_public_key
+        .as_deref()
+        .unwrap_or(device_id);
+    let fingerprint = workspace_fingerprint_with_salt(absolute_root.as_path(), Some(identity_salt));
+    let workspace_config = ClientConfig {
+        workspace_alias: Some(DEFAULT_FILESYSTEM_WORKSPACE_ALIAS.to_string()),
+        ..config.clone()
+    };
+    ensure_workspace_registered(
+        client,
+        &workspace_config,
+        state,
+        device_id,
+        absolute_root,
+        false,
+        Some(fingerprint.as_str()),
+    )
+    .await
 }
 
 async fn registered_device(
@@ -287,9 +330,12 @@ pub(crate) async fn bootstrap_env_config(
             &device_id,
             workspace_path,
             false,
+            None,
         )
         .await?;
     }
+    ensure_default_filesystem_workspace_registered(client, config, &mut state_guard, &device_id)
+        .await?;
     state_guard.save(config.state_path.as_path())?;
     Ok(())
 }

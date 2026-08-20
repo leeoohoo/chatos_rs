@@ -31,19 +31,8 @@ export interface ConnectorStatus {
   device_id?: string | null;
   device_name?: string | null;
   user?: AuthUser | null;
+  default_workspace_id?: string | null;
   workspaces: WorkspaceRecord[];
-}
-
-export interface FsEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
-}
-
-export interface FsListResponse {
-  path: string;
-  parent?: string | null;
-  entries: FsEntry[];
 }
 
 export interface TerminalExecResponse {

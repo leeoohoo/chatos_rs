@@ -10,7 +10,6 @@ import type {
   CommandExecutionApprovalDecision,
   CommandHistoryResponse,
   ConnectorStatus,
-  FsListResponse,
   LocalMcpConfig,
   LocalMcpConfigDraft,
   LocalModelConfigListResponse,
@@ -76,30 +75,6 @@ export const api = {
     request<ConnectorStatus>('/api/local/auth/logout', {
       method: 'POST',
     }),
-  fsList: (path?: string | null) => {
-    const query = path ? `?path=${encodeURIComponent(path)}` : '';
-    return request<FsListResponse>(`/api/local/fs/list${query}`);
-  },
-  addWorkspace: (payload: { path: string; alias?: string }) =>
-    request<ConnectorStatus>('/api/local/workspaces', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  removeWorkspace: (workspaceId: string) =>
-    request<ConnectorStatus>(`/api/local/workspaces/${encodeURIComponent(workspaceId)}`, {
-      method: 'DELETE',
-    }),
-  setWorkspaceProjectConfigTrust: (
-    workspaceId: string,
-    payload: { trusted: boolean; risk_acknowledged?: boolean },
-  ) =>
-    request<ConnectorStatus>(
-      `/api/local/workspaces/${encodeURIComponent(workspaceId)}/project-config-trust`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
-    ),
   setSandboxEnabled: (payload: { enabled: boolean }) =>
     request<ConnectorStatus>('/api/local/sandbox/toggle', {
       method: 'POST',

@@ -74,48 +74,6 @@ fn command_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBindi
     }
 }
 
-fn agent_binding(host: PluginExecutionHost) -> PluginToolComponentRuntimeBinding {
-    PluginToolComponentRuntimeBinding {
-        provider_ref: format!("plugin-tool-binding:{}", "e".repeat(64)),
-        resource_id: "plugin_component_reviewer".to_string(),
-        plugin_id: "plugin-review".to_string(),
-        release_id: "release-review-1".to_string(),
-        version: "1.0.0".to_string(),
-        artifact_sha256: "a".repeat(64),
-        normalized_manifest_sha256: "b".repeat(64),
-        component: PluginComponentDescriptor {
-            component_key: "reviewer".to_string(),
-            kind: PluginComponentKind::Agent,
-            display_name: "Reviewer".to_string(),
-            execution_host: host,
-            runtime_kind: "agent_profile".to_string(),
-            entrypoint: Some(PluginPathRef::new("./agents/reviewer.md")),
-            required: false,
-            permissions: Vec::new(),
-            metadata: BTreeMap::from([
-                (
-                    "description".to_string(),
-                    json!("Review the current change"),
-                ),
-                ("base_agent".to_string(), json!(RUN_AGENT_KEY)),
-                (
-                    "allowed_tools".to_string(),
-                    json!(["browser_tools_browser_snapshot"]),
-                ),
-                ("max_iterations".to_string(), json!(12)),
-            ]),
-        },
-        component_content_sha256: "c".repeat(64),
-        installation_device_id: (host == PluginExecutionHost::Local)
-            .then(|| "device-1".to_string()),
-        permission_snapshot: vec!["workspace.read".to_string()],
-        auth_connection_ids: Vec::new(),
-        required: true,
-        allow_writes: false,
-        command_arguments: None,
-    }
-}
-
 fn prompt_skill_binding() -> PluginToolComponentRuntimeBinding {
     PluginToolComponentRuntimeBinding {
         provider_ref: format!("plugin-tool-binding:{}", "f".repeat(64)),

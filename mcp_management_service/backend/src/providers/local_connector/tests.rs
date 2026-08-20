@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use axum::extract::{Query, State};
@@ -15,7 +15,9 @@ use chatos_mcp_management_sdk::{
 use chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER;
 use serde_json::{json, Value};
 
-use crate::runtime::RuntimeSessionSnapshot;
+use crate::runtime::{
+    LocalConnectorInlineHttpRuntime, LocalConnectorMcpProviderBinding, RuntimeSessionSnapshot,
+};
 
 use super::binding::validate_relative_root;
 use super::*;
@@ -121,6 +123,91 @@ fn code_read_route() -> ResolvedMcpRoute {
         cancel_supported: true,
         reason: "test".to_string(),
     }
+}
+
+fn user_http_route() -> ResolvedMcpRoute {
+    ResolvedMcpRoute {
+        resource_id: "http-mcp-1".to_string(),
+        server_name: "demo_http".to_string(),
+        provider_kind: McpProviderKind::LocalConnector,
+        provider_ref: Some("mcp-resource:http-mcp-1".to_string()),
+        tool_namespace: "demo_http".to_string(),
+        allow_writes: false,
+        retry_class: McpRetryClass::IdempotentRead,
+        cancel_supported: false,
+        reason: "HTTP MCP executes through Local Connector Client".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn user_http_mcp_is_relayed_to_local_connector_with_inline_runtime() {
+    const SECRET: &str = "local-connector-user-mcp-test-secret";
+    async fn handler(headers: HeaderMap, Json(request): Json<Value>) -> Json<Value> {
+        assert!(headers.get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER).is_none());
+        assert_eq!(
+            headers
+                .get(PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("http-mcp-1")
+        );
+        assert!(headers.get(LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER).is_none());
+        let encoded = headers
+            .get(LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .expect("inline HTTP runtime header");
+        let decoded = urlencoding::decode(encoded).unwrap();
+        let runtime: Value = serde_json::from_str(decoded.as_ref()).unwrap();
+        assert_eq!(runtime["url"], "https://mcp.example.com/rpc");
+        assert_eq!(runtime["headers"]["authorization"], "Bearer local-only");
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"content": [{"type":"text","text":"relayed"}]}
+        }))
+    }
+    let app = Router::new().route("/api/local-connectors/relay/device-1/mcp", post(handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = LocalConnectorProvider::new(
+        reqwest::Client::new(),
+        format!("http://{address}"),
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let route = user_http_route();
+    let mut runtime = snapshot();
+    runtime.local_connector_mcp_bindings.insert(
+        route.resource_id.clone(),
+        LocalConnectorMcpProviderBinding {
+            provider_ref: route.provider_ref.clone().unwrap(),
+            device_id: "device-1".to_string(),
+            workspace_id: None,
+            manifest_id: None,
+            inline_http: Some(LocalConnectorInlineHttpRuntime {
+                url: "https://mcp.example.com/rpc".to_string(),
+                headers: BTreeMap::from([(
+                    "authorization".to_string(),
+                    "Bearer local-only".to_string(),
+                )]),
+                timeout_ms: 30_000,
+            }),
+            allow_writes: false,
+            allowed_tool_names: HashSet::from(["search".to_string()]),
+            blocked_tool_names: HashSet::new(),
+        },
+    );
+    let outcome = provider
+        .call_tool(&runtime, &route, "search", json!({}), "invocation-1")
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome.result.pointer("/content/0/text").and_then(Value::as_str),
+        Some("relayed")
+    );
+    server.abort();
 }
 
 async fn start_local_connector(

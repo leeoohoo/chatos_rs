@@ -19,7 +19,8 @@ use crate::plugins::{
     PluginSkillLoader,
 };
 use crate::registration::{
-    ensure_device_registered, ensure_workspace_registered, is_cloud_authentication_expired,
+    ensure_default_filesystem_workspace_registered, ensure_device_registered,
+    ensure_workspace_registered, is_cloud_authentication_expired,
 };
 use crate::remote_connection::RemoteSftpManager;
 use crate::sandbox::managed_requirements::{
@@ -183,6 +184,7 @@ impl LocalRuntime {
                 device_id.as_str(),
                 workspace.absolute_root.clone(),
                 device_changed,
+                Some(workspace.fingerprint.as_str()),
             )
             .await
             {
@@ -195,6 +197,13 @@ impl LocalRuntime {
                 );
             }
         }
+        ensure_default_filesystem_workspace_registered(
+            &self.http_client,
+            &config,
+            &mut state,
+            device_id.as_str(),
+        )
+        .await?;
         state.save(self.state_path.as_path())?;
         Ok(())
     }

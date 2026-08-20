@@ -12,6 +12,7 @@ use crate::LocalState;
 
 pub(crate) const DEFAULT_CLOUD_BASE_URL: &str = "https://local-connector.jgoool.com";
 pub(crate) const DEFAULT_LOCAL_API_PORT: u16 = 39232;
+pub(crate) const DEFAULT_FILESYSTEM_WORKSPACE_ALIAS: &str = "本机文件系统";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClientConfig {
@@ -168,6 +169,21 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
         .ok()
         .map(PathBuf::from)
         .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn default_filesystem_root() -> PathBuf {
+    PathBuf::from("/")
+}
+
+#[cfg(windows)]
+pub(crate) fn default_filesystem_root() -> PathBuf {
+    let drive = std::env::var("SystemDrive")
+        .ok()
+        .map(|value| value.trim().trim_end_matches(['\\', '/']).to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "C:".to_string());
+    PathBuf::from(format!("{drive}\\"))
 }
 
 pub(crate) fn default_device_name() -> String {

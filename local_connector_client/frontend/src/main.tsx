@@ -30,7 +30,6 @@ import { ApprovalPanel } from './components/ApprovalPanel';
 import {
   ConnectionCard,
   LocalBoundaryPanel,
-  WorkspacePanel,
 } from './components/ConnectionPanels';
 import { GlobalApprovalTray } from './components/GlobalApprovalTray';
 import { ModelConfigPanel } from './components/ModelConfigPanel';
@@ -51,7 +50,7 @@ import './styles-skills.css';
 import './styles-plugins.css';
 import './styles-responsive.css';
 
-type AppTab = 'overview' | 'workspaces' | 'mcps' | 'plugins' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
+type AppTab = 'overview' | 'mcps' | 'plugins' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
 type LocalIcon = typeof Server;
 type ThemeMode = 'light' | 'dark';
 
@@ -68,13 +67,6 @@ const TABS: Array<{
     eyebrow: 'CONNECTION',
     description: '查看本机设备、云端连接与安全边界。',
     icon: Server,
-  },
-  {
-    id: 'workspaces',
-    label: '开放目录',
-    eyebrow: 'WORKSPACES',
-    description: '管理 Chat OS 可以访问的本地工作目录。',
-    icon: FolderOpen,
   },
   {
     id: 'mcps',
@@ -322,7 +314,7 @@ function SettingsApp() {
             <div className="authFeatures">
               <div>
                 <FolderOpen size={17} />
-                <span><strong>目录按需开放</strong><small>未授权路径默认不可见</small></span>
+                <span><strong>本机文件系统</strong><small>默认可用，仍受任务权限与系统权限约束</small></span>
               </div>
               <div>
                 <LockKeyhole size={17} />
@@ -364,10 +356,9 @@ function SettingsApp() {
               {activeTab === 'overview' ? (
                 <div className="tabGrid">
                   <ConnectionCard status={status} onStatus={setStatus} />
-                  <LocalBoundaryPanel status={status} />
+                  <LocalBoundaryPanel />
                 </div>
               ) : null}
-              {activeTab === 'workspaces' ? <WorkspacePanel status={status} onStatus={setStatus} /> : null}
               {activeTab === 'mcps' ? <McpConfigPanel /> : null}
               {activeTab === 'plugins' ? (
                 <PluginMarketplacePanel onOpenPermissions={() => setActiveTab('settings')} />
@@ -429,7 +420,7 @@ function initialTheme(): ThemeMode {
 function initialTab(): AppTab {
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get('tab') || readAndClearNextTab();
-  return isAppTab(requestedTab) ? requestedTab : 'workspaces';
+  return isAppTab(requestedTab) ? requestedTab : 'overview';
 }
 
 function readAndClearNextTab(): string | null {
