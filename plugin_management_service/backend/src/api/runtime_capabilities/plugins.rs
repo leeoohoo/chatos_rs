@@ -267,8 +267,7 @@ fn resolve_plugin_records(
     {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
-            "cloud Plugin execution is disabled; install a Local or Portable release"
-                .to_string(),
+            "cloud Plugin execution is disabled; install a Local or Portable release".to_string(),
         );
     }
     if preference.is_none() && portable_uses_local {
