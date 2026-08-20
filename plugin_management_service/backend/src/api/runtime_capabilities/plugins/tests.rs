@@ -32,7 +32,6 @@ fn exact_ready_installation_resolves_selected_components() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
         true,
     );
 
@@ -55,7 +54,6 @@ fn missing_device_fails_closed() {
         snapshots,
         Vec::new(),
         None,
-        &std::collections::HashSet::new(),
         true,
     );
 
@@ -80,7 +78,6 @@ fn artifact_hash_mismatch_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
         true,
     );
 
@@ -105,7 +102,6 @@ fn missing_component_status_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
         true,
     );
 
@@ -128,7 +124,6 @@ fn missing_immutable_component_snapshot_fails_closed() {
         Vec::new(),
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
         true,
     );
 
@@ -140,17 +135,17 @@ fn missing_immutable_component_snapshot_fails_closed() {
 }
 
 #[test]
-fn portable_host_uses_runtime_project_provider_before_legacy_agent_name() {
+fn portable_host_always_uses_local_connector() {
     assert!(portable_uses_local(
         Some("local_connector"),
         "chatos_conversation_agent"
     ));
-    assert!(!portable_uses_local(Some("cloud_sandbox"), RUN_AGENT_KEY));
-    assert!(!portable_uses_local(None, RUN_AGENT_KEY));
+    assert!(portable_uses_local(Some("cloud_sandbox"), RUN_AGENT_KEY));
+    assert!(portable_uses_local(None, RUN_AGENT_KEY));
 }
 
 #[test]
-fn cloud_mcp_component_uses_immutable_runtime_bundle_without_local_installation() {
+fn cloud_mcp_component_is_unavailable_without_local_execution() {
     let mut records = plugin_records();
     records.release.components[0].execution_host = PluginExecutionHost::Cloud;
     let snapshots = component_snapshots(&records);
@@ -163,23 +158,22 @@ fn cloud_mcp_component_uses_immutable_runtime_bundle_without_local_installation(
         snapshots,
         Vec::new(),
         None,
-        &std::collections::HashSet::from(["main".to_string()]),
-        false,
+        true,
     );
 
-    assert!(resolved.available);
+    assert!(!resolved.available);
     assert_eq!(
         resolved.components[0].status,
-        PluginAvailabilityStatus::Ready
+        PluginAvailabilityStatus::Unavailable
     );
-    assert_eq!(
-        resolved.components[0].component.execution_host,
-        PluginExecutionHost::Cloud
-    );
+    assert!(resolved
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("cloud Plugin execution is disabled")));
 }
 
 #[test]
-fn cloud_plugin_is_enabled_by_agent_binding_without_local_user_preference() {
+fn cloud_plugin_cannot_be_enabled_by_agent_binding() {
     let mut records = plugin_records();
     records.release.components[0].execution_host = PluginExecutionHost::Cloud;
     let snapshots = component_snapshots(&records);
@@ -192,11 +186,10 @@ fn cloud_plugin_is_enabled_by_agent_binding_without_local_user_preference() {
         snapshots,
         Vec::new(),
         None,
-        &std::collections::HashSet::from(["main".to_string()]),
-        false,
+        true,
     );
 
-    assert!(resolved.available);
+    assert!(!resolved.available);
     assert!(resolved.preference.is_none());
 }
 
@@ -213,7 +206,6 @@ fn local_plugin_still_requires_an_explicit_user_preference() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
         true,
     );
 

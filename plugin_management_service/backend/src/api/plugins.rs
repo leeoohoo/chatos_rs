@@ -327,14 +327,11 @@ fn plugin_execution_hosts_runtime_targets(
     let mut targets = BTreeSet::new();
     for host in hosts {
         match host {
-            PluginExecutionHost::Cloud => {
-                targets.insert(PLUGIN_RUNTIME_TARGET_CLOUD.to_string());
-            }
+            PluginExecutionHost::Cloud => {}
             PluginExecutionHost::Local => {
                 targets.insert(PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string());
             }
             PluginExecutionHost::Portable => {
-                targets.insert(PLUGIN_RUNTIME_TARGET_CLOUD.to_string());
                 targets.insert(PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string());
             }
         }
@@ -475,21 +472,18 @@ mod tests {
     }
 
     #[test]
-    fn release_runtime_targets_expand_portable_to_cloud_and_client() {
+    fn release_runtime_targets_expose_only_local_connector_execution() {
         assert_eq!(
             plugin_execution_hosts_runtime_targets([
                 PluginExecutionHost::Portable,
                 PluginExecutionHost::Local,
                 PluginExecutionHost::Cloud,
             ]),
-            vec![
-                PLUGIN_RUNTIME_TARGET_CLOUD.to_string(),
-                PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string(),
-            ],
+            vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()],
         );
         assert_eq!(
             plugin_execution_hosts_runtime_targets([PluginExecutionHost::Cloud]),
-            vec![PLUGIN_RUNTIME_TARGET_CLOUD.to_string()],
+            Vec::<String>::new(),
         );
         assert_eq!(
             plugin_execution_hosts_runtime_targets([PluginExecutionHost::Local]),
