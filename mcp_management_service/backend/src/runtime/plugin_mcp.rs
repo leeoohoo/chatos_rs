@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_plugin_management_sdk::{
-    PluginCloudComponentBundle, PluginComponentDescriptor, PluginExecutionHost, PluginMcpServer,
+    PluginComponentDescriptor, PluginExecutionHost, PluginMcpServer,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -94,24 +94,6 @@ pub struct PluginLocalToolComponentBinding {
 }
 
 impl PluginLocalToolComponentBinding {
-    pub fn publishes_tool(&self, tool_name: &str) -> bool {
-        let tool_name = tool_name.trim();
-        !tool_name.is_empty()
-            && self
-                .tools
-                .iter()
-                .any(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PluginCloudToolComponentBinding {
-    pub runtime: PluginToolComponentRuntimeBinding,
-    pub bundle: PluginCloudComponentBundle,
-    pub tools: Vec<Value>,
-}
-
-impl PluginCloudToolComponentBinding {
     pub fn publishes_tool(&self, tool_name: &str) -> bool {
         let tool_name = tool_name.trim();
         !tool_name.is_empty()

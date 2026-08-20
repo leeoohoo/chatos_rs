@@ -20,8 +20,8 @@ pub use invocation_store::{
     RuntimeInvocationStore, RuntimeInvocationStoreStats,
 };
 pub use plugin_mcp::{
-    PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
-    PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+    PluginLocalProviderBinding, PluginLocalToolComponentBinding, PluginMcpRuntimeBinding,
+    PluginToolComponentRuntimeBinding,
 };
 pub use quota::{
     RuntimeInvocationQuota, RuntimeInvocationQuotaLimits, RuntimeInvocationQuotaReserveError,

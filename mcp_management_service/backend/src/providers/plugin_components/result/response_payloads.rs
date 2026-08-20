@@ -26,33 +26,6 @@ pub(in crate::providers::plugin_components) fn plugin_command_result(
     ))
 }
 
-pub(in crate::providers::plugin_components) fn plugin_command_result_from_bundle(
-    immutable: &PluginToolComponentRuntimeBinding,
-    bundle: &chatos_plugin_management_sdk::PluginCloudComponentBundle,
-    arguments: Option<&str>,
-) -> Result<Value, ProviderCallError> {
-    Ok(plugin_instruction_result(
-        immutable,
-        "Plugin Command",
-        bundle.primary_text.as_str(),
-        arguments,
-        None,
-    ))
-}
-
-pub(in crate::providers::plugin_components) fn plugin_skill_result_from_bundle(
-    immutable: &PluginToolComponentRuntimeBinding,
-    bundle: &chatos_plugin_management_sdk::PluginCloudComponentBundle,
-) -> Result<Value, ProviderCallError> {
-    Ok(plugin_instruction_result(
-        immutable,
-        "Plugin Skill",
-        bundle.primary_text.as_str(),
-        None,
-        None,
-    ))
-}
-
 pub(in crate::providers::plugin_components) fn plugin_skill_result_from_local_snapshot(
     immutable: &PluginToolComponentRuntimeBinding,
     skill: &Value,
@@ -78,19 +51,6 @@ pub(in crate::providers::plugin_components) fn plugin_agent_result(
         prompt,
         None,
         Some(agent),
-    ))
-}
-
-pub(in crate::providers::plugin_components) fn plugin_agent_result_from_bundle(
-    immutable: &PluginToolComponentRuntimeBinding,
-    bundle: &chatos_plugin_management_sdk::PluginCloudComponentBundle,
-) -> Result<Value, ProviderCallError> {
-    Ok(plugin_instruction_result(
-        immutable,
-        "Plugin Agent Profile",
-        bundle.primary_text.as_str(),
-        None,
-        None,
     ))
 }
 

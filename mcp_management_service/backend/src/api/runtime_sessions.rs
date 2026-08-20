@@ -359,7 +359,6 @@ pub(super) async fn resolve_runtime_session(
             plugin_local_bindings,
             plugin_tool_component_bindings: materialized.plugin_tool_component_bindings,
             plugin_local_tool_component_bindings,
-            plugin_cloud_tool_component_bindings,
             local_connector_mcp_bindings,
             expires_at: grant.expires_at.clone(),
             expires_at_unix: grant.expires_at_unix,

@@ -20,8 +20,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use crate::runtime::{
-    PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
-    PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+    PluginLocalProviderBinding, PluginLocalToolComponentBinding, PluginMcpRuntimeBinding,
+    PluginToolComponentRuntimeBinding,
 };
 
 #[path = "session_store/cache.rs"]
@@ -110,7 +110,6 @@ pub struct RuntimeSessionSnapshot {
     pub plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
     pub plugin_tool_component_bindings: HashMap<String, PluginToolComponentRuntimeBinding>,
     pub plugin_local_tool_component_bindings: HashMap<String, PluginLocalToolComponentBinding>,
-    pub plugin_cloud_tool_component_bindings: HashMap<String, PluginCloudToolComponentBinding>,
     pub local_connector_mcp_bindings: HashMap<String, LocalConnectorMcpProviderBinding>,
     pub expires_at: String,
     pub expires_at_unix: i64,
@@ -242,7 +241,6 @@ struct PersistedRuntimeSessionSnapshot {
     plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
     plugin_tool_component_bindings: HashMap<String, PluginToolComponentRuntimeBinding>,
     plugin_local_tool_component_bindings: HashMap<String, PluginLocalToolComponentBinding>,
-    plugin_cloud_tool_component_bindings: HashMap<String, PluginCloudToolComponentBinding>,
     #[serde(default)]
     local_connector_mcp_bindings: HashMap<String, LocalConnectorMcpProviderBinding>,
     expires_at: String,
@@ -705,9 +703,6 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             plugin_local_tool_component_bindings: snapshot
                 .plugin_local_tool_component_bindings
                 .clone(),
-            plugin_cloud_tool_component_bindings: snapshot
-                .plugin_cloud_tool_component_bindings
-                .clone(),
             local_connector_mcp_bindings: snapshot.local_connector_mcp_bindings.clone(),
             expires_at: snapshot.expires_at.clone(),
             expires_at_unix: snapshot.expires_at_unix,
@@ -752,7 +747,6 @@ impl PersistedRuntimeSessionSnapshot {
             plugin_local_bindings: self.plugin_local_bindings,
             plugin_tool_component_bindings: self.plugin_tool_component_bindings,
             plugin_local_tool_component_bindings: self.plugin_local_tool_component_bindings,
-            plugin_cloud_tool_component_bindings: self.plugin_cloud_tool_component_bindings,
             local_connector_mcp_bindings: self.local_connector_mcp_bindings,
             expires_at: self.expires_at,
             expires_at_unix: self.expires_at_unix,
