@@ -114,9 +114,9 @@ fn resolve_user_mcp_binding<'a>(
     snapshot: &'a RuntimeSessionSnapshot,
     route: &ResolvedMcpRoute,
 ) -> Result<LocalConnectorBinding<'a>, ProviderCallError> {
-    let binding = snapshot
+    let (resource_id, binding) = snapshot
         .local_connector_mcp_bindings
-        .get(route.resource_id.as_str())
+        .get_key_value(route.resource_id.as_str())
         .ok_or_else(|| {
             ProviderCallError::provider_unavailable(
                 "Local Connector MCP route has no runtime binding",
@@ -159,7 +159,7 @@ fn resolve_user_mcp_binding<'a>(
         enabled_builtin_kinds: None,
         manifest_id,
         inline_http: binding.inline_http.as_ref(),
-        resource_id: Some(route.resource_id.as_str()),
+        resource_id: Some(resource_id.as_str()),
     })
 }
 

@@ -35,10 +35,6 @@ use self::cache::{
 };
 const SNAPSHOT_SCHEMA_VERSION: i32 = 10;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
-const MAX_PERSISTED_HEADERS: usize = 64;
-const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
-const MAX_PERSISTED_TOOL_POLICY_ITEMS: usize = 512;
-const MAX_PERSISTED_TOOL_NAME_BYTES: usize = 256;
 const MAX_PERSISTED_SNAPSHOT_BYTES: usize = 12 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalConnectorInlineHttpRuntime {
@@ -264,7 +260,6 @@ impl RuntimeSessionStore {
     pub async fn connect(
         database_url: &str,
         encryption_secret: &str,
-        _external_http_request_timeout: Duration,
         cache_limits: RuntimeSessionCacheLimits,
     ) -> Result<Self, String> {
         let client = Client::with_uri_str(database_url)

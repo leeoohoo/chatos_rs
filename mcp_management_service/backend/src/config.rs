@@ -297,7 +297,6 @@ pub struct AppConfig {
     pub local_connector_internal_api_secret: Option<String>,
     pub embedded_work_dir: PathBuf,
     pub downstream_request_timeout: Duration,
-    pub external_http_request_timeout: Duration,
     pub provider_response_limit_bytes: usize,
     pub public_base_url: String,
     pub runtime_grant_secret: String,
@@ -444,10 +443,6 @@ impl AppConfig {
             required_path("PLUGIN_MANAGEMENT_MTLS_CA_CERT_PATH")?.as_path(),
             required_path("PLUGIN_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
-        let external_http_request_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS")?
-                .clamp(1_000, 2 * 60 * 60 * 1_000),
-        );
         let runtime_session_ttl = Duration::from_secs(
             required_u64("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")?.clamp(5 * 60, 2 * 60 * 60),
         );
@@ -548,7 +543,6 @@ impl AppConfig {
             local_connector_internal_api_secret,
             embedded_work_dir: PathBuf::from(required_text("MCP_MANAGEMENT_EMBEDDED_WORK_DIR")?),
             downstream_request_timeout,
-            external_http_request_timeout,
             provider_response_limit_bytes,
             public_base_url,
             runtime_grant_secret,
@@ -626,7 +620,6 @@ impl AppConfig {
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
             embedded_work_dir: std::env::temp_dir().join("chatos-mcp-management-test"),
             downstream_request_timeout: Duration::from_secs(5),
-            external_http_request_timeout: Duration::from_secs(2 * 60 * 60),
             provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),
             runtime_grant_secret: "a-long-runtime-grant-secret".to_string(),

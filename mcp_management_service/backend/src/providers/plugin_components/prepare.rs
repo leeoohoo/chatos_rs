@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::{McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute};
+use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute};
 use serde_json::Value;
 
 use super::PluginComponentProvider;

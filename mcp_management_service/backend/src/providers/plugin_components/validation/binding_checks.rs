@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_management_sdk::WorkspaceProviderKind;
-use chatos_plugin_management_sdk::PluginComponentKind;
 use serde_json::Value;
 
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
