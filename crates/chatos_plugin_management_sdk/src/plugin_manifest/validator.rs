@@ -308,6 +308,7 @@ pub fn validate_plugin_manifest(
 
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
+    validate_mcp_runtime_permissions(manifest, &mut issues);
 
     let component_count = manifest.skills.len()
         + manifest.mcp_servers.len()
@@ -673,6 +674,30 @@ fn validate_permissions(
                     format!("unknown component key {component}"),
                 );
             }
+        }
+    }
+}
+
+fn validate_mcp_runtime_permissions(
+    manifest: &PluginManifest,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, server) in manifest.mcp_servers.iter().enumerate() {
+        let PluginMcpServer::Stdio { component_key, .. } = server else {
+            continue;
+        };
+        let declares_process_spawn = manifest.permissions.iter().any(|permission| {
+            permission.permission == "process.spawn"
+                && permission.required
+                && (permission.components.is_empty()
+                    || permission.components.iter().any(|key| key == component_key))
+        });
+        if !declares_process_spawn {
+            issue(
+                issues,
+                format!("mcpServers[{index}]").as_str(),
+                "stdio MCP component requires a required process.spawn permission",
+            );
         }
     }
 }

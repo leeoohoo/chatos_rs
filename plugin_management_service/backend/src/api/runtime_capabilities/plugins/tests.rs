@@ -31,7 +31,6 @@ fn exact_ready_installation_resolves_selected_components() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        true,
     );
 
     assert!(resolved.available);
@@ -53,7 +52,6 @@ fn missing_device_fails_closed() {
         snapshots,
         Vec::new(),
         None,
-        true,
     );
 
     assert!(!resolved.available);
@@ -77,7 +75,6 @@ fn artifact_hash_mismatch_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        true,
     );
 
     assert!(!resolved.available);
@@ -101,7 +98,6 @@ fn missing_component_status_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        true,
     );
 
     assert!(!resolved.available);
@@ -123,7 +119,6 @@ fn missing_immutable_component_snapshot_fails_closed() {
         Vec::new(),
         Vec::new(),
         Some("device-1"),
-        true,
     );
 
     assert!(!resolved.available);
@@ -134,17 +129,7 @@ fn missing_immutable_component_snapshot_fails_closed() {
 }
 
 #[test]
-fn portable_host_always_uses_local_connector() {
-    assert!(portable_uses_local(
-        Some("local_connector"),
-        "chatos_conversation_agent"
-    ));
-    assert!(portable_uses_local(Some("remote_sandbox"), RUN_AGENT_KEY));
-    assert!(portable_uses_local(None, RUN_AGENT_KEY));
-}
-
-#[test]
-fn local_plugin_still_requires_an_explicit_user_preference() {
+fn local_plugin_requires_an_explicit_user_preference() {
     let records = plugin_records();
     let snapshots = component_snapshots(&records);
     let resolved = resolve_plugin_records(
@@ -156,7 +141,6 @@ fn local_plugin_still_requires_an_explicit_user_preference() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        true,
     );
 
     assert!(!resolved.available);

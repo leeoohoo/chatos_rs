@@ -57,7 +57,7 @@ pub(super) async fn resolve_plugin_binding(
     binding: AgentBindingRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
-    runtime_provider: Option<&str>,
+    _runtime_provider: Option<&str>,
 ) -> Result<Option<ResolvedPlugin>, ApiError> {
     let Some(catalog) = state
         .store
@@ -127,7 +127,6 @@ pub(super) async fn resolve_plugin_binding(
     };
     auth_connection_ids.sort();
     auth_connection_ids.dedup();
-    let portable_uses_local = portable_uses_local(runtime_provider, binding.agent_key.as_str());
     Ok(Some(resolve_plugin_records(
         catalog,
         release,
@@ -137,7 +136,6 @@ pub(super) async fn resolve_plugin_binding(
         component_snapshots,
         auth_connection_ids,
         device_id,
-        portable_uses_local,
     )))
 }
 
@@ -221,14 +219,12 @@ fn resolve_plugin_records(
     component_snapshots: Vec<PluginComponentSnapshot>,
     auth_connection_ids: Vec<String>,
     device_id: Option<&str>,
-    portable_uses_local: bool,
 ) -> ResolvedPlugin {
     let component_result = resolve_components(
         release.as_ref(),
         installation.as_ref(),
         preference.as_ref(),
         &binding,
-        portable_uses_local,
     );
     let components = component_result.as_ref().cloned().unwrap_or_default();
     let unavailable = |status, reason: String| ResolvedPlugin {
@@ -251,7 +247,7 @@ fn resolve_plugin_records(
             "Plugin catalog entry is disabled".to_string(),
         );
     }
-    if preference.is_none() && portable_uses_local {
+    if preference.is_none() {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
             "Plugin user preference is missing for Local Connector execution".to_string(),
@@ -430,17 +426,11 @@ fn resolve_plugin_records(
     }
 }
 
-fn portable_uses_local(runtime_provider: Option<&str>, agent_key: &str) -> bool {
-    let _ = (runtime_provider, agent_key);
-    true
-}
-
 fn resolve_components(
     release: Option<&PluginReleaseRecord>,
     installation: Option<&PluginInstallationRecord>,
     preference: Option<&UserPluginPreferenceRecord>,
     binding: &AgentBindingRecord,
-    _portable_uses_local: bool,
 ) -> Result<Vec<ResolvedPluginComponent>, String> {
     let Some(release) = release else {
         return Ok(Vec::new());

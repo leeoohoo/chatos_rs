@@ -34,6 +34,9 @@ impl AppState {
         let db = client.database(config.mongodb_database.as_str());
         let store = AppStore::new(db);
         store.initialize().await?;
+        store.remove_retired_direct_local_mcps().await?;
+        store.remove_retired_builtin_skills().await?;
+        store.remove_retired_bundled_plugin_marketplaces().await?;
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
                 .map_err(|err| format!("build user_service client failed: {err}"))?;

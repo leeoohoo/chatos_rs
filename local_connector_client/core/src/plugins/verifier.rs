@@ -49,7 +49,6 @@ pub struct VerifiedPluginPackage {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct NpmPackageJson {
     name: String,
     version: String,
@@ -256,4 +255,32 @@ fn read_limited_file(path: &Path, limit: u64, label: &str) -> Result<String> {
 
 fn unscoped_package_name(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn npm_package_identity_parser_ignores_untrusted_metadata() {
+        let package: NpmPackageJson = serde_json::from_str(
+            r#"{
+                "name":"open-computer-use",
+                "version":"0.3.1",
+                "description":"Computer Use MCP",
+                "license":"MIT",
+                "repository":{"type":"git","url":"https://example.com/repository.git"},
+                "scripts":{"postinstall":"node scripts/postinstall.mjs"},
+                "bin":{"open-computer-use":"bin/open-computer-use"}
+            }"#,
+        )
+        .expect("real-world npm package metadata");
+
+        assert_eq!(package.name, "open-computer-use");
+        assert_eq!(package.version, "0.3.1");
+        assert_eq!(
+            package.bins().get("open-computer-use").map(String::as_str),
+            Some("bin/open-computer-use")
+        );
+    }
 }

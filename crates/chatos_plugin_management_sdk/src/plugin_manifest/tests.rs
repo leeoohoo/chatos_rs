@@ -25,6 +25,10 @@ fn manifest_with_mcp(server: serde_json::Value) -> String {
             "permission": "computer.control",
             "required": true,
             "components": ["computer-use"]
+        }, {
+            "permission": "process.spawn",
+            "required": true,
+            "components": ["computer-use"]
         }]
     })
     .to_string()

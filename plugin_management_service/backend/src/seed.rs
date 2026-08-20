@@ -85,8 +85,6 @@ const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[CHATOS_CONVERSATION_AGENT_KEY];
 const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] =
     &[TASK_RUNNER_PLAN_AGENT_KEY, TASK_RUNNER_RUN_AGENT_KEY];
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    store.remove_retired_direct_local_mcps().await?;
-    store.remove_retired_builtin_skills().await?;
     remove_retired_system_agents(store).await?;
     remove_retired_system_mcps(store).await?;
     seed_system_mcps(store, admin_user_id).await?;

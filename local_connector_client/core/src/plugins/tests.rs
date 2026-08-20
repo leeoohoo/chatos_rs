@@ -460,10 +460,7 @@ fn rejects_artifact_tampering_before_extraction() {
         PluginPackageLimits::default(),
     )
     .expect_err("tampered artifact must fail");
-    assert!(
-        error.to_string().contains("npm integrity"),
-        "{error:#}"
-    );
+    assert!(error.to_string().contains("npm integrity"), "{error:#}");
     assert!(!extraction.exists());
 }
 

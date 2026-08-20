@@ -208,7 +208,7 @@ fn validate_installation_release(
         && !release
             .supported_platforms
             .iter()
-            .any(|platform| platform == &payload.platform)
+            .any(|platform| platform_constraint_matches(platform, payload.platform.as_str()))
     {
         return Err(ApiError::conflict(
             "Plugin installation platform is not supported by release",
@@ -220,6 +220,16 @@ fn validate_installation_release(
         ));
     }
     Ok(())
+}
+
+fn platform_constraint_matches(constraint: &str, installed_platform: &str) -> bool {
+    if constraint == installed_platform {
+        return true;
+    }
+    let Some((platform_family, architecture)) = installed_platform.split_once('-') else {
+        return false;
+    };
+    !architecture.is_empty() && constraint == platform_family
 }
 
 fn validate_component_statuses(
@@ -267,6 +277,17 @@ mod tests {
         assert!(normalize_installation_payload(&mut payload).is_err());
         payload.install_status = PluginInstallStatus::Installed;
         assert!(normalize_installation_payload(&mut payload).is_ok());
+    }
+
+    #[test]
+    fn generic_release_platforms_accept_architecture_specific_client_platforms() {
+        assert!(platform_constraint_matches("macos", "macos-arm64"));
+        assert!(platform_constraint_matches("windows", "windows-x86_64"));
+        assert!(platform_constraint_matches("linux", "linux-aarch64"));
+        assert!(platform_constraint_matches("macos-arm64", "macos-arm64"));
+        assert!(!platform_constraint_matches("macos-x86_64", "macos-arm64"));
+        assert!(!platform_constraint_matches("linux", "macos-arm64"));
+        assert!(!platform_constraint_matches("macos", "macos-"));
     }
 
     fn installation_payload() -> PluginInstallationSyncPayload {
