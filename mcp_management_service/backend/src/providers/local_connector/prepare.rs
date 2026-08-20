@@ -5,12 +5,22 @@ use std::collections::{HashMap, HashSet};
 
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
 use chatos_mcp_management_sdk::{McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute};
+use chatos_mcp_runtime::extract_tools;
 use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedMcp};
+use chatos_service_runtime::http_body::read_response_bytes_limited;
 use reqwest::header::{HeaderName, HeaderValue};
+use serde_json::{json, Value};
+use uuid::Uuid;
 
+use crate::providers::project_service::decode_jsonrpc_response;
 use crate::runtime::{LocalConnectorInlineHttpRuntime, LocalConnectorMcpProviderBinding};
+use crate::trace_context::InternalTraceContextExt;
 
-use super::LocalConnectorProvider;
+use super::{
+    LocalConnectorProvider, ProviderCallError, CALLER_SERVICE,
+    LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER, LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER,
+    MCP_RELAY_SCOPE, PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER, TOKEN_AUDIENCE,
+};
 
 const DEFAULT_INLINE_HTTP_TIMEOUT_MS: u64 = 30_000;
 const MAX_CONFIGURED_HEADERS: usize = 64;
@@ -19,18 +29,23 @@ const MAX_TOOL_POLICY_ITEMS: usize = 512;
 const MAX_TOOL_NAME_BYTES: usize = 256;
 
 impl LocalConnectorProvider {
-    pub(in crate::providers) fn prepare_mcp_routes(
+    pub(in crate::providers) async fn prepare_mcp_routes(
         &self,
         capabilities: &ResolvedAgentCapabilities,
         routes: &mut [ResolvedMcpRoute],
         context: &ProjectExecutionContext,
-    ) -> HashMap<String, LocalConnectorMcpProviderBinding> {
+        owner_user_id: &str,
+    ) -> (
+        HashMap<String, LocalConnectorMcpProviderBinding>,
+        HashMap<String, Vec<Value>>,
+    ) {
         let resources = capabilities
             .mcps
             .iter()
             .map(|resolved| (resolved.resource.id.as_str(), resolved))
             .collect::<HashMap<_, _>>();
         let mut bindings = HashMap::new();
+        let mut tool_snapshots = HashMap::new();
         for route in routes.iter_mut().filter(|route| {
             route.provider_kind == McpProviderKind::LocalConnector
                 && system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_none()
@@ -42,12 +57,123 @@ impl LocalConnectorProvider {
                 .and_then(|resolved| prepare_binding(resolved, route, context));
             match binding {
                 Ok(binding) => {
-                    bindings.insert(route.resource_id.clone(), binding);
+                    match self
+                        .list_mcp_tools(owner_user_id, route.resource_id.as_str(), &binding)
+                        .await
+                    {
+                        Ok(tools) => {
+                            tool_snapshots.insert(route.resource_id.clone(), tools);
+                            bindings.insert(route.resource_id.clone(), binding);
+                        }
+                        Err(error) => make_route_unavailable(route, error.message.as_str()),
+                    }
                 }
                 Err(reason) => make_route_unavailable(route, reason.as_str()),
             }
         }
-        bindings
+        (bindings, tool_snapshots)
+    }
+
+    async fn list_mcp_tools(
+        &self,
+        owner_user_id: &str,
+        resource_id: &str,
+        binding: &LocalConnectorMcpProviderBinding,
+    ) -> Result<Vec<Value>, ProviderCallError> {
+        let secret = self.internal_secret.as_deref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Local Connector Provider internal secret is not configured",
+            )
+        })?;
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            secret,
+            CALLER_SERVICE,
+            TOKEN_AUDIENCE,
+            MCP_RELAY_SCOPE,
+            60,
+            owner_user_id,
+        )
+        .map_err(ProviderCallError::provider_unavailable)?;
+        let mut url = reqwest::Url::parse(
+            format!(
+                "{}/api/local-connectors/relay/{}/mcp",
+                self.base_url,
+                urlencoding::encode(binding.device_id.as_str())
+            )
+            .as_str(),
+        )
+        .map_err(|error| {
+            ProviderCallError::provider_unavailable(format!(
+                "build Local Connector MCP inspection URL failed: {error}"
+            ))
+        })?;
+        if let Some(workspace_id) = binding.workspace_id.as_deref() {
+            url.query_pairs_mut().append_pair("workspace_id", workspace_id);
+        }
+        let mut request = self
+            .http
+            .post(url)
+            .header("x-local-connector-caller", CALLER_SERVICE)
+            .header("x-local-connector-internal-token", token)
+            .header("x-local-connector-owner-user-id", owner_user_id)
+            .header(PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER, resource_id)
+            .with_internal_trace_context();
+        if let Some(manifest_id) = binding.manifest_id.as_deref() {
+            request = request.header(LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER, manifest_id);
+        }
+        if let Some(inline_http) = binding.inline_http.as_ref() {
+            let encoded = serde_json::to_string(inline_http).map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "serialize inline Local Connector MCP runtime failed: {error}"
+                ))
+            })?;
+            request = request.header(
+                LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER,
+                urlencoding::encode(encoded.as_str()).into_owned(),
+            );
+        }
+        let request_id = format!("mcp_prepare_{}", Uuid::new_v4().simple());
+        let response = request
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/list",
+                "params": {}
+            }))
+            .timeout(self.request_timeout)
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "Local Connector MCP tools/list request failed: {error}"
+                ))
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "Local Connector MCP tools/list response could not be read: {error}"
+                ))
+            })?;
+        if !status.is_success() {
+            return Err(ProviderCallError::provider_unavailable(format!(
+                "Local Connector MCP tools/list returned HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let result = decode_jsonrpc_response(
+            bytes.as_slice(),
+            request_id.as_str(),
+            "Local Connector MCP tools/list",
+        )?;
+        let tools = extract_tools(&result).map_err(ProviderCallError::invalid_response)?;
+        if tools.is_empty() {
+            return Err(ProviderCallError::invalid_response(
+                "Local Connector MCP tools/list returned no tools",
+            ));
+        }
+        Ok(tools)
     }
 }
 

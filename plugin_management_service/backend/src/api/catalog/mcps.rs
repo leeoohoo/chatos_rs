@@ -508,7 +508,8 @@ pub(super) async fn check_mcp(
     )?;
     let is_local_connector = matches!(
         record.runtime.kind.as_str(),
-        RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
+        RUNTIME_KIND_HTTP
+            | RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
             | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
             | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY
     );
