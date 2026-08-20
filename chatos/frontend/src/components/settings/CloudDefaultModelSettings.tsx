@@ -15,7 +15,6 @@ import type {
 const SLOT_LABEL_KEYS: Record<DefaultModelSlot, string> = {
   memory: 'cloudAi.memoryModel',
   project: 'cloudAi.projectModel',
-  environment: 'cloudAi.environmentModel',
 };
 
 export function CloudDefaultModelSettings({
@@ -38,7 +37,7 @@ export function CloudDefaultModelSettings({
           {t('cloudAi.defaultModelsDescription')}
         </p>
       </div>
-      <div className="grid gap-4 p-4 md:grid-cols-3">
+      <div className="grid gap-4 p-4 md:grid-cols-2">
         {(Object.keys(SLOT_LABEL_KEYS) as DefaultModelSlot[]).map((slot) => (
           <DefaultModelField
             key={slot}

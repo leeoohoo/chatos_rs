@@ -8,9 +8,8 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use crate::approval::clear_session_approvals;
-use crate::sandbox::process::destroy_native_sandbox_process;
 use crate::sandbox::types::{LocalSandboxLease, LocalSandboxRuntime};
-use crate::{local_now_rfc3339, tracing_stdout, LOCAL_SANDBOX_STATUS_DESTROYED};
+use crate::{local_now_rfc3339, LOCAL_SANDBOX_STATUS_DESTROYED};
 
 const LOCAL_SANDBOX_LEASE_REAPER_INTERVAL: Duration = Duration::from_secs(15);
 
@@ -47,8 +46,6 @@ async fn reap_expired_local_sandboxes(sandbox_runtime: &LocalSandboxRuntime) {
 
     for lease in expired {
         let sandbox_id = lease.sandbox_id.clone();
-        let cleanup_result =
-            destroy_native_sandbox_process(sandbox_runtime, sandbox_id.as_str()).await;
         clear_session_approvals(sandbox_id.as_str()).await;
 
         let mut leases = sandbox_runtime.leases.write().await;
@@ -56,21 +53,9 @@ async fn reap_expired_local_sandboxes(sandbox_runtime: &LocalSandboxRuntime) {
             continue;
         };
         stored.updated_at = local_now_rfc3339();
-        match cleanup_result {
-            Ok(()) => {
-                stored.status = LOCAL_SANDBOX_STATUS_DESTROYED.to_string();
-                stored.destroyed_at = Some(stored.updated_at.clone());
-                stored.last_error = None;
-            }
-            Err(err) => {
-                let message = format!("expired sandbox cleanup failed: {err:#}");
-                let should_log = stored.last_error.as_deref() != Some(message.as_str());
-                stored.last_error = Some(message.clone());
-                if should_log {
-                    tracing_stdout(format!("{message}; sandbox_id={sandbox_id}").as_str());
-                }
-            }
-        }
+        stored.status = LOCAL_SANDBOX_STATUS_DESTROYED.to_string();
+        stored.destroyed_at = Some(stored.updated_at.clone());
+        stored.last_error = None;
     }
 }
 

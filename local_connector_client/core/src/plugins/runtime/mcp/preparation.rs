@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,7 +22,6 @@ use super::super::super::oauth_broker::PluginOAuthBroker;
 use super::super::credentials::{
     PluginCredentialBindings, PluginHttpHeaderTemplates, PluginStdioEnvironmentTemplates,
 };
-use super::super::sandbox::PluginStdioSandboxLauncher;
 use super::{
     PluginMcpSnapshot, PreparedPluginMcpTransport, MAX_MCP_TOOLS, MAX_MCP_TOOL_SNAPSHOT_BYTES,
 };
@@ -64,9 +64,6 @@ pub(super) fn prepare_transport(
     device_id: &str,
     credential_component_key: &str,
     permission_snapshot: &BTreeSet<String>,
-    stdio_execution_enabled: bool,
-    stdio_sandbox_launcher: Option<&PluginStdioSandboxLauncher>,
-    stdio_unavailable_reason: &str,
     credential_vault: Option<PluginCredentialVault>,
     oauth_broker: Option<PluginOAuthBroker>,
 ) -> Result<PreparedPluginMcpTransport> {
@@ -81,9 +78,6 @@ pub(super) fn prepare_transport(
             cwd,
             ..
         } => {
-            if !stdio_execution_enabled {
-                bail!(stdio_unavailable_reason.to_string());
-            }
             if !permission_snapshot.contains("process.spawn") {
                 bail!("Plugin stdio MCP requires process.spawn in the permission snapshot");
             }
@@ -116,29 +110,19 @@ pub(super) fn prepare_transport(
             let server = McpStdioServer::new(server_name, command.to_string_lossy().into_owned())
                 .with_args(args.clone())
                 .with_cwd(cwd.to_string_lossy().into_owned())
+                .with_env(HashMap::from([(
+                    "CHATOS_PLUGIN_ROOT".to_string(),
+                    installation
+                        .installation_path
+                        .to_string_lossy()
+                        .into_owned(),
+                )]))
                 .with_user_id(format!("{owner_user_id}:{device_id}:{adapter_session_id}"));
-            let (server, sandbox_runtime) = match stdio_sandbox_launcher {
-                Some(launcher) => {
-                    let (server, runtime) = launcher.prepare(
-                        installation
-                            .installation_path
-                            .parent()
-                            .unwrap_or(installation.installation_path.as_path()),
-                        installation.installation_path.as_path(),
-                        &server,
-                        environment.variable_names(),
-                        &installation.version.package_file_sha256,
-                    )?;
-                    (server, Some(runtime))
-                }
-                None => (server, None),
-            };
             Ok(PreparedPluginMcpTransport::Stdio {
                 server,
                 environment,
                 credential_bindings,
                 cancellation: CancellationToken::new(),
-                _sandbox_runtime: sandbox_runtime,
             })
         }
         PluginMcpServer::Http {

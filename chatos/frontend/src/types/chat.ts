@@ -119,7 +119,6 @@ export interface MessageMetadata extends UnknownRecord {
     contact_id?: string;
     contact_agent_id?: string;
     execution_group_id?: string;
-    execution_plane?: string;
     project_task_ids?: string[];
     [key: string]: unknown;
   };

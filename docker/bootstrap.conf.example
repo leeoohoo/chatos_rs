@@ -10,7 +10,6 @@ CHATOS_ENV=local
 CHATOS_DOCKER_NETWORK=chatos-cloud
 CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
 CHATOS_IMAGE_TAG=latest
-SANDBOX_MANAGER_DOCKER_IMAGE=ghcr.io/leeoohoo/chatos-rs-sandbox-agent:latest
 DOCKER_SOCKET_PROXY_IMAGE=ghcr.io/tecnativa/docker-socket-proxy:latest
 
 # Infrastructure credentials
@@ -31,7 +30,6 @@ CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET=change_me_config_center_memory
 CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET=change_me_config_center_official_website_signing_secret
 CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_plugin_management_signing_secret
 CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_project_service_signing_secret
-CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET=change_me_config_center_sandbox_manager_signing_secret
 CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET=change_me_config_center_task_runner_signing_secret
 CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_user_service_signing_secret
 
@@ -56,8 +54,6 @@ HARNESS_BASE_URL=http://harness:3000
 
 # Sandbox frontend authenticates its bootstrap proxy before it can read runtime
 # settings from Configuration Center.
-SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID=sandbox-manager-frontend
-SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY=replace-with-configuration-center-secret
 
 # Host bindings and commonly overridden ports
 CHATOS_INFRA_BIND_HOST=127.0.0.1

@@ -21,7 +21,6 @@ export interface RequirementExecutionProcess {
   executionGroupId: string;
   messageId: string;
   contactId?: string | null;
-  executionPlane?: string | null;
   selectedModelId?: string | null;
   includePrerequisiteDependents?: boolean;
   planningFeedback?: string | null;
@@ -292,11 +291,6 @@ export const buildRequirementExecutionProcess = ({
       || readText(response.contactId)
       || readText(normalizedMessage?.metadata?.project_requirement_execution?.contact_id)
       || fallback?.contactId
-      || null,
-    executionPlane: readText(response.execution_plane)
-      || readText(response.executionPlane)
-      || readText(normalizedMessage?.metadata?.project_requirement_execution?.execution_plane)
-      || fallback?.executionPlane
       || null,
     selectedModelId: readText(response.model_config_id)
       || readText(response.modelConfigId)

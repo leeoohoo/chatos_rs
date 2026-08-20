@@ -433,7 +433,6 @@ fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
         owner_user_id: owner_user_id.to_string(),
         include_unavailable: true,
         task_profile: None,
-        project_source_type: None,
         runtime_provider: None,
         schedule_mode: None,
         device_id: None,

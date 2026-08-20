@@ -109,22 +109,6 @@ pub fn requirement_execution_recovery_state(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionPlane {
-    Cloud,
-    LocalConnector,
-}
-
-impl ExecutionPlane {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Cloud => "cloud",
-            Self::LocalConnector => "local_connector",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionPlanIdentity {
     pub execution_group_id: String,

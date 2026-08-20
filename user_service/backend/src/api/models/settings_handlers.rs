@@ -40,8 +40,6 @@ pub(in crate::api) async fn get_model_settings(
             memory_summary_thinking_level: None,
             project_management_agent_model_config_id: None,
             project_management_agent_thinking_level: None,
-            environment_initialization_model_config_id: None,
-            environment_initialization_thinking_level: None,
             updated_at: now_rfc3339(),
         });
 
@@ -69,8 +67,6 @@ pub(in crate::api) async fn put_model_settings(
             memory_summary_thinking_level: None,
             project_management_agent_model_config_id: None,
             project_management_agent_thinking_level: None,
-            environment_initialization_model_config_id: None,
-            environment_initialization_thinking_level: None,
             updated_at: now_rfc3339(),
         });
     let model_request_max_retries = resolve_model_request_max_retries(
@@ -86,10 +82,6 @@ pub(in crate::api) async fn put_model_settings(
         input.project_management_agent_model_config_id,
         current.project_management_agent_model_config_id,
     );
-    let environment_initialization_model_config_id = resolve_optional_update(
-        input.environment_initialization_model_config_id,
-        current.environment_initialization_model_config_id,
-    );
     let memory_summary_thinking_level_input = resolve_thinking_level_update(
         input.memory_summary_thinking_level,
         current.memory_summary_thinking_level,
@@ -99,11 +91,6 @@ pub(in crate::api) async fn put_model_settings(
         input.project_management_agent_thinking_level,
         current.project_management_agent_thinking_level,
         project_management_agent_model_config_id.as_deref(),
-    );
-    let environment_initialization_thinking_level_input = resolve_thinking_level_update(
-        input.environment_initialization_thinking_level,
-        current.environment_initialization_thinking_level,
-        environment_initialization_model_config_id.as_deref(),
     );
 
     let memory_summary_model_config = validate_settings_model_config(
@@ -120,22 +107,11 @@ pub(in crate::api) async fn put_model_settings(
         "project_management_agent_model_config_id",
     )
     .await?;
-    let environment_initialization_model_config = validate_settings_model_config(
-        &state,
-        user_id.as_str(),
-        environment_initialization_model_config_id.as_deref(),
-        "environment_initialization_model_config_id",
-    )
-    .await?;
     let memory_summary_provider = memory_summary_model_config
         .as_ref()
         .map(|model_config| model_config.provider.as_str())
         .unwrap_or("gpt");
     let project_management_agent_provider = project_management_agent_model_config
-        .as_ref()
-        .map(|model_config| model_config.provider.as_str())
-        .unwrap_or("gpt");
-    let environment_initialization_provider = environment_initialization_model_config
         .as_ref()
         .map(|model_config| model_config.provider.as_str())
         .unwrap_or("gpt");
@@ -152,11 +128,6 @@ pub(in crate::api) async fn put_model_settings(
         project_management_agent_thinking_level: normalize_thinking_level_input(
             project_management_agent_provider,
             project_management_agent_thinking_level_input.as_deref(),
-        )?,
-        environment_initialization_model_config_id,
-        environment_initialization_thinking_level: normalize_thinking_level_input(
-            environment_initialization_provider,
-            environment_initialization_thinking_level_input.as_deref(),
         )?,
         updated_at: now_rfc3339(),
     };

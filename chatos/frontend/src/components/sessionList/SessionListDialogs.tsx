@@ -11,9 +11,8 @@ import {
   CreateTerminalModal,
   type LocalConnectorDirectoryEntryOption,
   type LocalConnectorWorkspaceOption,
-  type ResourceSourceMode,
 } from './CreateResourceModals';
-import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
+import { KeyFilePickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
 import { TaskRunnerConfigModal } from './TaskRunnerConfigModal';
 import type { RemoteConnection } from '../../types';
@@ -47,13 +46,7 @@ interface SessionListDialogsProps {
   }) => Promise<void> | void;
 
   projectModalOpen: boolean;
-  projectRoot: string;
-  cloudProjectName: string;
-  cloudProjectGitUrl: string;
-  cloudProjectZipFile: File | null;
   projectError: string | null;
-  projectSourceMode: ResourceSourceMode;
-  allowLocalProjectCreation: boolean;
   localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
   localConnectorLoading: boolean;
   localConnectorError: string | null;
@@ -65,12 +58,6 @@ interface SessionListDialogsProps {
   selectedLocalConnectorDirectoryPath: string;
   selectedLocalConnectorWorkspaceId: string;
   setProjectModalOpen: (value: boolean) => void;
-  setProjectSourceMode: (value: ResourceSourceMode) => void;
-  setProjectRoot: (value: string) => void;
-  setCloudProjectName: (value: string) => void;
-  setCloudProjectGitUrl: (value: string) => void;
-  setCloudProjectZipFile: (value: File | null) => void;
-  openDirPickerForProject: () => void;
   refreshLocalConnectorWorkspaces: () => Promise<void> | void;
   setSelectedLocalConnectorWorkspaceId: (value: string) => void;
   browseLocalConnectorDirectory: (path: string) => void;
@@ -155,25 +142,6 @@ interface SessionListDialogsProps {
   loadKeyFileEntries: (path: string | null) => Promise<void> | void;
   applySelectedKeyFile: (path: string) => void;
 
-  dirPickerOpen: boolean;
-  dirPickerPath: string | null;
-  dirPickerParent: string | null;
-  dirPickerWritable: boolean;
-  dirPickerLoading: boolean;
-  dirPickerItems: FsEntry[];
-  dirPickerError: string | null;
-  showHiddenDirs: boolean;
-  dirPickerCreateModalOpen: boolean;
-  dirPickerNewFolderName: string;
-  dirPickerCreatingFolder: boolean;
-  closeDirPicker: () => void;
-  chooseDir: (path: string) => void;
-  openCreateDirModal: () => void;
-  setShowHiddenDirs: React.Dispatch<React.SetStateAction<boolean>>;
-  loadDirEntries: (path: string | null) => Promise<void> | void;
-  setDirPickerCreateModalOpen: (value: boolean) => void;
-  setDirPickerNewFolderName: (value: string) => void;
-  createDirInPicker: () => Promise<void> | void;
 }
 
 export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
@@ -194,13 +162,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   closeTaskRunnerConfig,
   saveTaskRunnerConfig,
   projectModalOpen,
-  projectRoot,
-  cloudProjectName,
-  cloudProjectGitUrl,
-  cloudProjectZipFile,
   projectError,
-  projectSourceMode,
-  allowLocalProjectCreation,
   localConnectorWorkspaces,
   localConnectorLoading,
   localConnectorError,
@@ -212,12 +174,6 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   selectedLocalConnectorDirectoryPath,
   selectedLocalConnectorWorkspaceId,
   setProjectModalOpen,
-  setProjectSourceMode,
-  setProjectRoot,
-  setCloudProjectName,
-  setCloudProjectGitUrl,
-  setCloudProjectZipFile,
-  openDirPickerForProject,
   refreshLocalConnectorWorkspaces,
   setSelectedLocalConnectorWorkspaceId,
   browseLocalConnectorDirectory,
@@ -298,25 +254,6 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   closeKeyFilePicker,
   loadKeyFileEntries,
   applySelectedKeyFile,
-  dirPickerOpen,
-  dirPickerPath,
-  dirPickerParent,
-  dirPickerWritable,
-  dirPickerLoading,
-  dirPickerItems,
-  dirPickerError,
-  showHiddenDirs,
-  dirPickerCreateModalOpen,
-  dirPickerNewFolderName,
-  dirPickerCreatingFolder,
-  closeDirPicker,
-  chooseDir,
-  openCreateDirModal,
-  setShowHiddenDirs,
-  loadDirEntries,
-  setDirPickerCreateModalOpen,
-  setDirPickerNewFolderName,
-  createDirInPicker,
 }) => {
   const [projectCreating, setProjectCreating] = React.useState(false);
 
@@ -375,13 +312,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
 
     <CreateProjectModal
       isOpen={projectModalOpen}
-      projectRoot={projectRoot}
-      cloudProjectName={cloudProjectName}
-      cloudProjectGitUrl={cloudProjectGitUrl}
-      cloudProjectZipFile={cloudProjectZipFile}
       projectError={projectError}
-      sourceMode={projectSourceMode}
-      allowLocalConnector={allowLocalProjectCreation}
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}
@@ -394,12 +325,6 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       selectedLocalWorkspaceId={selectedLocalConnectorWorkspaceId}
       submitting={projectCreating}
       onClose={closeProjectModal}
-      onSourceModeChange={setProjectSourceMode}
-      onProjectRootChange={setProjectRoot}
-      onCloudProjectNameChange={setCloudProjectName}
-      onCloudProjectGitUrlChange={setCloudProjectGitUrl}
-      onCloudProjectZipFileChange={setCloudProjectZipFile}
-      onOpenPicker={openDirPickerForProject}
       onRefreshLocalConnector={refreshLocalConnectorWorkspaces}
       onSelectedLocalWorkspaceChange={setSelectedLocalConnectorWorkspaceId}
       onBrowseLocalConnectorDirectory={browseLocalConnectorDirectory}
@@ -528,28 +453,6 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onSelectFile={applySelectedKeyFile}
     />
 
-    <DirPickerDialog
-      isOpen={dirPickerOpen}
-      currentPath={dirPickerPath || ''}
-      parentPath={dirPickerParent}
-      writable={dirPickerWritable}
-      loading={dirPickerLoading}
-      items={dirPickerItems}
-      error={dirPickerError}
-      showHiddenDirs={showHiddenDirs}
-      createModalOpen={dirPickerCreateModalOpen}
-      newFolderName={dirPickerNewFolderName}
-      creatingFolder={dirPickerCreatingFolder}
-      onClose={closeDirPicker}
-      onBack={() => { void loadDirEntries(dirPickerParent); }}
-      onChooseCurrent={() => chooseDir(dirPickerPath || '')}
-      onOpenCreateModal={openCreateDirModal}
-      onToggleHiddenDirs={() => setShowHiddenDirs((prev) => !prev)}
-      onOpenEntry={(path) => { void loadDirEntries(path); }}
-      onCreateModalClose={() => setDirPickerCreateModalOpen(false)}
-      onNewFolderNameChange={setDirPickerNewFolderName}
-      onCreateDir={() => { void createDirInPicker(); }}
-    />
   </>
   );
 };

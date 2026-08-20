@@ -39,7 +39,6 @@ DOCKER_APP_SERVICES=(
   plugin-management-backend
   local-connector-service-backend
   mcp-management-service-backend
-  sandbox-manager-backend
   task-runner-backend
   task-runner-worker
   task-runner-scheduler
@@ -51,7 +50,6 @@ DOCKER_APP_SERVICES=(
   project-management-frontend
   plugin-management-frontend
   task-runner-frontend
-  sandbox-manager-frontend
 )
 
 BACKEND_SERVICES=(
@@ -63,7 +61,6 @@ BACKEND_SERVICES=(
   "plugin-management-backend|plugin-management-service|plugin_management_service/backend/Cargo.toml|/api/health|39260|plugin_management_service_backend|-"
   "local-connector-service-backend|local-connector-service|local_connector_service/backend/Cargo.toml|/api/health|39230|local_connector_service_backend|-"
   "mcp-management-service-backend|mcp-management-service|mcp_management_service/backend/Cargo.toml|/health|39280|mcp_management_service_backend|-"
-  "sandbox-manager-backend|sandbox-manager|sandbox_manager_service/backend/Cargo.toml|/health|8095|sandbox_manager_service_backend|-"
   "task-runner-backend|task-runner|task_runner_service/backend/Cargo.toml|/api/health|39090|task_runner_service_backend|TASK_RUNNER_ROLE=api TASK_RUNNER_WORKER_ID=task-runner-api-local"
   "task-runner-worker|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=worker TASK_RUNNER_WORKER_ID=task-runner-worker-local"
   "task-runner-scheduler|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=scheduler TASK_RUNNER_WORKER_ID=task-runner-scheduler-local"
@@ -78,7 +75,6 @@ FRONTEND_SERVICES=(
   "project-management-frontend|project_management_service/frontend|39211"
   "plugin-management-frontend|plugin_management_service/frontend|39261"
   "task-runner-frontend|task_runner_service/frontend|39091"
-  "sandbox-manager-frontend|sandbox_manager_service/frontend|8096"
 )
 
 # shellcheck source=local-dev-stack/support.sh

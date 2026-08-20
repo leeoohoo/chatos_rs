@@ -36,8 +36,6 @@ describe('requirement execution process actions', () => {
         executionPaused={false}
         graphReady={false}
         hasActiveRuns={false}
-        runtimeEnvironmentReady
-        runtimeEnvironmentStatus="ready"
         onCancelRequirementExecution={noop}
         onClose={noop}
         onConfirmExecution={noop}
@@ -76,8 +74,6 @@ describe('requirement execution process actions', () => {
         executionPaused={false}
         graphReady
         hasActiveRuns={false}
-        runtimeEnvironmentReady
-        runtimeEnvironmentStatus="ready"
         onCancelRequirementExecution={noop}
         onClose={noop}
         onConfirmExecution={noop}
@@ -115,8 +111,6 @@ describe('requirement execution process actions', () => {
         executionPaused={false}
         graphReady={false}
         hasActiveRuns
-        runtimeEnvironmentReady
-        runtimeEnvironmentStatus="ready"
         onCancelRequirementExecution={noop}
         onClose={noop}
         onConfirmExecution={noop}
@@ -145,87 +139,6 @@ describe('requirement execution process actions', () => {
     expect(rerunButton.getAttribute('aria-busy')).toBe('true');
   });
 
-  it('keeps execution disabled until the project sandbox environment is ready', () => {
-    render(
-      <RequirementExecutionProcessActions
-        actuallyStarted={false}
-        canRegenerate={false}
-        canRerun={false}
-        cancellationSettling={false}
-        confirming={false}
-        executionPaused={false}
-        graphReady
-        hasActiveRuns={false}
-        runtimeEnvironmentReady={false}
-        runtimeEnvironmentStatus="analyzing"
-        onCancelRequirementExecution={noop}
-        onClose={noop}
-        onConfirmExecution={noop}
-        onOpenCancelConfirm={noop}
-        onOpenDiscardConfirm={noop}
-        onOpenFailedTaskRetry={noop}
-        onOpenRerunConfirm={noop}
-        onRegenerate={noop}
-        onTogglePause={noop}
-        pausing={false}
-        phase="awaiting_confirmation"
-        isLocalExecution={false}
-        queuedTaskCount={0}
-        rerunSettling={false}
-        rerunning={false}
-        retryableFailedTaskCount={0}
-        retryingTaskId={null}
-        revising={false}
-        runningTaskCount={0}
-        stopping={false}
-      />,
-    );
-
-    const executeButton = screen.getByRole('button', { name: '初始化环境中' });
-    expect((executeButton as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText('流程图已就绪，执行环境正在初始化，完成后自动开放执行。')).toBeTruthy();
-  });
-
-  it('explains that local connector execution is still orchestrated by the cloud', () => {
-    render(
-      <RequirementExecutionProcessActions
-        actuallyStarted={false}
-        canRegenerate={false}
-        canRerun={false}
-        cancellationSettling={false}
-        confirming={false}
-        executionPaused={false}
-        graphReady
-        hasActiveRuns={false}
-        runtimeEnvironmentReady={false}
-        runtimeEnvironmentStatus="analyzing"
-        onCancelRequirementExecution={noop}
-        onClose={noop}
-        onConfirmExecution={noop}
-        onOpenCancelConfirm={noop}
-        onOpenDiscardConfirm={noop}
-        onOpenFailedTaskRetry={noop}
-        onOpenRerunConfirm={noop}
-        onRegenerate={noop}
-        onTogglePause={noop}
-        pausing={false}
-        phase="awaiting_confirmation"
-        isLocalExecution
-        queuedTaskCount={0}
-        rerunSettling={false}
-        rerunning={false}
-        retryableFailedTaskCount={0}
-        retryingTaskId={null}
-        revising={false}
-        runningTaskCount={0}
-        stopping={false}
-      />,
-    );
-
-    expect(
-      screen.getByText('流程图已就绪，正在通过 Local Connector 识别本地技术栈与运行条件。'),
-    ).toBeTruthy();
-  });
 });
 
 describe('requirement execution process sidebar', () => {

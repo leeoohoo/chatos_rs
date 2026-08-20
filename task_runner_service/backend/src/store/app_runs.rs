@@ -301,6 +301,13 @@ impl AppStore {
         }
     }
 
+    pub async fn has_run_event_type(&self, run_id: &str, event_type: &str) -> Result<bool, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.has_run_event_type(run_id, event_type)),
+            Self::Mongo(store) => store.has_run_event_type(run_id, event_type).await,
+        }
+    }
+
     pub async fn get_run_event(
         &self,
         run_id: &str,

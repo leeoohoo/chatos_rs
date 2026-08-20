@@ -294,16 +294,7 @@ fn sha256_json(value: &impl serde::Serialize) -> Result<String, ToolCallError> {
 }
 
 fn classify_remote_tool_call_error(message: String) -> ToolCallError {
-    let normalized = message.to_ascii_lowercase();
-    let sandbox_lease_unavailable = normalized.contains("sandbox manager lease is not runnable")
-        && (normalized.contains("destroyed") || normalized.contains("expired"));
-    if sandbox_lease_unavailable {
-        ToolCallError::fatal(format!(
-            "sandbox infrastructure unavailable; the run must reacquire its sandbox: {message}"
-        ))
-    } else {
-        ToolCallError::non_fatal(message)
-    }
+    ToolCallError::non_fatal(message)
 }
 
 fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) -> Option<String> {
@@ -362,16 +353,6 @@ mod tests {
     use crate::registry::BuiltinToolRegistry;
     use crate::types::{McpAsyncResultTransport, ParsedToolDefinition};
     use serde_json::json;
-
-    #[test]
-    fn destroyed_or_expired_sandbox_lease_is_fatal() {
-        for status in ["destroyed", "expired"] {
-            let error = classify_remote_tool_call_error(format!(
-                "Sandbox Manager lease is not runnable: {status}"
-            ));
-            assert!(error.is_fatal());
-        }
-    }
 
     #[test]
     fn ordinary_remote_tool_failure_remains_non_fatal() {

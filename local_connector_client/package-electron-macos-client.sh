@@ -275,7 +275,7 @@ fi
 
 (
   cd "$ROOT_DIR"
-  cargo build --release -p local_connector_client_core -p chatos_sandbox_mcp_server
+  cargo build --release -p local_connector_client_core
 )
 
 TARGET_DIR="$({
@@ -290,7 +290,6 @@ process.stdin.on("end", () => process.stdout.write(JSON.parse(input).target_dire
 CORE_BIN="$TARGET_DIR/release/local_connector_client_core"
 CHROME_NATIVE_HOST_BIN="$TARGET_DIR/release/chatos_chrome_native_host"
 COMPUTER_USE_HELPER_BIN="$TARGET_DIR/release/chatos_computer_use_helper"
-SANDBOX_AGENT_BIN="$TARGET_DIR/release/chatos_sandbox_mcp_server"
 TOOLS_DIR="$ROOT_DIR/bundled-tools/$TOOLS_PLATFORM"
 
 if [[ ! -x "$CORE_BIN" ]]; then
@@ -305,11 +304,6 @@ fi
 
 if [[ ! -x "$COMPUTER_USE_HELPER_BIN" ]]; then
   echo "ChatOS Computer Use helper was not built: $COMPUTER_USE_HELPER_BIN" >&2
-  exit 1
-fi
-
-if [[ ! -x "$SANDBOX_AGENT_BIN" ]]; then
-  echo "Native sandbox MCP agent was not built: $SANDBOX_AGENT_BIN" >&2
   exit 1
 fi
 
@@ -330,7 +324,6 @@ mkdir -p \
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
 cp "$CHROME_NATIVE_HOST_BIN" "$STAGING_DIR/chatos_chrome_native_host"
 cp "$COMPUTER_USE_HELPER_BIN" "$STAGING_DIR/chatos_computer_use_helper"
-cp "$SANDBOX_AGENT_BIN" "$STAGING_DIR/chatos_sandbox_mcp_server"
 cp -R "$CLIENT_DIR/chrome_extension/." "$STAGING_DIR/chrome-extension/"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/skill_bundles/." "$STAGING_DIR/skill-bundles/"
@@ -365,8 +358,7 @@ fi
 chmod +x \
   "$STAGING_DIR/local_connector_client_core" \
   "$STAGING_DIR/chatos_chrome_native_host" \
-  "$STAGING_DIR/chatos_computer_use_helper" \
-  "$STAGING_DIR/chatos_sandbox_mcp_server"
+  "$STAGING_DIR/chatos_computer_use_helper"
 bash "$CLIENT_DIR/prepare-app-icon-macos.sh" \
   "$APP_ICON_SOURCE" \
   "$STAGING_DIR/ChatOS.icns"

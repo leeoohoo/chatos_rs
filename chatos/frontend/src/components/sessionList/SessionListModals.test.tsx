@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
-import { DirPickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
 
 describe('SessionList modals', () => {
@@ -25,19 +24,21 @@ describe('SessionList modals', () => {
     const { rerender } = render(
       <CreateProjectModal
         isOpen
-        projectRoot="/Users/demo/project-a"
         projectError={null}
+        localConnectorWorkspaces={[{
+          id: 'workspace-1',
+          deviceId: 'device-1',
+          label: 'MacBook / project-a',
+          alias: 'project-a',
+        }]}
+        selectedLocalWorkspaceId="workspace-1"
         onClose={onClose}
-        onProjectRootChange={vi.fn()}
-        onOpenPicker={vi.fn()}
         onCreate={onCreate}
       />,
     );
 
     expect(screen.getByRole('dialog', { name: '新增项目' })).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: '项目来源' }), {
-      target: { value: 'empty' },
-    });
+    expect(screen.getByRole('combobox')).toHaveValue('workspace-1');
     fireEvent.click(screen.getByRole('button', { name: '创建' }));
     expect(onCreate).toHaveBeenCalledTimes(1);
 
@@ -63,50 +64,6 @@ describe('SessionList modals', () => {
     expect(screen.queryByRole('button', { name: '选择目录' })).not.toBeInTheDocument();
   });
 
-  it('layers the directory picker above the project creation dialog', () => {
-    render(
-      <>
-        <CreateProjectModal
-          isOpen
-          projectRoot=""
-          projectError={null}
-          onClose={vi.fn()}
-          onProjectRootChange={vi.fn()}
-          onOpenPicker={vi.fn()}
-          onCreate={vi.fn()}
-        />
-        <DirPickerDialog
-          isOpen
-          currentPath="/Users/demo"
-          parentPath="/Users"
-          writable
-          loading={false}
-          items={[]}
-          error={null}
-          showHiddenDirs={false}
-          createModalOpen={false}
-          newFolderName=""
-          creatingFolder={false}
-          onClose={vi.fn()}
-          onBack={vi.fn()}
-          onChooseCurrent={vi.fn()}
-          onOpenCreateModal={vi.fn()}
-          onToggleHiddenDirs={vi.fn()}
-          onOpenEntry={vi.fn()}
-          onCreateModalClose={vi.fn()}
-          onNewFolderNameChange={vi.fn()}
-          onCreateDir={vi.fn()}
-        />
-      </>,
-    );
-
-    const projectDialogLayer = screen.getByRole('dialog', { name: '新增项目' }).parentElement;
-    const pickerLayer = screen.getByText('/Users/demo').closest('.fixed');
-
-    expect(projectDialogLayer).toHaveClass('z-[70]');
-    expect(pickerLayer).toHaveClass('z-[80]');
-  });
-
   it('disables project creation actions while the project is submitting', () => {
     const onCreate = vi.fn();
 
@@ -114,11 +71,8 @@ describe('SessionList modals', () => {
       <CreateProjectModal
         isOpen
         submitting
-        projectRoot=""
         projectError={null}
         onClose={vi.fn()}
-        onProjectRootChange={vi.fn()}
-        onOpenPicker={vi.fn()}
         onCreate={onCreate}
       />,
     );
@@ -127,69 +81,6 @@ describe('SessionList modals', () => {
     expect(createButton).toBeDisabled();
     fireEvent.click(createButton);
     expect(onCreate).not.toHaveBeenCalled();
-  });
-
-  it('hides local project creation when the feature is disabled', () => {
-    render(
-      <CreateProjectModal
-        isOpen
-        allowLocalConnector={false}
-        sourceMode="local_connector"
-        projectRoot=""
-        cloudProjectName="Cloud Project"
-        projectError={null}
-        onClose={vi.fn()}
-        onProjectRootChange={vi.fn()}
-        onOpenPicker={vi.fn()}
-        onCreate={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryByRole('button', { name: '本地连接器' })).not.toBeInTheDocument();
-    expect(screen.getByDisplayValue('Cloud Project')).toBeInTheDocument();
-  });
-
-  it('lets cloud projects choose one source without mixing Git and ZIP inputs', () => {
-    const onCreate = vi.fn();
-    const onGitUrlChange = vi.fn();
-    const onZipFileChange = vi.fn();
-    const props = {
-      isOpen: true,
-      allowLocalConnector: false,
-      projectRoot: '',
-      cloudProjectName: 'Cloud Project',
-      cloudProjectGitUrl: '',
-      projectError: null,
-      onClose: vi.fn(),
-      onProjectRootChange: vi.fn(),
-      onCloudProjectGitUrlChange: onGitUrlChange,
-      onCloudProjectZipFileChange: onZipFileChange,
-      onOpenPicker: vi.fn(),
-      onCreate,
-    };
-    const { rerender } = render(<CreateProjectModal {...props} cloudProjectZipFile={null} />);
-    const sourceSelect = screen.getByRole('combobox', { name: '项目来源' });
-
-    expect(screen.getByLabelText('Git 地址')).toBeInTheDocument();
-    expect(screen.queryByLabelText('ZIP 压缩包')).not.toBeInTheDocument();
-
-    fireEvent.change(sourceSelect, { target: { value: 'zip' } });
-
-    expect(onGitUrlChange).toHaveBeenCalledWith('');
-    expect(screen.queryByLabelText('Git 地址')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('ZIP 压缩包')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '创建' }));
-    expect(screen.getByText('请选择 ZIP 压缩包')).toBeInTheDocument();
-    expect(onCreate).not.toHaveBeenCalled();
-
-    const zipFile = new File(['zip'], 'project.zip', { type: 'application/zip' });
-    fireEvent.change(screen.getByLabelText('ZIP 压缩包'), { target: { files: [zipFile] } });
-    expect(onZipFileChange).toHaveBeenCalledWith(zipFile);
-    rerender(<CreateProjectModal {...props} cloudProjectZipFile={zipFile} />);
-    fireEvent.click(screen.getByRole('button', { name: '创建' }));
-
-    expect(onCreate).toHaveBeenCalledTimes(1);
   });
 
   it('renders contact creation dialog with selectable agents', () => {

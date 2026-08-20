@@ -30,10 +30,6 @@ export const defaultModelDraftsFromSettings = (
     modelId: settings.project_management_agent_model_config_id || '',
     thinking: settings.project_management_agent_thinking_level || '',
   },
-  environment: {
-    modelId: settings.environment_initialization_model_config_id || '',
-    thinking: settings.environment_initialization_thinking_level || '',
-  },
 });
 
 export const taskModelDraftsFromModels = (models: AiModelConfig[]): TaskModelDrafts => {

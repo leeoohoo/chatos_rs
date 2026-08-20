@@ -29,9 +29,7 @@ describe('loadProjects', () => {
       .mockResolvedValueOnce([{
         id: 'project_fresh',
         name: 'Fresh Project',
-        source_type: 'cloud',
-        execution_plane: 'cloud',
-        root_path: 'harness://project/project_fresh',
+        root_path: 'local://connector/device/workspace/project_fresh',
       }]);
     const actions = createProjectActions({
       set,
@@ -49,9 +47,7 @@ describe('loadProjects', () => {
     resolveInitial?.([{
       id: 'project_stale',
       name: 'Stale Project',
-      source_type: 'cloud',
-      execution_plane: 'cloud',
-      root_path: 'harness://project/project_stale',
+      root_path: 'local://connector/device/workspace/project_stale',
     }]);
     await initial;
 
@@ -107,10 +103,10 @@ describe('loadProjects', () => {
     expect(state.projects[0]?.gitUrl).toBe('git@github.com:org/kept.git');
   });
 
-  it('keeps local connector projects visible in the cloud project list', async () => {
+  it('keeps Local Connector projects visible in the project list', async () => {
     const state = {
       projects: [],
-      currentProjectId: 'cloud-project',
+      currentProjectId: 'project-a',
       currentProject: null,
       activePanel: 'chat',
       error: null,
@@ -125,18 +121,14 @@ describe('loadProjects', () => {
         registerProjectExecution: vi.fn(),
         listProjects: vi.fn().mockResolvedValue([
           {
-            id: 'cloud-project',
-            name: 'Cloud',
-            source_type: 'cloud',
-            execution_plane: 'cloud',
-            root_path: 'harness://project/cloud-project',
+            id: 'project-a',
+            name: 'Project A',
+            root_path: 'local://connector/device/workspace/project-a',
           },
           {
             id: 'local-project',
             name: 'Local',
-            source_type: 'local_connector',
-            execution_plane: 'local_connector',
-            root_path: 'local://connector/device/workspace',
+            root_path: 'local://connector/device/workspace/project-b',
           },
         ]),
       } as never,
@@ -146,7 +138,7 @@ describe('loadProjects', () => {
     await actions.loadProjects({ force: true });
 
     expect(state.projects.map((project) => project.id)).toEqual([
-      'cloud-project',
+      'project-a',
       'local-project',
     ]);
   });

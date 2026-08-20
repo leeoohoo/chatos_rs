@@ -6,9 +6,8 @@ use chatos_plugin_management_sdk::SystemMcpKey;
 use crate::CatalogSystemMcpDefinition;
 
 pub mod builtin;
-pub mod sandbox_images;
 
-static SYSTEM_MCP_DEFINITIONS: [CatalogSystemMcpDefinition; 19] = [
+static SYSTEM_MCP_DEFINITIONS: [CatalogSystemMcpDefinition; 16] = [
     CatalogSystemMcpDefinition::new(SystemMcpKey::CodeMaintainerRead),
     CatalogSystemMcpDefinition::new(SystemMcpKey::CodeMaintainerWrite),
     CatalogSystemMcpDefinition::new(SystemMcpKey::TerminalController),
@@ -22,9 +21,6 @@ static SYSTEM_MCP_DEFINITIONS: [CatalogSystemMcpDefinition; 19] = [
     CatalogSystemMcpDefinition::new(SystemMcpKey::MemorySkillReader),
     CatalogSystemMcpDefinition::new(SystemMcpKey::MemoryCommandReader),
     CatalogSystemMcpDefinition::new(SystemMcpKey::MemoryPluginReader),
-    CatalogSystemMcpDefinition::new(SystemMcpKey::SandboxImages),
-    CatalogSystemMcpDefinition::new(SystemMcpKey::ProjectEnvironment),
-    CatalogSystemMcpDefinition::new(SystemMcpKey::ProjectRuntimeEnvironment),
     CatalogSystemMcpDefinition::new(SystemMcpKey::LocalCommandApproval),
     CatalogSystemMcpDefinition::new(SystemMcpKey::TaskProcessLog),
     CatalogSystemMcpDefinition::new(SystemMcpKey::TaskRunnerService),

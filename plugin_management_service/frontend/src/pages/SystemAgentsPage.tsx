@@ -259,7 +259,6 @@ export function SystemAgentsPage({ user, onOpenPromptSettings }: SystemAgentsPag
         item.mcp.component_key,
         ...item.variants.flatMap((variant) => [
           variant.conditions.task_profile,
-          variant.conditions.project_source_type,
           variant.conditions.schedule_mode,
           variant.tool_allowlist.join(' '),
           variant.tool_blocklist.join(' '),
@@ -551,7 +550,6 @@ function bindingConditionEntries(item: MergedMcpBindingItem): Array<[string, str
   }
 
   for (const [label, value] of item.variants.flatMap((variant) => [
-    ['project_source_type', variant.conditions.project_source_type || ''] as [string, string],
     ['schedule_mode', variant.conditions.schedule_mode || ''] as [string, string],
   ])) {
     if (value && !entries.some((entry) => entry[0] === label && entry[1] === value)) {

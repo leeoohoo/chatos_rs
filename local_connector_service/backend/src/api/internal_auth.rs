@@ -751,7 +751,6 @@ mod tests {
             user_service_request_timeout: Duration::from_secs(1),
             relay_request_timeout: Duration::from_secs(1),
             plugin_hook_relay_request_timeout: Duration::from_secs(1),
-            sandbox_image_relay_request_timeout: Duration::from_secs(1),
             public_base_url: None,
             internal_api_secrets: HashMap::new(),
             require_device_connect_signature: true,

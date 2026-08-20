@@ -10,9 +10,6 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::relay::RelayRequest;
-use crate::sandbox::workspace::{
-    local_sandbox_baseline_workspace, prepare_local_sandbox_workspace,
-};
 use crate::terminal::guard::{
     normalize_path_for_guard, path_is_inside_root, sanitize_terminal_command_line,
     validate_local_terminal_command, validate_local_terminal_directory_change,
@@ -221,65 +218,6 @@ fn relative_workspace_path_matching_cwd_is_not_duplicated() {
         )
     );
     fs::remove_dir_all(root.as_path()).expect("cleanup");
-}
-
-#[test]
-fn prepare_local_sandbox_workspace_clears_existing_run_copy() {
-    let root = temp_test_dir("workspace-copy");
-    let workspace_root = root.join("project");
-    fs::create_dir_all(workspace_root.as_path()).expect("create project root");
-    fs::write(workspace_root.join("keep.txt"), "current").expect("write project file");
-    fs::create_dir_all(workspace_root.join(".chatos").join("task-runner"))
-        .expect("create internal dir");
-    fs::write(
-        workspace_root
-            .join(".chatos")
-            .join("task-runner")
-            .join("skip.txt"),
-        "internal",
-    )
-    .expect("write internal file");
-
-    let run_workspace = workspace_root
-        .join(".chatos")
-        .join("task-runner")
-        .join("runs")
-        .join("run-test")
-        .join("input")
-        .join("workspace");
-    let baseline_workspace =
-        local_sandbox_baseline_workspace(run_workspace.as_path()).expect("baseline path");
-    fs::create_dir_all(run_workspace.as_path()).expect("create run workspace");
-    fs::create_dir_all(baseline_workspace.as_path()).expect("create baseline workspace");
-    fs::write(run_workspace.join("stale.txt"), "old").expect("write stale run file");
-    fs::write(baseline_workspace.join("stale.txt"), "old").expect("write stale baseline file");
-
-    let workspace = WorkspaceState {
-        id: "workspace-test".to_string(),
-        absolute_root: fs::canonicalize(workspace_root.as_path()).expect("canonical root"),
-        alias: "project".to_string(),
-        fingerprint: "fingerprint-test".to_string(),
-        project_config_trust: None,
-    };
-    let state = LocalState {
-        workspaces: vec![workspace],
-        ..LocalState::default()
-    };
-    prepare_local_sandbox_workspace(
-        &test_relay_request("workspace-test"),
-        &state,
-        &json!({ "run_workspace": run_workspace.to_string_lossy() }),
-    )
-    .expect("prepare workspace");
-
-    assert!(run_workspace.join("keep.txt").is_file());
-    assert!(baseline_workspace.join("keep.txt").is_file());
-    assert!(!run_workspace.join("stale.txt").exists());
-    assert!(!baseline_workspace.join("stale.txt").exists());
-    assert!(!run_workspace.join(".chatos").exists());
-    assert!(!baseline_workspace.join(".chatos").exists());
-
-    fs::remove_dir_all(root.as_path()).expect("cleanup temp test dir");
 }
 
 #[test]

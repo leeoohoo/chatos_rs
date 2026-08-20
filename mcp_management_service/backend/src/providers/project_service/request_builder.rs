@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp::system_mcp_descriptor_by_resource_id;
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute, RuntimeWorkspaceRouteTarget};
-use chatos_mcp_service::{builtin_kind_header_value, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER};
+use chatos_mcp_management_sdk::ResolvedMcpRoute;
 
 use crate::runtime::RuntimeSessionSnapshot;
 use crate::trace_context::InternalTraceContextExt;
 
-use super::{
-    ProjectServiceProvider, ProviderCallError, CALLER_SERVICE, PROJECT_HARNESS_SCOPE,
-    TOKEN_AUDIENCE,
-};
+use super::{ProjectServiceProvider, ProviderCallError, CALLER_SERVICE, TOKEN_AUDIENCE};
 
 impl ProjectServiceProvider {
     pub(in crate::providers) fn request(
@@ -48,27 +43,6 @@ impl ProjectServiceProvider {
             .header("x-mcp-management-project-id", snapshot.project_id.as_str())
             .header("x-chatos-project-id", snapshot.project_id.as_str())
             .header("x-task-runner-project-id", snapshot.project_id.as_str());
-        if route.provider_kind == McpProviderKind::Harness && scope == PROJECT_HARNESS_SCOPE {
-            let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-                .ok_or_else(|| {
-                    ProviderCallError::provider_unavailable(
-                        "Harness route is not a registered System MCP",
-                    )
-                })?;
-            request = request.header(
-                HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
-                builtin_kind_header_value([descriptor.key.as_str()]),
-            );
-            let branch_ref = match snapshot.workspace_route.as_ref() {
-                Some(RuntimeWorkspaceRouteTarget::Harness { branch }) => branch.branch_ref(),
-                _ => {
-                    return Err(ProviderCallError::provider_unavailable(
-                        "Harness provider requires a frozen runtime branch target",
-                    ));
-                }
-            };
-            request = request.header("x-mcp-management-harness-branch-ref", branch_ref);
-        }
         for (header, value) in [
             ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
             ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),

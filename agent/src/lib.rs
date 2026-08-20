@@ -46,9 +46,8 @@ pub use core::{AgentExecutor, AgentTurnMemory, AgentTurnRequest};
 #[cfg(feature = "runtime")]
 pub use implementations::{
     ChatosAgentProfile, ChatosStreamAgent, ChatosStreamRuntime, CommandApprovalAgent,
-    MemoryEngineAgent, MemoryEngineAgentKind, ProjectEnvironmentAgent, TaskRunnerAgent,
-    TaskRunnerRunSpecInput, COMMAND_APPROVAL_AGENT, MEMORY_ENGINE_MEMORY_ROLLUP_AGENT,
-    MEMORY_ENGINE_ROLLUP_AGENT, MEMORY_ENGINE_SUBJECT_MEMORY_AGENT, MEMORY_ENGINE_SUMMARY_AGENT,
-    MEMORY_ENGINE_THREAD_REPAIR_AGENT, PROJECT_ENVIRONMENT_AGENT, PROJECT_ENVIRONMENT_LOCAL_AGENT,
-    TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
+    MemoryEngineAgent, MemoryEngineAgentKind, TaskRunnerAgent, TaskRunnerRunSpecInput,
+    COMMAND_APPROVAL_AGENT, MEMORY_ENGINE_MEMORY_ROLLUP_AGENT, MEMORY_ENGINE_ROLLUP_AGENT,
+    MEMORY_ENGINE_SUBJECT_MEMORY_AGENT, MEMORY_ENGINE_SUMMARY_AGENT,
+    MEMORY_ENGINE_THREAD_REPAIR_AGENT, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
 };

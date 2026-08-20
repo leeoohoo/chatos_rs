@@ -29,8 +29,6 @@ pub struct TaskProjectRecord {
     #[serde(default)]
     pub git_url: Option<String>,
     #[serde(default)]
-    pub source_type: Option<String>,
-    #[serde(default)]
     pub cloud_import_source: Option<String>,
     #[serde(default)]
     pub import_status: Option<String>,
@@ -77,8 +75,6 @@ pub struct ChatosProjectImportRequest {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
-    #[serde(default)]
-    pub source_type: Option<String>,
     #[serde(default)]
     pub cloud_import_source: Option<String>,
     #[serde(default)]

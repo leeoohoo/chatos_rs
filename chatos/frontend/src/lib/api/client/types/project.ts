@@ -12,10 +12,6 @@ export interface ProjectResponse {
   displayRootPath?: string | null;
   git_url?: string | null;
   gitUrl?: string | null;
-  source_type?: string | null;
-  sourceType?: string | null;
-  execution_plane?: string | null;
-  executionPlane?: string | null;
   cloud_import_source?: string | null;
   cloudImportSource?: string | null;
   import_status?: string | null;
@@ -105,8 +101,6 @@ export interface ProjectRunExecuteResponse {
 export interface ProjectRequirementExecuteResponse {
   success?: boolean;
   status?: string;
-  execution_plane?: string;
-  executionPlane?: string;
   project_id?: string;
   projectId?: string;
   requirement_id?: string;
@@ -152,8 +146,6 @@ export type RequirementExecutionRecoveryAction = 'none' | 'rerun' | 'regenerate'
 
 export interface ProjectRequirementExecutionPlanResponse {
   found?: boolean;
-  execution_plane?: string;
-  executionPlane?: string;
   project_id?: string;
   projectId?: string;
   requirement_id?: string;
@@ -197,8 +189,6 @@ export interface ProjectRequirementExecutionPlanResponse {
 export interface ProjectRequirementConfirmResponse {
   success?: boolean;
   status?: string;
-  execution_plane?: string;
-  executionPlane?: string;
   project_id?: string;
   projectId?: string;
   requirement_id?: string;
@@ -231,8 +221,6 @@ export interface ProjectRequirementDispatchResponse extends ProjectRequirementCo
 export interface ProjectRequirementStopResponse {
   success?: boolean;
   status?: string;
-  execution_plane?: string;
-  executionPlane?: string;
   project_id?: string;
   projectId?: string;
   requirement_id?: string;
@@ -364,169 +352,6 @@ export interface ProjectRunEnvironmentResponse {
   terminalUiEnabled?: boolean;
   updated_at?: string | null;
   updatedAt?: string | null;
-}
-
-export type ProjectRuntimeEnvironmentStatus =
-  | 'disabled'
-  | 'pending_configuration'
-  | 'pending_image_build'
-  | 'pending'
-  | 'analyzing'
-  | 'ready'
-  | 'not_runnable'
-  | 'failed'
-  | string;
-
-export type ProjectRuntimeEnvironmentProvider =
-  | 'none'
-  | 'local_connector'
-  | 'harness'
-  | 'cloud_sandbox_manager'
-  | string;
-
-export interface ProjectRuntimeEnvironmentRecordResponse {
-  project_id?: string;
-  projectId?: string;
-  status?: ProjectRuntimeEnvironmentStatus;
-  sandbox_enabled?: boolean;
-  sandboxEnabled?: boolean;
-  sandbox_provider?: ProjectRuntimeEnvironmentProvider;
-  sandboxProvider?: ProjectRuntimeEnvironmentProvider;
-  file_provider?: ProjectRuntimeEnvironmentProvider;
-  fileProvider?: ProjectRuntimeEnvironmentProvider;
-  analysis_summary?: string | null;
-  analysisSummary?: string | null;
-  not_runnable_reason?: string | null;
-  notRunnableReason?: string | null;
-  execution_service_id?: string | null;
-  executionServiceId?: string | null;
-  detected_stack?: unknown;
-  detectedStack?: unknown;
-  required_services?: unknown;
-  requiredServices?: unknown;
-  env_vars?: unknown;
-  envVars?: unknown;
-  generated_config_files?: ProjectRuntimeEnvironmentConfigFileResponse[];
-  generatedConfigFiles?: ProjectRuntimeEnvironmentConfigFileResponse[];
-  last_agent_run_id?: string | null;
-  lastAgentRunId?: string | null;
-  last_error?: string | null;
-  lastError?: string | null;
-  created_at?: string;
-  createdAt?: string;
-  updated_at?: string;
-  updatedAt?: string;
-}
-
-export interface ProjectRuntimeEnvironmentConfigFileResponse {
-  path?: string;
-  format?: string;
-  content?: string;
-  description?: string | null;
-  source_files?: string[];
-  sourceFiles?: string[];
-}
-
-export interface ProjectRuntimeEnvironmentImageResponse {
-  id?: string;
-  project_id?: string;
-  projectId?: string;
-  environment_key?: string;
-  environmentKey?: string;
-  environment_type?: string;
-  environmentType?: string;
-  display_name?: string;
-  displayName?: string;
-  service_id?: string;
-  serviceId?: string;
-  service_role?: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown' | string;
-  serviceRole?: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown' | string;
-  source_root?: string;
-  sourceRoot?: string;
-  component_kind?: string;
-  componentKind?: string;
-  startup_command?: string | null;
-  startupCommand?: string | null;
-  test_command?: string | null;
-  testCommand?: string | null;
-  depends_on?: string[];
-  dependsOn?: string[];
-  auto_start?: boolean;
-  autoStart?: boolean;
-  mcp_policy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
-  mcpPolicy?: ProjectRuntimeEnvironmentMcpPolicyResponse;
-  image_id?: string | null;
-  imageId?: string | null;
-  image_ref?: string | null;
-  imageRef?: string | null;
-  image_provider?: ProjectRuntimeEnvironmentProvider;
-  imageProvider?: ProjectRuntimeEnvironmentProvider;
-  features?: unknown;
-  ports?: unknown;
-  env_vars?: unknown;
-  envVars?: unknown;
-  dockerfile?: string | null;
-  custom_build_script?: string | null;
-  customBuildScript?: string | null;
-  status?: string;
-  error?: string | null;
-  created_at?: string;
-  createdAt?: string;
-  updated_at?: string;
-  updatedAt?: string;
-}
-
-export interface ProjectRuntimeEnvironmentMcpPolicyResponse {
-  managed_by?: 'system' | string;
-  managedBy?: 'system' | string;
-  attachment?: 'workspace_gateway_target' | 'project_gateway_target' | 'none' | string;
-  filesystem?: boolean;
-  terminal?: boolean;
-}
-
-export interface ProjectRuntimeEnvironmentResponse {
-  environment?: ProjectRuntimeEnvironmentRecordResponse;
-  images?: ProjectRuntimeEnvironmentImageResponse[];
-}
-
-export interface ProjectRuntimeEnvironmentProgressResponse {
-  project_id?: string;
-  projectId?: string;
-  run_id?: string | null;
-  runId?: string | null;
-  phase?: string;
-  status?: 'idle' | 'running' | 'succeeded' | 'failed' | string;
-  progress_percent?: number | null;
-  progressPercent?: number | null;
-  provider?: ProjectRuntimeEnvironmentProvider;
-  job_id?: string | null;
-  jobId?: string | null;
-  image_id?: string | null;
-  imageId?: string | null;
-  image_ref?: string | null;
-  imageRef?: string | null;
-  started_at?: string | null;
-  startedAt?: string | null;
-  updated_at?: string;
-  updatedAt?: string;
-  finished_at?: string | null;
-  finishedAt?: string | null;
-  logs?: string;
-  error?: string | null;
-}
-
-export interface UpdateProjectRuntimeEnvironmentSettingsPayload {
-  sandbox_enabled?: boolean;
-  sandboxEnabled?: boolean;
-}
-
-export interface AnalyzeProjectRuntimeEnvironmentPayload {
-  analysis_requirement?: string;
-  analysisRequirement?: string;
-  selected_dependencies?: string[];
-  selectedDependencies?: string[];
-  prefer_china_mirrors?: boolean;
-  preferChinaMirrors?: boolean;
 }
 
 export interface ProjectContactLinkResponse {

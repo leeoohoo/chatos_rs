@@ -1035,7 +1035,7 @@ mod tests {
                 "user-1",
                 "project-1",
                 "run-1",
-                WorkspaceProviderKind::CloudSandbox,
+                WorkspaceProviderKind::LocalConnector,
                 "session-1",
                 chrono::Utc::now().timestamp() + 300,
             )
@@ -1050,7 +1050,7 @@ mod tests {
                 "user-1",
                 "project-1",
                 "run-1",
-                WorkspaceProviderKind::CloudSandbox,
+                WorkspaceProviderKind::LocalConnector,
                 "batch-1",
                 &invocations,
             )
@@ -1061,7 +1061,7 @@ mod tests {
                 "user-1",
                 "project-1",
                 "run-1",
-                WorkspaceProviderKind::CloudSandbox,
+                WorkspaceProviderKind::LocalConnector,
                 "batch-1",
                 &invocations,
             )
@@ -1080,7 +1080,7 @@ mod tests {
                 "user-1",
                 "project-1",
                 "run-1",
-                WorkspaceProviderKind::CloudSandbox,
+                WorkspaceProviderKind::LocalConnector,
                 "session-1",
                 chrono::Utc::now().timestamp() + 300,
             )
@@ -1092,7 +1092,7 @@ mod tests {
                 "user-1",
                 "project-1",
                 "run-1",
-                WorkspaceProviderKind::CloudSandbox,
+                WorkspaceProviderKind::LocalConnector,
                 "batch-1",
                 &invocations,
             )
@@ -1104,7 +1104,7 @@ mod tests {
                 "user-1",
                 "project-1",
                 "run-1",
-                WorkspaceProviderKind::CloudSandbox,
+                WorkspaceProviderKind::LocalConnector,
                 "batch-2",
                 &invocations,
             )

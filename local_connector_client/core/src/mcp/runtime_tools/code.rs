@@ -18,11 +18,12 @@ use super::project::normalize_request_task_project_relative_path;
 pub(crate) fn code_maintainer_service_for_root(
     root: &Path,
     project_id: Option<String>,
+    conversation_id: Option<String>,
+    run_id: Option<String>,
     allow_writes: bool,
     enable_read_tools: bool,
     enable_write_tools: bool,
 ) -> Result<CodeMaintainerService> {
-    let session_scope = project_id.clone();
     CodeMaintainerService::new(CodeMaintainerOptions {
         server_name: "local_connector_code_maintainer".to_string(),
         root: root.to_path_buf(),
@@ -33,12 +34,48 @@ pub(crate) fn code_maintainer_service_for_root(
         search_limit: MAX_LOCAL_MCP_SEARCH_RESULTS,
         enable_read_tools,
         enable_write_tools,
-        conversation_id: session_scope.clone(),
-        run_id: session_scope,
+        conversation_id,
+        run_id,
         db_path: None,
         hooks: None,
     })
     .map_err(|err| anyhow!(err))
+}
+
+pub(crate) fn code_maintainer_service_for_request(
+    root: &Path,
+    project_id: Option<String>,
+    request: &RelayRequest,
+    allow_writes: bool,
+    enable_read_tools: bool,
+    enable_write_tools: bool,
+) -> Result<CodeMaintainerService> {
+    let session_id = relay_header(request, "x-mcp-management-session-id")
+        .or_else(|| relay_header(request, "x-mcp-management-run-id"))
+        .unwrap_or(request.workspace_id.as_str())
+        .to_string();
+    let run_id = relay_header(request, "x-mcp-management-run-id")
+        .or_else(|| relay_header(request, "x-mcp-management-session-id"))
+        .unwrap_or(request.workspace_id.as_str())
+        .to_string();
+    code_maintainer_service_for_root(
+        root,
+        project_id,
+        Some(session_id),
+        Some(run_id),
+        allow_writes,
+        enable_read_tools,
+        enable_write_tools,
+    )
+}
+
+fn relay_header<'a>(request: &'a RelayRequest, name: &str) -> Option<&'a str> {
+    request
+        .headers
+        .get(name)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) fn normalize_code_maintainer_arguments(

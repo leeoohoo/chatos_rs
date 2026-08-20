@@ -2,7 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, ProjectExecutionContext, SandboxProviderKind, WorkspaceProviderKind,
+    ProjectExecutionContext, RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget,
+    WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
 
@@ -69,27 +70,18 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         default_model_config_id: Some("model-1".to_string()),
         tool_result_max_chars: Some(40_000),
         expected_project_task_ids: vec!["task-1".to_string()],
-        workspace_route: Some(
-            chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox {
-                target: SandboxExecutionTarget {
-                    provider: SandboxProviderKind::Cloud,
-                    pairing_id: None,
-                    sandbox_id: "sandbox-1".to_string(),
-                    lease_id: "lease-1".to_string(),
-                    is_environment: false,
-                    service_id: None,
-                },
-            },
-        ),
+        workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: Some("workspace".to_string()),
+        }),
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "owner-1".to_string(),
-            execution_plane: ExecutionPlane::Cloud,
-            workspace_provider: WorkspaceProviderKind::CloudSandbox,
-            workspace: None,
-            sandbox_provider: SandboxProviderKind::Cloud,
-            sandbox_pairing_id: None,
-            source_type: Some("cloud".to_string()),
+            workspace_provider: WorkspaceProviderKind::LocalConnector,
+            workspace: Some(WorkspaceExecutionTarget {
+                device_id: Some("device-private-1".to_string()),
+                workspace_id: "workspace-private-1".to_string(),
+                relative_root: None,
+            }),
             revision: "project-revision-1".to_string(),
         },
         policy_revision: "policy-1".to_string(),
@@ -135,23 +127,6 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
                 blocked_tool_names: HashSet::from(["delete".to_string()]),
             },
         )]),
-        cloud_stdio_bindings: HashMap::from([(
-            "stdio-1".to_string(),
-            CloudStdioProviderBinding {
-                provider_ref: "sandbox:sandbox-1/lease:lease-1".to_string(),
-                command: "node".to_string(),
-                args: vec!["server.js".to_string()],
-                env: BTreeMap::from([(
-                    "PLUGIN_TOKEN".to_string(),
-                    "stdio-shared-store-secret".to_string(),
-                )]),
-                cwd: Some("/workspace/plugin".to_string()),
-                plugin_artifact: None,
-                allow_writes: true,
-                allowed_tool_names: HashSet::new(),
-                blocked_tool_names: HashSet::new(),
-            },
-        )]),
         expires_at: chrono::DateTime::from_timestamp(expires_at_unix, 0)
             .unwrap()
             .to_rfc3339(),
@@ -180,8 +155,6 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
     let encoded = mongodb::bson::to_vec(&document).unwrap();
     for secret in [
         b"shared-store-secret".as_slice(),
-        b"stdio-shared-store-secret".as_slice(),
-        b"/workspace/plugin".as_slice(),
         b"oauth-private-reference".as_slice(),
         b"plugin-private.example.com".as_slice(),
     ] {
@@ -202,10 +175,6 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
         "Bearer shared-store-secret"
     );
     assert_eq!(external.resolved_addresses[0].to_string(), "8.8.8.8:443");
-    assert_eq!(
-        restored.cloud_stdio_bindings["stdio-1"].env["PLUGIN_TOKEN"],
-        "stdio-shared-store-secret"
-    );
     assert_eq!(
         restored.plugin_mcp_bindings["plugin-mcp-1"].release_id,
         "private-release-1"

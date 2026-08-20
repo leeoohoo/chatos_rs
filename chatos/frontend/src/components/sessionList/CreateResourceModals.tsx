@@ -4,12 +4,8 @@
 import React from 'react';
 
 import { useI18n } from '../../i18n/I18nProvider';
-import { getUserVisiblePath, resolveUserVisiblePathInput } from '../../lib/domain/filesystem';
 import ManagerFormDialog from '../ui/ManagerFormDialog';
-import { CloudProjectSourceFields, type CloudProjectSourceMethod } from './CloudProjectSourceFields';
 import { deriveNameFromPath } from './helpers';
-
-export type ResourceSourceMode = 'server' | 'local_connector';
 
 export interface LocalConnectorWorkspaceOption {
   id: string;
@@ -40,12 +36,9 @@ const formatLocalConnectorDisplayPath = (alias: string, relativePath: string): s
 interface CreateResourceModalProps {
   isOpen: boolean;
   title: string;
-  pathLabel: string;
   previewLabel: string;
-  pathValue: string;
   error: string | null;
   fallbackName: string;
-  sourceMode: ResourceSourceMode;
   localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
   localConnectorLoading: boolean;
   localConnectorError: string | null;
@@ -62,13 +55,7 @@ interface CreateResourceModalProps {
   terminalExecuting?: boolean;
   submitting?: boolean;
   submittingLabel?: string;
-  serverContent?: React.ReactNode;
-  hideServerPreview?: boolean;
-  hideSourceModeSwitch?: boolean;
   onClose: () => void;
-  onSourceModeChange: (value: ResourceSourceMode) => void;
-  onPathChange: (value: string) => void;
-  onOpenPicker: () => void;
   onRefreshLocalConnector: () => void;
   onSelectedLocalWorkspaceChange: (value: string) => void;
   onBrowseLocalConnectorDirectory: (path: string) => void;
@@ -82,12 +69,9 @@ interface CreateResourceModalProps {
 const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   isOpen,
   title,
-  pathLabel,
   previewLabel,
-  pathValue,
   error,
   fallbackName,
-  sourceMode,
   localConnectorWorkspaces,
   localConnectorLoading,
   localConnectorError,
@@ -104,13 +88,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
   terminalExecuting,
   submitting = false,
   submittingLabel,
-  serverContent,
-  hideServerPreview = false,
-  hideSourceModeSwitch = false,
   onClose,
-  onSourceModeChange,
-  onPathChange,
-  onOpenPicker,
   onRefreshLocalConnector,
   onSelectedLocalWorkspaceChange,
   onBrowseLocalConnectorDirectory,
@@ -122,12 +100,9 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
 }) => {
   const { t } = useI18n();
   const [newLocalDirectoryName, setNewLocalDirectoryName] = React.useState('');
-  const displayPathValue = getUserVisiblePath(pathValue);
-  const displayName = deriveNameFromPath(displayPathValue, fallbackName);
   const selectedWorkspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalWorkspaceId) || null;
-  const isLocalConnectorMode = sourceMode === 'local_connector';
   const isTerminalCommandMode = Boolean(onTerminalCommandChange);
-  const submitLabel = isTerminalCommandMode && isLocalConnectorMode
+  const submitLabel = isTerminalCommandMode
     ? t('sessionList.resource.executeCommand')
     : t('common.create');
   const submitBusy = Boolean(terminalExecuting || submitting);
@@ -159,32 +134,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
         className="space-y-4"
       >
         <div className="space-y-4 rounded-xl border border-border bg-muted/40 p-4">
-          {!hideSourceModeSwitch ? (
-            <div className="inline-flex rounded-lg border border-border bg-background p-1">
-              <button
-                type="button"
-                onClick={() => onSourceModeChange('server')}
-                disabled={submitBusy}
-                className={`rounded-md px-3 py-1.5 text-xs transition-colors ${sourceMode === 'server' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-              >
-                {t('sessionList.resource.sourceServer')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onSourceModeChange('local_connector');
-                  onRefreshLocalConnector();
-                }}
-                disabled={submitBusy}
-                className={`rounded-md px-3 py-1.5 text-xs transition-colors ${sourceMode === 'local_connector' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}
-              >
-                {t('sessionList.resource.sourceLocalConnector')}
-              </button>
-            </div>
-          ) : null}
-
-          {isLocalConnectorMode ? (
-            <div className="space-y-3">
+          <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <select
                   value={selectedLocalWorkspaceId}
@@ -336,38 +286,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
               {localConnectorError ? (
                 <div className="text-xs text-destructive">{localConnectorError}</div>
               ) : null}
-            </div>
-          ) : serverContent ? (
-            serverContent
-          ) : (
-            <div>
-              <label className="text-sm text-muted-foreground">{pathLabel}</label>
-              <div className="mt-1 flex items-center gap-2">
-                <input
-                  value={displayPathValue}
-                  onChange={(event) => onPathChange(resolveUserVisiblePathInput(event.target.value, pathValue))}
-                  className="flex-1 rounded border border-border bg-background px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={t('sessionList.resource.pathPlaceholder')}
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={onOpenPicker}
-                  className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
-                >
-                  {t('sessionList.resource.chooseDirectory')}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {!isLocalConnectorMode && !hideServerPreview && pathValue.trim() ? (
-            <div className="text-xs text-muted-foreground">
-              {previewLabel}
-              <span className="text-foreground">{displayName}</span>
-              <span className="ml-2 text-muted-foreground">{displayPathValue}</span>
-            </div>
-          ) : null}
+          </div>
           {error ? (
             <div className="text-xs text-destructive">{error}</div>
           ) : null}
@@ -396,12 +315,7 @@ const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
 
 interface CreateProjectModalProps {
   isOpen: boolean;
-  projectRoot: string;
-  cloudProjectName?: string;
-  cloudProjectGitUrl?: string;
-  cloudProjectZipFile?: File | null;
   projectError: string | null;
-  sourceMode?: ResourceSourceMode;
   localConnectorWorkspaces?: LocalConnectorWorkspaceOption[];
   localConnectorLoading?: boolean;
   localConnectorError?: string | null;
@@ -413,14 +327,7 @@ interface CreateProjectModalProps {
   selectedLocalDirectoryPath?: string;
   selectedLocalWorkspaceId?: string;
   submitting?: boolean;
-  allowLocalConnector?: boolean;
   onClose: () => void;
-  onSourceModeChange?: (value: ResourceSourceMode) => void;
-  onProjectRootChange: (value: string) => void;
-  onCloudProjectNameChange?: (value: string) => void;
-  onCloudProjectGitUrlChange?: (value: string) => void;
-  onCloudProjectZipFileChange?: (value: File | null) => void;
-  onOpenPicker: () => void;
   onRefreshLocalConnector?: () => void;
   onSelectedLocalWorkspaceChange?: (value: string) => void;
   onBrowseLocalConnectorDirectory?: (path: string) => void;
@@ -431,12 +338,7 @@ interface CreateProjectModalProps {
 
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   isOpen,
-  projectRoot,
-  cloudProjectName = '',
-  cloudProjectGitUrl = '',
-  cloudProjectZipFile = null,
   projectError,
-  sourceMode = 'server',
   localConnectorWorkspaces = [],
   localConnectorLoading = false,
   localConnectorError = null,
@@ -448,14 +350,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   selectedLocalDirectoryPath = '',
   selectedLocalWorkspaceId = '',
   submitting = false,
-  allowLocalConnector = true,
   onClose,
-  onSourceModeChange = () => {},
-  onProjectRootChange,
-  onCloudProjectNameChange = () => {},
-  onCloudProjectGitUrlChange = () => {},
-  onCloudProjectZipFileChange = () => {},
-  onOpenPicker,
   onRefreshLocalConnector = () => {},
   onSelectedLocalWorkspaceChange = () => {},
   onBrowseLocalConnectorDirectory = () => {},
@@ -464,52 +359,20 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onCreate,
 }) => {
   const { t } = useI18n();
-  const [cloudSourceMethod, setCloudSourceMethod] = React.useState<CloudProjectSourceMethod>('git');
-  const [cloudSourceError, setCloudSourceError] = React.useState<string | null>(null);
-  const wasOpenRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (isOpen && !wasOpenRef.current) {
-      setCloudSourceMethod(cloudProjectZipFile ? 'zip' : 'git');
-      setCloudSourceError(null);
-    } else if (!isOpen) {
-      setCloudSourceError(null);
+    if (isOpen) {
+      onRefreshLocalConnector();
     }
-    wasOpenRef.current = isOpen;
-  }, [cloudProjectGitUrl, cloudProjectZipFile, isOpen]);
-
-  const changeCloudSourceMethod = (method: CloudProjectSourceMethod) => {
-    setCloudSourceMethod(method);
-    setCloudSourceError(null);
-    if (method !== 'git') onCloudProjectGitUrlChange('');
-    if (method !== 'zip') onCloudProjectZipFileChange(null);
-  };
-
-  const submitProject = () => {
-    if (sourceMode === 'server') {
-      if (cloudSourceMethod === 'git' && !cloudProjectGitUrl.trim()) {
-        setCloudSourceError(t('sessionList.resource.error.enterGitUrl'));
-        return;
-      }
-      if (cloudSourceMethod === 'zip' && !cloudProjectZipFile) {
-        setCloudSourceError(t('sessionList.resource.error.selectZipFile'));
-        return;
-      }
-    }
-    setCloudSourceError(null);
-    onCreate();
-  };
+  }, [isOpen, onRefreshLocalConnector]);
 
   return (
     <CreateResourceModal
       isOpen={isOpen}
       title={t('sessionList.resource.projectTitle')}
-      pathLabel={t('sessionList.resource.projectDirectory')}
       previewLabel={t('sessionList.resource.projectDefaultName')}
-      pathValue={projectRoot}
-      error={cloudSourceError || projectError}
+      error={projectError}
       fallbackName="Project"
-      sourceMode={allowLocalConnector ? sourceMode : 'server'}
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}
@@ -522,30 +385,13 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       selectedLocalWorkspaceId={selectedLocalWorkspaceId}
       submitting={submitting}
       submittingLabel={t('sessionList.resource.creatingProject')}
-      hideSourceModeSwitch={!allowLocalConnector}
-      serverContent={(
-        <CloudProjectSourceFields
-          projectName={cloudProjectName}
-          gitUrl={cloudProjectGitUrl}
-          zipFile={cloudProjectZipFile}
-          sourceMethod={cloudSourceMethod}
-          onProjectNameChange={onCloudProjectNameChange}
-          onGitUrlChange={onCloudProjectGitUrlChange}
-          onZipFileChange={onCloudProjectZipFileChange}
-          onSourceMethodChange={changeCloudSourceMethod}
-        />
-      )}
-      hideServerPreview
       onClose={onClose}
-      onSourceModeChange={onSourceModeChange}
-      onPathChange={onProjectRootChange}
-      onOpenPicker={onOpenPicker}
       onRefreshLocalConnector={onRefreshLocalConnector}
       onSelectedLocalWorkspaceChange={onSelectedLocalWorkspaceChange}
       onBrowseLocalConnectorDirectory={onBrowseLocalConnectorDirectory}
       onSelectLocalConnectorDirectory={onSelectLocalConnectorDirectory}
       onCreateLocalConnectorDirectory={onCreateLocalConnectorDirectory}
-      onSubmit={submitProject}
+      onSubmit={onCreate}
     />
   );
 };
@@ -609,12 +455,9 @@ export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
     <CreateResourceModal
       isOpen={isOpen}
       title={t('sessionList.resource.terminalTitle')}
-      pathLabel={t('sessionList.resource.terminalDirectory')}
       previewLabel={t('sessionList.resource.terminalDefaultName')}
-      pathValue=""
       error={terminalError}
       fallbackName="Terminal"
-      sourceMode="local_connector"
       localConnectorWorkspaces={localConnectorWorkspaces}
       localConnectorLoading={localConnectorLoading}
       localConnectorError={localConnectorError}
@@ -626,11 +469,7 @@ export const CreateTerminalModal: React.FC<CreateTerminalModalProps> = ({
       selectedLocalDirectoryPath={selectedLocalDirectoryPath}
       selectedLocalWorkspaceId={selectedLocalWorkspaceId}
       terminalExecuting={terminalExecuting}
-      hideSourceModeSwitch
       onClose={onClose}
-      onSourceModeChange={() => {}}
-      onPathChange={() => {}}
-      onOpenPicker={() => {}}
       onRefreshLocalConnector={onRefreshLocalConnector}
       onSelectedLocalWorkspaceChange={onSelectedLocalWorkspaceChange}
       onBrowseLocalConnectorDirectory={onBrowseLocalConnectorDirectory}

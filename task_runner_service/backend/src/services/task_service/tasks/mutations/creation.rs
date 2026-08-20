@@ -288,7 +288,6 @@ mod tests {
                 name: format!("Project {id}"),
                 root_path: Some(format!("/workspace/{id}")),
                 git_url: Some(format!("https://example.com/{id}.git")),
-                source_type: None,
                 cloud_import_source: None,
                 import_status: None,
                 source_git_url: None,

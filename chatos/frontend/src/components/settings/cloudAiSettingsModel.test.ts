@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import type { AiModelConfig } from '../../types';
 import {
   buildTaskModelPatch,
-  defaultModelDraftsFromSettings,
   isCloudConfiguredModel,
   taskModelDraftsFromModels,
 } from './cloudAiSettingsModel';
@@ -29,18 +28,6 @@ const buildModel = (overrides: Partial<AiModelConfig> = {}): AiModelConfig => ({
 });
 
 describe('cloud AI settings model', () => {
-  it('maps the environment initialization default independently', () => {
-    expect(defaultModelDraftsFromSettings({
-      user_id: 'user-1',
-      project_management_agent_model_config_id: 'project-model',
-      environment_initialization_model_config_id: 'environment-model',
-      environment_initialization_thinking_level: 'high',
-    }).environment).toEqual({
-      modelId: 'environment-model',
-      thinking: 'high',
-    });
-  });
-
   it('excludes local metadata records without cloud connection details', () => {
     expect(isCloudConfiguredModel(buildModel())).toBe(true);
     expect(isCloudConfiguredModel(buildModel({ base_url: '' }))).toBe(false);

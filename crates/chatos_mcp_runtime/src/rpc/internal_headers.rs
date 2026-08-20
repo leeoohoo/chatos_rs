@@ -13,11 +13,6 @@ const LOCAL_CONNECTOR_CALLER_HEADER: &str = "x-local-connector-caller";
 const LOCAL_CONNECTOR_TOKEN_HEADER: &str = "x-local-connector-internal-token";
 const LOCAL_CONNECTOR_SCOPE_HEADER: &str = "x-local-connector-internal-scope";
 const LOCAL_CONNECTOR_TOKEN_AUDIENCE: &str = "local-connector-service";
-const SANDBOX_MANAGER_SECRET_HEADER: &str = "x-sandbox-client-key";
-const SANDBOX_MANAGER_CALLER_HEADER: &str = "x-sandbox-caller";
-const SANDBOX_MANAGER_TOKEN_HEADER: &str = "x-sandbox-internal-token";
-const SANDBOX_MANAGER_SCOPE_HEADER: &str = "x-sandbox-internal-scope";
-const SANDBOX_MANAGER_TOKEN_AUDIENCE: &str = "sandbox-manager";
 
 pub fn prepare_http_headers(
     headers: &HashMap<String, String>,
@@ -34,37 +29,12 @@ pub fn prepare_http_headers(
         LOCAL_CONNECTOR_SCOPE_HEADER,
         "Local Connector",
     )?;
-    reject_static_token_without_scope(
-        headers,
-        SANDBOX_MANAGER_TOKEN_HEADER,
-        SANDBOX_MANAGER_SCOPE_HEADER,
-        "Sandbox Manager",
-    )?;
-    let signing_profile_count = [
-        SANDBOX_MANAGER_SCOPE_HEADER,
-        LOCAL_CONNECTOR_SCOPE_HEADER,
-        PROJECT_SERVICE_SCOPE_HEADER,
-    ]
-    .into_iter()
-    .filter(|scope_header| header_value(headers, scope_header).is_some())
-    .count();
+    let signing_profile_count = [LOCAL_CONNECTOR_SCOPE_HEADER, PROJECT_SERVICE_SCOPE_HEADER]
+        .into_iter()
+        .filter(|scope_header| header_value(headers, scope_header).is_some())
+        .count();
     if signing_profile_count > 1 {
         return Err("MCP headers contain multiple internal request signing profiles".to_string());
-    }
-    if let Some(scope) = header_value(headers, SANDBOX_MANAGER_SCOPE_HEADER) {
-        return sign_headers(
-            headers,
-            HeaderSigningProfile {
-                caller_header: SANDBOX_MANAGER_CALLER_HEADER,
-                secret_header: SANDBOX_MANAGER_SECRET_HEADER,
-                token_header: SANDBOX_MANAGER_TOKEN_HEADER,
-                scope_header: SANDBOX_MANAGER_SCOPE_HEADER,
-                audience: SANDBOX_MANAGER_TOKEN_AUDIENCE,
-                service_label: "Sandbox Manager",
-                extra_private_headers: &["x-sandbox-client-id"],
-            },
-            scope,
-        );
     }
     if let Some(scope) = header_value(headers, LOCAL_CONNECTOR_SCOPE_HEADER) {
         return sign_headers(
@@ -100,13 +70,9 @@ pub fn prepare_http_headers(
 }
 
 pub fn headers_require_per_request_signing(headers: &HashMap<String, String>) -> bool {
-    [
-        SANDBOX_MANAGER_SCOPE_HEADER,
-        LOCAL_CONNECTOR_SCOPE_HEADER,
-        PROJECT_SERVICE_SCOPE_HEADER,
-    ]
-    .into_iter()
-    .any(|scope_header| header_value(headers, scope_header).is_some())
+    [LOCAL_CONNECTOR_SCOPE_HEADER, PROJECT_SERVICE_SCOPE_HEADER]
+        .into_iter()
+        .any(|scope_header| header_value(headers, scope_header).is_some())
 }
 
 fn reject_static_token_without_scope(
@@ -245,32 +211,6 @@ mod tests {
             "task-runner",
             LOCAL_CONNECTOR_TOKEN_AUDIENCE,
             "relay.mcp",
-        );
-    }
-
-    #[test]
-    fn sandbox_manager_headers_receive_token_without_client_key() {
-        assert_signed_headers(
-            HashMap::from([
-                (
-                    SANDBOX_MANAGER_SECRET_HEADER.to_string(),
-                    "a-long-project-sandbox-secret".to_string(),
-                ),
-                (
-                    SANDBOX_MANAGER_CALLER_HEADER.to_string(),
-                    "project-service".to_string(),
-                ),
-                (
-                    SANDBOX_MANAGER_SCOPE_HEADER.to_string(),
-                    "sandbox.service".to_string(),
-                ),
-            ]),
-            SANDBOX_MANAGER_SECRET_HEADER,
-            SANDBOX_MANAGER_TOKEN_HEADER,
-            "a-long-project-sandbox-secret",
-            "project-service",
-            SANDBOX_MANAGER_TOKEN_AUDIENCE,
-            "sandbox.service",
         );
     }
 

@@ -67,16 +67,6 @@ export_local_env() {
   export CHATOS_LOCAL_DEV_HOST_ADDRESS="$host_address"
   configure_local_dev_cloud_browser_runtime
 
-  export CHATOS_LOCAL_DEV_SANDBOX_RUNTIME_PROXY_PORT="${CHATOS_LOCAL_DEV_SANDBOX_RUNTIME_PROXY_PORT:-17897}"
-  export CHATOS_LOCAL_DEV_MANAGED_SANDBOX_RUNTIME_PROXY="${CHATOS_LOCAL_DEV_MANAGED_SANDBOX_RUNTIME_PROXY:-true}"
-  if [[ "$(uname -s)" == "Darwin" \
-    && "$CHATOS_LOCAL_DEV_MANAGED_SANDBOX_RUNTIME_PROXY" == "true" \
-    && -z "${SANDBOX_MANAGER_RUNTIME_HTTP_PROXY:-}" \
-    && -z "${SANDBOX_MANAGER_RUNTIME_HTTPS_PROXY:-}" ]]; then
-    export SANDBOX_MANAGER_RUNTIME_HTTP_PROXY="http://${host_address}:${CHATOS_LOCAL_DEV_SANDBOX_RUNTIME_PROXY_PORT}"
-    export SANDBOX_MANAGER_RUNTIME_HTTPS_PROXY="$SANDBOX_MANAGER_RUNTIME_HTTP_PROXY"
-  fi
-
   export CHATOS_ENV="${CHATOS_LOCAL_DEV_ENV:-local}"
   export CHATOS_SERVICE_RUNTIME_ENABLED="${CHATOS_LOCAL_DEV_SERVICE_RUNTIME_ENABLED:-true}"
   export CHATOS_SERVICE_DISCOVERY_MODE="${CHATOS_LOCAL_DEV_DISCOVERY_MODE:-consul,static}"
@@ -122,11 +112,6 @@ export_local_env() {
   export PLUGIN_MANAGEMENT_MTLS_SERVER_KEY_PATH="${PLUGIN_MANAGEMENT_MTLS_SERVER_KEY_PATH:-$PLUGIN_MANAGEMENT_MTLS_DIR/server.key}"
   export PLUGIN_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH="${PLUGIN_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH:-$PLUGIN_MANAGEMENT_MTLS_DIR/ca.crt}"
   export PLUGIN_MANAGEMENT_MTLS_CA_CERT_PATH="${PLUGIN_MANAGEMENT_MTLS_CA_CERT_PATH:-$PLUGIN_MANAGEMENT_MTLS_DIR/ca.crt}"
-  export SANDBOX_MANAGER_MTLS_DIR="${SANDBOX_MANAGER_MTLS_DIR:-$STATE_DIR/sandbox-manager-mtls}"
-  export SANDBOX_MANAGER_MTLS_SERVER_CERT_PATH="${SANDBOX_MANAGER_MTLS_SERVER_CERT_PATH:-$SANDBOX_MANAGER_MTLS_DIR/server.crt}"
-  export SANDBOX_MANAGER_MTLS_SERVER_KEY_PATH="${SANDBOX_MANAGER_MTLS_SERVER_KEY_PATH:-$SANDBOX_MANAGER_MTLS_DIR/server.key}"
-  export SANDBOX_MANAGER_MTLS_CLIENT_CA_CERT_PATH="${SANDBOX_MANAGER_MTLS_CLIENT_CA_CERT_PATH:-$SANDBOX_MANAGER_MTLS_DIR/ca.crt}"
-  export SANDBOX_MANAGER_MTLS_CA_CERT_PATH="${SANDBOX_MANAGER_MTLS_CA_CERT_PATH:-$SANDBOX_MANAGER_MTLS_DIR/ca.crt}"
   export USER_SERVICE_MTLS_DIR="${USER_SERVICE_MTLS_DIR:-$STATE_DIR/user-service-mtls}"
   export USER_SERVICE_MTLS_SERVER_CERT_PATH="${USER_SERVICE_MTLS_SERVER_CERT_PATH:-$USER_SERVICE_MTLS_DIR/server.crt}"
   export USER_SERVICE_MTLS_SERVER_KEY_PATH="${USER_SERVICE_MTLS_SERVER_KEY_PATH:-$USER_SERVICE_MTLS_DIR/server.key}"
@@ -141,7 +126,6 @@ export_local_env() {
   export CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET:-change_me_config_center_official_website_signing_secret}"
   export CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_plugin_management_signing_secret}"
   export CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_project_service_signing_secret}"
-  export CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET="${CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET:-change_me_config_center_sandbox_manager_signing_secret}"
   export CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET="${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}"
   export CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_user_service_signing_secret}"
   export AGENT_MAX_ITERATIONS="${AGENT_MAX_ITERATIONS:-600}"
@@ -202,22 +186,13 @@ export_local_env() {
   export MCP_MANAGEMENT_RUNTIME_GRANT_SECRET="${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}"
   export MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET="${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}"
   export MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS="${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}"
-  export MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET="${MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_mcp_management_sandbox_manager_secret}"
-  export MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS:-180000}"
   export TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}"
   export TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS="${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
   export CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}"
   export CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS="${CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
-  export PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-180000}"
   export CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET="${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}"
   export TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET="${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}"
-  export PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET="${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}"
   export USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET="${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}"
-  export PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET="${PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_project_service_sandbox_manager_secret}"
-  export PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID="project-service"
-  export PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY="$PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET"
-  export SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID="${SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID:-sandbox-manager-frontend}"
-  export SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY="${SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY:-local_dev_sandbox_manager_frontend_proxy_key_2026}"
 
   export USER_SERVICE_HOST="${USER_SERVICE_HOST:-0.0.0.0}"
   export USER_SERVICE_PORT="${USER_SERVICE_PORT:-39190}"
@@ -245,10 +220,6 @@ export_local_env() {
   export MCP_MANAGEMENT_HOST="${MCP_MANAGEMENT_HOST:-0.0.0.0}"
   export MCP_MANAGEMENT_PORT="${MCP_MANAGEMENT_PORT:-39280}"
   export MCP_MANAGEMENT_INTERNAL_MTLS_PORT="${MCP_MANAGEMENT_INTERNAL_MTLS_PORT:-39282}"
-  export SANDBOX_MANAGER_HOST="${SANDBOX_MANAGER_HOST:-0.0.0.0}"
-  export SANDBOX_MANAGER_PORT="${SANDBOX_MANAGER_PORT:-8095}"
-  export SANDBOX_MANAGER_INTERNAL_MTLS_PORT="${SANDBOX_MANAGER_INTERNAL_MTLS_PORT:-8097}"
-  export SANDBOX_MANAGER_WORK_ROOT="${SANDBOX_MANAGER_WORK_ROOT:-$STATE_DIR/sandbox-manager-work}"
   export TASK_RUNNER_HOST="${TASK_RUNNER_HOST:-0.0.0.0}"
   export TASK_RUNNER_PORT="${TASK_RUNNER_PORT:-39090}"
   export TASK_RUNNER_INTERNAL_MTLS_PORT="${TASK_RUNNER_INTERNAL_MTLS_PORT:-39092}"
@@ -264,7 +235,6 @@ export_local_env() {
   export CONFIG_CENTER_MONGODB_DATABASE="${CONFIG_CENTER_MONGODB_DATABASE:-configuration_center}"
   export PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE="${PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE:-plugin_management_service}"
   export LOCAL_CONNECTOR_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/local_connector_service?${mongodb_query}"
-  export SANDBOX_MANAGER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/sandbox_manager_service?${mongodb_query}"
   export TASK_RUNNER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/task_runner_service?${mongodb_query}"
   export MCP_MANAGEMENT_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/mcp_management_service?${mongodb_query}"
   export LEGACY_AUTH_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin?${mongodb_query}"
@@ -286,8 +256,6 @@ export_local_env() {
   export PROJECT_SERVICE_TASK_RUNNER_BASE_URL="https://127.0.0.1:${TASK_RUNNER_INTERNAL_MTLS_PORT}"
   export PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET="$PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"
   export PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
-  export PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
-  export PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL="https://127.0.0.1:${SANDBOX_MANAGER_INTERNAL_MTLS_PORT}"
   export CHATOS_RUN_WORKSPACE_ROOT="${CHATOS_RUN_WORKSPACE_ROOT:-$STATE_DIR/run-workspaces}"
   export PROJECT_SERVICE_SYNC_SECRET="$CHATOS_PROJECT_SERVICE_SYNC_SECRET"
   export PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
@@ -307,19 +275,6 @@ export_local_env() {
   export USER_SERVICE_TASK_RUNNER_BASE_URL="https://127.0.0.1:${TASK_RUNNER_INTERNAL_MTLS_PORT}"
   export MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL="https://127.0.0.1:${CHATOS_INTERNAL_MTLS_PORT}"
   export MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
-  export MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL="https://127.0.0.1:${SANDBOX_MANAGER_INTERNAL_MTLS_PORT}"
-  export SANDBOX_MANAGER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
-  export SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE="${SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE:-published}"
-  export SANDBOX_MANAGER_DOCKER_PUBLISH_AGENT="${SANDBOX_MANAGER_DOCKER_PUBLISH_AGENT:-true}"
-  export SANDBOX_MANAGER_DOCKER_CONFIG="${SANDBOX_MANAGER_DOCKER_CONFIG:-$STATE_DIR/docker-public-config}"
-  export SANDBOX_MANAGER_RUNTIME_HTTP_PROXY="${SANDBOX_MANAGER_RUNTIME_HTTP_PROXY:-}"
-  export SANDBOX_MANAGER_RUNTIME_HTTPS_PROXY="${SANDBOX_MANAGER_RUNTIME_HTTPS_PROXY:-}"
-  export SANDBOX_MANAGER_RUNTIME_NO_PROXY="${SANDBOX_MANAGER_RUNTIME_NO_PROXY:-localhost,127.0.0.1,postgresql,workspace}"
-  if [[ -z "${SANDBOX_MANAGER_DOCKER_HOST:-}" && -S "$HOME/.docker/run/docker.sock" ]]; then
-    export SANDBOX_MANAGER_DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"
-  else
-    export SANDBOX_MANAGER_DOCKER_HOST="${SANDBOX_MANAGER_DOCKER_HOST:-${DOCKER_HOST:-}}"
-  fi
   export TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-mongo}"
   # Do not inject a local default for TASK_RUNNER_WORKER_CONCURRENCY here.
   # Task Runner loads the authoritative value from Configuration Center at
@@ -348,7 +303,6 @@ config_center_caller_signing_secret() {
     official-website) printf '%s' "$CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET" ;;
     plugin-management-service) printf '%s' "$CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET" ;;
     project-service) printf '%s' "$CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET" ;;
-    sandbox-manager) printf '%s' "$CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET" ;;
     task-runner) printf '%s' "$CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET" ;;
     user-service) printf '%s' "$CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET" ;;
     *) return 1 ;;
@@ -358,7 +312,7 @@ config_center_caller_signing_secret() {
 config_center_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|local-connector-service|mcp-management-service|memory-engine|official-website|plugin-management-service|project-service|sandbox-manager|task-runner|user-service)
+    chatos-backend|local-connector-service|mcp-management-service|memory-engine|official-website|plugin-management-service|project-service|task-runner|user-service)
       printf '%s/%s.identity.pem' "$CONFIG_CENTER_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -390,7 +344,7 @@ task_runner_client_identity_path() {
 memory_engine_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    configuration-center|user-service|chatos-backend|task-runner|project-service)
+    configuration-center|user-service|chatos-backend|task-runner)
       printf '%s/%s.identity.pem' "$MEMORY_ENGINE_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -445,65 +399,13 @@ plugin_management_client_identity_path() {
   esac
 }
 
-sandbox_manager_client_identity_path() {
-  local caller="$1"
-  case "$caller" in
-    project-service|mcp-management-service)
-      printf '%s/%s.identity.pem' "$SANDBOX_MANAGER_MTLS_DIR" "$caller"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
 ensure_dirs() {
   mkdir -p \
     "$LOG_DIR" \
     "$PID_DIR" \
     "$STATE_DIR/task-runner" \
     "$STATE_DIR/chatos" \
-    "$STATE_DIR/sandboxes" \
-    "$STATE_DIR/docker-public-config" \
     "$STATE_DIR/local-connector"
-}
-
-prepare_sandbox_docker_config() {
-  local default_config_dir="$STATE_DIR/docker-public-config"
-  local config_file plugin_dir
-  local -a plugin_dirs=()
-
-  # Custom Docker configs are user-managed. The local default intentionally
-  # contains no registry credentials, but still needs Docker CLI plugins.
-  if [[ "$SANDBOX_MANAGER_DOCKER_CONFIG" != "$default_config_dir" ]]; then
-    return 0
-  fi
-  for plugin_dir in \
-    "$HOME/.docker/cli-plugins" \
-    "/Applications/Docker.app/Contents/Resources/cli-plugins" \
-    "/opt/homebrew/lib/docker/cli-plugins" \
-    "/usr/local/lib/docker/cli-plugins"; do
-    if [[ -d "$plugin_dir" ]]; then
-      plugin_dirs+=("$plugin_dir")
-    fi
-  done
-  if (( ${#plugin_dirs[@]} == 0 )); then
-    return 0
-  fi
-
-  config_file="$default_config_dir/config.json"
-  python3 - "$config_file" "${plugin_dirs[@]}" <<'PY'
-import json
-import os
-import sys
-
-path = sys.argv[1]
-plugin_dirs = list(dict.fromkeys(sys.argv[2:]))
-payload = {"cliPluginsExtraDirs": plugin_dirs}
-temporary = f"{path}.tmp"
-with open(temporary, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, separators=(",", ":"))
-    handle.write("\n")
-os.replace(temporary, path)
-PY
 }
 
 prepare_local_dev_apisix_config() {
@@ -610,7 +512,6 @@ managed = {
     "plugin-management-service",
     "local-connector-service",
     "mcp-management-service",
-    "sandbox-manager",
     "task-runner",
     "chatos-backend",
     "harness",

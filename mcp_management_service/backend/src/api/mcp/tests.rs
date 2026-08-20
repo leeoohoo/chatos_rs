@@ -11,9 +11,8 @@ use super::*;
 use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    RuntimeToolDescriptor, RuntimeWorkspaceRouteTarget, SandboxExecutionTarget,
-    SandboxProviderKind, WorkspaceProviderKind,
+    McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute, RuntimeToolDescriptor,
+    RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_mcp_service::{McpToolCallCommandItem, METHOD_TOOLS_CALL};
 use tokio::sync::{mpsc, Notify};
@@ -48,12 +47,12 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
-            execution_plane: ExecutionPlane::Cloud,
-            workspace_provider: WorkspaceProviderKind::Harness,
-            workspace: None,
-            sandbox_provider: SandboxProviderKind::Cloud,
-            sandbox_pairing_id: None,
-            source_type: Some("cloud".to_string()),
+            workspace_provider: WorkspaceProviderKind::LocalConnector,
+            workspace: Some(WorkspaceExecutionTarget {
+                device_id: Some("device-1".to_string()),
+                workspace_id: "workspace-1".to_string(),
+                relative_root: None,
+            }),
             revision: "project-revision".to_string(),
         },
         policy_revision: "policy-1".to_string(),
@@ -81,7 +80,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         plugin_local_tool_component_bindings: Default::default(),
         plugin_cloud_tool_component_bindings: Default::default(),
         external_http_bindings: Default::default(),
-        cloud_stdio_bindings: Default::default(),
         expires_at: chrono::DateTime::from_timestamp(expires_at_unix, 0)
             .unwrap()
             .to_rfc3339(),
@@ -120,22 +118,15 @@ fn explicit_workspace_route_is_the_execution_scope_provider_authority() {
     let mut snapshot = snapshot();
     assert_eq!(
         snapshot.execution_scope_provider(),
-        WorkspaceProviderKind::Harness
+        WorkspaceProviderKind::LocalConnector
     );
-    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::CloudSandbox {
-        target: SandboxExecutionTarget {
-            provider: SandboxProviderKind::Cloud,
-            pairing_id: None,
-            sandbox_id: "sandbox-1".to_string(),
-            lease_id: "lease-1".to_string(),
-            is_environment: false,
-            service_id: None,
-        },
+    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::LocalConnector {
+        default_tool_root: Some("apps/backend".to_string()),
     });
 
     assert_eq!(
         snapshot.execution_scope_provider(),
-        WorkspaceProviderKind::CloudSandbox
+        WorkspaceProviderKind::LocalConnector
     );
 }
 
@@ -216,48 +207,6 @@ fn tool_call_command(
         calls,
         delivery_attempt: 1,
     }
-}
-
-#[tokio::test]
-async fn cloud_sandbox_route_and_harness_project_share_one_execution_scope_authority() {
-    let state = AppState::new(crate::config::AppConfig::test())
-        .await
-        .unwrap();
-    let mut snapshot = snapshot();
-    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::CloudSandbox {
-        target: SandboxExecutionTarget {
-            provider: SandboxProviderKind::Cloud,
-            pairing_id: None,
-            sandbox_id: "sandbox-1".to_string(),
-            lease_id: "lease-1".to_string(),
-            is_environment: false,
-            service_id: None,
-        },
-    });
-    persist_runtime_session(&state, &snapshot).await;
-    let command = tool_call_command(
-        &state,
-        &snapshot,
-        vec![McpToolCallCommandItem {
-            invocation_id: "sandbox-invocation".to_string(),
-            tool_call_id: "sandbox-call".to_string(),
-            call_index: 0,
-            name: "demo_search".to_string(),
-            arguments: json!({}),
-            preflight_error: None,
-        }],
-    );
-
-    let batch = register_tool_call_command(&state, &command)
-        .await
-        .expect("Cloud Sandbox batch must enqueue through the explicit route scope")
-        .record;
-
-    assert_eq!(batch.status, RuntimeToolBatchStatus::Active);
-    assert_eq!(
-        state.runtime_execution_scopes.queued_invocation_ids().await,
-        vec!["sandbox-invocation".to_string()]
-    );
 }
 
 #[tokio::test]

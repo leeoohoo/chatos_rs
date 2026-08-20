@@ -3,16 +3,12 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::{
-    McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute, SandboxExecutionTarget,
-};
+use chatos_mcp_management_sdk::{McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute};
 use serde_json::Value;
 
 use super::{PluginCloudProvider, PreparedPluginCloudRoute};
 use crate::providers::ProviderCallError;
-use crate::runtime::{
-    CloudStdioProviderBinding, ExternalHttpProviderBinding, PluginMcpRuntimeBinding,
-};
+use crate::runtime::{ExternalHttpProviderBinding, PluginMcpRuntimeBinding};
 
 impl PluginCloudProvider {
     #[allow(clippy::too_many_arguments)]
@@ -22,18 +18,13 @@ impl PluginCloudProvider {
         immutable_bindings: &HashMap<String, PluginMcpRuntimeBinding>,
         routes: &mut [ResolvedMcpRoute],
         context: &ProjectExecutionContext,
-        target: Option<&SandboxExecutionTarget>,
         runtime_session_id: &str,
         owner_user_id: &str,
-        project_id: &str,
-        run_id: Option<&str>,
         expires_at_unix: i64,
     ) -> (
-        HashMap<String, CloudStdioProviderBinding>,
         HashMap<String, ExternalHttpProviderBinding>,
         HashMap<String, Vec<Value>>,
     ) {
-        let mut stdio_bindings = HashMap::new();
         let mut http_bindings = HashMap::new();
         let mut tool_snapshots = HashMap::new();
         for route in routes
@@ -48,11 +39,8 @@ impl PluginCloudProvider {
                         immutable,
                         route,
                         context,
-                        target,
                         runtime_session_id,
                         owner_user_id,
-                        project_id,
-                        run_id,
                         expires_at_unix,
                     )
                     .await
@@ -62,11 +50,6 @@ impl PluginCloudProvider {
                 )),
             };
             match result {
-                Ok(PreparedPluginCloudRoute::Stdio { binding, tools }) => {
-                    route.cancel_supported = true;
-                    tool_snapshots.insert(route.resource_id.clone(), tools);
-                    stdio_bindings.insert(route.resource_id.clone(), *binding);
-                }
                 Ok(PreparedPluginCloudRoute::Http { binding, tools }) => {
                     route.cancel_supported = true;
                     tool_snapshots.insert(route.resource_id.clone(), tools);
@@ -75,7 +58,7 @@ impl PluginCloudProvider {
                 Err(error) => make_route_unavailable(route, error.message.as_str()),
             }
         }
-        (stdio_bindings, http_bindings, tool_snapshots)
+        (http_bindings, tool_snapshots)
     }
 }
 

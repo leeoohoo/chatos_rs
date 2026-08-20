@@ -46,8 +46,6 @@ pub const MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "mcp_management.downstream.chatos_internal_api_secret";
 pub const MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "mcp_management.downstream.local_connector_internal_api_secret";
-pub const MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "mcp_management.downstream.sandbox_manager_internal_api_secret";
 pub const MCP_MANAGEMENT_HOST_CONFIG_KEY: &str = "mcp_management.runtime.host";
 pub const MCP_MANAGEMENT_PORT_CONFIG_KEY: &str = "mcp_management.runtime.port";
 pub const MCP_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
@@ -89,10 +87,6 @@ pub const MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY: &str =
     "mcp_management.invocation.project_active_limit";
 pub const MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY: &str =
     "mcp_management.invocation.device_active_limit";
-pub const MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
-    "mcp_management.runtime.sandbox_tool_timeout_ms";
-pub const MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
-    "mcp_management.runtime.sandbox_image_tool_timeout_ms";
 pub const MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
     "mcp_management.runtime.task_runner_tool_timeout_ms";
 pub const MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
@@ -115,8 +109,6 @@ pub const MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "mcp_management.downstream.chatos_service_base_url";
 pub const MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "mcp_management.downstream.local_connector_service_base_url";
-pub const MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "mcp_management.downstream.sandbox_manager_service_base_url";
 pub const PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.task_runner_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =

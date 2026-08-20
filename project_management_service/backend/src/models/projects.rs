@@ -33,59 +33,6 @@ impl DbStatus for ProjectStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
-pub enum ProjectSourceType {
-    Local,
-    LocalConnector,
-    #[default]
-    Cloud,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub enum ProjectExecutionPlane {
-    #[default]
-    Cloud,
-}
-
-impl DbStatus for ProjectExecutionPlane {
-    fn as_str(&self) -> &'static str {
-        "cloud"
-    }
-
-    fn from_db(_value: &str) -> Self {
-        Self::Cloud
-    }
-}
-
-impl ProjectSourceType {
-    pub fn execution_plane(self) -> ProjectExecutionPlane {
-        let _ = self;
-        ProjectExecutionPlane::Cloud
-    }
-}
-
-impl DbStatus for ProjectSourceType {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::LocalConnector => "local_connector",
-            Self::Cloud => "cloud",
-        }
-    }
-
-    fn from_db(value: &str) -> Self {
-        match value.trim() {
-            "local" => Self::Local,
-            "local_connector" => Self::LocalConnector,
-            _ => Self::Cloud,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
 pub enum CloudImportSource {
     #[default]
     None,
@@ -164,10 +111,6 @@ pub struct ProjectRecord {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     #[serde(default)]
-    pub source_type: ProjectSourceType,
-    #[serde(default)]
-    pub execution_plane: ProjectExecutionPlane,
-    #[serde(default)]
     pub cloud_import_source: CloudImportSource,
     #[serde(default)]
     pub import_status: ProjectImportStatus,
@@ -211,10 +154,6 @@ pub struct CreateProjectRequest {
     pub git_url: Option<String>,
     pub description: Option<String>,
     #[serde(default)]
-    pub sandbox_enabled: Option<bool>,
-    #[serde(default)]
-    pub source_type: Option<ProjectSourceType>,
-    #[serde(default)]
     pub cloud_import_source: Option<CloudImportSource>,
     #[serde(default)]
     pub import_status: Option<ProjectImportStatus>,
@@ -232,10 +171,6 @@ pub struct ImportProjectRequest {
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub description: Option<String>,
-    #[serde(default)]
-    pub sandbox_enabled: Option<bool>,
-    #[serde(default)]
-    pub source_type: Option<ProjectSourceType>,
     #[serde(default)]
     pub cloud_import_source: Option<CloudImportSource>,
     #[serde(default)]

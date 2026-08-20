@@ -134,8 +134,6 @@ make local-dev-stop
 - Task Runner backend：`39090`
 - Project Management：`39211`
 - Project Management backend：`39210`
-- Sandbox Manager：`8096`
-- Sandbox Manager backend：`8095`
 - Local Connector Service backend：`39230`
 - Official Website：`39251`
 - Official Website backend：`39250`
@@ -174,28 +172,7 @@ CHATOS_IMAGE_TAG=sha-<commit>
 
 本地源码构建入口使用 `docker/compose.build.yml` overlay；CI 会同时校验运行 Compose 和本地构建 overlay。
 
-## 7. Sandbox Manager 和宿主 Docker
-
-Sandbox Manager 自身在容器里运行，但通过挂载 `/var/run/docker.sock` 控制宿主机 Docker：
-
-```yaml
-volumes:
-  - /var/run/docker.sock:/var/run/docker.sock
-```
-
-Compose 默认设置：
-
-```env
-SANDBOX_MANAGER_DOCKER_NETWORK=chatos-cloud
-SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE=container
-SANDBOX_MANAGER_DOCKER_PUBLISH_AGENT=false
-```
-
-也就是说，Sandbox Manager 创建的沙箱容器会加入 `chatos-cloud` 网络，Manager 用类似 `http://chatos-sandbox-<id>:49888` 的容器内地址访问 agent，不需要把每个 sandbox agent 端口发布到宿主机。
-
-注意：Docker socket 是高权限能力。能访问它的容器基本可以管理宿主机上的 Docker 资源。
-
-## 8. Harness
+## 7. Harness
 
 Harness 作为独立微服务纳入 Docker 栈：
 

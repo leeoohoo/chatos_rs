@@ -51,8 +51,6 @@ async fn create_test_project(store: &AppStore) -> crate::models::ProjectRecord {
                 root_path: None,
                 git_url: None,
                 description: None,
-                sandbox_enabled: None,
-                source_type: None,
                 cloud_import_source: None,
                 import_status: None,
                 source_git_url: None,

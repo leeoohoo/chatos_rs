@@ -12,10 +12,9 @@ use chatos_agent::{
 };
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, ExecutionPlane, McpProviderKind,
+    CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind,
     ProjectExecutionContext, ResolvedMcpRoute, RuntimeProviderFinalizationStatus,
-    RuntimeSessionResponse, RuntimeSessionRoutesResponse, SandboxExecutionTarget,
-    SandboxProviderKind, WorkspaceProviderKind,
+    RuntimeSessionResponse, RuntimeSessionRoutesResponse, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     PluginComponentKind, ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities,
@@ -51,11 +50,6 @@ pub(super) async fn resolve_runtime_session(
     let caller_service = identity.caller.clone();
     validate_session_request(&request)?;
     request.workspace_route = normalize_runtime_workspace_route(request.workspace_route.clone())?;
-    let sandbox_target = request
-        .workspace_route
-        .as_ref()
-        .and_then(|route| route.sandbox_target())
-        .cloned();
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
     let contact_agent_id = normalized(request.contact_agent_id.clone());
     let expected_project_task_ids = normalized_unique_items(
@@ -87,17 +81,12 @@ pub(super) async fn resolve_runtime_session(
         Some(chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::LocalConnector { .. }) => {
             "local_connector"
         }
-        Some(
-            chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::Harness { .. }
-            | chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget::CloudSandbox { .. },
-        ) => "cloud",
         None => capability_runtime_provider(&project_context),
     };
     let capability_request =
         ResolveAgentCapabilitiesRequest::new(agent_key, request.owner_user_id.trim().to_string())
             .with_runtime_context(
                 normalized(request.task_profile.clone()),
-                project_context.source_type.clone(),
                 Some(runtime_provider.to_string()),
                 None,
             )
@@ -157,43 +146,6 @@ pub(super) async fn resolve_runtime_session(
         request.workspace_route.as_ref(),
         &project_context,
     )?;
-    let cloud_sandbox_target = sandbox_target
-        .as_ref()
-        .filter(|target| target.provider == SandboxProviderKind::Cloud);
-    bind_cloud_stdio_routes(route_response.routes.as_mut_slice(), cloud_sandbox_target);
-    bind_sandbox_image_routes(route_response.routes.as_mut_slice(), &project_context);
-    let plugin_cloud_requires_sandbox = route_response.routes.iter().any(|route| {
-        route.provider_kind == McpProviderKind::PluginCloud
-            && materialized
-                .plugin_bindings
-                .get(route.resource_id.as_str())
-                .is_some_and(|binding| {
-                    matches!(
-                        &binding.runtime,
-                        chatos_plugin_management_sdk::PluginMcpServer::Stdio { .. }
-                    )
-                })
-    });
-    let routed_sandbox_target_required = route_response
-        .routes
-        .iter()
-        .any(|route| state.providers.requires_sandbox_target(route));
-    if routed_sandbox_target_required || (plugin_cloud_requires_sandbox && sandbox_target.is_some())
-    {
-        let target = sandbox_target.as_ref().ok_or_else(|| {
-            ApiError::conflict("Cloud sandbox-backed route requires a bound sandbox target")
-        })?;
-        state
-            .providers
-            .validate_sandbox_target(
-                target,
-                request.owner_user_id.trim(),
-                request.project_id.trim(),
-                request.run_id.as_deref(),
-            )
-            .await
-            .map_err(|error| ApiError::conflict(error.message))?;
-    }
     let chatos_tool_snapshots = state
         .providers
         .prepare_chatos_routes(
@@ -204,7 +156,6 @@ pub(super) async fn resolve_runtime_session(
             request.project_id.trim(),
             request.run_id.as_deref(),
             request.source_session_id.as_deref(),
-            sandbox_target.as_ref(),
             expires_at_unix,
         )
         .await;
@@ -227,19 +178,6 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
-    let (mut cloud_stdio_bindings, cloud_stdio_tool_snapshots) = state
-        .providers
-        .prepare_cloud_stdio_routes(
-            &capabilities,
-            route_response.routes.as_mut_slice(),
-            cloud_sandbox_target,
-            session_id.as_str(),
-            request.owner_user_id.trim(),
-            request.project_id.trim(),
-            request.run_id.as_deref(),
-            expires_at_unix,
-        )
-        .await;
     let (plugin_local_bindings, mut plugin_tool_snapshots) = state
         .providers
         .prepare_plugin_local_routes(
@@ -251,23 +189,18 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
-    let (plugin_cloud_stdio_bindings, plugin_cloud_http_bindings, plugin_cloud_tool_snapshots) =
-        state
-            .providers
-            .prepare_plugin_cloud_routes(
-                &state.plugin_management_client,
-                &materialized.plugin_bindings,
-                route_response.routes.as_mut_slice(),
-                &project_context,
-                cloud_sandbox_target,
-                session_id.as_str(),
-                request.owner_user_id.trim(),
-                request.project_id.trim(),
-                request.run_id.as_deref(),
-                expires_at_unix,
-            )
-            .await;
-    cloud_stdio_bindings.extend(plugin_cloud_stdio_bindings);
+    let (plugin_cloud_http_bindings, plugin_cloud_tool_snapshots) = state
+        .providers
+        .prepare_plugin_cloud_routes(
+            &state.plugin_management_client,
+            &materialized.plugin_bindings,
+            route_response.routes.as_mut_slice(),
+            &project_context,
+            session_id.as_str(),
+            request.owner_user_id.trim(),
+            expires_at_unix,
+        )
+        .await;
     plugin_tool_snapshots.extend(plugin_cloud_tool_snapshots);
     let (
         plugin_local_tool_component_bindings,
@@ -289,14 +222,9 @@ pub(super) async fn resolve_runtime_session(
     let cleanup_session_id = session_id.clone();
     let cleanup_plugin_local_bindings = plugin_local_bindings.clone();
     let cleanup_plugin_local_tool_component_bindings = plugin_local_tool_component_bindings.clone();
-    let cleanup_cloud_stdio_bindings = cloud_stdio_bindings.clone();
-    let cleanup_sandbox_target = cloud_sandbox_target.cloned();
-    let cleanup_project_id = request.project_id.trim().to_string();
-    let cleanup_run_id = request.run_id.clone();
     let result = async {
         apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
         apply_live_tool_snapshots(&mut capabilities, task_runner_tool_snapshots);
-        apply_live_tool_snapshots(&mut capabilities, cloud_stdio_tool_snapshots);
         let mut external_http_bindings = state
             .providers
             .prepare_external_http_routes(&capabilities, route_response.routes.as_mut_slice())
@@ -448,7 +376,6 @@ pub(super) async fn resolve_runtime_session(
             plugin_local_tool_component_bindings,
             plugin_cloud_tool_component_bindings,
             external_http_bindings,
-            cloud_stdio_bindings,
             expires_at: grant.expires_at.clone(),
             expires_at_unix: grant.expires_at_unix,
         };
@@ -552,22 +479,6 @@ pub(super) async fn resolve_runtime_session(
             )
             .await;
     }
-    if result.is_err() && !cleanup_cloud_stdio_bindings.is_empty() {
-        if let Some(target) = cleanup_sandbox_target.as_ref() {
-            state
-                .providers
-                .close_prepared_cloud_stdio_bindings(
-                    target,
-                    cleanup_session_id.as_str(),
-                    cleanup_owner_user_id.as_str(),
-                    cleanup_project_id.as_str(),
-                    cleanup_run_id.as_deref(),
-                    expires_at_unix,
-                    &cleanup_cloud_stdio_bindings,
-                )
-                .await;
-        }
-    }
     result
 }
 
@@ -575,12 +486,8 @@ fn public_chat_execution_context(owner_user_id: &str) -> ProjectExecutionContext
     ProjectExecutionContext {
         project_id: PUBLIC_PROJECT_ID.to_string(),
         owner_user_id: owner_user_id.trim().to_string(),
-        execution_plane: ExecutionPlane::Cloud,
         workspace_provider: WorkspaceProviderKind::None,
         workspace: None,
-        sandbox_provider: SandboxProviderKind::None,
-        sandbox_pairing_id: None,
-        source_type: Some("public".to_string()),
         revision: PUBLIC_PROJECT_CONTEXT_REVISION.to_string(),
     }
 }
@@ -1153,18 +1060,9 @@ fn normalized_plugin_component_ids(
 fn capability_runtime_provider(
     context: &chatos_mcp_management_sdk::ProjectExecutionContext,
 ) -> &'static str {
-    // Plugin Management's runtime_provider condition expresses execution
-    // locality (cloud or Local Connector), not the concrete workspace backend.
-    // Harness, Cloud Sandbox and Cloud Storage are all cloud execution
-    // locations. Keeping this translation here lets capability policy remain
-    // stable while MCP Management independently chooses the concrete provider
-    // from the authoritative Project Execution Context.
     match context.workspace_provider {
         WorkspaceProviderKind::LocalConnector => WorkspaceProviderKind::LocalConnector.as_str(),
-        WorkspaceProviderKind::Harness
-        | WorkspaceProviderKind::CloudSandbox
-        | WorkspaceProviderKind::CloudStorage
-        | WorkspaceProviderKind::None => "cloud",
+        WorkspaceProviderKind::None => "server",
     }
 }
 

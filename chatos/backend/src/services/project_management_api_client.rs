@@ -26,7 +26,6 @@ pub struct ProjectServiceProjectRecord {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
-    pub source_type: Option<String>,
     pub cloud_import_source: Option<String>,
     pub import_status: Option<String>,
     pub source_git_url: Option<String>,
@@ -76,30 +75,12 @@ pub struct CreateProjectServiceProjectRequest {
     pub description: Option<String>,
 }
 
-pub struct CreateCloudProjectServiceProjectRequest {
-    pub name: String,
-    pub git_url: Option<String>,
-    pub description: Option<String>,
-    pub zip: Option<(String, Vec<u8>)>,
-}
-
 #[derive(Debug, Default, Serialize)]
 pub struct UpdateProjectServiceProjectRequest {
     pub name: Option<String>,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
     pub description: Option<String>,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct UpdateProjectRuntimeEnvironmentSettingsRequest {
-    pub sandbox_enabled: Option<bool>,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct AnalyzeProjectRuntimeEnvironmentRequest {
-    pub analysis_requirement: Option<String>,
-    pub selected_dependencies: Vec<String>,
 }
 
 pub async fn list_project_service_projects(
@@ -153,51 +134,6 @@ pub async fn create_project_service_project(
     .await
 }
 
-pub async fn create_cloud_project_service_project(
-    base_url: &str,
-    access_token: &str,
-    request: &CreateCloudProjectServiceProjectRequest,
-) -> Result<ProjectServiceProjectRecord, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/projects/cloud",
-        base_url.trim().trim_end_matches('/')
-    );
-    let mut form = reqwest::multipart::Form::new().text("name", request.name.clone());
-    if let Some(git_url) = request
-        .git_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        form = form.text("git_url", git_url.to_string());
-    }
-    if let Some(description) = request
-        .description
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        form = form.text("description", description.to_string());
-    }
-    if let Some((filename, bytes)) = request.zip.as_ref() {
-        if !bytes.is_empty() {
-            let part = reqwest::multipart::Part::bytes(bytes.clone())
-                .file_name(filename.clone())
-                .mime_str("application/zip")
-                .map_err(|err| err.to_string())?;
-            form = form.part("zip", part);
-        }
-    }
-    send_json(
-        reqwest::Client::new()
-            .post(endpoint)
-            .bearer_auth(access_token.trim())
-            .multipart(form),
-    )
-    .await
-}
-
 pub async fn update_project_service_project(
     base_url: &str,
     access_token: &str,
@@ -233,107 +169,6 @@ pub async fn archive_project_service_project(
     send_optional_json(
         reqwest::Client::new()
             .delete(endpoint)
-            .bearer_auth(access_token.trim()),
-    )
-    .await
-}
-
-pub async fn get_project_service_runtime_environment(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/projects/{}/runtime-environment",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    send_json(
-        reqwest::Client::new()
-            .get(endpoint)
-            .bearer_auth(access_token.trim()),
-    )
-    .await
-}
-
-pub async fn update_project_service_runtime_environment_settings(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-    request: &UpdateProjectRuntimeEnvironmentSettingsRequest,
-) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/projects/{}/runtime-environment/settings",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    send_json(
-        reqwest::Client::new()
-            .put(endpoint)
-            .bearer_auth(access_token.trim())
-            .json(request),
-    )
-    .await
-}
-
-pub async fn analyze_project_service_runtime_environment(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-    request: &AnalyzeProjectRuntimeEnvironmentRequest,
-) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/projects/{}/runtime-environment/analyze",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    send_json(
-        reqwest::Client::new()
-            .post(endpoint)
-            .bearer_auth(access_token.trim())
-            .json(request),
-    )
-    .await
-}
-
-pub async fn generate_project_service_runtime_environment_image(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-    image_record_id: &str,
-) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/projects/{}/runtime-environment/images/{}/generate",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim()),
-        urlencoding::encode(image_record_id.trim()),
-    );
-    send_json(
-        reqwest::Client::new()
-            .post(endpoint)
-            .bearer_auth(access_token.trim()),
-    )
-    .await
-}
-
-pub async fn get_project_service_runtime_environment_progress(
-    base_url: &str,
-    access_token: &str,
-    project_id: &str,
-) -> Result<Value, String> {
-    let base_url = resolve_project_service_base_url(base_url).await;
-    let endpoint = format!(
-        "{}/api/projects/{}/runtime-environment/progress",
-        base_url.trim().trim_end_matches('/'),
-        urlencoding::encode(project_id.trim())
-    );
-    send_json(
-        reqwest::Client::new()
-            .get(endpoint)
             .bearer_auth(access_token.trim()),
     )
     .await

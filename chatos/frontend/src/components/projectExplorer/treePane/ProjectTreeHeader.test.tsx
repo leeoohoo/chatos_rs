@@ -78,21 +78,8 @@ const renderHeader = (project: Project) => {
 };
 
 describe('ProjectTreeHeader', () => {
-  it('shows the harness hint for cloud projects', () => {
-    renderHeader(createProject({
-      rootPath: '/workspace/cloud-project',
-      sourceType: 'cloud',
-    }));
-
-    expect(
-      screen.getByText('文件来自内部 Harness 仓库；编辑、创建和删除会直接提交到云端项目默认分支。'),
-    ).toBeInTheDocument();
-  });
-
-  it('shows the gateway hint for local connector projects', () => {
-    renderHeader(createProject({
-      sourceType: 'local_connector',
-    }));
+  it('shows the Local Connector gateway hint', () => {
+    renderHeader(createProject({}));
 
     expect(
       screen.getByText('文件来自当前设备的 Local Connector 工作区；页面上的读写操作都会先经过云端网关，再转发到本机。'),

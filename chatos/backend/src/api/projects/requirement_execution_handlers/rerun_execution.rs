@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use chatos_project_execution::{
-    read_planning_feedback_history, ExecutionPlanIdentity, ExecutionPlane,
-    STATUS_AWAITING_CONFIRMATION, STATUS_EXECUTION_STARTED,
+    read_planning_feedback_history, ExecutionPlanIdentity, STATUS_AWAITING_CONFIRMATION,
+    STATUS_EXECUTION_STARTED,
 };
 use serde_json::{json, Value};
 use tracing::warn;
@@ -473,7 +473,6 @@ pub(super) async fn rerun_requirement_execution_inner(
     Ok(json!({
         "success": true,
         "status": confirmation_status,
-        "execution_plane": ExecutionPlane::Cloud.as_str(),
         "project_id": context.project.id,
         "requirement_id": requirement_id,
         "contact_id": contact_runtime.contact.contact_id,

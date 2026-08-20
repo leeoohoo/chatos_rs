@@ -8,8 +8,6 @@ pub const CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY: &str =
     "chatos.runtime.legacy_auth_database_url";
 pub const CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY: &str =
     "chatos.runtime.legacy_auth_mongodb_database";
-pub const CHATOS_LOCAL_PROJECT_CREATION_CONFIG_KEY: &str =
-    "chatos.ui.local_project_creation_enabled";
 pub const CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY: &str = "chatos.downstream.user_service_base_url";
 pub const CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.downstream.user_service_request_timeout_ms";

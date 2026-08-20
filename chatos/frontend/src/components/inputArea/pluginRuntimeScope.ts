@@ -2,14 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import { PUBLIC_PROJECT_ID } from '../../lib/domain/contactSessions';
-import { resolveProjectSourceKind, type ProjectSourceKind } from '../../lib/domain/projectSource';
 import { parseLocalConnectorProjectRoot } from '../../lib/api/localRuntime';
 import type { TaskRunnerSelectablePluginResponse } from '../../lib/api/client/types';
 import type { Project } from '../../types';
 
 export interface TaskPluginRuntimeScope {
   projectId: string;
-  sourceKind: ProjectSourceKind;
+  sourceKind: 'local_connector';
   localDeviceId: string | null;
 }
 
@@ -21,32 +20,23 @@ export const resolveTaskPluginRuntimeScope = (
   if (!conversationId || !projectId || projectId === '0' || projectId === PUBLIC_PROJECT_ID) {
     return null;
   }
-  const sourceKind = resolveProjectSourceKind(project);
-  const localRoot = sourceKind === 'local_connector'
-    ? parseLocalConnectorProjectRoot(project?.rootPath)
-    : null;
-  if (sourceKind === 'local_connector' && !localRoot?.deviceId) {
+  const localRoot = parseLocalConnectorProjectRoot(project?.rootPath);
+  if (!localRoot?.deviceId) {
     return null;
   }
   return {
     projectId,
-    sourceKind,
+    sourceKind: 'local_connector',
     localDeviceId: localRoot?.deviceId || null,
   };
 };
 
 export const filterPluginsForProjectRuntime = (
   plugins: TaskRunnerSelectablePluginResponse[],
-  sourceKind: ProjectSourceKind,
+  _sourceKind: 'local_connector',
 ): TaskRunnerSelectablePluginResponse[] => plugins.filter((plugin) => {
   const availableComponents = (Array.isArray(plugin.components) ? plugin.components : [])
     .filter((component) => component.available);
-  if (sourceKind === 'cloud') {
-    return availableComponents.length > 0
-      && availableComponents.every((component) => (
-        component.prepare_provider === 'task_runner_cloud'
-      ));
-  }
   return availableComponents.some((component) => (
     component.prepare_provider === 'local_connector'
   ));

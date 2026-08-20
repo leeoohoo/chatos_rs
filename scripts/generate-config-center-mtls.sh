@@ -22,7 +22,6 @@ CALLERS=(
   official-website
   plugin-management-service
   project-service
-  sandbox-manager
   task-runner
   user-service
 )

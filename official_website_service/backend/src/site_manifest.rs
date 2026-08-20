@@ -74,11 +74,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 frontend: Some(39211),
             },
             DefaultPort {
-                name: "Sandbox Manager",
-                backend: Some(8095),
-                frontend: Some(8096),
-            },
-            DefaultPort {
                 name: "Official Website",
                 backend: Some(39250),
                 frontend: Some(39251),
@@ -115,12 +110,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 role: "工程计划管理",
                 capability: "沉淀需求、技术方案、项目任务和依赖关系。",
             },
-            ServiceInfo {
-                name: "sandbox_manager_service",
-                directory: "sandbox_manager_service/",
-                role: "隔离执行底座",
-                capability: "管理 Docker/Kata 沙箱租约、镜像初始化和沙箱 MCP 代理。",
-            },
         ],
         showcase_images: vec![
             ShowcaseImage {
@@ -140,12 +129,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 title: "Task Runner 运行台",
                 path: "/showcase/task-runner.png",
                 source_url: "http://127.0.0.1:39091",
-            },
-            ShowcaseImage {
-                id: "sandbox-manager",
-                title: "Sandbox Manager 管理台",
-                path: "/showcase/sandbox-manager.png",
-                source_url: "http://127.0.0.1:8096",
             },
             ShowcaseImage {
                 id: "project-management",

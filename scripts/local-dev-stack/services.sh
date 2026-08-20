@@ -79,9 +79,6 @@ start_backend() {
     if plugin_management_identity="$(plugin_management_client_identity_path "$service_name")"; then
       export PLUGIN_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH="$plugin_management_identity"
     fi
-    if sandbox_manager_identity="$(sandbox_manager_client_identity_path "$service_name")"; then
-      export SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH="$sandbox_manager_identity"
-    fi
     if [[ "$name" == "memory-engine-backend" ]]; then
       export MEMORY_ENGINE_MTLS_SERVER_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/server.crt"
       export MEMORY_ENGINE_MTLS_SERVER_KEY_PATH="$MEMORY_ENGINE_MTLS_DIR/server.key"
@@ -112,11 +109,6 @@ start_backend() {
       export PLUGIN_MANAGEMENT_MTLS_SERVER_KEY_PATH="$PLUGIN_MANAGEMENT_MTLS_DIR/server.key"
       export PLUGIN_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH="$PLUGIN_MANAGEMENT_MTLS_DIR/ca.crt"
     fi
-    if [[ "$name" == "sandbox-manager-backend" ]]; then
-      export SANDBOX_MANAGER_MTLS_SERVER_CERT_PATH="$SANDBOX_MANAGER_MTLS_DIR/server.crt"
-      export SANDBOX_MANAGER_MTLS_SERVER_KEY_PATH="$SANDBOX_MANAGER_MTLS_DIR/server.key"
-      export SANDBOX_MANAGER_MTLS_CLIENT_CA_CERT_PATH="$SANDBOX_MANAGER_MTLS_DIR/ca.crt"
-    fi
     if [[ -n "$env_overrides" && "$env_overrides" != "-" ]]; then
       # shellcheck disable=SC2086
       export $env_overrides
@@ -127,45 +119,6 @@ start_backend() {
   if [[ -n "$port" && "$port" != "-" && -n "$health_path" && "$health_path" != "-" ]]; then
     wait_for_http "$name" "http://127.0.0.1:${port}${health_path}" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
   fi
-}
-
-ensure_local_dev_sandbox_runtime_proxy() {
-  if [[ "${CHATOS_LOCAL_DEV_MANAGED_SANDBOX_RUNTIME_PROXY:-false}" != "true" ]]; then
-    return 0
-  fi
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    return 0
-  fi
-
-  local name="sandbox-runtime-proxy"
-  local host_address="${CHATOS_LOCAL_DEV_HOST_ADDRESS:-}"
-  local port="${CHATOS_LOCAL_DEV_SANDBOX_RUNTIME_PROXY_PORT:-17897}"
-  local log_file pid_file proxy_script spawned_pid
-  if [[ -z "$host_address" || ! "$port" =~ ^[1-9][0-9]*$ || "$port" -gt 65535 ]]; then
-    echo "[ERROR] invalid managed sandbox runtime proxy address: ${host_address}:${port}" >&2
-    return 1
-  fi
-  if [[ -n "$(pid_for_port "$port")" ]]; then
-    echo "[OK] sandbox runtime proxy is already listening on ${host_address}:${port}"
-    return 0
-  fi
-  if ! command -v ruby >/dev/null 2>&1 \
-    || ! ruby -rwebrick -rwebrick/httpproxy -e 'exit 0' >/dev/null 2>&1; then
-    echo "[ERROR] managed sandbox runtime proxy requires Ruby with WEBrick" >&2
-    return 1
-  fi
-
-  log_file="$(log_file_for "$name")"
-  pid_file="$(pid_file_for "$name")"
-  stop_service_pid "$name"
-  : >"$log_file"
-  proxy_script='logger=WEBrick::Log.new($stderr, WEBrick::Log::INFO); server=WEBrick::HTTPProxyServer.new(Port: Integer(ARGV.fetch(1)), BindAddress: ARGV.fetch(0), Logger: logger, AccessLog: []); ["INT", "TERM"].each { |signal| trap(signal) { server.shutdown } }; server.start'
-  spawned_pid="$(
-    spawn_detached "$ROOT_DIR" "$log_file" \
-      ruby -rwebrick -rwebrick/httpproxy -e "$proxy_script" "$host_address" "$port"
-  )"
-  echo "$spawned_pid" >"$pid_file"
-  wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
 }
 
 ensure_config_center_mtls_material() {
@@ -202,10 +155,6 @@ ensure_memory_engine_mtls_material() {
 
 ensure_plugin_management_mtls_material() {
   "$ROOT_DIR/scripts/generate-plugin-management-mtls.sh" "$PLUGIN_MANAGEMENT_MTLS_DIR"
-}
-
-ensure_sandbox_manager_mtls_material() {
-  "$ROOT_DIR/scripts/generate-sandbox-manager-mtls.sh" "$SANDBOX_MANAGER_MTLS_DIR"
 }
 
 ensure_local_dev_managed_runtime_config() {
@@ -687,8 +636,6 @@ start_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
-  ensure_local_dev_sandbox_runtime_proxy
-  prepare_sandbox_docker_config
   ensure_config_center_mtls_material
   ensure_mcp_management_mtls_material
   ensure_task_runner_mtls_material
@@ -698,7 +645,6 @@ start_all() {
   ensure_user_service_mtls_material
   ensure_memory_engine_mtls_material
   ensure_plugin_management_mtls_material
-  ensure_sandbox_manager_mtls_material
   prepare_local_dev_apisix_config
   cleanup_legacy_local_connector_client_state
   start_infra
@@ -855,7 +801,6 @@ Memory Engine:            http://localhost:4178
 Task Runner:              http://localhost:39091
 Project Management:       http://localhost:39211
 Plugin Management:        http://localhost:39261
-Sandbox Manager:          http://localhost:8096
 Local Connector Service:  http://localhost:39230
 MCP Management Service:   http://localhost:39280
 

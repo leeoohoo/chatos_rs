@@ -10,7 +10,6 @@ BOOTSTRAP_EXAMPLE_FILE="$SCRIPT_DIR/bootstrap.conf.example"
 IMAGE_NAMESPACE="${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}"
 IMAGE_TAG="${CHATOS_IMAGE_TAG:-harness-ci}"
 PUBLIC_HOST="${CHATOS_PUBLIC_HOST:-8.155.171.124}"
-DOCKER_SOCKET_PROXY_IMAGE="${DOCKER_SOCKET_PROXY_IMAGE:-ghcr.io/tecnativa/docker-socket-proxy:latest}"
 
 ensure_bootstrap_file() {
   if [[ -f "$BOOTSTRAP_FILE" ]]; then
@@ -62,9 +61,6 @@ ensure_runtime_image() {
 
 image_for_service() {
   case "$1" in
-    sandbox-agent|sandbox-agent-image)
-      printf '%s/chatos-rs-sandbox-agent:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
     user-service-backend)
       printf '%s/chatos-rs-user-service-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
@@ -82,9 +78,6 @@ image_for_service() {
       ;;
     local-connector-service-backend)
       printf '%s/chatos-rs-local-connector-service-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
-    sandbox-manager-backend)
-      printf '%s/chatos-rs-sandbox-manager-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
     task-runner-backend)
       printf '%s/chatos-rs-task-runner-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
@@ -116,9 +109,6 @@ image_for_service() {
     task-runner-frontend)
       printf '%s/chatos-rs-task-runner-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
-    sandbox-manager-frontend)
-      printf '%s/chatos-rs-sandbox-manager-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
     official-website-frontend)
       printf '%s/chatos-rs-official-website-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
@@ -144,14 +134,12 @@ require_harness_ci_images_for_services() {
 
 require_harness_ci_images() {
   local required_images=(
-    "$IMAGE_NAMESPACE/chatos-rs-sandbox-agent:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-configuration-center-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-user-service-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-memory-engine-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-project-management-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-plugin-management-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-local-connector-service-backend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-sandbox-manager-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-task-runner-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-chatos-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-official-website-backend:$IMAGE_TAG"
@@ -162,7 +150,6 @@ require_harness_ci_images() {
     "$IMAGE_NAMESPACE/chatos-rs-project-management-frontend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-plugin-management-frontend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-task-runner-frontend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-sandbox-manager-frontend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-official-website-frontend:$IMAGE_TAG"
     "harness/harness:latest"
   )
@@ -175,8 +162,6 @@ require_harness_ci_images() {
 ensure_bootstrap_file
 set_bootstrap_value CHATOS_IMAGE_NAMESPACE "$IMAGE_NAMESPACE"
 set_bootstrap_value CHATOS_IMAGE_TAG "$IMAGE_TAG"
-set_bootstrap_value SANDBOX_MANAGER_DOCKER_IMAGE "$IMAGE_NAMESPACE/chatos-rs-sandbox-agent:$IMAGE_TAG"
-set_bootstrap_value DOCKER_SOCKET_PROXY_IMAGE "$DOCKER_SOCKET_PROXY_IMAGE"
 set_bootstrap_value CHATOS_DOCKER_EXTRA_COMPOSE_FILES ""
 set_bootstrap_value HARNESS_PORT "3000"
 set_bootstrap_value HARNESS_SSH_PORT "3022"
@@ -199,7 +184,6 @@ case "${1:-}" in
 esac
 
 require_harness_ci_images_for_services "$@"
-ensure_runtime_image "$DOCKER_SOCKET_PROXY_IMAGE"
 
 if [[ $# -eq 0 ]]; then
   echo "[INFO] using local Harness CI images: $IMAGE_NAMESPACE/*:$IMAGE_TAG"

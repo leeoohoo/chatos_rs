@@ -24,7 +24,6 @@ updates:
       - "/official_website_service/frontend"
       - "/plugin_management_service/frontend"
       - "/project_management_service/frontend"
-      - "/sandbox_manager_service/frontend"
       - "/task_runner_service/frontend"
       - "/user_service/frontend"
     schedule:

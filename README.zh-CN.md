@@ -66,7 +66,7 @@ Okra 会持续整理项目背景、重要决定、会话摘要和角色记忆，
 - 让 AI 记住项目约定与个人偏好
 - 查看当前会话已经沉淀的总结
 - 从其他相关会话召回重要信息
-- 在本地项目中主动“忘记”不再需要的 Recall
+- 在当前项目中主动“忘记”不再需要的 Recall
 
 记忆不是无限堆积的聊天记录。系统会通过摘要和分层整理，尽量把真正有用的信息留在后续上下文中。
 
@@ -109,11 +109,7 @@ Okra 会持续整理项目背景、重要决定、会话摘要和角色记忆，
 
 ### 1. 创建项目
 
-你可以选择：
-
-- 从 Git 仓库创建云端项目
-- 上传 ZIP 创建云端项目
-- 在桌面客户端中选择一个已授权的本机目录
+安装桌面客户端，注册 Local Connector 工作区，然后从已授权目录创建项目。所有项目的文件、Git、搜索和命令都使用这个工作区。
 
 ### 2. 告诉 Okra 你想完成什么
 
@@ -127,24 +123,16 @@ Okra 会持续整理项目背景、重要决定、会话摘要和角色记忆，
 
 完成后，结果、项目变化和后续建议会回到同一个会话与项目上下文中。
 
-## 云端项目还是本地项目
+## 项目与工作区
 
-Okra 不要求所有项目都使用同一种工作方式。
+Okra 只有一种项目模型。每个项目都绑定一个已授权的 Local Connector 工作区，不再区分云端项目和本地项目。
 
-| | 云端项目 | 本地项目 |
-| --- | --- | --- |
-| 适合 | 希望直接在浏览器使用、需要隔离环境或云端持续运行 | 代码主要保存在自己电脑、需要使用本机工具链和目录 |
-| 创建方式 | Git 仓库或 ZIP | 桌面客户端中授权本机目录 |
-| 工作环境 | 云端 Git 工作区与隔离运行环境 | 用户授权的本机工作区 |
-| 使用入口 | 浏览器或桌面客户端 | 桌面客户端 |
-| 任务编排 | 云端后台任务 | 云端编排，按需调用当前设备能力 |
-| 项目记忆 | 保存在云端 | 保存在云端 |
+- Project、Session、Message、Task、Requirement、Memory 和 Agent 生命周期由服务端编排。
+- 项目文件、Git、搜索、命令、本地 Skill/Plugin/MCP、sandbox facade 和审批只通过 Local Connector Client 执行。
+- Harness 可以管理仓库资产、分支、同步、CI 和集成，但不会作为 MCP 项目文件或命令 provider。
+- Local Connector 不可用时，工作区操作会明确失败或等待，不会回退到服务端文件系统、Harness 或 Cloud Sandbox。
 
-两类项目共享同一套云端业务编排。工具的执行位置由 MCP Management 根据 Project Context 明确选择；本机能力不可用时会明确失败或等待，不会偷偷切换到云端文件系统或其他设备。
-
-### 关于本地项目与隐私
-
-本地项目的 Project、Session、Message、Task、Requirement、Memory 和 Agent 生命周期由云端服务管理；文件、Git、命令、本地 Skill/Plugin/MCP、沙箱和审批仍在你明确授权的设备边界内执行。
+### 关于项目与隐私
 
 需要注意：
 
@@ -182,23 +170,16 @@ Okra 不要求所有项目都使用同一种工作方式。
 
 ## 开始之前需要准备什么
 
-### 使用云端项目
-
-1. 打开你所在部署的 Okra 网站。
-2. 注册或登录账号；部分测试环境可能需要邀请码。
-3. 在设置中添加可用的云端 AI 模型。
-4. 创建或导入一个云端项目。
-5. 添加项目联系人，然后开始对话或规划。
-
-### 使用本地项目
+### 创建项目
 
 1. 从 Okra 官网下载并安装 Okra 桌面连接器。
 2. 使用与 Web 端相同的账号登录。
 3. 添加并授权一个本机工作区。
-4. 配置需要使用的本地工具、Skill、Plugin、MCP、沙箱和审批权限。
-5. 在桌面端创建本地项目。
+4. 配置需要使用的本地工具、Skill、Plugin、MCP、sandbox facade 和审批权限。
+5. 在桌面端从该工作区创建项目。
+6. 添加项目联系人，然后开始对话或规划。
 
-本地项目只能在桌面客户端中使用。直接在普通浏览器中打开 Okra，不会获得访问本机目录的能力。
+直接在普通浏览器中打开 Okra，不会获得访问本机目录的能力。工作区操作要求桌面客户端和 Local Connector 在线。
 
 ## 常见问题
 
@@ -208,11 +189,11 @@ Okra 不要求所有项目都使用同一种工作方式。
 
 ### 必须把代码上传到云端吗？
 
-不需要。使用桌面客户端创建本地项目后，代码可以继续保存在你授权的本机目录中。如果希望使用浏览器、云端隔离环境和云端后台运行，则可以选择云端项目。
+不需要。项目代码继续保存在 Local Connector 授权的目录中。AI 推理所需内容仍可能发送给你配置的模型供应商。
 
 ### 可以使用自己的模型服务吗？
 
-可以。Okra 支持配置 OpenAI 兼容的模型服务，并允许为普通聊天、项目管理、环境分析、记忆总结和任务执行选择不同模型。
+可以。Okra 支持配置 OpenAI 兼容的模型服务，并允许为普通聊天、项目规划、记忆总结和任务执行选择不同模型。
 
 ### AI 执行过程中我还能干预吗？
 
@@ -220,19 +201,19 @@ Okra 不要求所有项目都使用同一种工作方式。
 
 ### 关闭页面后任务还会继续吗？
 
-任务编排和业务状态会在云端继续运行。若本地项目的下一步需要访问本机文件、命令或其他设备能力，桌面客户端和 Local Connector 必须在线。
+任务编排和业务状态会在服务端继续运行。若下一步需要访问项目文件、命令或其他设备能力，桌面客户端和 Local Connector 必须在线。
 
-### 云端项目和本地项目可以自动互相切换吗？
+### 设备离线时，项目会回退到云端工作区吗？
 
-不会。两种项目拥有不同的文件与工具执行边界，但共享云端业务编排。MCP Management 会根据 Project Context 固定路由，不会静默切换到错误的文件系统或设备。
+不会。项目工作区只使用已绑定的 Local Connector。MCP Management 不会静默切换到 Harness、服务端文件系统、Cloud Sandbox 或其他设备。
 
 ## 当前产品状态
 
 Okra 仍在快速迭代。当前需要留意：
 
-- 本地项目必须使用桌面客户端。
-- 本地项目暂不支持对话附件，也暂不支持在任务运行过程中附带图片或文件进行补充引导。
-- 本地项目的业务历史保存在云端；2.0.10 不迁移旧客户端 SQLite 中的历史会话、任务和记忆。
+- 项目工作区访问要求桌面客户端和 Local Connector 在线。
+- 项目暂不支持对话附件，也暂不支持在任务运行过程中附带图片或文件进行补充引导。
+- 业务历史由服务端保存；2.0.10 不迁移旧客户端 SQLite 中的历史会话、任务和记忆。
 - 可公开下载的桌面平台、版本和注册规则以对应部署的 Okra 官网为准。
 
 ## 技术与自部署参考
@@ -248,7 +229,7 @@ Okra 使用一套云端业务编排平面，并按需调用设备侧能力执行
 
 - Project、Session、Task、Requirement、Memory 和 Agent 生命周期全部以云端服务为事实数据源。
 - Local Connector Core 只执行必须在用户设备完成的 Workspace 文件、Git、命令、本地 Skill/Plugin/MCP、沙箱和审批能力。
-- Agent 工具调用统一由 MCP Management 根据 Project Context 选择 Local Connector、Harness 或 Cloud Sandbox。
+- MCP Management 只把项目文件、Git、搜索和命令路由到已绑定的 Local Connector；Harness 只保留仓库与集成控制面职责。
 - Local Connector 不可用时明确失败，不会把设备侧操作静默切换到其他执行位置。
 
 ### 本地数据位置
@@ -298,7 +279,7 @@ make local-connector-client-status
 make local-connector-client-stop
 ```
 
-完整本地项目体验依赖 Electron 提供的可信 Runtime Bridge。Core/设置页开发模式本身不等于完整桌面客户端。
+完整项目工作区体验依赖 Electron 提供的可信 Runtime Bridge。Core/设置页开发模式本身不等于完整桌面客户端。
 
 macOS 打包：
 
@@ -319,8 +300,8 @@ Linux Core 档打包（必须在 Linux 上运行）：
 ./local_connector_client/package-electron-linux-client.sh
 ```
 
-Linux 包包含桌面客户端、Local Connector Core、沙箱 MCP 服务和经过校验的 Plugin/Skill
-清单。浏览器自动化、Chrome Native Messaging、Computer Use 和内置文档运行时需等待
+Linux 包包含桌面客户端、Local Connector Core 和经过校验的 Plugin/Skill 清单。浏览器自动化、
+Chrome Native Messaging、Computer Use 和内置文档运行时需等待
 Linux 原生运行资源补齐后再纳入完整发布档。
 
 ### 构建与测试
@@ -331,7 +312,7 @@ make smoke
 make test
 ```
 
-核心执行平面可以单独测试：
+核心服务可以单独测试：
 
 ```bash
 cargo test -p chat_app_server_rs
@@ -345,11 +326,10 @@ cd memory_engine/backend && cargo test
 - 部署边界与端口：`docker/compose.yml`
 - Rust workspace：`Cargo.toml`
 - 云端业务 API 与本地能力桥：`chatos/frontend/src/lib/api/client/facades/`
-- 云端执行边界：`chatos/backend/src/core/project_execution.rs`
+- 项目编排边界：`chatos/backend/src/core/project_execution.rs`
 - Local Connector 能力执行器：`local_connector_client/core/src/local_runtime/`
 - Local Connector 控制状态 Schema：`local_connector_client/core/migrations/`
 - 云端 Task Runner：`task_runner_service/backend/src/services/`
-- 项目运行环境：`project_management_service/backend/src/services/runtime_environment.rs`
 - 开发与部署命令：`Makefile`、`docker/deploy.sh`、`scripts/local-dev-stack.sh`
 - `chatos_3d_anime_prototype/` 是实验性界面，不是当前正式产品入口。
 

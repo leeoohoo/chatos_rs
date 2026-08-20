@@ -63,7 +63,6 @@ pub async fn purge_managed_runtime_settings() -> Result<u64, String> {
                             "settings.CHAT_MAX_TOKENS": "",
                             "settings.ATTACHMENT_TOTAL_MAX_BYTES": "",
                             "settings.TERMINAL_UI_ENABLED": "",
-                            "settings.LOCAL_PROJECT_CREATION_ENABLED": "",
                         }
                     },
                     None,

@@ -27,7 +27,6 @@ describe('requirement execution modal fullscreen mode', () => {
     render(
       <RequirementExecutionStartingModal
         requirement={{ id: 'requirement-1', title: 'Requirement 1' }}
-        executionPlane="cloud"
         starting={false}
         onClose={vi.fn()}
         onStart={vi.fn()}
@@ -54,7 +53,6 @@ describe('requirement execution modal fullscreen mode', () => {
     render(
       <RequirementExecutionStartingModal
         requirement={{ id: 'requirement-1', title: 'Requirement 1' }}
-        executionPlane="cloud"
         starting={false}
         onClose={vi.fn()}
         onStart={onStart}

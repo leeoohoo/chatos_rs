@@ -107,146 +107,73 @@ fn stale_write_review_directs_an_exact_rebased_edit() {
 }
 
 #[test]
-fn task_outcome_review_accepts_strict_succeeded_contract() {
-    let outcome = parse_task_execution_outcome(
-        r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["cargo test passed"]}"#,
-    )
-    .expect("valid outcome");
+fn terminal_outcome_is_built_from_recorded_runtime_evidence() {
+    let outcome = task_execution_outcome_from_recorded_evidence(
+        "## 完成结果\n\n后端骨架已创建并验证。\n\n## 阻塞\n\n无阻塞。",
+        &["backend skeleton exists".to_string()],
+        vec!["backend/pom.xml".to_string()],
+        vec!["mvn -q clean test".to_string()],
+        Vec::new(),
+        true,
+    );
 
     assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Succeeded);
-    assert_eq!(outcome.verification_evidence, ["cargo test passed"]);
-}
-
-#[test]
-fn task_outcome_review_rejects_success_without_evidence() {
-    let error = parse_task_execution_outcome(
-        r#"{"status":"succeeded","summary":"claimed completion","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":[]}"#,
-    )
-    .expect_err("missing evidence must fail closed");
-
-    assert!(error.contains("verification evidence"));
-}
-
-#[test]
-fn task_outcome_review_requires_one_to_one_runtime_backed_acceptance_evidence() {
-    let outcome = parse_task_execution_outcome_with_evidence(
-        r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["dashboard render test passed"],"acceptance_evidence":[{"criterion":"dashboard renders","evidence":["dashboard render test passed"],"referenced_paths":["src/Dashboard.tsx"],"commands":["npm test"]}],"referenced_paths":["src/Dashboard.tsx"],"referenced_endpoints":[]}"#,
-        &["dashboard renders".to_string()],
-        &["src/Dashboard.tsx".to_string()],
-        &["npm test".to_string()],
-        &[],
-        true,
-    )
-    .expect("runtime-backed acceptance evidence");
+    assert_eq!(outcome.summary, "后端骨架已创建并验证。");
     assert_eq!(outcome.acceptance_evidence.len(), 1);
-
-    let error = parse_task_execution_outcome_with_evidence(
-        r#"{"status":"succeeded","summary":"claimed","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["dashboard render test passed"],"acceptance_evidence":[{"criterion":"dashboard renders","evidence":["dashboard render test passed"],"referenced_paths":[],"commands":["npm test"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
-        &["dashboard renders".to_string()],
-        &[],
-        &["npm run build".to_string()],
-        &[],
-        true,
-    )
-    .expect_err("unrecorded command must fail closed");
-    assert!(error.contains("without successful runtime evidence"));
+    assert_eq!(outcome.referenced_paths, ["backend/pom.xml"]);
+    assert!(outcome.verification_evidence[0].contains("mvn -q clean test"));
 }
 
 #[test]
-fn task_outcome_review_accepts_recorded_browser_evidence() {
-    let outcome = parse_task_execution_outcome_with_evidence(
-        r#"{"status":"succeeded","summary":"verified responsive layout","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["320px browser snapshot rendered without overflow"],"acceptance_evidence":[{"criterion":"works at 320px","evidence":["320px browser snapshot rendered without overflow"],"referenced_paths":[],"commands":[],"tool_names":["browser_tools_browser_snapshot"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
-        &["works at 320px".to_string()],
-        &[],
-        &[],
-        &["browser_tools_browser_snapshot".to_string()],
+fn execution_without_recorded_evidence_is_blocked_without_an_ai_repair_round() {
+    let outcome = task_execution_outcome_from_recorded_evidence(
+        "任务已经完成。",
+        &["build passes".to_string()],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
         true,
-    )
-    .expect("recorded browser evidence");
-
-    assert_eq!(outcome.acceptance_evidence.len(), 1);
-}
-
-#[test]
-fn task_outcome_review_ignores_non_browser_tool_names_when_other_evidence_is_valid() {
-    let outcome = parse_task_execution_outcome_with_evidence(
-        r#"{"status":"succeeded","summary":"implemented and verified","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["production build passed"],"acceptance_evidence":[{"criterion":"baseline exists","evidence":["production build passed"],"referenced_paths":["package.json"],"commands":["npm run build"],"tool_names":["code_maintainer_write_commit_edit_session","terminal_controller_execute_command"]}],"referenced_paths":["package.json"],"referenced_endpoints":[]}"#,
-        &["baseline exists".to_string()],
-        &["package.json".to_string()],
-        &["npm run build".to_string()],
-        &[],
-        true,
-    )
-    .expect("ordinary runtime tools must not invalidate path/command evidence");
-
-    assert_eq!(outcome.acceptance_evidence.len(), 1);
-
-    let error = parse_task_execution_outcome_with_evidence(
-        r#"{"status":"succeeded","summary":"claimed","blocking_reason":null,"unmet_acceptance_criteria":[],"verification_evidence":["claimed"],"acceptance_evidence":[{"criterion":"baseline exists","evidence":["claimed"],"referenced_paths":[],"commands":[],"tool_names":["terminal_controller_execute_command"]}],"referenced_paths":[],"referenced_endpoints":[]}"#,
-        &["baseline exists".to_string()],
-        &[],
-        &[],
-        &[],
-        true,
-    )
-    .expect_err("ordinary runtime tools alone are not acceptance evidence");
-    assert!(error.contains("no concrete runtime path, command, or browser evidence"));
-}
-
-#[test]
-fn task_outcome_review_rejects_markdown_wrapped_json() {
-    let error = parse_task_execution_outcome("```json\n{\"status\":\"blocked\"}\n```")
-        .expect_err("review response must be strict JSON");
-
-    assert!(error.contains("invalid task execution outcome JSON"));
-}
-
-#[test]
-fn task_outcome_review_uses_strict_provider_json_schema() {
-    let format = task_execution_outcome_output_format();
-
-    assert_eq!(format.name, "task_execution_outcome");
-    assert!(format.strict);
-    assert_eq!(
-        format.schema.pointer("/additionalProperties"),
-        Some(&Value::Bool(false))
     );
-    assert_eq!(
-        format.schema.pointer("/properties/status/enum"),
-        Some(&json!(["succeeded", "blocked"]))
+
+    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Blocked);
+    assert_eq!(outcome.unmet_acceptance_criteria, ["build passes"]);
+    assert!(outcome
+        .blocking_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("未记录到")));
+}
+
+#[test]
+fn explicit_blocker_in_final_response_overrides_recorded_success_evidence() {
+    let outcome = task_execution_outcome_from_recorded_evidence(
+        "任务执行受阻：缺少上游凭据。",
+        &["integration passes".to_string()],
+        vec!["src/main.rs".to_string()],
+        vec!["cargo check".to_string()],
+        Vec::new(),
+        true,
     );
-    assert!(format
-        .schema
-        .pointer("/required")
-        .and_then(Value::as_array)
-        .is_some_and(|required| required.iter().any(|value| value == "acceptance_evidence")));
+
+    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Blocked);
+    assert!(outcome
+        .blocking_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("缺少上游凭据")));
 }
 
 #[test]
-fn task_outcome_protocol_repair_is_bounded_and_actionable() {
-    let raw = "x".repeat(TASK_OUTCOME_RAW_RESPONSE_MAX_CHARS + 10);
-    let bounded = bounded_task_outcome_raw_response(raw.as_str());
-    assert!(bounded.ends_with("...[truncated]"));
-    assert!(bounded.chars().count() < raw.chars().count());
+fn planning_result_needs_no_runtime_tool_evidence() {
+    let outcome = task_execution_outcome_from_recorded_evidence(
+        "## 方案\n\n实施方案已整理完成。",
+        &["plan delivered".to_string()],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        false,
+    );
 
-    let repair = task_execution_outcome_repair_message("expected value").to_string();
-    assert!(repair.contains("expected value"));
-    assert!(repair.contains("schema-constrained JSON object"));
-    assert!(repair.contains("Do not change the underlying task conclusion"));
-}
-
-#[test]
-fn task_outcome_review_distinguishes_execution_and_planning_evidence() {
-    let execution = task_execution_outcome_review_message(true, &[]).to_string();
-    let planning = task_execution_outcome_review_message(false, &[]).to_string();
-
-    assert!(execution.contains("actual tool results"));
-    assert!(execution.contains("changed project files"));
-    assert!(execution.contains("referenced_paths"));
-    assert!(execution.contains("referenced_endpoints"));
-    assert!(execution.contains("workspace-relative paths only"));
-    assert!(planning.contains("non-execution planning task"));
-    assert!(planning.contains("do not require file changes"));
+    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Succeeded);
+    assert_eq!(outcome.acceptance_evidence.len(), 1);
 }
 
 #[test]

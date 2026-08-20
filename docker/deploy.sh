@@ -22,7 +22,6 @@ LOCAL_BUILD_SERVICES=(
   plugin-management-backend
   local-connector-service-backend
   mcp-management-service-backend
-  sandbox-manager-backend
   task-runner-backend
   chatos-backend
   official-website-backend
@@ -33,7 +32,6 @@ LOCAL_BUILD_SERVICES=(
   project-management-frontend
   plugin-management-frontend
   task-runner-frontend
-  sandbox-manager-frontend
   official-website-frontend
 )
 
@@ -91,7 +89,6 @@ compose_build_limited() {
 }
 
 print_build_services() {
-  printf '%s\n' sandbox-agent-image
   printf '%s\n' "${LOCAL_BUILD_SERVICES[@]}"
 }
 
@@ -286,7 +283,6 @@ CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET|change_me_config_center_memory
 CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET|change_me_config_center_official_website_signing_secret
 CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_plugin_management_signing_secret
 CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_project_service_signing_secret
-CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET|change_me_config_center_sandbox_manager_signing_secret
 CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET|change_me_config_center_task_runner_signing_secret
 CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_user_service_signing_secret
 EOF
@@ -317,7 +313,6 @@ ensure_config_center_mtls_material() {
     official-website.identity.pem \
     plugin-management-service.identity.pem \
     project-service.identity.pem \
-    sandbox-manager.identity.pem \
     task-runner.identity.pem \
     user-service.identity.pem
   do
@@ -348,7 +343,6 @@ ensure_config_center_mtls_material() {
     official-website.identity.pem \
     plugin-management-service.identity.pem \
     project-service.identity.pem \
-    sandbox-manager.identity.pem \
     task-runner.identity.pem \
     user-service.identity.pem
   do
@@ -759,45 +753,6 @@ ensure_plugin_management_mtls_material() {
   done
 }
 
-ensure_sandbox_manager_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir required_file failures=0
-  configured_dir="$(env_value SANDBOX_MANAGER_MTLS_DIR ./secrets/sandbox-manager-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in ca.crt server.crt server.key task-runner.identity.pem \
-    project-service.identity.pem mcp-management-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-sandbox-manager-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Sandbox Manager mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null || return 1
-  openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1 || return 1
-  for required_file in task-runner.identity.pem project-service.identity.pem \
-    mcp-management-service.identity.pem
-  do
-    openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null || return 1
-    openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1 || return 1
-  done
-}
-
 ensure_memory_engine_mtls_material() {
   need_cmd openssl
   local configured_dir resolved_dir
@@ -859,7 +814,7 @@ ensure_memory_engine_mtls_material() {
 print_urls() {
   local frontend_port main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
-  local plugin_management_frontend_port sandbox_manager_frontend_port local_connector_service_port
+  local plugin_management_frontend_port local_connector_service_port
   local official_website_frontend_port config_center_frontend_port mcp_management_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
   frontend_port="$(env_value FRONTEND_PORT 8088)"
@@ -873,7 +828,6 @@ print_urls() {
   task_runner_frontend_port="$(env_value TASK_RUNNER_FRONTEND_PORT 39091)"
   project_service_frontend_port="$(env_value PROJECT_SERVICE_FRONTEND_PORT 39211)"
   plugin_management_frontend_port="$(env_value PLUGIN_MANAGEMENT_FRONTEND_PORT 39261)"
-  sandbox_manager_frontend_port="$(env_value SANDBOX_MANAGER_FRONTEND_PORT 8096)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
   mcp_management_port="$(env_value MCP_MANAGEMENT_PORT 39280)"
   official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
@@ -893,7 +847,6 @@ Task Runner:              http://localhost:${task_runner_frontend_port}
 Project Management:       http://localhost:${project_service_frontend_port}
 Plugin Management:        http://localhost:${plugin_management_frontend_port}
 Configuration Center:     http://localhost:${config_center_frontend_port}
-Sandbox Manager:          http://localhost:${sandbox_manager_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
 MCP Management Service:   http://localhost:${mcp_management_port}
 Official Website:         http://localhost:${official_website_frontend_port}
@@ -907,8 +860,6 @@ EOF
 build_local_images() {
   local services=("$@")
   if [[ ${#services[@]} -eq 0 ]]; then
-    echo "[INFO] building sandbox runtime image"
-    compose_build_limited --profile image build sandbox-agent-image
     echo "[INFO] building Chat OS cloud service images"
     services=("${LOCAL_BUILD_SERVICES[@]}")
   else
@@ -918,11 +869,7 @@ build_local_images() {
   local service
   for service in "${services[@]}"; do
     echo "[INFO] building image: $service"
-    if [[ "$service" == "sandbox-agent-image" ]]; then
-      compose_build_limited --profile image build "$service"
-    else
-      compose_build_limited build "$service"
-    fi
+    compose_build_limited build "$service"
   done
 }
 
@@ -933,35 +880,6 @@ pull_prebuilt_images() {
   else
     echo "[INFO] pulling prebuilt Chat OS cloud images"
     compose --profile image pull
-  fi
-}
-
-sandbox_manager_requested() {
-  if [[ $# -eq 0 ]]; then
-    return 0
-  fi
-  local service
-  for service in "$@"; do
-    if [[ "$service" == "sandbox-manager-backend" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-ensure_sandbox_manager_docker_runtime() {
-  local buildkit_image="moby/buildkit:buildx-stable-1"
-  if ! docker image inspect "$buildkit_image" >/dev/null 2>&1; then
-    echo "[INFO] pulling Sandbox Manager BuildKit runtime image"
-    docker pull "$buildkit_image"
-  fi
-  echo "[INFO] starting Sandbox Manager Docker socket proxy"
-  compose up -d --no-build --pull missing sandbox-docker-socket-proxy
-}
-
-ensure_sandbox_manager_docker_runtime_if_requested() {
-  if sandbox_manager_requested "$@"; then
-    ensure_sandbox_manager_docker_runtime
   fi
 }
 
@@ -1017,7 +935,6 @@ clean_docker_artifacts_if_enabled() {
 
 start_from_prebuilt_images() {
   pull_prebuilt_images "$@"
-  ensure_sandbox_manager_docker_runtime_if_requested "$@"
   echo "[INFO] starting Chat OS cloud services from prebuilt images"
   compose up -d --no-build --remove-orphans "$@"
   clean_docker_artifacts_if_enabled
@@ -1026,7 +943,6 @@ start_from_prebuilt_images() {
 
 start_from_local_build() {
   build_local_images "$@"
-  ensure_sandbox_manager_docker_runtime_if_requested "$@"
   echo "[INFO] starting Chat OS cloud services from local build"
   compose_build up -d --no-build --remove-orphans "$@"
   clean_docker_artifacts_if_enabled
@@ -1053,7 +969,6 @@ restart_without_refresh() {
 rebuild_services() {
   local services=("$@")
   build_local_images "${services[@]}"
-  ensure_sandbox_manager_docker_runtime_if_requested "${services[@]}"
   if [[ ${#services[@]} -eq 0 ]]; then
     echo "[INFO] starting Chat OS cloud services from rebuilt local images"
     compose_build up -d --no-build --remove-orphans
@@ -1108,7 +1023,6 @@ case "$ACTION" in
     ensure_local_connector_mtls_material
     ensure_user_service_mtls_material
     ensure_plugin_management_mtls_material
-    ensure_sandbox_manager_mtls_material
     ensure_memory_engine_mtls_material
     ensure_cloud_network
     ;;

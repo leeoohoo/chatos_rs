@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chatos_project_execution::{
-    validate_exact_project_task_scope, ExecutionPlanIdentity, ExecutionPlane,
-    STATUS_EXECUTION_STARTED, STATUS_PAUSED,
+    validate_exact_project_task_scope, ExecutionPlanIdentity, STATUS_EXECUTION_STARTED,
+    STATUS_PAUSED,
 };
 use serde_json::{json, Value};
 
@@ -189,7 +189,6 @@ pub(super) async fn confirm_requirement_execution_inner(
     Ok(json!({
         "success": true,
         "status": value_string(&confirmation, "status").unwrap_or_else(|| STATUS_EXECUTION_STARTED.to_string()),
-        "execution_plane": ExecutionPlane::Cloud.as_str(),
         "project_id": context.project.id,
         "requirement_id": requirement_id,
         "conversation_id": conversation_id,
@@ -268,7 +267,6 @@ pub(super) async fn mutate_requirement_execution_dispatch_inner(
         "success": true,
         "status": if paused { STATUS_PAUSED } else { STATUS_EXECUTION_STARTED },
         "execution_paused": paused,
-        "execution_plane": ExecutionPlane::Cloud.as_str(),
         "project_id": context.project.id,
         "requirement_id": requirement_id,
         "conversation_id": identity.conversation_id,

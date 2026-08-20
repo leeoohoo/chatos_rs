@@ -4,7 +4,6 @@
 mod agent_prompts;
 mod capabilities;
 mod database;
-mod execution_scopes;
 mod mcp_manifests;
 
 pub(crate) use agent_prompts::LocalAgentPromptRecord;

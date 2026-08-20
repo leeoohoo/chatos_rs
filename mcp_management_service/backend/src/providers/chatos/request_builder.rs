@@ -71,28 +71,6 @@ impl ChatosProvider {
                 binding.expected_project_task_ids.join(","),
             );
         }
-        if let Some(target) = binding.sandbox_target {
-            request = request
-                .header(
-                    "x-mcp-management-sandbox-provider",
-                    target.provider.as_str(),
-                )
-                .header("x-mcp-management-sandbox-id", target.sandbox_id.as_str())
-                .header(
-                    "x-mcp-management-sandbox-lease-id",
-                    target.lease_id.as_str(),
-                )
-                .header(
-                    "x-mcp-management-sandbox-is-environment",
-                    target.is_environment.to_string(),
-                );
-            if let Some(pairing_id) = target.pairing_id.as_deref() {
-                request = request.header("x-mcp-management-sandbox-pairing-id", pairing_id);
-            }
-            if let Some(service_id) = target.service_id.as_deref() {
-                request = request.header("x-mcp-management-sandbox-service-id", service_id);
-            }
-        }
         Ok(request.with_internal_trace_context())
     }
 }

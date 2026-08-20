@@ -29,17 +29,6 @@ pub fn system_mcp_tool_catalog(key: SystemMcpKey) -> Result<SystemMcpToolCatalog
         return crate::builtin_tool_catalog(kind).map(SystemMcpToolCatalog::Static);
     }
     let tools = match key {
-        SystemMcpKey::SandboxImages => crate::sandbox_images::list_tools()
-            .get("tools")
-            .and_then(Value::as_array)
-            .cloned()
-            .ok_or_else(|| "Sandbox Images tool registry returned no tools array".to_string())?,
-        SystemMcpKey::ProjectEnvironment => {
-            crate::system_tool_catalog::project_environment_tool_definitions()
-        }
-        SystemMcpKey::ProjectRuntimeEnvironment => {
-            crate::system_tool_catalog::project_runtime_environment_info_tool_definitions()
-        }
         SystemMcpKey::LocalCommandApproval => {
             crate::system_tool_catalog::local_command_approval_tool_definitions()
         }

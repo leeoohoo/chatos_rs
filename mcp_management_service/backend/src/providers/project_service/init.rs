@@ -40,21 +40,10 @@ impl ProjectServiceProvider {
             return false;
         };
         match route.provider_kind {
-            McpProviderKind::Harness => matches!(
-                descriptor.key,
-                SystemMcpKey::CodeMaintainerRead
-                    | SystemMcpKey::CodeMaintainerWrite
-                    | SystemMcpKey::TerminalController
-            ),
             McpProviderKind::InternalService
                 if route.provider_ref.as_deref() == Some(PROJECT_MANAGEMENT_OWNER_SERVICE) =>
             {
-                matches!(
-                    descriptor.key,
-                    SystemMcpKey::ProjectManagement
-                        | SystemMcpKey::ProjectEnvironment
-                        | SystemMcpKey::ProjectRuntimeEnvironment
-                )
+                descriptor.key == SystemMcpKey::ProjectManagement
             }
             _ => false,
         }

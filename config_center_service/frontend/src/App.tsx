@@ -54,7 +54,6 @@ const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'mcp-management-service': { label: 'MCP 管理', order: 30 },
   'memory-engine': { label: 'Memory Engine', order: 40 },
   'project-service': { label: '项目服务', order: 50 },
-  'sandbox-manager': { label: '沙箱管理', order: 60 },
   'user-service': { label: '用户服务', order: 70 },
   'plugin-management-service': { label: '插件管理', order: 80 },
   'local-connector-service': { label: '本地连接器', order: 90 },
@@ -75,7 +74,6 @@ function configAreaKey(definition: ConfigDefinition) {
   if (categoryRoot === 'mcp management') return 'mcp-management-service';
   if (categoryRoot === 'memory engine') return 'memory-engine';
   if (categoryRoot === 'project service') return 'project-service';
-  if (categoryRoot === 'sandbox manager') return 'sandbox-manager';
   if (categoryRoot === 'user service') return 'user-service';
   if (categoryRoot === 'plugin management') return 'plugin-management-service';
   if (categoryRoot === 'local connector') return 'local-connector-service';
@@ -586,7 +584,6 @@ function ConfigEditor({ environment }: { environment: string }) {
                 'project-service',
                 'plugin-management-service',
                 'local-connector-service',
-                'sandbox-manager',
                 'memory-engine',
                 'official-website',
               ].map((value) => ({ value, label: value }))}

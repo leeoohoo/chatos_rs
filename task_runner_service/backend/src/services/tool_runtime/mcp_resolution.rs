@@ -15,7 +15,6 @@ use crate::models::{
 #[allow(dead_code)]
 pub(super) enum AgentMcpCaller {
     ChatosAsyncPlanner,
-    ProjectManagementAgent,
     LocalConnectorClientAgent,
     TaskRunnerPlanPhase,
     TaskRunnerRunPhase,
@@ -224,9 +223,6 @@ fn requirement_source_key(source: McpCapabilityRequirementSource) -> &'static st
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::ChatosAsyncPlanner) => {
             CHATOS_ASYNC_PLANNER_TOOL_PROFILE
         }
-        McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::ProjectManagementAgent) => {
-            "project_management_agent"
-        }
         McpCapabilityRequirementSource::CallerContract(
             AgentMcpCaller::LocalConnectorClientAgent,
         ) => "local_connector_client_agent",
@@ -285,7 +281,6 @@ pub(super) fn caller_builtin_capability_requirements(
 
     let kinds: &[BuiltinMcpKind] = match caller {
         ChatosAsyncPlanner | TaskRunnerPlanPhase | TaskRunnerRunPhase => &[AskUser],
-        ProjectManagementAgent => &[ProjectManagement],
         LocalConnectorClientAgent => &[],
     };
     kinds

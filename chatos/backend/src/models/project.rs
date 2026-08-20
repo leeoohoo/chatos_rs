@@ -28,8 +28,6 @@ pub struct Project {
     pub name: String,
     pub root_path: String,
     pub git_url: Option<String>,
-    pub source_type: Option<String>,
-    pub execution_plane: Option<String>,
     pub cloud_import_source: Option<String>,
     pub import_status: Option<String>,
     pub source_git_url: Option<String>,
@@ -63,8 +61,6 @@ impl Project {
             name,
             root_path,
             git_url,
-            source_type: Some("local".to_string()),
-            execution_plane: Some("cloud".to_string()),
             cloud_import_source: Some("none".to_string()),
             import_status: Some("none".to_string()),
             source_git_url: None,
@@ -104,28 +100,6 @@ impl ProjectService {
         )
         .await?;
         Ok(project.id)
-    }
-
-    pub async fn create_cloud(
-        name: String,
-        git_url: Option<String>,
-        zip: Option<(String, Vec<u8>)>,
-        description: Option<String>,
-    ) -> Result<Project, String> {
-        let cfg = Config::try_get()?;
-        let access_token = current_access_token_required()?;
-        let project = project_management_api_client::create_cloud_project_service_project(
-            cfg.project_service_base_url.as_str(),
-            access_token.as_str(),
-            &project_management_api_client::CreateCloudProjectServiceProjectRequest {
-                name,
-                git_url: normalize_optional_text(git_url),
-                description: normalize_optional_text(description),
-                zip,
-            },
-        )
-        .await?;
-        Ok(project_from_project_service(project))
     }
 
     pub async fn get_by_id(id: &str) -> Result<Option<Project>, String> {
@@ -225,31 +199,18 @@ impl ProjectService {
 fn project_from_project_service(
     record: project_management_api_client::ProjectServiceProjectRecord,
 ) -> Project {
-    let is_cloud_project = record
-        .source_type
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| value.eq_ignore_ascii_case("cloud"));
     let root_path = record
         .root_path
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| {
-            if is_cloud_project {
-                harness_project_root_path(record.id.as_str())
-            } else {
-                String::new()
-            }
-        });
+        .unwrap_or_default();
     Project {
         id: record.id,
         name: record.name,
         root_path,
         git_url: record.git_url,
-        source_type: record.source_type,
-        execution_plane: Some("cloud".to_string()),
         cloud_import_source: record.cloud_import_source,
         import_status: record.import_status,
         source_git_url: record.source_git_url,
@@ -302,20 +263,16 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        harness_project_id_from_root_path, project_from_project_service,
-        HARNESS_PROJECT_ROOT_PREFIX,
-    };
+    use super::{harness_project_id_from_root_path, project_from_project_service};
     use crate::services::project_management_api_client::ProjectServiceProjectRecord;
 
-    fn project_record(source_type: &str, root_path: Option<&str>) -> ProjectServiceProjectRecord {
+    fn project_record(root_path: Option<&str>) -> ProjectServiceProjectRecord {
         ProjectServiceProjectRecord {
             id: "project-1".to_string(),
             owner_user_id: Some("user-1".to_string()),
             name: "Project".to_string(),
             root_path: root_path.map(ToOwned::to_owned),
             git_url: None,
-            source_type: Some(source_type.to_string()),
             cloud_import_source: None,
             import_status: None,
             source_git_url: None,
@@ -334,22 +291,10 @@ mod tests {
     }
 
     #[test]
-    fn cloud_project_uses_internal_harness_virtual_root() {
-        let project = project_from_project_service(project_record("cloud", None));
-        assert_eq!(
-            project.root_path,
-            format!("{HARNESS_PROJECT_ROOT_PREFIX}project-1")
-        );
-        assert_eq!(project.source_type.as_deref(), Some("cloud"));
-    }
-
-    #[test]
-    fn local_project_keeps_its_real_root_path() {
+    fn project_keeps_its_bound_root_path() {
         let project =
-            project_from_project_service(project_record("local", Some("/workspace/local-project")));
+            project_from_project_service(project_record(Some("/workspace/local-project")));
         assert_eq!(project.root_path, "/workspace/local-project");
-        assert_eq!(project.source_type.as_deref(), Some("local"));
-        assert_eq!(project.execution_plane.as_deref(), Some("cloud"));
     }
 
     #[test]

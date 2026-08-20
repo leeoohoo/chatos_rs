@@ -4,8 +4,8 @@
 use super::*;
 
 #[test]
-fn task_runner_cloud_run_phase_defaults_match_cloud_execution_plane() {
-    let kinds = task_runner_cloud_run_phase_optional_builtin_kinds()
+fn task_runner_run_phase_defaults_cover_execution_capabilities() {
+    let kinds = task_runner_run_phase_optional_builtin_kinds()
         .into_iter()
         .map(|(kind, _)| kind)
         .collect::<Vec<_>>();
@@ -23,8 +23,8 @@ fn task_runner_cloud_run_phase_defaults_match_cloud_execution_plane() {
 }
 
 #[test]
-fn task_runner_cloud_plan_phase_excludes_mutating_engineering_tools() {
-    let kinds = task_runner_cloud_plan_phase_builtin_kinds();
+fn task_runner_plan_phase_excludes_mutating_engineering_tools() {
+    let kinds = task_runner_plan_phase_builtin_kinds();
 
     assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(!kinds.contains(&BuiltinMcpKind::TaskManager));
@@ -37,9 +37,9 @@ fn task_runner_cloud_plan_phase_excludes_mutating_engineering_tools() {
 
 #[test]
 fn task_runner_planning_agent_owns_read_only_code_and_project_planning_capabilities() {
-    let required = task_runner_cloud_plan_phase_builtin_kinds()
+    let required = task_runner_plan_phase_builtin_kinds()
         .into_iter()
-        .filter(|kind| task_runner_cloud_plan_phase_required(*kind))
+        .filter(|kind| task_runner_plan_phase_required(*kind))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -125,30 +125,6 @@ fn task_runner_provider_skills_are_split_by_runtime_profile() {
 }
 
 #[test]
-fn project_runtime_environment_skill_distinguishes_application_topology_from_project_tools() {
-    let skills = provider_skills_for_system_mcp(PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID)
-        .and_then(|value| value.as_array().cloned())
-        .expect("project runtime provider skill");
-    let instructions = skills[0]
-        .get("instructions")
-        .and_then(Value::as_str)
-        .expect("instructions");
-
-    assert!(instructions.contains("项目应用环境状态不等于当前项目文件和终端工具的可用状态"));
-    assert!(instructions.contains("不能仅因应用环境为 `pending` 而阻塞"));
-    assert!(instructions.contains("只有明确依赖项目应用服务"));
-    for forbidden in [
-        "Task Runner",
-        "沙箱",
-        "Harness",
-        "Local Connector",
-        "Provider",
-    ] {
-        assert!(!instructions.contains(forbidden), "{forbidden}");
-    }
-}
-
-#[test]
 fn legacy_chatos_planning_agents_are_retired_in_favor_of_task_runner_plan_phase() {
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_planning_agent"));
@@ -166,9 +142,7 @@ fn all_chatos_runtime_agents_receive_the_notepad_binding() {
         CHATOS_NOTEPAD_AGENT_KEYS,
         [
             CHATOS_CONVERSATION_AGENT_KEY,
-            CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
             PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
-            PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
         ]
     );
 }
@@ -177,21 +151,7 @@ fn all_chatos_runtime_agents_receive_the_notepad_binding() {
 fn only_the_conversation_agent_can_delegate_generic_task_runner_work() {
     assert_eq!(
         CHATOS_TASK_RUNNER_AGENT_KEYS,
-        [
-            CHATOS_CONVERSATION_AGENT_KEY,
-            CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
-        ]
-    );
-}
-
-#[test]
-fn project_management_agent_exposes_program_routed_environment_tools() {
-    assert_eq!(
-        PROJECT_MANAGEMENT_AGENT_REQUIRED_MCPS,
-        &[
-            (PROJECT_ENVIRONMENT_MCP_RESOURCE_ID, 20),
-            (SANDBOX_IMAGES_MCP_RESOURCE_ID, 30),
-        ]
+        [CHATOS_CONVERSATION_AGENT_KEY]
     );
 }
 
@@ -206,13 +166,9 @@ fn system_agent_registry_contains_all_runtime_roles() {
         keys,
         vec![
             CHATOS_CONVERSATION_AGENT_KEY,
-            CHATOS_LOCAL_CONVERSATION_AGENT_KEY,
             PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
-            PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_KEY,
             TASK_RUNNER_PLAN_AGENT_KEY,
             TASK_RUNNER_RUN_AGENT_KEY,
-            PROJECT_MANAGEMENT_AGENT_KEY,
-            PROJECT_MANAGEMENT_LOCAL_AGENT_KEY,
             LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY,
             "memory_engine_summary_agent",
             "memory_engine_rollup_agent",
@@ -276,7 +232,7 @@ fn seeded_system_mcp_records_use_the_unified_runtime_kind() {
 }
 
 #[test]
-fn chatos_conversation_requires_task_runner_service_on_both_execution_planes() {
+fn chatos_conversation_requires_task_runner_service() {
     let spec = (
         "chatos_conversation_agent",
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
@@ -343,22 +299,6 @@ fn seeded_binding_matching_preserves_task_runner_condition_variants() {
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
         &plan_conditions,
     ));
-}
-
-#[test]
-fn project_management_agent_read_only_tool_policies_are_seeded() {
-    assert_eq!(
-        PROJECT_MANAGEMENT_AGENT_SANDBOX_TOOL_ALLOWLIST,
-        &["get_image_catalog", "search_images"]
-    );
-    assert!(
-        chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
-            .contains(&"list_requirements")
-    );
-    assert!(
-        !chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
-            .contains(&"create_requirement")
-    );
 }
 
 #[test]

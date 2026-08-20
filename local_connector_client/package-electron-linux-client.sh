@@ -99,9 +99,6 @@ fi
     -p local_connector_client_core \
     --bin local_connector_client_core \
     --bin chatos_chrome_native_host
-  cargo build --release \
-    -p chatos_sandbox_mcp_server \
-    --bin chatos_sandbox_mcp_server
 )
 
 TARGET_DIR="$({
@@ -115,10 +112,9 @@ process.stdin.on("end", () => process.stdout.write(JSON.parse(input).target_dire
 ')"
 CORE_BIN="$TARGET_DIR/release/local_connector_client_core"
 CHROME_NATIVE_HOST_BIN="$TARGET_DIR/release/chatos_chrome_native_host"
-SANDBOX_AGENT_BIN="$TARGET_DIR/release/chatos_sandbox_mcp_server"
 TOOLS_DIR="$ROOT_DIR/bundled-tools/$TOOLS_PLATFORM"
 
-for executable_path in "$CORE_BIN" "$CHROME_NATIVE_HOST_BIN" "$SANDBOX_AGENT_BIN"; do
+for executable_path in "$CORE_BIN" "$CHROME_NATIVE_HOST_BIN"; do
   if [[ ! -x "$executable_path" ]]; then
     echo "Required Linux executable was not built: $executable_path" >&2
     exit 1
@@ -137,7 +133,6 @@ mkdir -p \
   "$STAGING_DIR/sqlite-migrations"
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
 cp "$CHROME_NATIVE_HOST_BIN" "$STAGING_DIR/chatos_chrome_native_host"
-cp "$SANDBOX_AGENT_BIN" "$STAGING_DIR/chatos_sandbox_mcp_server"
 cp -R "$CLIENT_DIR/chrome_extension/." "$STAGING_DIR/chrome-extension/"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/skill_bundles/." "$STAGING_DIR/skill-bundles/"
@@ -157,8 +152,7 @@ node "$PLUGIN_BUNDLE_TOOL" \
 cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
 chmod 755 \
   "$STAGING_DIR/local_connector_client_core" \
-  "$STAGING_DIR/chatos_chrome_native_host" \
-  "$STAGING_DIR/chatos_sandbox_mcp_server"
+  "$STAGING_DIR/chatos_chrome_native_host"
 
 (
   cd "$FRONTEND_DIR"

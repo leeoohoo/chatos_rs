@@ -61,13 +61,10 @@ pub(super) async fn resolve_mcp_management_gateway(
     if run.effective_tools.terminal
         && !matches!(
             workspace_route,
-            Some(RuntimeWorkspaceRouteTarget::CloudSandbox { .. })
-                | Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
+            Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
         )
     {
-        return Err(
-            "TerminalController requires a prepared Cloud Sandbox for cloud projects".to_string(),
-        );
+        return Err("TerminalController requires a Local Connector workspace".to_string());
     }
     let timeout = Duration::from_millis(
         std::env::var("TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS")

@@ -24,27 +24,11 @@ import { useRequirementExecutionProcessModalState } from './useRequirementExecut
 
 export * from './requirementExecutionProcessPublic';
 
-export const isRequirementExecutionRuntimeReady = ({
-  clientManagedRuntime,
-  conversationId,
-  executionPlane,
-  status,
-}: {
-  clientManagedRuntime: boolean;
-  conversationId: string;
-  executionPlane?: string | null;
-  status: string;
-}): boolean => status === 'ready'
-  || clientManagedRuntime
-  || (executionPlane || '').toLowerCase() === 'local_connector'
-  || conversationId.startsWith('lc_');
-
 export const RequirementExecutionProcessModal: React.FC<{
   process: RequirementExecutionProcess;
-  clientManagedRuntime?: boolean;
   onClose: () => void;
   onProcessChange: (process: RequirementExecutionProcess) => void;
-}> = ({ process, clientManagedRuntime = false, onClose, onProcessChange }) => {
+}> = ({ process, onClose, onProcessChange }) => {
   const apiClient = useApiClient();
   const refreshSessionById = useChatStore((state) => state.refreshSessionById);
   const syncSessionMessagesInBackground = useChatStore(
@@ -74,7 +58,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     rerunning,
     rerunningRef,
     revising,
-    runtimeEnvironmentStatus,
     setActionError,
     setActionMessage,
     setCancelConfirmOpen,
@@ -94,7 +77,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     setRerunConfirmOpen,
     setRerunning,
     setRevising,
-    setRuntimeEnvironmentStatus,
     setStopping,
     setSyncError,
     setSyncing,
@@ -163,15 +145,7 @@ export const RequirementExecutionProcessModal: React.FC<{
     && allTasks.length > 0
     && !actuallyStarted
     && phase !== 'stopped';
-  const isLocalExecution = clientManagedRuntime
-    || (liveProcess.executionPlane || '').toLowerCase() === 'local_connector'
-    || liveProcess.conversationId.startsWith('lc_');
-  const runtimeEnvironmentReady = isRequirementExecutionRuntimeReady({
-    clientManagedRuntime,
-    conversationId: liveProcess.conversationId,
-    executionPlane: liveProcess.executionPlane,
-    status: runtimeEnvironmentStatus,
-  });
+  const isLocalExecution = true;
   const recoveryActions = resolveRequirementExecutionRecoveryActions({
     actuallyStarted,
     hasActiveRuns,
@@ -190,31 +164,6 @@ export const RequirementExecutionProcessModal: React.FC<{
     && !cancellationSettling;
   const [plannerProcessOpen, setPlannerProcessOpen] = useState(false);
 
-  useEffect(() => {
-    if (!graphReady || actuallyStarted) return undefined;
-    let cancelled = false;
-    const refreshRuntimeEnvironment = async () => {
-      try {
-        const response = await apiClient.getProjectRuntimeEnvironment(liveProcess.projectId);
-        if (cancelled) return;
-        const nextStatus = readText(response.environment?.status).toLowerCase() || 'pending';
-        setRuntimeEnvironmentStatus(nextStatus);
-      } catch (err) {
-        if (cancelled) return;
-        setRuntimeEnvironmentStatus('unavailable');
-        setActionError(err instanceof Error ? err.message : '读取项目执行环境失败');
-      }
-    };
-    void refreshRuntimeEnvironment();
-    const timer = window.setInterval(
-      () => void refreshRuntimeEnvironment(),
-      REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
-    );
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [actuallyStarted, apiClient, graphReady, liveProcess.projectId]);
   const showRerunAction = canRerun || rerunBusy;
   const terminal = ['completed', 'failed', 'stopped'].includes(phase)
     && !hasActiveRuns
@@ -397,10 +346,6 @@ export const RequirementExecutionProcessModal: React.FC<{
   const confirmExecution = async () => {
     if (!graphReady || !confirmationState.canConfirm) {
       setActionError('完整流程图尚未生成，或者当前批次已经存在运行记录');
-      return;
-    }
-    if (!runtimeEnvironmentReady) {
-      setActionError('项目执行环境仍在初始化，请稍后再试');
       return;
     }
     setConfirming(true);
@@ -789,8 +734,6 @@ export const RequirementExecutionProcessModal: React.FC<{
               executionPaused={Boolean(liveProcess.executionPaused)}
               graphReady={graphReady}
               hasActiveRuns={hasActiveRuns}
-              runtimeEnvironmentReady={runtimeEnvironmentReady}
-              runtimeEnvironmentStatus={runtimeEnvironmentStatus}
               onClose={onClose}
               onCancelRequirementExecution={() => void stopCurrentBatch(false)}
               onConfirmExecution={() => void confirmExecution()}

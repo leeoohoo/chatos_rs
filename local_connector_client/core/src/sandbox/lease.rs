@@ -48,6 +48,7 @@ fn cloud_safe_effective_permissions(lease: &LocalSandboxLease) -> Value {
     value
 }
 
+#[cfg(test)]
 fn redact_local_output_manifest(mut manifest: Value) -> Value {
     if let Some(object) = manifest.as_object_mut() {
         object.insert("output_workspace".to_string(), Value::Null);

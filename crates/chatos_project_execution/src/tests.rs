@@ -26,7 +26,7 @@ fn work_item(id: &str, requirement_id: &str, status: &str) -> WorkItemPlanItem {
 }
 
 #[test]
-fn scope_is_shared_across_execution_planes() {
+fn requirement_scope_is_consistent_across_execution_stages() {
     let requirements = vec![
         requirement("root", None, "approved"),
         requirement("dependent", None, "approved"),
@@ -160,7 +160,6 @@ fn prompt_keeps_routing_program_owned_and_requires_exact_coverage() {
         Some("先补测试，再改实现"),
     )
     .expect("planner prompt");
-    assert!(!prompt.contains("execution_plane"));
     assert!(!prompt.contains("local_connector"));
     assert!(prompt.contains("运行路由由系统自动完成"));
     assert!(prompt.contains("先补测试，再改实现"));
@@ -216,7 +215,7 @@ fn prompt_separates_pending_context_and_satisfied_prerequisites() {
 }
 
 #[test]
-fn plan_identity_is_shared_across_execution_planes() {
+fn plan_identity_is_shared_across_execution_stages() {
     assert_eq!(
         ExecutionPlanIdentity::required(" group-1 ", " session-1 ").expect("complete identity"),
         ExecutionPlanIdentity {
@@ -271,7 +270,7 @@ fn exact_scope_validation_reports_missing_and_unexpected_tasks() {
 }
 
 #[test]
-fn local_and_cloud_task_statuses_share_one_semantic_state_machine() {
+fn task_statuses_share_one_semantic_state_machine() {
     assert_eq!(
         classify_execution_task_status("todo"),
         ExecutionTaskState::Planned
@@ -316,7 +315,7 @@ fn requirement_execution_recovery_state_is_server_owned() {
 }
 
 #[test]
-fn missing_prerequisite_is_rejected_for_every_execution_plane() {
+fn missing_prerequisite_is_rejected_for_every_execution_stage() {
     let requirements = vec![requirement("root", None, "approved")];
     let error = validate_requirement_prerequisites(
         requirements.as_slice(),

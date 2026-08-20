@@ -5,7 +5,6 @@ use anyhow::{anyhow, Result};
 use reqwest::Method;
 use serde_json::Value;
 
-use super::paths::local_sandbox_workspace_root;
 use crate::relay::RelayRequest;
 use crate::workspace::paths::workspace_for_request;
 use crate::LocalState;
@@ -20,14 +19,13 @@ pub(crate) fn local_sandbox_request_body(
         return Ok(request.body.clone());
     }
     let workspace = workspace_for_request(state, request.workspace_id.as_str())?;
-    let workspace_root = local_sandbox_workspace_root(workspace)?;
     let mut body = request.body.clone();
     let object = body
         .as_object_mut()
         .ok_or_else(|| anyhow!("sandbox create lease body must be a JSON object"))?;
     object.insert(
         "workspace_root".to_string(),
-        Value::String(workspace_root.to_string_lossy().to_string()),
+        Value::String(workspace.absolute_root.to_string_lossy().to_string()),
     );
     Ok(body)
 }

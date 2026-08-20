@@ -5,7 +5,7 @@ use chatos_mcp::{system_mcp_catalog, SystemMcpDescriptor, SystemMcpKey};
 use chatos_mcp_management_sdk::{
     McpExecutionHost, McpProviderKind, McpRetryClass, McpRouteCandidate, McpRouteResourceKind,
     ProjectExecutionContext, ResolveMcpRoutesRequest, ResolveMcpRoutesResponse, ResolvedMcpRoute,
-    SandboxProviderKind, WorkspaceProviderKind,
+    WorkspaceProviderKind,
 };
 use sha2::{Digest, Sha256};
 
@@ -86,25 +86,12 @@ impl RoutingEngine {
                 resource,
                 "local command approval is local-only and is not exposed through MCP Management",
             ),
-            SystemMcpKey::SandboxImages => self.resolve_sandbox(context, resource, allow_writes),
-            SystemMcpKey::ProjectEnvironment => {
-                let mut route = internal_service_route(
-                    resource,
-                    descriptor,
-                    "project environment analysis tools are owned by Project Service",
-                    allow_writes,
-                );
-                route.cancel_supported = false;
-                route
-            }
-            SystemMcpKey::ProjectManagement | SystemMcpKey::ProjectRuntimeEnvironment => {
-                internal_service_route(
-                    resource,
-                    descriptor,
-                    "project management capabilities are owned by their internal service",
-                    allow_writes,
-                )
-            }
+            SystemMcpKey::ProjectManagement => internal_service_route(
+                resource,
+                descriptor,
+                "project management capabilities are owned by their internal service",
+                allow_writes,
+            ),
             SystemMcpKey::TaskProcessLog | SystemMcpKey::TaskRunnerService => {
                 internal_service_route(
                     resource,
@@ -190,27 +177,10 @@ impl RoutingEngine {
                 allow_writes,
                 "project workspace provider is Local Connector",
             ),
-            WorkspaceProviderKind::Harness => available_route(
+            WorkspaceProviderKind::None => unavailable_route(
                 resource,
-                McpProviderKind::Harness,
-                Some(project_provider_ref(context)),
-                "project workspace provider is Harness",
-                allow_writes,
+                "project workspace MCP requires a Local Connector workspace",
             ),
-            WorkspaceProviderKind::CloudSandbox => available_route(
-                resource,
-                McpProviderKind::CloudSandbox,
-                Some(sandbox_provider_ref(context)),
-                "project workspace provider is Cloud Sandbox",
-                allow_writes,
-            ),
-            WorkspaceProviderKind::CloudStorage => unavailable_route(
-                resource,
-                "cloud storage workspace MCP adapter is not registered",
-            ),
-            WorkspaceProviderKind::None => {
-                unavailable_route(resource, "project has no workspace provider")
-            }
         }
     }
 
@@ -227,97 +197,31 @@ impl RoutingEngine {
                 allow_writes,
                 "local project commands are routed through Local Connector",
             ),
-            WorkspaceProviderKind::Harness => available_route(
+            WorkspaceProviderKind::None => unavailable_route(
                 resource,
-                McpProviderKind::Harness,
-                Some(project_provider_ref(context)),
-                "Harness owns the project command runtime",
-                allow_writes,
+                "project commands require a Local Connector workspace",
             ),
-            WorkspaceProviderKind::CloudSandbox => available_route(
-                resource,
-                McpProviderKind::CloudSandbox,
-                Some(sandbox_provider_ref(context)),
-                "Cloud Sandbox owns the project command runtime",
-                allow_writes,
-            ),
-            WorkspaceProviderKind::CloudStorage | WorkspaceProviderKind::None => unavailable_route(
-                resource,
-                "project has no command-capable workspace provider",
-            ),
-        }
-    }
-
-    fn resolve_sandbox(
-        &self,
-        context: &ProjectExecutionContext,
-        resource: &McpRouteCandidate,
-        allow_writes: bool,
-    ) -> ResolvedMcpRoute {
-        match context.sandbox_provider {
-            SandboxProviderKind::LocalConnector => local_connector_route(
-                context,
-                resource,
-                allow_writes,
-                "project sandbox provider is Local Connector",
-            ),
-            SandboxProviderKind::Cloud => available_route(
-                resource,
-                McpProviderKind::CloudSandbox,
-                Some(sandbox_provider_ref(context)),
-                "project sandbox provider is cloud",
-                allow_writes,
-            ),
-            SandboxProviderKind::None => {
-                unavailable_route(resource, "project has no sandbox provider")
-            }
         }
     }
 
     fn resolve_stdio(
         &self,
-        context: &ProjectExecutionContext,
+        _context: &ProjectExecutionContext,
         resource: &McpRouteCandidate,
     ) -> ResolvedMcpRoute {
         let Some(execution_host) = resource.execution_host else {
             return unavailable_route(resource, "stdio MCP execution host is not resolved");
         };
         match execution_host {
-            McpExecutionHost::Cloud => available_route(
-                resource,
-                McpProviderKind::CloudStdio,
-                resource
-                    .provider_ref
-                    .clone()
-                    .or_else(|| Some(resource.resource_id.clone())),
-                "stdio MCP is pinned to a controlled cloud runner",
-                resource.allow_writes,
-            ),
-            McpExecutionHost::Local => resource_local_connector_route(
+            McpExecutionHost::Local | McpExecutionHost::Portable => resource_local_connector_route(
                 resource,
                 McpProviderKind::LocalConnector,
                 resource.allow_writes,
-                "stdio MCP is pinned to Local Connector",
+                "stdio MCP is executed through Local Connector",
             ),
-            McpExecutionHost::Portable
-                if context.workspace_provider == WorkspaceProviderKind::LocalConnector =>
-            {
-                resource_local_connector_route(
-                    resource,
-                    McpProviderKind::LocalConnector,
-                    resource.allow_writes,
-                    "portable stdio MCP was pinned to Local Connector for this session",
-                )
-            }
-            McpExecutionHost::Portable => available_route(
+            McpExecutionHost::Cloud => unavailable_route(
                 resource,
-                McpProviderKind::CloudStdio,
-                resource
-                    .provider_ref
-                    .clone()
-                    .or_else(|| Some(resource.resource_id.clone())),
-                "portable stdio MCP was pinned to a cloud runner for this session",
-                resource.allow_writes,
+                "cloud stdio execution is no longer supported; use Local Connector",
             ),
         }
     }
@@ -534,24 +438,6 @@ fn local_connector_provider_ref(context: &ProjectExecutionContext) -> Option<Str
         return None;
     }
     Some(format!("device:{device_id}/workspace:{workspace_id}"))
-}
-
-fn project_provider_ref(context: &ProjectExecutionContext) -> String {
-    format!(
-        "project:{}@{}",
-        context.project_id.trim(),
-        context.revision.trim()
-    )
-}
-
-fn sandbox_provider_ref(context: &ProjectExecutionContext) -> String {
-    context
-        .sandbox_pairing_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("sandbox-pairing:{value}"))
-        .unwrap_or_else(|| project_provider_ref(context))
 }
 
 fn route_revision(context: &ProjectExecutionContext, routes: &[ResolvedMcpRoute]) -> String {

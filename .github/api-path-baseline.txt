@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=267
-total_endpoint_count=267
+main_backend_endpoint_count=261
+total_endpoint_count=261
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -120,8 +120,6 @@ GET /api/projects/{id}/requirements/{requirement_id}/work-items
 GET /api/projects/{id}/run/catalog
 GET /api/projects/{id}/run/environment
 GET /api/projects/{id}/run/state
-GET /api/projects/{id}/runtime-environment
-GET /api/projects/{id}/runtime-environment/progress
 GET /api/realtime/ws
 GET /api/remote-connections
 GET /api/remote-connections/{id}
@@ -218,7 +216,6 @@ POST /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/w
 POST /api/messages/{message_id}/task-runner/runs/{run_id}/retry
 POST /api/notepad/folders
 POST /api/notepad/notes
-POST /api/projects/cloud
 POST /api/projects/{id}/contacts
 POST /api/projects/{id}/requirements/{requirement_id}/confirm-execution
 POST /api/projects/{id}/requirements/{requirement_id}/execute
@@ -229,8 +226,6 @@ POST /api/projects/{id}/requirements/{requirement_id}/stop
 POST /api/projects/{id}/run/analyze
 POST /api/projects/{id}/run/default
 POST /api/projects/{id}/run/execute
-POST /api/projects/{id}/runtime-environment/analyze
-POST /api/projects/{id}/runtime-environment/images/{image_record_id}/generate
 POST /api/remote-connections
 POST /api/remote-connections/test
 POST /api/remote-connections/{id}/disconnect
@@ -266,7 +261,6 @@ PUT /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/{turn_id}/sync
 PUT /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts/{artifact_id}
 PUT /api/projects/{id}
 PUT /api/projects/{id}/run/environment
-PUT /api/projects/{id}/runtime-environment/settings
 PUT /api/remote-connections/{id}
 PUT /api/system-contexts/{context_id}
 PUT /api/user-settings

@@ -3,15 +3,13 @@
 
 // Keep plugin runtime's MCP-specific preparation and execution helpers behind
 // one module boundary so generic plugin loading code does not depend on
-// scattered transport, sandbox, and credential internals.
+// scattered transport and credential internals.
 #[path = "mcp/mod.rs"]
 mod adapter;
 #[path = "mcp_config.rs"]
 mod config;
 #[path = "mcp_credentials.rs"]
 mod credentials;
-#[path = "stdio_sandbox.rs"]
-mod sandbox;
 
 pub(in crate::plugins::runtime) use adapter::{
     load_verified_manifest, PluginMcpInvocationCancelOutcome, PreparedPluginMcp,
@@ -19,4 +17,3 @@ pub(in crate::plugins::runtime) use adapter::{
 pub use adapter::{PluginMcpAdapter, PluginMcpHealthSnapshot, PluginMcpSnapshot};
 #[cfg(test)]
 pub(in crate::plugins::runtime) use adapter::{PluginMcpInvoker, PreparedPluginMcpTransport};
-pub(in crate::plugins::runtime) use sandbox::PluginStdioSandboxLauncher;

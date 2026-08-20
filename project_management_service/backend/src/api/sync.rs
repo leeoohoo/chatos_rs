@@ -13,17 +13,12 @@ use super::internal_auth::{
 };
 use super::ApiError;
 use crate::models::{
-    ImportProjectRequest, ProjectRecord, ProjectRuntimeEnvironmentResponse, ProjectStatus,
-    ProjectWorkItemTaskRunnerLinkRecord, SyncDeleteExecutionLinksRequest,
-    SyncExecutionLinksQueryRequest, SyncRequirementExecutionStateRequest,
-    SyncRequirementExecutionStateResponse, SyncTaskRunnerWorkItemStatusRequest,
-    SyncTaskRunnerWorkItemStatusResponse,
+    ImportProjectRequest, ProjectRecord, ProjectStatus, ProjectWorkItemTaskRunnerLinkRecord,
+    SyncDeleteExecutionLinksRequest, SyncExecutionLinksQueryRequest,
+    SyncRequirementExecutionStateRequest, SyncRequirementExecutionStateResponse,
+    SyncTaskRunnerWorkItemStatusRequest, SyncTaskRunnerWorkItemStatusResponse,
 };
 use crate::services::execution_sync::{self, ExecutionSyncError};
-use crate::services::runtime_environment::{
-    default_runtime_environment_for_project, enforce_project_runtime_boundary,
-    ensure_runtime_environment_for_project, refresh_environment_variable_values,
-};
 use crate::state::AppState;
 
 #[derive(Debug, Default, Deserialize)]
@@ -64,17 +59,12 @@ pub(in crate::api) async fn sync_import_project(
     let resource_id = input.id.clone();
     let represented_user_id = input.owner_user_id.clone();
     let resource_name = input.name.clone();
-    let sandbox_enabled = input.sandbox_enabled;
     let result = async {
-        let project = state
+        state
             .store
             .import_project(input)
             .await
-            .map_err(ApiError::bad_request)?;
-        ensure_runtime_environment_for_project(&state.store, &project, sandbox_enabled)
-            .await
-            .map_err(ApiError::bad_request)?;
-        Ok(project)
+            .map_err(ApiError::bad_request)
     }
     .await;
     record_project_internal_resource_access(
@@ -110,53 +100,6 @@ pub(in crate::api) async fn sync_get_project(
         .map_err(ApiError::bad_request)?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("项目不存在: {project_id}")))
-}
-
-pub(in crate::api) async fn sync_get_project_runtime_environment(
-    Path(project_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<ProjectRuntimeEnvironmentResponse>, ApiError> {
-    require_project_internal_request(
-        &state.config,
-        &headers,
-        &[CHATOS_CALLER, TASK_RUNNER_CALLER],
-        PROJECT_READ_SCOPE,
-    )?;
-    let project = state
-        .store
-        .get_project(&project_id)
-        .await
-        .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("项目不存在: {project_id}")))?;
-    let mut environment = state
-        .store
-        .get_project_runtime_environment(&project_id)
-        .await
-        .map_err(ApiError::bad_request)?
-        .unwrap_or_else(|| default_runtime_environment_for_project(&project, None));
-    refresh_environment_variable_values(&mut environment);
-    let mut images = state
-        .store
-        .list_project_runtime_environment_images(&project_id)
-        .await
-        .map_err(ApiError::bad_request)?;
-    if enforce_project_runtime_boundary(&project, &mut environment, &mut images) {
-        environment = state
-            .store
-            .upsert_project_runtime_environment(&environment)
-            .await
-            .map_err(ApiError::bad_request)?;
-        images = state
-            .store
-            .replace_project_runtime_environment_images(&project_id, images.as_slice())
-            .await
-            .map_err(ApiError::bad_request)?;
-    }
-    Ok(Json(ProjectRuntimeEnvironmentResponse {
-        environment,
-        images,
-    }))
 }
 
 pub(in crate::api) async fn sync_list_execution_links(

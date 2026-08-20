@@ -45,8 +45,6 @@ struct AiModelSettingsRequest {
     memory_summary_thinking_level: Option<Option<String>>,
     project_management_agent_model_config_id: Option<Option<String>>,
     project_management_agent_thinking_level: Option<Option<String>>,
-    environment_initialization_model_config_id: Option<Option<String>>,
-    environment_initialization_thinking_level: Option<Option<String>>,
 }
 
 pub fn router() -> Router {

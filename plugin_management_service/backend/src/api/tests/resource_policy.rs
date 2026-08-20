@@ -434,7 +434,7 @@ fn system_mcps_cannot_be_created_through_the_api() {
     let payload = McpPayload {
         runtime: Some(McpRuntime {
             kind: RUNTIME_KIND_SYSTEM.to_string(),
-            system_key: Some("sandbox_images".to_string()),
+            system_key: Some("code_maintainer_read".to_string()),
             ..McpRuntime::default()
         }),
         ..McpPayload::default()

@@ -102,6 +102,21 @@ impl RunService {
         if !task.mcp_config.enabled {
             return;
         }
+        match self
+            .store
+            .has_run_event_type(run.id.as_str(), "mcp_runtime")
+            .await
+        {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(err) => {
+                warn!(
+                    run_id = run.id.as_str(),
+                    task_id = task.id.as_str(),
+                    "failed to check existing MCP runtime snapshot: {err}"
+                );
+            }
+        }
         let Some(executor) = runtime.mcp_executor() else {
             return;
         };

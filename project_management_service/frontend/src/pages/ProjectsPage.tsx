@@ -11,7 +11,6 @@ import {
   Modal,
   Popconfirm,
   Space,
-  Switch,
   Table,
   Tag,
   Typography,
@@ -168,7 +167,6 @@ export function ProjectsPage() {
             onClick={() => {
               setEditingProject(null);
               form.resetFields();
-              form.setFieldsValue({ sandbox_enabled: true });
               setModalOpen(true);
             }}
           >
@@ -197,7 +195,6 @@ export function ProjectsPage() {
         <Form<CreateProjectPayload>
           form={form}
           layout="vertical"
-          initialValues={{ sandbox_enabled: true }}
           onFinish={(values) => saveMutation.mutate(values)}
         >
           <Form.Item name="name" label="项目名" rules={[{ required: true, message: '请输入项目名' }]}>
@@ -212,16 +209,6 @@ export function ProjectsPage() {
           <Form.Item name="description" label="短描述">
             <Input.TextArea rows={3} />
           </Form.Item>
-          {!editingProject ? (
-            <Form.Item
-              name="sandbox_enabled"
-              label="使用沙箱初始化"
-              valuePropName="checked"
-              preserve={false}
-            >
-              <Switch checkedChildren="是" unCheckedChildren="否" />
-            </Form.Item>
-          ) : null}
         </Form>
       </Modal>
     </div>

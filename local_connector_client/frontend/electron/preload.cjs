@@ -10,8 +10,16 @@ contextBridge.exposeInMainWorld('chatosLocalConnector', {
   requestDesktopSystemPermission: (permissionId) => (
     ipcRenderer.invoke('local-connector:desktop-system-permission-request', permissionId)
   ),
-  openSettings: () => ipcRenderer.invoke('local-connector:settings-open'),
+  openSettings: (tab) => ipcRenderer.invoke('local-connector:settings-open', tab),
   closeSettings: () => ipcRenderer.invoke('local-connector:settings-close'),
+  setApprovalOverlayMode: (mode) => (
+    ipcRenderer.invoke('local-connector:approval-overlay-mode', mode)
+  ),
+  onSettingsTabRequested: (callback) => {
+    const listener = (_event, tab) => callback(tab);
+    ipcRenderer.on('local-connector:settings-tab', listener);
+    return () => ipcRenderer.removeListener('local-connector:settings-tab', listener);
+  },
   reloadChatOS: () => ipcRenderer.invoke('local-connector:chatos-reload'),
   setDeveloperMode: (enabled) => ipcRenderer.invoke('local-connector:developer-mode', enabled),
   runtimeSettings: () => ipcRenderer.invoke('local-connector:runtime-settings'),

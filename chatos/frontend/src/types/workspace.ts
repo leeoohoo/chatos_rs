@@ -7,8 +7,6 @@ export interface Project {
   rootPath: string;
   displayRootPath?: string | null;
   gitUrl?: string | null;
-  sourceType?: 'local' | 'local_connector' | 'cloud' | string | null;
-  executionPlane?: 'local_connector' | 'cloud' | string | null;
   cloudImportSource?: 'none' | 'empty' | 'git' | 'zip' | string | null;
   importStatus?: 'none' | 'pending' | 'importing' | 'ready' | 'failed' | string | null;
   sourceGitUrl?: string | null;

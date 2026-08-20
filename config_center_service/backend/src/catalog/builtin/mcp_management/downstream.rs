@@ -87,22 +87,5 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             3616,
             &now,
         ),
-        definition(
-            MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
-            "Sandbox Manager Base URL",
-            "MCP Management 调用 Sandbox Manager 时使用的基础地址",
-            "MCP Management / Downstream",
-            "service",
-            Some("mcp-management-service"),
-            "string",
-            json!("https://sandbox-manager-backend:8097"),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL"],
-            3617,
-            &now,
-        ),
     ]
 }

@@ -11,8 +11,7 @@ use chatos_project_execution::{
     build_requirement_execution_planner_prompt, build_requirement_execution_user_message,
 };
 use chatos_project_execution::{
-    requirement_execution_recovery_state, ExecutionPlanIdentity, ExecutionPlane, STATUS_STOPPED,
-    STATUS_STOPPING,
+    requirement_execution_recovery_state, ExecutionPlanIdentity, STATUS_STOPPED, STATUS_STOPPING,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -629,7 +628,6 @@ async fn stop_requirement_execution_inner(
     Ok(json!({
         "success": true,
         "status": STATUS_STOPPED,
-        "execution_plane": ExecutionPlane::Cloud.as_str(),
         "project_id": project.id,
         "requirement_id": requirement_id,
         "contact_id": contact_runtime.contact.contact_id,

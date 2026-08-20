@@ -662,7 +662,7 @@ async fn mock_parse_recovery_provider(
     Json(json!({
         "id": "response-recovered",
         "status": "completed",
-        "output_text": "completed through non-stream fallback",
+        "output_text": "completed through streaming retry",
         "output": []
     }))
     .into_response()
@@ -892,7 +892,7 @@ async fn model_request_uses_configured_transient_retry_limit() {
 }
 
 #[tokio::test]
-async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
+async fn stream_parse_failure_retries_once_in_streaming_isolated_mode() {
     let (base_url, state, server) = start_parse_recovery_mock_provider(false).await;
     let diagnostics = Arc::new(Mutex::new(Vec::new()));
     let request = ModelRequest::openai_compatible(
@@ -921,21 +921,21 @@ async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
             ),
         )
         .await
-        .expect("non-stream recovery should succeed");
+        .expect("streaming recovery should succeed");
     server.abort();
 
-    assert_eq!(result.content, "completed through non-stream fallback");
+    assert_eq!(result.content, "completed through streaming retry");
     let requests = state.requests.lock().await;
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].get("stream"), Some(&Value::Bool(true)));
-    assert_eq!(requests[1].get("stream"), Some(&Value::Bool(false)));
+    assert_eq!(requests[1].get("stream"), Some(&Value::Bool(true)));
     assert_eq!(
         requests[0].pointer("/reasoning/effort"),
         Some(&json!("high"))
     );
     assert_eq!(
         requests[1].pointer("/reasoning/effort"),
-        Some(&json!("medium"))
+        Some(&json!("high"))
     );
     drop(requests);
 
@@ -956,10 +956,10 @@ async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
         "high"
     );
     assert_eq!(diagnostics[1]["task_runner_debug"]["request_attempt"], 2);
-    assert_eq!(diagnostics[1]["task_runner_debug"]["stream"], false);
+    assert_eq!(diagnostics[1]["task_runner_debug"]["stream"], true);
     assert_eq!(
         diagnostics[1]["task_runner_debug"]["thinking_level"],
-        "medium"
+        "high"
     );
     assert_eq!(
         diagnostics[1]["task_runner_debug"]["connection_mode"],
@@ -968,7 +968,7 @@ async fn stream_parse_failure_retries_once_in_non_stream_isolated_mode() {
 }
 
 #[tokio::test]
-async fn exhausted_parse_recovery_reports_non_stream_fallback_without_raw_body() {
+async fn exhausted_parse_recovery_reports_parse_failure_without_raw_body() {
     let (base_url, state, server) = start_parse_recovery_mock_provider(true).await;
     let request = ModelRequest::openai_compatible(
         base_url,
@@ -992,7 +992,6 @@ async fn exhausted_parse_recovery_reports_non_stream_fallback_without_raw_body()
 
     assert_eq!(state.requests.lock().await.len(), 2);
     assert!(error.contains("最后一次响应包含无法解析的数据"));
-    assert!(error.contains("已自动切换为非流式响应"));
     assert!(!error.contains("truncated json"));
 }
 

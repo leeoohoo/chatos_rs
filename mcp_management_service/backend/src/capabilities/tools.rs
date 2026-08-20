@@ -712,8 +712,8 @@ mod tests {
         let route = ResolvedMcpRoute {
             resource_id: "builtin_code_maintainer_read".to_string(),
             server_name: "code_maintainer_read".to_string(),
-            provider_kind: McpProviderKind::CloudSandbox,
-            provider_ref: Some("sandbox:sandbox-1/lease:lease-1".to_string()),
+            provider_kind: McpProviderKind::LocalConnector,
+            provider_ref: Some("device:device-1/workspace:workspace-1".to_string()),
             tool_namespace: "code_maintainer_read".to_string(),
             allow_writes: false,
             retry_class: McpRetryClass::IdempotentRead,
@@ -721,7 +721,7 @@ mod tests {
             reason: "test".to_string(),
         };
         let mut another = route.clone();
-        another.provider_ref = Some("sandbox:sandbox-2/lease:lease-2".to_string());
+        another.provider_ref = Some("device:device-2/workspace:workspace-2".to_string());
         assert_ne!(
             runtime_route_revision("base-route", "policy-1", &[route], &[]).unwrap(),
             runtime_route_revision("base-route", "policy-1", &[another], &[]).unwrap()
@@ -745,6 +745,3 @@ mod tests {
         assert!(!route_allows_system_tool(&route, "create_requirement"));
     }
 }
-
-#[cfg(test)]
-mod agent_policy_tests;

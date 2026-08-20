@@ -284,7 +284,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "maxItems": 100,
                             "items": { "type": "string", "minLength": 1 },
                             "uniqueItems": true,
-                            "description": "Every hard acceptance criterion this execution task must prove. Outcome Review requires a one-to-one structured evidence mapping before succeeded is allowed."
+                            "description": "Every hard acceptance criterion this execution task must prove. The runtime records a one-to-one evidence mapping from successful paths, validation commands, and acceptance tools before succeeded is allowed."
                         },
                         "task_role": {
                             "type": "string",

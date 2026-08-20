@@ -19,7 +19,6 @@ pub struct AppConfig {
     pub user_service_request_timeout: Duration,
     pub relay_request_timeout: Duration,
     pub plugin_hook_relay_request_timeout: Duration,
-    pub sandbox_image_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_device_connect_signature: bool,
@@ -59,8 +58,6 @@ impl AppConfig {
         let plugin_hook_relay_timeout_ms =
             required_u64("LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS")?
                 .clamp(30_000, 10 * 60 * 1_000);
-        let sandbox_image_relay_timeout_ms =
-            required_u64("LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS")?.max(10_000);
         let signature_skew_seconds =
             required_u64("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")?.clamp(30, 3600);
         let active_session_lease_ttl_seconds =
@@ -93,9 +90,6 @@ impl AppConfig {
             user_service_request_timeout: Duration::from_millis(timeout_ms),
             relay_request_timeout: Duration::from_millis(relay_timeout_ms),
             plugin_hook_relay_request_timeout: Duration::from_millis(plugin_hook_relay_timeout_ms),
-            sandbox_image_relay_request_timeout: Duration::from_millis(
-                sandbox_image_relay_timeout_ms,
-            ),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
             internal_api_secrets: caller_internal_api_secrets(),
             require_device_connect_signature: required_managed_bool(
@@ -197,7 +191,6 @@ impl AppConfig {
             user_service_request_timeout: Duration::from_secs(1),
             relay_request_timeout: Duration::from_secs(2),
             plugin_hook_relay_request_timeout: Duration::from_secs(2),
-            sandbox_image_relay_request_timeout: Duration::from_secs(2),
             public_base_url: None,
             internal_api_secrets,
             require_device_connect_signature: true,

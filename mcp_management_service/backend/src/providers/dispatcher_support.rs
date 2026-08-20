@@ -8,18 +8,12 @@ use super::ProviderDispatcher;
 impl ProviderDispatcher {
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
-            McpProviderKind::InternalService | McpProviderKind::Harness => {
+            McpProviderKind::InternalService => {
                 self.project_service.supports(route)
                     || self.task_runner.supports(route)
                     || self.chatos.supports(route)
             }
-            McpProviderKind::LocalConnector => {
-                self.local_connector.supports(route) || self.sandbox_images.supports(route)
-            }
-            McpProviderKind::CloudSandbox => {
-                self.cloud_sandbox.supports(route) || self.sandbox_images.supports(route)
-            }
-            McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
+            McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
             McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
@@ -29,20 +23,14 @@ impl ProviderDispatcher {
         }
     }
 
-    pub fn requires_sandbox_target(&self, route: &ResolvedMcpRoute) -> bool {
-        self.cloud_sandbox.supports(route) || self.cloud_stdio.supports(route)
-    }
-
     pub fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
-            McpProviderKind::InternalService | McpProviderKind::Harness => {
+            McpProviderKind::InternalService => {
                 self.project_service.supports(route)
                     || self.task_runner.supports(route)
                     || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
-            McpProviderKind::CloudSandbox => self.cloud_sandbox.supports(route),
-            McpProviderKind::CloudStdio => self.cloud_stdio.supports(route),
             McpProviderKind::ExternalHttp => self.external_http.supports(route),
             McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
                 self.plugins.supports_cancellation(route)

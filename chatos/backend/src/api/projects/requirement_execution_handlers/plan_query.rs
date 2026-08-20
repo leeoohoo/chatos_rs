@@ -4,8 +4,8 @@
 use axum::http::StatusCode;
 use chatos_project_execution::{
     read_planning_feedback_history, requirement_execution_recovery_state,
-    requirement_execution_status_is_stopped_terminal, ExecutionPlanIdentity, ExecutionPlane,
-    STATUS_PAUSED, STATUS_PLANNING, STATUS_PLANNING_STARTED, STATUS_STOPPED, STATUS_STOPPING,
+    requirement_execution_status_is_stopped_terminal, ExecutionPlanIdentity, STATUS_PAUSED,
+    STATUS_PLANNING, STATUS_PLANNING_STARTED, STATUS_STOPPED, STATUS_STOPPING,
 };
 use serde_json::{json, Value};
 
@@ -87,7 +87,6 @@ pub(super) async fn get_requirement_execution_plan_inner(
             Err(error) if error.status == StatusCode::NOT_FOUND => {
                 return Ok(json!({
                     "found": false,
-                    "execution_plane": ExecutionPlane::Cloud.as_str(),
                     "project_id": context.project.id,
                     "requirement_id": requirement_id,
                     "conversation_id": identity.conversation_id,
@@ -126,7 +125,6 @@ pub(super) async fn get_requirement_execution_plan_inner(
     else {
         return Ok(json!({
             "found": false,
-            "execution_plane": ExecutionPlane::Cloud.as_str(),
             "project_id": context.project.id,
             "requirement_id": requirement_id,
             "recovery_action": "none",
@@ -383,7 +381,6 @@ fn build_cloud_execution_plan_response(
     );
     json!({
         "found": true,
-        "execution_plane": ExecutionPlane::Cloud.as_str(),
         "project_id": project_id,
         "requirement_id": requirement_id,
         "conversation_id": message.session_id,

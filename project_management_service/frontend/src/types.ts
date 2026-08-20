@@ -3,23 +3,8 @@
 
 export type UserRole = 'admin' | 'agent';
 export type ProjectStatus = 'active' | 'archived';
-export type ProjectSourceType = 'local' | 'local_connector' | 'cloud';
 export type CloudImportSource = 'none' | 'empty' | 'git' | 'zip';
 export type ProjectImportStatus = 'none' | 'pending' | 'importing' | 'ready' | 'failed';
-export type ProjectRuntimeEnvironmentStatus =
-  | 'disabled'
-  | 'pending_configuration'
-  | 'pending_image_build'
-  | 'pending'
-  | 'analyzing'
-  | 'ready'
-  | 'not_runnable'
-  | 'failed';
-export type RuntimeEnvironmentProvider =
-  | 'none'
-  | 'local_connector'
-  | 'harness'
-  | 'cloud_sandbox_manager';
 export type RequirementStatus =
   | 'draft'
   | 'reviewing'
@@ -87,7 +72,6 @@ export interface ProjectRecord {
   name: string;
   root_path?: string | null;
   git_url?: string | null;
-  source_type?: ProjectSourceType;
   cloud_import_source?: CloudImportSource;
   import_status?: ProjectImportStatus;
   source_git_url?: string | null;
@@ -111,7 +95,6 @@ export interface CreateProjectPayload {
   root_path?: string;
   git_url?: string;
   description?: string;
-  sandbox_enabled?: boolean;
 }
 
 export type UpdateProjectPayload = Partial<CreateProjectPayload>;
@@ -127,123 +110,6 @@ export interface ProjectProfileRecord {
 export interface UpsertProjectProfilePayload {
   background?: string;
   introduction?: string;
-}
-
-export interface ProjectRuntimeEnvironmentRecord {
-  project_id: string;
-  status: ProjectRuntimeEnvironmentStatus;
-  sandbox_enabled: boolean;
-  sandbox_provider: RuntimeEnvironmentProvider;
-  file_provider: RuntimeEnvironmentProvider;
-  analysis_summary?: string | null;
-  not_runnable_reason?: string | null;
-  execution_service_id?: string | null;
-  detected_stack: unknown;
-  required_services: unknown;
-  env_vars: unknown;
-  environment_variables: ProjectRuntimeEnvironmentVariableRecord[];
-  generated_config_files?: ProjectRuntimeEnvironmentConfigFileRecord[];
-  last_agent_run_id?: string | null;
-  last_error?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export type RuntimeEnvironmentVariableSource =
-  | 'project'
-  | 'ai_recommended'
-  | 'user'
-  | 'none';
-
-export interface ProjectRuntimeEnvironmentVariableRecord {
-  name: string;
-  project_value?: string | null;
-  project_value_suitable: boolean;
-  recommended_value?: string | null;
-  user_value?: string | null;
-  effective_value?: string | null;
-  effective_source: RuntimeEnvironmentVariableSource;
-  description?: string | null;
-  recommendation_reason?: string | null;
-  required: boolean;
-  secret: boolean;
-}
-
-export interface UpdateProjectRuntimeEnvironmentVariablesPayload {
-  variables: Array<{ name: string; value: string }>;
-}
-
-export interface ProjectRuntimeEnvironmentConfigFileRecord {
-  path: string;
-  format: string;
-  content: string;
-  description?: string | null;
-  source_files: string[];
-}
-
-export interface ProjectRuntimeEnvironmentImageRecord {
-  id: string;
-  project_id: string;
-  environment_key: string;
-  environment_type: string;
-  display_name: string;
-  service_id: string;
-  service_role: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown';
-  source_root: string;
-  component_kind: string;
-  startup_command?: string | null;
-  test_command?: string | null;
-  depends_on: string[];
-  auto_start: boolean;
-  mcp_policy: {
-    managed_by: 'system';
-    attachment: 'workspace_gateway_target' | 'none';
-    filesystem: boolean;
-    terminal: boolean;
-  };
-  image_id?: string | null;
-  image_ref?: string | null;
-  image_provider: RuntimeEnvironmentProvider;
-  features: unknown;
-  ports: unknown;
-  env_vars: unknown;
-  dockerfile?: string | null;
-  custom_build_script?: string | null;
-  status: string;
-  error?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProjectRuntimeEnvironmentResponse {
-  environment: ProjectRuntimeEnvironmentRecord;
-  images: ProjectRuntimeEnvironmentImageRecord[];
-}
-
-export interface ProjectRuntimeEnvironmentDeploymentResponse {
-  project_id: string;
-  project_name: string;
-  status: 'running' | 'stopped' | 'degraded' | string;
-  runtime_directory?: string | null;
-  compose_file?: string | null;
-  output?: string | null;
-  services: ProjectRuntimeEnvironmentDeploymentService[];
-}
-
-export interface ProjectRuntimeEnvironmentDeploymentService {
-  service_id: string;
-  environment_key: string;
-  display_name: string;
-  service_role: 'workspace' | 'application' | 'dependency' | 'artifact' | 'unknown';
-  mcp_policy: ProjectRuntimeEnvironmentImageRecord['mcp_policy'];
-  status: string;
-  image_ref?: string | null;
-  ports: unknown;
-  runtime?: Record<string, unknown> | null;
-}
-
-export interface UpdateProjectRuntimeEnvironmentSettingsPayload {
-  sandbox_enabled?: boolean;
 }
 
 export interface RequirementRecord {

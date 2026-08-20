@@ -6,22 +6,12 @@ import { describe, expect, it } from 'vitest';
 import { resolveVisibleWorkspaceTabs } from './workspaceTabsModel';
 
 describe('resolveVisibleWorkspaceTabs', () => {
-  it('uses the sandbox runtime tab instead of project settings for cloud projects', () => {
-    expect(resolveVisibleWorkspaceTabs(true)).toEqual([
-      'files',
-      'team',
-      'plan',
-      'sandbox',
-    ]);
-  });
-
-  it('keeps sandbox runtime out of local project navigation', () => {
-    expect(resolveVisibleWorkspaceTabs(false)).toEqual([
+  it('uses one workspace tab set for every project', () => {
+    expect(resolveVisibleWorkspaceTabs()).toEqual([
       'files',
       'team',
       'plan',
       'settings',
     ]);
   });
-
 });

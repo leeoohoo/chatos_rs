@@ -3,7 +3,6 @@
 
 import { buildQuery } from '../shared';
 import type {
-  AnalyzeProjectRuntimeEnvironmentPayload,
   DeleteSuccessResponse,
   ProjectContactLockResponse,
   ProjectContactLinkResponse,
@@ -17,30 +16,17 @@ import type {
   ProjectRequirementExecutionPlanResponse,
   ProjectRequirementDispatchResponse,
   ProjectRequirementStopResponse,
-  ProjectRuntimeEnvironmentResponse,
-  ProjectRuntimeEnvironmentProgressResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
   ProjectRunExecuteResponse,
   ProjectRunStateResponse,
-  UpdateProjectRuntimeEnvironmentSettingsPayload,
 } from '../types';
 import type { ApiRequestFn, ContactPaging } from './common';
 
 export const listProjects = (request: ApiRequestFn, userId?: string): Promise<ProjectResponse[]> => {
   const query = buildQuery({ user_id: userId });
   return request<ProjectResponse[]>(`/projects${query}`);
-};
-
-export const createCloudProject = (
-  request: ApiRequestFn,
-  data: FormData,
-): Promise<ProjectResponse> => {
-  return request<ProjectResponse>('/projects/cloud', {
-    method: 'POST',
-    body: data,
-  });
 };
 
 export const updateProject = (
@@ -62,55 +48,6 @@ export const deleteProject = (request: ApiRequestFn, id: string): Promise<Delete
 
 export const getProject = (request: ApiRequestFn, id: string): Promise<ProjectResponse> => {
   return request<ProjectResponse>(`/projects/${id}`);
-};
-
-export const getProjectRuntimeEnvironment = (
-  request: ApiRequestFn,
-  projectId: string,
-): Promise<ProjectRuntimeEnvironmentResponse> => {
-  return request<ProjectRuntimeEnvironmentResponse>(`/projects/${encodeURIComponent(projectId)}/runtime-environment`);
-};
-
-export const updateProjectRuntimeEnvironmentSettings = (
-  request: ApiRequestFn,
-  projectId: string,
-  data: UpdateProjectRuntimeEnvironmentSettingsPayload,
-): Promise<ProjectRuntimeEnvironmentResponse> => {
-  return request<ProjectRuntimeEnvironmentResponse>(`/projects/${encodeURIComponent(projectId)}/runtime-environment/settings`, {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  });
-};
-
-export const analyzeProjectRuntimeEnvironment = (
-  request: ApiRequestFn,
-  projectId: string,
-  data: AnalyzeProjectRuntimeEnvironmentPayload = {},
-): Promise<ProjectRuntimeEnvironmentResponse> => {
-  return request<ProjectRuntimeEnvironmentResponse>(
-    `/projects/${encodeURIComponent(projectId)}/runtime-environment/analyze`,
-    { method: 'POST', body: JSON.stringify(data) },
-  );
-};
-
-export const generateProjectRuntimeEnvironmentImage = (
-  request: ApiRequestFn,
-  projectId: string,
-  imageRecordId: string,
-): Promise<ProjectRuntimeEnvironmentResponse> => {
-  return request<ProjectRuntimeEnvironmentResponse>(
-    `/projects/${encodeURIComponent(projectId)}/runtime-environment/images/${encodeURIComponent(imageRecordId)}/generate`,
-    { method: 'POST' },
-  );
-};
-
-export const getProjectRuntimeEnvironmentProgress = (
-  request: ApiRequestFn,
-  projectId: string,
-): Promise<ProjectRuntimeEnvironmentProgressResponse> => {
-  return request<ProjectRuntimeEnvironmentProgressResponse>(
-    `/projects/${encodeURIComponent(projectId)}/runtime-environment/progress`,
-  );
 };
 
 export const getProjectPlan = (

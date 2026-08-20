@@ -21,19 +21,9 @@ pub struct ChatosAgentProfile {
 
 impl ChatosAgentProfile {
     pub fn from_flags(plan_mode: bool, project_requirement_execution_planner: bool) -> Self {
-        Self::from_project_locality(plan_mode, project_requirement_execution_planner, false)
-    }
-
-    pub fn from_project_locality(
-        plan_mode: bool,
-        project_requirement_execution_planner: bool,
-        local_project: bool,
-    ) -> Self {
-        let key = match (project_requirement_execution_planner, local_project) {
-            (true, true) => SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
-            (true, false) => SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-            (false, true) => SystemAgentKey::ChatosLocalConversationAgent,
-            (false, false) => SystemAgentKey::ChatosConversationAgent,
+        let key = match project_requirement_execution_planner {
+            true => SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
+            false => SystemAgentKey::ChatosConversationAgent,
         };
         Self {
             key,
@@ -194,37 +184,17 @@ mod tests {
     }
 
     #[test]
-    fn local_projects_receive_local_agent_identities() {
-        let conversation = ChatosAgentProfile::from_project_locality(false, false, true);
-        assert_eq!(
-            conversation.key(),
-            SystemAgentKey::ChatosLocalConversationAgent
-        );
-
-        let requirement = ChatosAgentProfile::from_project_locality(false, true, true);
-        assert_eq!(
-            requirement.key(),
-            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
-        );
-        assert!(requirement.requires_project_management_mcp());
-    }
-
-    #[test]
-    fn one_profile_factory_covers_all_four_chatos_cloud_agents() {
+    fn profile_factory_selects_agents_by_responsibility() {
         let keys = [
-            ChatosAgentProfile::from_project_locality(false, false, false).key(),
-            ChatosAgentProfile::from_project_locality(false, false, true).key(),
-            ChatosAgentProfile::from_project_locality(false, true, false).key(),
-            ChatosAgentProfile::from_project_locality(false, true, true).key(),
+            ChatosAgentProfile::from_flags(false, false).key(),
+            ChatosAgentProfile::from_flags(false, true).key(),
         ];
 
         assert_eq!(
             keys,
             [
                 SystemAgentKey::ChatosConversationAgent,
-                SystemAgentKey::ChatosLocalConversationAgent,
                 SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-                SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
             ]
         );
     }

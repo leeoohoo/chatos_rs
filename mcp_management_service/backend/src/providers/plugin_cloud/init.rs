@@ -4,14 +4,8 @@
 use super::{McpProviderKind, PluginCloudProvider, ResolvedMcpRoute};
 
 impl PluginCloudProvider {
-    pub(in crate::providers) fn new(
-        cloud_stdio: super::CloudStdioProvider,
-        external_http: super::ExternalHttpProvider,
-    ) -> Self {
-        Self {
-            cloud_stdio,
-            external_http,
-        }
+    pub(in crate::providers) fn new(external_http: super::ExternalHttpProvider) -> Self {
+        Self { external_http }
     }
 
     pub(in crate::providers) fn supports(&self, route: &ResolvedMcpRoute) -> bool {

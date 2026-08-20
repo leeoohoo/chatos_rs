@@ -54,7 +54,6 @@ pub use implementations::builtin::{
 pub(crate) use implementations::builtin::{
     browser_page_insights, browser_page_state_view, tool_registry,
 };
-pub use implementations::sandbox_images;
 pub use task_types::{
     TaskClosureDecision, TaskDraft, TaskOutcomeItem, TaskUpdatePatch, TASK_NOT_FOUND_ERR,
 };

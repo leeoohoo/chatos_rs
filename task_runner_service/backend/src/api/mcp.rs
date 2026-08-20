@@ -261,6 +261,13 @@ struct BoundTaskProcessLogArgs {
     heading: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundTaskOutcomeArgs {
+    status: crate::models::TaskReportedOutcomeStatus,
+    reason: String,
+}
+
 pub(super) async fn mcp_management_entrypoint(
     Path(system_key): Path<String>,
     State(state): State<AppState>,
@@ -501,7 +508,7 @@ async fn dispatch_bound_task_process_log(
         .get("name")
         .and_then(Value::as_str)
         .map(str::trim);
-    if name != Some("record_process") {
+    if !matches!(name, Some("record_process" | "report_outcome")) {
         return task_runner_mcp_error(id, -32602, "Task Process Log tool was not found");
     }
     let arguments = request
@@ -509,16 +516,6 @@ async fn dispatch_bound_task_process_log(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let input = match serde_json::from_value::<BoundTaskProcessLogArgs>(arguments) {
-        Ok(input) => input,
-        Err(error) => {
-            return task_runner_mcp_error(
-                id,
-                -32602,
-                format!("invalid Task Process Log arguments: {error}"),
-            )
-        }
-    };
     let run = match state.run_service.get_run(run_id).await {
         Ok(Some(run)) => run,
         Ok(None) => {
@@ -548,39 +545,92 @@ async fn dispatch_bound_task_process_log(
             "bound task does not match MCP Management owner, project, run, or Agent scope",
         );
     }
-    let updated = match state
-        .task_service
-        .record_task_process(
-            task_id,
-            crate::models::RecordTaskProcessRequest {
-                operation: input.operation,
-                content: input.content,
-                heading: input.heading,
-            },
-        )
-        .await
-    {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return task_runner_mcp_error(id, -32000, "bound Task Runner task was not found")
+    match name {
+        Some("record_process") => {
+            let input = match serde_json::from_value::<BoundTaskProcessLogArgs>(arguments) {
+                Ok(input) => input,
+                Err(error) => {
+                    return task_runner_mcp_error(
+                        id,
+                        -32602,
+                        format!("invalid Task Process Log arguments: {error}"),
+                    )
+                }
+            };
+            let updated = match state
+                .task_service
+                .record_task_process(
+                    task_id,
+                    crate::models::RecordTaskProcessRequest {
+                        operation: input.operation,
+                        content: input.content,
+                        heading: input.heading,
+                    },
+                )
+                .await
+            {
+                Ok(Some(task)) => task,
+                Ok(None) => {
+                    return task_runner_mcp_error(
+                        id,
+                        -32000,
+                        "bound Task Runner task was not found",
+                    )
+                }
+                Err(error) => return task_runner_mcp_error(id, -32000, error),
+            };
+            JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: Some(task_runner_mcp_text_result(json!({
+                    "recorded": true,
+                    "task_id": updated.id,
+                    "run_id": run_id,
+                    "process_log_chars": updated
+                        .process_log
+                        .as_deref()
+                        .map(|value| value.chars().count())
+                        .unwrap_or_default(),
+                    "updated_at": updated.updated_at,
+                }))),
+                error: None,
+            }
         }
-        Err(error) => return task_runner_mcp_error(id, -32000, error),
-    };
-    JsonRpcResponse {
-        jsonrpc: "2.0",
-        id,
-        result: Some(task_runner_mcp_text_result(json!({
-            "recorded": true,
-            "task_id": updated.id,
-            "run_id": run_id,
-            "process_log_chars": updated
-                .process_log
-                .as_deref()
-                .map(|value| value.chars().count())
-                .unwrap_or_default(),
-            "updated_at": updated.updated_at,
-        }))),
-        error: None,
+        Some("report_outcome") => {
+            let input = match serde_json::from_value::<BoundTaskOutcomeArgs>(arguments) {
+                Ok(input) => input,
+                Err(error) => {
+                    return task_runner_mcp_error(
+                        id,
+                        -32602,
+                        format!("invalid Task Process Log outcome arguments: {error}"),
+                    )
+                }
+            };
+            let (event, duplicate) = match state
+                .run_service
+                .record_ai_reported_task_outcome(run_id, input.status, input.reason.as_str())
+                .await
+            {
+                Ok(result) => result,
+                Err(error) => return task_runner_mcp_error(id, -32000, error),
+            };
+            JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: Some(task_runner_mcp_text_result(json!({
+                    "reported": true,
+                    "duplicate": duplicate,
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "status": input.status.as_str(),
+                    "reason": input.reason.trim(),
+                    "reported_at": event.created_at,
+                }))),
+                error: None,
+            }
+        }
+        _ => task_runner_mcp_error(id, -32602, "Task Process Log tool was not found"),
     }
 }
 

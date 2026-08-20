@@ -214,31 +214,3 @@ fn policy_exposes_cloud_and_local_connector_mcps_exactly_as_configured() {
         vec!["local-user".to_string(), "cloud-http".to_string()]
     );
 }
-
-#[test]
-fn unified_service_system_mcp_is_selected_as_a_task_runner_backend() {
-    let system = resolved_mcp(
-        chatos_plugin_management_sdk::PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
-        chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND,
-        Some("project_runtime_environment"),
-        false,
-        true,
-    );
-    let policy = TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
-        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
-        owner_user_id: "owner-1".to_string(),
-        policy_revision: "revision-system".to_string(),
-        generated_at: "now".to_string(),
-        agent_enabled: true,
-        mcps: vec![system],
-        skills: Vec::new(),
-        plugins: Vec::new(),
-        local_connector_requirements: Vec::new(),
-    })
-    .expect("policy");
-
-    assert_eq!(
-        policy.selectable_external_mcp_ids(),
-        vec![chatos_plugin_management_sdk::PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID.to_string()]
-    );
-}

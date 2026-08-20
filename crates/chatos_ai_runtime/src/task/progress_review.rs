@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -11,6 +11,7 @@ use serde_json::Value;
 const MAX_CONFIRMED_PROJECT_PATHS: usize = 128;
 const MAX_CONFIRMED_VALIDATION_COMMANDS: usize = 128;
 const MAX_CONFIRMED_ACCEPTANCE_TOOLS: usize = 128;
+const MAX_PENDING_VALIDATION_COMMANDS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionReviewPolicy {
@@ -83,6 +84,7 @@ pub struct TaskExecutionProgressState {
     confirmed_project_paths: Mutex<BTreeSet<String>>,
     confirmed_validation_commands: Mutex<BTreeSet<String>>,
     confirmed_acceptance_tools: Mutex<BTreeSet<String>>,
+    pending_validation_commands: Mutex<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +104,8 @@ pub struct TaskExecutionProgressSnapshot {
     pub confirmed_validation_commands: Vec<String>,
     #[serde(default)]
     pub confirmed_acceptance_tools: Vec<String>,
+    #[serde(default)]
+    pub pending_validation_commands: BTreeMap<String, String>,
 }
 
 impl Default for TaskExecutionProgressState {
@@ -126,6 +130,7 @@ impl TaskExecutionProgressState {
             confirmed_project_paths: Mutex::new(BTreeSet::new()),
             confirmed_validation_commands: Mutex::new(BTreeSet::new()),
             confirmed_acceptance_tools: Mutex::new(BTreeSet::new()),
+            pending_validation_commands: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -160,6 +165,11 @@ impl TaskExecutionProgressState {
             confirmed_project_paths: self.confirmed_project_paths(),
             confirmed_validation_commands: self.confirmed_validation_commands(),
             confirmed_acceptance_tools: self.confirmed_acceptance_tools(),
+            pending_validation_commands: self
+                .pending_validation_commands
+                .lock()
+                .map(|commands| commands.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -220,6 +230,16 @@ impl TaskExecutionProgressState {
                     .cloned(),
             );
         }
+        if let Ok(mut pending) = self.pending_validation_commands.lock() {
+            pending.clear();
+            pending.extend(
+                snapshot
+                    .pending_validation_commands
+                    .iter()
+                    .take(MAX_PENDING_VALIDATION_COMMANDS)
+                    .map(|(process_id, command)| (process_id.clone(), command.clone())),
+            );
+        }
     }
 
     pub fn begin_iteration(&self, iteration: usize) {
@@ -236,13 +256,10 @@ impl TaskExecutionProgressState {
             self.record_meaningful_action(iteration);
             return;
         }
-        if tool_result_is_validation(payload) {
-            let command = terminal_result_command(payload);
-            if !command.is_empty() {
-                if let Ok(mut commands) = self.confirmed_validation_commands.lock() {
-                    if commands.len() < MAX_CONFIRMED_VALIDATION_COMMANDS {
-                        commands.insert(command);
-                    }
+        if let Some(command) = self.validation_command_from_tool_result(payload) {
+            if let Ok(mut commands) = self.confirmed_validation_commands.lock() {
+                if commands.len() < MAX_CONFIRMED_VALIDATION_COMMANDS {
+                    commands.insert(command);
                 }
             }
             if self.record_validation_for_current_generation() {
@@ -284,6 +301,53 @@ impl TaskExecutionProgressState {
             .lock()
             .map(|tools| tools.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    fn validation_command_from_tool_result(&self, payload: &Value) -> Option<String> {
+        let name = payload.get("name").and_then(Value::as_str)?;
+        if name.ends_with("terminal_controller_execute_command") {
+            if payload.get("success").and_then(Value::as_bool) != Some(true)
+                || payload.get("is_error").and_then(Value::as_bool) == Some(true)
+            {
+                return None;
+            }
+            let command = terminal_result_command(payload);
+            if !terminal_command_is_validation(command.as_str()) {
+                return None;
+            }
+            if terminal_result_exit_succeeded(payload) {
+                return Some(command);
+            }
+            if terminal_result_is_busy(payload) {
+                let process_id = terminal_result_process_id(payload)?;
+                if let Ok(mut pending) = self.pending_validation_commands.lock() {
+                    if pending.len() < MAX_PENDING_VALIDATION_COMMANDS {
+                        pending.insert(process_id, command);
+                    }
+                }
+            }
+            return None;
+        }
+        if !tool_name_ends_with_any(
+            name,
+            &[
+                "terminal_controller_process_wait",
+                "terminal_controller_process_poll",
+            ],
+        ) || terminal_result_is_busy(payload)
+        {
+            return None;
+        }
+        let process_id = terminal_result_process_id(payload)?;
+        let command = self
+            .pending_validation_commands
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(process_id.as_str()))?;
+        (payload.get("success").and_then(Value::as_bool) == Some(true)
+            && payload.get("is_error").and_then(Value::as_bool) != Some(true)
+            && terminal_result_exit_succeeded(payload))
+        .then_some(command)
     }
 
     fn record_confirmed_project_paths(&self, payload: &Value) {
@@ -806,6 +870,10 @@ fn terminal_result_command(payload: &Value) -> String {
 }
 
 fn terminal_result_exit_succeeded(payload: &Value) -> bool {
+    terminal_result_exit_code(payload) == Some(0)
+}
+
+fn terminal_result_exit_code(payload: &Value) -> Option<i64> {
     let direct_exit_code = payload
         .get("result")
         .map(chatos_mcp_runtime::structured_result_payload)
@@ -817,11 +885,15 @@ fn terminal_result_exit_succeeded(payload: &Value) -> bool {
         .and_then(|content| serde_json::from_str::<Value>(content).ok())
         .map(|content| chatos_mcp_runtime::structured_result_payload(&content).clone())
         .and_then(|content| content.get("exit_code").and_then(Value::as_i64));
-    direct_exit_code.or(content_exit_code) == Some(0)
+    direct_exit_code.or(content_exit_code)
 }
 
 fn terminal_result_has_validation_command(payload: &Value) -> bool {
     let command = terminal_result_command(payload);
+    terminal_command_is_validation(command.as_str())
+}
+
+fn terminal_command_is_validation(command: &str) -> bool {
     [
         "cargo test",
         "cargo check",
@@ -849,11 +921,56 @@ fn terminal_result_has_validation_command(payload: &Value) -> bool {
         "yarn audit",
         "go test",
         "mvn test",
+        "mvn clean test",
+        "mvn verify",
+        "mvn clean verify",
+        "mvn package",
+        "mvn clean package",
+        "./mvnw test",
+        "./mvnw clean test",
+        "./mvnw verify",
+        "./mvnw clean verify",
+        "./mvnw package",
+        "./mvnw clean package",
         "gradle test",
+        "gradle check",
+        "gradle build",
+        "./gradlew test",
+        "./gradlew check",
+        "./gradlew build",
         "dotnet test",
     ]
     .iter()
     .any(|needle| command.contains(needle))
+}
+
+fn terminal_result_process_id(payload: &Value) -> Option<String> {
+    terminal_result_field(payload, "process_id")
+        .and_then(|value| value.as_str().map(str::trim).map(ToString::to_string))
+        .filter(|value| !value.is_empty())
+}
+
+fn terminal_result_is_busy(payload: &Value) -> bool {
+    terminal_result_field(payload, "busy").and_then(|value| value.as_bool()) == Some(true)
+}
+
+fn terminal_result_field(payload: &Value, field: &str) -> Option<Value> {
+    payload
+        .get("result")
+        .map(chatos_mcp_runtime::structured_result_payload)
+        .and_then(|result| result.get(field))
+        .cloned()
+        .or_else(|| {
+            payload
+                .get("content")
+                .and_then(Value::as_str)
+                .and_then(|content| serde_json::from_str::<Value>(content).ok())
+                .and_then(|content| {
+                    chatos_mcp_runtime::structured_result_payload(&content)
+                        .get(field)
+                        .cloned()
+                })
+        })
 }
 
 #[cfg(test)]
@@ -970,7 +1087,6 @@ mod tests {
     #[test]
     fn observation_and_task_bookkeeping_are_not_engineering_progress() {
         for name in [
-            "project_runtime_environment_get_project_runtime_environment_info",
             "project_management_update_project_task",
             "task_run_process_record_process",
             "code_maintainer_read_read_file_raw",
@@ -1160,6 +1276,79 @@ mod tests {
             progress.confirmed_validation_commands(),
             vec!["npm run build".to_string(), "npm test".to_string()]
         );
+    }
+
+    #[test]
+    fn async_maven_validation_is_recorded_after_successful_wait() {
+        let progress = TaskExecutionProgressState::default();
+        progress.observe_tool_result(&json!({
+            "name": "terminal_controller_execute_command",
+            "success": true,
+            "is_error": false,
+            "content": serde_json::to_string(&json!({
+                "common": "mvn clean verify",
+                "busy": true,
+                "process_id": "local-proc-1",
+            })).expect("content"),
+            "result": {
+                "busy": true,
+                "process_id": "local-proc-1",
+            },
+        }));
+
+        assert!(progress.confirmed_validation_commands().is_empty());
+
+        let restored = TaskExecutionProgressState::default();
+        restored.restore_snapshot(&progress.snapshot());
+
+        restored.observe_tool_result(&json!({
+            "name": "terminal_controller_process_wait",
+            "success": true,
+            "is_error": false,
+            "content": serde_json::to_string(&json!({
+                "busy": false,
+                "process_id": "local-proc-1",
+                "exit_code": 0,
+                "output": "BUILD SUCCESS",
+            })).expect("content"),
+            "result": {
+                "busy": false,
+                "process_id": "local-proc-1",
+                "exit_code": 0,
+            },
+        }));
+
+        assert_eq!(
+            restored.confirmed_validation_commands(),
+            ["mvn clean verify"]
+        );
+    }
+
+    #[test]
+    fn failed_async_validation_is_not_recorded() {
+        let progress = TaskExecutionProgressState::default();
+        progress.observe_tool_result(&json!({
+            "name": "terminal_controller_execute_command",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "common": "./gradlew check",
+                "busy": true,
+                "process_id": "local-proc-2",
+            },
+        }));
+        progress.observe_tool_result(&json!({
+            "name": "terminal_controller_process_poll",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "busy": false,
+                "process_id": "local-proc-2",
+                "exit_code": 1,
+            },
+        }));
+
+        assert!(progress.confirmed_validation_commands().is_empty());
     }
 
     #[test]

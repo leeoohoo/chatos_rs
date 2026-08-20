@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn planning_and_execution_agents_have_distinct_cloud_identities() {
+    fn planning_and_execution_agents_have_distinct_identities() {
         assert_eq!(
             TASK_RUNNER_PLAN_AGENT.descriptor().key,
             SystemAgentKey::TaskRunnerPlanPhase

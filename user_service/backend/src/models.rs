@@ -265,10 +265,6 @@ pub struct UserModelSettingsRecord {
     pub project_management_agent_model_config_id: Option<String>,
     #[serde(default)]
     pub project_management_agent_thinking_level: Option<String>,
-    #[serde(default)]
-    pub environment_initialization_model_config_id: Option<String>,
-    #[serde(default)]
-    pub environment_initialization_thinking_level: Option<String>,
     pub updated_at: String,
 }
 
@@ -500,8 +496,6 @@ pub struct UpdateUserModelSettingsRequest {
     pub memory_summary_thinking_level: Option<Option<String>>,
     pub project_management_agent_model_config_id: Option<Option<String>>,
     pub project_management_agent_thinking_level: Option<Option<String>>,
-    pub environment_initialization_model_config_id: Option<Option<String>>,
-    pub environment_initialization_thinking_level: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

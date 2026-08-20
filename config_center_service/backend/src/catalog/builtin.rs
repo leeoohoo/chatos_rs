@@ -9,7 +9,6 @@ use chatos_agent::{
     TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
     TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };
-use chatos_service_runtime::DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET;
 use chrono::Utc;
 use memory_engine_sdk::{
     memory_policy_config_key, memory_policy_env_key, ManagedMemoryPolicy, MemoryPolicyKind,
@@ -29,8 +28,6 @@ mod memory_engine;
 mod plugin_management;
 #[path = "builtin/project_service.rs"]
 mod project_service;
-#[path = "builtin/sandbox_manager.rs"]
-mod sandbox_manager;
 #[path = "builtin/shared_chatos.rs"]
 mod shared_chatos;
 #[path = "builtin/task_runner.rs"]
@@ -43,7 +40,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let mut definitions = Vec::new();
     definitions.extend(shared_chatos::definitions(&now));
     definitions.extend(task_runner::definitions(&now));
-    definitions.extend(sandbox_manager::definitions(&now));
     definitions.extend(local_connector::definitions(&now));
     definitions.extend(mcp_management::definitions(&now));
     definitions.extend(plugin_management::definitions(&now));

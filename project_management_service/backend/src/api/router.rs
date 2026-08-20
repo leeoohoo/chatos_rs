@@ -25,10 +25,9 @@ use super::harness_git_access::{
 };
 use super::harness_mcp::harness_project_mcp_entrypoint;
 use super::plan::get_project_plan;
-use super::project_environment_agent_mcp::project_environment_agent_mcp_entrypoint;
 use super::projects::{
-    create_cloud_project, create_project, delete_project, get_project, get_project_profile,
-    list_projects, update_project, upsert_project_profile,
+    create_project, delete_project, get_project, get_project_profile, list_projects,
+    update_project, upsert_project_profile,
 };
 use super::requirements::{
     create_requirement, create_requirement_document, delete_requirement, get_requirement,
@@ -40,19 +39,9 @@ use super::run_workspace::{
     finalize_run_workspace, get_run_workspace_changes, integrate_run_workspace,
     prepare_run_workspace, promote_execution_workspace,
 };
-use super::runtime_environment::{
-    analyze_project_runtime_environment_handler,
-    generate_project_runtime_environment_image_handler, get_project_runtime_environment,
-    get_project_runtime_environment_deployment_handler,
-    get_project_runtime_environment_progress_handler, restart_project_runtime_environment_handler,
-    start_project_runtime_environment_handler, stop_project_runtime_environment_handler,
-    update_project_runtime_environment_settings, update_project_runtime_environment_variables,
-};
-use super::runtime_environment_mcp::project_runtime_environment_mcp_entrypoint;
 use super::sync::{
-    sync_delete_execution_links, sync_get_project, sync_get_project_runtime_environment,
-    sync_import_project, sync_list_execution_links, sync_list_projects,
-    sync_requirement_execution_state, sync_task_runner_task_status,
+    sync_delete_execution_links, sync_get_project, sync_import_project, sync_list_execution_links,
+    sync_list_projects, sync_requirement_execution_state, sync_task_runner_task_status,
     sync_task_runner_work_item_status,
 };
 use super::task_runner_links::{
@@ -77,7 +66,6 @@ fn protected_api(state: AppState) -> Router<AppState> {
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/agent-accounts", get(list_agent_accounts))
         .route("/api/projects", get(list_projects).post(create_project))
-        .route("/api/projects/cloud", post(create_cloud_project))
         .route(
             "/api/projects/{project_id}",
             get(get_project)
@@ -105,46 +93,6 @@ fn protected_api(state: AppState) -> Router<AppState> {
             get(get_project_dependency_graph),
         )
         .route("/api/projects/{project_id}/plan", get(get_project_plan))
-        .route(
-            "/api/projects/{project_id}/runtime-environment",
-            get(get_project_runtime_environment),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/settings",
-            axum::routing::put(update_project_runtime_environment_settings),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/variables",
-            axum::routing::put(update_project_runtime_environment_variables),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/analyze",
-            post(analyze_project_runtime_environment_handler),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/progress",
-            get(get_project_runtime_environment_progress_handler),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/images/{image_record_id}/generate",
-            post(generate_project_runtime_environment_image_handler),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/start",
-            post(start_project_runtime_environment_handler),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/deployment",
-            get(get_project_runtime_environment_deployment_handler),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/stop",
-            post(stop_project_runtime_environment_handler),
-        )
-        .route(
-            "/api/projects/{project_id}/runtime-environment/restart",
-            post(restart_project_runtime_environment_handler),
-        )
         .route(
             "/api/requirements/{requirement_id}",
             get(get_requirement)
@@ -236,18 +184,6 @@ pub fn build_internal_router(state: AppState) -> Router {
             .route(
                 "/api/internal/projects/{project_id}/execution-context",
                 get(resolve_project_execution_context),
-            )
-            .route(
-                "/api/chatos-sync/projects/{project_id}/runtime-environment",
-                get(sync_get_project_runtime_environment),
-            )
-            .route(
-                "/api/chatos-sync/projects/{project_id}/runtime-environment/mcp",
-                post(project_runtime_environment_mcp_entrypoint),
-            )
-            .route(
-                "/api/internal/projects/{project_id}/environment-agent/mcp",
-                post(project_environment_agent_mcp_entrypoint),
             )
             .route(
                 "/api/chatos-sync/projects/{project_id}/harness/git-access",
@@ -486,8 +422,6 @@ mod tests {
             otlp_trace_sample_ratio: 0.0,
             otlp_export_timeout: Duration::from_secs(1),
             database_url: "mongodb://127.0.0.1:1/project_router_tests".to_string(),
-            mcp_result_rabbitmq_url: "amqp://127.0.0.1:1/%2f".to_string(),
-            mcp_result_queue_prefix: "project_service.mcp.results.test".to_string(),
             user_service_base_url: "http://127.0.0.1:1".to_string(),
             user_service_internal_base_url: "https://127.0.0.1:1".to_string(),
             user_service_internal_http_client: reqwest::Client::new(),
@@ -496,23 +430,11 @@ mod tests {
             local_connector_service_base_url: "http://127.0.0.1:1".to_string(),
             local_connector_http_client: reqwest::Client::new(),
             local_connector_service_request_timeout: Duration::from_millis(300),
-            memory_engine_base_url: "https://127.0.0.1:1/api/memory-engine/v1".to_string(),
-            memory_engine_source_id: "project_router_tests".to_string(),
-            memory_engine_internal_api_secret: None,
-            memory_engine_http_client: reqwest::Client::new(),
-            memory_engine_request_timeout: Duration::from_millis(300),
-            sandbox_manager_base_url: "http://127.0.0.1:1".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_client_id: None,
-            sandbox_manager_client_key: None,
-            sandbox_image_mcp_request_timeout: Duration::from_millis(300),
             cloud_project_import_enabled: true,
             cloud_project_max_zip_bytes: 1024 * 1024,
             cloud_project_max_unpacked_bytes: 1024 * 1024,
             cloud_project_max_files: 100,
             cloud_project_git_timeout: Duration::from_millis(300),
-            environment_analysis_timeout: Duration::from_secs(60),
-            environment_analysis_stale_after: Duration::from_secs(60),
             task_runner_base_url: None,
             task_runner_request_timeout: Duration::from_millis(300),
             task_runner_internal_secret: None,

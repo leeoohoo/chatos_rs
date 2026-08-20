@@ -44,7 +44,6 @@ pub(super) async fn resolve_agent_capabilities(
         query.include_unavailable.unwrap_or(true),
         BindingConditions {
             task_profile: normalized(query.task_profile.as_deref()),
-            project_source_type: normalized(query.project_source_type.as_deref()),
             runtime_provider: normalized(query.runtime_provider.as_deref()),
             schedule_mode: normalized(query.schedule_mode.as_deref()),
         },
@@ -79,7 +78,6 @@ pub(super) async fn resolve_agent_capabilities_internal(
         input.include_unavailable,
         BindingConditions {
             task_profile: normalized(input.task_profile.as_deref()),
-            project_source_type: normalized(input.project_source_type.as_deref()),
             runtime_provider: normalized(input.runtime_provider.as_deref()),
             schedule_mode: normalized(input.schedule_mode.as_deref()),
         },
@@ -503,9 +501,6 @@ fn binding_matches_runtime_context(
         conditions.task_profile.as_deref(),
         runtime_context.task_profile.as_deref(),
     ) && condition_matches(
-        conditions.project_source_type.as_deref(),
-        runtime_context.project_source_type.as_deref(),
-    ) && condition_matches(
         conditions.runtime_provider.as_deref(),
         runtime_context.runtime_provider.as_deref(),
     ) && condition_matches(
@@ -567,7 +562,6 @@ fn binding_scope_precedence(scope: &str) -> u8 {
 fn binding_condition_specificity(conditions: &BindingConditions) -> u8 {
     [
         conditions.task_profile.as_deref(),
-        conditions.project_source_type.as_deref(),
         conditions.runtime_provider.as_deref(),
         conditions.schedule_mode.as_deref(),
     ]

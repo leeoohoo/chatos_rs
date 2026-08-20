@@ -5,10 +5,8 @@ import React from 'react';
 
 import { useI18n } from '../i18n/I18nProvider';
 import type { Project } from '../types';
-import { isCloudProjectSource } from '../lib/domain/projectSource';
 import { cn } from '../lib/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
-import CloudProjectRuntimeEnvironmentPanel from './projectExplorer/CloudProjectRuntimeEnvironmentPanel';
 import ProjectPlanPane from './projectExplorer/ProjectPlanPane';
 import ProjectRunSettingsPanel from './projectExplorer/ProjectRunSettingsPanel';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
@@ -24,9 +22,8 @@ interface ProjectExplorerProps {
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const { t } = useI18n();
-  const cloudProjectSource = isCloudProjectSource(project);
   const allowedWorkspaceTabs = React.useMemo<WorkspaceTab[]>(
-    () => ['files', 'team', 'plan', 'settings', 'sandbox'],
+    () => ['files', 'team', 'plan', 'settings'],
     [],
   );
   const fallbackWorkspaceTab: WorkspaceTab = 'files';
@@ -73,8 +70,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     fallbackTab: fallbackWorkspaceTab,
   });
   const workspaceTabs = React.useMemo(
-    () => resolveVisibleWorkspaceTabs(cloudProjectSource),
-    [cloudProjectSource],
+    () => resolveVisibleWorkspaceTabs(),
+    [],
   );
 
   React.useEffect(() => {
@@ -104,7 +101,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
               client={client}
               projectId={project.id}
               projectRoot={project.rootPath}
-              readOnly={cloudProjectSource}
+              readOnly={false}
               onRepositoryChanged={handleGitRepositoryChanged}
             />
           ) : null
@@ -122,15 +119,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             project={project}
             className="h-full"
           />
-        ) : workspaceTab === 'sandbox' ? (
-          <div className="h-full overflow-auto p-4">
-            <CloudProjectRuntimeEnvironmentPanel
-              projectId={project.id}
-              projectName={project.name}
-              projectSourceType={project.sourceType}
-              projectRootPath={project.rootPath}
-            />
-          </div>
         ) : workspaceTab === 'settings' ? (
           <div className="h-full overflow-auto p-4">
             <ProjectRunSettingsPanel {...projectSettingsProps} />

@@ -397,11 +397,9 @@ impl AppState {
                 ));
             }
         }
-        validate_sandbox_manager_mtls_invariants(values, &mut errors);
         for key in [
             CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
         ] {
@@ -546,39 +544,6 @@ pub(super) fn validate_chatos_mtls_invariants(
     if public_port.is_some() && public_port == internal_mtls_port {
         errors.push(
             "chatos.runtime.internal_mtls_port must differ from chatos.runtime.port".to_string(),
-        );
-    }
-}
-
-pub(super) fn validate_sandbox_manager_mtls_invariants(
-    values: &BTreeMap<String, Value>,
-    errors: &mut Vec<String>,
-) {
-    for key in [
-        PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY,
-        MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL_CONFIG_KEY,
-    ] {
-        let is_https = values
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.trim().starts_with("https://"));
-        if !is_https {
-            errors.push(format!(
-                "{key} must use https:// because Sandbox Manager internal APIs require mTLS"
-            ));
-        }
-    }
-
-    let public_port = values
-        .get(SANDBOX_MANAGER_PORT_CONFIG_KEY)
-        .and_then(Value::as_i64);
-    let internal_mtls_port = values
-        .get(SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY)
-        .and_then(Value::as_i64);
-    if public_port.is_some() && public_port == internal_mtls_port {
-        errors.push(
-            "sandbox_manager.runtime.internal_mtls_port must differ from sandbox_manager.runtime.port"
-                .to_string(),
         );
     }
 }

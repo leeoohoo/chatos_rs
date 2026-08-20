@@ -45,7 +45,6 @@ impl ProviderDispatcher {
                 "failed to close ChatOS MCP Provider session state"
             );
         }
-        self.cloud_stdio.close_session(snapshot).await;
         self.plugins.close_session(snapshot).await;
         Ok(provider_finalization)
     }

@@ -66,7 +66,7 @@ This lets you:
 - Let the AI remember project conventions and personal preferences
 - Review the summary accumulated in the current conversation
 - Recall important information from related conversations
-- Explicitly forget a Recall that is no longer useful in a local project
+- Explicitly forget a Recall that is no longer useful in the current project
 
 Memory is not an endless pile of chat history. Okra uses summaries and layered organization to keep the information that is most useful for future work.
 
@@ -109,11 +109,7 @@ Create product, development, testing, or research contacts, then choose the most
 
 ### 1. Create a project
 
-You can:
-
-- Create a cloud project from a Git repository
-- Upload a ZIP archive as a cloud project
-- Select an authorized local directory in the desktop client
+Install the desktop client, register a Local Connector workspace, and create the project from an authorized directory. Every project uses this workspace for files, Git, search, and commands.
 
 ### 2. Tell Okra what you want to accomplish
 
@@ -127,24 +123,16 @@ While a task is running, you can review progress, send additional guidance, answ
 
 When the work is complete, the result, project changes, and suggested next steps return to the same conversation and project context.
 
-## Cloud or Local Projects
+## Projects and Workspaces
 
-Okra does not force every project into the same working model.
+Okra has one project model. Every project binds an authorized Local Connector workspace; there is no cloud/local project type switch.
 
-| | Cloud project | Local project |
-| --- | --- | --- |
-| Best for | Browser access, isolated environments, or cloud execution that keeps running | Code that stays on your computer and uses local directories and toolchains |
-| Created from | A Git repository or ZIP archive | A local directory authorized in the desktop client |
-| Working environment | A cloud Git workspace and isolated runtime | A local workspace authorized by you |
-| Access | Browser or desktop client | Desktop client |
-| Task orchestration | Cloud background tasks | Cloud orchestration with device capabilities invoked as needed |
-| Project memory | Stored in the cloud | Stored in the cloud |
+- Project, session, message, task, requirement, memory, and Agent lifecycles are orchestrated by server-side services.
+- Project files, Git, search, commands, local Skills/Plugins/MCP servers, sandbox facade operations, and approvals execute through Local Connector Client.
+- Harness can manage repository assets, branches, synchronization, CI, and integrations, but it is never used as the MCP project file or command provider.
+- If Local Connector is unavailable, workspace operations fail or wait explicitly. They do not fall back to a server filesystem, Harness, or Cloud Sandbox.
 
-Both project types use the same cloud business orchestration plane. MCP Management selects the tool execution location from Project Context; when a device capability is unavailable, the operation fails or waits explicitly instead of switching to a cloud filesystem or another device.
-
-### Local projects and privacy
-
-Project, session, message, task, requirement, memory, and Agent lifecycles are managed by cloud services. Files, Git, commands, local Skills/Plugins/MCP servers, sandboxes, and approvals still execute within the explicitly authorized device boundary.
+### Projects and privacy
 
 Keep in mind:
 
@@ -182,23 +170,16 @@ Create agents, choose models, enable the tools and skills they need, and set def
 
 ## Before You Begin
 
-### Using a cloud project
-
-1. Open the Okra website for your deployment.
-2. Register or sign in. Some test deployments may require an invitation code.
-3. Add an available cloud AI model in Settings.
-4. Create or import a cloud project.
-5. Add a project contact, then start a conversation or plan.
-
-### Using a local project
+### Creating a project
 
 1. Download and install the Okra desktop connector from the Okra website.
 2. Sign in with the same account you use on the web.
 3. Add and authorize a local workspace.
-4. Configure the local tools, Skills, Plugins, MCP servers, sandboxes, and approval permissions you need.
-5. Create a local project in the desktop client.
+4. Configure the local tools, Skills, Plugins, MCP servers, sandbox facade, and approval permissions you need.
+5. Create the project from that workspace in the desktop client.
+6. Add a project contact, then start a conversation or plan.
 
-Local projects are available only in the desktop client. Opening Okra in a regular browser does not grant it access to directories on your computer.
+Opening Okra in a regular browser does not grant access to directories on your computer. Workspace operations require the desktop client and Local Connector to be online.
 
 ## Frequently Asked Questions
 
@@ -208,11 +189,11 @@ Typical chat tools primarily generate responses. Okra is designed for continuous
 
 ### Do I have to upload my code to the cloud?
 
-No. When you create a local project in the desktop client, the code can remain in the local directory you authorized. Choose a cloud project when you want browser access, an isolated cloud environment, and cloud background execution.
+No. Project code remains in the directory authorized through Local Connector. Content needed for AI inference may still be sent to the model provider you configured.
 
 ### Can I use my own model service?
 
-Yes. Okra supports OpenAI-compatible model services and lets you select different models for general chat, project management, environment analysis, memory summaries, and task execution.
+Yes. Okra supports OpenAI-compatible model services and lets you select different models for general chat, project planning, memory summaries, and task execution.
 
 ### Can I intervene while the AI is working?
 
@@ -220,19 +201,19 @@ Yes. You can review tool activity, respond to confirmation requests, send additi
 
 ### Will a task continue after I close the page?
 
-Task orchestration and business state continue in the cloud. When the next step for a local project needs local files, commands, or another device capability, the desktop client and Local Connector must be online.
+Task orchestration and business state continue on the server. When the next step needs project files, commands, or another device capability, the desktop client and Local Connector must be online.
 
-### Can cloud and local projects switch automatically?
+### Can a project fall back to a cloud workspace when my device is offline?
 
-No. They have different file and tool execution boundaries while sharing cloud business orchestration. MCP Management fixes routing from Project Context and never silently switches to the wrong filesystem or device.
+No. Project workspace access only uses the bound Local Connector. MCP Management never silently switches to Harness, a server filesystem, Cloud Sandbox, or another device.
 
 ## Current Product Status
 
 Okra is evolving quickly. Current limitations include:
 
-- Local projects require the desktop client.
-- Local projects do not yet support chat attachments or image/file attachments in additional guidance sent while a task is running.
-- Business history for local projects is stored in the cloud. Version 2.0.10 does not migrate historical sessions, tasks, or memory from the legacy client SQLite database.
+- Project workspace access requires the desktop client and an online Local Connector.
+- Projects do not yet support chat attachments or image/file attachments in additional guidance sent while a task is running.
+- Business history is stored by server-side services. Version 2.0.10 does not migrate historical sessions, tasks, or memory from the legacy client SQLite database.
 - Available desktop platforms, versions, and registration rules depend on the Okra deployment you use.
 
 ## Technical and Self-Hosting Reference
@@ -248,7 +229,7 @@ Okra uses one cloud business orchestration plane plus device-side capability exe
 
 - Project, conversation, task, requirement, memory, and Agent lifecycle data is authoritative in cloud services.
 - Local Connector Core only executes capabilities that must run on the user's device, including workspace files, Git, commands, local Skill/Plugin/MCP components, sandbox operations, and approvals.
-- MCP Management selects Local Connector, Harness, or Cloud Sandbox from Project Context for every Agent tool call.
+- MCP Management routes project files, Git, search, and commands only to the bound Local Connector. Harness remains a repository and integration control plane.
 - Local Connector unavailability fails explicitly; it never moves a device-scoped operation to another execution host silently.
 
 ### Local data paths
@@ -298,7 +279,7 @@ make local-connector-client-status
 make local-connector-client-stop
 ```
 
-The complete local-project experience depends on the trusted Runtime Bridge provided by Electron. Core/settings development mode alone is not equivalent to the complete desktop client.
+The complete project workspace experience depends on the trusted Runtime Bridge provided by Electron. Core/settings development mode alone is not equivalent to the complete desktop client.
 
 Package for macOS:
 
@@ -319,8 +300,8 @@ Package the Linux core profile on Linux:
 ./local_connector_client/package-electron-linux-client.sh
 ```
 
-The Linux package includes the desktop client, Local Connector Core, sandbox MCP server, and the
-verified Plugin/Skill catalogs. Browser automation, Chrome Native Messaging, Computer Use, and the
+The Linux package includes the desktop client, Local Connector Core, and the verified Plugin/Skill
+catalogs. Browser automation, Chrome Native Messaging, Computer Use, and the
 bundled document runtime remain excluded until Linux-native runtime assets are available.
 
 ### Build and test
@@ -331,7 +312,7 @@ make smoke
 make test
 ```
 
-The main execution planes can also be tested independently:
+The main services can also be tested independently:
 
 ```bash
 cargo test -p chat_app_server_rs
@@ -349,7 +330,6 @@ cd memory_engine/backend && cargo test
 - Local Connector capability executor: `local_connector_client/core/src/local_runtime/`
 - Local Connector control-state schema: `local_connector_client/core/migrations/`
 - Cloud Task Runner: `task_runner_service/backend/src/services/`
-- Project runtime environments: `project_management_service/backend/src/services/runtime_environment.rs`
 - Development and deployment commands: `Makefile`, `docker/deploy.sh`, and `scripts/local-dev-stack.sh`
 - `chatos_3d_anime_prototype/` is an experimental interface, not the current production entry point.
 

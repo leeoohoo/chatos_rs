@@ -17,8 +17,6 @@ pub struct AppConfig {
     pub otlp_trace_sample_ratio: f64,
     pub otlp_export_timeout: Duration,
     pub database_url: String,
-    pub mcp_result_rabbitmq_url: String,
-    pub mcp_result_queue_prefix: String,
     pub user_service_base_url: String,
     pub user_service_internal_base_url: String,
     pub user_service_internal_http_client: reqwest::Client,
@@ -27,23 +25,11 @@ pub struct AppConfig {
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
     pub local_connector_service_request_timeout: Duration,
-    pub memory_engine_base_url: String,
-    pub memory_engine_source_id: String,
-    pub memory_engine_internal_api_secret: Option<String>,
-    pub memory_engine_http_client: reqwest::Client,
-    pub memory_engine_request_timeout: Duration,
-    pub sandbox_manager_base_url: String,
-    pub sandbox_manager_http_client: reqwest::Client,
-    pub sandbox_manager_client_id: Option<String>,
-    pub sandbox_manager_client_key: Option<String>,
-    pub sandbox_image_mcp_request_timeout: Duration,
     pub cloud_project_import_enabled: bool,
     pub cloud_project_max_zip_bytes: usize,
     pub cloud_project_max_unpacked_bytes: u64,
     pub cloud_project_max_files: usize,
     pub cloud_project_git_timeout: Duration,
-    pub environment_analysis_timeout: Duration,
-    pub environment_analysis_stale_after: Duration,
     pub task_runner_base_url: Option<String>,
     pub task_runner_request_timeout: Duration,
     pub task_runner_internal_secret: Option<String>,
@@ -107,53 +93,8 @@ impl AppConfig {
             required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
             required_bootstrap_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
-        let memory_engine_request_timeout_ms =
-            required_u64("PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS")?.max(300);
-        let memory_engine_base_url = required_text("PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL")?;
-        require_https_base_url(
-            "PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL",
-            memory_engine_base_url.as_str(),
-        )?;
-        let memory_engine_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
-                memory_engine_request_timeout_ms,
-            )),
-            required_bootstrap_path("MEMORY_ENGINE_MTLS_CA_CERT_PATH")?.as_path(),
-            required_bootstrap_path("MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
-        let sandbox_image_mcp_request_timeout_ms =
-            required_u64("PROJECT_SERVICE_SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS")?.max(10_000);
-        let sandbox_manager_base_url = required_text("PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL")?;
-        require_https_base_url(
-            "PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL",
-            sandbox_manager_base_url.as_str(),
-        )?;
-        let sandbox_manager_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
-                sandbox_image_mcp_request_timeout_ms,
-            )),
-            required_bootstrap_path("SANDBOX_MANAGER_MTLS_CA_CERT_PATH")?.as_path(),
-            required_bootstrap_path("SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
         let cloud_project_git_timeout_ms =
             required_u64("PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS")?.max(1_000);
-        let environment_analysis_timeout_ms =
-            required_u64("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS")?;
-        let environment_analysis_stale_after_ms =
-            required_u64("PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS")?;
-        if environment_analysis_timeout_ms < 60_000 {
-            return Err(
-                "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS must be at least 60000"
-                    .to_string(),
-            );
-        }
-        if environment_analysis_stale_after_ms < environment_analysis_timeout_ms {
-            return Err(
-                "PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS must be greater than or equal to PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS"
-                    .to_string(),
-            );
-        }
-
         let config = Self {
             host,
             port,
@@ -161,8 +102,6 @@ impl AppConfig {
             otlp_trace_sample_ratio,
             otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             database_url: required_text("PROJECT_SERVICE_DATABASE_URL")?,
-            mcp_result_rabbitmq_url: required_text("PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL")?,
-            mcp_result_queue_prefix: required_text("PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX")?,
             user_service_base_url: required_text("PROJECT_SERVICE_USER_SERVICE_BASE_URL")?,
             user_service_internal_base_url,
             user_service_internal_http_client,
@@ -175,26 +114,6 @@ impl AppConfig {
             local_connector_service_request_timeout: Duration::from_millis(
                 local_connector_service_request_timeout_ms,
             ),
-            memory_engine_base_url,
-            memory_engine_source_id: normalized_env("PROJECT_SERVICE_MEMORY_ENGINE_SOURCE_ID")
-                .or_else(|| normalized_env("MEMORY_ENGINE_SOURCE_ID"))
-                .unwrap_or_else(|| "project_management_agent".to_string()),
-            memory_engine_internal_api_secret: Some(required_text(
-                "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            )?),
-            memory_engine_http_client,
-            memory_engine_request_timeout: Duration::from_millis(memory_engine_request_timeout_ms),
-            sandbox_manager_base_url,
-            sandbox_manager_http_client,
-            sandbox_manager_client_id: Some(required_text(
-                "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID",
-            )?),
-            sandbox_manager_client_key: Some(required_text(
-                "PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY",
-            )?),
-            sandbox_image_mcp_request_timeout: Duration::from_millis(
-                sandbox_image_mcp_request_timeout_ms,
-            ),
             cloud_project_import_enabled: required_managed_bool(
                 "PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED",
             )?,
@@ -206,10 +125,6 @@ impl AppConfig {
             )?,
             cloud_project_max_files: required_usize("PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES")?,
             cloud_project_git_timeout: Duration::from_millis(cloud_project_git_timeout_ms),
-            environment_analysis_timeout: Duration::from_millis(environment_analysis_timeout_ms),
-            environment_analysis_stale_after: Duration::from_millis(
-                environment_analysis_stale_after_ms,
-            ),
             task_runner_base_url: Some(required_text("PROJECT_SERVICE_TASK_RUNNER_BASE_URL")?),
             task_runner_request_timeout: Duration::from_millis(task_runner_request_timeout_ms),
             task_runner_internal_secret: Some(required_text(
@@ -240,16 +155,6 @@ impl AppConfig {
             }
         }
 
-        validate_production_secret(
-            "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            config.memory_engine_internal_api_secret.as_deref(),
-            &["change_me_project_service_memory_engine_secret"],
-        )?;
-        validate_production_secret(
-            "PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-            config.sandbox_manager_client_key.as_deref(),
-            &["change_me_project_service_sandbox_manager_secret"],
-        )?;
         if config.user_service_internal_secret.is_some() {
             validate_production_secret(
                 "PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET",

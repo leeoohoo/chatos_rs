@@ -76,14 +76,6 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
         "mongodb": "2.8",
     },
-    "sandbox_manager_service/backend/Cargo.toml": {
-        "axum": "0.8",
-        "tower-http": "0.7",
-        "mongodb": "2.8",
-    },
-    "sandbox_manager_service/sandbox_mcp_server/Cargo.toml": {
-        "axum": "0.8",
-    },
     "task_runner_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",

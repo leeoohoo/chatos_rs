@@ -57,7 +57,6 @@ pub(crate) async fn live_mcp_descriptor(
         }
         // Cloud stdio must never spawn inside Plugin Management. Its live
         // tools/list probe is performed by MCP Management through the bound
-        // Sandbox Manager lease during runtime session materialization.
         RUNTIME_KIND_STDIO_CLOUD => Ok(None),
         RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
         | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP

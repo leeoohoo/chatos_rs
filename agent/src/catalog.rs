@@ -27,8 +27,8 @@ impl ChatosTaskRunnerToolProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentExecutionLocation {
-    CloudEventDriven,
-    ClientLocalLoop,
+    ServerOrchestrated,
+    ClientEmbedded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,27 +71,7 @@ pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
     "Runs normal Chat OS conversations while applying the selected contact as user-specific role context.",
     false,
     AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
-);
-
-pub static CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::ChatosLocalConversationAgent,
-    "Local Chat OS Conversation Agent",
-    "chatos",
-    "Runs Chat OS conversations for Local Connector projects with an independently configurable local execution identity.",
-    false,
-    AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
-);
-
-static RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::ChatosPlanningAgent,
-    "Retired Chat OS Planning Agent",
-    "chatos",
-    "Retired compatibility identity. Chat OS plan mode now submits a Task Runner planning task programmatically, and task_runner_plan_phase performs the planning.",
-    false,
-    AgentToolPlane::None,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
 pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescriptor =
@@ -102,69 +82,38 @@ pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescript
         "Splits project-management work items into concrete Task Runner execution tasks for Chat OS project requirement execution.",
         true,
         AgentToolPlane::Managed,
-        AgentExecutionLocation::CloudEventDriven,
-    );
-
-pub static PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR: AgentDescriptor =
-    AgentDescriptor::new(
-        SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
-        "Local Project Requirement Execution Planner Agent",
-        "chatos",
-        "Splits local-project work items into concrete Task Runner execution tasks for Chat OS project requirement execution with a separate local configuration surface.",
-        true,
-        AgentToolPlane::Managed,
-        AgentExecutionLocation::CloudEventDriven,
+        AgentExecutionLocation::ServerOrchestrated,
     );
 
 pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerPlanPhase,
-    "Cloud Task Runner Planning Agent",
+    "Task Runner Planning Agent",
     "task-runner",
-    "Runs non-mutating Task Runner planning tasks in the cloud execution plane with a planning-specific Prompt and capability boundary.",
+    "Runs non-mutating Task Runner planning tasks with a planning-specific Prompt and capability boundary.",
     true,
     AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
 pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::TaskRunnerRunPhase,
-    "Cloud Task Runner Execution Agent",
+    "Task Runner Execution Agent",
     "task-runner",
-    "Executes implementation, testing, repair, deployment, and other mutating Task Runner work in the cloud execution plane.",
+    "Executes implementation, testing, repair, deployment, and other mutating Task Runner work.",
     true,
     AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
-);
-
-pub static PROJECT_MANAGEMENT_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::ProjectManagementAgent,
-    "Project Runtime Environment Agent",
-    "project-service",
-    "Inspects project files, resolves sandbox images, and persists the project runtime environment.",
-    false,
-    AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
-);
-
-pub static PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::ProjectManagementLocalAgent,
-    "Local Project Runtime Environment Agent",
-    "project-service",
-    "Inspects Local Connector project files, resolves project runtime dependencies, and persists the local project runtime environment with an independently configurable local identity.",
-    false,
-    AgentToolPlane::Managed,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
 pub static LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR: AgentDescriptor =
     AgentDescriptor::new(
         SystemAgentKey::LocalConnectorCommandApprovalAgent,
-        "Local Command Approval Agent",
+        "Command Approval Agent",
         "local-connector-client",
         "Reviews local shell commands with read-only project tools and returns an approval decision.",
         false,
         AgentToolPlane::LocalOnly,
-        AgentExecutionLocation::ClientLocalLoop,
+        AgentExecutionLocation::ClientEmbedded,
     );
 
 pub static MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -174,7 +123,7 @@ pub static MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescri
     "Compresses raw conversation records into a high-signal level-zero thread summary.",
     false,
     AgentToolPlane::None,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
 pub static MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -184,7 +133,7 @@ pub static MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescrip
     "Consolidates lower-level thread summaries into durable higher-level project knowledge.",
     false,
     AgentToolPlane::None,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
 pub static MEMORY_ENGINE_SUBJECT_MEMORY_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -194,7 +143,7 @@ pub static MEMORY_ENGINE_SUBJECT_MEMORY_AGENT_DESCRIPTOR: AgentDescriptor = Agen
     "Distills thread summaries into durable subject memories for long-term recall.",
     false,
     AgentToolPlane::None,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
 pub static MEMORY_ENGINE_MEMORY_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -204,7 +153,7 @@ pub static MEMORY_ENGINE_MEMORY_ROLLUP_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     "Consolidates lower-level subject memories into stable higher-level long-term memory.",
     false,
     AgentToolPlane::None,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
 pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -214,18 +163,14 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     "Builds a user-grounded repair summary when conversation context has drifted.",
     false,
     AgentToolPlane::None,
-    AgentExecutionLocation::CloudEventDriven,
+    AgentExecutionLocation::ServerOrchestrated,
 );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 14] = [
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 10] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-    &CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR,
     &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
-    &PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR,
     &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
-    &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
-    &PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR,
@@ -264,19 +209,12 @@ pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
     matches!(
         key,
         SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ChatosLocalConversationAgent
-            | SystemAgentKey::ChatosPlanningAgent
             | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-            | SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
     )
 }
 
 pub const fn is_project_requirement_execution_planner_agent(key: SystemAgentKey) -> bool {
-    matches!(
-        key,
-        SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-            | SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
-    )
+    matches!(key, SystemAgentKey::ProjectRequirementExecutionPlannerAgent)
 }
 
 pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
@@ -319,18 +257,11 @@ pub const fn requires_expected_project_task_ids(key: SystemAgentKey) -> bool {
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-        SystemAgentKey::ChatosLocalConversationAgent => &CHATOS_LOCAL_CONVERSATION_AGENT_DESCRIPTOR,
-        SystemAgentKey::ChatosPlanningAgent => &RETIRED_CHATOS_PLANNING_AGENT_DESCRIPTOR,
         SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
             &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR
         }
-        SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent => {
-            &PROJECT_REQUIREMENT_EXECUTION_LOCAL_PLANNER_AGENT_DESCRIPTOR
-        }
         SystemAgentKey::TaskRunnerPlanPhase => &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
         SystemAgentKey::TaskRunnerRunPhase => &TASK_RUNNER_AGENT_DESCRIPTOR,
-        SystemAgentKey::ProjectManagementAgent => &PROJECT_MANAGEMENT_AGENT_DESCRIPTOR,
-        SystemAgentKey::ProjectManagementLocalAgent => &PROJECT_MANAGEMENT_LOCAL_AGENT_DESCRIPTOR,
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
             &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR
         }
@@ -362,19 +293,15 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 14);
+        assert_eq!(keys.len(), 10);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
             vec![
                 "chatos_conversation_agent",
-                "chatos_local_conversation_agent",
                 "project_requirement_execution_planner_agent",
-                "project_requirement_execution_local_planner_agent",
                 "task_runner_plan_phase",
                 "task_runner_run_phase",
-                "project_management_agent",
-                "project_management_local_agent",
                 "local_connector_command_approval_agent",
                 "memory_engine_summary_agent",
                 "memory_engine_rollup_agent",
@@ -422,10 +349,7 @@ mod tests {
     fn callback_groups_live_with_agent_catalog() {
         for key in [
             SystemAgentKey::ChatosConversationAgent,
-            SystemAgentKey::ChatosLocalConversationAgent,
-            SystemAgentKey::ChatosPlanningAgent,
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent,
         ] {
             assert!(is_chatos_callback_agent(key));
         }
@@ -443,9 +367,6 @@ mod tests {
         ));
         assert!(uses_chatos_browser_callback(
             SystemAgentKey::ChatosConversationAgent
-        ));
-        assert!(!uses_chatos_notepad_callback(
-            SystemAgentKey::ProjectManagementAgent
         ));
         assert!(!uses_chatos_browser_callback(
             SystemAgentKey::MemoryEngineSummaryAgent
@@ -474,30 +395,13 @@ mod tests {
             Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
         );
         assert_eq!(
-            chatos_task_runner_tool_profile(SystemAgentKey::ChatosLocalConversationAgent),
-            Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
-        );
-        assert_eq!(
-            chatos_task_runner_tool_profile(SystemAgentKey::ChatosPlanningAgent),
-            Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
-        );
-        assert_eq!(
             chatos_task_runner_tool_profile(
                 SystemAgentKey::ProjectRequirementExecutionPlannerAgent
             ),
             Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
         );
-        assert_eq!(
-            chatos_task_runner_tool_profile(
-                SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
-            ),
-            Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
-        );
         assert!(requires_expected_project_task_ids(
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        ));
-        assert!(requires_expected_project_task_ids(
-            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
         ));
         assert!(!requires_expected_project_task_ids(
             SystemAgentKey::ChatosConversationAgent
@@ -505,11 +409,11 @@ mod tests {
     }
 
     #[test]
-    fn desktop_approval_is_the_only_client_local_loop_agent() {
+    fn desktop_approval_is_the_only_client_embedded_agent() {
         let local_loop_agents = system_agent_catalog()
             .iter()
             .filter(|descriptor| {
-                descriptor.execution_location == AgentExecutionLocation::ClientLocalLoop
+                descriptor.execution_location == AgentExecutionLocation::ClientEmbedded
             })
             .map(|descriptor| descriptor.key)
             .collect::<Vec<_>>();
@@ -522,7 +426,7 @@ mod tests {
             system_agent_catalog()
                 .iter()
                 .filter(|descriptor| {
-                    descriptor.execution_location == AgentExecutionLocation::CloudEventDriven
+                    descriptor.execution_location == AgentExecutionLocation::ServerOrchestrated
                 })
                 .count(),
             system_agent_catalog().len() - local_loop_agents.len()

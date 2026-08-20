@@ -182,7 +182,6 @@ function createCoreRuntime({ app, desktopAuthToken }) {
       LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
       LOCAL_CONNECTOR_IPC_ENDPOINT: ipcEndpoint,
       LOCAL_CONNECTOR_ENABLE_TCP_API: '1',
-      LOCAL_CONNECTOR_ENABLE_PLUGIN_STDIO_SANDBOX: process.platform === 'darwin' ? '1' : '0',
       LOCAL_CONNECTOR_OPEN_UI: '0',
       LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
     };

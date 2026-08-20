@@ -117,7 +117,6 @@ service_bins = {
     "plugin_management_service_backend",
     "local_connector_service_backend",
     "mcp_management_service_backend",
-    "sandbox_manager_service_backend",
     "task_runner_service_backend",
     "chat_app_server_rs",
 }
@@ -172,7 +171,6 @@ service_bins = {
     "plugin_management_service_backend",
     "local_connector_service_backend",
     "mcp_management_service_backend",
-    "sandbox_manager_service_backend",
     "task_runner_service_backend",
     "chat_app_server_rs",
 }
@@ -184,7 +182,6 @@ frontend_markers = (
     "/project_management_service/frontend/",
     "/plugin_management_service/frontend/",
     "/task_runner_service/frontend/",
-    "/sandbox_manager_service/frontend/",
 )
 current = os.getpid()
 parent = os.getppid()

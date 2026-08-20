@@ -109,7 +109,6 @@ require_exact_locations(
     {
         "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
         "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
-        "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
     },
 )
 require_exact_locations(
@@ -120,7 +119,6 @@ require_exact_locations(
 )
 for gateway_path in [
     "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
-    "project_management_service/backend/src/services/environment_agent/mcp_management_gateway.rs",
 ]:
     forbid(
         gateway_path,
@@ -130,7 +128,6 @@ for gateway_path in [
 
 expected_executor_gateway_assembly = {
     "task_runner_service/backend/src/services/run_model_phase/setup/preparation.rs",
-    "project_management_service/backend/src/services/environment_agent/runtime/analysis.rs",
 }
 require_exact_locations(
     "cloud Agent MCP executor assembly",
@@ -180,35 +177,6 @@ require(
     "task_runner_service/backend/src/services/run_model_phase/setup/preparation.rs",
     ".with_http_server(mcp_management_server)",
     "single-server MCP Management executor assembly",
-)
-
-project_environment_analysis = (
-    "project_management_service/backend/src/services/environment_agent/runtime/analysis.rs"
-)
-require(
-    project_environment_analysis,
-    "resolve_project_environment_mcp(",
-    "MCP Management Runtime Session resolution",
-)
-require(
-    project_environment_analysis,
-    ".with_http_server(gateway.server().clone())",
-    "single-server MCP Management executor assembly",
-)
-require(
-    project_environment_analysis,
-    "client.close_runtime_session(session_ref).await",
-    "terminal Runtime Session cleanup",
-)
-require(
-    project_environment_analysis,
-    "gateway.close().await",
-    "failed-start Runtime Session cleanup",
-)
-forbid(
-    project_environment_analysis,
-    ["jsonrpc_http_call(", "McpStdioServer", ".with_builtin_servers("],
-    "Project Environment Agent must not call a Provider directly",
 )
 
 local_approval = "local_connector_client/core/src/approval/ai_agent.rs"

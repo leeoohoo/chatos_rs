@@ -14,8 +14,6 @@ import type {
   ProjectManagementSkillLocale,
   ProjectManagementSkillResponse,
   ProjectRecord,
-  ProjectRuntimeEnvironmentDeploymentResponse,
-  ProjectRuntimeEnvironmentResponse,
   ProjectStatus,
   ProjectWorkItemRecord,
   ProjectWorkItemTaskRunnerLinkRecord,
@@ -25,8 +23,6 @@ import type {
   RequirementStatus,
   UpdateRequirementDocumentPayload,
   UpdateProjectPayload,
-  UpdateProjectRuntimeEnvironmentSettingsPayload,
-  UpdateProjectRuntimeEnvironmentVariablesPayload,
   UpdateRequirementPayload,
   UpdateWorkItemPayload,
   UpsertRequirementDocumentPayload,
@@ -111,65 +107,6 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
-  getProjectRuntimeEnvironment: (projectId: string) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment`,
-    ),
-  updateProjectRuntimeEnvironmentSettings: (
-    projectId: string,
-    payload: UpdateProjectRuntimeEnvironmentSettingsPayload,
-  ) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment/settings`,
-      {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      },
-    ),
-  updateProjectRuntimeEnvironmentVariables: (
-    projectId: string,
-    payload: UpdateProjectRuntimeEnvironmentVariablesPayload,
-  ) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment/variables`,
-      {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      },
-    ),
-  analyzeProjectRuntimeEnvironment: (projectId: string) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment/analyze`,
-      {
-        method: 'POST',
-      },
-    ),
-  generateProjectRuntimeEnvironmentImage: (projectId: string, imageRecordId: string) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment/images/${imageRecordId}/generate`,
-      {
-        method: 'POST',
-      },
-    ),
-  startProjectRuntimeEnvironment: (projectId: string) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment/start`,
-      { method: 'POST' },
-    ),
-  getProjectRuntimeEnvironmentDeployment: (projectId: string) =>
-    request<ProjectRuntimeEnvironmentDeploymentResponse>(
-      `/api/projects/${projectId}/runtime-environment/deployment`,
-    ),
-  stopProjectRuntimeEnvironment: (projectId: string) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment/stop`,
-      { method: 'POST' },
-    ),
-  restartProjectRuntimeEnvironment: (projectId: string) =>
-    request<ProjectRuntimeEnvironmentResponse>(
-      `/api/projects/${projectId}/runtime-environment/restart`,
-      { method: 'POST' },
-    ),
   listRequirements: (
     projectId: string,
     filters?: { status?: RequirementStatus; keyword?: string; include_archived?: boolean },

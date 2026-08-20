@@ -2,6 +2,14 @@
 
 使用 `task_run_process_record_process` 留下简短、用户可见的执行记录，帮助用户和后续复核者理解当前任务发生了什么。
 
+全部实现和验证完成后，必须调用一次 `task_run_process_report_outcome`，明确上报当前任务的最终状态：
+
+- `succeeded`：任务已经完成；
+- `failed`：执行已经结束，但结果失败；
+- `blocked`：外部依赖、权限或必要输入阻止任务完成。
+
+`task_run_process_report_outcome` 必须是最终答复前的最后一次工具调用，并提供简短、具体的理由。未成功上报终态时，运行时不会接受最终答复。
+
 适合记录：
 
 - 修改前选定的实施方式；

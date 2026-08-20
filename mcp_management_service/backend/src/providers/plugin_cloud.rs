@@ -4,9 +4,8 @@
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 use serde_json::Value;
 
-use crate::runtime::{CloudStdioProviderBinding, ExternalHttpProviderBinding};
+use crate::runtime::ExternalHttpProviderBinding;
 
-use super::cloud_stdio::CloudStdioProvider;
 use super::external_http::ExternalHttpProvider;
 use super::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
 
@@ -25,15 +24,10 @@ mod validation;
 
 #[derive(Clone)]
 pub(super) struct PluginCloudProvider {
-    cloud_stdio: CloudStdioProvider,
     external_http: ExternalHttpProvider,
 }
 
 enum PreparedPluginCloudRoute {
-    Stdio {
-        binding: Box<CloudStdioProviderBinding>,
-        tools: Vec<Value>,
-    },
     Http {
         binding: Box<ExternalHttpProviderBinding>,
         tools: Vec<Value>,

@@ -3,11 +3,9 @@
 
 use std::time::Duration;
 
-use chatos_mcp_management_sdk::SandboxExecutionTarget;
-
 use crate::runtime::RuntimeSessionSnapshot;
 
-use super::{CloudSandboxProvider, ProviderCallError, ProviderWaitingForUser};
+use super::{ProviderCallError, ProviderWaitingForUser};
 
 mod init;
 mod memory;
@@ -24,7 +22,6 @@ const CHATOS_MCP_SCOPE: &str = "mcp.tools.call";
 const CHATOS_PROVIDER_REF: &str = "chatos";
 const CHATOS_MEMORY_PROVIDER_REF_PREFIX: &str = "chatos:memory:";
 const CLOUD_BROWSER_SESSION_CLOSE_METHOD: &str = "browser/session/close";
-const CLOUD_BROWSER_EXECUTION_AUTHORIZE_METHOD: &str = "browser/execution/authorize";
 
 pub(super) struct ChatosRequestBinding<'a> {
     owner_user_id: &'a str,
@@ -40,7 +37,6 @@ pub(super) struct ChatosRequestBinding<'a> {
     default_model_config_id: Option<&'a str>,
     contact_agent_id: Option<&'a str>,
     expected_project_task_ids: &'a [String],
-    sandbox_target: Option<&'a SandboxExecutionTarget>,
 }
 
 impl<'a> From<&'a RuntimeSessionSnapshot> for ChatosRequestBinding<'a> {
@@ -59,7 +55,6 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for ChatosRequestBinding<'a> {
             default_model_config_id: snapshot.default_model_config_id.as_deref(),
             contact_agent_id: snapshot.contact_agent_id.as_deref(),
             expected_project_task_ids: snapshot.expected_project_task_ids.as_slice(),
-            sandbox_target: snapshot.sandbox_target(),
         }
     }
 }
@@ -73,7 +68,6 @@ pub(super) struct ChatosProvider {
     ask_user_request_timeout: Duration,
     browser_request_timeout: Duration,
     response_limit_bytes: usize,
-    cloud_sandbox: Option<CloudSandboxProvider>,
 }
 
 #[cfg(test)]

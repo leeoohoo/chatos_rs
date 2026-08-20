@@ -6,41 +6,26 @@ use std::path::{Path, PathBuf};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chatos_mcp_management_sdk::{SandboxExecutionTarget, SandboxProviderKind};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use super::internal_auth::{
     require_project_internal_request, PROJECT_HARNESS_SCOPE, TASK_RUNNER_CALLER,
 };
 use super::ApiError;
-use crate::http_body::{
-    read_response_json_limited, read_response_text_limited_or_message,
-    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
-};
-use crate::models::{
-    ProjectImportStatus, ProjectRecord, ProjectRuntimeEnvironmentStatus, ProjectStatus,
-    RuntimeEnvironmentProvider, RuntimeServiceRole,
-};
+use crate::models::{ProjectImportStatus, ProjectRecord, ProjectStatus};
 use crate::services::cloud_import::git::{authenticated_git_url, run_git, run_git_output};
 use crate::services::harness_repo::{
     ensure_harness_repo_for_project_owner, fetch_harness_api_access, project_harness_metadata_ready,
 };
 use crate::state::AppState;
-use crate::trace_context::InternalTraceContextExt;
 
-const SANDBOX_MANAGER_CALLER: &str = "project-service";
-const SANDBOX_MANAGER_AUDIENCE: &str = "sandbox-manager";
-const SANDBOX_MANAGER_SCOPE: &str = "sandbox.service";
 const RUN_CHANGES_PATCH_LIMIT_BYTES: usize = 256 * 1024;
 const GIT_INTEGRATION_LEASE_SECONDS: i64 = 10 * 60;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct PrepareRunWorkspaceRequest {
     owner_user_id: String,
-    tenant_id: String,
     create_run_branch: bool,
-    create_cloud_sandbox: bool,
     execution_group_id: Option<String>,
     expected_execution_commit: Option<String>,
 }
@@ -59,7 +44,6 @@ pub(in crate::api) struct PrepareRunWorkspaceResponse {
     run_id: String,
     default_branch: String,
     branch: Option<PreparedRunBranch>,
-    sandbox_target: Option<SandboxExecutionTarget>,
     execution_branch_ref: Option<String>,
     execution_base_commit: Option<String>,
 }
@@ -68,8 +52,6 @@ pub(in crate::api) struct PrepareRunWorkspaceResponse {
 pub(in crate::api) struct FinalizeRunWorkspaceRequest {
     owner_user_id: String,
     branch: Option<PreparedRunBranch>,
-    sandbox_target: Option<SandboxExecutionTarget>,
-    destroy_sandbox: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,19 +143,6 @@ pub(in crate::api) struct PromoteExecutionWorkspaceResponse {
     message: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct SandboxLeaseResponse {
-    lease_id: String,
-    sandbox_id: String,
-    status: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReleaseSandboxResponse {
-    output_workspace: Option<String>,
-    output_error: Option<String>,
-}
-
 async fn ensure_project_harness_repo_metadata(
     state: &AppState,
     mut project: ProjectRecord,
@@ -224,11 +193,6 @@ pub(in crate::api) async fn prepare_run_workspace(
     if project_owner != request.owner_user_id.trim() {
         return Err(ApiError::forbidden(
             "represented user does not own the requested project",
-        ));
-    }
-    if request.create_cloud_sandbox && !request.create_run_branch {
-        return Err(ApiError::bad_request(
-            "cloud sandbox preparation requires a run branch",
         ));
     }
     let project =
@@ -333,44 +297,11 @@ pub(in crate::api) async fn prepare_run_workspace(
     } else {
         None
     };
-    let sandbox_target = if request.create_cloud_sandbox {
-        let workspace_image_id =
-            resolve_cloud_workspace_image_id(&state, project_id.as_str()).await?;
-        let branch = branch.as_ref().ok_or_else(|| {
-            ApiError::conflict("cloud sandbox preparation lost its required run branch")
-        })?;
-        let workspace = prepare_shared_workspace(
-            &state,
-            project_id.as_str(),
-            run_id.as_str(),
-            git_url.as_str(),
-            authenticated_url.as_str(),
-            branch.branch_ref.as_str(),
-            &scrub,
-        )
-        .await?;
-        Some(
-            create_cloud_sandbox(
-                &state,
-                project_id.as_str(),
-                run_id.as_str(),
-                request.tenant_id.trim(),
-                project_owner.as_str(),
-                workspace.as_path(),
-                workspace_image_id.as_str(),
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-
     Ok(Json(PrepareRunWorkspaceResponse {
         project_id,
         run_id,
         default_branch,
         branch,
-        sandbox_target,
         execution_branch_ref,
         execution_base_commit,
     }))
@@ -430,10 +361,6 @@ pub(in crate::api) async fn finalize_run_workspace(
     )
     .map_err(ApiError::bad_request)?;
     let scrub = [access.access_token.as_str(), authenticated_url.as_str()];
-    let released_output = match request.sandbox_target.as_ref() {
-        Some(target) => Some(release_cloud_sandbox(&state, target, request.destroy_sandbox).await?),
-        None => None,
-    };
     let workspace = prepare_shared_workspace(
         &state,
         project_id.as_str(),
@@ -444,13 +371,6 @@ pub(in crate::api) async fn finalize_run_workspace(
         &scrub,
     )
     .await?;
-    if let Some(output_workspace) = released_output
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        replace_worktree_from_sandbox_output(workspace.as_path(), Path::new(output_workspace))?;
-    }
     let result_commit = commit_and_push_run_branch(
         &state,
         workspace.as_path(),
@@ -466,8 +386,7 @@ pub(in crate::api) async fn finalize_run_workspace(
         project_id,
         run_id,
         result_commit: Some(result_commit),
-        sandbox_retained_for_diagnostics: request.sandbox_target.is_some()
-            && !request.destroy_sandbox,
+        sandbox_retained_for_diagnostics: false,
     }))
 }
 
@@ -1387,70 +1306,6 @@ pub(in crate::api) async fn promote_execution_workspace(
     }))
 }
 
-async fn release_cloud_sandbox(
-    state: &AppState,
-    target: &SandboxExecutionTarget,
-    destroy: bool,
-) -> Result<String, ApiError> {
-    if target.provider != SandboxProviderKind::Cloud {
-        return Err(ApiError::bad_request(
-            "run workspace contains a non-cloud sandbox target",
-        ));
-    }
-    let token = sandbox_manager_token(state)?;
-    let url = sandbox_manager_internal_url(
-        state.config.sandbox_manager_base_url.as_str(),
-        format!(
-            "sandboxes/{}/release",
-            urlencoding::encode(target.sandbox_id.trim())
-        )
-        .as_str(),
-    );
-    let response = state
-        .config
-        .sandbox_manager_http_client
-        .post(url)
-        .header("x-sandbox-caller", SANDBOX_MANAGER_CALLER)
-        .header("x-sandbox-internal-token", token)
-        .json(&json!({
-            "lease_id": target.lease_id,
-            "export_result": true,
-            "destroy": destroy
-        }))
-        .with_internal_trace_context()
-        .send()
-        .await
-        .map_err(|error| ApiError::bad_gateway(format!("release cloud sandbox failed: {error}")))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body =
-            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
-        return Err(ApiError::bad_gateway(format!(
-            "release cloud sandbox failed: {status} {body}"
-        )));
-    }
-    let released =
-        read_response_json_limited::<ReleaseSandboxResponse>(response, JSON_BODY_LIMIT_BYTES)
-            .await
-            .map_err(|error| {
-                ApiError::bad_gateway(format!("decode sandbox release failed: {error}"))
-            })?;
-    if let Some(error) = released
-        .output_error
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return Err(ApiError::bad_gateway(format!(
-            "sandbox output export failed: {error}"
-        )));
-    }
-    released
-        .output_workspace
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::bad_gateway("sandbox release did not return an output workspace"))
-}
-
 async fn commit_and_push_run_branch(
     state: &AppState,
     workspace: &Path,
@@ -1897,238 +1752,6 @@ async fn prepare_shared_workspace(
     Ok(workspace)
 }
 
-async fn create_cloud_sandbox(
-    state: &AppState,
-    project_id: &str,
-    run_id: &str,
-    tenant_id: &str,
-    owner_user_id: &str,
-    workspace: &Path,
-    image_id: &str,
-) -> Result<SandboxExecutionTarget, ApiError> {
-    let token = sandbox_manager_token(state)?;
-    let url = sandbox_manager_internal_url(
-        state.config.sandbox_manager_base_url.as_str(),
-        "sandboxes/leases",
-    );
-    let response = state
-        .config
-        .sandbox_manager_http_client
-        .post(url)
-        .header("x-sandbox-caller", SANDBOX_MANAGER_CALLER)
-        .header("x-sandbox-internal-token", token)
-        .header("x-idempotency-key", format!("task-run:{run_id}:workspace"))
-        .json(&json!({
-            "tenant_id": tenant_id,
-            "user_id": owner_user_id,
-            "project_id": project_id,
-            "run_id": run_id,
-            "workspace_root": workspace.to_string_lossy(),
-            "image_id": image_id,
-            "tools": ["filesystem", "terminal"],
-            "ttl_seconds": 7200,
-            "resource_limits": null,
-            "network": null,
-            "permission_profile_id": "workspace_write",
-            "approval_policy": "on_request",
-            "approval_reviewer": "user"
-        }))
-        .with_internal_trace_context()
-        .send()
-        .await
-        .map_err(|error| ApiError::bad_gateway(format!("create cloud sandbox failed: {error}")))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body =
-            read_response_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES).await;
-        return Err(ApiError::bad_gateway(format!(
-            "create cloud sandbox failed: {status} {body}"
-        )));
-    }
-    let lease = read_response_json_limited::<SandboxLeaseResponse>(response, JSON_BODY_LIMIT_BYTES)
-        .await
-        .map_err(|error| {
-            ApiError::bad_gateway(format!("decode cloud sandbox lease failed: {error}"))
-        })?;
-    if lease.status.trim() != "ready" {
-        return Err(ApiError::conflict(format!(
-            "cloud sandbox is not ready: {}",
-            lease.status.trim()
-        )));
-    }
-    Ok(SandboxExecutionTarget {
-        provider: SandboxProviderKind::Cloud,
-        pairing_id: None,
-        sandbox_id: lease.sandbox_id,
-        lease_id: lease.lease_id,
-        is_environment: false,
-        service_id: None,
-    })
-}
-
-async fn resolve_cloud_workspace_image_id(
-    state: &AppState,
-    project_id: &str,
-) -> Result<String, ApiError> {
-    let environment = state
-        .store
-        .get_project_runtime_environment(project_id)
-        .await
-        .map_err(ApiError::bad_gateway)?
-        .ok_or_else(|| ApiError::conflict("project runtime environment is not initialized"))?;
-    if environment.status != ProjectRuntimeEnvironmentStatus::Ready
-        || !environment.sandbox_enabled
-        || environment.sandbox_provider != RuntimeEnvironmentProvider::CloudSandboxManager
-    {
-        return Err(ApiError::conflict(
-            "project cloud sandbox runtime environment is not ready",
-        ));
-    }
-    let execution_service_id = environment
-        .execution_service_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::conflict("project workspace execution service is missing"))?;
-    let images = state
-        .store
-        .list_project_runtime_environment_images(project_id)
-        .await
-        .map_err(ApiError::bad_gateway)?;
-    let workspace_image = images
-        .iter()
-        .find(|image| {
-            image.service_role == RuntimeServiceRole::Workspace
-                && image.service_id.trim() == execution_service_id
-        })
-        .ok_or_else(|| ApiError::conflict("project workspace execution image is missing"))?;
-    if workspace_image.image_provider != RuntimeEnvironmentProvider::CloudSandboxManager
-        || workspace_image.status.trim() != "ready"
-    {
-        return Err(ApiError::conflict(
-            "project workspace execution image is not ready",
-        ));
-    }
-    workspace_image
-        .image_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| ApiError::conflict("project workspace execution image id is missing"))
-}
-
-fn replace_worktree_from_sandbox_output(
-    worktree: &Path,
-    sandbox_output: &Path,
-) -> Result<(), ApiError> {
-    if !worktree.join(".git").is_dir() {
-        return Err(ApiError::bad_gateway(
-            "run branch workspace is not a Git worktree",
-        ));
-    }
-    if !sandbox_output.is_dir() {
-        return Err(ApiError::bad_gateway(format!(
-            "sandbox output workspace is not a directory: {}",
-            sandbox_output.display()
-        )));
-    }
-    for entry in std::fs::read_dir(worktree).map_err(|error| {
-        ApiError::bad_gateway(format!("read run branch worktree failed: {error}"))
-    })? {
-        let entry = entry.map_err(|error| {
-            ApiError::bad_gateway(format!("read worktree entry failed: {error}"))
-        })?;
-        if entry.file_name() == ".git" {
-            continue;
-        }
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(|error| {
-            ApiError::bad_gateway(format!("read worktree entry type failed: {error}"))
-        })?;
-        if file_type.is_dir() {
-            std::fs::remove_dir_all(path.as_path()).map_err(|error| {
-                ApiError::bad_gateway(format!(
-                    "remove stale worktree directory {} failed: {error}",
-                    path.display()
-                ))
-            })?;
-        } else {
-            std::fs::remove_file(path.as_path()).map_err(|error| {
-                ApiError::bad_gateway(format!(
-                    "remove stale worktree file {} failed: {error}",
-                    path.display()
-                ))
-            })?;
-        }
-    }
-    copy_workspace_contents(sandbox_output, worktree)
-}
-
-fn copy_workspace_contents(source: &Path, destination: &Path) -> Result<(), ApiError> {
-    for entry in walkdir::WalkDir::new(source).follow_links(false) {
-        let entry = entry.map_err(|error| {
-            ApiError::bad_gateway(format!("scan run workspace failed: {error}"))
-        })?;
-        let relative = entry.path().strip_prefix(source).map_err(|error| {
-            ApiError::bad_gateway(format!("resolve run workspace path failed: {error}"))
-        })?;
-        if relative.as_os_str().is_empty() {
-            continue;
-        }
-        if relative.components().any(
-            |component| matches!(component, std::path::Component::Normal(name) if name == ".git"),
-        ) {
-            continue;
-        }
-        let target = destination.join(relative);
-        let file_type = entry.file_type();
-        if file_type.is_symlink() {
-            return Err(ApiError::bad_gateway(format!(
-                "run workspace contains an unsupported symlink: {}",
-                relative.display()
-            )));
-        }
-        if file_type.is_dir() {
-            std::fs::create_dir_all(target.as_path()).map_err(|error| {
-                ApiError::bad_gateway(format!(
-                    "create sandbox workspace directory failed: {error}"
-                ))
-            })?;
-        } else if file_type.is_file() {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    ApiError::bad_gateway(format!(
-                        "create sandbox workspace parent failed: {error}"
-                    ))
-                })?;
-            }
-            std::fs::copy(entry.path(), target.as_path()).map_err(|error| {
-                ApiError::bad_gateway(format!("copy sandbox workspace file failed: {error}"))
-            })?;
-        }
-    }
-    Ok(())
-}
-
-fn sandbox_manager_token(state: &AppState) -> Result<String, ApiError> {
-    let secret = state
-        .config
-        .sandbox_manager_client_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::conflict("sandbox manager client secret is not configured"))?;
-    chatos_service_runtime::issue_internal_service_token(
-        secret,
-        SANDBOX_MANAGER_CALLER,
-        SANDBOX_MANAGER_AUDIENCE,
-        SANDBOX_MANAGER_SCOPE,
-        60,
-    )
-    .map_err(ApiError::bad_gateway)
-}
-
 fn run_workspace_root() -> Result<PathBuf, ApiError> {
     let configured = std::env::var_os("CHATOS_RUN_WORKSPACE_ROOT")
         .map(PathBuf::from)
@@ -2284,14 +1907,6 @@ fn validate_workspace_symlink_boundaries(workspace: &Path) -> Result<(), ApiErro
         }
     }
     Ok(())
-}
-
-fn sandbox_manager_internal_url(base_url: &str, path: &str) -> String {
-    format!(
-        "{}/api/internal/{}",
-        base_url.trim().trim_end_matches('/'),
-        path.trim().trim_start_matches('/')
-    )
 }
 
 fn parse_name_status_z(value: &str) -> Result<Vec<RunWorkspaceChangedFile>, ApiError> {
@@ -2470,36 +2085,6 @@ mod tests {
         symlink(source.join("Cargo.toml"), workspace.join("Cargo.toml")).unwrap();
 
         assert!(validate_workspace_symlink_boundaries(workspace.as_path()).is_err());
-    }
-
-    #[test]
-    fn sandbox_manager_calls_use_the_internal_mtls_router_prefix() {
-        assert_eq!(
-            sandbox_manager_internal_url("https://sandbox-manager:8097/", "/sandboxes/leases"),
-            "https://sandbox-manager:8097/api/internal/sandboxes/leases"
-        );
-    }
-
-    #[test]
-    fn sandbox_output_replaces_worktree_but_preserves_git_metadata() {
-        let temp = tempfile::tempdir().unwrap();
-        let worktree = temp.path().join("worktree");
-        let output = temp.path().join("output");
-        std::fs::create_dir_all(worktree.join(".git")).unwrap();
-        std::fs::create_dir_all(worktree.join("stale")).unwrap();
-        std::fs::create_dir_all(output.join("src")).unwrap();
-        std::fs::write(worktree.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
-        std::fs::write(worktree.join("stale/file.txt"), "stale\n").unwrap();
-        std::fs::write(output.join("src/main.rs"), "fn main() {}\n").unwrap();
-
-        replace_worktree_from_sandbox_output(worktree.as_path(), output.as_path()).unwrap();
-
-        assert!(worktree.join(".git/HEAD").is_file());
-        assert!(!worktree.join("stale").exists());
-        assert_eq!(
-            std::fs::read_to_string(worktree.join("src/main.rs")).unwrap(),
-            "fn main() {}\n"
-        );
     }
 
     #[test]

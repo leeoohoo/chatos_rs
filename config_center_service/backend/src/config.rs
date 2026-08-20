@@ -48,11 +48,6 @@ pub const CONFIG_CENTER_CALLER_BOOTSTRAP_SECRETS: &[(&str, &str, &str)] = &[
         "change_me_config_center_project_service_signing_secret",
     ),
     (
-        "sandbox-manager",
-        "CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET",
-        "change_me_config_center_sandbox_manager_signing_secret",
-    ),
-    (
         "task-runner",
         "CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET",
         "change_me_config_center_task_runner_signing_secret",

@@ -11,7 +11,6 @@ pub(in crate::api) const PROJECT_READ_SCOPE: &str = "project.read";
 pub(in crate::api) const PROJECT_SYNC_SCOPE: &str = "project.sync";
 pub(in crate::api) const PROJECT_MCP_SCOPE: &str = "project.mcp";
 pub(in crate::api) const PROJECT_HARNESS_SCOPE: &str = "project.harness";
-pub(in crate::api) const PROJECT_ENVIRONMENT_SCOPE: &str = "project.environment";
 pub(in crate::api) const PROJECT_EXECUTION_CONTEXT_SCOPE: &str = "project.execution_context.read";
 
 pub(in crate::api) const CHATOS_CALLER: &str = "chatos-backend";
@@ -268,8 +267,6 @@ mod tests {
             database_url:
                 "mongodb://admin:admin@127.0.0.1:27018/project_management_test?authSource=admin"
                     .to_string(),
-            mcp_result_rabbitmq_url: "amqp://127.0.0.1:1/%2f".to_string(),
-            mcp_result_queue_prefix: "project_service.mcp.results.test".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
             user_service_internal_http_client: reqwest::Client::new(),
@@ -278,23 +275,11 @@ mod tests {
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_http_client: reqwest::Client::new(),
             local_connector_service_request_timeout: Duration::from_secs(1),
-            memory_engine_base_url: "http://127.0.0.1:7081".to_string(),
-            memory_engine_http_client: reqwest::Client::new(),
-            memory_engine_source_id: "test".to_string(),
-            memory_engine_internal_api_secret: None,
-            memory_engine_request_timeout: Duration::from_secs(1),
-            sandbox_manager_base_url: "http://127.0.0.1:8095".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_client_id: None,
-            sandbox_manager_client_key: None,
-            sandbox_image_mcp_request_timeout: Duration::from_secs(1),
             cloud_project_import_enabled: true,
             cloud_project_max_zip_bytes: 1024,
             cloud_project_max_unpacked_bytes: 1024,
             cloud_project_max_files: 10,
             cloud_project_git_timeout: Duration::from_secs(1),
-            environment_analysis_timeout: Duration::from_secs(60),
-            environment_analysis_stale_after: Duration::from_secs(60),
             task_runner_base_url: None,
             task_runner_request_timeout: Duration::from_secs(1),
             task_runner_internal_secret: None,

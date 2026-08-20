@@ -127,7 +127,7 @@ local_connector_client/dist/electron-linux/
 ```
 
 Linux currently ships the explicit `linux-browser` runtime profile. It contains the desktop app,
-Local Connector Core, sandbox MCP server, bundled `rg`, Plugin/Skill catalogs, SQLite migrations,
+Local Connector Core, bundled `rg`, Plugin/Skill catalogs, SQLite migrations,
 the fixed-identity Chrome extension, and the Linux native messaging host. The desktop shell loads
 the hosted ChatOS web application at runtime instead of packaging a local ChatOS frontend bundle. The
 client registers user-scoped manifests for both Google Chrome and Chromium when the user explicitly
@@ -220,4 +220,4 @@ Terminal exec remains available for MCP tools and relay diagnostics:
 4. Optional `cwd` must still resolve inside the authorized workspace.
 5. The response includes `exit_code`, `success`, `stdout`, `stderr`, timeout state, and truncation flags.
 
-Sandbox support is implemented locally by the Connector core. Task Runner calls the Local Connector relay facade, the facade sends `sandbox_request` messages over the outbound Connector WebSocket, and the client creates native local-process leases on the user's machine. The core rewrites `workspace_root` to the authorized local workspace's `.chatos/task-runner` directory, copies the authorized workspace into the local sandbox baseline/run workspace, starts the native sandbox MCP agent under the operating-system sandbox, proxies MCP calls to that process, and exports the output manifest on release. The relay facade does not create cloud sandboxes, does not call cloud Sandbox Manager, and never calls a user-machine localhost address.
+The compatibility sandbox facade remains a Local Connector authorization and pairing boundary. Task Runner sends `sandbox_request` messages through the outbound Connector WebSocket, and the client binds each lease to the authorized local workspace. MCP calls then execute through the Connector's existing workspace, terminal, browser, and plugin runtimes; no standalone sandbox MCP process is packaged or started, and release has no copied workspace to export. The relay facade never creates a server-side project workspace and never calls a user-machine localhost address.

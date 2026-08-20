@@ -4,6 +4,18 @@
 use super::*;
 
 impl MongoStore {
+    pub(in crate::store) async fn has_run_event_type(
+        &self,
+        run_id: &str,
+        event_type: &str,
+    ) -> Result<bool, String> {
+        self.run_events
+            .find_one(doc! { "run_id": run_id, "event_type": event_type }, None)
+            .await
+            .map(|event| event.is_some())
+            .map_err(|err| err.to_string())
+    }
+
     pub(in crate::store) async fn get_run_event(
         &self,
         run_id: &str,

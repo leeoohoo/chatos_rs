@@ -303,7 +303,6 @@ export interface AgentPromptCompleteness {
 
 export interface BindingConditions {
   task_profile?: string | null;
-  project_source_type?: string | null;
   runtime_provider?: string | null;
   schedule_mode?: string | null;
 }

@@ -11,7 +11,7 @@ use chatos_sandbox_contract::{
 use serde_json::{json, Value};
 
 use crate::sandbox::lease::shutdown_local_sandboxes;
-use crate::sandbox::process::native_process_sandbox_capability;
+use crate::sandbox::local_connector_execution_capability;
 use crate::sandbox::types::LocalSandboxNetworkAccess;
 use crate::{local_now_rfc3339, LocalRuntime};
 
@@ -518,7 +518,7 @@ fn sandbox_settings_payload(sandbox: &crate::sandbox::types::LocalSandboxState) 
 }
 
 async fn local_sandbox_backend_capabilities() -> Vec<SandboxBackendCapability> {
-    let process_capability = native_process_sandbox_capability().await;
+    let process_capability = local_connector_execution_capability();
     vec![process_capability]
 }
 
@@ -528,7 +528,7 @@ async fn ensure_sandbox_backend_ready(backend: SandboxBackendKind) -> Result<(),
             "the local client only supports the local_process sandbox backend",
         ));
     }
-    let capability = native_process_sandbox_capability().await;
+    let capability = local_connector_execution_capability();
     if capability.status == SandboxBackendReadinessStatus::Ready {
         Ok(())
     } else {

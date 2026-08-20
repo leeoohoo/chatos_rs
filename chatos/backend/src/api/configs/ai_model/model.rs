@@ -173,8 +173,6 @@ pub(super) fn model_settings_response_value(
         "memory_summary_thinking_level": settings.memory_summary_thinking_level,
         "project_management_agent_model_config_id": settings.project_management_agent_model_config_id,
         "project_management_agent_thinking_level": settings.project_management_agent_thinking_level,
-        "environment_initialization_model_config_id": settings.environment_initialization_model_config_id,
-        "environment_initialization_thinking_level": settings.environment_initialization_thinking_level,
         "updated_at": settings.updated_at,
     });
     if !settings.sync_warnings.is_empty() {

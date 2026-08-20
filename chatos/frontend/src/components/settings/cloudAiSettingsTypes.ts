@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-export type DefaultModelSlot = 'memory' | 'project' | 'environment';
+export type DefaultModelSlot = 'memory' | 'project';
 
 export interface DefaultModelDraft {
   modelId: string;
@@ -23,5 +23,4 @@ export type TaskModelDrafts = Record<string, TaskModelDraft>;
 export const emptyDefaultModelDrafts = (): DefaultModelDrafts => ({
   memory: { modelId: '', thinking: '' },
   project: { modelId: '', thinking: '' },
-  environment: { modelId: '', thinking: '' },
 });

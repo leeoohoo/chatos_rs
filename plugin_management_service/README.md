@@ -88,23 +88,22 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
 - `optional`：该 agent 可以按需调用。
 - `required`：该 agent 默认必须携带。
 
-项目来源通过运行上下文条件收口。MCP Management 根据 Project Execution Context 将文件、终端、浏览器和本地 Plugin 工具路由到 Local Connector，或将云端工具路由到云端 provider。模型和 Task Runner Agent 身份都不需要知道底层连接方式。
+项目工作区通过运行上下文收口。MCP Management 根据 Project Execution Context 将文件、终端、浏览器和本地 Plugin 工具统一路由到 Local Connector。模型和 Task Runner Agent 身份不感知底层连接方式。
 
-Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，并只登记两套稳定 Agent 身份：规划任务进入 `task_runner_plan_phase`，执行任务进入 `task_runner_run_phase`。项目实际使用 Local Connector 还是云端 provider 由 MCP Management 在建立 Runtime Session 时根据 Project Context 路由，Task Runner 和 Agent 身份不感知执行位置。
+Task Runner 的规划任务与执行任务复用底层模型运行时和 Worker，并只登记两套稳定 Agent 身份：规划任务进入 `task_runner_plan_phase`，执行任务进入 `task_runner_run_phase`。项目工作区能力由 MCP Management 在建立 Runtime Session 时路由到 Local Connector，Task Runner 和 Agent 身份不感知执行位置。
 
 ## 当前系统 Agent
 
 系统 Agent registry 登记当前代码中真实存在、具有独立 MCP/skills 能力边界的系统级智能体角色或运行模式：
 
 - `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
-- `chatos_local_conversation_agent`：Chat OS 本地普通对话智能体。面向 Local Connector 项目，具备独立的 Prompt 与 MCP 配置。
+- `project_requirement_execution_planner_agent`：项目需求执行规划智能体。把 Project Management 工作项拆成可确认、可执行的 Task Runner DAG。
 - `task_runner_plan_phase`：Task Runner 规划任务智能体。使用只读代码、任务/项目管理、资料读取和询问用户能力，不开放代码写入与终端执行。
 - `task_runner_run_phase`：Task Runner 执行任务智能体。负责代码修改、终端执行、测试、部署及工程验收。
-- `project_management_agent`：项目运行环境智能体。必需 `CodeMaintainerRead`、只读 `ProjectManagement`、`project_environment`、`sandbox_images`。
-- `project_management_local_agent`：本地项目运行环境智能体。面向本地项目的运行环境分析与依赖解析，配置独立于云端环境智能体。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
+- `memory_engine_summary_agent`、`memory_engine_rollup_agent`、`memory_engine_subject_memory_agent`、`memory_engine_memory_rollup_agent`、`memory_engine_thread_repair_agent`：Memory Engine 的消息总结、层级归并、主体记忆与上下文修复智能体。
 
-Chat OS 只有普通对话 Agent。规划开关不是第二个 Chat OS Agent，而是程序硬路由：程序使用当前用户、项目、会话和源消息上下文创建 `task_profile=chatos_plan && requires_execution=false` 的 Task Runner 任务，随后由 `task_runner_plan_phase` 读取项目事实并写入 Project Management 规划产物。用户进入项目执行流程后，程序调用 `project_requirement_execution_planner_agent` 创建等待确认的 Task Runner 执行 DAG。其他任务进入执行 Agent；项目工具的本地/云端执行位置由 MCP Management 路由。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
+Chat OS 只有普通对话 Agent。规划开关不是第二个 Chat OS Agent，而是程序硬路由：程序使用当前用户、项目、会话和源消息上下文创建 `task_profile=chatos_plan && requires_execution=false` 的 Task Runner 任务，随后由 `task_runner_plan_phase` 读取项目事实并写入 Project Management 规划产物。用户进入项目执行流程后，程序调用 `project_requirement_execution_planner_agent` 创建等待确认的 Task Runner 执行 DAG。其他任务进入执行 Agent；项目工具统一由 MCP Management 路由到 Local Connector。Chat OS 用户联系人、prompt 生成、Agent Builder、浏览器视觉等一次性模型辅助工具不逐条登记。
 
 ## 环境变量
 

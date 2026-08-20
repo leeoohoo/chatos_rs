@@ -4,9 +4,8 @@
 use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
     McpRecord, SystemMcpKey, CHATOS_TASK_RUNNER_MCP_RESOURCE_ID, LEGACY_BUILTIN_MCP_RUNTIME_KIND,
-    LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
-    PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID, SANDBOX_IMAGES_MCP_RESOURCE_ID,
-    SYSTEM_MCP_RUNTIME_KIND, TASK_PROCESS_LOG_MCP_RESOURCE_ID,
+    LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, SYSTEM_MCP_RUNTIME_KIND,
+    TASK_PROCESS_LOG_MCP_RESOURCE_ID,
 };
 
 use crate::{SystemMcpBackend, SystemMcpHost};
@@ -47,16 +46,10 @@ const CHATOS_TASK_LOCAL_HOSTS: &[SystemMcpHost] = &[
 const CHATOS_TASK_HOSTS: &[SystemMcpHost] = &[SystemMcpHost::Chatos, SystemMcpHost::TaskRunner];
 const TASK_AND_LOCAL_HOSTS: &[SystemMcpHost] =
     &[SystemMcpHost::TaskRunner, SystemMcpHost::LocalConnector];
-const TASK_RUNNER_HOST: &[SystemMcpHost] = &[SystemMcpHost::TaskRunner];
 const CHATOS_HOST: &[SystemMcpHost] = &[SystemMcpHost::Chatos];
 const CHATOS_AND_LOCAL_HOSTS: &[SystemMcpHost] =
     &[SystemMcpHost::Chatos, SystemMcpHost::LocalConnector];
-const PROJECT_SERVICE_HOST: &[SystemMcpHost] = &[SystemMcpHost::ProjectManagementService];
 const LOCAL_CONNECTOR_HOST: &[SystemMcpHost] = &[SystemMcpHost::LocalConnector];
-const PROJECT_AND_SANDBOX_HOSTS: &[SystemMcpHost] = &[
-    SystemMcpHost::ProjectManagementService,
-    SystemMcpHost::SandboxManagerService,
-];
 const NO_RUNTIME_HOSTS: &[SystemMcpHost] = &[];
 
 macro_rules! embedded_descriptor {
@@ -78,7 +71,7 @@ macro_rules! embedded_descriptor {
     };
 }
 
-static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
+static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 16] = [
     embedded_descriptor!(
         CodeMaintainerRead,
         "builtin_code_maintainer_read",
@@ -231,50 +224,6 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 19] = [
         CHATOS_HOST,
         MemoryPluginReader
     ),
-    SystemMcpDescriptor {
-        key: SystemMcpKey::SandboxImages,
-        resource_id: SANDBOX_IMAGES_MCP_RESOURCE_ID,
-        server_name: "sandbox_images",
-        display_name: "Sandbox Images",
-        description: "Sandbox image discovery and preparation tools for project environments.",
-        allow_writes: true,
-        tags: &["system", "sandbox", "images"],
-        category: Some("project_environment"),
-        owner_service: "sandbox_manager_service",
-        backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: PROJECT_AND_SANDBOX_HOSTS,
-        embedded_kind: None,
-    },
-    SystemMcpDescriptor {
-        key: SystemMcpKey::ProjectEnvironment,
-        resource_id: PROJECT_ENVIRONMENT_MCP_RESOURCE_ID,
-        server_name: "project_environment",
-        display_name: "Project Environment",
-        description:
-            "Project environment state tools used by the Project Runtime Environment Agent.",
-        allow_writes: true,
-        tags: &["system", "project", "environment"],
-        category: Some("project_environment"),
-        owner_service: "project_management_service",
-        backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: PROJECT_SERVICE_HOST,
-        embedded_kind: None,
-    },
-    SystemMcpDescriptor {
-        key: SystemMcpKey::ProjectRuntimeEnvironment,
-        resource_id: PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID,
-        server_name: "project_runtime_environment",
-        display_name: "Project Runtime Environment",
-        description:
-            "Read-only initialized runtime environment information for Task Runner execution.",
-        allow_writes: false,
-        tags: &["system", "project", "runtime", "environment", "task_runner"],
-        category: Some("task_runner"),
-        owner_service: "project_management_service",
-        backend: SystemMcpBackend::ServiceHttp,
-        implementation_hosts: TASK_RUNNER_HOST,
-        embedded_kind: None,
-    },
     SystemMcpDescriptor {
         key: SystemMcpKey::LocalCommandApproval,
         resource_id: LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,

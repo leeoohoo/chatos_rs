@@ -15,10 +15,6 @@ use crate::plugin_runtime::{
 };
 
 pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
-pub const SANDBOX_IMAGES_MCP_RESOURCE_ID: &str = "system_mcp_sandbox_images";
-pub const PROJECT_ENVIRONMENT_MCP_RESOURCE_ID: &str = "system_mcp_project_environment";
-pub const PROJECT_RUNTIME_ENVIRONMENT_MCP_RESOURCE_ID: &str =
-    "system_mcp_project_runtime_environment";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
 pub const TASK_PROCESS_LOG_MCP_RESOURCE_ID: &str = "system_mcp_task_process_log";
 
@@ -69,16 +65,13 @@ pub enum SystemMcpKey {
     MemorySkillReader,
     MemoryCommandReader,
     MemoryPluginReader,
-    SandboxImages,
-    ProjectEnvironment,
-    ProjectRuntimeEnvironment,
     LocalCommandApproval,
     TaskProcessLog,
     TaskRunnerService,
 }
 
 impl SystemMcpKey {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 16] = [
         Self::CodeMaintainerRead,
         Self::CodeMaintainerWrite,
         Self::TerminalController,
@@ -92,9 +85,6 @@ impl SystemMcpKey {
         Self::MemorySkillReader,
         Self::MemoryCommandReader,
         Self::MemoryPluginReader,
-        Self::SandboxImages,
-        Self::ProjectEnvironment,
-        Self::ProjectRuntimeEnvironment,
         Self::LocalCommandApproval,
         Self::TaskProcessLog,
         Self::TaskRunnerService,
@@ -116,9 +106,6 @@ impl SystemMcpKey {
             Self::MemorySkillReader => "memory_skill_reader",
             Self::MemoryCommandReader => "memory_command_reader",
             Self::MemoryPluginReader => "memory_plugin_reader",
-            Self::SandboxImages => "sandbox_images",
-            Self::ProjectEnvironment => "project_environment",
-            Self::ProjectRuntimeEnvironment => "project_runtime_environment",
             Self::LocalCommandApproval => "local_command_approval",
             Self::TaskProcessLog => "task_process_log",
             Self::TaskRunnerService => "task_runner_service",
@@ -148,14 +135,9 @@ impl std::str::FromStr for SystemMcpKey {
 #[serde(rename_all = "snake_case")]
 pub enum SystemAgentKey {
     ChatosConversationAgent,
-    ChatosLocalConversationAgent,
-    ChatosPlanningAgent,
     ProjectRequirementExecutionPlannerAgent,
-    ProjectRequirementExecutionLocalPlannerAgent,
     TaskRunnerPlanPhase,
     TaskRunnerRunPhase,
-    ProjectManagementAgent,
-    ProjectManagementLocalAgent,
     LocalConnectorCommandApprovalAgent,
     MemoryEngineSummaryAgent,
     MemoryEngineRollupAgent,
@@ -165,16 +147,11 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 10] = [
         Self::ChatosConversationAgent,
-        Self::ChatosLocalConversationAgent,
-        Self::ChatosPlanningAgent,
         Self::ProjectRequirementExecutionPlannerAgent,
-        Self::ProjectRequirementExecutionLocalPlannerAgent,
         Self::TaskRunnerPlanPhase,
         Self::TaskRunnerRunPhase,
-        Self::ProjectManagementAgent,
-        Self::ProjectManagementLocalAgent,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
         Self::MemoryEngineRollupAgent,
@@ -186,18 +163,11 @@ impl SystemAgentKey {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
-            Self::ChatosLocalConversationAgent => "chatos_local_conversation_agent",
-            Self::ChatosPlanningAgent => "chatos_planning_agent",
             Self::ProjectRequirementExecutionPlannerAgent => {
                 "project_requirement_execution_planner_agent"
             }
-            Self::ProjectRequirementExecutionLocalPlannerAgent => {
-                "project_requirement_execution_local_planner_agent"
-            }
             Self::TaskRunnerPlanPhase => "task_runner_plan_phase",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
-            Self::ProjectManagementAgent => "project_management_agent",
-            Self::ProjectManagementLocalAgent => "project_management_local_agent",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
             Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",
             Self::MemoryEngineRollupAgent => "memory_engine_rollup_agent",
@@ -272,8 +242,6 @@ pub struct ResolveAgentCapabilitiesRequest {
     #[serde(default)]
     pub task_profile: Option<String>,
     #[serde(default)]
-    pub project_source_type: Option<String>,
-    #[serde(default)]
     pub runtime_provider: Option<String>,
     #[serde(default)]
     pub schedule_mode: Option<String>,
@@ -288,7 +256,6 @@ impl ResolveAgentCapabilitiesRequest {
             owner_user_id: owner_user_id.into(),
             include_unavailable: true,
             task_profile: None,
-            project_source_type: None,
             runtime_provider: None,
             schedule_mode: None,
             device_id: None,
@@ -298,12 +265,10 @@ impl ResolveAgentCapabilitiesRequest {
     pub fn with_runtime_context(
         mut self,
         task_profile: Option<String>,
-        project_source_type: Option<String>,
         runtime_provider: Option<String>,
         schedule_mode: Option<String>,
     ) -> Self {
         self.task_profile = task_profile;
-        self.project_source_type = project_source_type;
         self.runtime_provider = runtime_provider;
         self.schedule_mode = schedule_mode;
         self
@@ -484,7 +449,6 @@ pub struct SkillRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct BindingConditions {
     pub task_profile: Option<String>,
-    pub project_source_type: Option<String>,
     pub runtime_provider: Option<String>,
     pub schedule_mode: Option<String>,
 }

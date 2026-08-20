@@ -27,13 +27,11 @@ bash docker/deploy.sh build-services
 当前常用服务名：
 
 ```text
-sandbox-agent-image
 user-service-backend
 memory-engine-backend
 project-management-backend
 plugin-management-backend
 local-connector-service-backend
-sandbox-manager-backend
 task-runner-backend
 chatos-backend
 official-website-backend
@@ -43,7 +41,6 @@ memory-engine-frontend
 project-management-frontend
 plugin-management-frontend
 task-runner-frontend
-sandbox-manager-frontend
 official-website-frontend
 ```
 

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_management_sdk::{
-    ProjectExecutionContext, ResolvedMcpRoute, SandboxExecutionTarget, WorkspaceProviderKind,
-};
+use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute, WorkspaceProviderKind};
 use chatos_plugin_management_sdk::{
     PluginExecutionHost, PluginManagementClient, PluginMcpServer,
     ResolvePluginMcpCloudCredentialsRequest,
@@ -22,11 +20,8 @@ impl PluginCloudProvider {
         immutable: &PluginMcpRuntimeBinding,
         route: &ResolvedMcpRoute,
         context: &ProjectExecutionContext,
-        target: Option<&SandboxExecutionTarget>,
         runtime_session_id: &str,
         owner_user_id: &str,
-        project_id: &str,
-        run_id: Option<&str>,
         expires_at_unix: i64,
     ) -> Result<PreparedPluginCloudRoute, ProviderCallError> {
         if !self.supports(route)
@@ -90,40 +85,9 @@ impl PluginCloudProvider {
             ));
         }
         match bundle.effective_runtime() {
-            PluginMcpServer::Stdio { .. } => {
-                if !credentials.headers.is_empty() || credentials.oauth_connection_id.is_some() {
-                    return Err(ProviderCallError::invalid_response(
-                        "Plugin stdio credential response contains HTTP-only values",
-                    ));
-                }
-                let target = target.ok_or_else(|| {
-                    ProviderCallError::provider_unavailable(
-                        "Plugin Cloud stdio requires a bound sandbox target",
-                    )
-                })?;
-                let binding = self
-                    .cloud_stdio
-                    .prepare_plugin_binding(immutable, route, &credentials.environment, &bundle)
-                    .map_err(ProviderCallError::provider_unavailable)?;
-                let tools = self
-                    .cloud_stdio
-                    .list_plugin_tools(
-                        target,
-                        runtime_session_id,
-                        owner_user_id,
-                        project_id,
-                        run_id,
-                        expires_at_unix,
-                        route.resource_id.as_str(),
-                        &binding,
-                    )
-                    .await?;
-                validate_tool_snapshot(tools.as_slice())?;
-                Ok(PreparedPluginCloudRoute::Stdio {
-                    binding: Box::new(binding),
-                    tools,
-                })
-            }
+            PluginMcpServer::Stdio { .. } => Err(ProviderCallError::provider_unavailable(
+                "Plugin cloud stdio execution is no longer supported; use Local Connector",
+            )),
             PluginMcpServer::Http { .. } => {
                 if !credentials.environment.is_empty() {
                     return Err(ProviderCallError::invalid_response(

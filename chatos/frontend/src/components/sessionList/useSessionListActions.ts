@@ -10,11 +10,8 @@ import {
 import type ApiClient from '../../lib/api/client';
 import { deriveNameFromPath, translateSessionListMessage } from './helpers';
 import type { ChatState, SessionSelectOptions } from '../../lib/store/types';
-import type { Project, RemoteConnection, Session, Terminal } from '../../types';
-import type {
-  LocalConnectorWorkspaceOption,
-  ResourceSourceMode,
-} from './CreateResourceModals';
+import type { RemoteConnection, Session, Terminal } from '../../types';
+import type { LocalConnectorWorkspaceOption } from './CreateResourceModals';
 import type { ContactItem } from './types';
 
 type ActivePanel = ChatState['activePanel'];
@@ -55,38 +52,22 @@ interface SessionListActionsParams {
   setIsRefreshing: (value: boolean) => void;
   setIsRefreshingTerminals: (value: boolean) => void;
   setIsRefreshingRemote: (value: boolean) => void;
-  setProjectRoot: (value: string) => void;
-  setCloudProjectName: (value: string) => void;
-  setCloudProjectGitUrl: (value: string) => void;
-  setCloudProjectZipFile: (value: File | null) => void;
   setProjectError: (value: string | null) => void;
   setProjectModalOpen: (value: boolean) => void;
-  setProjectSourceMode: (value: ResourceSourceMode) => void;
   setTerminalError: (value: string | null) => void;
   setTerminalModalOpen: (value: boolean) => void;
   setTerminalExecuting: (value: boolean) => void;
   setKeyFilePickerOpen: (value: boolean) => void;
   openRemoteModalBase: () => void;
-  createCloudProject: (input: {
-    name: string;
-    gitUrl?: string;
-    zipFile?: File | null;
-    description?: string;
-  }) => Promise<Project>;
   createTerminal: (cwd: string, name: string) => Promise<Terminal>;
   selectProject: (projectId: string) => Promise<void>;
   selectTerminal: (terminalId: string) => Promise<void>;
   loadProjects: (options?: { force?: boolean }) => Promise<unknown>;
-  projectSourceMode: ResourceSourceMode;
   localConnectorWorkspaces: LocalConnectorWorkspaceOption[];
   selectedLocalConnectorWorkspaceId: string;
   selectedLocalConnectorDirectoryPath?: string;
   selectRemoteConnection: (connectionId: string) => Promise<void>;
   openRemoteSftp: (connectionId: string) => Promise<void>;
-  cloudProjectName: string;
-  cloudProjectGitUrl: string;
-  cloudProjectZipFile: File | null;
-  allowLocalProjectCreation: boolean;
 }
 
 export const useSessionListActions = ({
@@ -109,33 +90,22 @@ export const useSessionListActions = ({
   setIsRefreshing,
   setIsRefreshingTerminals,
   setIsRefreshingRemote,
-  setProjectRoot,
-  setCloudProjectName,
-  setCloudProjectGitUrl,
-  setCloudProjectZipFile,
   setProjectError,
   setProjectModalOpen,
-  setProjectSourceMode,
   setTerminalError,
   setTerminalModalOpen,
   setTerminalExecuting,
   setKeyFilePickerOpen,
   openRemoteModalBase,
-  createCloudProject,
   createTerminal,
   selectProject,
   selectTerminal,
   loadProjects,
-  projectSourceMode,
   localConnectorWorkspaces,
   selectedLocalConnectorWorkspaceId,
   selectedLocalConnectorDirectoryPath = '',
   selectRemoteConnection,
   openRemoteSftp,
-  cloudProjectName,
-  cloudProjectGitUrl,
-  cloudProjectZipFile,
-  allowLocalProjectCreation,
 }: SessionListActionsParams) => {
   const localConnectorRelativePath = selectedLocalConnectorDirectoryPath.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 
@@ -221,21 +191,11 @@ export const useSessionListActions = ({
   }, [loadRemoteConnections, setIsRefreshingRemote]);
 
   const openProjectModal = useCallback(() => {
-    setProjectRoot('');
-    setCloudProjectName('');
-    setCloudProjectGitUrl('');
-    setCloudProjectZipFile(null);
     setProjectError(null);
-    setProjectSourceMode('server');
     setProjectModalOpen(true);
   }, [
-    setCloudProjectGitUrl,
-    setCloudProjectName,
-    setCloudProjectZipFile,
     setProjectError,
     setProjectModalOpen,
-    setProjectRoot,
-    setProjectSourceMode,
   ]);
 
   const openTerminalModal = useCallback(() => {
@@ -252,67 +212,35 @@ export const useSessionListActions = ({
   }, [openRemoteModalBase, setKeyFilePickerOpen]);
 
   const handleCreateProject = useCallback(async () => {
-    if (projectSourceMode === 'local_connector') {
-      if (!allowLocalProjectCreation) {
-        setProjectError('当前配置未开启本地项目创建');
-        return;
-      }
-      const workspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalConnectorWorkspaceId);
-      if (!workspace) {
-        setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.selectLocalConnectorWorkspace'));
-        return;
-      }
-      try {
-        const name = deriveNameFromPath(localConnectorRelativePath || workspace.alias, 'Project');
-        const created = await apiClient.createLocalConnectorProject({
-          name,
-          device_id: workspace.deviceId,
-          workspace_id: workspace.id,
-          relative_path: localConnectorRelativePath || undefined,
-        });
-        if (created.id) {
-          await selectProject(created.id);
-        }
-        void loadProjects({ force: true }).catch((error) => {
-          console.warn('Background cloud project refresh failed after local project creation.', error);
-        });
-        setProjectModalOpen(false);
-      } catch (error) {
-        setProjectError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createProjectFailed'));
-      }
+    const workspace = localConnectorWorkspaces.find((item) => item.id === selectedLocalConnectorWorkspaceId);
+    if (!workspace) {
+      setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.selectLocalConnectorWorkspace'));
       return;
     }
-    const normalizedName = cloudProjectName.trim();
-    const normalizedGitUrl = cloudProjectGitUrl.trim();
-    if (!normalizedName) {
-      setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.enterProjectName'));
-      return;
-    }
-    if (normalizedGitUrl && cloudProjectZipFile) {
-      setProjectError(translateSessionListMessage(t, 'sessionList.resource.error.gitUrlOrZipOnly'));
-      return;
-    }
+    setProjectError(null);
     try {
-      await createCloudProject({
-        name: normalizedName,
-        gitUrl: normalizedGitUrl || undefined,
-        zipFile: cloudProjectZipFile,
+      const name = deriveNameFromPath(localConnectorRelativePath || workspace.alias, 'Project');
+      const created = await apiClient.createLocalConnectorProject({
+        name,
+        device_id: workspace.deviceId,
+        workspace_id: workspace.id,
+        relative_path: localConnectorRelativePath || undefined,
+      });
+      if (created.id) {
+        await selectProject(created.id);
+      }
+      void loadProjects({ force: true }).catch((error) => {
+        console.warn('Background project refresh failed after Local Connector project creation.', error);
       });
       setProjectModalOpen(false);
     } catch (error) {
       setProjectError(error instanceof Error ? error.message : translateSessionListMessage(t, 'sessionList.resource.error.createProjectFailed'));
     }
   }, [
-    allowLocalProjectCreation,
     apiClient,
-    cloudProjectGitUrl,
-    cloudProjectName,
-    cloudProjectZipFile,
-    createCloudProject,
     loadProjects,
     localConnectorWorkspaces,
     localConnectorRelativePath,
-    projectSourceMode,
     selectedLocalConnectorWorkspaceId,
     selectProject,
     setProjectError,

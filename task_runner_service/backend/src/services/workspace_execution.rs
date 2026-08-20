@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_management_sdk::{
-    HarnessBranchTarget, McpProviderKind, RuntimeProviderFinalization,
-    RuntimeProviderFinalizationStatus, RuntimeWorkspaceRouteTarget,
+    McpProviderKind, RuntimeProviderFinalization, RuntimeProviderFinalizationStatus,
+    RuntimeWorkspaceRouteTarget,
 };
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
@@ -14,8 +14,8 @@ use crate::models::{
 };
 
 use super::project_management_api_client::{
-    FinalizeRunWorkspaceRequest, IntegrateRunWorkspaceRequest, PrepareRunWorkspaceRequest,
-    PrepareRunWorkspaceResponse, PreparedRunBranch, RunWorkspaceIntegrationResultStatus,
+    FinalizeRunWorkspaceRequest, IntegrateRunWorkspaceRequest, PreparedRunBranch,
+    RunWorkspaceIntegrationResultStatus,
 };
 use super::RunService;
 
@@ -23,9 +23,6 @@ use super::RunService;
 pub(crate) enum WorkspaceRouteDecision {
     None,
     LocalConnector,
-    HarnessDefaultBranch,
-    HarnessRunBranch,
-    CloudSandboxRunBranch,
 }
 
 struct PreparedWorkspaceExecution {
@@ -34,13 +31,6 @@ struct PreparedWorkspaceExecution {
     execution_group_id: Option<String>,
     execution_branch_ref: Option<String>,
     execution_base_commit: Option<String>,
-}
-
-fn retain_sandbox_for_diagnostics(status: crate::models::ModelPhaseStatus) -> bool {
-    matches!(
-        status,
-        crate::models::ModelPhaseStatus::Failed | crate::models::ModelPhaseStatus::Blocked
-    )
 }
 
 fn workspace_execution(status: WorkspacePreparationStatus) -> TaskRunWorkspaceExecution {
@@ -342,35 +332,12 @@ pub(crate) fn task_runtime_capability_fingerprint(task: &TaskRecord) -> String {
 }
 
 pub(crate) fn decide_workspace_route(
-    has_harness_repo: bool,
     tools: &EffectiveTaskToolSnapshot,
 ) -> Result<WorkspaceRouteDecision, String> {
     if !tools.uses_workspace() {
         return Ok(WorkspaceRouteDecision::None);
     }
-    if has_harness_repo {
-        if tools.terminal {
-            return Ok(WorkspaceRouteDecision::CloudSandboxRunBranch);
-        }
-        if tools.workspace_write {
-            return Ok(WorkspaceRouteDecision::HarnessRunBranch);
-        }
-        return Ok(WorkspaceRouteDecision::HarnessDefaultBranch);
-    }
     Ok(WorkspaceRouteDecision::LocalConnector)
-}
-
-fn project_has_harness_repo(project: &crate::models::TaskProjectRecord) -> bool {
-    project
-        .harness_repo_identifier
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-        || project
-            .harness_git_url
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
 }
 
 pub(crate) async fn model_execution_lane_key(
@@ -489,117 +456,34 @@ async fn prepare_workspace_inner(
     )
     .await?
     .ok_or_else(|| format!("project not found while preparing Task Run workspace: {project_id}"))?;
-    let decision =
-        decide_workspace_route(project_has_harness_repo(&project), &run.effective_tools)?;
+    let decision = decide_workspace_route(&run.effective_tools)?;
     match decision {
         WorkspaceRouteDecision::None => {
             Err("workspace preparation was requested without workspace tools".to_string())
         }
-        WorkspaceRouteDecision::LocalConnector => Ok(PreparedWorkspaceExecution {
-            route: RuntimeWorkspaceRouteTarget::LocalConnector {
-                default_tool_root: single_owned_workspace_root(task)?,
-            },
-            branch_target: TaskRunBranchTarget::Local,
-            execution_group_id: run
-                .effective_tools
-                .mutates_workspace()
-                .then(|| execution_group_id_for_task(task)),
-            execution_branch_ref: None,
-            execution_base_commit: None,
-        }),
-        WorkspaceRouteDecision::HarnessDefaultBranch
-        | WorkspaceRouteDecision::HarnessRunBranch
-        | WorkspaceRouteDecision::CloudSandboxRunBranch => {
-            let create_run_branch = matches!(
-                decision,
-                WorkspaceRouteDecision::HarnessRunBranch
-                    | WorkspaceRouteDecision::CloudSandboxRunBranch
-            );
-            let create_cloud_sandbox = decision == WorkspaceRouteDecision::CloudSandboxRunBranch;
-            let execution_group_id = create_run_branch.then(|| execution_group_id_for_task(task));
-            let response = super::project_management_api_client::prepare_run_workspace(
-                &service.config,
-                project_id.as_str(),
-                run.id.as_str(),
-                &PrepareRunWorkspaceRequest {
-                    owner_user_id: task_owner_user_id(task)?,
-                    tenant_id: task.tenant_id.trim().to_string(),
-                    create_run_branch,
-                    create_cloud_sandbox,
-                    execution_group_id: execution_group_id.clone(),
-                    expected_execution_commit: None,
-                },
-            )
-            .await?;
-            validate_prepared_identity(&response, project_id.as_str(), run.id.as_str())?;
-            match decision {
-                WorkspaceRouteDecision::HarnessDefaultBranch => {
-                    let branch_ref = response.default_branch;
-                    Ok(PreparedWorkspaceExecution {
-                        route: RuntimeWorkspaceRouteTarget::Harness {
-                            branch: HarnessBranchTarget::Default {
-                                branch_ref: branch_ref.clone(),
-                            },
-                        },
-                        branch_target: TaskRunBranchTarget::Default { branch_ref },
-                        execution_group_id: None,
-                        execution_branch_ref: None,
-                        execution_base_commit: None,
-                    })
-                }
-                WorkspaceRouteDecision::HarnessRunBranch => {
-                    let branch = response.branch.ok_or_else(|| {
-                        "Project Service did not return the required run branch".to_string()
-                    })?;
-                    Ok(PreparedWorkspaceExecution {
-                        route: RuntimeWorkspaceRouteTarget::Harness {
-                            branch: HarnessBranchTarget::Run {
-                                branch_id: branch.branch_id.clone(),
-                                branch_ref: branch.branch_ref.clone(),
-                                base_branch: branch.base_branch.clone(),
-                                base_commit: branch.base_commit.clone(),
-                            },
-                        },
-                        branch_target: TaskRunBranchTarget::Run {
-                            branch_id: branch.branch_id,
-                            branch_ref: branch.branch_ref,
-                            base_branch: branch.base_branch,
-                            base_commit: branch.base_commit,
-                        },
-                        execution_group_id,
-                        execution_branch_ref: response.execution_branch_ref,
-                        execution_base_commit: response.execution_base_commit,
-                    })
-                }
-                WorkspaceRouteDecision::CloudSandboxRunBranch => {
-                    if response.branch.is_none() {
-                        return Err(
-                            "Project Service did not prepare the required sandbox source branch"
-                                .to_string(),
-                        );
-                    }
-                    let target = response.sandbox_target.ok_or_else(|| {
-                        "Project Service did not return the required cloud sandbox target"
-                            .to_string()
-                    })?;
-                    let branch = response.branch.expect("branch checked above");
-                    Ok(PreparedWorkspaceExecution {
-                        route: RuntimeWorkspaceRouteTarget::CloudSandbox { target },
-                        branch_target: TaskRunBranchTarget::Run {
-                            branch_id: branch.branch_id,
-                            branch_ref: branch.branch_ref,
-                            base_branch: branch.base_branch,
-                            base_commit: branch.base_commit,
-                        },
-                        execution_group_id,
-                        execution_branch_ref: response.execution_branch_ref,
-                        execution_base_commit: response.execution_base_commit,
-                    })
-                }
-                WorkspaceRouteDecision::None | WorkspaceRouteDecision::LocalConnector => {
-                    unreachable!("non-cloud decisions returned from cloud preparation")
-                }
+        WorkspaceRouteDecision::LocalConnector => {
+            let has_local_workspace = project
+                .root_path
+                .as_deref()
+                .and_then(chatos_project_execution::parse_local_connector_workspace_root)
+                .is_some();
+            if !has_local_workspace {
+                return Err(
+                    "project workspace tools require a bound Local Connector workspace".to_string(),
+                );
             }
+            Ok(PreparedWorkspaceExecution {
+                route: RuntimeWorkspaceRouteTarget::LocalConnector {
+                    default_tool_root: single_owned_workspace_root(task)?,
+                },
+                branch_target: TaskRunBranchTarget::Local,
+                execution_group_id: run
+                    .effective_tools
+                    .mutates_workspace()
+                    .then(|| execution_group_id_for_task(task)),
+                execution_branch_ref: None,
+                execution_base_commit: None,
+            })
         }
     }
 }
@@ -643,17 +527,6 @@ fn task_owner_user_id(task: &TaskRecord) -> Result<String, String> {
     } else {
         Ok(owner_user_id)
     }
-}
-
-fn validate_prepared_identity(
-    response: &PrepareRunWorkspaceResponse,
-    project_id: &str,
-    run_id: &str,
-) -> Result<(), String> {
-    if response.project_id.trim() != project_id || response.run_id.trim() != run_id {
-        return Err("Project Service returned a workspace for a different Task Run".to_string());
-    }
-    Ok(())
 }
 
 pub(crate) async fn load_task_run_workspace_changes(
@@ -768,19 +641,13 @@ pub(crate) async fn finalize_task_run_workspace(
         }),
         Some(TaskRunBranchTarget::Local | TaskRunBranchTarget::Default { .. }) | None => None,
     };
-    let sandbox_target = execution
-        .route
-        .as_ref()
-        .and_then(RuntimeWorkspaceRouteTarget::sandbox_target)
-        .cloned();
-    if branch.is_none() && sandbox_target.is_none() {
+    if branch.is_none() {
         mark_workspace_finalized(service, run, None, false).await?;
         return Ok(());
     }
     let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
     let owner_user_id = task_owner_user_id(task)?;
     if execution.finalized_at.is_none() {
-        let retain_sandbox_for_diagnostics = retain_sandbox_for_diagnostics(run.model_phase_status);
         let response = super::project_management_api_client::finalize_run_workspace(
             &service.config,
             project_id.as_str(),
@@ -788,8 +655,6 @@ pub(crate) async fn finalize_task_run_workspace(
             &FinalizeRunWorkspaceRequest {
                 owner_user_id: owner_user_id.clone(),
                 branch: branch.clone(),
-                sandbox_target,
-                destroy_sandbox: !retain_sandbox_for_diagnostics,
             },
         )
         .await;
@@ -1109,62 +974,26 @@ mod tests {
     }
 
     #[test]
-    fn cloud_terminal_can_only_choose_cloud_sandbox() {
+    fn workspace_tools_always_choose_local_connector() {
         assert_eq!(
-            decide_workspace_route(true, &tools(true, true, true)).unwrap(),
-            WorkspaceRouteDecision::CloudSandboxRunBranch
+            decide_workspace_route(&tools(true, true, true)).unwrap(),
+            WorkspaceRouteDecision::LocalConnector
         );
-    }
-
-    #[test]
-    fn failed_and_blocked_runs_retain_the_sandbox_until_lease_expiry() {
-        assert!(retain_sandbox_for_diagnostics(
-            crate::models::ModelPhaseStatus::Failed
-        ));
-        assert!(retain_sandbox_for_diagnostics(
-            crate::models::ModelPhaseStatus::Blocked
-        ));
-        assert!(!retain_sandbox_for_diagnostics(
-            crate::models::ModelPhaseStatus::Succeeded
-        ));
-        assert!(!retain_sandbox_for_diagnostics(
-            crate::models::ModelPhaseStatus::Cancelled
-        ));
-    }
-
-    #[test]
-    fn cloud_write_uses_a_harness_run_branch_without_a_sandbox() {
         assert_eq!(
-            decide_workspace_route(true, &tools(true, true, false)).unwrap(),
-            WorkspaceRouteDecision::HarnessRunBranch
+            decide_workspace_route(&tools(true, true, false)).unwrap(),
+            WorkspaceRouteDecision::LocalConnector
         );
-    }
-
-    #[test]
-    fn cloud_read_only_uses_the_default_harness_branch() {
         assert_eq!(
-            decide_workspace_route(true, &tools(true, false, false)).unwrap(),
-            WorkspaceRouteDecision::HarnessDefaultBranch
-        );
-    }
-
-    #[test]
-    fn projects_without_harness_repo_use_local_connector_workspace() {
-        assert_eq!(
-            decide_workspace_route(false, &tools(true, true, true)).unwrap(),
+            decide_workspace_route(&tools(true, false, false)).unwrap(),
             WorkspaceRouteDecision::LocalConnector
         );
     }
 
     #[test]
-    fn projects_with_harness_repo_use_harness_workspaces() {
+    fn tasks_without_workspace_tools_need_no_workspace_route() {
         assert_eq!(
-            decide_workspace_route(true, &tools(true, true, false)).unwrap(),
-            WorkspaceRouteDecision::HarnessRunBranch
-        );
-        assert_eq!(
-            decide_workspace_route(true, &tools(true, false, false)).unwrap(),
-            WorkspaceRouteDecision::HarnessDefaultBranch
+            decide_workspace_route(&tools(false, false, false)).unwrap(),
+            WorkspaceRouteDecision::None
         );
     }
 

@@ -196,13 +196,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         closeTaskRunnerConfig={controller.closeTaskRunnerConfig}
         saveTaskRunnerConfig={controller.saveTaskRunnerConfig}
         projectModalOpen={controller.projectModalOpen}
-        projectRoot={controller.projectRoot}
-        cloudProjectName={controller.cloudProjectName}
-        cloudProjectGitUrl={controller.cloudProjectGitUrl}
-        cloudProjectZipFile={controller.cloudProjectZipFile}
         projectError={controller.projectError}
-        projectSourceMode={controller.projectSourceMode}
-        allowLocalProjectCreation={controller.allowLocalProjectCreation}
         localConnectorWorkspaces={controller.localConnectorWorkspaces}
         localConnectorLoading={controller.localConnectorLoading}
         localConnectorError={controller.localConnectorError}
@@ -214,14 +208,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         selectedLocalConnectorDirectoryPath={controller.selectedLocalConnectorDirectoryPath}
         selectedLocalConnectorWorkspaceId={controller.selectedLocalConnectorWorkspaceId}
         setProjectModalOpen={controller.setProjectModalOpen}
-        setProjectSourceMode={controller.setProjectSourceMode}
-        setProjectRoot={controller.setProjectRoot}
-        setCloudProjectName={controller.setCloudProjectName}
-        setCloudProjectGitUrl={controller.setCloudProjectGitUrl}
-        setCloudProjectZipFile={controller.setCloudProjectZipFile}
-        openDirPickerForProject={() => {
-          void controller.localFsPickers.openDirPicker('project');
-        }}
         refreshLocalConnectorWorkspaces={controller.refreshLocalConnectorWorkspaces}
         setSelectedLocalConnectorWorkspaceId={controller.setSelectedLocalConnectorWorkspaceId}
         browseLocalConnectorDirectory={controller.browseLocalConnectorDirectory}
@@ -302,25 +288,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         closeKeyFilePicker={controller.localFsPickers.closeKeyFilePicker}
         loadKeyFileEntries={controller.localFsPickers.loadKeyFileEntries}
         applySelectedKeyFile={controller.localFsPickers.applySelectedKeyFile}
-        dirPickerOpen={controller.localFsPickers.dirPickerOpen}
-        dirPickerPath={controller.localFsPickers.dirPickerPath}
-        dirPickerParent={controller.localFsPickers.dirPickerParent}
-        dirPickerWritable={controller.localFsPickers.dirPickerWritable}
-        dirPickerLoading={controller.localFsPickers.dirPickerLoading}
-        dirPickerItems={controller.localFsPickers.dirPickerItems}
-        dirPickerError={controller.localFsPickers.dirPickerError}
-        showHiddenDirs={controller.localFsPickers.showHiddenDirs}
-        dirPickerCreateModalOpen={controller.localFsPickers.dirPickerCreateModalOpen}
-        dirPickerNewFolderName={controller.localFsPickers.dirPickerNewFolderName}
-        dirPickerCreatingFolder={controller.localFsPickers.dirPickerCreatingFolder}
-        closeDirPicker={controller.localFsPickers.closeDirPicker}
-        chooseDir={controller.localFsPickers.chooseDir}
-        openCreateDirModal={controller.localFsPickers.openCreateDirModal}
-        setShowHiddenDirs={controller.localFsPickers.setShowHiddenDirs}
-        loadDirEntries={controller.localFsPickers.loadDirEntries}
-        setDirPickerCreateModalOpen={controller.localFsPickers.setDirPickerCreateModalOpen}
-        setDirPickerNewFolderName={controller.localFsPickers.setDirPickerNewFolderName}
-        createDirInPicker={controller.localFsPickers.createDirInPicker}
       />
     </div>
   );

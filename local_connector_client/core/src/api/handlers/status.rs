@@ -6,7 +6,7 @@ use axum::Json;
 use chatos_sandbox_contract::{PermissionProfileId, SandboxBackendCapability, SandboxBackendKind};
 use serde_json::{json, Value};
 
-use crate::sandbox::process::native_process_sandbox_capability;
+use crate::sandbox::local_connector_execution_capability;
 use crate::workspace::trust::workspace_project_config_trust_is_current;
 use crate::LocalRuntime;
 
@@ -37,7 +37,7 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
         &effective_policy,
         Vec::new(),
     );
-    let process_capability = native_process_sandbox_capability().await;
+    let process_capability = local_connector_execution_capability();
     let isolation = sandbox_isolation_status(effective_permission_profile, &process_capability);
     let connector_running = runtime
         .connector_task

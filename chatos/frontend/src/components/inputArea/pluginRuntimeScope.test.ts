@@ -14,8 +14,7 @@ import {
 const project = (overrides: Partial<Project> = {}): Project => ({
   id: 'project-1',
   name: 'Project',
-  rootPath: '/project',
-  sourceType: 'cloud',
+  rootPath: 'local://connector/device-1/workspace-1/project',
   createdAt: new Date(0),
   updatedAt: new Date(0),
   ...overrides,
@@ -49,17 +48,16 @@ const plugin = (
 });
 
 describe('Plugin runtime scope', () => {
-  it('resolves cloud projects without requiring a Local Connector device', () => {
+  it('resolves the bound Local Connector device', () => {
     expect(resolveTaskPluginRuntimeScope('conversation-1', project())).toEqual({
       projectId: 'project-1',
-      sourceKind: 'cloud',
-      localDeviceId: null,
+      sourceKind: 'local_connector',
+      localDeviceId: 'device-1',
     });
   });
 
-  it('requires the managed Local Connector device for a local project', () => {
+  it('rejects projects without a managed Local Connector root', () => {
     expect(resolveTaskPluginRuntimeScope('conversation-1', project({
-      sourceType: 'local_connector',
       rootPath: 'local://connector/device-1/workspace-1/apps/backend',
     }))).toEqual({
       projectId: 'project-1',
@@ -67,7 +65,6 @@ describe('Plugin runtime scope', () => {
       localDeviceId: 'device-1',
     });
     expect(resolveTaskPluginRuntimeScope('conversation-1', project({
-      sourceType: 'local_connector',
       rootPath: '/unmanaged/local/path',
     }))).toBeNull();
   });
@@ -82,13 +79,11 @@ describe('Plugin runtime scope', () => {
     )).toBeNull();
   });
 
-  it('keeps cloud projects cloud-only and local projects local-capable', () => {
+  it('keeps only Local Connector-capable Plugins', () => {
     const cloud = plugin('cloud', ['task_runner_cloud']);
     const local = plugin('local', ['local_connector']);
     const hybrid = plugin('hybrid', ['task_runner_cloud', 'local_connector']);
 
-    expect(filterPluginsForProjectRuntime([cloud, local, hybrid], 'cloud'))
-      .toEqual([cloud]);
     expect(filterPluginsForProjectRuntime([cloud, local, hybrid], 'local_connector'))
       .toEqual([local, hybrid]);
   });

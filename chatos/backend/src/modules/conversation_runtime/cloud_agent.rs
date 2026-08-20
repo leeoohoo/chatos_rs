@@ -68,7 +68,6 @@ struct ChatosCloudAgentRunInput {
     prompt_vendor: Option<String>,
     plan_mode: bool,
     project_requirement_execution_planner: bool,
-    local_project: bool,
     effective_settings: Value,
     max_tokens: Option<i64>,
     prefixed_input_items: Vec<Value>,
@@ -97,11 +96,7 @@ struct ChatosCloudAgentRunInput {
 
 impl ChatosCloudAgentRunInput {
     fn profile(&self) -> ChatosAgentProfile {
-        ChatosAgentProfile::from_project_locality(
-            self.plan_mode,
-            self.project_requirement_execution_planner,
-            self.local_project,
-        )
+        ChatosAgentProfile::from_flags(self.plan_mode, self.project_requirement_execution_planner)
     }
 
     fn validate_identity(&self, run: &CloudAgentRunRecord) -> Result<(), String> {
@@ -154,11 +149,6 @@ pub async fn start_chatos_cloud_agent(input: StartChatosCloudAgent<'_>) -> Resul
     )?
     .to_string();
     let agent_profile = input.runtime_context.agent_profile;
-    let local_project = matches!(
-        agent_profile.key(),
-        SystemAgentKey::ChatosLocalConversationAgent
-            | SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent
-    );
     let max_iterations =
         super::chat_execution::max_iterations_from_settings(&input.effective_settings);
     let lifecycle = CloudTaskTurnLifecycleState {
@@ -187,7 +177,6 @@ pub async fn start_chatos_cloud_agent(input: StartChatosCloudAgent<'_>) -> Resul
         project_requirement_execution_planner: input
             .runtime_context
             .project_requirement_execution_planner,
-        local_project,
         effective_settings: input.effective_settings.clone(),
         max_tokens: input.max_tokens,
         prefixed_input_items: input.prepared_mcp.prefixed_input_items,
@@ -479,9 +468,7 @@ fn runtime() -> Result<CloudAgentServiceRuntime<CloudAgentProfileRegistry>, Stri
     let registry = CloudAgentProfileRegistry::new("chatos", store).register(
         [
             SystemAgentKey::ChatosConversationAgent.as_str(),
-            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
-            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
         ],
         ChatosCloudAgentAdapter,
     )?;

@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Router,
 };
 
@@ -14,7 +14,6 @@ mod plan_handlers;
 mod requirement_execution;
 mod requirement_execution_handlers;
 mod run_handlers;
-mod runtime_environment_handlers;
 mod session_resolver;
 
 pub(crate) use self::requirement_execution_handlers::{
@@ -44,9 +43,7 @@ pub(crate) async fn reconcile_requirement_planner_owner_context(
 use self::contact_handlers::{
     add_project_contact, get_project_contact_lock, list_project_contacts, remove_project_contact,
 };
-use self::crud_handlers::{
-    create_cloud_project, delete_project, get_project, list_projects, update_project,
-};
+use self::crud_handlers::{delete_project, get_project, list_projects, update_project};
 use self::plan_handlers::{
     get_project_plan, list_requirement_documents, list_requirement_work_items,
 };
@@ -59,16 +56,9 @@ use self::run_handlers::{
     analyze_project_run, execute_project_run, get_project_run_catalog, get_project_run_environment,
     get_project_run_state, set_project_run_default, update_project_run_environment,
 };
-use self::runtime_environment_handlers::{
-    analyze_project_runtime_environment, generate_project_runtime_environment_image,
-    get_project_runtime_environment, get_project_runtime_environment_progress,
-    update_project_runtime_environment_settings,
-};
-
 pub fn router() -> Router {
     Router::new()
         .route("/api/projects", get(list_projects))
-        .route("/api/projects/cloud", post(create_cloud_project))
         .route(
             "/api/projects/{id}",
             get(get_project).put(update_project).delete(delete_project),
@@ -136,25 +126,5 @@ pub fn router() -> Router {
         .route(
             "/api/projects/{id}/run/environment",
             get(get_project_run_environment).put(update_project_run_environment),
-        )
-        .route(
-            "/api/projects/{id}/runtime-environment",
-            get(get_project_runtime_environment),
-        )
-        .route(
-            "/api/projects/{id}/runtime-environment/settings",
-            put(update_project_runtime_environment_settings),
-        )
-        .route(
-            "/api/projects/{id}/runtime-environment/analyze",
-            post(analyze_project_runtime_environment),
-        )
-        .route(
-            "/api/projects/{id}/runtime-environment/images/{image_record_id}/generate",
-            post(generate_project_runtime_environment_image),
-        )
-        .route(
-            "/api/projects/{id}/runtime-environment/progress",
-            get(get_project_runtime_environment_progress),
         )
 }

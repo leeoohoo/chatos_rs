@@ -41,7 +41,7 @@ export const useProjectExplorerState = (projectId?: string | null) => {
       return 'files';
     }
     const saved = window.localStorage.getItem(`project_workspace_tab_${projectId}`);
-    return saved === 'team' || saved === 'plan' || saved === 'settings' || saved === 'sandbox'
+    return saved === 'team' || saved === 'plan' || saved === 'settings'
       ? saved
       : 'files';
   });

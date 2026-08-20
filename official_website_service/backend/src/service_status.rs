@@ -161,15 +161,6 @@ fn status_targets() -> Vec<StatusTarget> {
             "/api/health",
         ),
         target(
-            4,
-            "Sandbox Manager",
-            "隔离沙箱租约与 MCP 代理",
-            "OFFICIAL_WEBSITE_STATUS_SANDBOX_MANAGER_URL",
-            "SANDBOX_MANAGER_PORT",
-            8095,
-            "/health",
-        ),
-        target(
             5,
             "Task Runner",
             "异步任务执行与回调",

@@ -64,13 +64,6 @@ pub(super) async fn dispatch_close_bound_cloud_browser_session(
             "configured Agent is not allowed to close ChatOS Browser Tools MCP",
         );
     }
-    if binding.sandbox_target.is_some() {
-        return jsonrpc_error(
-            id,
-            MCP_ERROR_INVALID_PARAMS,
-            "sandbox-bound Browser Runtime sessions must be closed through Sandbox Manager",
-        );
-    }
     let browser_binding = match cloud_browser_binding(&binding) {
         Ok(binding) => binding,
         Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
@@ -86,13 +79,6 @@ pub(super) async fn dispatch_bound_browser_tools(
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
     let id = request.id.unwrap_or(Value::Null);
-    if binding.sandbox_target.is_some() {
-        return jsonrpc_error(
-            id,
-            MCP_ERROR_INVALID_PARAMS,
-            "sandbox-bound Browser Tools must execute through the authorized Sandbox Browser Runtime",
-        );
-    }
     let browser_binding = match resolve_bound_cloud_browser(binding).await {
         Ok(binding) => binding,
         Err((code, message)) => return jsonrpc_error(id, code, message),
@@ -131,13 +117,6 @@ pub(super) async fn dispatch_bound_browser_tools_list(
     binding: &McpManagementBinding,
 ) -> JsonRpcResponse {
     let id = request.id.unwrap_or(Value::Null);
-    if binding.sandbox_target.is_some() {
-        return jsonrpc_error(
-            id,
-            MCP_ERROR_INVALID_PARAMS,
-            "sandbox-bound Browser Tools catalog must come from the authorized Sandbox Browser Runtime",
-        );
-    }
     let browser_binding = match resolve_bound_cloud_browser(binding).await {
         Ok(binding) => binding,
         Err((code, message)) => return jsonrpc_error(id, code, message),
@@ -146,81 +125,6 @@ pub(super) async fn dispatch_bound_browser_tools_list(
         Ok(tools) => jsonrpc_ok(id, serde_json::json!({"tools": tools})),
         Err(error) => jsonrpc_error(id, MCP_ERROR_INTERNAL, error),
     }
-}
-
-pub(super) async fn dispatch_bound_browser_execution_authorization(
-    request: JsonRpcRequest,
-    binding: &McpManagementBinding,
-) -> JsonRpcResponse {
-    let id = request.id.unwrap_or(Value::Null);
-    if let Err((code, message)) = validate_bound_browser_access(binding).await {
-        return jsonrpc_error(id, code, message);
-    }
-    let target = match binding.sandbox_target.as_ref() {
-        Some(target) => target,
-        None => {
-            return jsonrpc_error(
-                id,
-                MCP_ERROR_INVALID_PARAMS,
-                "Sandbox Browser Runtime authorization requires an immutable sandbox target",
-            )
-        }
-    };
-    if !is_valid_cloud_sandbox_browser_target(target) {
-        return jsonrpc_error(
-            id,
-            MCP_ERROR_INVALID_PARAMS,
-            "Sandbox Browser Runtime target is not a valid immutable Cloud sandbox binding",
-        );
-    }
-    let operation = request
-        .params
-        .get("operation")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    let valid_operation = match operation {
-        METHOD_TOOLS_LIST | CLOUD_BROWSER_SESSION_CLOSE_METHOD => true,
-        METHOD_TOOLS_CALL => request
-            .params
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .is_some_and(|name| name.starts_with("browser_")),
-        _ => false,
-    };
-    if !valid_operation {
-        return jsonrpc_error(
-            id,
-            MCP_ERROR_INVALID_PARAMS,
-            "Sandbox Browser Runtime authorization operation is not allowed",
-        );
-    }
-    jsonrpc_ok(
-        id,
-        serde_json::json!({
-            "authorized": true,
-            "target_ref": target.provider_ref(),
-        }),
-    )
-}
-
-pub(super) fn is_valid_cloud_sandbox_browser_target(
-    target: &chatos_mcp_management_sdk::SandboxExecutionTarget,
-) -> bool {
-    target.provider == SandboxProviderKind::Cloud
-        && !target.sandbox_id.trim().is_empty()
-        && !target.lease_id.trim().is_empty()
-        && target.pairing_id.is_none()
-        && if target.is_environment {
-            target
-                .service_id
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty())
-        } else {
-            target.service_id.is_none()
-        }
 }
 
 async fn resolve_bound_cloud_browser(

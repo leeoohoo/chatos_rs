@@ -14,7 +14,6 @@ pub use chatos_agent::{
     TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };
 #[cfg(test)]
-use chatos_service_runtime::DEFAULT_SANDBOX_MANAGER_AGENT_TOKEN_SECRET;
 #[cfg(test)]
 use serde_json::{json, Value};
 

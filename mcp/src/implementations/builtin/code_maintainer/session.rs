@@ -90,25 +90,31 @@ impl EditSessionStore {
         &'a mut self,
         session_id: &str,
         run_id: &str,
+        conversation_id: &str,
     ) -> Result<&'a mut EditSession, String> {
         self.prune_expired();
         let session = self
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| format!("edit session not found: {session_id}"))?;
-        if session.run_id != run_id {
+        if session.run_id != run_id || session.conversation_id != conversation_id {
             return Err(format!("edit session not found: {session_id}"));
         }
         Ok(session)
     }
 
-    pub(super) fn take(&mut self, session_id: &str, run_id: &str) -> Result<EditSession, String> {
+    pub(super) fn take(
+        &mut self,
+        session_id: &str,
+        run_id: &str,
+        conversation_id: &str,
+    ) -> Result<EditSession, String> {
         self.prune_expired();
         let session = self
             .sessions
             .remove(session_id)
             .ok_or_else(|| format!("edit session not found: {session_id}"))?;
-        if session.run_id != run_id {
+        if session.run_id != run_id || session.conversation_id != conversation_id {
             self.sessions.insert(session.id.clone(), session);
             return Err(format!("edit session not found: {session_id}"));
         }
@@ -298,7 +304,9 @@ mod tests {
         let second_store = store_for_workspace(root.as_path()).expect("second store");
         let mut store = second_store.lock().expect("second lock");
         store.open_session("run-b", "conversation-b", false);
-        assert!(store.get_mut(first_session.as_str(), "run-a").is_ok());
+        assert!(store
+            .get_mut(first_session.as_str(), "run-a", "conversation-a")
+            .is_ok());
     }
 
     #[test]
@@ -326,6 +334,22 @@ mod tests {
         assert!(!other_run.reused);
         assert!(!other_conversation.reused);
         assert_eq!(store.sessions.len(), 3);
+    }
+
+    #[test]
+    fn session_access_requires_matching_run_and_conversation() {
+        let mut store = EditSessionStore::default();
+        let session = store.open_session("run-a", "conversation-a", false);
+
+        assert!(store
+            .get_mut(session.id.as_str(), "run-a", "conversation-b")
+            .is_err());
+        assert!(store
+            .take(session.id.as_str(), "run-a", "conversation-b")
+            .is_err());
+        assert!(store
+            .take(session.id.as_str(), "run-a", "conversation-a")
+            .is_ok());
     }
 
     #[test]

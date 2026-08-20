@@ -5,15 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { workspaceProjectFacade } from './projectsFacade';
 
-describe('workspaceProjectFacade cloud orchestration', () => {
+describe('workspaceProjectFacade server orchestration', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('uses the cloud project catalog as the only business source', async () => {
+  it('uses the project service catalog as the only business source', async () => {
     const projects = [
       { id: 'local-root-project', root_path: 'local://connector/device/workspace/app' },
-      { id: 'cloud-project', root_path: 'harness://project/cloud-project' },
     ];
     const request = vi.fn().mockResolvedValue(projects);
 
@@ -24,29 +23,15 @@ describe('workspaceProjectFacade cloud orchestration', () => {
     expect(request).toHaveBeenCalledWith('/projects?user_id=user-1');
   });
 
-  it('surfaces cloud project catalog failures instead of using stale SQLite data', async () => {
-    const request = vi.fn().mockRejectedValue(new Error('cloud offline'));
+  it('surfaces project service failures instead of using stale SQLite data', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('project service offline'));
     await expect(workspaceProjectFacade.listProjects.call(
       { getRequestFn: () => request } as never,
       'user-1',
-    )).rejects.toThrow('cloud offline');
+    )).rejects.toThrow('project service offline');
   });
 
-  it('allows browser clients to create cloud projects', async () => {
-    vi.stubGlobal('window', {});
-    const request = vi.fn().mockResolvedValue({ id: 'cloud-1' });
-    const form = new FormData();
-    form.set('name', 'Cloud');
-
-    await workspaceProjectFacade.createCloudProject.call(
-      { getRequestFn: () => request } as never,
-      form,
-    );
-
-    expect(request).toHaveBeenCalledWith('/projects/cloud', { method: 'POST', body: form });
-  });
-
-  it('routes project planning and environment operations through cloud APIs', async () => {
+  it('routes project planning through the project API', async () => {
     const request = vi.fn().mockResolvedValue({});
     const context = { getRequestFn: () => request };
 
@@ -55,34 +40,12 @@ describe('workspaceProjectFacade cloud orchestration', () => {
       'project-1',
       { includeWorkItems: false },
     );
-    await workspaceProjectFacade.analyzeProjectRuntimeEnvironment.call(
-      context as never,
-      'project-1',
-      { analysis_requirement: 'Use Node.js 22' },
-    );
-    await workspaceProjectFacade.generateProjectRuntimeEnvironmentImage.call(
-      context as never,
-      'project-1',
-      'image-1',
-    );
-
-    expect(request).toHaveBeenNthCalledWith(
-      1,
+    expect(request).toHaveBeenCalledWith(
       '/projects/project-1/plan?include_work_items=false',
-    );
-    expect(request).toHaveBeenNthCalledWith(
-      2,
-      '/projects/project-1/runtime-environment/analyze',
-      { method: 'POST', body: JSON.stringify({ analysis_requirement: 'Use Node.js 22' }) },
-    );
-    expect(request).toHaveBeenNthCalledWith(
-      3,
-      '/projects/project-1/runtime-environment/images/image-1/generate',
-      { method: 'POST' },
     );
   });
 
-  it('routes requirement execution and project runs through cloud APIs', async () => {
+  it('routes requirement execution and project runs through server APIs', async () => {
     const request = vi.fn().mockResolvedValue({});
     const context = { getRequestFn: () => request };
 
@@ -110,7 +73,7 @@ describe('workspaceProjectFacade cloud orchestration', () => {
     );
   });
 
-  it('uses ordinary cloud contact routes without local-runtime flags', async () => {
+  it('uses ordinary contact routes without local-runtime flags', async () => {
     const request = vi.fn().mockResolvedValue({});
     const context = { getRequestFn: () => request };
 

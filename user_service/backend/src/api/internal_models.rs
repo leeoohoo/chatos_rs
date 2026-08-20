@@ -44,8 +44,6 @@ pub struct InternalUserModelSettingsResponse {
     pub memory_summary_thinking_level: Option<String>,
     pub project_management_agent_model_config_id: Option<String>,
     pub project_management_agent_thinking_level: Option<String>,
-    pub environment_initialization_model_config_id: Option<String>,
-    pub environment_initialization_thinking_level: Option<String>,
     pub updated_at: String,
 }
 
@@ -94,10 +92,6 @@ pub async fn get_user_model_settings(
                     .project_management_agent_model_config_id,
                 project_management_agent_thinking_level: settings
                     .project_management_agent_thinking_level,
-                environment_initialization_model_config_id: settings
-                    .environment_initialization_model_config_id,
-                environment_initialization_thinking_level: settings
-                    .environment_initialization_thinking_level,
                 updated_at: settings.updated_at,
             },
             None => InternalUserModelSettingsResponse {
@@ -107,8 +101,6 @@ pub async fn get_user_model_settings(
                 memory_summary_thinking_level: None,
                 project_management_agent_model_config_id: None,
                 project_management_agent_thinking_level: None,
-                environment_initialization_model_config_id: None,
-                environment_initialization_thinking_level: None,
                 updated_at: now_rfc3339(),
             },
         }))

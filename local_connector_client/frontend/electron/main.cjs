@@ -21,6 +21,10 @@ const { attachRetryingViewLoader } = require('./retrying-view-loader.cjs');
 const { loadChatosPage, reloadChatosPage } = require('./chatos-page-loader.cjs');
 const { createCoreRuntime } = require('./core-runtime.cjs');
 const {
+  approvalOverlayBounds,
+  normalizeApprovalOverlayMode,
+} = require('./approval-overlay-layout.cjs');
+const {
   resolveChatosWebUrl,
   resolveCloudBaseUrl,
 } = require('./chatos-web-config.cjs');
@@ -43,6 +47,8 @@ let settingsView = null;
 let settingsOpen = false;
 let chatosView = null;
 let chatosViewLoader = null;
+let approvalOverlayView = null;
+let approvalOverlayMode = 'hidden';
 let shutdownStarted = false;
 const desktopAuthToken = crypto.randomBytes(32).toString('base64url');
 const coreRuntime = createCoreRuntime({ app, desktopAuthToken });
@@ -144,6 +150,11 @@ function createWindow() {
     }
     settingsView = null;
     settingsOpen = false;
+    if (approvalOverlayView && !approvalOverlayView.webContents.isDestroyed()) {
+      trustedLocalWebContents.delete(approvalOverlayView.webContents.id);
+    }
+    approvalOverlayView = null;
+    approvalOverlayMode = 'hidden';
     chatosViewLoader?.dispose();
     chatosViewLoader = null;
     chatosView = null;
@@ -151,6 +162,7 @@ function createWindow() {
     mainWindow = null;
   });
   createChatosView();
+  createApprovalOverlayView();
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     openExternalIfSafe(url);
@@ -232,6 +244,55 @@ function createChatosView() {
       }
     },
   });
+  bringApprovalOverlayToFront();
+}
+
+function createApprovalOverlayView() {
+  if (!mainWindow || mainWindow.isDestroyed() || approvalOverlayView) {
+    return;
+  }
+  approvalOverlayView = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  const overlayWebContentsId = approvalOverlayView.webContents.id;
+  approvalOverlayView.setBackgroundColor('#00000000');
+  trustedLocalWebContents.add(overlayWebContentsId);
+  mainWindow.contentView.addChildView(approvalOverlayView);
+  approvalOverlayView.setVisible(false);
+  attachLocalFrontendNavigationGuard(approvalOverlayView.webContents);
+  approvalOverlayView.webContents.loadFile(localFrontendIndexPath(), {
+    query: { view: 'approval-overlay' },
+  });
+  approvalOverlayView.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalIfSafe(url);
+    return { action: 'deny' };
+  });
+  approvalOverlayView.webContents.once('destroyed', () => {
+    if (approvalOverlayView?.webContents.id !== overlayWebContentsId) {
+      return;
+    }
+    trustedLocalWebContents.delete(overlayWebContentsId);
+    approvalOverlayView = null;
+    approvalOverlayMode = 'hidden';
+  });
+}
+
+function bringApprovalOverlayToFront() {
+  if (!mainWindow || mainWindow.isDestroyed() || !approvalOverlayView) {
+    return;
+  }
+  try {
+    mainWindow.contentView.addChildView(approvalOverlayView);
+  } catch {
+    // The main window may be changing views while it is closing.
+  }
+  layoutApprovalOverlayView();
 }
 
 function recreateChatosView() {
@@ -279,9 +340,23 @@ function layoutSettingsView() {
   });
 }
 
+function layoutApprovalOverlayView() {
+  if (!mainWindow || !approvalOverlayView) {
+    return;
+  }
+  const bounds = approvalOverlayBounds(mainWindow.getContentBounds(), approvalOverlayMode);
+  if (!bounds) {
+    approvalOverlayView.setVisible(false);
+    return;
+  }
+  approvalOverlayView.setBounds(bounds);
+  approvalOverlayView.setVisible(true);
+}
+
 function layoutMainViews() {
   layoutChatosView();
   layoutSettingsView();
+  layoutApprovalOverlayView();
 }
 
 function repaintView(view) {
@@ -308,6 +383,7 @@ function restoreMainWindowContent() {
     settingsView.setVisible(true);
     layoutSettingsView();
     repaintView(settingsView);
+    bringApprovalOverlayToFront();
     return;
   }
   if (!chatosView || chatosView.webContents.isDestroyed()) {
@@ -317,6 +393,7 @@ function restoreMainWindowContent() {
     layoutChatosView();
     repaintView(chatosView);
   }
+  bringApprovalOverlayToFront();
 }
 
 function chatosWebUrl() {
@@ -478,7 +555,7 @@ function requestDesktopSystemPermission(permissionId) {
   return desktopSystemPermissionStatuses();
 }
 
-function openSettingsView() {
+function openSettingsView(requestedTab) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -490,6 +567,10 @@ function openSettingsView() {
     settingsView.setVisible(true);
     layoutSettingsView();
     repaintView(settingsView);
+    if (requestedTab) {
+      settingsView.webContents.send('local-connector:settings-tab', requestedTab);
+    }
+    bringApprovalOverlayToFront();
     settingsView.webContents.focus();
     mainWindow.show();
     mainWindow.focus();
@@ -510,7 +591,7 @@ function openSettingsView() {
   layoutSettingsView();
   attachLocalFrontendNavigationGuard(settingsView.webContents);
   settingsView.webContents.loadFile(localFrontendIndexPath(), {
-    query: { view: 'settings' },
+    query: requestedTab ? { view: 'settings', tab: requestedTab } : { view: 'settings' },
   });
   settingsView.webContents.setWindowOpenHandler(({ url }) => {
     openExternalIfSafe(url);
@@ -522,7 +603,10 @@ function openSettingsView() {
       closeSettingsView();
     }
   });
-  settingsView.webContents.once('did-finish-load', () => repaintView(settingsView));
+  settingsView.webContents.once('did-finish-load', () => {
+    repaintView(settingsView);
+    bringApprovalOverlayToFront();
+  });
   settingsView.webContents.once('destroyed', () => {
     if (settingsView?.webContents.id !== settingsWebContentsId) {
       return;
@@ -596,11 +680,24 @@ app.whenReady().then(async () => {
     }
     return requestDesktopSystemPermission(String(permissionId || ''));
   });
-  ipcMain.handle('local-connector:settings-open', (event) => {
+  ipcMain.handle('local-connector:settings-open', (event, requestedTab) => {
     if (!isTrustedLocalEvent(event) && !isTrustedRuntimeEvent(event)) {
       return false;
     }
-    openSettingsView();
+    const tab = typeof requestedTab === 'string' ? requestedTab : '';
+    openSettingsView(tab);
+    return true;
+  });
+  ipcMain.handle('local-connector:approval-overlay-mode', (event, requestedMode) => {
+    if (
+      !isTrustedLocalEvent(event)
+      || !approvalOverlayView
+      || event.sender.id !== approvalOverlayView.webContents.id
+    ) {
+      return false;
+    }
+    approvalOverlayMode = normalizeApprovalOverlayMode(requestedMode);
+    layoutApprovalOverlayView();
     return true;
   });
   ipcMain.handle('local-connector:settings-close', (event) => {

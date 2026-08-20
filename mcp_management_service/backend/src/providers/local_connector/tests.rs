@@ -9,9 +9,8 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    RuntimeWorkspaceRouteTarget, SandboxProviderKind, WorkspaceExecutionTarget,
-    WorkspaceProviderKind,
+    McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER;
 use serde_json::{json, Value};
@@ -84,16 +83,12 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
-            execution_plane: ExecutionPlane::Local,
             workspace_provider: WorkspaceProviderKind::LocalConnector,
             workspace: Some(WorkspaceExecutionTarget {
                 device_id: Some("device-1".to_string()),
                 workspace_id: "workspace-1".to_string(),
                 relative_root: Some("apps".to_string()),
             }),
-            sandbox_provider: SandboxProviderKind::None,
-            sandbox_pairing_id: None,
-            source_type: Some("local_connector".to_string()),
             revision: "project-revision".to_string(),
         },
         policy_revision: "policy-1".to_string(),
@@ -106,7 +101,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         plugin_local_tool_component_bindings: Default::default(),
         plugin_cloud_tool_component_bindings: Default::default(),
         external_http_bindings: Default::default(),
-        cloud_stdio_bindings: Default::default(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix: i64::MAX,
     }

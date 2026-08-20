@@ -12,7 +12,7 @@ use chatos_sandbox_contract::{
     SandboxBackendKind, SandboxLeasePolicyRequest,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 use super::permission_layers::{
     EffectivePermissionProfileConfiguration, RuntimePermissionProfileLayers,
@@ -349,11 +349,6 @@ pub(crate) enum LocalSandboxNetworkAccess {
 #[derive(Clone, Default)]
 pub(crate) struct LocalSandboxRuntime {
     pub(crate) leases: Arc<RwLock<HashMap<String, LocalSandboxLease>>>,
-    pub(crate) processes:
-        Arc<RwLock<HashMap<String, Arc<crate::sandbox::process::NativeSandboxProcess>>>>,
-    pub(crate) execution_scopes:
-        Arc<RwLock<HashMap<String, Arc<crate::mcp::execution_scope::LocalExecutionScope>>>>,
-    pub(crate) execution_scope_creation_lock: Arc<Mutex<()>>,
 }
 
 impl std::fmt::Debug for LocalSandboxRuntime {

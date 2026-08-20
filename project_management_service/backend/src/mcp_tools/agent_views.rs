@@ -94,8 +94,8 @@ pub(super) fn project_task_dependency(record: &WorkItemDependencyRecord) -> Valu
 mod tests {
     use super::*;
     use crate::models::{
-        CloudImportSource, ProjectExecutionPlane, ProjectImportStatus, ProjectSourceType,
-        ProjectStatus, ProjectWorkItemStatus, RequirementStatus, RequirementType,
+        CloudImportSource, ProjectImportStatus, ProjectStatus, ProjectWorkItemStatus,
+        RequirementStatus, RequirementType,
     };
 
     fn project_record() -> ProjectRecord {
@@ -110,8 +110,6 @@ mod tests {
             name: "Project".to_string(),
             root_path: Some("/private/workspace".to_string()),
             git_url: Some("ssh://private/repository".to_string()),
-            source_type: ProjectSourceType::Cloud,
-            execution_plane: ProjectExecutionPlane::Cloud,
             cloud_import_source: CloudImportSource::Git,
             import_status: ProjectImportStatus::Ready,
             source_git_url: Some("ssh://source/repository".to_string()),
@@ -219,7 +217,6 @@ mod tests {
             "root_path",
             "git_url",
             "source_type",
-            "execution_plane",
             "cloud_import_source",
             "import_status",
             "source_git_url",

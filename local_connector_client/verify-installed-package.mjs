@@ -726,18 +726,15 @@ async function main(args) {
         ['local_connector_client_core', 'Local Connector Core'],
         ['chatos_chrome_native_host', 'Chrome Native Messaging Host'],
         ['chatos_computer_use_helper', 'Computer Use helper'],
-        ['chatos_sandbox_mcp_server', 'Sandbox MCP server'],
       ]
     : windows
       ? [
         ['local_connector_client_core.exe', 'Local Connector Core'],
         ['chatos_chrome_native_host.exe', 'Chrome Native Messaging Host'],
-        ['chatos_sandbox_mcp_server.exe', 'Sandbox MCP server'],
       ]
       : [
         ['local_connector_client_core', 'Local Connector Core'],
         ...(linuxBrowser ? [['chatos_chrome_native_host', 'Chrome Native Messaging Host']] : []),
-        ['chatos_sandbox_mcp_server', 'Sandbox MCP server'],
       ];
   const executables = [];
   const executablePaths = [];

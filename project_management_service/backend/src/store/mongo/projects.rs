@@ -31,10 +31,7 @@ impl MongoStore {
             Some(doc! { "updated_at": -1, "id": 1 }),
         )
         .await?;
-        Ok(projects
-            .into_iter()
-            .map(normalize_project_execution_plane)
-            .collect())
+        Ok(projects)
     }
 
     pub async fn list_all_projects(
@@ -51,10 +48,7 @@ impl MongoStore {
             Some(doc! { "updated_at": -1, "id": 1 }),
         )
         .await?;
-        Ok(projects
-            .into_iter()
-            .map(normalize_project_execution_plane)
-            .collect())
+        Ok(projects)
     }
 
     pub async fn create_project(
@@ -71,9 +65,6 @@ impl MongoStore {
         let root_path = normalized_optional(input.root_path);
         let git_url = normalize_git_url(input.git_url)?;
         let source_git_url = normalize_git_url(input.source_git_url)?;
-        let source_type = input
-            .source_type
-            .unwrap_or_else(|| project_source_type_from_root(root_path.as_deref()));
         let project = ProjectRecord {
             id: Uuid::new_v4().to_string(),
             creator_user_id: Some(user.id.clone()),
@@ -88,8 +79,6 @@ impl MongoStore {
             name: input.name.trim().to_string(),
             root_path,
             git_url,
-            source_type,
-            execution_plane: source_type.execution_plane(),
             cloud_import_source: input.cloud_import_source.unwrap_or_default(),
             import_status: input.import_status.unwrap_or_default(),
             source_git_url,
@@ -128,9 +117,6 @@ impl MongoStore {
         let git_url = normalize_git_url(input.git_url)?;
         let source_git_url = normalize_git_url(input.source_git_url)?;
         let harness_git_url = normalize_git_url(input.harness_git_url)?;
-        let source_type = input
-            .source_type
-            .unwrap_or_else(|| project_source_type_from_root(root_path.as_deref()));
         let project = ProjectRecord {
             id: id.to_string(),
             creator_user_id: None,
@@ -142,8 +128,6 @@ impl MongoStore {
             name: input.name.trim().to_string(),
             root_path,
             git_url,
-            source_type,
-            execution_plane: source_type.execution_plane(),
             cloud_import_source: input.cloud_import_source.unwrap_or_default(),
             import_status: input.import_status.unwrap_or_default(),
             source_git_url,
@@ -174,8 +158,7 @@ impl MongoStore {
     }
 
     pub async fn save_project_record(&self, project: &ProjectRecord) -> Result<(), String> {
-        let project = normalize_project_execution_plane(project.clone());
-        upsert_by_id(&self.projects, &project.id, &project).await
+        upsert_by_id(&self.projects, &project.id, project).await
     }
 
     pub async fn get_project(&self, id: &str) -> Result<Option<ProjectRecord>, String> {
@@ -184,7 +167,7 @@ impl MongoStore {
             .find_one(doc! { "id": id.trim() }, None)
             .await
             .map_err(|err| err.to_string())?;
-        Ok(project.map(normalize_project_execution_plane))
+        Ok(project)
     }
 
     pub async fn update_project(
@@ -288,47 +271,5 @@ impl MongoStore {
         )
         .await?;
         Ok(profile)
-    }
-}
-
-fn project_source_type_from_root(root_path: Option<&str>) -> ProjectSourceType {
-    if root_path
-        .map(str::trim)
-        .is_some_and(|value| value.starts_with("local://connector/"))
-    {
-        ProjectSourceType::LocalConnector
-    } else {
-        ProjectSourceType::Local
-    }
-}
-
-fn normalize_project_execution_plane(mut project: ProjectRecord) -> ProjectRecord {
-    project.execution_plane = project.source_type.execution_plane();
-    project
-}
-
-#[cfg(test)]
-mod execution_plane_tests {
-    use super::*;
-
-    #[test]
-    fn every_project_source_uses_cloud_orchestration() {
-        assert_eq!(ProjectSourceType::default(), ProjectSourceType::Cloud);
-        assert_eq!(
-            ProjectExecutionPlane::default(),
-            ProjectExecutionPlane::Cloud
-        );
-        assert_eq!(
-            ProjectSourceType::Cloud.execution_plane(),
-            ProjectExecutionPlane::Cloud
-        );
-        assert_eq!(
-            ProjectSourceType::Local.execution_plane(),
-            ProjectExecutionPlane::Cloud
-        );
-        assert_eq!(
-            ProjectSourceType::LocalConnector.execution_plane(),
-            ProjectExecutionPlane::Cloud
-        );
     }
 }

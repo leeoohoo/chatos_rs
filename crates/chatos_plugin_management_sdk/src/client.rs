@@ -97,9 +97,6 @@ impl PluginManagementClient {
         if let Some(value) = request.task_profile.as_deref() {
             query.push(("task_profile", value));
         }
-        if let Some(value) = request.project_source_type.as_deref() {
-            query.push(("project_source_type", value));
-        }
         if let Some(value) = request.runtime_provider.as_deref() {
             query.push(("runtime_provider", value));
         }

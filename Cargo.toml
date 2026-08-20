@@ -32,8 +32,6 @@ members = [
   "local_connector_client/core",
   "plugin_management_service/backend",
   "official_website_service/backend",
-  "sandbox_manager_service/backend",
-  "sandbox_manager_service/sandbox_mcp_server"
 ]
 exclude = [
   "memory_engine/backend"

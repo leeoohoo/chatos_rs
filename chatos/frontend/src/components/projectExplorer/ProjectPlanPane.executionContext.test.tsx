@@ -93,7 +93,6 @@ describe('ProjectPlanPane execution workbench context', () => {
       id: 'project-1',
       name: 'Project 1',
       rootPath: '/workspace',
-      executionPlane: 'cloud',
       createdAt: now,
       updatedAt: now,
     };

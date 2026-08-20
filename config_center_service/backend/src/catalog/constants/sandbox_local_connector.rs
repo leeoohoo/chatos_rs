@@ -1,44 +1,3 @@
-pub const SANDBOX_MANAGER_POOL_MAX_ACTIVE_CONFIG_KEY: &str = "sandbox_manager.pool.max_active";
-pub const SANDBOX_MANAGER_POOL_MAX_PENDING_CONFIG_KEY: &str = "sandbox_manager.pool.max_pending";
-pub const SANDBOX_MANAGER_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
-    "sandbox_manager.pool.lease_ttl_seconds";
-pub const SANDBOX_MANAGER_CLEANUP_INTERVAL_SECONDS_CONFIG_KEY: &str =
-    "sandbox_manager.pool.cleanup_interval_seconds";
-pub const SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED_CONFIG_KEY: &str =
-    "sandbox_manager.docker.maintenance_enabled";
-pub const SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE_CONFIG_KEY: &str =
-    "sandbox_manager.docker.build_cache_max_used_space";
-pub const SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE_CONFIG_KEY: &str =
-    "sandbox_manager.docker.build_cache_reserved_space";
-pub const SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS_CONFIG_KEY: &str =
-    "sandbox_manager.docker.build_cache_timeout_secs";
-pub const SANDBOX_MANAGER_HOST_CONFIG_KEY: &str = "sandbox_manager.runtime.host";
-pub const SANDBOX_MANAGER_PORT_CONFIG_KEY: &str = "sandbox_manager.runtime.port";
-pub const SANDBOX_MANAGER_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
-    "sandbox_manager.runtime.internal_mtls_port";
-pub const SANDBOX_MANAGER_DATABASE_URL_CONFIG_KEY: &str = "sandbox_manager.runtime.database_url";
-pub const SANDBOX_MANAGER_MONGODB_DATABASE_CONFIG_KEY: &str =
-    "sandbox_manager.runtime.mongodb_database";
-pub const SANDBOX_MANAGER_AGENT_PORT_CONFIG_KEY: &str = "sandbox_manager.runtime.agent_port";
-pub const SANDBOX_MANAGER_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
-    "sandbox_manager.security.require_signed_internal_requests";
-pub const SANDBOX_MANAGER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "sandbox_manager.security.project_service_internal_api_secret";
-pub const SANDBOX_MANAGER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "sandbox_manager.security.mcp_management_internal_api_secret";
-pub const SANDBOX_MANAGER_AGENT_TOKEN_SECRET_CONFIG_KEY: &str =
-    "sandbox_manager.security.agent_token_secret";
-pub const SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID_CONFIG_KEY: &str =
-    "sandbox_manager.frontend.proxy_client_id";
-pub const SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY_CONFIG_KEY: &str =
-    "sandbox_manager.frontend.proxy_client_key";
-pub const SANDBOX_MANAGER_REQUIRE_AUTH_CONFIG_KEY: &str = "sandbox_manager.security.require_auth";
-pub const SANDBOX_MANAGER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "sandbox_manager.downstream.user_service_base_url";
-pub const SANDBOX_MANAGER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "sandbox_manager.downstream.user_service_request_timeout_ms";
-pub const SANDBOX_MANAGER_SYSTEM_CLIENT_MAX_LEASE_TTL_SECONDS_CONFIG_KEY: &str =
-    "sandbox_manager.security.system_client_max_lease_ttl_seconds";
 pub const LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "local_connector.security.require_signed_internal_requests";
 pub const LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
@@ -62,8 +21,6 @@ pub const LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "local_connector.relay.request_timeout_ms";
 pub const LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "local_connector.relay.plugin_hook_request_timeout_ms";
-pub const LOCAL_CONNECTOR_SANDBOX_IMAGE_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "local_connector.relay.sandbox_image_request_timeout_ms";
 pub const LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY: &str = "local_connector.public.base_url";
 pub const LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY: &str =
     "local_connector.device_connect.require_signature";

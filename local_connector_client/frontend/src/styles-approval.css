@@ -9,14 +9,51 @@
 }
 
 .globalApprovalTray {
-  bottom: 16px;
+  bottom: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   max-width: min(420px, calc(100vw - 24px));
   position: fixed;
   right: 16px;
+  top: 68px;
   z-index: 40;
+}
+
+html.approvalOverlayDocument,
+html.approvalOverlayDocument body,
+html.approvalOverlayDocument #root {
+  background: transparent;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.approvalOverlayDocument .globalApprovalTray {
+  bottom: auto;
+  box-sizing: border-box;
+  height: 100vh;
+  max-width: none;
+  padding: 8px;
+  position: static;
+  right: auto;
+  top: auto;
+  width: 100vw;
+}
+
+.approvalOverlayDocument .globalApprovalTray:not(.expanded) {
+  justify-content: flex-start;
+}
+
+.approvalOverlayDocument .globalApprovalSummary,
+.approvalOverlayDocument .globalApprovalPopover {
+  width: 100%;
+}
+
+.approvalOverlayDocument .globalApprovalPopover {
+  box-sizing: border-box;
+  height: 100%;
+  max-height: none;
 }
 
 .globalApprovalSummary {
@@ -38,6 +75,33 @@
 
 .globalApprovalSummary:hover {
   background: var(--panel-subtle);
+}
+
+.globalApprovalSummary.outcome.approved {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.globalApprovalSummary.outcome.denied {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+}
+
+.globalApprovalSummary.outcome.approved .globalApprovalIcon {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--success) 28%, transparent);
+  color: var(--success);
+}
+
+.globalApprovalSummary.outcome.denied .globalApprovalIcon {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  color: var(--danger);
+}
+
+.globalApprovalSummary.outcome small {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .globalApprovalIcon {
@@ -96,9 +160,19 @@
 }
 
 .globalApprovalHeader strong {
+  align-items: center;
   color: var(--text);
+  display: flex;
   font-size: 13px;
   font-weight: 700;
+  gap: 6px;
+}
+
+.globalApprovalHeaderActions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .globalApprovalReviewing {
@@ -111,6 +185,28 @@
   font-size: 10px;
   gap: 7px;
   padding: 8px 9px;
+}
+
+.globalApprovalOutcome {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  font-size: 10px;
+  gap: 7px;
+  padding: 8px 9px;
+}
+
+.globalApprovalOutcome.approved {
+  background: color-mix(in srgb, var(--success) 10%, var(--panel-bg));
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+  color: var(--success);
+}
+
+.globalApprovalOutcome.denied {
+  background: color-mix(in srgb, var(--danger) 9%, var(--panel-bg));
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+  color: var(--danger);
 }
 
 .globalApprovalList {
@@ -145,6 +241,31 @@
   overflow-wrap: anywhere;
 }
 
+.globalApprovalCommandLine > code {
+  color: var(--text);
+  flex: 1 1 100%;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  max-height: 132px;
+  min-width: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.globalApprovalMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.globalApprovalMeta code {
+  color: var(--text-secondary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
 .globalApprovalReason {
   overflow-wrap: anywhere;
 }
@@ -153,6 +274,76 @@
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+.globalApprovalAudit,
+.globalApprovalConfirmation,
+.globalApprovalWaiting {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+}
+
+.globalApprovalAudit strong,
+.globalApprovalConfirmation > span {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.globalApprovalAudit span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.globalApprovalConfirmation > span {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+}
+
+.globalApprovalConfirmation > code {
+  color: var(--warning);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.globalApprovalConfirmation input {
+  width: 100%;
+}
+
+.globalApprovalFooter {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.globalApprovalPager {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.globalApprovalPager span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  min-width: 32px;
+  text-align: center;
+}
+
+.globalApprovalWaiting {
+  align-items: center;
+  color: var(--text-secondary);
+  flex: 1;
+  font-size: 11px;
+  justify-content: center;
 }
 
 .globalApprovalMore {
@@ -357,6 +548,88 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.approvalProjectTabs {
+  display: flex;
+  gap: 6px;
+  margin: -3px 0 10px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 3px 0 5px;
+  scrollbar-width: thin;
+}
+
+.approvalProjectTabs button {
+  align-items: center;
+  background: var(--panel-subtle);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  max-width: 240px;
+  min-height: 32px;
+  padding: 5px 9px;
+}
+
+.approvalProjectTabs button:hover {
+  border-color: color-mix(in srgb, var(--text-tertiary) 55%, var(--border));
+  color: var(--text);
+}
+
+.approvalProjectTabs button.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--text);
+}
+
+.approvalProjectTabs button span {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approvalProjectTabs button strong {
+  align-items: center;
+  background: var(--panel-bg);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  display: inline-flex;
+  font-size: 9px;
+  height: 18px;
+  justify-content: center;
+  min-width: 18px;
+  padding: 0 5px;
+}
+
+.approvalProjectTabs button.active strong {
+  color: var(--accent);
+}
+
+.approvalPagination {
+  align-items: center;
+  color: var(--text-tertiary);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  min-height: 34px;
+  padding-top: 8px;
+}
+
+.approvalPagination > div {
+  display: flex;
+  gap: 5px;
+}
+
+.approvalPagination .iconButton {
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  width: 30px;
 }
 
 .approvalPendingRow,

@@ -434,7 +434,6 @@ pub struct RuntimeCapabilitiesQuery {
     pub owner_user_id: Option<String>,
     pub include_unavailable: Option<bool>,
     pub task_profile: Option<String>,
-    pub project_source_type: Option<String>,
     pub runtime_provider: Option<String>,
     pub schedule_mode: Option<String>,
     pub device_id: Option<String>,

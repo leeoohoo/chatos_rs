@@ -16,9 +16,6 @@ pub(in crate::providers) use response::decode_jsonrpc_response;
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "project-service";
 const PROJECT_MCP_SCOPE: &str = "project.mcp";
-const PROJECT_READ_SCOPE: &str = "project.read";
-const PROJECT_HARNESS_SCOPE: &str = "project.harness";
-const PROJECT_ENVIRONMENT_SCOPE: &str = "project.environment";
 const PROJECT_MANAGEMENT_OWNER_SERVICE: &str = "project_management_service";
 
 #[derive(Debug, Clone, PartialEq)]

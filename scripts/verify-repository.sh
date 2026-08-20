@@ -16,7 +16,6 @@ FRONTEND_DIRS=(
   "official_website_service/frontend"
   "plugin_management_service/frontend"
   "project_management_service/frontend"
-  "sandbox_manager_service/frontend"
   "task_runner_service/frontend"
   "user_service/frontend"
 )
@@ -88,16 +87,6 @@ run_rust_lint() {
 run_rust_tests() {
   cd "$ROOT_DIR"
   "${CARGO[@]}" test --workspace --no-fail-fast
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    "${CARGO[@]}" build -p chatos_sandbox_mcp_server
-    "${CARGO[@]}" test \
-      -p local_connector_client_core \
-      --lib \
-      plugins::runtime::tests::signed_packaged_connector_hooks_run_end_to_end_without_a_listener \
-      -- \
-      --ignored \
-      --exact
-  fi
   (
     cd memory_engine/backend
     "${CARGO[@]}" test --no-fail-fast
@@ -129,17 +118,14 @@ run_native_platform() {
   cd "$ROOT_DIR"
   "${CARGO[@]}" check \
     -p local_connector_client_core \
-    -p chatos_sandbox_mcp_server \
     --all-targets
   "${CARGO[@]}" clippy \
     -p local_connector_client_core \
-    -p chatos_sandbox_mcp_server \
     --all-targets \
     -- \
     -D warnings
   "${CARGO[@]}" build \
     -p local_connector_client_core \
-    -p chatos_sandbox_mcp_server \
     --bins
   "${CARGO[@]}" test \
     -p local_connector_client_core \
@@ -161,12 +147,6 @@ run_native_platform() {
       -- \
       --nocapture
   fi
-  "${CARGO[@]}" test \
-    -p chatos_sandbox_mcp_server \
-    plugin_stdio_wrapper::tests:: \
-    -- \
-    --nocapture
-
   local core_binary="$ROOT_DIR/target-shared/debug/local_connector_client_core${executable_suffix}"
   if [[ ! -f "$core_binary" ]]; then
     echo "Native Local Connector Core binary is missing: $core_binary" >&2

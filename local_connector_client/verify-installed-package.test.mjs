@@ -155,13 +155,12 @@ function createFixture(platform, runtimeProfile = 'full') {
 
   const packageArchitecture = platform.endsWith('-arm64') ? 'arm64' : 'x64';
   const executableNames = platform.startsWith('macos-')
-    ? ['local_connector_client_core', 'chatos_chrome_native_host', 'chatos_computer_use_helper', 'chatos_sandbox_mcp_server']
+    ? ['local_connector_client_core', 'chatos_chrome_native_host', 'chatos_computer_use_helper']
     : platform.startsWith('windows-')
-      ? ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe', 'chatos_sandbox_mcp_server.exe']
+      ? ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe']
       : [
         'local_connector_client_core',
         ...(runtimeProfile === 'linux-browser' ? ['chatos_chrome_native_host'] : []),
-        'chatos_sandbox_mcp_server',
       ];
   for (const executableName of executableNames) {
     const destination = path.join(resources, executableName);

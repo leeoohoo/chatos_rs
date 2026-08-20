@@ -9,7 +9,6 @@ const STABLE_IDENTIFIERS = new Map([
   ['local_connector_client_core', 'com.chatos.local-connector.core'],
   ['chatos_computer_use_helper', 'com.chatos.local-connector.computer-use-helper'],
   ['chatos_chrome_native_host', 'com.chatos.local-connector.chrome-native-host'],
-  ['chatos_sandbox_mcp_server', 'com.chatos.local-connector.sandbox-mcp-server'],
 ]);
 const APP_IDENTIFIER = 'com.chatos.local-connector';
 

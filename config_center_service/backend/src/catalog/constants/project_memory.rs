@@ -21,10 +21,6 @@ pub const PROJECT_SERVICE_PORT_CONFIG_KEY: &str = "project_service.runtime.port"
 pub const PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
     "project_service.runtime.internal_mtls_port";
 pub const PROJECT_SERVICE_DATABASE_URL_CONFIG_KEY: &str = "project_service.runtime.database_url";
-pub const PROJECT_SERVICE_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY: &str =
-    "project_service.mcp.result_rabbitmq_url";
-pub const PROJECT_SERVICE_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY: &str =
-    "project_service.mcp.result_queue_prefix";
 pub const PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET_CONFIG_KEY: &str =
     "project_service.downstream.user_service_internal_secret";
 pub const PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
@@ -44,20 +40,6 @@ pub const PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "project_service.downstream.local_connector_service_base_url";
 pub const PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "project_service.downstream.local_connector_service_request_timeout_ms";
-pub const PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
-    "project_service.downstream.memory_engine_base_url";
-pub const PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "project_service.downstream.memory_engine_internal_api_secret";
-pub const PROJECT_SERVICE_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "project_service.downstream.memory_engine_request_timeout_ms";
-pub const PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL_CONFIG_KEY: &str =
-    "project_service.downstream.sandbox_manager_base_url";
-pub const PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID_CONFIG_KEY: &str =
-    "project_service.downstream.sandbox_manager_client_id";
-pub const PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_KEY_CONFIG_KEY: &str =
-    "project_service.downstream.sandbox_manager_client_key";
-pub const PROJECT_SERVICE_SANDBOX_IMAGE_MCP_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "project_service.downstream.sandbox_image_mcp_request_timeout_ms";
 pub const PROJECT_SERVICE_CLOUD_PROJECT_IMPORT_ENABLED_CONFIG_KEY: &str =
     "project_service.cloud_import.enabled";
 pub const PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES_CONFIG_KEY: &str =
@@ -68,10 +50,6 @@ pub const PROJECT_SERVICE_CLOUD_PROJECT_MAX_FILES_CONFIG_KEY: &str =
     "project_service.cloud_import.max_files";
 pub const PROJECT_SERVICE_CLOUD_PROJECT_GIT_TIMEOUT_MS_CONFIG_KEY: &str =
     "project_service.cloud_import.git_timeout_ms";
-pub const PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_TIMEOUT_MS_CONFIG_KEY: &str =
-    "project_service.environment_analysis.timeout_ms";
-pub const PROJECT_SERVICE_ENVIRONMENT_ANALYSIS_STALE_AFTER_MS_CONFIG_KEY: &str =
-    "project_service.environment_analysis.stale_after_ms";
 pub const MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "memory_engine.security.require_signed_internal_requests";
 pub const CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
@@ -86,8 +64,6 @@ pub const MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.chatos_internal_api_secret";
 pub const MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.task_runner_internal_api_secret";
-pub const MEMORY_ENGINE_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "memory_engine.security.project_service_internal_api_secret";
 pub const MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.user_service_internal_api_secret";
 pub const MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY: &str =

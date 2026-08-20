@@ -2,13 +2,24 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import React from 'react';
-import { BellRing, CheckCircle2, ListChecks, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import {
+  BellRing,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ListChecks,
+  RefreshCw,
+  ShieldCheck,
+  XCircle,
+} from 'lucide-react';
 
 import {
   api,
   type ApprovalActionAudit,
   type ApprovalMode,
+  type ApprovalProjectKey,
   type ApprovalSettings,
+  type CommandWhitelistEntry,
   type PendingApprovalItem,
   type RequestPermissionProfile,
 } from '../api';
@@ -110,6 +121,122 @@ const confirmationRiskLabels: Record<string, string> = {
   application_shortcut: '带修饰键的快捷键可能触发应用或系统级操作。',
 };
 
+const APPROVAL_PAGE_SIZE = 10;
+
+interface WhitelistProjectGroup {
+  key: string;
+  label: string;
+  latestAt: number;
+  projectKey: ApprovalProjectKey;
+  entries: CommandWhitelistEntry[];
+}
+
+function projectIdentity(projectKey: ApprovalProjectKey): string {
+  return [
+    projectKey.owner_user_id,
+    projectKey.workspace_id,
+    projectKey.project_root_relative_path,
+    projectKey.project_anchor_relative_path || '',
+  ].join('\u0000');
+}
+
+function shortProjectIdentity(projectKey: ApprovalProjectKey): string {
+  return (projectKey.project_id || projectKey.workspace_id).slice(0, 8);
+}
+
+function createdAtValue(createdAt: string): number {
+  const value = Date.parse(createdAt);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function groupWhitelistByProject(entries: CommandWhitelistEntry[]): WhitelistProjectGroup[] {
+  const groups = new Map<string, WhitelistProjectGroup>();
+  for (const entry of entries) {
+    const key = projectIdentity(entry.project_key);
+    const timestamp = createdAtValue(entry.created_at);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.entries.push(entry);
+      existing.latestAt = Math.max(existing.latestAt, timestamp);
+      continue;
+    }
+    groups.set(key, {
+      key,
+      label: projectLabel(entry.project_key),
+      latestAt: timestamp,
+      projectKey: entry.project_key,
+      entries: [entry],
+    });
+  }
+  const sortedGroups = [...groups.values()]
+    .map((group) => ({
+      ...group,
+      entries: group.entries.sort(
+        (left, right) => createdAtValue(right.created_at) - createdAtValue(left.created_at),
+      ),
+    }))
+    .sort((left, right) => right.latestAt - left.latestAt || left.label.localeCompare(right.label));
+  const labelCounts = sortedGroups.reduce((counts, group) => {
+    counts.set(group.label, (counts.get(group.label) || 0) + 1);
+    return counts;
+  }, new Map<string, number>());
+  return sortedGroups.map((group) => ({
+    ...group,
+    label: labelCounts.get(group.label) === 1
+      ? group.label
+      : `${group.label} · ${shortProjectIdentity(group.projectKey)}`,
+  }));
+}
+
+function pageItems<T>(items: T[], page: number): T[] {
+  const offset = (page - 1) * APPROVAL_PAGE_SIZE;
+  return items.slice(offset, offset + APPROVAL_PAGE_SIZE);
+}
+
+function pageCount(itemCount: number): number {
+  return Math.max(1, Math.ceil(itemCount / APPROVAL_PAGE_SIZE));
+}
+
+function Pagination({
+  page,
+  totalItems,
+  onChange,
+}: {
+  page: number;
+  totalItems: number;
+  onChange: (page: number) => void;
+}) {
+  const totalPages = pageCount(totalItems);
+  if (totalPages <= 1) return null;
+  return (
+    <div className="approvalPagination">
+      <span>第 {page} / {totalPages} 页 · 共 {totalItems} 条</span>
+      <div>
+        <button
+          type="button"
+          className="iconButton compact"
+          disabled={page <= 1}
+          onClick={() => onChange(page - 1)}
+          title="上一页"
+          aria-label="上一页"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <button
+          type="button"
+          className="iconButton compact"
+          disabled={page >= totalPages}
+          onClick={() => onChange(page + 1)}
+          title="下一页"
+          aria-label="下一页"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function auditValue(value: string): string {
   return auditValueLabels[value] || value;
 }
@@ -173,6 +300,9 @@ export function ApprovalPanel() {
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [selectedWhitelistProject, setSelectedWhitelistProject] = React.useState<string | null>(null);
+  const [whitelistPage, setWhitelistPage] = React.useState(1);
+  const [historyPage, setHistoryPage] = React.useState(1);
 
   const loadSettings = React.useCallback(async () => {
     setError(null);
@@ -211,6 +341,42 @@ export function ApprovalPanel() {
     }, 2500);
     return () => window.clearInterval(interval);
   }, [loadPending]);
+
+  const whitelistGroups = React.useMemo(
+    () => groupWhitelistByProject(settings?.whitelist || []),
+    [settings?.whitelist],
+  );
+  const activeWhitelistProject = whitelistGroups.find(
+    (group) => group.key === selectedWhitelistProject,
+  ) || whitelistGroups[0] || null;
+  const history = React.useMemo(
+    () => [...(settings?.history || [])].sort(
+      (left, right) => createdAtValue(right.created_at) - createdAtValue(left.created_at),
+    ),
+    [settings?.history],
+  );
+  const visibleWhitelist = pageItems(activeWhitelistProject?.entries || [], whitelistPage);
+  const visibleHistory = pageItems(history, historyPage);
+
+  React.useEffect(() => {
+    if (!whitelistGroups.length) {
+      setSelectedWhitelistProject(null);
+      setWhitelistPage(1);
+      return;
+    }
+    if (!whitelistGroups.some((group) => group.key === selectedWhitelistProject)) {
+      setSelectedWhitelistProject(whitelistGroups[0].key);
+      setWhitelistPage(1);
+    }
+  }, [selectedWhitelistProject, whitelistGroups]);
+
+  React.useEffect(() => {
+    setWhitelistPage((current) => Math.min(current, pageCount(activeWhitelistProject?.entries.length || 0)));
+  }, [activeWhitelistProject?.entries.length]);
+
+  React.useEffect(() => {
+    setHistoryPage((current) => Math.min(current, pageCount(history.length)));
+  }, [history.length]);
 
   const saveMode = async (mode: ApprovalMode) => {
     if (!settings) {
@@ -300,9 +466,6 @@ export function ApprovalPanel() {
       </section>
     );
   }
-
-  const history = [...settings.history].reverse().slice(0, 80);
-  const whitelist = [...settings.whitelist].reverse();
 
   return (
     <section className="approvalPage">
@@ -454,32 +617,62 @@ export function ApprovalPanel() {
         <div className="panelHeader">
           <div>
             <h2><ListChecks size={18} />白名单</h2>
-            <p>{whitelist.length ? `${whitelist.length} 条始终允许命令` : '还没有白名单命令'}</p>
+            <p>
+              {settings.whitelist.length
+                ? `${settings.whitelist.length} 条始终允许命令 · ${whitelistGroups.length} 个项目`
+                : '还没有白名单命令'}
+            </p>
           </div>
         </div>
+        {whitelistGroups.length ? (
+          <div className="approvalProjectTabs" role="tablist" aria-label="白名单项目">
+            {whitelistGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                role="tab"
+                aria-selected={group.key === activeWhitelistProject?.key}
+                className={group.key === activeWhitelistProject?.key ? 'active' : ''}
+                onClick={() => {
+                  setSelectedWhitelistProject(group.key);
+                  setWhitelistPage(1);
+                }}
+                title={group.label}
+              >
+                <span>{group.label}</span>
+                <strong>{group.entries.length}</strong>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="approvalList">
-          {whitelist.map((entry) => (
+          {visibleWhitelist.map((entry) => (
             <div className="approvalSimpleRow" key={entry.id}>
               <div>
                 <strong>{entry.command_display}</strong>
-                <span>{projectLabel(entry.project_key)} · {entry.cwd_scope} · {decisionSourceLabel(entry.created_by)} · {formatHistoryTime(entry.created_at)}</span>
+                <span>{entry.cwd_scope} · {decisionSourceLabel(entry.created_by)} · {formatHistoryTime(entry.created_at)}</span>
               </div>
               <span className={entry.enabled ? 'status ok' : 'status warn'}>{entry.enabled ? '启用' : '停用'}</span>
             </div>
           ))}
-          {!whitelist.length ? <div className="emptyState">白名单为空。</div> : null}
+          {!activeWhitelistProject?.entries.length ? <div className="emptyState">白名单为空。</div> : null}
         </div>
+        <Pagination
+          page={whitelistPage}
+          totalItems={activeWhitelistProject?.entries.length || 0}
+          onChange={setWhitelistPage}
+        />
       </section>
 
       <section className="panel">
         <div className="panelHeader">
           <div>
             <h2><ListChecks size={18} />审批历史</h2>
-            <p>{history.length ? `最近 ${history.length} 条` : '还没有审批历史'}</p>
+            <p>{history.length ? `${history.length} 条审批记录` : '还没有审批历史'}</p>
           </div>
         </div>
         <div className="approvalList">
-          {history.map((entry) => (
+          {visibleHistory.map((entry) => (
             <div className="approvalSimpleRow" key={entry.id}>
               <div>
                 <div className="approvalCommandLine">
@@ -487,7 +680,7 @@ export function ApprovalPanel() {
                   <span className={riskStatusClass(entry.risk)}>{riskLabel(entry.risk)}</span>
                   <strong>{entry.normalized_command}</strong>
                 </div>
-                <span>{approvalModeLabel(entry.mode)} · {sourceLabel(entry.source)} · {entry.cwd} · {formatHistoryTime(entry.created_at)}</span>
+                <span>{projectLabel(entry.project_key)} · {approvalModeLabel(entry.mode)} · {sourceLabel(entry.source)} · {entry.cwd} · {formatHistoryTime(entry.created_at)}</span>
                 {entry.reason ? <span>{entry.reason}</span> : null}
                 <ActionAuditCard audit={entry.action_audit} />
               </div>
@@ -495,6 +688,7 @@ export function ApprovalPanel() {
           ))}
           {!history.length ? <div className="emptyState">审批历史为空。</div> : null}
         </div>
+        <Pagination page={historyPage} totalItems={history.length} onChange={setHistoryPage} />
       </section>
     </section>
   );

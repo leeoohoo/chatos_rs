@@ -48,10 +48,6 @@ function Get-CoreBin {
   Join-Path (Get-CargoTargetDir) "release\local_connector_client_core.exe"
 }
 
-function Get-SandboxAgentBin {
-  Join-Path (Get-CargoTargetDir) "release\chatos_sandbox_mcp_server.exe"
-}
-
 function Get-ChromeNativeHostBin {
   Join-Path (Get-CargoTargetDir) "release\chatos_chrome_native_host.exe"
 }
@@ -127,7 +123,7 @@ function Invoke-FrontendBuild {
 function Invoke-CoreBuild {
   Push-Location $RootDir
   try {
-    cargo build --release -p local_connector_client_core -p chatos_sandbox_mcp_server
+    cargo build --release -p local_connector_client_core
   } finally {
     Pop-Location
   }
@@ -146,7 +142,6 @@ function Sync-ElectronResources {
   New-Item -ItemType Directory -Force -Path $ElectronResourcesDir | Out-Null
   Copy-Item -LiteralPath (Get-CoreBin) -Destination (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Force
   Copy-Item -LiteralPath (Get-ChromeNativeHostBin) -Destination (Join-Path $ElectronResourcesDir "chatos_chrome_native_host.exe") -Force
-  Copy-Item -LiteralPath (Get-SandboxAgentBin) -Destination (Join-Path $ElectronResourcesDir "chatos_sandbox_mcp_server.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ClientDir "chrome_extension") -Destination (Join-Path $ElectronResourcesDir "chrome-extension") -Recurse -Force
 
   $platform = Get-PlatformDir
@@ -210,7 +205,6 @@ function New-ManualElectronPackage {
 
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Destination (Join-Path $resourcesDir "local_connector_client_core.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos_chrome_native_host.exe") -Destination (Join-Path $resourcesDir "chatos_chrome_native_host.exe") -Force
-  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos_sandbox_mcp_server.exe") -Destination (Join-Path $resourcesDir "chatos_sandbox_mcp_server.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "bundled-tools") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "skill_bundles") -Destination (Join-Path $resourcesDir "skill-bundles") -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "plugin-bundles") -Destination $resourcesDir -Recurse -Force

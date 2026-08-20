@@ -329,8 +329,6 @@ export const RequirementExecutionProcessActions: React.FC<{
   executionPaused: boolean;
   graphReady: boolean;
   hasActiveRuns: boolean;
-  runtimeEnvironmentReady: boolean;
-  runtimeEnvironmentStatus: string;
   onClose: () => void;
   onCancelRequirementExecution: () => void;
   onConfirmExecution: () => void;
@@ -360,7 +358,6 @@ export const RequirementExecutionProcessActions: React.FC<{
   executionPaused,
   graphReady,
   hasActiveRuns,
-  runtimeEnvironmentReady,
   onClose,
   onCancelRequirementExecution,
   onConfirmExecution,
@@ -390,14 +387,8 @@ export const RequirementExecutionProcessActions: React.FC<{
           : queuedTaskCount > 0
             ? `正在取消本次执行，等待 ${queuedTaskCount} 个排队任务回写取消状态。`
             : '正在取消本次执行，等待任务回写取消状态。')
-        : graphReady && !runtimeEnvironmentReady
-        ? (
-          isLocalExecution
-            ? '流程图已就绪，正在通过 Local Connector 识别本地技术栈与运行条件。'
-            : '流程图已就绪，执行环境正在初始化，完成后自动开放执行。'
-        )
         : graphReady
-        ? '流程图和执行环境均已就绪，当前还没有任务开始运行。'
+        ? '流程图已就绪，当前还没有任务开始运行。'
         : phase === 'paused'
           ? (runningTaskCount > 0
             ? `暂停门禁已生效，等待 ${runningTaskCount} 个运行中任务结束。`
@@ -508,17 +499,13 @@ export const RequirementExecutionProcessActions: React.FC<{
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-5 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!graphReady || !runtimeEnvironmentReady || confirming || stopping || pausing || revising}
+          disabled={!graphReady || confirming || stopping || pausing || revising}
           onClick={onConfirmExecution}
         >
-          {confirming || (graphReady && !runtimeEnvironmentReady)
+          {confirming
             ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
             : <Play className="h-3.5 w-3.5" />}
-          {confirming
-            ? '启动中'
-            : graphReady && !runtimeEnvironmentReady
-              ? (isLocalExecution ? '分析本地运行条件' : '初始化环境中')
-              : '执行'}
+          {confirming ? '启动中' : '执行'}
         </button>
       ) : null}
       <button

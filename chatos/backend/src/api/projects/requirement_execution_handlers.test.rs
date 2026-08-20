@@ -340,7 +340,6 @@ mod tests {
         assert!(prompt.contains("project_task_001"));
         assert!(!prompt.contains("project-task-1"));
         assert!(prompt.contains("model-selected"));
-        assert!(!prompt.contains("execution_plane"));
         assert!(!prompt.contains("local_connector"));
         assert!(prompt.contains("运行路由由系统自动完成"));
     }

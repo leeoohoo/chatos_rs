@@ -6,7 +6,6 @@ use tracing::warn;
 use super::support::normalize_optional_text;
 use crate::api::fs::policy::FsPathPolicy;
 use crate::core::auth::AuthUser;
-use crate::models::project::{harness_project_id_from_root_path, HARNESS_PROJECT_ROOT_PREFIX};
 use chatos_project_execution::{parse_local_connector_workspace_root, LOCAL_CONNECTOR_ROOT_PREFIX};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -16,25 +15,19 @@ pub(super) struct ResolvedRuntimeProjectRoot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RuntimeProjectRootKind {
-    Harness(String),
-    InvalidHarness,
     LocalConnector(String),
     InvalidLocalConnector,
-    LegacyLocalPath,
+    Unsupported,
 }
 
 fn classify_runtime_project_root(raw: &str) -> RuntimeProjectRootKind {
     let raw = raw.trim().to_string();
-    if harness_project_id_from_root_path(raw.as_str()).is_some() {
-        RuntimeProjectRootKind::Harness(raw)
-    } else if raw.starts_with(HARNESS_PROJECT_ROOT_PREFIX) {
-        RuntimeProjectRootKind::InvalidHarness
-    } else if parse_local_connector_workspace_root(raw.as_str()).is_some() {
+    if parse_local_connector_workspace_root(raw.as_str()).is_some() {
         RuntimeProjectRootKind::LocalConnector(raw)
     } else if raw == "local://connector" || raw.starts_with(LOCAL_CONNECTOR_ROOT_PREFIX) {
         RuntimeProjectRootKind::InvalidLocalConnector
     } else {
-        RuntimeProjectRootKind::LegacyLocalPath
+        RuntimeProjectRootKind::Unsupported
     }
 }
 
@@ -45,17 +38,9 @@ pub(super) async fn resolve_runtime_project_root(
         return ResolvedRuntimeProjectRoot::default();
     };
     match classify_runtime_project_root(raw.as_str()) {
-        RuntimeProjectRootKind::Harness(logical_root)
-        | RuntimeProjectRootKind::LocalConnector(logical_root) => ResolvedRuntimeProjectRoot {
+        RuntimeProjectRootKind::LocalConnector(logical_root) => ResolvedRuntimeProjectRoot {
             logical_root: Some(logical_root),
         },
-        RuntimeProjectRootKind::InvalidHarness => {
-            warn!(
-                project_root = raw.as_str(),
-                "invalid Harness project root dropped"
-            );
-            ResolvedRuntimeProjectRoot::default()
-        }
         RuntimeProjectRootKind::InvalidLocalConnector => {
             warn!(
                 project_root = raw.as_str(),
@@ -63,9 +48,10 @@ pub(super) async fn resolve_runtime_project_root(
             );
             ResolvedRuntimeProjectRoot::default()
         }
-        RuntimeProjectRootKind::LegacyLocalPath => {
+        RuntimeProjectRootKind::Unsupported => {
             warn!(
-                "legacy server-local project root dropped; projects must use a managed logical root"
+                project_root = raw.as_str(),
+                "unsupported project root dropped; projects must use a Local Connector root"
             );
             ResolvedRuntimeProjectRoot::default()
         }
@@ -77,10 +63,10 @@ pub(super) async fn authorize_runtime_workspace_dir(
     raw: Option<String>,
 ) -> Option<String> {
     let raw = normalize_optional_text(raw.as_deref())?;
-    if raw.starts_with(HARNESS_PROJECT_ROOT_PREFIX) {
+    if raw.contains("://") {
         warn!(
             workspace_dir = raw.as_str(),
-            "cloud logical project root is not a local workspace directory"
+            "logical project root is not a server-local workspace directory"
         );
         return None;
     }
@@ -136,17 +122,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn preserves_harness_root_as_logical_context_only() {
-        let resolved =
-            resolve_runtime_project_root(Some("harness://project/project-1".to_string())).await;
-
-        assert_eq!(
-            resolved.logical_root.as_deref(),
-            Some("harness://project/project-1")
-        );
-    }
-
-    #[tokio::test]
     async fn preserves_local_connector_root_as_logical_context_only() {
         let root = "local://connector/device-1/workspace-1/apps/backend";
         let resolved = resolve_runtime_project_root(Some(root.to_string())).await;
@@ -155,7 +130,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn harness_root_is_never_accepted_as_local_workspace() {
+    async fn logical_root_is_never_accepted_as_server_local_workspace() {
         assert_eq!(
             authorize_runtime_workspace_dir(
                 Some("user-1"),
@@ -167,14 +142,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_server_paths_are_not_project_runtime_roots() {
+    fn only_local_connector_roots_are_project_runtime_roots() {
         assert_eq!(
             classify_runtime_project_root("/workspace/project-1"),
-            RuntimeProjectRootKind::LegacyLocalPath
+            RuntimeProjectRootKind::Unsupported
         );
         assert_eq!(
-            classify_runtime_project_root("harness://project/"),
-            RuntimeProjectRootKind::InvalidHarness
+            classify_runtime_project_root("harness://project/project-1"),
+            RuntimeProjectRootKind::Unsupported
         );
         assert_eq!(
             classify_runtime_project_root("local://connector/device-only"),

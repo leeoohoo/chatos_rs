@@ -2302,7 +2302,7 @@ async fn workspace_write_hook_requires_one_invocation_user_approval() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-#[ignore = "requires `cargo build -p chatos_sandbox_mcp_server` before this test"]
+#[ignore = "packaged hook end-to-end fixture"]
 async fn signed_packaged_connector_hooks_run_end_to_end_without_a_listener() {
     let temp = TempDir::new().expect("temp directory");
     let package = TestSigner::new().package_with_packaged_hook_suite(temp.path(), "1.0.0");
@@ -3222,31 +3222,6 @@ async fn plugin_stdio_mcp_prepares_filtered_tools_calls_and_cancels_exact_sessio
     let installed = installer
         .install_archive(package.install_request())
         .expect("install stdio MCP Plugin");
-    let default_host = PluginRuntimeHost::new(
-        PluginSkillLoader::new(installer.clone()),
-        PluginMcpAdapter::new(installer.clone()),
-    );
-    let sandbox_required = default_host
-        .handle_prepare(plugin_request(
-            "plugin_prepare_request",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": installed.installed_version.release_id,
-                "artifact_sha256": installed.installed_version.artifact_sha256,
-                "component_key": "demo-stdio",
-                "permission_snapshot": ["process.spawn"],
-            }),
-        ))
-        .await;
-    assert_eq!(
-        sandbox_required.get("status").and_then(Value::as_u64),
-        Some(409)
-    );
-    assert!(sandbox_required
-        .pointer("/body/error")
-        .and_then(Value::as_str)
-        .is_some_and(|error| error.contains("OS sandbox isolation")));
-
     let invoker = Arc::new(MockPluginMcpInvoker::default());
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -3675,125 +3650,6 @@ async fn plugin_stdio_mcp_cancel_terminates_real_process_tree() {
 fn unix_process_exists(pid: u32) -> bool {
     let result = unsafe { libc::kill(pid as i32, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-#[cfg(target_os = "macos")]
-#[tokio::test]
-#[ignore = "requires `cargo build -p chatos_sandbox_mcp_server` before this test"]
-async fn plugin_stdio_mcp_seatbelt_enforces_read_only_root_runtime_dirs_and_network_denial() {
-    let network_probe = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind random Seatbelt network probe");
-    let network_probe_port = network_probe
-        .local_addr()
-        .expect("Seatbelt network probe address")
-        .port();
-    let temp = TempDir::new().expect("temp directory");
-    let vault = PluginCredentialVault::in_memory(temp.path());
-    let package = TestSigner::new().package_with_sandbox_probe_stdio_mcp(
-        temp.path(),
-        "1.0.0",
-        network_probe_port,
-    );
-    let installer =
-        PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
-    let installed = installer
-        .install_archive(package.install_request())
-        .expect("install Seatbelt stdio MCP Plugin");
-    let scope = PluginCredentialScope::new(
-        "owner-a",
-        "device-a",
-        PLUGIN_ID,
-        installed.installed_version.release_id.clone(),
-        "demo-stdio",
-        "access_token",
-    )
-    .expect("credential scope");
-    vault
-        .upsert(&scope, b"sandbox-secret")
-        .expect("store Seatbelt stdio MCP credential");
-    let launcher = super::mcp_runtime::PluginStdioSandboxLauncher::discover()
-        .expect("discover Plugin stdio Seatbelt launcher");
-    let host = PluginRuntimeHost::new(
-        PluginSkillLoader::new(installer.clone()),
-        PluginMcpAdapter::with_stdio_sandbox_for_tests(installer, launcher),
-    );
-
-    let prepare = host
-        .handle_prepare(plugin_request(
-            "plugin_prepare_request",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": installed.installed_version.release_id,
-                "artifact_sha256": installed.installed_version.artifact_sha256,
-                "component_key": "demo-stdio",
-                "permission_snapshot": ["process.spawn", "credential.use:demo"],
-                "tool_allowlist": ["echo"],
-            }),
-        ))
-        .await;
-    assert_eq!(prepare.get("status").and_then(Value::as_u64), Some(200));
-    assert!(!prepare.to_string().contains("sandbox-secret"));
-    assert!(!installed
-        .installation_path
-        .join("mcp/plugin-write-attempt")
-        .exists());
-    let runtime_parent = installed
-        .installation_path
-        .parent()
-        .expect("Plugin version parent")
-        .join("runtime/stdio");
-    let runtime_roots = fs::read_dir(runtime_parent.as_path())
-        .expect("list Plugin stdio runtime roots")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read Plugin stdio runtime root entries");
-    assert_eq!(runtime_roots.len(), 1);
-    let runtime_root = runtime_roots[0].path();
-    assert!(runtime_root.join("state/state-ok").exists());
-    assert!(runtime_root.join("cache/cache-ok").exists());
-    assert!(runtime_root.join("tmp/temp-ok").exists());
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(200),
-        network_probe.accept()
-    )
-    .await
-    .is_err());
-
-    let body = prepare.get("body").expect("prepare body");
-    let execute = host
-        .handle_execute(plugin_request(
-            "plugin_execute_request",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": body["release_id"],
-                "artifact_sha256": body["artifact_sha256"],
-                "component_key": "demo-stdio",
-                "adapter_session_id": body["adapter_session_id"],
-                "operation": "mcp_tools_call",
-                "invocation_id": "invocation-stdio-lifecycle",
-                "tool_name": "echo",
-                "arguments": {},
-            }),
-        ))
-        .await;
-    assert_eq!(execute.get("status").and_then(Value::as_u64), Some(200));
-    let cancel = host
-        .handle_cancel(plugin_request(
-            "plugin_cancel_request",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": body["release_id"],
-                "artifact_sha256": body["artifact_sha256"],
-                "component_key": "demo-stdio",
-                "adapter_session_id": body["adapter_session_id"],
-            }),
-        ))
-        .await;
-    assert_eq!(
-        cancel.pointer("/body/cancelled").and_then(Value::as_bool),
-        Some(true)
-    );
-    assert!(!runtime_root.exists());
 }
 
 #[tokio::test]

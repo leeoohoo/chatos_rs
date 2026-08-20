@@ -694,13 +694,7 @@ async fn sandbox_facade_impl(
     if is_local_sandbox_mcp_path(relay_path.as_str()) {
         internal_auth::require_mcp_management_service_caller(&user)?;
     }
-    let relay_timeout = if relay_path == "/api/local/sandbox/images/mcp"
-        || relay_path.starts_with("/api/local/sandbox/environments/compose/")
-    {
-        state.config.sandbox_image_relay_request_timeout
-    } else {
-        state.config.relay_request_timeout
-    };
+    let relay_timeout = state.config.relay_request_timeout;
     let request = RelayRequest {
         message_type: "sandbox_request".to_string(),
         request_id: Uuid::new_v4().to_string(),
@@ -922,7 +916,10 @@ fn is_plugin_hook_dispatch(action: &str, body: &Value) -> bool {
 mod tests {
     use std::time::Duration;
 
-    use super::{is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout};
+    use super::{
+        is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout,
+        MIN_MCP_RELAY_TIMEOUT,
+    };
     use serde_json::json;
 
     #[test]
@@ -963,7 +960,7 @@ mod tests {
                     }
                 })
             ),
-            Duration::from_secs(60)
+            MIN_MCP_RELAY_TIMEOUT
         );
     }
 

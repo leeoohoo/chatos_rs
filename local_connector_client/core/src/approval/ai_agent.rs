@@ -75,9 +75,12 @@ pub(crate) async fn run_auto_approval_agent(
     let decision = Arc::new(Mutex::new(None));
     let mut prompt = build_approval_prompt(request, root.as_path(), risk_level, risk_reason)?;
     let run_id = format!("approval-agent-{}", Uuid::new_v4());
+    let conversation_id = format!("local_connector_command_approval:{}", request.request_id);
     let code_service = code_maintainer_service_for_root(
         root.as_path(),
         Some(request.project_key.workspace_id.clone()),
+        Some(conversation_id.clone()),
+        Some(run_id.clone()),
         false,
         true,
         false,
@@ -98,7 +101,6 @@ pub(crate) async fn run_auto_approval_agent(
         prompt.push_str("\n\n");
         prompt.push_str(provider_skills_prompt);
     }
-    let conversation_id = format!("local_connector_command_approval:{}", request.request_id);
     let metadata = json!({
         "agent": "local_connector_command_approval_agent",
         "run_id": run_id,

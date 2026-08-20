@@ -36,7 +36,6 @@ export function useRequirementExecutionProcessModalState(
   );
   const [planDiscarded, setPlanDiscarded] = useState(Boolean(process.tasksDiscarded));
   const [executionConfirmed, setExecutionConfirmed] = useState(false);
-  const [runtimeEnvironmentStatus, setRuntimeEnvironmentStatus] = useState('pending');
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -58,7 +57,6 @@ export function useRequirementExecutionProcessModalState(
     setPlanStopped(stopped);
     setPlanDiscarded(Boolean(process.tasksDiscarded));
     setExecutionConfirmed(Boolean(process.hasStartedRuns));
-    setRuntimeEnvironmentStatus('pending');
     setActionError(null);
     setActionMessage(null);
     setSyncError(null);
@@ -93,7 +91,6 @@ export function useRequirementExecutionProcessModalState(
     rerunning,
     rerunningRef,
     revising,
-    runtimeEnvironmentStatus,
     setActionError,
     setActionMessage,
     setCancelConfirmOpen,
@@ -113,7 +110,6 @@ export function useRequirementExecutionProcessModalState(
     setRerunConfirmOpen,
     setRerunning,
     setRevising,
-    setRuntimeEnvironmentStatus,
     setStopping,
     setSyncError,
     setSyncing,

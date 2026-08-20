@@ -164,7 +164,6 @@ async fn get_project_sync_record(
         "name": "Project A",
         "root_path": null,
         "git_url": null,
-        "source_type": "cloud",
         "description": null,
         "status": "active",
         "created_at": "2026-01-01T00:00:00Z",

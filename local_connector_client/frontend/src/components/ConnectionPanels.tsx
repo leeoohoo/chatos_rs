@@ -197,7 +197,7 @@ export function LocalBoundaryPanel({ status }: { status: ConnectorStatus }) {
       <div className="boundaryList">
         <div><CheckCircle2 size={16} />Local Connector Core 执行本机沙箱、文件和终端操作。</div>
         <div><CheckCircle2 size={16} />Local Connector Service 只负责登录设备、保存配对和 relay 消息。</div>
-        <div><CheckCircle2 size={16} />本地沙箱不调用云端 Sandbox Manager，也不复用云端沙箱实例。</div>
+        <div><CheckCircle2 size={16} />本地沙箱由 Local Connector Client 在用户设备上独立管理。</div>
       </div>
     </section>
   );

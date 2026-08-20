@@ -1,10 +1,6 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
-ARG DOCKER_CLI_VERSION=27.5.1
-ARG DOCKER_BUILDX_VERSION=0.20.0
-ARG DOCKER_DOWNLOAD_BASE_URL=https://mirrors.aliyun.com/docker-ce
-ARG DOCKER_DOWNLOAD_FALLBACK_URL=https://download.docker.com
 ARG NODE_DOWNLOAD_BASE_URL=https://npmmirror.com/mirrors/node
 ARG NODE_DOWNLOAD_FALLBACK_URL=https://nodejs.org/dist
 ARG NPM_REGISTRY=https://registry.npmmirror.com
@@ -77,10 +73,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim AS runtime-deps
 
 ARG BIN_NAME
-ARG DOCKER_CLI_VERSION
-ARG DOCKER_BUILDX_VERSION
-ARG DOCKER_DOWNLOAD_BASE_URL
-ARG DOCKER_DOWNLOAD_FALLBACK_URL
 ARG AGENT_BROWSER_VERSION=0.31.2
 ARG NODE_VERSION=24.4.1
 ARG NODE_DOWNLOAD_BASE_URL
@@ -128,30 +120,6 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
          && tar -xJf "/tmp/${node_archive}" -C /usr/local --strip-components=1 \
          && rm -f "/tmp/${node_archive}" /tmp/node-shasums.txt /tmp/node-sha256.txt \
          && npm install --global --registry "$NPM_REGISTRY" "agent-browser@${AGENT_BROWSER_VERSION}"; \
-       fi \
-    && if [ "$BIN_NAME" = "sandbox_manager_service_backend" ]; then \
-         docker_arch="$(dpkg --print-architecture)" \
-         && download_docker_package() { \
-              docker_path="$1"; docker_destination="$2"; \
-              for docker_base_url in "$DOCKER_DOWNLOAD_BASE_URL" "$DOCKER_DOWNLOAD_FALLBACK_URL"; do \
-                if curl -fL --retry 5 --retry-delay 2 --retry-all-errors \
-                  "${docker_base_url}/${docker_path}" -o "$docker_destination"; then \
-                  return 0; \
-                fi; \
-              done; \
-              return 1; \
-            } \
-         && docker_pool_path="linux/debian/dists/bookworm/pool/stable/${docker_arch}" \
-         && download_docker_package \
-           "${docker_pool_path}/docker-ce-cli_${DOCKER_CLI_VERSION}-1~debian.12~bookworm_${docker_arch}.deb" \
-           /tmp/docker-ce-cli.deb \
-         && download_docker_package \
-           "${docker_pool_path}/docker-buildx-plugin_${DOCKER_BUILDX_VERSION}-1~debian.12~bookworm_${docker_arch}.deb" \
-           /tmp/docker-buildx-plugin.deb \
-         && apt-get install -y --no-install-recommends \
-           /tmp/docker-ce-cli.deb \
-           /tmp/docker-buildx-plugin.deb \
-         && rm -f /tmp/docker-ce-cli.deb /tmp/docker-buildx-plugin.deb; \
        fi \
     && rm -rf /var/lib/apt/lists/*
 

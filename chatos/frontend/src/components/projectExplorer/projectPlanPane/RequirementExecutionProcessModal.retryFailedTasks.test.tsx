@@ -46,18 +46,15 @@ const mocks = vi.hoisted(() => ({
     },
   },
   getProjectRequirementExecutionPlan: vi.fn(),
-  getProjectRuntimeEnvironment: vi.fn(),
   reloadGraph: vi.fn(),
   retryTask: vi.fn(),
   apiClient: null as unknown as {
     getProjectRequirementExecutionPlan: ReturnType<typeof vi.fn>;
-    getProjectRuntimeEnvironment: ReturnType<typeof vi.fn>;
   },
 }));
 
 mocks.apiClient = {
   getProjectRequirementExecutionPlan: mocks.getProjectRequirementExecutionPlan,
-  getProjectRuntimeEnvironment: mocks.getProjectRuntimeEnvironment,
 };
 
 vi.mock('../../../lib/api/ApiClientContext', () => ({
@@ -149,35 +146,6 @@ beforeEach(() => {
     message_id: 'message-1',
     status: 'failed',
     has_started_runs: true,
-  });
-  mocks.getProjectRuntimeEnvironment.mockResolvedValue({
-    environment: { status: 'ready', execution_service_id: 'workspace' },
-    images: [
-      {
-        service_id: 'workspace',
-        display_name: 'Project Workspace',
-        service_role: 'workspace',
-        status: 'ready',
-      },
-      {
-        service_id: 'mdm-service',
-        display_name: 'MDM Service',
-        service_role: 'application',
-        status: 'planned',
-      },
-      {
-        service_id: 'web-prototype',
-        display_name: 'Web Prototype',
-        service_role: 'artifact',
-        status: 'excluded',
-      },
-      {
-        service_id: 'postgresql',
-        display_name: 'PostgreSQL',
-        service_role: 'dependency',
-        status: 'ready',
-      },
-    ],
   });
 });
 

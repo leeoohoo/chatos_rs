@@ -153,12 +153,23 @@ async fn sync_task_runner_pending_prompt_record(
     if external_prompt_id.is_empty() {
         return Ok(record);
     }
-    let remote_prompt = get_task_runner_prompt(
+    let remote_prompt = match get_task_runner_prompt(
         Config::get().task_runner_base_url.as_str(),
         access_token,
         external_prompt_id.as_str(),
     )
-    .await?;
+    .await
+    {
+        Ok(prompt) => prompt,
+        Err(err) if is_task_runner_prompt_missing_error(err.as_str()) => {
+            return update_task_runner_ask_user_prompt_as_canceled(
+                record,
+                Some("Task Runner 中已不存在该交互请求".to_string()),
+            )
+            .await;
+        }
+        Err(err) => return Err(err),
+    };
     let Some(next_status) = task_runner_prompt_status_from_value(&remote_prompt) else {
         return Ok(record);
     };
@@ -339,11 +350,10 @@ async fn submit_task_runner_ask_user_prompt(
             }
         }
         Err(err) => {
-            if is_task_runner_prompt_cancelled_error(err.as_str()) {
+            if is_task_runner_prompt_stale_error(err.as_str()) {
                 return mark_task_runner_ask_user_prompt_canceled(
                     record,
-                    Some("Task Runner 已取消该交互请求".to_string()),
-                    err,
+                    task_runner_prompt_stale_reason(err.as_str()),
                 )
                 .await;
             }
@@ -450,11 +460,10 @@ async fn cancel_task_runner_ask_user_prompt(
             }
         }
         Err(err) => {
-            if is_task_runner_prompt_cancelled_error(err.as_str()) {
+            if is_task_runner_prompt_stale_error(err.as_str()) {
                 return mark_task_runner_ask_user_prompt_canceled(
                     record,
-                    reason.or_else(|| Some("Task Runner 已取消该交互请求".to_string())),
-                    err,
+                    reason.or_else(|| task_runner_prompt_stale_reason(err.as_str())),
                 )
                 .await;
             }
@@ -469,31 +478,15 @@ async fn cancel_task_runner_ask_user_prompt(
 async fn mark_task_runner_ask_user_prompt_canceled(
     record: AskUserPromptRecord,
     reason: Option<String>,
-    remote_error: String,
 ) -> (StatusCode, Json<Value>) {
-    let payload = payload_from_record(&record);
-    let submission = AskUserPromptResponseSubmission {
-        status: AskUserPromptStatus::Canceled.as_str().to_string(),
-        values: None,
-        selection: None,
-        reason,
-    };
-    let redacted_response = redact_response_for_store(&submission, &payload);
-    match update_ask_user_prompt_response(
-        record.id.as_str(),
-        AskUserPromptStatus::Canceled,
-        Some(redacted_response),
-    )
-    .await
-    {
+    match update_task_runner_ask_user_prompt_as_canceled(record, reason).await {
         Ok(saved) => (
             StatusCode::CONFLICT,
             Json(json!({
                 "success": false,
                 "code": "ask_user_prompt_stale",
-                "error": "该交互请求已经被 Task Runner 取消，已同步为失效状态；请等待新的交互请求或重新发起任务。",
+                "error": "该交互请求在 Task Runner 中已失效，已同步本地状态；请等待新的交互请求或重新发起任务。",
                 "prompt": saved,
-                "remote_error": remote_error,
             })),
         ),
         Err(err) => (
@@ -502,10 +495,49 @@ async fn mark_task_runner_ask_user_prompt_canceled(
                 "success": false,
                 "code": "ask_user_prompt_stale_sync_failed",
                 "error": err,
-                "remote_error": remote_error,
             })),
         ),
     }
+}
+
+async fn update_task_runner_ask_user_prompt_as_canceled(
+    record: AskUserPromptRecord,
+    reason: Option<String>,
+) -> Result<AskUserPromptRecord, String> {
+    let payload = payload_from_record(&record);
+    let submission = AskUserPromptResponseSubmission {
+        status: AskUserPromptStatus::Canceled.as_str().to_string(),
+        values: None,
+        selection: None,
+        reason,
+    };
+    let redacted_response = redact_response_for_store(&submission, &payload);
+    update_ask_user_prompt_response(
+        record.id.as_str(),
+        AskUserPromptStatus::Canceled,
+        Some(redacted_response),
+    )
+    .await
+}
+
+fn is_task_runner_prompt_stale_error(error: &str) -> bool {
+    is_task_runner_prompt_cancelled_error(error) || is_task_runner_prompt_missing_error(error)
+}
+
+fn task_runner_prompt_stale_reason(error: &str) -> Option<String> {
+    if is_task_runner_prompt_missing_error(error) {
+        Some("Task Runner 中已不存在该交互请求".to_string())
+    } else if is_task_runner_prompt_cancelled_error(error) {
+        Some("Task Runner 已取消该交互请求".to_string())
+    } else {
+        None
+    }
+}
+
+fn is_task_runner_prompt_missing_error(error: &str) -> bool {
+    let normalized = error.trim().to_ascii_lowercase();
+    normalized.contains("404 not found")
+        && (normalized.contains("提示不存在") || normalized.contains("prompt not found"))
 }
 
 fn is_task_runner_prompt_cancelled_error(error: &str) -> bool {
@@ -646,6 +678,23 @@ mod tests {
         ));
         assert!(!is_task_runner_prompt_cancelled_error(
             "Task Runner request failed: 400 Bad Request {\"error\":\"提示当前状态不允许提交: submitted\"}",
+        ));
+    }
+
+    #[test]
+    fn detects_task_runner_missing_prompt_errors_as_stale() {
+        assert!(is_task_runner_prompt_stale_error(
+            "Task Runner request failed: 404 Not Found {\"error\":\"提示不存在: prompt-1\"}",
+        ));
+        assert!(is_task_runner_prompt_stale_error(
+            "Task Runner request failed: 404 Not Found {\"error\":\"prompt not found\"}",
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_arbitrary_not_found_errors_as_stale_prompts() {
+        assert!(!is_task_runner_prompt_stale_error(
+            "Task Runner request failed: 404 Not Found {\"error\":\"task not found\"}",
         ));
     }
 

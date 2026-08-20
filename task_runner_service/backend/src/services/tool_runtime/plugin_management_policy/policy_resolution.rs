@@ -79,7 +79,6 @@ async fn resolve_policy(
         .with_runtime_context(
             normalized_text(task_profile),
             None,
-            None,
             normalized_text(schedule_mode),
         );
     let capabilities = if let Some(access_token) = access_token {

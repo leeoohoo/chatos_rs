@@ -3,7 +3,6 @@
 
 import * as workspaceApi from '../../workspace';
 import type {
-  AnalyzeProjectRuntimeEnvironmentPayload,
   DeleteSuccessResponse,
   PagingOptions,
   ProjectContactLockResponse,
@@ -18,39 +17,19 @@ import type {
   ProjectRequirementExecutionPlanResponse,
   ProjectRequirementDispatchResponse,
   ProjectRequirementStopResponse,
-  ProjectRuntimeEnvironmentResponse,
-  ProjectRuntimeEnvironmentProgressResponse,
   ProjectRunEnvironmentResponse,
   ProjectResponse,
   ProjectRunCatalogResponse,
   ProjectRunExecuteResponse,
   ProjectRunStateResponse,
-  UpdateProjectRuntimeEnvironmentSettingsPayload,
 } from '../../types';
 import type ApiClient from '../../../client';
 
 export interface WorkspaceProjectFacade {
   listProjects(userId?: string): Promise<ProjectResponse[]>;
-  createCloudProject(data: FormData): Promise<ProjectResponse>;
   updateProject(id: string, data: { name?: string; git_url?: string; description?: string }): Promise<ProjectResponse>;
   deleteProject(id: string): Promise<DeleteSuccessResponse>;
   getProject(id: string): Promise<ProjectResponse>;
-  getProjectRuntimeEnvironment(projectId: string): Promise<ProjectRuntimeEnvironmentResponse>;
-  updateProjectRuntimeEnvironmentSettings(
-    projectId: string,
-    data: UpdateProjectRuntimeEnvironmentSettingsPayload,
-  ): Promise<ProjectRuntimeEnvironmentResponse>;
-  analyzeProjectRuntimeEnvironment(
-    projectId: string,
-    data?: AnalyzeProjectRuntimeEnvironmentPayload,
-  ): Promise<ProjectRuntimeEnvironmentResponse>;
-  generateProjectRuntimeEnvironmentImage(
-    projectId: string,
-    imageRecordId: string,
-  ): Promise<ProjectRuntimeEnvironmentResponse>;
-  getProjectRuntimeEnvironmentProgress(
-    projectId: string,
-  ): Promise<ProjectRuntimeEnvironmentProgressResponse>;
   getProjectPlan(projectId: string, options?: ProjectPlanOptions): Promise<ProjectPlanResponse>;
   listProjectRequirementWorkItems(
     projectId: string,
@@ -163,9 +142,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   async listProjects(userId) {
     return workspaceApi.listProjects(this.getRequestFn(), userId);
   },
-  async createCloudProject(data) {
-    return workspaceApi.createCloudProject(this.getRequestFn(), data);
-  },
   async updateProject(id, data) {
     return workspaceApi.updateProject(this.getRequestFn(), id, data);
   },
@@ -174,25 +150,6 @@ export const workspaceProjectFacade: WorkspaceProjectFacade & ThisType<ApiClient
   },
   async getProject(id) {
     return workspaceApi.getProject(this.getRequestFn(), id);
-  },
-  async getProjectRuntimeEnvironment(projectId) {
-    return workspaceApi.getProjectRuntimeEnvironment(this.getRequestFn(), projectId);
-  },
-  async updateProjectRuntimeEnvironmentSettings(projectId, data) {
-    return workspaceApi.updateProjectRuntimeEnvironmentSettings(this.getRequestFn(), projectId, data);
-  },
-  async analyzeProjectRuntimeEnvironment(projectId, data = {}) {
-    return workspaceApi.analyzeProjectRuntimeEnvironment(this.getRequestFn(), projectId, data);
-  },
-  async generateProjectRuntimeEnvironmentImage(projectId, imageRecordId) {
-    return workspaceApi.generateProjectRuntimeEnvironmentImage(
-      this.getRequestFn(),
-      projectId,
-      imageRecordId,
-    );
-  },
-  async getProjectRuntimeEnvironmentProgress(projectId) {
-    return workspaceApi.getProjectRuntimeEnvironmentProgress(this.getRequestFn(), projectId);
   },
   async getProjectPlan(projectId, options) {
     return workspaceApi.getProjectPlan(this.getRequestFn(), projectId, options);

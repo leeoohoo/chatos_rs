@@ -17,11 +17,6 @@ services:
         BIN_NAME: config_center_service_backend
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
-  sandbox-agent-image:
-    build:
-      context: ..
-      dockerfile: sandbox_manager_service/sandbox_agent/Dockerfile
-
   user-service-backend:
     build:
       context: ..
@@ -78,16 +73,6 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: mcp_management_service_backend
         BIN_NAME: mcp_management_service_backend
-        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
-
-  sandbox-manager-backend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.rust-service
-      args:
-        MANIFEST_PATH: Cargo.toml
-        PACKAGE_NAME: sandbox_manager_service_backend
-        BIN_NAME: sandbox_manager_service_backend
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   task-runner-backend:
@@ -178,14 +163,6 @@ services:
         <<: *frontend-build-args
         APP_DIR: task_runner_service/frontend
         VITE_CONFIG_CENTER_URL: ${CONFIG_CENTER_PUBLIC_URL:-http://localhost:39271}
-
-  sandbox-manager-frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-      args:
-        <<: *frontend-build-args
-        APP_DIR: sandbox_manager_service/frontend
 
   official-website-frontend:
     build:

@@ -8,8 +8,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    SandboxProviderKind, WorkspaceProviderKind,
+    McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    WorkspaceProviderKind,
 };
 use chatos_mcp_service::METHOD_NOTIFICATIONS_CANCELLED;
 use reqwest::header::HeaderMap;
@@ -64,12 +64,8 @@ fn snapshot(binding: ExternalHttpProviderBinding) -> RuntimeSessionSnapshot {
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
-            execution_plane: ExecutionPlane::Cloud,
-            workspace_provider: WorkspaceProviderKind::Harness,
+            workspace_provider: WorkspaceProviderKind::None,
             workspace: None,
-            sandbox_provider: SandboxProviderKind::None,
-            sandbox_pairing_id: None,
-            source_type: Some("cloud".to_string()),
             revision: "project-revision".to_string(),
         },
         policy_revision: "policy-1".to_string(),
@@ -82,7 +78,6 @@ fn snapshot(binding: ExternalHttpProviderBinding) -> RuntimeSessionSnapshot {
         plugin_local_tool_component_bindings: Default::default(),
         plugin_cloud_tool_component_bindings: Default::default(),
         external_http_bindings: HashMap::from([("external-1".to_string(), binding)]),
-        cloud_stdio_bindings: Default::default(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix: i64::MAX,
     }

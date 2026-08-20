@@ -21,7 +21,7 @@ pub(super) async fn resolve_local_runtime_capabilities(
         .ok_or_else(|| ApiError::not_found("Local runtime agent capability was not found"))?;
     let owner_user_id = user.effective_owner_user_id();
     let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id)
-        .with_runtime_context(None, None, Some("local_connector".to_string()), None);
+        .with_runtime_context(None, Some("local_connector".to_string()), None);
     let capabilities = state
         .plugin_management_client
         .resolve_for_service(&request)

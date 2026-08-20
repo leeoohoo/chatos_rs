@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use anyhow::{anyhow, Context, Result};
 use chatos_sandbox_contract::{
     EffectiveSandboxPolicy, NetworkPermissionPolicy, SandboxBackendKind,
-    SandboxBackendReadinessStatus,
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::Method;
@@ -14,15 +13,12 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::relay::RelayRequest;
-use crate::sandbox::process::{native_process_sandbox_capability, start_native_sandbox_process};
 use crate::sandbox::project_permissions::load_trusted_project_permission_document;
 use crate::sandbox::types::{
     CreateLocalSandboxLeaseRequest, LocalSandboxLease, LocalSandboxNetworkPolicy,
     LocalSandboxRuntime,
 };
-use crate::sandbox::workspace::{
-    local_sandbox_request_body, local_sandbox_run_workspace, prepare_local_sandbox_workspace,
-};
+use crate::sandbox::workspace::local_sandbox_request_body;
 use crate::workspace::paths::{resolve_request_workspace_dir, workspace_for_request};
 use crate::{local_now_rfc3339, LocalState, LOCAL_SANDBOX_STATUS_READY};
 
@@ -54,9 +50,7 @@ pub(crate) async fn create_local_sandbox_lease(
     let effective_policy = selection.policy;
     let lease_id = format!("lease-{}", Uuid::new_v4());
     let sandbox_id = format!("sandbox-{}", Uuid::new_v4());
-    let run_workspace = local_sandbox_run_workspace(workspace, input.run_id.as_str())?;
-    let response_seed = json!({ "run_workspace": run_workspace.to_string_lossy() });
-    prepare_local_sandbox_workspace(request, state, &response_seed)?;
+    let run_workspace = project_cwd;
     let effective_permissions = state.sandbox.effective_permissions_with_project(
         Some(selection.profile_name.as_str()),
         &effective_policy,
@@ -69,31 +63,8 @@ pub(crate) async fn create_local_sandbox_lease(
     resource_limits.disk_mb = resource_limits.disk_mb.max(128);
     resource_limits.max_processes = resource_limits.max_processes.max(16);
     let requested_network = input.network.unwrap_or_default();
-    let capability = native_process_sandbox_capability().await;
-    if capability.status != SandboxBackendReadinessStatus::Ready {
-        return Ok((
-            409,
-            BTreeMap::new(),
-            json!({
-                "error": capability.message,
-                "code": "sandbox_backend_not_ready",
-                "requested_backend": SandboxBackendKind::LocalProcess,
-            }),
-        ));
-    }
     let network =
         normalized_native_process_network(&requested_network, &effective_permissions.network)?;
-    let backend_id = start_native_sandbox_process(
-        sandbox_runtime,
-        sandbox_id.as_str(),
-        run_workspace.as_path(),
-        &effective_policy,
-        &effective_permissions,
-        &resource_limits,
-        input.project_id.as_str(),
-        input.user_id.as_str(),
-    )
-    .await?;
     let now = local_now_rfc3339();
     let ttl_seconds = normalized_local_sandbox_lease_ttl_seconds(input.ttl_seconds);
     let expires_at = (Utc::now() + ChronoDuration::seconds(ttl_seconds as i64)).to_rfc3339();
@@ -107,7 +78,7 @@ pub(crate) async fn create_local_sandbox_lease(
         workspace_root: input.workspace_root,
         run_workspace: run_workspace.to_string_lossy().to_string(),
         backend: effective_policy.sandbox_mode.as_str().to_string(),
-        backend_id: Some(backend_id),
+        backend_id: None,
         status: LOCAL_SANDBOX_STATUS_READY.to_string(),
         resource_limits,
         network,

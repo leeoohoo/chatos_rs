@@ -15,9 +15,8 @@ steps:
       - docker ps --filter 'name=chatos-rs-' --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
       - test -z "$(docker ps --filter 'name=chatos-rs-' --filter 'health=unhealthy' --format '{{.Names}}')"
       - test "$(docker inspect chatos-rs-mongodb-1 --format '{{.State.Health.Status}}')" = healthy
-      - test "$(docker inspect chatos-rs-sandbox-manager-backend-1 --format '{{.State.Health.Status}}')" = healthy
       - docker images --format '{{.Repository}}:{{.Tag}}' | grep 'chatos-rs-.*:harness-ci' | sort -u > .chatos-ci-images
-      - test "$(wc -l < .chatos-ci-images)" -eq 18
+      - test "$(wc -l < .chatos-ci-images)" -eq 15
     volumes:
       - name: docker-sock
         path: /var/run/docker.sock

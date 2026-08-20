@@ -136,23 +136,6 @@ steps:
 ---
 kind: pipeline
 type: docker
-name: backend-sandbox-manager
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: cargo-check
-    image: rust:1-bookworm
-    commands:
-      - find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -e 's|http://deb.debian.org/debian|http://mirrors.cloud.aliyuncs.com/debian|g' -e 's|http://deb.debian.org/debian-security|http://mirrors.cloud.aliyuncs.com/debian-security|g' {} + && apt-get update && apt-get install -y --no-install-recommends git bash python3 build-essential clang cmake libssl-dev pkg-config protobuf-compiler ca-certificates && rm -rf /var/lib/apt/lists/*
-      - cargo check --manifest-path Cargo.toml -p sandbox_manager_service_backend
-
----
-kind: pipeline
-type: docker
 name: backend-task-runner
 
 clone:
@@ -302,25 +285,6 @@ steps:
 ---
 kind: pipeline
 type: docker
-name: frontend-sandbox-manager
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: npm-check
-    image: node:24-bookworm
-    commands:
-      - cd sandbox_manager_service/frontend
-      - npm ci --legacy-peer-deps
-      - npm run type-check
-      - npm run build
-
----
-kind: pipeline
-type: docker
 name: frontend-official-website
 
 clone:
@@ -336,25 +300,6 @@ steps:
       - npm ci --legacy-peer-deps
       - npm run type-check
       - npm run build
-
----
-kind: pipeline
-type: docker
-name: sandbox-agent-image
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: dockerfile-check
-    image: docker:27-cli
-    commands:
-      - apk add --no-cache bash
-      - test -f sandbox_manager_service/sandbox_agent/Dockerfile
-      - test -f sandbox_manager_service/sandbox_agent/Cargo.workspace.toml
-      - test -f sandbox_manager_service/sandbox_mcp_server/Cargo.toml
 
 ---
 kind: pipeline

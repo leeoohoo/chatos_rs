@@ -193,7 +193,7 @@ fn register_stage_edit_batch_tool(
                 let mut store = session_store
                     .lock()
                     .map_err(|_| "edit session store unavailable".to_string())?;
-                let session = store.get_mut(session_id, ctx.run_id)?;
+                let session = store.get_mut(session_id, ctx.run_id, ctx.conversation_id)?;
                 let mut staged_session = session.clone();
                 let mut batch_changed_paths = BTreeSet::new();
                 let mut batch_matches: Vec<Value> = Vec::new();
@@ -285,7 +285,7 @@ fn register_commit_edit_session_tool(
                 let session = session_store
                     .lock()
                     .map_err(|_| "edit session store unavailable".to_string())?
-                    .take(session_id, ctx.run_id)?;
+                    .take(session_id, ctx.run_id, ctx.conversation_id)?;
                 commit_session(
                     session,
                     &fs_ops,
@@ -328,7 +328,7 @@ fn register_abort_edit_session_tool(
                 let session = session_store
                     .lock()
                     .map_err(|_| "edit session store unavailable".to_string())?
-                    .take(session_id, ctx.run_id)?;
+                    .take(session_id, ctx.run_id, ctx.conversation_id)?;
                 Ok(text_result(json!({
                     "outcome": FileModificationOutcome::AlreadyApplied,
                     "changed": false,

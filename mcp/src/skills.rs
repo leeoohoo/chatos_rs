@@ -101,24 +101,6 @@ fn builtin_provider_skills(
 
 fn service_provider_skill(key: SystemMcpKey) -> Option<SystemMcpProviderSkill> {
     let (id, name, description, instructions) = match key {
-        SystemMcpKey::SandboxImages => (
-            "sandbox_images_usage",
-            "运行镜像工具使用指南",
-            "指导 AI 搜索和复用项目运行镜像，并只采用工具真实返回的镜像结果。",
-            include_str!("../provider_skills/sandbox-images.md"),
-        ),
-        SystemMcpKey::ProjectEnvironment => (
-            "project_environment_usage",
-            "项目环境分析工具使用指南",
-            "指导 AI 读取和更新当前项目的运行环境状态。",
-            include_str!("../provider_skills/project-environment.md"),
-        ),
-        SystemMcpKey::ProjectRuntimeEnvironment => (
-            "project_runtime_environment_usage",
-            "项目运行环境信息工具使用指南",
-            "指导执行 Agent 读取当前项目已经初始化好的环境信息。",
-            include_str!("../provider_skills/project-runtime-environment.md"),
-        ),
         SystemMcpKey::LocalCommandApproval => (
             "local_command_approval_usage",
             "本地命令审批工具使用指南",
@@ -151,7 +133,6 @@ mod tests {
     fn agent_facing_service_guidance_hides_execution_routing_internals() {
         for key in [
             SystemMcpKey::TaskRunnerService,
-            SystemMcpKey::ProjectRuntimeEnvironment,
             SystemMcpKey::TaskProcessLog,
         ] {
             let guidance = system_mcp_provider_skills(key);

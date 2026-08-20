@@ -31,9 +31,7 @@ import { useProjectsRealtime } from '../../lib/realtime/useProjectsRealtime';
 import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnectionsRealtime';
 import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
 import { useTerminalUiSetting } from '../../hooks/useTerminalUiSetting';
-import { useLocalProjectCreationSetting } from '../../hooks/useLocalProjectCreationSetting';
 import type { ChatStore as SessionListStoreHook } from '../../lib/store/createChatStoreWithBackend';
-import type { ResourceSourceMode } from './CreateResourceModals';
 import { resolveWorkspaceResourceVisibility } from './resourceVisibility';
 import type { ContactItem } from './types';
 
@@ -99,7 +97,6 @@ export const useSessionListController = ({
     projects,
     currentProject,
     loadProjects,
-    createCloudProject,
     selectProject,
     deleteProject,
     markProjectsStale,
@@ -136,12 +133,7 @@ export const useSessionListController = ({
   const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
-  const [projectRoot, setProjectRoot] = useState('');
-  const [cloudProjectName, setCloudProjectName] = useState('');
-  const [cloudProjectGitUrl, setCloudProjectGitUrl] = useState('');
-  const [cloudProjectZipFile, setCloudProjectZipFile] = useState<File | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
-  const [projectSourceMode, setProjectSourceMode] = useState<ResourceSourceMode>('server');
 
   const [terminalModalOpen, setTerminalModalOpen] = useState(false);
   const [terminalError, setTerminalError] = useState<string | null>(null);
@@ -153,12 +145,6 @@ export const useSessionListController = ({
   const [taskRunnerSaving, setTaskRunnerSaving] = useState(false);
 
   const apiClient = useApiClient();
-  const {
-    localProjectCreationEnabled,
-    localProjectCreationResolved,
-  } = useLocalProjectCreationSetting();
-  const allowLocalProjectCreation = localProjectCreationResolved
-    && localProjectCreationEnabled;
   const { confirm, alert } = useDialogService();
 
   const {
@@ -215,12 +201,10 @@ export const useSessionListController = ({
   const localFsPickers = useLocalFsPickers({
     apiClient,
     t,
-    projectRoot,
     remotePrivateKeyPath: remoteForm.remotePrivateKeyPath,
     remoteCertificatePath: remoteForm.remoteCertificatePath,
     remoteJumpPrivateKeyPath: remoteForm.remoteJumpPrivateKeyPath,
     remoteJumpCertificatePath: remoteForm.remoteJumpCertificatePath,
-    onProjectRootChange: setProjectRoot,
     onRemotePrivateKeyPathChange: remoteForm.setRemotePrivateKeyPath,
     onRemoteCertificatePathChange: remoteForm.setRemoteCertificatePath,
     onRemoteJumpPrivateKeyPathChange: remoteForm.setRemoteJumpPrivateKeyPath,
@@ -339,34 +323,23 @@ export const useSessionListController = ({
     setIsRefreshing,
     setIsRefreshingTerminals,
     setIsRefreshingRemote,
-    setProjectRoot,
-    setCloudProjectName,
-    setCloudProjectGitUrl,
-    setCloudProjectZipFile,
     setProjectError,
     setProjectModalOpen,
-    setProjectSourceMode,
     setTerminalError,
     setTerminalModalOpen,
     setKeyFilePickerOpen: localFsPickers.setKeyFilePickerOpen,
     openRemoteModalBase: remoteForm.openRemoteModal,
-    createCloudProject,
     createTerminal,
     selectProject,
     selectTerminal,
     loadProjects,
     apiClient,
-    projectSourceMode,
     localConnectorWorkspaces,
     selectedLocalConnectorWorkspaceId,
     selectedLocalConnectorDirectoryPath,
     setTerminalExecuting,
     selectRemoteConnection,
     openRemoteSftp,
-    cloudProjectName,
-    cloudProjectGitUrl,
-    cloudProjectZipFile,
-    allowLocalProjectCreation,
   });
 
   const sectionExpansion = useSectionExpansion({
@@ -617,7 +590,6 @@ export const useSessionListController = ({
   return {
     agents,
     apiClient,
-    allowLocalProjectCreation,
     contactSessionCreator,
     contactSessionState,
     currentProject,
@@ -646,11 +618,6 @@ export const useSessionListController = ({
     openTaskRunnerConfig,
     projectError,
     projectModalOpen,
-    projectRoot,
-    cloudProjectName,
-    cloudProjectGitUrl,
-    cloudProjectZipFile,
-    projectSourceMode,
     projects,
     remoteConnections,
     remoteForm,
@@ -659,11 +626,6 @@ export const useSessionListController = ({
     sessionListActions,
     sessions,
     setProjectModalOpen,
-    setProjectRoot,
-    setCloudProjectName,
-    setCloudProjectGitUrl,
-    setCloudProjectZipFile,
-    setProjectSourceMode,
     setTerminalModalOpen,
     setSelectedLocalConnectorWorkspaceId: handleSelectedLocalConnectorWorkspaceChange,
     taskRunnerContact,

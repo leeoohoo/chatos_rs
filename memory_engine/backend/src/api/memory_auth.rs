@@ -243,9 +243,9 @@ pub async fn require_memory_auth(
     let required_scope = scope_for_memory_path(request.uri().path());
     let allowed_callers: &[&str] = match required_scope {
         MODEL_PROFILE_SYNC_SCOPE => &["user-service"],
-        SOURCE_SCOPE => &["chatos-backend", "task-runner", "project-service"],
+        SOURCE_SCOPE => &["chatos-backend", "task-runner"],
         ADMIN_SCOPE => &[],
-        DATA_SCOPE => &["chatos-backend", "task-runner", "project-service"],
+        DATA_SCOPE => &["chatos-backend", "task-runner"],
         _ => &[],
     };
     if let Some(claims) = require_internal_request(

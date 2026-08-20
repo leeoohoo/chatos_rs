@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::{ResolvedMcpRoute, SandboxExecutionTarget};
+use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
@@ -20,7 +20,6 @@ impl ProviderDispatcher {
         project_id: &str,
         run_id: Option<&str>,
         source_session_id: Option<&str>,
-        sandbox_target: Option<&SandboxExecutionTarget>,
         expires_at_unix: i64,
     ) -> HashMap<String, Vec<Value>> {
         self.chatos
@@ -32,7 +31,6 @@ impl ProviderDispatcher {
                 project_id,
                 run_id,
                 source_session_id,
-                sandbox_target,
                 expires_at_unix,
             )
             .await

@@ -193,7 +193,6 @@ impl AppConfig {
         for caller in [
             "chatos-backend",
             "task-runner",
-            "project-service",
             "user-service",
             "configuration-center",
         ] {
@@ -210,7 +209,6 @@ impl AppConfig {
                 &[
                     "change_me_chatos_memory_engine_secret",
                     "change_me_task_runner_memory_engine_secret",
-                    "change_me_project_service_memory_engine_secret",
                     "change_me_user_service_memory_engine_secret",
                     "change_me_configuration_center_memory_engine_secret",
                 ],
@@ -226,10 +224,6 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "task-runner",
             "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
-        ),
-        (
-            "project-service",
-            "PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
         ),
         (
             "user-service",

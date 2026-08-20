@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=214
-total_route_count=214
+main_backend_route_count=208
+total_route_count=208
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -160,13 +160,7 @@ chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route("/api/projects", get(list_projects))
-chatos/backend/src/api/projects.rs: .route("/api/projects/cloud", post(create_cloud_project))
 chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/plan", get(get_project_plan))
 chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/analyze", post(analyze_project_run))
 chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/execute", post(execute_project_run))

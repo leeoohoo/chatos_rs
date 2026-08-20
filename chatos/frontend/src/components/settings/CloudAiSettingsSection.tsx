@@ -112,8 +112,6 @@ export function CloudAiSettingsSection({
           memory_summary_thinking_level: defaultDrafts.memory.thinking || null,
           project_management_agent_model_config_id: defaultDrafts.project.modelId || null,
           project_management_agent_thinking_level: defaultDrafts.project.thinking || null,
-          environment_initialization_model_config_id: defaultDrafts.environment.modelId || null,
-          environment_initialization_thinking_level: defaultDrafts.environment.thinking || null,
         }),
         ...updates,
       ]);

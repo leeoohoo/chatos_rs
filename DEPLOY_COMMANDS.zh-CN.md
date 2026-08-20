@@ -29,7 +29,6 @@ docker/deploy.sh logs
 docker/deploy.sh logs chatos-backend
 docker/deploy.sh logs harness
 docker/deploy.sh logs task-runner-backend
-docker/deploy.sh logs sandbox-manager-backend
 ```
 
 ## 重启

@@ -102,10 +102,6 @@ impl AppState {
             config.local_connector_http_client.clone(),
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),
-            config.sandbox_manager_http_client.clone(),
-            config.sandbox_manager_service_base_url.clone(),
-            config.sandbox_manager_internal_api_secret.clone(),
-            config.sandbox_manager_request_timeout,
             config.embedded_work_dir.clone(),
             ProviderRuntimeConfig {
                 downstream_request_timeout: config.downstream_request_timeout,
@@ -113,7 +109,6 @@ impl AppState {
                     config.downstream_request_timeout,
                 ),
                 external_http_request_timeout: config.external_http_request_timeout,
-                sandbox_image_request_timeout: config.sandbox_image_request_timeout,
                 response_limit_bytes: config.provider_response_limit_bytes,
             },
         )?;

@@ -92,9 +92,7 @@ impl ProviderDispatcher {
             return result;
         }
         match route.provider_kind {
-            McpProviderKind::InternalService | McpProviderKind::Harness
-                if self.project_service.supports(route) =>
-            {
+            McpProviderKind::InternalService if self.project_service.supports(route) => {
                 self.project_service
                     .call_tool(
                         snapshot,
@@ -127,43 +125,8 @@ impl ProviderDispatcher {
                     )
                     .await
             }
-            McpProviderKind::LocalConnector | McpProviderKind::CloudSandbox
-                if self.sandbox_images.supports(route) =>
-            {
-                self.sandbox_images
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
             McpProviderKind::LocalConnector if self.local_connector.supports(route) => {
                 self.local_connector
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
-            McpProviderKind::CloudSandbox if self.cloud_sandbox.supports(route) => {
-                self.cloud_sandbox
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
-            McpProviderKind::CloudStdio if self.cloud_stdio.supports(route) => {
-                self.cloud_stdio
                     .call_tool(
                         snapshot,
                         route,

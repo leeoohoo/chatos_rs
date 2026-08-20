@@ -837,14 +837,14 @@ mod project_execution_scope_tests {
     };
 
     #[test]
-    fn exact_cloud_project_task_scope_is_required() {
+    fn exact_project_task_scope_is_required() {
         let expected = BTreeSet::from(["task-a".to_string(), "task-b".to_string()]);
         validate_project_execution_scope(&expected, &expected)
             .expect("exact selected scope should be accepted");
 
         let missing =
             validate_project_execution_scope(&expected, &BTreeSet::from(["task-a".to_string()]))
-                .expect_err("partial coverage must be rejected before creating cloud tasks");
+                .expect_err("partial coverage must be rejected before creating project tasks");
         assert!(missing.contains("缺少=[task-b]"));
 
         let extra = validate_project_execution_scope(

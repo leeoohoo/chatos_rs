@@ -16,12 +16,11 @@ import { readText } from './model';
 
 export const RequirementExecutionStartingModal: React.FC<{
   requirement: ProjectRequirementResponse;
-  executionPlane?: string | null;
   starting: boolean;
   onClose: () => void;
   onStart: (planningFeedback: string) => void;
-}> = ({ requirement, executionPlane, starting, onClose, onStart }) => {
-  const isLocalExecution = (executionPlane || '').toLowerCase() === 'local_connector';
+}> = ({ requirement, starting, onClose, onStart }) => {
+  const isLocalExecution = true;
   const [fullscreen, setFullscreen] = useState(false);
   const [planningFeedback, setPlanningFeedback] = useState('');
   return (
@@ -44,14 +43,10 @@ export const RequirementExecutionStartingModal: React.FC<{
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {starting
                   ? (
-                    isLocalExecution
-                      ? '云端正在读取需求、项目任务和技术文档，并为 Local Connector 本地承载整理完整的任务依赖关系。'
-                      : '云端正在读取需求、项目任务和技术文档，并整理完整的任务依赖关系。'
+                    '云端正在读取需求、项目任务和技术文档，并为 Local Connector 工作区整理完整的任务依赖关系。'
                   )
                   : (
-                    isLocalExecution
-                      ? '点击“开始生成执行计划”后，云端会先整理任务和依赖关系；确认后再通过 Local Connector 调度本机能力执行。'
-                      : '点击“开始生成执行计划”后会先整理任务和依赖关系；检查无误后，再由你确认开始执行。'
+                    '点击“开始生成执行计划”后，云端会先整理任务和依赖关系；确认后再通过 Local Connector 调度项目能力执行。'
                   )}
               </p>
             </div>

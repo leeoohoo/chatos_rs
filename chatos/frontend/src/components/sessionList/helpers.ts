@@ -17,8 +17,6 @@ export type KeyFilePickerTarget =
   | 'certificate'
   | 'jump_private_key'
   | 'jump_certificate';
-export type DirPickerTarget = 'project';
-
 export interface RemoteConnectionFormPayload {
   name?: string;
   host: string;

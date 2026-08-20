@@ -549,12 +549,7 @@ async fn ensure_harness_git_project(
         .await
         .map_err(map_project_access_error)?;
     let is_harness_managed = project_harness_metadata_ready(&project);
-    let is_cloud = project
-        .source_type
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| value.eq_ignore_ascii_case("cloud"));
-    if !is_cloud && !is_harness_managed {
+    if !is_harness_managed {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "该项目没有绑定 Harness 代码仓库" })),

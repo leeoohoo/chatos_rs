@@ -28,9 +28,7 @@ impl ProviderDispatcher {
                 return result;
             }
             match route.provider_kind {
-                McpProviderKind::InternalService | McpProviderKind::Harness
-                    if self.project_service.supports(route) =>
-                {
+                McpProviderKind::InternalService if self.project_service.supports(route) => {
                     self.project_service
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
@@ -47,16 +45,6 @@ impl ProviderDispatcher {
                 }
                 McpProviderKind::LocalConnector if self.local_connector.supports(route) => {
                     self.local_connector
-                        .cancel_invocation(snapshot, route, invocation_id)
-                        .await
-                }
-                McpProviderKind::CloudSandbox if self.cloud_sandbox.supports(route) => {
-                    self.cloud_sandbox
-                        .cancel_invocation(snapshot, route, invocation_id)
-                        .await
-                }
-                McpProviderKind::CloudStdio if self.cloud_stdio.supports(route) => {
-                    self.cloud_stdio
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
                 }

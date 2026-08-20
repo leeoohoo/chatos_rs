@@ -2,75 +2,144 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import React from 'react';
-import { BellRing, CheckCircle2, ExternalLink, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import {
+  BellRing,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Minimize2,
+  RefreshCw,
+  ShieldAlert,
+  XCircle,
+} from 'lucide-react';
 
 import {
   api,
+  type ApprovalHistoryEntry,
   type PendingApprovalItem,
   type RequestPermissionProfile,
 } from '../api';
-import {
-  projectLabel,
-  riskLabel,
-  riskStatusClass,
-} from '../utils/approvalFormat';
-import {
-  formatHistoryTime,
-  sourceLabel,
-} from '../utils/terminalFormat';
+import { projectLabel, riskLabel, riskStatusClass } from '../utils/approvalFormat';
+import { formatHistoryTime, sourceLabel } from '../utils/terminalFormat';
 
-export function GlobalApprovalTray({
-  onOpenApproval,
-}: {
-  onOpenApproval?: () => void | Promise<void>;
-}) {
+interface ApprovalOutcome {
+  command: string;
+  decision: 'approved' | 'denied';
+  decisionSource: string;
+  id: string;
+  reason?: string | null;
+}
+
+export function GlobalApprovalTray() {
   const [pending, setPending] = React.useState<PendingApprovalItem[]>([]);
   const [reviewing, setReviewing] = React.useState<PendingApprovalItem[]>([]);
+  const [outcome, setOutcome] = React.useState<ApprovalOutcome | null>(null);
   const [expanded, setExpanded] = React.useState(false);
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const [confirmationResponses, setConfirmationResponses] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState<Record<string, boolean>>({});
   const [error, setError] = React.useState<string | null>(null);
+  const knownPendingIds = React.useRef<Set<string>>(new Set());
+  const knownHistoryIds = React.useRef<Set<string> | null>(null);
 
   const load = React.useCallback(async () => {
     try {
-      const next = await api.pendingApprovals();
-      setPending(next.items);
-      setReviewing(next.reviewing || []);
-      if (!next.items.length && !(next.reviewing || []).length) {
+      const [next, settings] = await Promise.all([
+        api.pendingApprovals(),
+        api.approvalSettings().catch(() => null),
+      ]);
+      const nextPending = next.items;
+      const pendingRequestIds = new Set(nextPending.map((item) => item.request_id));
+      const nextReviewing = (next.reviewing || [])
+        .filter((item) => !pendingRequestIds.has(item.request_id));
+      const hasNewPending = nextPending.some((item) => !knownPendingIds.current.has(item.id));
+      knownPendingIds.current = new Set(nextPending.map((item) => item.id));
+      setPending(nextPending);
+      setReviewing(nextReviewing);
+      setActiveIndex((current) => Math.min(current, Math.max(0, nextPending.length - 1)));
+
+      if (settings) {
+        const nextHistoryIds = new Set(settings.history.map((entry) => entry.id));
+        if (knownHistoryIds.current) {
+          const newest = [...settings.history]
+            .reverse()
+            .find((entry) => !knownHistoryIds.current?.has(entry.id));
+          if (newest) setOutcome(outcomeFromHistory(newest));
+        }
+        knownHistoryIds.current = nextHistoryIds;
+      }
+
+      if (hasNewPending) {
+        setExpanded(true);
+      } else if (!nextPending.length && !nextReviewing.length) {
         setExpanded(false);
         setError(null);
       }
     } catch {
-      // The tray should not cover the main app when the local core is restarting.
+      // Keep the overlay quiet while the local core is restarting.
     }
   }, []);
 
   React.useEffect(() => {
-    void load();
-    const interval = window.setInterval(() => void load(), 2500);
-    return () => window.clearInterval(interval);
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      await load();
+      if (!stopped) timer = window.setTimeout(poll, document.hidden ? 5000 : 2000);
+    };
+    const refreshNow = () => void load();
+    void poll();
+    document.addEventListener('visibilitychange', refreshNow);
+    window.addEventListener('focus', refreshNow);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', refreshNow);
+      window.removeEventListener('focus', refreshNow);
+    };
   }, [load]);
 
+  React.useEffect(() => {
+    if (!outcome) return undefined;
+    const timer = window.setTimeout(() => setOutcome(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [outcome]);
+
+  const total = pending.length + reviewing.length;
+  const visible = Boolean(total || outcome);
+  React.useEffect(() => {
+    const mode = visible ? (expanded ? 'expanded' : 'compact') : 'hidden';
+    void window.chatosLocalConnector?.setApprovalOverlayMode?.(mode);
+  }, [expanded, visible]);
+
+  React.useEffect(() => () => {
+    void window.chatosLocalConnector?.setApprovalOverlayMode?.('hidden');
+  }, []);
+
   const openApproval = React.useCallback(async () => {
-    try {
-      window.localStorage.setItem('local-connector-next-tab', 'approval');
-    } catch {
-      // Storage is best-effort in the desktop shell.
-    }
-    if (onOpenApproval) {
-      await onOpenApproval();
+    await window.chatosLocalConnector?.openSettings?.('approval');
+  }, []);
+
+  const approve = async (item: PendingApprovalItem) => {
+    const confirmationResponse = confirmationResponses[item.id]?.trim() || '';
+    if (item.confirmation && confirmationResponse !== item.confirmation.challenge) {
+      setError(`请输入完整确认口令 ${item.confirmation.challenge}`);
       return;
     }
-    await window.chatosLocalConnector?.openSettings?.();
-  }, [onOpenApproval]);
-
-  const resolve = async (item: PendingApprovalItem, remember: boolean) => {
-    const decision = remember ? 'acceptForSession' : 'accept';
     setBusy((current) => ({ ...current, [item.id]: true }));
     setError(null);
     try {
       await api.approvePendingApproval(item.id, {
-        decision,
-        risk_acknowledged: remember,
+        decision: 'accept',
+        risk_acknowledged: Boolean(item.confirmation),
+        confirmation_response: item.confirmation ? confirmationResponse : undefined,
+      });
+      setOutcome({
+        command: item.command,
+        decision: 'approved',
+        decisionSource: 'user',
+        id: `local-approved-${item.id}`,
       });
       await load();
     } catch (err) {
@@ -84,8 +153,12 @@ export function GlobalApprovalTray({
     setBusy((current) => ({ ...current, [item.id]: true }));
     setError(null);
     try {
-      await api.denyPendingApproval(item.id, {
-        reason: '已从全局审批入口快速拒绝',
+      await api.denyPendingApproval(item.id, { reason: '已从全局审批浮层拒绝' });
+      setOutcome({
+        command: item.command,
+        decision: 'denied',
+        decisionSource: 'user',
+        id: `local-denied-${item.id}`,
       });
       await load();
     } catch (err) {
@@ -95,129 +168,152 @@ export function GlobalApprovalTray({
     }
   };
 
-  const total = pending.length + reviewing.length;
-  if (!total) {
-    return null;
+  if (!visible) return null;
+
+  const activeItem = pending[activeIndex] || null;
+  if (!expanded) {
+    const showOutcome = Boolean(outcome && !pending.length);
+    return (
+      <aside className="globalApprovalTray">
+        <button
+          type="button"
+          className={`globalApprovalSummary${showOutcome ? ` outcome ${outcome?.decision}` : ''}`}
+          onClick={() => {
+            if (total) setExpanded(true);
+            else void openApproval();
+          }}
+          aria-expanded={false}
+        >
+          <span className="globalApprovalIcon">
+            {showOutcome
+              ? outcome?.decision === 'approved' ? <CheckCircle2 size={16} /> : <XCircle size={16} />
+              : pending.length ? <BellRing size={15} /> : <RefreshCw className="spinIcon" size={15} />}
+          </span>
+          <span>
+            <strong>{outcome && showOutcome ? outcomeLabel(outcome) : pending.length ? `${pending.length} 项等待你的审批` : `${reviewing.length} 项 AI 审批中`}</strong>
+            <small>{showOutcome ? outcome?.command : pending.length ? '点击展开并处理' : '完成后会显示审批结果'}</small>
+          </span>
+        </button>
+      </aside>
+    );
   }
 
-  const visiblePending = pending.slice(0, 3);
-  const hiddenPendingCount = Math.max(0, pending.length - visiblePending.length);
-
   return (
-    <aside className={expanded ? 'globalApprovalTray expanded' : 'globalApprovalTray'}>
-      <button
-        type="button"
-        className="globalApprovalSummary"
-        onClick={() => setExpanded((current) => !current)}
-        aria-expanded={expanded}
-      >
-        <span className="globalApprovalIcon">
-          {reviewing.length ? <RefreshCw className="spinIcon" size={15} /> : <BellRing size={15} />}
-        </span>
-        <span>
-          <strong>{pending.length ? `${pending.length} 项待审批` : `${reviewing.length} 项 AI 审批中`}</strong>
-          <small>{pending.length && reviewing.length ? `${reviewing.length} 项正在 AI 审核` : '点击展开快速处理'}</small>
-        </span>
-      </button>
-
-      {expanded ? (
-        <div className="globalApprovalPopover">
-          <div className="globalApprovalHeader">
-            <div>
-              <strong>命令审批</strong>
-              <span>{pending.length} 项等待处理，{reviewing.length} 项正在 AI 审核</span>
-            </div>
-            <button
-              type="button"
-              className="iconButton"
-              title="打开完整审批页"
-              aria-label="打开完整审批页"
-              onClick={() => void openApproval()}
-            >
+    <aside className="globalApprovalTray expanded">
+      <div className="globalApprovalPopover">
+        <div className="globalApprovalHeader">
+          <div>
+            <strong><BellRing size={15} />命令审批</strong>
+            <span>{pending.length} 项等待处理，{reviewing.length} 项正在 AI 审核</span>
+          </div>
+          <div className="globalApprovalHeaderActions">
+            <button type="button" className="iconButton" title="收起审批浮层" aria-label="收起审批浮层" onClick={() => setExpanded(false)}>
+              <Minimize2 size={15} />
+            </button>
+            <button type="button" className="iconButton" title="打开完整审批页" aria-label="打开完整审批页" onClick={() => void openApproval()}>
               <ExternalLink size={15} />
             </button>
           </div>
-          {error ? <div className="formError">{error}</div> : null}
-          {reviewing.length ? (
-            <div className="globalApprovalReviewing">
-              <RefreshCw className="spinIcon" size={13} />
-              <span>{reviewing.length} 条命令正在等待 AI 审批结果</span>
-            </div>
-          ) : null}
-          <div className="globalApprovalList">
-            {visiblePending.map((item) => {
-              const canRemember = !item.confirmation
-                && (item.available_decisions?.includes('acceptForSession') ?? true);
-              return (
-                <div className="globalApprovalItem" key={item.id}>
-                  <div className="globalApprovalCommandLine">
-                    <span className={riskStatusClass(item.risk)}>{riskLabel(item.risk)}</span>
-                    <strong>{item.command}</strong>
-                  </div>
-                  <span className="globalApprovalMeta">
-                    {sourceLabel(item.source)} · {projectLabel(item.project_key)} · {formatHistoryTime(item.created_at)}
-                  </span>
-                  {item.reason ? <span className="globalApprovalReason">{item.reason}</span> : null}
-                  {item.requested_permissions ? (
-                    <span className="globalApprovalReason">
-                      {formatRequestedPermissions(item.requested_permissions)}
-                    </span>
-                  ) : null}
-                  <div className="globalApprovalActions">
-                    {item.confirmation ? (
-                      <button
-                        type="button"
-                        className="ghostButton compact"
-                        onClick={() => void openApproval()}
-                      >
-                        <ShieldCheck size={15} />去审批
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="primaryButton compact"
-                        disabled={busy[item.id]}
-                        onClick={() => void resolve(item, false)}
-                      >
-                        <CheckCircle2 size={15} />本次通过
-                      </button>
-                    )}
-                    {canRemember ? (
-                      <button
-                        type="button"
-                        className="ghostButton compact"
-                        disabled={busy[item.id]}
-                        onClick={() => void resolve(item, true)}
-                      >
-                        <ShieldCheck size={15} />本会话
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="ghostButton compact dangerText"
-                      disabled={busy[item.id]}
-                      onClick={() => void deny(item)}
-                    >
-                      <XCircle size={15} />拒绝
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {hiddenPendingCount ? (
-            <button
-              type="button"
-              className="globalApprovalMore"
-              onClick={() => void openApproval()}
-            >
-              还有 {hiddenPendingCount} 项，打开完整审批页
-            </button>
-          ) : null}
         </div>
-      ) : null}
+
+        {outcome ? (
+          <div className={`globalApprovalOutcome ${outcome.decision}`}>
+            {outcome.decision === 'approved' ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+            <span>{outcomeLabel(outcome)}</span>
+          </div>
+        ) : null}
+        {error ? <div className="formError">{error}</div> : null}
+        {reviewing.length ? (
+          <div className="globalApprovalReviewing">
+            <RefreshCw className="spinIcon" size={13} />
+            <span>{reviewing.length} 条命令正在等待 AI 审批结果</span>
+          </div>
+        ) : null}
+
+        {activeItem ? (
+          <div className="globalApprovalItem">
+            <div className="globalApprovalCommandLine">
+              <span className={riskStatusClass(activeItem.risk)}>{riskLabel(activeItem.risk)}</span>
+              <code>{activeItem.command}</code>
+            </div>
+            <div className="globalApprovalMeta">
+              <span>{sourceLabel(activeItem.source)} · {projectLabel(activeItem.project_key)} · {formatHistoryTime(activeItem.created_at)}</span>
+              <code>{activeItem.cwd}</code>
+            </div>
+            {activeItem.reason ? <div className="globalApprovalReason">{activeItem.reason}</div> : null}
+            {activeItem.requested_permissions ? (
+              <div className="globalApprovalReason">请求权限：{formatRequestedPermissions(activeItem.requested_permissions)}</div>
+            ) : null}
+            {activeItem.action_audit ? (
+              <div className="globalApprovalAudit">
+                <strong>操作审计 · {activeItem.action_audit.operation}</strong>
+                {activeItem.action_audit.details?.length ? (
+                  <span>{activeItem.action_audit.details.map((detail) => `${detail.key}: ${detail.value}`).join(' · ')}</span>
+                ) : null}
+              </div>
+            ) : null}
+            {activeItem.confirmation ? (
+              <label className="globalApprovalConfirmation">
+                <span><ShieldAlert size={14} />高风险操作，请输入确认口令</span>
+                <code>{activeItem.confirmation.challenge}</code>
+                <input
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={confirmationResponses[activeItem.id] || ''}
+                  onChange={(event) => setConfirmationResponses((current) => ({ ...current, [activeItem.id]: event.target.value }))}
+                  placeholder={activeItem.confirmation.challenge}
+                />
+              </label>
+            ) : null}
+            <div className="globalApprovalFooter">
+              <div className="globalApprovalPager">
+                <button type="button" className="iconButton" title="上一条" aria-label="上一条" disabled={activeIndex === 0} onClick={() => setActiveIndex((current) => Math.max(0, current - 1))}>
+                  <ChevronLeft size={15} />
+                </button>
+                <span>{activeIndex + 1} / {pending.length}</span>
+                <button type="button" className="iconButton" title="下一条" aria-label="下一条" disabled={activeIndex >= pending.length - 1} onClick={() => setActiveIndex((current) => Math.min(pending.length - 1, current + 1))}>
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+              <div className="globalApprovalActions">
+                <button type="button" className="ghostButton compact dangerText" disabled={busy[activeItem.id]} onClick={() => void deny(activeItem)}>
+                  <XCircle size={15} />拒绝
+                </button>
+                <button
+                  type="button"
+                  className="primaryButton compact"
+                  disabled={busy[activeItem.id] || Boolean(activeItem.confirmation && confirmationResponses[activeItem.id]?.trim() !== activeItem.confirmation.challenge)}
+                  onClick={() => void approve(activeItem)}
+                >
+                  <CheckCircle2 size={15} />本次通过
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="globalApprovalWaiting">
+            <RefreshCw className="spinIcon" size={16} />
+            <span>AI 正在审核命令，完成后会自动更新。</span>
+          </div>
+        )}
+      </div>
     </aside>
   );
+}
+
+function outcomeFromHistory(entry: ApprovalHistoryEntry): ApprovalOutcome {
+  return {
+    command: entry.normalized_command || entry.command,
+    decision: entry.decision === 'approved' ? 'approved' : 'denied',
+    decisionSource: entry.decision_source,
+    id: entry.id,
+    reason: entry.reason,
+  };
+}
+
+function outcomeLabel(outcome: ApprovalOutcome): string {
+  const actor = outcome.decisionSource === 'ai' ? 'AI' : outcome.decisionSource === 'user' ? '你' : '策略';
+  return `${actor}${outcome.decision === 'approved' ? '已通过' : '已拒绝'}`;
 }
 
 function formatRequestedPermissions(permissions: RequestPermissionProfile): string {

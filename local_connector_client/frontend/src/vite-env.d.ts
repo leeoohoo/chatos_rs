@@ -12,8 +12,10 @@ interface ChatosLocalConnectorBridge {
     headers: Record<string, string | string[] | undefined>;
     body: string;
   }>;
-  openSettings?: () => Promise<void>;
+  openSettings?: (tab?: string) => Promise<void>;
   closeSettings?: () => Promise<boolean>;
+  setApprovalOverlayMode?: (mode: 'hidden' | 'compact' | 'expanded') => Promise<boolean>;
+  onSettingsTabRequested?: (callback: (tab: string) => void) => () => void;
   reloadChatOS?: () => Promise<void>;
   setDeveloperMode?: (enabled: boolean) => Promise<boolean>;
   runtimeSettings?: () => Promise<{

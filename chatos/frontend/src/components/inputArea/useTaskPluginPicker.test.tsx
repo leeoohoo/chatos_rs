@@ -18,8 +18,7 @@ afterEach(() => {
 const project = (overrides: Partial<Project> = {}): Project => ({
   id: 'project-1',
   name: 'Project',
-  rootPath: '/project',
-  sourceType: 'cloud',
+  rootPath: 'local://connector/device-1/workspace-1/project',
   createdAt: new Date(0),
   updatedAt: new Date(0),
   ...overrides,
@@ -68,7 +67,7 @@ const renderPicker = (
 ));
 
 describe('useTaskPluginPicker project runtime gating', () => {
-  it('shows only executable cloud Plugins for a cloud project', async () => {
+  it('hides the picker for a project without a Local Connector root', async () => {
     const cloud = plugin('cloud', ['task_runner_cloud']);
     const local = plugin('local', ['local_connector']);
     const listLocalConnectorDevices = vi.fn();
@@ -80,11 +79,13 @@ describe('useTaskPluginPicker project runtime gating', () => {
       listTaskRunnerAvailablePlugins,
     } as unknown as ApiClient;
 
-    const { result } = renderPicker(client, project());
+    const { result } = renderPicker(client, project({ rootPath: '/unmanaged/project' }));
 
-    await waitFor(() => expect(result.current.visible).toBe(true));
-    expect(result.current.filteredPlugins).toEqual([cloud]);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.visible).toBe(false);
+    expect(result.current.filteredPlugins).toEqual([]);
     expect(listLocalConnectorDevices).not.toHaveBeenCalled();
+    expect(listTaskRunnerAvailablePlugins).not.toHaveBeenCalled();
   });
 
   it('hides the picker when the local project device is offline', async () => {
@@ -98,7 +99,6 @@ describe('useTaskPluginPicker project runtime gating', () => {
     } as unknown as ApiClient;
 
     const { result } = renderPicker(client, project({
-      sourceType: 'local_connector',
       rootPath: 'local://connector/device-1/workspace-1/apps/backend',
     }));
 
@@ -125,7 +125,6 @@ describe('useTaskPluginPicker project runtime gating', () => {
     } as unknown as ApiClient;
 
     const { result } = renderPicker(client, project({
-      sourceType: 'local_connector',
       rootPath: 'local://connector/device-1/workspace-1/apps/backend',
     }));
 
@@ -140,7 +139,6 @@ describe('useTaskPluginPicker project runtime gating', () => {
       id: 'project-1',
       name: 'Local project',
       root_path: 'local://connector/device-1/workspace-1/apps/backend',
-      source_type: 'local_connector',
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
     });
@@ -170,23 +168,24 @@ describe('useTaskPluginPicker project runtime gating', () => {
     const firstProject = new Promise<unknown>((resolve) => {
       resolveFirstProject = resolve;
     });
-    const cloud = plugin('cloud', ['task_runner_cloud']);
+    const local = plugin('local', ['local_connector']);
     const getProject = vi.fn()
       .mockReturnValueOnce(firstProject)
       .mockResolvedValueOnce({
         id: 'project-2',
-        name: 'Cloud project',
-        root_path: '/cloud/project',
-        source_type: 'cloud',
+        name: 'Current project',
+        root_path: 'local://connector/device-2/workspace-2/project',
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       });
     const listTaskRunnerAvailablePlugins = vi.fn().mockResolvedValue({
-      selectable_plugins: [cloud],
+      selectable_plugins: [local],
     });
     const client = {
       getProject,
-      listLocalConnectorDevices: vi.fn(),
+      listLocalConnectorDevices: vi.fn().mockResolvedValue([
+        { id: 'device-2', status: 'online' },
+      ]),
       listTaskRunnerAvailablePlugins,
     } as unknown as ApiClient;
 
@@ -209,21 +208,22 @@ describe('useTaskPluginPicker project runtime gating', () => {
       id: 'project-1',
       name: 'Old local project',
       root_path: 'local://connector/device-1/workspace-1/apps/backend',
-      source_type: 'local_connector',
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
     });
     await Promise.resolve();
 
-    expect(result.current.filteredPlugins).toEqual([cloud]);
-    expect(client.listLocalConnectorDevices).not.toHaveBeenCalled();
+    expect(result.current.filteredPlugins).toEqual([local]);
+    expect(client.listLocalConnectorDevices).toHaveBeenCalledTimes(1);
     expect(listTaskRunnerAvailablePlugins).toHaveBeenCalledTimes(1);
     expect(listTaskRunnerAvailablePlugins).toHaveBeenCalledWith('project-2', false);
   });
 
   it('hides the picker when the executable catalog is empty', async () => {
     const client = {
-      listLocalConnectorDevices: vi.fn(),
+      listLocalConnectorDevices: vi.fn().mockResolvedValue([
+        { id: 'device-1', status: 'online' },
+      ]),
       listTaskRunnerAvailablePlugins: vi.fn().mockResolvedValue({ selectable_plugins: [] }),
     } as unknown as ApiClient;
 

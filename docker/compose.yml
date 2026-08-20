@@ -112,10 +112,6 @@ x-config-center-mtls-mcp-management-secrets: &config-center-mtls-mcp-management-
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_mcp_management_identity
     target: plugin_management_mtls_client_identity
-  - source: sandbox_manager_mtls_ca
-    target: sandbox_manager_mtls_ca
-  - source: sandbox_manager_mtls_mcp_management_identity
-    target: sandbox_manager_mtls_client_identity
   - source: local_connector_mtls_ca
     target: local_connector_mtls_ca
   - source: local_connector_mtls_mcp_management_identity
@@ -178,10 +174,6 @@ x-config-center-mtls-project-service-secrets: &config-center-mtls-project-servic
     target: mcp_management_mtls_ca
   - source: mcp_management_mtls_project_service_identity
     target: mcp_management_mtls_client_identity
-  - source: memory_engine_mtls_ca
-    target: memory_engine_mtls_ca
-  - source: memory_engine_mtls_project_service_identity
-    target: memory_engine_mtls_client_identity
   - source: project_service_mtls_ca
     target: project_service_mtls_ca
   - source: project_service_mtls_server_cert
@@ -196,26 +188,10 @@ x-config-center-mtls-project-service-secrets: &config-center-mtls-project-servic
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_project_service_identity
     target: plugin_management_mtls_client_identity
-  - source: sandbox_manager_mtls_ca
-    target: sandbox_manager_mtls_ca
-  - source: sandbox_manager_mtls_project_service_identity
-    target: sandbox_manager_mtls_client_identity
   - source: local_connector_mtls_ca
     target: local_connector_mtls_ca
   - source: local_connector_mtls_project_service_identity
     target: local_connector_mtls_client_identity
-
-x-config-center-mtls-sandbox-manager-secrets: &config-center-mtls-sandbox-manager-secrets
-  - source: config_center_mtls_ca
-    target: config_center_mtls_ca
-  - source: config_center_mtls_sandbox_manager_identity
-    target: config_center_mtls_client_identity
-  - source: sandbox_manager_mtls_ca
-    target: sandbox_manager_mtls_ca
-  - source: sandbox_manager_mtls_server_cert
-    target: sandbox_manager_mtls_server_cert
-  - source: sandbox_manager_mtls_server_key
-    target: sandbox_manager_mtls_server_key
 
 x-config-center-mtls-task-runner-secrets: &config-center-mtls-task-runner-secrets
   - source: config_center_mtls_ca
@@ -428,7 +404,6 @@ services:
       CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET:-change_me_config_center_official_website_signing_secret}
       CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_plugin_management_signing_secret}
       CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_project_service_signing_secret}
-      CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET:-change_me_config_center_sandbox_manager_signing_secret}
       CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}
       CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_user_service_signing_secret}
       CONFIG_CENTER_CONSUL_REQUIRED: ${CONFIG_CENTER_CONSUL_REQUIRED:-false}
@@ -445,13 +420,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
-    networks:
-      - cloud
-
-  sandbox-agent-image:
-    image: ${SANDBOX_MANAGER_DOCKER_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-agent:${CHATOS_IMAGE_TAG:-latest}}
-    profiles:
-      - image
     networks:
       - cloud
 
@@ -613,7 +581,6 @@ services:
       MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
@@ -656,7 +623,6 @@ services:
       MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
@@ -694,15 +660,6 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_project_service_secret}
       PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}
-      PROJECT_SERVICE_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
-      MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
-      MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
-      PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_project_service_memory_engine_secret}
-      PROJECT_SERVICE_SANDBOX_MANAGER_BASE_URL: https://sandbox-manager-backend:8097
-      SANDBOX_MANAGER_MTLS_CA_CERT_PATH: /run/secrets/sandbox_manager_mtls_ca
-      SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/sandbox_manager_mtls_client_identity
-      PROJECT_SERVICE_SANDBOX_MANAGER_CLIENT_ID: project-service
-      PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_project_service_sandbox_manager_secret}
       PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-}
       CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET: ${CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_project_service_secret}
       TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
@@ -712,7 +669,6 @@ services:
       MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
       MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
       MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
-      PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${PROJECT_SERVICE_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-7200000}
       PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
       PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
       CHATOS_RUN_WORKSPACE_ROOT: /data/chatos/run-workspaces
@@ -723,7 +679,6 @@ services:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PROJECT_SERVICE_PORT:-39210}:39210"
     volumes:
       - chatos-data:/data/chatos
-      - sandbox-manager-data:/data/sandboxes
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39210/api/health"]
       interval: 10s
@@ -885,11 +840,6 @@ services:
       LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
       LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
       MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}
-      MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL: https://sandbox-manager-backend:8097
-      SANDBOX_MANAGER_MTLS_CA_CERT_PATH: /run/secrets/sandbox_manager_mtls_ca
-      SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/sandbox_manager_mtls_client_identity
-      MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_mcp_management_sandbox_manager_secret}
-      MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS:-7200000}
       MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS:-7200000}
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MCP_MANAGEMENT_PORT:-39280}:39280"
@@ -904,109 +854,8 @@ services:
         condition: service_healthy
       local-connector-service-backend:
         condition: service_healthy
-      sandbox-manager-backend:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39280/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  sandbox-docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-ghcr.io/tecnativa/docker-socket-proxy:latest}
-    restart: unless-stopped
-    networks:
-      - cloud
-    deploy:
-      resources:
-        limits:
-          cpus: "${SANDBOX_DOCKER_PROXY_CPU_LIMIT:-0.25}"
-          memory: ${SANDBOX_DOCKER_PROXY_MEMORY_LIMIT:-128M}
-        reservations:
-          cpus: "${SANDBOX_DOCKER_PROXY_CPU_RESERVATION:-0.02}"
-          memory: ${SANDBOX_DOCKER_PROXY_MEMORY_RESERVATION:-32M}
-    environment:
-      CONTAINERS: "1"
-      IMAGES: "1"
-      BUILD: "1"
-      EXEC: "1"
-      GRPC: "1"
-      SESSION: "1"
-      NETWORKS: "1"
-      INFO: "1"
-      PING: "1"
-      VERSION: "1"
-      POST: "1"
-      DELETE: "1"
-      SERVICES: "0"
-      TASKS: "0"
-      SWARM: "0"
-      SECRETS: "0"
-      CONFIGS: "0"
-      PLUGINS: "0"
-      NODES: "0"
-      VOLUMES: "1"
-      AUTH: "0"
-      DISTRIBUTION: "0"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
-  sandbox-manager-backend:
-    <<: *rust-service
-    image: ${SANDBOX_MANAGER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-manager-backend:${CHATOS_IMAGE_TAG:-latest}}
-    secrets: *config-center-mtls-sandbox-manager-secrets
-    environment:
-      <<: *service-runtime-env
-      CHATOS_SERVICE_NAME: sandbox-manager
-      CONFIG_CENTER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_SANDBOX_MANAGER_CALLER_SIGNING_SECRET:-change_me_config_center_sandbox_manager_signing_secret}
-      CHATOS_SERVICE_ID: sandbox-manager-docker
-      CHATOS_SERVICE_ADDRESS: sandbox-manager-backend
-      CHATOS_SERVICE_PORT: 8095
-      CHATOS_SERVICE_HEALTH_PATH: /health
-      SANDBOX_MANAGER_HOST: 0.0.0.0
-      SANDBOX_MANAGER_PORT: 8095
-      SANDBOX_MANAGER_INTERNAL_MTLS_PORT: 8097
-      SANDBOX_MANAGER_MTLS_SERVER_CERT_PATH: /run/secrets/sandbox_manager_mtls_server_cert
-      SANDBOX_MANAGER_MTLS_SERVER_KEY_PATH: /run/secrets/sandbox_manager_mtls_server_key
-      SANDBOX_MANAGER_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/sandbox_manager_mtls_ca
-      SANDBOX_MANAGER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/sandbox_manager_service?authSource=admin&replicaSet=rs0
-      SANDBOX_MANAGER_MONGODB_DATABASE: sandbox_manager_service
-      SANDBOX_MANAGER_BACKEND: docker
-      SANDBOX_MANAGER_WORK_ROOT: /data/sandboxes
-      SANDBOX_MANAGER_DOCKER_WORK_VOLUME: ${SANDBOX_MANAGER_DATA_VOLUME_NAME:-chatos-sandbox-manager-data}
-      SANDBOX_MANAGER_DOCKER_IMAGE: ${SANDBOX_MANAGER_DOCKER_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-agent:${CHATOS_IMAGE_TAG:-latest}}
-      SANDBOX_MANAGER_DOCKER_NETWORK: ${CHATOS_DOCKER_NETWORK:-chatos-cloud}
-      SANDBOX_MANAGER_DOCKER_AGENT_ENDPOINT_MODE: container
-      SANDBOX_MANAGER_DOCKER_PUBLISH_AGENT: "false"
-      SANDBOX_MANAGER_REQUIRE_AUTH: ${SANDBOX_MANAGER_REQUIRE_AUTH:-true}
-      SANDBOX_MANAGER_AGENT_TOKEN_SECRET: ${SANDBOX_MANAGER_AGENT_TOKEN_SECRET:-chatos-sandbox-agent-dev-secret}
-      SANDBOX_MANAGER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_project_service_sandbox_manager_secret}
-      MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET:-change_me_mcp_management_sandbox_manager_secret}
-      SANDBOX_MANAGER_IMAGE_BUILD_CONTEXT: /opt/chatos-sandbox-build-context
-      SANDBOX_MANAGER_IMAGE_DOCKERFILE: /opt/chatos-sandbox-build-context/sandbox_manager_service/sandbox_agent/Dockerfile
-      SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED: ${SANDBOX_MANAGER_DOCKER_MAINTENANCE_ENABLED:-true}
-      SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE: ${SANDBOX_MANAGER_DOCKER_BUILD_CACHE_MAX_USED_SPACE:-${CHATOS_DOCKER_BUILD_CACHE_MAX_USED_SPACE:-32gb}}
-      SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE: ${SANDBOX_MANAGER_DOCKER_BUILD_CACHE_RESERVED_SPACE:-${CHATOS_DOCKER_BUILD_CACHE_RESERVED_SPACE:-8gb}}
-      SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS: ${SANDBOX_MANAGER_DOCKER_BUILD_CACHE_TIMEOUT_SECS:-180}
-      DOCKER_HOST: tcp://sandbox-docker-socket-proxy:2375
-      DOCKER_BUILDKIT: "1"
-    ports:
-      - "${SANDBOX_MANAGER_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_PORT:-8095}:8095"
-    volumes:
-      - sandbox-manager-data:/data/sandboxes
-      - chatos-data:/data/chatos
-      - ../Cargo.lock:/opt/chatos-sandbox-build-context/Cargo.lock:ro
-      - ../BUILTIN_MCP_PROMPT.en-US.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.en-US.md:ro
-      - ../BUILTIN_MCP_PROMPT.zh-CN.md:/opt/chatos-sandbox-build-context/BUILTIN_MCP_PROMPT.zh-CN.md:ro
-      - ../crates:/opt/chatos-sandbox-build-context/crates:ro
-      - ../sandbox_manager_service/sandbox_agent:/opt/chatos-sandbox-build-context/sandbox_manager_service/sandbox_agent:ro
-      - ../sandbox_manager_service/sandbox_mcp_server:/opt/chatos-sandbox-build-context/sandbox_manager_service/sandbox_mcp_server:ro
-    depends_on:
-      sandbox-docker-socket-proxy:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8095/health"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -1075,8 +924,6 @@ services:
       consul:
         condition: service_healthy
       mongodb:
-        condition: service_healthy
-      sandbox-manager-backend:
         condition: service_healthy
       user-service-backend:
         condition: service_healthy
@@ -1153,8 +1000,6 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-      sandbox-manager-backend:
-        condition: service_healthy
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
@@ -1216,8 +1061,6 @@ services:
       consul:
         condition: service_healthy
       mongodb:
-        condition: service_healthy
-      sandbox-manager-backend:
         condition: service_healthy
       user-service-backend:
         condition: service_healthy
@@ -1374,7 +1217,6 @@ services:
       MEMORY_ENGINE_PORT: ${MEMORY_ENGINE_PORT:-7081}
       USER_SERVICE_PORT: ${USER_SERVICE_PORT:-39190}
       PROJECT_SERVICE_PORT: ${PROJECT_SERVICE_PORT:-39210}
-      SANDBOX_MANAGER_PORT: ${SANDBOX_MANAGER_PORT:-8095}
       TASK_RUNNER_BACKEND_PORT: ${TASK_RUNNER_BACKEND_PORT:-39090}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -1474,19 +1316,6 @@ services:
       task-runner-backend:
         condition: service_healthy
 
-  sandbox-manager-frontend:
-    <<: *frontend-service
-    image: ${SANDBOX_MANAGER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-sandbox-manager-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://sandbox-manager-backend:8095
-      SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID: ${SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID:?set SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_ID from Configuration Center}
-      SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY: ${SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY:?set SANDBOX_MANAGER_FRONTEND_PROXY_CLIENT_KEY from Configuration Center}
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${SANDBOX_MANAGER_FRONTEND_PORT:-8096}:80"
-    depends_on:
-      sandbox-manager-backend:
-        condition: service_healthy
-
   official-website-frontend:
     <<: *frontend-service
     image: ${OFFICIAL_WEBSITE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-official-website-frontend:${CHATOS_IMAGE_TAG:-latest}}
@@ -1503,8 +1332,6 @@ volumes:
   chatos-data:
   task-runner-data:
   local-connector-data:
-  sandbox-manager-data:
-    name: ${SANDBOX_MANAGER_DATA_VOLUME_NAME:-chatos-sandbox-manager-data}
   harness-data:
 
 secrets:
@@ -1528,8 +1355,6 @@ secrets:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/plugin-management-service.identity.pem
   config_center_mtls_project_service_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/project-service.identity.pem
-  config_center_mtls_sandbox_manager_identity:
-    file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/sandbox-manager.identity.pem
   config_center_mtls_task_runner_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/task-runner.identity.pem
   config_center_mtls_user_service_identity:
@@ -1572,8 +1397,6 @@ secrets:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/configuration-center.identity.pem
   memory_engine_mtls_chatos_identity:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/chatos-backend.identity.pem
-  memory_engine_mtls_project_service_identity:
-    file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/project-service.identity.pem
   memory_engine_mtls_task_runner_identity:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/task-runner.identity.pem
   memory_engine_mtls_user_service_identity:
@@ -1638,16 +1461,6 @@ secrets:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/memory-engine.identity.pem
   plugin_management_mtls_mcp_management_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/mcp-management-service.identity.pem
-  sandbox_manager_mtls_ca:
-    file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/ca.crt
-  sandbox_manager_mtls_server_cert:
-    file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/server.crt
-  sandbox_manager_mtls_server_key:
-    file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/server.key
-  sandbox_manager_mtls_project_service_identity:
-    file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/project-service.identity.pem
-  sandbox_manager_mtls_mcp_management_identity:
-    file: ${SANDBOX_MANAGER_MTLS_DIR:-./secrets/sandbox-manager-mtls}/mcp-management-service.identity.pem
 
 networks:
   cloud:

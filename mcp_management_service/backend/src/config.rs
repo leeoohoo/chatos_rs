@@ -295,11 +295,6 @@ pub struct AppConfig {
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
     pub local_connector_internal_api_secret: Option<String>,
-    pub sandbox_manager_service_base_url: String,
-    pub sandbox_manager_http_client: reqwest::Client,
-    pub sandbox_manager_internal_api_secret: Option<String>,
-    pub sandbox_manager_request_timeout: Duration,
-    pub sandbox_image_request_timeout: Duration,
     pub embedded_work_dir: PathBuf,
     pub downstream_request_timeout: Duration,
     pub external_http_request_timeout: Duration,
@@ -392,9 +387,6 @@ impl AppConfig {
         let local_connector_internal_api_secret = Some(required_text(
             "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         )?);
-        let sandbox_manager_internal_api_secret = Some(required_text(
-            "MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-        )?);
         validate_production_secret(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             plugin_management_internal_api_secret.as_deref(),
@@ -419,11 +411,6 @@ impl AppConfig {
             "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
             local_connector_internal_api_secret.as_deref(),
             &["change_me_mcp_management_local_connector_secret"],
-        )?;
-        validate_production_secret(
-            "MCP_MANAGEMENT_SANDBOX_MANAGER_INTERNAL_API_SECRET",
-            sandbox_manager_internal_api_secret.as_deref(),
-            &["change_me_mcp_management_sandbox_manager_secret"],
         )?;
         validate_production_secret(
             "MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET",
@@ -464,25 +451,6 @@ impl AppConfig {
         let runtime_session_ttl = Duration::from_secs(
             required_u64("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")?.clamp(5 * 60, 2 * 60 * 60),
         );
-        let sandbox_manager_request_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_SANDBOX_TOOL_TIMEOUT_MS")?
-                .clamp(1_000, 2 * 60 * 60 * 1_000),
-        );
-        let sandbox_image_request_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_SANDBOX_IMAGE_TOOL_TIMEOUT_MS")?
-                .clamp(30_000, 3 * 60 * 60 * 1_000),
-        );
-        let sandbox_manager_service_base_url = require_https_base_url(
-            "MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL",
-            normalize_base_url(required_text(
-                "MCP_MANAGEMENT_SANDBOX_MANAGER_SERVICE_BASE_URL",
-            )?),
-        )?;
-        let sandbox_manager_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(sandbox_image_request_timeout),
-            required_path("SANDBOX_MANAGER_MTLS_CA_CERT_PATH")?.as_path(),
-            required_path("SANDBOX_MANAGER_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
         let task_runner_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
@@ -533,7 +501,7 @@ impl AppConfig {
             )?),
         )?;
         let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(sandbox_image_request_timeout),
+            chatos_service_runtime::HttpClientTimeouts::new(project_service_tool_timeout),
             required_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
             required_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
@@ -578,11 +546,6 @@ impl AppConfig {
             local_connector_service_base_url,
             local_connector_http_client,
             local_connector_internal_api_secret,
-            sandbox_manager_service_base_url,
-            sandbox_manager_http_client,
-            sandbox_manager_internal_api_secret,
-            sandbox_manager_request_timeout,
-            sandbox_image_request_timeout,
             embedded_work_dir: PathBuf::from(required_text("MCP_MANAGEMENT_EMBEDDED_WORK_DIR")?),
             downstream_request_timeout,
             external_http_request_timeout,
@@ -661,11 +624,6 @@ impl AppConfig {
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_http_client: reqwest::Client::new(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
-            sandbox_manager_service_base_url: "http://127.0.0.1:8095".to_string(),
-            sandbox_manager_http_client: reqwest::Client::new(),
-            sandbox_manager_internal_api_secret: Some("a-long-sandbox-manager-secret".to_string()),
-            sandbox_manager_request_timeout: Duration::from_secs(2 * 60 * 60),
-            sandbox_image_request_timeout: Duration::from_secs(2 * 60 * 60 + 30),
             embedded_work_dir: std::env::temp_dir().join("chatos-mcp-management-test"),
             downstream_request_timeout: Duration::from_secs(5),
             external_http_request_timeout: Duration::from_secs(2 * 60 * 60),

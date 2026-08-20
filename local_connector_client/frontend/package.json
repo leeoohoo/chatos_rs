@@ -44,10 +44,6 @@
         "to": "local_connector_client_core.exe"
       },
       {
-        "from": "electron/resources/chatos_sandbox_mcp_server.exe",
-        "to": "chatos_sandbox_mcp_server.exe"
-      },
-      {
         "from": "electron/resources/bundled-tools",
         "to": "bundled-tools"
       },

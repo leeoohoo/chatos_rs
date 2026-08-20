@@ -5,8 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, ProjectExecutionContext, SandboxProviderKind, WorkspaceExecutionTarget,
-    WorkspaceProviderKind,
+    ProjectExecutionContext, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_project_execution::parse_local_connector_workspace_root;
 use serde::Deserialize;
@@ -16,8 +15,7 @@ use super::internal_auth::{
     require_project_internal_request, MCP_MANAGEMENT_CALLER, PROJECT_EXECUTION_CONTEXT_SCOPE,
 };
 use super::ApiError;
-use crate::models::{ProjectRecord, ProjectRuntimeEnvironmentRecord, ProjectSourceType};
-use crate::services::environment_agent::resolve_project_execution_sandbox_binding;
+use crate::models::ProjectRecord;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -55,126 +53,43 @@ pub(in crate::api) async fn resolve_project_execution_context(
             "project owner does not match the requested runtime owner",
         ));
     }
-    let environment = state
-        .store
-        .get_project_runtime_environment(project.id.as_str())
-        .await
-        .map_err(ApiError::bad_request)?;
-    let (sandbox_provider, sandbox_pairing_id) = resolve_project_execution_sandbox_binding(
-        &state,
-        &project,
-        environment.as_ref(),
-        owner_user_id,
-    )
-    .await
-    .map_err(|error| {
-        ApiError::bad_gateway(format!("resolve project sandbox binding failed: {error}"))
-    })?;
-    Ok(Json(build_execution_context(
-        &project,
-        environment.as_ref(),
-        owner_user_id,
-        sandbox_provider,
-        sandbox_pairing_id,
-    )))
+    Ok(Json(build_execution_context(&project, owner_user_id)))
 }
 
 fn build_execution_context(
     project: &ProjectRecord,
-    environment: Option<&ProjectRuntimeEnvironmentRecord>,
     owner_user_id: &str,
-    runtime_sandbox_provider: crate::models::RuntimeEnvironmentProvider,
-    sandbox_pairing_id: Option<String>,
 ) -> ProjectExecutionContext {
     let local_workspace = project
         .root_path
         .as_deref()
         .and_then(parse_local_connector_workspace);
-    let workspace_provider = resolve_workspace_provider(project, &local_workspace);
+    let workspace_provider = resolve_workspace_provider(&local_workspace);
     let workspace = (workspace_provider == WorkspaceProviderKind::LocalConnector)
         .then_some(local_workspace)
         .flatten();
-    let sandbox_provider = resolve_sandbox_provider(runtime_sandbox_provider);
-    let source_type = match project.source_type {
-        ProjectSourceType::Local => "local",
-        ProjectSourceType::LocalConnector => "local_connector",
-        ProjectSourceType::Cloud => "cloud",
-    };
-    let revision = execution_context_revision(
-        project,
-        environment,
-        workspace_provider,
-        sandbox_provider,
-        workspace.as_ref(),
-        sandbox_pairing_id.as_deref(),
-    );
+    let revision = execution_context_revision(project, workspace_provider, workspace.as_ref());
     ProjectExecutionContext {
         project_id: project.id.clone(),
         owner_user_id: owner_user_id.to_string(),
-        // Agents run in the cloud. Workspace and sandbox providers decide data location.
-        execution_plane: ExecutionPlane::Cloud,
         workspace_provider,
         workspace,
-        sandbox_provider,
-        sandbox_pairing_id,
-        source_type: Some(source_type.to_string()),
         revision,
     }
 }
 
 fn resolve_workspace_provider(
-    project: &ProjectRecord,
     local_workspace: &Option<WorkspaceExecutionTarget>,
 ) -> WorkspaceProviderKind {
-    if project
-        .harness_repo_identifier
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-        || project
-            .harness_git_url
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
-    {
-        return WorkspaceProviderKind::Harness;
-    }
-    match project.source_type {
-        ProjectSourceType::Local | ProjectSourceType::LocalConnector
-            if local_workspace.is_some() =>
-        {
-            WorkspaceProviderKind::LocalConnector
-        }
-        ProjectSourceType::Cloud
-            if project
-                .harness_repo_identifier
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()) =>
-        {
-            WorkspaceProviderKind::Harness
-        }
-        _ => WorkspaceProviderKind::None,
-    }
-}
-
-fn resolve_sandbox_provider(
-    provider: crate::models::RuntimeEnvironmentProvider,
-) -> SandboxProviderKind {
-    match provider {
-        crate::models::RuntimeEnvironmentProvider::LocalConnector => {
-            SandboxProviderKind::LocalConnector
-        }
-        crate::models::RuntimeEnvironmentProvider::CloudSandboxManager => {
-            SandboxProviderKind::Cloud
-        }
-        crate::models::RuntimeEnvironmentProvider::None
-        | crate::models::RuntimeEnvironmentProvider::Harness => SandboxProviderKind::None,
+    if local_workspace.is_some() {
+        WorkspaceProviderKind::LocalConnector
+    } else {
+        WorkspaceProviderKind::None
     }
 }
 
 fn parse_local_connector_workspace(root_path: &str) -> Option<WorkspaceExecutionTarget> {
-    // Compatibility import only. New consumers read this normalized context and never parse roots.
+    // Normalize the persisted Local Connector root before exposing it to MCP Management.
     let workspace = parse_local_connector_workspace_root(root_path)?;
     Some(WorkspaceExecutionTarget {
         device_id: Some(workspace.device_id),
@@ -185,21 +100,15 @@ fn parse_local_connector_workspace(root_path: &str) -> Option<WorkspaceExecution
 
 fn execution_context_revision(
     project: &ProjectRecord,
-    environment: Option<&ProjectRuntimeEnvironmentRecord>,
     workspace_provider: WorkspaceProviderKind,
-    sandbox_provider: SandboxProviderKind,
     workspace: Option<&WorkspaceExecutionTarget>,
-    sandbox_pairing_id: Option<&str>,
 ) -> String {
     let input = serde_json::json!({
-        "purpose": "mcp-project-execution-context-v1",
+        "purpose": "mcp-project-execution-context-local-connector-v1",
         "project_id": project.id,
         "project_updated_at": project.updated_at,
-        "environment_updated_at": environment.map(|value| value.updated_at.as_str()),
         "workspace_provider": workspace_provider,
         "workspace": workspace,
-        "sandbox_provider": sandbox_provider,
-        "sandbox_pairing_id": sandbox_pairing_id,
     });
     let bytes = serde_json::to_vec(&input).unwrap_or_default();
     hex::encode(Sha256::digest(bytes))
@@ -217,9 +126,8 @@ fn required_text<'a>(value: &'a str, field: &str) -> Result<&'a str, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ProjectRuntimeEnvironmentStatus, RuntimeEnvironmentProvider};
 
-    fn project(source_type: ProjectSourceType) -> ProjectRecord {
+    fn project() -> ProjectRecord {
         ProjectRecord {
             id: "project-1".to_string(),
             creator_user_id: None,
@@ -231,8 +139,6 @@ mod tests {
             name: "Project".to_string(),
             root_path: Some("local://connector/device-1/workspace-1".to_string()),
             git_url: None,
-            source_type,
-            execution_plane: crate::models::ProjectExecutionPlane::Cloud,
             cloud_import_source: crate::models::CloudImportSource::Empty,
             import_status: crate::models::ProjectImportStatus::Ready,
             source_git_url: None,
@@ -279,72 +185,30 @@ mod tests {
     }
 
     #[test]
-    fn runtime_environment_provider_controls_sandbox_routing() {
+    fn local_connector_project_builds_authoritative_workspace_context() {
+        let project = project();
+        let context = build_execution_context(&project, "user-1");
+
         assert_eq!(
-            resolve_sandbox_provider(RuntimeEnvironmentProvider::LocalConnector),
-            SandboxProviderKind::LocalConnector
+            context.workspace_provider,
+            WorkspaceProviderKind::LocalConnector
         );
         assert_eq!(
-            resolve_sandbox_provider(RuntimeEnvironmentProvider::CloudSandboxManager),
-            SandboxProviderKind::Cloud
-        );
-        assert_eq!(
-            resolve_sandbox_provider(RuntimeEnvironmentProvider::None),
-            SandboxProviderKind::None
+            context
+                .workspace
+                .as_ref()
+                .map(|workspace| workspace.workspace_id.as_str()),
+            Some("workspace-1")
         );
     }
 
     #[test]
-    fn runtime_environment_settings_do_not_change_source_workspace_capabilities() {
-        let mut project = project(ProjectSourceType::Cloud);
-        project.harness_repo_identifier = Some("repo-1".to_string());
-        let environment = ProjectRuntimeEnvironmentRecord {
-            project_id: project.id.clone(),
-            status: ProjectRuntimeEnvironmentStatus::Disabled,
-            sandbox_enabled: false,
-            sandbox_provider: RuntimeEnvironmentProvider::None,
-            file_provider: RuntimeEnvironmentProvider::Harness,
-            analysis_summary: None,
-            not_runnable_reason: None,
-            execution_service_id: None,
-            detected_stack: serde_json::json!({}),
-            required_services: serde_json::json!([]),
-            env_vars: serde_json::json!({}),
-            environment_variables: Vec::new(),
-            generated_config_files: Vec::new(),
-            last_agent_run_id: None,
-            last_error: None,
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-        };
+    fn project_without_local_connector_root_has_no_mcp_workspace() {
+        let mut project = project();
+        project.root_path = None;
+        let context = build_execution_context(&project, "user-1");
 
-        let context = build_execution_context(
-            &project,
-            Some(&environment),
-            "user-1",
-            RuntimeEnvironmentProvider::None,
-            None,
-        );
-
-        assert_eq!(context.workspace_provider, WorkspaceProviderKind::Harness);
-        assert_eq!(context.sandbox_provider, SandboxProviderKind::None);
-    }
-
-    #[test]
-    fn local_sandbox_pairing_is_included_in_context_and_revision() {
-        let project = project(ProjectSourceType::LocalConnector);
-        let context = build_execution_context(
-            &project,
-            None,
-            "user-1",
-            RuntimeEnvironmentProvider::LocalConnector,
-            Some("pairing-1".to_string()),
-        );
-
-        assert_eq!(
-            context.sandbox_provider,
-            SandboxProviderKind::LocalConnector
-        );
-        assert_eq!(context.sandbox_pairing_id.as_deref(), Some("pairing-1"));
+        assert_eq!(context.workspace_provider, WorkspaceProviderKind::None);
+        assert!(context.workspace.is_none());
     }
 }

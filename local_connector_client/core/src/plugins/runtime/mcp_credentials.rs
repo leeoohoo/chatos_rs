@@ -162,10 +162,6 @@ impl PluginStdioEnvironmentTemplates {
         self.variables.values().cloned().collect()
     }
 
-    pub(in crate::plugins::runtime) fn variable_names(&self) -> impl Iterator<Item = String> + '_ {
-        self.variables.keys().cloned()
-    }
-
     pub(in crate::plugins::runtime) fn resolve(
         &self,
         bindings: Option<&PluginCredentialBindings>,

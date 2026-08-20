@@ -22,9 +22,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: chatos-rs-sandbox-agent
-            dockerfile: sandbox_manager_service/sandbox_agent/Dockerfile
-            build_args: ""
           - image: chatos-rs-user-service-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
@@ -65,12 +62,6 @@ jobs:
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=mcp_management_service_backend
               BIN_NAME=mcp_management_service_backend
-          - image: chatos-rs-sandbox-manager-backend
-            dockerfile: docker/Dockerfile.rust-service
-            build_args: |
-              MANIFEST_PATH=Cargo.toml
-              PACKAGE_NAME=sandbox_manager_service_backend
-              BIN_NAME=sandbox_manager_service_backend
           - image: chatos-rs-task-runner-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
@@ -119,10 +110,6 @@ jobs:
             dockerfile: docker/Dockerfile.frontend
             build_args: |
               APP_DIR=task_runner_service/frontend
-          - image: chatos-rs-sandbox-manager-frontend
-            dockerfile: docker/Dockerfile.frontend
-            build_args: |
-              APP_DIR=sandbox_manager_service/frontend
           - image: chatos-rs-official-website-frontend
             dockerfile: docker/Dockerfile.frontend
             build_args: |

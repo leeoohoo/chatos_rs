@@ -321,6 +321,120 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn code_maintainer_edit_sessions_are_isolated_between_parallel_mcp_runs() {
+    let root = temp_test_dir("parallel-edit-sessions");
+    let project = root.join("project");
+    fs::create_dir_all(project.as_path()).expect("create project");
+    let workspace = test_workspace(root.as_path());
+    let state = test_state_with_full_control_workspace(workspace);
+    let recorder = CommandHistoryRecorder {
+        state_path: root.join("state.json"),
+        state: Arc::new(RwLock::new(state.clone())),
+    };
+    let mut first_request =
+        request_with_cwd_and_builtin_kinds("project", "CodeMaintainerRead,CodeMaintainerWrite");
+    first_request.headers.insert(
+        "x-mcp-management-session-id".to_string(),
+        "mcp-session-a".to_string(),
+    );
+    first_request.headers.insert(
+        "x-mcp-management-run-id".to_string(),
+        "task-run-a".to_string(),
+    );
+    let mut second_request = first_request.clone();
+    second_request.headers.insert(
+        "x-mcp-management-session-id".to_string(),
+        "mcp-session-b".to_string(),
+    );
+    second_request.headers.insert(
+        "x-mcp-management-run-id".to_string(),
+        "task-run-b".to_string(),
+    );
+
+    let first_opened = call_builtin_compatible_local_tool(
+        &first_request,
+        &state,
+        "open_edit_session",
+        json!({}),
+        &recorder,
+    )
+    .await
+    .expect("open first edit session")
+    .expect("first open result");
+    let first_session_id = code_maintainer_structured_result(first_opened)["result"]["session_id"]
+        .as_str()
+        .expect("first session id")
+        .to_string();
+    let second_opened = call_builtin_compatible_local_tool(
+        &second_request,
+        &state,
+        "open_edit_session",
+        json!({}),
+        &recorder,
+    )
+    .await
+    .expect("open second edit session")
+    .expect("second open result");
+    let second_session_id = code_maintainer_structured_result(second_opened)["result"]
+        ["session_id"]
+        .as_str()
+        .expect("second session id")
+        .to_string();
+
+    assert_ne!(first_session_id, second_session_id);
+
+    for (request, session_id, path, content) in [
+        (&first_request, &first_session_id, "first.txt", "first"),
+        (&second_request, &second_session_id, "second.txt", "second"),
+    ] {
+        call_builtin_compatible_local_tool(
+            request,
+            &state,
+            "stage_edit_batch",
+            json!({
+                "session_id": session_id,
+                "operations": [{
+                    "kind": "write",
+                    "path": path,
+                    "content": content,
+                    "expected_sha256": null
+                }]
+            }),
+            &recorder,
+        )
+        .await
+        .expect("stage isolated edit session")
+        .expect("stage result");
+    }
+
+    for (request, session_id) in [
+        (&first_request, &first_session_id),
+        (&second_request, &second_session_id),
+    ] {
+        call_builtin_compatible_local_tool(
+            request,
+            &state,
+            "commit_edit_session",
+            json!({ "session_id": session_id }),
+            &recorder,
+        )
+        .await
+        .expect("commit isolated edit session")
+        .expect("commit result");
+    }
+
+    assert_eq!(
+        fs::read_to_string(project.join("first.txt")).expect("read first file"),
+        "first"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("second.txt")).expect("read second file"),
+        "second"
+    );
+    fs::remove_dir_all(root.as_path()).expect("cleanup");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn code_maintainer_default_tool_root_scopes_missing_owned_path() {
     let root = temp_test_dir("default-tool-root");
     fs::create_dir_all(root.join("frontend").as_path()).expect("create existing sibling");

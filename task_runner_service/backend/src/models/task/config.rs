@@ -61,6 +61,24 @@ pub enum TaskProcessLogOperation {
     Clear,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskReportedOutcomeStatus {
+    Succeeded,
+    Failed,
+    Blocked,
+}
+
+impl TaskReportedOutcomeStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskMcpConfig {
     #[serde(default = "task_mcp_enabled_default")]

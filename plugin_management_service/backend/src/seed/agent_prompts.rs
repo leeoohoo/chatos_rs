@@ -228,17 +228,7 @@ fn baseline_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
             include_str!("../../seed_data/agent_prompts/chatos_conversation_agent.md"),
         ),
         (
-            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
-            DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!("../../seed_data/agent_prompts/chatos_local_conversation_agent.md"),
-        ),
-        (
             SystemAgentKey::ChatosConversationAgent.as_str(),
-            chatos_agent::CHATOS_PLAN_TASK_PROFILE,
-            include_str!("../../seed_data/agent_prompts/chatos_plan_profile.md"),
-        ),
-        (
-            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
             chatos_agent::CHATOS_PLAN_TASK_PROFILE,
             include_str!("../../seed_data/agent_prompts/chatos_plan_profile.md"),
         ),
@@ -250,13 +240,6 @@ fn baseline_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
             ),
         ),
         (
-            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
-            DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!(
-                "../../seed_data/agent_prompts/project_requirement_execution_local_planner_agent.md"
-            ),
-        ),
-        (
             SystemAgentKey::TaskRunnerPlanPhase.as_str(),
             DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
@@ -265,16 +248,6 @@ fn baseline_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
             DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
-        ),
-        (
-            SystemAgentKey::ProjectManagementAgent.as_str(),
-            DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!("../../seed_data/agent_prompts/project_management_agent.md"),
-        ),
-        (
-            SystemAgentKey::ProjectManagementLocalAgent.as_str(),
-            DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!("../../seed_data/agent_prompts/project_management_local_agent.md"),
         ),
         (
             SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
@@ -337,7 +310,7 @@ mod tests {
         let prompts = baseline_prompts();
         assert_eq!(
             prompts.len(),
-            chatos_agent::system_agent_catalog().len() + 2
+            chatos_agent::system_agent_catalog().len() + 1
         );
         assert!(prompts
             .iter()
@@ -346,10 +319,7 @@ mod tests {
 
     #[test]
     fn chatos_agents_publish_distinct_default_and_plan_profiles() {
-        for agent_key in [
-            SystemAgentKey::ChatosConversationAgent.as_str(),
-            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
-        ] {
+        for agent_key in [SystemAgentKey::ChatosConversationAgent.as_str()] {
             assert_eq!(
                 agent_prompt_profiles_for_agent(agent_key),
                 vec![
@@ -372,10 +342,7 @@ mod tests {
     #[test]
     fn execution_planner_prompts_require_terminal_for_dependency_manifests() {
         let prompts = baseline_prompts();
-        for agent_key in [
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
-            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
-        ] {
+        for agent_key in [SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str()] {
             let content = prompts
                 .iter()
                 .find(|(key, profile, _)| {
@@ -396,9 +363,7 @@ mod tests {
         let prompts = baseline_prompts();
         for agent_key in [
             SystemAgentKey::ChatosConversationAgent.as_str(),
-            SystemAgentKey::ChatosLocalConversationAgent.as_str(),
             SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
-            SystemAgentKey::ProjectRequirementExecutionLocalPlannerAgent.as_str(),
             SystemAgentKey::TaskRunnerPlanPhase.as_str(),
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
         ] {

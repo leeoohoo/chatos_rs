@@ -11,12 +11,9 @@ import type {
   CreateRequirementPayload,
   DependencyGraphNode,
   ProjectProfileRecord,
-  ProjectRuntimeEnvironmentDeploymentResponse,
-  ProjectRuntimeEnvironmentResponse,
   ProjectWorkItemRecord,
   RequirementRecord,
   UpsertProjectProfilePayload,
-  UpdateProjectRuntimeEnvironmentVariablesPayload,
 } from '../types';
 import { buildProjectDetailColumns } from './projectDetail/columns';
 import { ProjectDetailOverlays } from './projectDetail/ProjectDetailOverlays';
@@ -82,23 +79,6 @@ export function ProjectDetailPage() {
     queryKey: ['project-graph', projectId, showArchived],
     queryFn: () => api.getProjectDependencyGraph(projectId!, { include_archived: showArchived }),
     enabled: Boolean(projectId),
-  });
-  const runtimeEnvironmentQuery = useQuery({
-    queryKey: ['project-runtime-environment', projectId],
-    queryFn: () => api.getProjectRuntimeEnvironment(projectId!),
-    enabled: Boolean(projectId),
-  });
-  const runtimeEnvironmentDeploymentQuery = useQuery<ProjectRuntimeEnvironmentDeploymentResponse>({
-    queryKey: ['project-runtime-environment-deployment', projectId],
-    queryFn: () => api.getProjectRuntimeEnvironmentDeployment(projectId!),
-    enabled: Boolean(
-      projectId &&
-        runtimeEnvironmentQuery.data?.environment.sandbox_provider === 'local_connector' &&
-        runtimeEnvironmentQuery.data.images.some((image) =>
-          ['running', 'starting', 'stopped'].includes(image.status),
-        ),
-    ),
-    retry: false,
   });
   const requirementDepsQuery = useQuery({
     queryKey: ['requirement-deps', requirementDepTarget?.id],
@@ -194,10 +174,6 @@ export function ProjectDetailPage() {
     queryClient.invalidateQueries({ queryKey: ['project-graph', projectId] });
   };
 
-  const setRuntimeEnvironmentCache = (data: ProjectRuntimeEnvironmentResponse) => {
-    queryClient.setQueryData(['project-runtime-environment', projectId], data);
-  };
-
   const profileMutation = useMutation({
     mutationFn: (payload: UpsertProjectProfilePayload) =>
       api.upsertProjectProfile(projectId!, payload),
@@ -270,82 +246,6 @@ export function ProjectDetailPage() {
     onError: (error) => messageApi.error((error as Error).message),
   });
 
-  const updateRuntimeEnvironmentSettingsMutation = useMutation({
-    mutationFn: (sandboxEnabled: boolean) =>
-      api.updateProjectRuntimeEnvironmentSettings(projectId!, {
-        sandbox_enabled: sandboxEnabled,
-      }),
-    onSuccess: (data, sandboxEnabled) => {
-      messageApi.success(sandboxEnabled ? '已启用项目沙箱初始化' : '已停用项目沙箱初始化');
-      setRuntimeEnvironmentCache(data);
-    },
-    onError: (error) => messageApi.error((error as Error).message),
-  });
-
-  const analyzeRuntimeEnvironmentMutation = useMutation({
-    mutationFn: () => api.analyzeProjectRuntimeEnvironment(projectId!),
-    onSuccess: (data) => {
-      messageApi.success('运行环境初始化已完成');
-      setRuntimeEnvironmentCache(data);
-    },
-    onError: (error) => {
-      messageApi.error((error as Error).message);
-      runtimeEnvironmentQuery.refetch();
-    },
-  });
-
-  const updateRuntimeEnvironmentVariablesMutation = useMutation({
-    mutationFn: (payload: UpdateProjectRuntimeEnvironmentVariablesPayload) =>
-      api.updateProjectRuntimeEnvironmentVariables(projectId!, payload),
-    onSuccess: (data) => {
-      messageApi.success('运行环境变量已保存');
-      setRuntimeEnvironmentCache(data);
-    },
-    onError: (error) => messageApi.error((error as Error).message),
-  });
-
-  const startRuntimeEnvironmentMutation = useMutation({
-    mutationFn: () => api.startProjectRuntimeEnvironment(projectId!),
-    onSuccess: (data) => {
-      messageApi.success('项目运行环境已作为一个 Docker Compose 项目启动');
-      setRuntimeEnvironmentCache(data);
-      queryClient.invalidateQueries({
-        queryKey: ['project-runtime-environment-deployment', projectId],
-      });
-    },
-    onError: (error) => {
-      messageApi.error((error as Error).message);
-      runtimeEnvironmentQuery.refetch();
-    },
-  });
-
-  const stopRuntimeEnvironmentMutation = useMutation({
-    mutationFn: () => api.stopProjectRuntimeEnvironment(projectId!),
-    onSuccess: (data) => {
-      messageApi.success('项目级 Docker Compose 环境已整体停止，数据卷已保留');
-      setRuntimeEnvironmentCache(data);
-      queryClient.invalidateQueries({
-        queryKey: ['project-runtime-environment-deployment', projectId],
-      });
-    },
-    onError: (error) => messageApi.error((error as Error).message),
-  });
-
-  const restartRuntimeEnvironmentMutation = useMutation({
-    mutationFn: () => api.restartProjectRuntimeEnvironment(projectId!),
-    onSuccess: (data) => {
-      messageApi.success('项目级 Docker Compose 环境已整体重启');
-      setRuntimeEnvironmentCache(data);
-      queryClient.invalidateQueries({
-        queryKey: ['project-runtime-environment-deployment', projectId],
-      });
-    },
-    onError: (error) => {
-      messageApi.error((error as Error).message);
-      runtimeEnvironmentQuery.refetch();
-    },
-  });
-
   const { requirementColumns, workItemColumns } = buildProjectDetailColumns({
     requirements,
     onShowRequirementDetail: setRequirementDetailTarget,
@@ -375,7 +275,6 @@ export function ProjectDetailPage() {
           requirementsQuery.refetch();
           workItemsQuery.refetch();
           graphQuery.refetch();
-          runtimeEnvironmentQuery.refetch();
         }}
         profileForm={profileForm}
         profileBackground={profileBackground}
@@ -399,33 +298,6 @@ export function ProjectDetailPage() {
         graphLoading={graphQuery.isLoading}
         blockingRelations={blockingRelations}
         containsRelations={containsRelations}
-        runtimeEnvironment={runtimeEnvironmentQuery.data}
-        runtimeEnvironmentDeployment={runtimeEnvironmentDeploymentQuery.data}
-        runtimeEnvironmentLoading={runtimeEnvironmentQuery.isLoading}
-        runtimeEnvironmentDeploymentLoading={runtimeEnvironmentDeploymentQuery.isFetching}
-        runtimeEnvironmentErrorMessage={
-          runtimeEnvironmentQuery.isError
-            ? (runtimeEnvironmentQuery.error as Error).message
-            : undefined
-        }
-        runtimeEnvironmentAnalyzing={analyzeRuntimeEnvironmentMutation.isPending}
-        runtimeEnvironmentSettingsSaving={updateRuntimeEnvironmentSettingsMutation.isPending}
-        runtimeEnvironmentVariablesSaving={updateRuntimeEnvironmentVariablesMutation.isPending}
-        runtimeEnvironmentStarting={startRuntimeEnvironmentMutation.isPending}
-        runtimeEnvironmentStopping={stopRuntimeEnvironmentMutation.isPending}
-        runtimeEnvironmentRestarting={restartRuntimeEnvironmentMutation.isPending}
-        onRefreshRuntimeEnvironment={() => runtimeEnvironmentQuery.refetch()}
-        onAnalyzeRuntimeEnvironment={() => analyzeRuntimeEnvironmentMutation.mutate()}
-        onRuntimeSandboxEnabledChange={(value) =>
-          updateRuntimeEnvironmentSettingsMutation.mutate(value)
-        }
-        onSaveRuntimeEnvironmentVariables={async (payload) => {
-          await updateRuntimeEnvironmentVariablesMutation.mutateAsync(payload);
-        }}
-        onStartRuntimeEnvironment={() => startRuntimeEnvironmentMutation.mutate()}
-        onRefreshRuntimeEnvironmentDeployment={() => runtimeEnvironmentDeploymentQuery.refetch()}
-        onStopRuntimeEnvironment={() => stopRuntimeEnvironmentMutation.mutate()}
-        onRestartRuntimeEnvironment={() => restartRuntimeEnvironmentMutation.mutate()}
       />
       <ProjectDetailOverlays
         requirementModalOpen={requirementModalOpen}

@@ -309,7 +309,7 @@ Default strategy:
 4. Use `web_tools_web_extract` when you already have a specific URL or obtained one in the previous step.
 
 Boundaries:
-1. If the question only involves the current conversation, the local project, or the current browser page, do not launch public-web research unnecessarily.
+1. If the question only involves the current conversation, the current project, or the current browser page, do not launch public-web research unnecessarily.
 2. If the current browser page is the core of the problem and browser tools also exist, inspect the browser first and switch to web tools only when page information is insufficient.
 
 ## [builtin_notepad]

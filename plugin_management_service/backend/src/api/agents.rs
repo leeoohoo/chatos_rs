@@ -482,7 +482,6 @@ pub(super) async fn build_agent_mcp_bindings_response(
 fn normalized_binding_conditions(conditions: BindingConditions) -> BindingConditions {
     BindingConditions {
         task_profile: normalized(conditions.task_profile.as_deref()),
-        project_source_type: normalized(conditions.project_source_type.as_deref()),
         runtime_provider: normalized(conditions.runtime_provider.as_deref()),
         schedule_mode: normalized(conditions.schedule_mode.as_deref()),
     }
@@ -491,10 +490,6 @@ fn normalized_binding_conditions(conditions: BindingConditions) -> BindingCondit
 fn binding_conditions_key(conditions: &BindingConditions) -> String {
     [
         ("task_profile", conditions.task_profile.as_deref()),
-        (
-            "project_source_type",
-            conditions.project_source_type.as_deref(),
-        ),
         ("runtime_provider", conditions.runtime_provider.as_deref()),
         ("schedule_mode", conditions.schedule_mode.as_deref()),
     ]

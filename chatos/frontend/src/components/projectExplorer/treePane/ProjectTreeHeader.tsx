@@ -5,7 +5,6 @@ import React from 'react';
 
 import { useI18n } from '../../../i18n/I18nProvider';
 import { getUserVisiblePath } from '../../../lib/domain/filesystem';
-import { isCloudProjectSource, resolveProjectSourceKind } from '../../../lib/domain/projectSource';
 import type { FsEntry, Project, ProjectSearchHit } from '../../../types';
 import { cn } from '../../../lib/utils';
 import {
@@ -97,7 +96,6 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
   onClearDragAutoScroll,
 }) => {
   const { t } = useI18n();
-  const projectSourceKind = resolveProjectSourceKind(project);
   const visibleRootPath = getUserVisiblePath(project.displayRootPath || project.rootPath);
   const visibleSelectedPath = selectedEntry
     ? getUserVisiblePath(selectedEntry.path, project.rootPath)
@@ -165,11 +163,7 @@ export const ProjectTreeHeader: React.FC<ProjectTreeHeaderProps> = ({
         onRefresh={onRefresh}
       />
       <div className="text-[11px] text-muted-foreground">
-        {isCloudProjectSource(project)
-          ? t('projectExplorer.tree.harnessHint')
-          : projectSourceKind === 'local_connector'
-            ? t('projectExplorer.tree.localConnectorHint')
-            : t('projectExplorer.tree.gitHint')}
+        {t('projectExplorer.tree.localConnectorHint')}
       </div>
       <ProjectTreeSearchControls
         searchQuery={searchQuery}

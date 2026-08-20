@@ -14,11 +14,7 @@ write_pipeline() {
   local file="$OUT_DIR/$identifier.yml"
   local deploy_command
 
-  if [[ "$service" == "sandbox-agent-image" ]]; then
-    deploy_command='bash docker/deploy-harness-ci.sh check-images "$CHATOS_CI_IMAGE_SERVICES"'
-  else
-    deploy_command='bash docker/deploy-harness-ci.sh "$CHATOS_CI_IMAGE_SERVICES"'
-  fi
+  deploy_command='bash docker/deploy-harness-ci.sh "$CHATOS_CI_IMAGE_SERVICES"'
 
   cat >"$file" <<EOF
 ---

@@ -201,7 +201,6 @@ function ShellApp() {
           <span>设置</span>
         </button>
       </div>
-      <GlobalApprovalTray />
     </div>
   );
 }
@@ -230,6 +229,14 @@ function SettingsApp() {
   React.useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  React.useEffect(() => (
+    window.chatosLocalConnector?.onSettingsTabRequested?.((requestedTab) => {
+      if (isAppTab(requestedTab)) {
+        setActiveTab(requestedTab);
+      }
+    })
+  ), []);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -374,14 +381,34 @@ function SettingsApp() {
           </section>
         </main>
       )}
-      {status?.configured ? <GlobalApprovalTray onOpenApproval={() => setActiveTab('approval')} /> : null}
     </div>
   );
 }
 
+function ApprovalOverlayApp() {
+  React.useEffect(() => {
+    const syncTheme = () => {
+      const theme = initialTheme();
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    };
+    syncTheme();
+    document.documentElement.classList.add('approvalOverlayDocument');
+    window.addEventListener('storage', syncTheme);
+    return () => {
+      document.documentElement.classList.remove('approvalOverlayDocument');
+      window.removeEventListener('storage', syncTheme);
+    };
+  }, []);
+  return <GlobalApprovalTray />;
+}
+
 function Root() {
   const params = new URLSearchParams(window.location.search);
-  return params.get('view') === 'shell' ? <ShellApp /> : <SettingsApp />;
+  const view = params.get('view');
+  if (view === 'shell') return <ShellApp />;
+  if (view === 'approval-overlay') return <ApprovalOverlayApp />;
+  return <SettingsApp />;
 }
 
 function initialTheme(): ThemeMode {

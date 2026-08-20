@@ -10,9 +10,8 @@ import type { Session } from '../../types';
 import { useSessionListActions } from './useSessionListActions';
 
 describe('useSessionListActions', () => {
-  it('opens cloud project creation without a desktop bridge', () => {
+  it('opens Local Connector project creation', () => {
     const setProjectModalOpen = vi.fn();
-    const setProjectSourceMode = vi.fn();
     const { result } = renderHook(() => useSessionListActions({
       apiClient: { createLocalConnectorProject: vi.fn() } as unknown as ApiClient,
       contacts: [],
@@ -30,37 +29,25 @@ describe('useSessionListActions', () => {
       setIsRefreshing: vi.fn(),
       setIsRefreshingTerminals: vi.fn(),
       setIsRefreshingRemote: vi.fn(),
-      setProjectRoot: vi.fn(),
-      setCloudProjectName: vi.fn(),
-      setCloudProjectGitUrl: vi.fn(),
-      setCloudProjectZipFile: vi.fn(),
       setProjectError: vi.fn(),
       setProjectModalOpen,
-      setProjectSourceMode,
       setTerminalError: vi.fn(),
       setTerminalModalOpen: vi.fn(),
       setTerminalExecuting: vi.fn(),
       setKeyFilePickerOpen: vi.fn(),
       openRemoteModalBase: vi.fn(),
-      createCloudProject: vi.fn(),
       createTerminal: vi.fn(),
       selectProject: vi.fn(),
       selectTerminal: vi.fn(),
       loadProjects: vi.fn(),
-      projectSourceMode: 'server',
       localConnectorWorkspaces: [],
       selectedLocalConnectorWorkspaceId: '',
       selectRemoteConnection: vi.fn(),
       openRemoteSftp: vi.fn(),
-      cloudProjectName: '',
-      cloudProjectGitUrl: '',
-      cloudProjectZipFile: null,
-      allowLocalProjectCreation: false,
     }));
 
     result.current.openProjectModal();
 
-    expect(setProjectSourceMode).toHaveBeenCalledWith('server');
     expect(setProjectModalOpen).toHaveBeenCalledWith(true);
   });
 
@@ -93,32 +80,21 @@ describe('useSessionListActions', () => {
       setIsRefreshing: vi.fn(),
       setIsRefreshingTerminals: vi.fn(),
       setIsRefreshingRemote: vi.fn(),
-      setProjectRoot: vi.fn(),
-      setCloudProjectName: vi.fn(),
-      setCloudProjectGitUrl: vi.fn(),
-      setCloudProjectZipFile: vi.fn(),
       setProjectError: vi.fn(),
       setProjectModalOpen: vi.fn(),
-      setProjectSourceMode: vi.fn(),
       setTerminalError: vi.fn(),
       setTerminalModalOpen: vi.fn(),
       setTerminalExecuting: vi.fn(),
       setKeyFilePickerOpen: vi.fn(),
       openRemoteModalBase: vi.fn(),
-      createCloudProject: vi.fn(),
       createTerminal: vi.fn(),
       selectProject: vi.fn(),
       selectTerminal: vi.fn(),
       loadProjects: vi.fn(),
-      projectSourceMode: 'server',
       localConnectorWorkspaces: [],
       selectedLocalConnectorWorkspaceId: '',
       selectRemoteConnection: vi.fn(),
       openRemoteSftp: vi.fn(),
-      cloudProjectName: '',
-      cloudProjectGitUrl: '',
-      cloudProjectZipFile: null,
-      allowLocalProjectCreation: true,
     }));
 
     await result.current.handleSelectSession('contact-placeholder:contact-1');
@@ -170,32 +146,21 @@ describe('useSessionListActions', () => {
       setIsRefreshing: vi.fn(),
       setIsRefreshingTerminals: vi.fn(),
       setIsRefreshingRemote: vi.fn(),
-      setProjectRoot: vi.fn(),
-      setCloudProjectName: vi.fn(),
-      setCloudProjectGitUrl: vi.fn(),
-      setCloudProjectZipFile: vi.fn(),
       setProjectError: vi.fn(),
       setProjectModalOpen: vi.fn(),
-      setProjectSourceMode: vi.fn(),
       setTerminalError: vi.fn(),
       setTerminalModalOpen: vi.fn(),
       setTerminalExecuting: vi.fn(),
       setKeyFilePickerOpen: vi.fn(),
       openRemoteModalBase: vi.fn(),
-      createCloudProject: vi.fn(),
       createTerminal: vi.fn(),
       selectProject: vi.fn(),
       selectTerminal: vi.fn(),
       loadProjects: vi.fn(),
-      projectSourceMode: 'server',
       localConnectorWorkspaces: [],
       selectedLocalConnectorWorkspaceId: '',
       selectRemoteConnection: vi.fn(),
       openRemoteSftp: vi.fn(),
-      cloudProjectName: '',
-      cloudProjectGitUrl: '',
-      cloudProjectZipFile: null,
-      allowLocalProjectCreation: true,
     }));
 
     await result.current.handleSelectSession('contact-placeholder:contact-1');
@@ -230,24 +195,17 @@ describe('useSessionListActions', () => {
       setIsRefreshing: vi.fn(),
       setIsRefreshingTerminals: vi.fn(),
       setIsRefreshingRemote: vi.fn(),
-      setProjectRoot: vi.fn(),
-      setCloudProjectName: vi.fn(),
-      setCloudProjectGitUrl: vi.fn(),
-      setCloudProjectZipFile: vi.fn(),
       setProjectError: vi.fn(),
       setProjectModalOpen: vi.fn(),
-      setProjectSourceMode: vi.fn(),
       setTerminalError: vi.fn(),
       setTerminalModalOpen,
       setTerminalExecuting,
       setKeyFilePickerOpen: vi.fn(),
       openRemoteModalBase: vi.fn(),
-      createCloudProject: vi.fn(),
       createTerminal,
       selectProject: vi.fn(),
       selectTerminal: vi.fn(),
       loadProjects: vi.fn(),
-      projectSourceMode: 'server',
       localConnectorWorkspaces: [{
         id: 'workspace-1',
         deviceId: 'device-1',
@@ -258,10 +216,6 @@ describe('useSessionListActions', () => {
       selectedLocalConnectorDirectoryPath: 'apps/backend',
       selectRemoteConnection: vi.fn(),
       openRemoteSftp: vi.fn(),
-      cloudProjectName: '',
-      cloudProjectGitUrl: '',
-      cloudProjectZipFile: null,
-      allowLocalProjectCreation: true,
     }));
 
     await result.current.handleCreateTerminal();
@@ -275,7 +229,7 @@ describe('useSessionListActions', () => {
     expect(setTerminalExecuting).toHaveBeenLastCalledWith(false);
   });
 
-  it('opens a new local project without waiting for the cloud project refresh', async () => {
+  it('opens a new project without waiting for the background refresh', async () => {
     const selectProject = vi.fn().mockResolvedValue(undefined);
     const loadProjects = vi.fn().mockReturnValue(new Promise(() => {}));
     const setProjectModalOpen = vi.fn();
@@ -299,24 +253,17 @@ describe('useSessionListActions', () => {
       setIsRefreshing: vi.fn(),
       setIsRefreshingTerminals: vi.fn(),
       setIsRefreshingRemote: vi.fn(),
-      setProjectRoot: vi.fn(),
-      setCloudProjectName: vi.fn(),
-      setCloudProjectGitUrl: vi.fn(),
-      setCloudProjectZipFile: vi.fn(),
       setProjectError: vi.fn(),
       setProjectModalOpen,
-      setProjectSourceMode: vi.fn(),
       setTerminalError: vi.fn(),
       setTerminalModalOpen: vi.fn(),
       setTerminalExecuting: vi.fn(),
       setKeyFilePickerOpen: vi.fn(),
       openRemoteModalBase: vi.fn(),
-      createCloudProject: vi.fn(),
       createTerminal: vi.fn(),
       selectProject,
       selectTerminal: vi.fn(),
       loadProjects,
-      projectSourceMode: 'local_connector',
       localConnectorWorkspaces: [{
         id: 'workspace-1',
         deviceId: 'device-1',
@@ -327,10 +274,6 @@ describe('useSessionListActions', () => {
       selectedLocalConnectorDirectoryPath: 'apps/backend',
       selectRemoteConnection: vi.fn(),
       openRemoteSftp: vi.fn(),
-      cloudProjectName: '',
-      cloudProjectGitUrl: '',
-      cloudProjectZipFile: null,
-      allowLocalProjectCreation: true,
     }));
 
     await result.current.handleCreateProject();

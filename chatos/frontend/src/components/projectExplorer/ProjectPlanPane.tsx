@@ -613,7 +613,6 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       {startingExecutionRequirement && executionProcessOpen ? (
         <RequirementExecutionStartingModal
           requirement={startingExecutionRequirement}
-          executionPlane={project.executionPlane}
           starting={executingRequirementId === startingExecutionRequirement.id}
           onClose={() => {
             setStartingExecutionRequirement(null);
@@ -626,9 +625,6 @@ export const ProjectPlanPane: React.FC<ProjectPlanPaneProps> = ({ project, class
       ) : executionProcess && executionProcessOpen ? (
         <RequirementExecutionProcessModal
           process={executionProcess}
-          clientManagedRuntime={project.executionPlane === 'local_connector'
-            || project.sourceType === 'local'
-            || project.sourceType === 'local_connector'}
           onClose={() => setExecutionProcessOpen(false)}
           onProcessChange={(nextProcess) => {
             setExecutionProcess(nextProcess);

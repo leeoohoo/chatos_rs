@@ -241,6 +241,10 @@
     align-items: flex-start;
   }
 
+  .approvalProjectTabs button {
+    max-width: 180px;
+  }
+
   .permissionRow {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -266,10 +270,11 @@
   }
 
   .globalApprovalTray {
-    bottom: 10px;
+    bottom: auto;
     left: 10px;
     max-width: calc(100vw - 20px);
     right: 10px;
+    top: 10px;
   }
 
   .globalApprovalSummary {
@@ -284,5 +289,14 @@
   .globalApprovalActions .primaryButton,
   .globalApprovalActions .ghostButton {
     flex: 1 1 110px;
+  }
+
+  .globalApprovalFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .globalApprovalPager {
+    justify-content: center;
   }
 }

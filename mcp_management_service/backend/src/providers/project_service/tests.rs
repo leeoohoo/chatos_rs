@@ -5,10 +5,9 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
-use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
-    ExecutionPlane, HarnessBranchTarget, McpProviderKind, McpRetryClass, ProjectExecutionContext,
-    ResolvedMcpRoute, RuntimeWorkspaceRouteTarget, SandboxProviderKind, WorkspaceProviderKind,
+    McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
+    WorkspaceProviderKind,
 };
 use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
 use serde_json::json;
@@ -46,12 +45,8 @@ fn snapshot() -> RuntimeSessionSnapshot {
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
             owner_user_id: "user-1".to_string(),
-            execution_plane: ExecutionPlane::Cloud,
-            workspace_provider: WorkspaceProviderKind::Harness,
+            workspace_provider: WorkspaceProviderKind::None,
             workspace: None,
-            sandbox_provider: SandboxProviderKind::Cloud,
-            sandbox_pairing_id: None,
-            source_type: Some("cloud".to_string()),
             revision: "project-revision".to_string(),
         },
         policy_revision: "policy-1".to_string(),
@@ -64,7 +59,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         plugin_local_tool_component_bindings: Default::default(),
         plugin_cloud_tool_component_bindings: Default::default(),
         external_http_bindings: Default::default(),
-        cloud_stdio_bindings: Default::default(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix: i64::MAX,
     }
@@ -77,21 +71,6 @@ fn project_management_route() -> ResolvedMcpRoute {
         provider_kind: McpProviderKind::InternalService,
         provider_ref: Some(PROJECT_MANAGEMENT_OWNER_SERVICE.to_string()),
         tool_namespace: "project_management_service".to_string(),
-        allow_writes: true,
-        retry_class: McpRetryClass::NoRetry,
-        cancel_supported: true,
-        reason: "test".to_string(),
-    }
-}
-
-fn project_environment_route() -> ResolvedMcpRoute {
-    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::ProjectEnvironment);
-    ResolvedMcpRoute {
-        resource_id: descriptor.resource_id.to_string(),
-        server_name: descriptor.server_name.to_string(),
-        provider_kind: McpProviderKind::InternalService,
-        provider_ref: Some(PROJECT_MANAGEMENT_OWNER_SERVICE.to_string()),
-        tool_namespace: descriptor.server_name.to_string(),
         allow_writes: true,
         retry_class: McpRetryClass::NoRetry,
         cancel_supported: true,
@@ -252,93 +231,4 @@ async fn project_management_call_uses_frozen_snapshot_identity_and_original_tool
     );
     assert!(outcome.response_bytes > 0);
     server.abort();
-}
-
-#[test]
-fn harness_route_uses_the_project_scoped_harness_endpoint() {
-    let provider = ProjectServiceProvider::new(
-        reqwest::Client::new(),
-        "http://127.0.0.1:39210",
-        Some("a-long-project-service-secret".to_string()),
-        std::time::Duration::from_secs(180),
-        1024 * 1024,
-    )
-    .unwrap();
-    let route = ResolvedMcpRoute {
-        resource_id: "builtin_code_maintainer_read".to_string(),
-        server_name: "code_maintainer_read".to_string(),
-        provider_kind: McpProviderKind::Harness,
-        provider_ref: Some("project:project-1@revision".to_string()),
-        tool_namespace: "code_maintainer_read".to_string(),
-        allow_writes: false,
-        retry_class: McpRetryClass::IdempotentRead,
-        cancel_supported: true,
-        reason: "test".to_string(),
-    };
-    let (url, scope) = provider.endpoint(&snapshot(), &route).unwrap();
-    assert_eq!(scope, PROJECT_HARNESS_SCOPE);
-    assert!(url.ends_with("/api/chatos-sync/projects/project-1/harness/mcp"));
-}
-
-#[test]
-fn harness_request_carries_the_frozen_run_branch_header() {
-    let provider = ProjectServiceProvider::new(
-        reqwest::Client::new(),
-        "http://127.0.0.1:39210",
-        Some("a-long-project-service-secret".to_string()),
-        std::time::Duration::from_secs(180),
-        1024 * 1024,
-    )
-    .unwrap();
-    let route = ResolvedMcpRoute {
-        resource_id: "builtin_code_maintainer_write".to_string(),
-        server_name: "code_maintainer_write".to_string(),
-        provider_kind: McpProviderKind::Harness,
-        provider_ref: None,
-        tool_namespace: "code_maintainer_write".to_string(),
-        allow_writes: true,
-        retry_class: McpRetryClass::NoRetry,
-        cancel_supported: true,
-        reason: "test".to_string(),
-    };
-    let mut snapshot = snapshot();
-    snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::Harness {
-        branch: HarnessBranchTarget::Run {
-            branch_id: "project-1:run-1".to_string(),
-            branch_ref: "chatos/runs/run-1".to_string(),
-            base_branch: "main".to_string(),
-            base_commit: "base-commit".to_string(),
-        },
-    });
-
-    let request = provider
-        .request(&snapshot, &route)
-        .unwrap()
-        .build()
-        .unwrap();
-
-    assert_eq!(
-        request
-            .headers()
-            .get("x-mcp-management-harness-branch-ref")
-            .and_then(|value| value.to_str().ok()),
-        Some("chatos/runs/run-1")
-    );
-}
-
-#[test]
-fn project_environment_route_uses_the_run_bound_internal_endpoint() {
-    let provider = ProjectServiceProvider::new(
-        reqwest::Client::new(),
-        "http://127.0.0.1:39210",
-        Some("a-long-project-service-secret".to_string()),
-        std::time::Duration::from_secs(180),
-        1024 * 1024,
-    )
-    .unwrap();
-    let route = project_environment_route();
-    assert!(provider.supports(&route));
-    let (url, scope) = provider.endpoint(&snapshot(), &route).unwrap();
-    assert_eq!(scope, PROJECT_ENVIRONMENT_SCOPE);
-    assert!(url.ends_with("/api/internal/projects/project-1/environment-agent/mcp"));
 }

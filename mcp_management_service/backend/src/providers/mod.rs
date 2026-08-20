@@ -3,19 +3,14 @@
 
 mod cancel_response;
 mod chatos;
-mod cloud_sandbox;
-mod cloud_stdio;
 mod dispatcher_init;
 mod dispatcher_prepare;
 #[path = "dispatcher_prepare/plugins.rs"]
 mod dispatcher_prepare_plugins;
-#[path = "dispatcher_prepare/sandbox.rs"]
-mod dispatcher_prepare_sandbox;
 #[path = "dispatcher_prepare/system.rs"]
 mod dispatcher_prepare_system;
 mod dispatcher_runtime;
 mod dispatcher_runtime_lifecycle;
-mod dispatcher_sandbox;
 mod dispatcher_support;
 mod embedded;
 mod external_http;
@@ -29,7 +24,6 @@ mod plugin_routes_prepare;
 #[path = "plugin_routes/runtime.rs"]
 mod plugin_routes_runtime;
 mod project_service;
-mod sandbox_images;
 mod task_runner;
 
 use std::time::Duration;
@@ -39,8 +33,6 @@ use serde_json::{json, Value};
 pub(super) use cancel_response::decode_cancel_notification_response;
 pub(crate) use chatos::memory_provider_ref as chatos_memory_provider_ref;
 use chatos::ChatosProvider;
-use cloud_sandbox::CloudSandboxProvider;
-use cloud_stdio::CloudStdioProvider;
 use embedded::EmbeddedProvider;
 use external_http::ExternalHttpProvider;
 pub(crate) use external_http::{
@@ -54,11 +46,6 @@ use plugin_local::PluginLocalProvider;
 use plugin_routes::PluginRouteDispatcher;
 use project_service::ProjectServiceProvider;
 pub use project_service::{ProviderCallError, ProviderCallOutcome, ProviderWaitingForUser};
-use sandbox_images::SandboxImagesProvider;
-pub(crate) use sandbox_images::{
-    cloud_provider_ref as sandbox_images_cloud_provider_ref,
-    local_provider_ref as sandbox_images_local_provider_ref,
-};
 use task_runner::TaskRunnerProvider;
 
 pub struct TaskRunnerProviderConfig {
@@ -82,7 +69,6 @@ pub struct ProviderRuntimeConfig {
     pub downstream_request_timeout: Duration,
     pub local_connector_request_timeout: Duration,
     pub external_http_request_timeout: Duration,
-    pub sandbox_image_request_timeout: Duration,
     pub response_limit_bytes: usize,
 }
 
@@ -100,9 +86,6 @@ pub struct ProviderDispatcher {
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
-    cloud_sandbox: CloudSandboxProvider,
-    cloud_stdio: CloudStdioProvider,
-    sandbox_images: SandboxImagesProvider,
     embedded: EmbeddedProvider,
     external_http: ExternalHttpProvider,
 }

@@ -17,8 +17,6 @@ extraResources:
     to: local_connector_client_core
   - from: ../.package/linux/chatos_chrome_native_host
     to: chatos_chrome_native_host
-  - from: ../.package/linux/chatos_sandbox_mcp_server
-    to: chatos_sandbox_mcp_server
   - from: ../.package/linux/bundled-tools
     to: bundled-tools
   - from: ../.package/linux/skill-bundles

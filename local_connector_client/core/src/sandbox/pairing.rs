@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use crate::config::{api_url, ClientConfig};
 use crate::registration::ensure_success;
-use crate::sandbox::process::native_process_sandbox_capability;
+use crate::sandbox::local_connector_execution_capability;
 use crate::LocalState;
 
 pub(crate) async fn reconcile_sandbox_pairings(
@@ -30,7 +30,7 @@ pub(crate) async fn reconcile_sandbox_pairings(
         )
     };
     policy.sandbox_mode = SandboxBackendKind::LocalProcess;
-    let process_capability = native_process_sandbox_capability().await;
+    let process_capability = local_connector_execution_capability();
     let readiness = sandbox_pairing_readiness(&process_capability);
     let mut synced = 0;
     for workspace in workspaces {

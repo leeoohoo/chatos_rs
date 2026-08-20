@@ -6,28 +6,8 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExecutionPlane {
-    #[default]
-    Cloud,
-    Local,
-}
-
-impl ExecutionPlane {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Cloud => "cloud",
-            Self::Local => "local",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum WorkspaceProviderKind {
     LocalConnector,
-    Harness,
-    CloudSandbox,
-    CloudStorage,
     #[default]
     None,
 }
@@ -36,28 +16,6 @@ impl WorkspaceProviderKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::LocalConnector => "local_connector",
-            Self::Harness => "harness",
-            Self::CloudSandbox => "cloud_sandbox",
-            Self::CloudStorage => "cloud_storage",
-            Self::None => "none",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SandboxProviderKind {
-    LocalConnector,
-    Cloud,
-    #[default]
-    None,
-}
-
-impl SandboxProviderKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::LocalConnector => "local_connector",
-            Self::Cloud => "cloud",
             Self::None => "none",
         }
     }
@@ -71,70 +29,11 @@ pub struct WorkspaceExecutionTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SandboxExecutionTarget {
-    pub provider: SandboxProviderKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pairing_id: Option<String>,
-    pub sandbox_id: String,
-    pub lease_id: String,
-    #[serde(default)]
-    pub is_environment: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_id: Option<String>,
-}
-
-impl SandboxExecutionTarget {
-    pub fn provider_ref(&self) -> String {
-        match self.provider {
-            SandboxProviderKind::LocalConnector => format!(
-                "sandbox-pairing:{}/sandbox:{}/lease:{}",
-                self.pairing_id.as_deref().unwrap_or_default().trim(),
-                self.sandbox_id.trim(),
-                self.lease_id.trim()
-            ),
-            SandboxProviderKind::Cloud | SandboxProviderKind::None => format!(
-                "sandbox:{}/lease:{}",
-                self.sandbox_id.trim(),
-                self.lease_id.trim()
-            ),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum HarnessBranchTarget {
-    Default {
-        branch_ref: String,
-    },
-    Run {
-        branch_id: String,
-        branch_ref: String,
-        base_branch: String,
-        base_commit: String,
-    },
-}
-
-impl HarnessBranchTarget {
-    pub fn branch_ref(&self) -> &str {
-        match self {
-            Self::Default { branch_ref } | Self::Run { branch_ref, .. } => branch_ref.as_str(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeWorkspaceRouteTarget {
     LocalConnector {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_tool_root: Option<String>,
-    },
-    Harness {
-        branch: HarnessBranchTarget,
-    },
-    CloudSandbox {
-        target: SandboxExecutionTarget,
     },
 }
 
@@ -142,29 +41,12 @@ impl RuntimeWorkspaceRouteTarget {
     pub const fn provider_kind(&self) -> WorkspaceProviderKind {
         match self {
             Self::LocalConnector { .. } => WorkspaceProviderKind::LocalConnector,
-            Self::Harness { .. } => WorkspaceProviderKind::Harness,
-            Self::CloudSandbox { .. } => WorkspaceProviderKind::CloudSandbox,
-        }
-    }
-
-    pub fn sandbox_target(&self) -> Option<&SandboxExecutionTarget> {
-        match self {
-            Self::CloudSandbox { target } => Some(target),
-            Self::LocalConnector { .. } | Self::Harness { .. } => None,
-        }
-    }
-
-    pub fn harness_branch(&self) -> Option<&HarnessBranchTarget> {
-        match self {
-            Self::Harness { branch } => Some(branch),
-            Self::LocalConnector { .. } | Self::CloudSandbox { .. } => None,
         }
     }
 
     pub fn local_connector_default_tool_root(&self) -> Option<&str> {
         match self {
             Self::LocalConnector { default_tool_root } => default_tool_root.as_deref(),
-            Self::Harness { .. } | Self::CloudSandbox { .. } => None,
         }
     }
 }
@@ -174,14 +56,8 @@ pub struct ProjectExecutionContext {
     pub project_id: String,
     pub owner_user_id: String,
     #[serde(default)]
-    pub execution_plane: ExecutionPlane,
-    #[serde(default)]
     pub workspace_provider: WorkspaceProviderKind,
     pub workspace: Option<WorkspaceExecutionTarget>,
-    #[serde(default)]
-    pub sandbox_provider: SandboxProviderKind,
-    pub sandbox_pairing_id: Option<String>,
-    pub source_type: Option<String>,
     pub revision: String,
 }
 
@@ -191,10 +67,7 @@ pub enum McpProviderKind {
     Embedded,
     InternalService,
     LocalConnector,
-    Harness,
-    CloudSandbox,
     ExternalHttp,
-    CloudStdio,
     PluginLocal,
     PluginCloud,
     Unavailable,
@@ -206,10 +79,7 @@ impl McpProviderKind {
             Self::Embedded => "embedded",
             Self::InternalService => "internal_service",
             Self::LocalConnector => "local_connector",
-            Self::Harness => "harness",
-            Self::CloudSandbox => "cloud_sandbox",
             Self::ExternalHttp => "external_http",
-            Self::CloudStdio => "cloud_stdio",
             Self::PluginLocal => "plugin_local",
             Self::PluginCloud => "plugin_cloud",
             Self::Unavailable => "unavailable",
@@ -514,8 +384,8 @@ mod tests {
             "\"local_connector\""
         );
         assert_eq!(
-            serde_json::to_string(&McpProviderKind::CloudSandbox).unwrap(),
-            "\"cloud_sandbox\""
+            serde_json::to_string(&McpProviderKind::LocalConnector).unwrap(),
+            "\"local_connector\""
         );
     }
 
@@ -535,29 +405,6 @@ mod tests {
         assert_eq!(
             route.exposed_tool_name("read_file"),
             "code_maintainer_read_read_file"
-        );
-    }
-
-    #[test]
-    fn sandbox_execution_target_provider_ref_contains_only_opaque_ids() {
-        let target = SandboxExecutionTarget {
-            provider: SandboxProviderKind::Cloud,
-            pairing_id: None,
-            sandbox_id: "sandbox-1".to_string(),
-            lease_id: "lease-1".to_string(),
-            is_environment: false,
-            service_id: None,
-        };
-        assert_eq!(target.provider_ref(), "sandbox:sandbox-1/lease:lease-1");
-
-        let local = SandboxExecutionTarget {
-            provider: SandboxProviderKind::LocalConnector,
-            pairing_id: Some("pairing-1".to_string()),
-            ..target
-        };
-        assert_eq!(
-            local.provider_ref(),
-            "sandbox-pairing:pairing-1/sandbox:sandbox-1/lease:lease-1"
         );
     }
 

@@ -297,14 +297,6 @@ pub(in crate::api::projects) async fn create_execution_message(
             "execution_group_id".to_string(),
             Value::String(turn_id.clone()),
         );
-        execution.insert(
-            "execution_plane".to_string(),
-            Value::String(
-                chatos_project_execution::ExecutionPlane::Cloud
-                    .as_str()
-                    .to_string(),
-            ),
-        );
     }
     if let Some(Value::Object(task_runner_async)) = metadata.get_mut("task_runner_async") {
         task_runner_async.insert("source_turn_id".to_string(), Value::String(turn_id));

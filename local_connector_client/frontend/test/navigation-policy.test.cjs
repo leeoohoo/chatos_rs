@@ -12,15 +12,18 @@ const {
   isSafeExternalUrl,
 } = require('../electron/navigation-policy.cjs');
 
-test('allows only the packaged shell and settings documents', () => {
+test('allows only the packaged local frontend documents', () => {
   const indexPath = path.resolve('/application/dist/index.html');
   const shellUrl = pathToFileURL(indexPath);
   shellUrl.searchParams.set('view', 'shell');
   const settingsUrl = pathToFileURL(indexPath);
   settingsUrl.searchParams.set('view', 'settings');
+  const approvalOverlayUrl = pathToFileURL(indexPath);
+  approvalOverlayUrl.searchParams.set('view', 'approval-overlay');
 
   assert.equal(isAllowedLocalFrontendUrl(shellUrl.toString(), indexPath), true);
   assert.equal(isAllowedLocalFrontendUrl(settingsUrl.toString(), indexPath), true);
+  assert.equal(isAllowedLocalFrontendUrl(approvalOverlayUrl.toString(), indexPath), true);
   assert.equal(
     isAllowedLocalFrontendUrl('https://example.com/index.html?view=shell', indexPath),
     false,

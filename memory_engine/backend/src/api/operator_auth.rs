@@ -28,7 +28,6 @@ pub async fn require_operator_auth(
         &[
             "chatos-backend",
             "task-runner",
-            "project-service",
             "configuration-center",
         ],
     )?

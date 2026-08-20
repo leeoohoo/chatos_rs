@@ -31,7 +31,6 @@ pub struct NewUserBootstrapInput {
 pub struct NewUserBootstrapReport {
     pub created_default_agent: bool,
     pub provisioned_task_runner_agent_account: bool,
-    pub project_management_agent_account_ready: bool,
     pub created_default_contact: bool,
     pub created_starter_session: bool,
 }
@@ -73,7 +72,6 @@ async fn bootstrap_new_user_defaults_inner(
         report.provisioned_task_runner_agent_account = true;
         agent = updated;
     }
-    report.project_management_agent_account_ready = has_shared_user_service_agent_account(&agent);
 
     let contact = ensure_default_contact(&context, &agent, &mut report).await?;
     if should_create_starter_session(context.user_id.as_str()).await? {

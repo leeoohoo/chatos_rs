@@ -19,7 +19,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use super::mcp_runtime::{load_verified_manifest, PluginStdioSandboxLauncher};
+use super::mcp_runtime::load_verified_manifest;
 use crate::plugins::{ActivePluginInstallation, PluginInstaller};
 
 const MAX_HOOK_SET_BYTES: u64 = 512 * 1024;
@@ -363,27 +363,9 @@ impl PluginHookLoader {
         )
         .with_args(args.clone())
         .with_cwd(installation.installation_path.to_string_lossy());
-        let launcher = PluginStdioSandboxLauncher::discover()?;
-        let (wrapped, _sandbox_runtime) = if hook.workspace_write {
-            let workspace_root =
-                workspace_root.context("Plugin Hook workspace-write approval is unavailable")?;
-            launcher.prepare_with_workspace_write(
-                self.installer.plugin_root(),
-                installation.installation_path.as_path(),
-                &server,
-                Vec::<String>::new(),
-                &installation.version.package_file_sha256,
-                workspace_root,
-            )?
-        } else {
-            launcher.prepare(
-                self.installer.plugin_root(),
-                installation.installation_path.as_path(),
-                &server,
-                Vec::<String>::new(),
-                &installation.version.package_file_sha256,
-            )?
-        };
+        if hook.workspace_write {
+            workspace_root.context("Plugin Hook workspace-write approval is unavailable")?;
+        }
         let input = serde_json::to_vec(&json!({
             "schemaVersion": 1,
             "event": event,
@@ -398,19 +380,26 @@ impl PluginHookLoader {
         if input.len() > MAX_HOOK_INPUT_BYTES {
             bail!("Plugin Hook input exceeds its size limit");
         }
-        let mut command = tokio::process::Command::new(wrapped.command.as_str());
+        let mut command = tokio::process::Command::new(server.command.as_str());
         command
-            .args(wrapped.args.unwrap_or_default())
+            .args(server.args.unwrap_or_default())
             .current_dir(
-                wrapped
+                server
                     .cwd
                     .as_deref()
-                    .context("Plugin Hook sandbox cwd is unavailable")?,
+                    .context("Plugin Hook cwd is unavailable")?,
+            )
+            .env(
+                "CHATOS_PLUGIN_ROOT",
+                installation.installation_path.as_os_str(),
             )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(workspace_root) = workspace_root {
+            command.env("CHATOS_WORKSPACE", workspace_root.as_os_str());
+        }
         configure_process_group(&mut command);
         let mut child = command
             .spawn()

@@ -73,26 +73,21 @@ mod tests {
     };
     use crate::models::project::Project;
 
-    fn project(source_type: &str, execution_plane: Option<&str>) -> Project {
-        let mut project = Project::new(
+    fn project() -> Project {
+        Project::new(
             "Project".to_string(),
             "/workspace/project".to_string(),
             None,
             None,
             Some("user-1".to_string()),
-        );
-        project.source_type = Some(source_type.to_string());
-        project.execution_plane = execution_plane.map(ToOwned::to_owned);
-        project
+        )
     }
 
     #[test]
     fn local_workspace_projects_are_cloud_business_records_visible_on_every_surface() {
-        let local = project("local_connector", Some("local_connector"));
-        let cloud = project("cloud", Some("cloud"));
+        let local = project();
         let browser_headers = HeaderMap::new();
         assert!(project_is_visible_on_request(&local, &browser_headers));
-        assert!(project_is_visible_on_request(&cloud, &browser_headers));
 
         let mut desktop_headers = HeaderMap::new();
         desktop_headers.insert(

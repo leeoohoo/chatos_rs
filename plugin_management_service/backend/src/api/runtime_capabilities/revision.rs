@@ -18,9 +18,8 @@ pub(super) fn capability_policy_revision(
     )];
     revision_parts.extend(mcps.iter().map(|item| {
         let conditions = format!(
-            "{:?}:{:?}:{:?}:{:?}",
+            "{:?}:{:?}:{:?}",
             item.binding.conditions.task_profile,
-            item.binding.conditions.project_source_type,
             item.binding.conditions.runtime_provider,
             item.binding.conditions.schedule_mode
         );
@@ -39,9 +38,8 @@ pub(super) fn capability_policy_revision(
     }));
     revision_parts.extend(skills.iter().map(|item| {
         let conditions = format!(
-            "{:?}:{:?}:{:?}:{:?}",
+            "{:?}:{:?}:{:?}",
             item.binding.conditions.task_profile,
-            item.binding.conditions.project_source_type,
             item.binding.conditions.runtime_provider,
             item.binding.conditions.schedule_mode
         );
@@ -125,9 +123,8 @@ fn plugin_revision_part(item: &ResolvedPlugin) -> String {
         .collect::<Vec<_>>()
         .join(",");
     let conditions = format!(
-        "{:?}:{:?}:{:?}:{:?}",
+        "{:?}:{:?}:{:?}",
         item.binding.conditions.task_profile,
-        item.binding.conditions.project_source_type,
         item.binding.conditions.runtime_provider,
         item.binding.conditions.schedule_mode
     );

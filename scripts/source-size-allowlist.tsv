@@ -5,9 +5,7 @@ local_connector_client/core/src/skills/native/computer_use/windows.rs	2553	2026-
 task_runner_service/backend/src/api/chatos_internal.rs	1901	2026-09-30	Phase 1E: split internal message task, retry, plugin projection, and response handlers
 local_connector_client/core/src/skills/native/chrome.rs	1836	2026-09-15	Phase 1C: split Chrome read, write, download, upload, approval, and session helpers
 local_connector_client/chrome_extension/background.js	1745	2026-09-15	Phase 1C: split extension session, tab, target, action, storage, and native bridge modules
-sandbox_manager_service/sandbox_mcp_server/src/plugin_stdio_wrapper/windows_workspace.rs	1287	2026-09-15	Phase 1C: split Windows workspace mirror, validation, commit, and cleanup responsibilities
 crates/chatos_project_execution/src/lib.rs	1148	2026-09-30	Phase 1E: split project execution graph, status, planning, identity, and feedback modules
-sandbox_manager_service/sandbox_mcp_server/src/plugin_stdio_wrapper/windows.rs	1132	2026-09-15	Phase 1C: split Windows process, AppContainer, pipe, environment, and cleanup support
 local_connector_client/frontend/src/apiTypes.ts	996	2026-10-31	Phase 2: split Local Connector frontend API types by domain
 mcp/src/implementations/builtin/browser_tools/actions_har.rs	992	2026-10-31	Phase 2: split HAR validation, sanitization, export, and response mapping
 mcp/src/implementations/builtin/browser_tools/actions_websocket.rs	978	2026-10-31	Phase 2: split WebSocket observation, sanitation, storage, and response mapping

@@ -59,7 +59,7 @@ mod tests {
 
     impl AgentIdentity for TestAgent {
         fn descriptor(&self) -> &'static AgentDescriptor {
-            crate::agent_descriptor(SystemAgentKey::ProjectManagementAgent)
+            crate::agent_descriptor(SystemAgentKey::TaskRunnerRunPhase)
         }
     }
 

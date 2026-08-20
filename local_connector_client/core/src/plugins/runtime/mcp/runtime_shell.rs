@@ -20,7 +20,6 @@ use super::super::super::oauth_broker::PluginOAuthTokenBinding;
 use super::super::credentials::{
     PluginCredentialBindings, PluginHttpHeaderTemplates, PluginStdioEnvironmentTemplates,
 };
-use super::super::sandbox::PluginStdioSandboxRuntime;
 use super::preparation;
 use super::validation::{validate_invocation_id, wait_for_invocation_cancellation};
 use super::{
@@ -330,7 +329,6 @@ pub(in crate::plugins::runtime) enum PreparedPluginMcpTransport {
         environment: PluginStdioEnvironmentTemplates,
         credential_bindings: Option<PluginCredentialBindings>,
         cancellation: CancellationToken,
-        _sandbox_runtime: Option<Arc<PluginStdioSandboxRuntime>>,
     },
     Http {
         url: String,
@@ -558,9 +556,7 @@ impl ResolvedPluginStdioServer {
         environment: std::collections::HashMap<String, String>,
     ) -> Self {
         let mut server = server.clone();
-        if !environment.is_empty() {
-            server.env = Some(environment);
-        }
+        server.env.get_or_insert_default().extend(environment);
         Self(server)
     }
 

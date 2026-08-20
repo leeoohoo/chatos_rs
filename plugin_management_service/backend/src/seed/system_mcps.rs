@@ -8,7 +8,15 @@ use super::*;
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
 
 pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), String> {
-    store.delete_retired_task_manager_mcp().await
+    store.delete_retired_task_manager_mcp().await?;
+    for resource_id in [
+        "system_mcp_sandbox_images",
+        "system_mcp_project_environment",
+        "system_mcp_project_runtime_environment",
+    ] {
+        store.delete_mcp(resource_id).await?;
+    }
+    Ok(())
 }
 
 pub(super) async fn seed_system_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), String> {

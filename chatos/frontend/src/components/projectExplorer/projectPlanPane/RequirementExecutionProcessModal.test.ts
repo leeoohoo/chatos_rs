@@ -10,7 +10,6 @@ import {
   isRequirementExecutionCancellationSettling,
   isRequirementExecutionRerunCancellationSettlingError,
   isPendingRequirementExecutionPlanError,
-  isRequirementExecutionRuntimeReady,
   REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS,
   resolveRequirementExecutionRecoveryActions,
   resolveRequirementExecutionProcessPhase,
@@ -39,21 +38,6 @@ const confirmationState = (
 });
 
 describe('requirement execution process phase', () => {
-  it('does not gate client-managed local projects on server image initialization', () => {
-    expect(isRequirementExecutionRuntimeReady({
-      clientManagedRuntime: true,
-      conversationId: 'conversation-1',
-      executionPlane: 'cloud',
-      status: 'analyzing',
-    })).toBe(true);
-    expect(isRequirementExecutionRuntimeReady({
-      clientManagedRuntime: false,
-      conversationId: 'conversation-1',
-      executionPlane: 'cloud',
-      status: 'analyzing',
-    })).toBe(false);
-  });
-
   it('polls every ten seconds and treats a not-yet-persisted plan as pending', () => {
     expect(REQUIREMENT_EXECUTION_REFRESH_INTERVAL_MS).toBe(10_000);
     expect(isPendingRequirementExecutionPlanError(new ApiRequestError(
@@ -258,7 +242,6 @@ describe('requirement execution process phase', () => {
       requirement: { id: 'requirement-1', title: 'Requirement 1' },
       response: {
         found: true,
-        execution_plane: 'local_connector',
         conversation_id: 'lc_session_1',
         execution_group_id: 'lc_execution_group_1',
         message_id: 'lc_message_1',
@@ -307,7 +290,6 @@ describe('requirement execution process phase', () => {
       requirement: { id: 'requirement-1', title: 'Requirement 1' },
       response: {
         found: true,
-        execution_plane: 'cloud',
         conversation_id: 'conversation-1',
         execution_group_id: 'execution-group-stopped',
         message_id: 'message-stopped',

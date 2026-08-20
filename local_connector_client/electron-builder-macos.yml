@@ -17,8 +17,6 @@ extraResources:
     to: chatos_chrome_native_host
   - from: ../.package/macos/chatos_computer_use_helper
     to: chatos_computer_use_helper
-  - from: ../.package/macos/chatos_sandbox_mcp_server
-    to: chatos_sandbox_mcp_server
   - from: ../.package/macos/bundled-tools
     to: bundled-tools
   - from: ../.package/macos/skill-bundles

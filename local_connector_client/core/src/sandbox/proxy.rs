@@ -22,7 +22,6 @@ use crate::history::{
 };
 use crate::relay::RelayRequest;
 use crate::sandbox::lease::local_sandbox_lease_expired;
-use crate::sandbox::process::call_native_sandbox_mcp;
 use crate::sandbox::types::{LocalSandboxLease, LocalSandboxRuntime};
 use crate::workspace::paths::relative_to_workspace;
 use crate::{local_now_rfc3339, LocalState};
@@ -66,10 +65,21 @@ pub(crate) async fn proxy_local_sandbox_mcp(
             return Ok(response);
         }
     }
+    let mut direct_request = request.clone();
+    direct_request.body = forwarded_body;
+    direct_request
+        .headers
+        .entry(chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER.to_string())
+        .or_insert_with(|| "CodeMaintainerRead,CodeMaintainerWrite,TerminalController".to_string());
     let result = (
         200,
         BTreeMap::new(),
-        call_native_sandbox_mcp(sandbox_runtime, sandbox_id, &forwarded_body).await?,
+        crate::mcp::service::handle_standard_local_mcp_body(
+            &direct_request,
+            state,
+            history_recorder,
+        )
+        .await?,
     );
     if let Some(tool_call) = tool_call {
         history_recorder

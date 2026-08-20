@@ -75,6 +75,7 @@ pub fn validate_stdio_environment_name(name: &str) -> Result<(), StdioPolicyViol
             | "USERPROFILE"
             | "APPDATA"
             | "LOCALAPPDATA"
+            | "CHATOS_PLUGIN_ROOT"
             | "CHATOS_WORKSPACE"
             | "CHATOS_SANDBOX_MCP_TOKEN"
             | "CHATOS_AGENT_TOKEN"
@@ -90,8 +91,7 @@ pub fn validate_stdio_environment_name(name: &str) -> Result<(), StdioPolicyViol
     ) || normalized.starts_with("LD_")
         || normalized.starts_with("DYLD_")
         || normalized.starts_with("XDG_")
-        || normalized.starts_with("MCP_MANAGEMENT_")
-        || normalized.starts_with("SANDBOX_MANAGER_");
+        || normalized.starts_with("MCP_MANAGEMENT_");
     if !valid || controlled {
         return Err(StdioPolicyViolation::EnvironmentEntry);
     }

@@ -12,7 +12,6 @@ use serde_json::json;
 
 use super::super::oauth_broker::PluginOAuthBroker;
 use super::config::load_configured_mcp_server;
-use super::sandbox::PluginStdioSandboxLauncher;
 use crate::plugins::{PluginCredentialVault, PluginInstaller};
 
 mod preparation;
@@ -44,9 +43,6 @@ pub struct PluginMcpAdapter {
     credential_vault: Option<PluginCredentialVault>,
     oauth_broker: Option<PluginOAuthBroker>,
     invoker: Arc<dyn PluginMcpInvoker>,
-    stdio_execution_enabled: bool,
-    stdio_sandbox_launcher: Option<PluginStdioSandboxLauncher>,
-    stdio_unavailable_reason: String,
 }
 
 impl std::fmt::Debug for PluginMcpAdapter {
@@ -61,28 +57,11 @@ impl std::fmt::Debug for PluginMcpAdapter {
 impl PluginMcpAdapter {
     pub fn new(installer: PluginInstaller) -> Self {
         let credential_vault = installer.credential_vault();
-        let sandbox_requested = !cfg!(test)
-            && std::env::var("LOCAL_CONNECTOR_ENABLE_PLUGIN_STDIO_SANDBOX").as_deref() == Ok("1");
-        let sandbox = sandbox_requested
-            .then(PluginStdioSandboxLauncher::discover)
-            .transpose();
-        let (stdio_sandbox_launcher, stdio_unavailable_reason) = match sandbox {
-            Ok(Some(launcher)) => (Some(launcher), String::new()),
-            Ok(None) => (
-                None,
-                "Plugin stdio MCP execution requires OS sandbox isolation and is disabled by Local Connector configuration"
-                    .to_string(),
-            ),
-            Err(error) => (None, error.to_string()),
-        };
         Self {
             installer,
             credential_vault,
             oauth_broker: None,
             invoker: Arc::new(DefaultPluginMcpInvoker),
-            stdio_execution_enabled: stdio_sandbox_launcher.is_some(),
-            stdio_sandbox_launcher,
-            stdio_unavailable_reason,
         }
     }
 
@@ -97,9 +76,6 @@ impl PluginMcpAdapter {
             credential_vault,
             oauth_broker: None,
             invoker,
-            stdio_execution_enabled: true,
-            stdio_sandbox_launcher: None,
-            stdio_unavailable_reason: String::new(),
         }
     }
 
@@ -113,26 +89,6 @@ impl PluginMcpAdapter {
             credential_vault,
             oauth_broker: None,
             invoker: Arc::new(DefaultPluginMcpInvoker),
-            stdio_execution_enabled: true,
-            stdio_sandbox_launcher: None,
-            stdio_unavailable_reason: String::new(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::plugins::runtime) fn with_stdio_sandbox_for_tests(
-        installer: PluginInstaller,
-        launcher: PluginStdioSandboxLauncher,
-    ) -> Self {
-        let credential_vault = installer.credential_vault();
-        Self {
-            installer,
-            credential_vault,
-            oauth_broker: None,
-            invoker: Arc::new(DefaultPluginMcpInvoker),
-            stdio_execution_enabled: true,
-            stdio_sandbox_launcher: Some(launcher),
-            stdio_unavailable_reason: String::new(),
         }
     }
 
@@ -198,9 +154,6 @@ impl PluginMcpAdapter {
             device_id,
             component_key,
             permission_snapshot,
-            self.stdio_execution_enabled,
-            self.stdio_sandbox_launcher.as_ref(),
-            self.stdio_unavailable_reason.as_str(),
             self.credential_vault.clone(),
             self.oauth_broker.clone(),
         )?;

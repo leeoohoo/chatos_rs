@@ -3,9 +3,6 @@
 
 import type { WorkspaceTab } from './WorkspaceTabs';
 
-export const resolveVisibleWorkspaceTabs = (isCloudProject: boolean): WorkspaceTab[] => {
-  if (isCloudProject) {
-    return ['files', 'team', 'plan', 'sandbox'];
-  }
-  return ['files', 'team', 'plan', 'settings'];
-};
+export const resolveVisibleWorkspaceTabs = (): WorkspaceTab[] => (
+  ['files', 'team', 'plan', 'settings']
+);
