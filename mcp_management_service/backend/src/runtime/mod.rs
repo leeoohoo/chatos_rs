@@ -28,8 +28,8 @@ pub use quota::{
 };
 pub use session_close_store::RuntimeSessionCloseStore;
 pub use session_store::{
-    ExternalHttpProviderBinding, RuntimeSessionCacheLimits, RuntimeSessionSnapshot,
-    RuntimeSessionStore, RuntimeSessionStoreStats,
+    LocalConnectorInlineHttpRuntime, LocalConnectorMcpProviderBinding, RuntimeSessionCacheLimits,
+    RuntimeSessionSnapshot, RuntimeSessionStore, RuntimeSessionStoreStats,
 };
 pub use tool_batch_store::{
     RuntimeToolBatchPendingEvent, RuntimeToolBatchRecord, RuntimeToolBatchStatus,

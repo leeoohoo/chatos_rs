@@ -11,10 +11,12 @@ use super::binding::resolve_binding;
 use super::{
     LocalConnectorProvider, ProviderCallError, CALLER_SERVICE,
     LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER, LOCAL_CONNECTOR_OWNED_PATHS_HEADER,
+    LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER, LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER,
     LOCAL_CONNECTOR_PROJECT_ID_HEADER, MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER,
     MCP_MANAGEMENT_RUN_ID_HEADER, MCP_MANAGEMENT_SCOPE_GENERATION_HEADER,
     MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER, MCP_MANAGEMENT_SESSION_ID_HEADER,
-    MCP_MANAGEMENT_TASK_ID_HEADER, MCP_RELAY_SCOPE, TOKEN_AUDIENCE,
+    MCP_MANAGEMENT_TASK_ID_HEADER, MCP_RELAY_SCOPE, PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER,
+    TOKEN_AUDIENCE,
 };
 
 impl LocalConnectorProvider {
@@ -58,7 +60,9 @@ impl LocalConnectorProvider {
         })?;
         {
             let mut query = url.query_pairs_mut();
-            query.append_pair("workspace_id", binding.workspace_id);
+            if let Some(workspace_id) = binding.workspace_id {
+                query.append_pair("workspace_id", workspace_id);
+            }
             if let Some(relative_root) = binding.relative_root {
                 query.append_pair("cwd", relative_root);
             }
@@ -77,10 +81,6 @@ impl LocalConnectorProvider {
                 snapshot.project_id.as_str(),
             )
             .header(
-                LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
-                binding.enabled_builtin_kinds,
-            )
-            .header(
                 MCP_MANAGEMENT_SESSION_ID_HEADER,
                 snapshot.session_id.as_str(),
             )
@@ -89,6 +89,29 @@ impl LocalConnectorProvider {
                 snapshot.expires_at_unix.to_string(),
             )
             .with_internal_trace_context();
+        if let Some(enabled_builtin_kinds) = binding.enabled_builtin_kinds {
+            request = request.header(
+                LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+                enabled_builtin_kinds,
+            );
+        }
+        if let Some(resource_id) = binding.resource_id {
+            request = request.header(PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER, resource_id);
+        }
+        if let Some(manifest_id) = binding.manifest_id {
+            request = request.header(LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER, manifest_id);
+        }
+        if let Some(inline_http) = binding.inline_http {
+            let encoded = serde_json::to_string(inline_http).map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "serialize inline Local Connector MCP runtime failed: {error}"
+                ))
+            })?;
+            request = request.header(
+                LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER,
+                urlencoding::encode(encoded.as_str()).into_owned(),
+            );
+        }
         if let Some(default_tool_root) = binding.default_tool_root {
             request = request.header(LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER, default_tool_root);
         }

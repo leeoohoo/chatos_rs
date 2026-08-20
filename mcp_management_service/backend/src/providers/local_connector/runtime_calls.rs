@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
+use chatos_mcp_service::{
+    MCP_ERROR_AUTH_REQUIRED, METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL,
+};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
 
@@ -23,6 +25,22 @@ impl LocalConnectorProvider {
         arguments: Value,
         invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
+        if let Some(binding) = snapshot
+            .local_connector_mcp_bindings
+            .get(route.resource_id.as_str())
+        {
+            if route.allow_writes != binding.allow_writes {
+                return Err(ProviderCallError::provider_unavailable(
+                    "Local Connector MCP route does not match its runtime policy",
+                ));
+            }
+            if !binding.allows_tool(original_tool_name) {
+                return Err(ProviderCallError {
+                    code: MCP_ERROR_AUTH_REQUIRED,
+                    message: "tool is blocked by the Local Connector MCP policy".to_string(),
+                });
+            }
+        }
         let call_timeout = super::local_connector_call_timeout(
             original_tool_name,
             &arguments,

@@ -8,6 +8,7 @@ use super::ProviderCallError;
 mod binding;
 mod init;
 mod lifecycle;
+mod prepare;
 mod request_builder;
 mod runtime_calls;
 
@@ -17,6 +18,9 @@ const MCP_RELAY_SCOPE: &str = "relay.mcp";
 const LOCAL_CONNECTOR_PROJECT_ID_HEADER: &str = "x-local-connector-project-id";
 const LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER: &str = "x-local-connector-default-tool-root";
 const LOCAL_CONNECTOR_OWNED_PATHS_HEADER: &str = "x-local-connector-owned-paths";
+const LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER: &str = "x-local-connector-mcp-manifest-id";
+const LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER: &str = "x-local-connector-inline-mcp-runtime";
+const PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER: &str = "x-plugin-management-resource-id";
 const MCP_MANAGEMENT_SESSION_ID_HEADER: &str = "x-mcp-management-session-id";
 const MCP_MANAGEMENT_RUN_ID_HEADER: &str = "x-mcp-management-run-id";
 const MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER: &str = "x-mcp-management-execution-group-id";

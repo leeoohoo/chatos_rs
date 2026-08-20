@@ -5,23 +5,29 @@ use chatos_mcp::system_mcp_descriptor_by_resource_id;
 use chatos_mcp_management_sdk::{ResolvedMcpRoute, WorkspaceProviderKind};
 use chatos_mcp_service::builtin_kind_header_value;
 
-use crate::runtime::RuntimeSessionSnapshot;
+use crate::runtime::{LocalConnectorInlineHttpRuntime, RuntimeSessionSnapshot};
 
 use super::ProviderCallError;
 
 pub(super) struct LocalConnectorBinding<'a> {
     pub(super) device_id: &'a str,
-    pub(super) workspace_id: &'a str,
+    pub(super) workspace_id: Option<&'a str>,
     pub(super) relative_root: Option<&'a str>,
     pub(super) default_tool_root: Option<&'a str>,
     pub(super) owned_paths: &'a [String],
-    pub(super) enabled_builtin_kinds: String,
+    pub(super) enabled_builtin_kinds: Option<String>,
+    pub(super) manifest_id: Option<&'a str>,
+    pub(super) inline_http: Option<&'a LocalConnectorInlineHttpRuntime>,
+    pub(super) resource_id: Option<&'a str>,
 }
 
 pub(super) fn resolve_binding<'a>(
     snapshot: &'a RuntimeSessionSnapshot,
     route: &ResolvedMcpRoute,
 ) -> Result<LocalConnectorBinding<'a>, ProviderCallError> {
+    if system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_none() {
+        return resolve_user_mcp_binding(snapshot, route);
+    }
     if snapshot.project_context.workspace_provider != WorkspaceProviderKind::LocalConnector {
         return Err(ProviderCallError::provider_unavailable(
             "runtime session is not pinned to a Local Connector workspace",
@@ -93,11 +99,67 @@ pub(super) fn resolve_binding<'a>(
     }
     Ok(LocalConnectorBinding {
         device_id,
-        workspace_id,
+        workspace_id: Some(workspace_id),
         relative_root,
         default_tool_root,
         owned_paths,
-        enabled_builtin_kinds,
+        enabled_builtin_kinds: Some(enabled_builtin_kinds),
+        manifest_id: None,
+        inline_http: None,
+        resource_id: None,
+    })
+}
+
+fn resolve_user_mcp_binding<'a>(
+    snapshot: &'a RuntimeSessionSnapshot,
+    route: &ResolvedMcpRoute,
+) -> Result<LocalConnectorBinding<'a>, ProviderCallError> {
+    let binding = snapshot
+        .local_connector_mcp_bindings
+        .get(route.resource_id.as_str())
+        .ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Local Connector MCP route has no runtime binding",
+            )
+        })?;
+    if route.provider_kind != chatos_mcp_management_sdk::McpProviderKind::LocalConnector
+        || route.provider_ref.as_deref() != Some(binding.provider_ref.as_str())
+    {
+        return Err(ProviderCallError::provider_unavailable(
+            "Local Connector MCP route does not match its runtime binding",
+        ));
+    }
+    let device_id = binding.device_id.trim();
+    if device_id.is_empty() {
+        return Err(ProviderCallError::provider_unavailable(
+            "Local Connector MCP binding is missing its device id",
+        ));
+    }
+    let workspace_id = binding
+        .workspace_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let manifest_id = binding
+        .manifest_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if manifest_id.is_some() == binding.inline_http.is_some() {
+        return Err(ProviderCallError::provider_unavailable(
+            "Local Connector MCP binding must contain exactly one local runtime",
+        ));
+    }
+    Ok(LocalConnectorBinding {
+        device_id,
+        workspace_id,
+        relative_root: None,
+        default_tool_root: None,
+        owned_paths: &[],
+        enabled_builtin_kinds: None,
+        manifest_id,
+        inline_http: binding.inline_http.as_ref(),
+        resource_id: Some(route.resource_id.as_str()),
     })
 }
 

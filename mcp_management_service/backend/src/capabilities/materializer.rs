@@ -153,7 +153,7 @@ fn classify_runtime(kind: &str) -> (McpRouteResourceKind, Option<McpExecutionHos
     match kind.trim() {
         "http" => (
             McpRouteResourceKind::ExternalHttp,
-            Some(McpExecutionHost::Cloud),
+            Some(McpExecutionHost::Local),
         ),
         "stdio_cloud" => (McpRouteResourceKind::Stdio, Some(McpExecutionHost::Cloud)),
         "local_connector_stdio" | "local_connector_http" | "local_connector_builtin_proxy" => (
