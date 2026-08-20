@@ -371,9 +371,7 @@ impl RuntimeSessionStore {
                         return Ok(Some(snapshot));
                     }
                 }
-                let snapshot = store
-                    .cipher
-                    .decrypt(document)?;
+                let snapshot = store.cipher.decrypt(document)?;
                 let snapshot = Arc::new(snapshot);
                 let mut cache = store.cache.write().await;
                 cache_snapshot_arc(
@@ -414,11 +412,7 @@ impl RuntimeSessionStore {
                         return Ok(Some(cached.snapshot));
                     }
                 }
-                store
-                    .cipher
-                    .decrypt(document)
-                    .map(Arc::new)
-                    .map(Some)
+                store.cipher.decrypt(document).map(Arc::new).map(Some)
             }
         }
     }
@@ -608,7 +602,10 @@ impl SnapshotCipher {
         })
     }
 
-    fn decrypt(&self, document: StoredRuntimeSessionDocument) -> Result<RuntimeSessionSnapshot, String> {
+    fn decrypt(
+        &self,
+        document: StoredRuntimeSessionDocument,
+    ) -> Result<RuntimeSessionSnapshot, String> {
         if document.schema_version != SNAPSHOT_SCHEMA_VERSION {
             return Err(format!(
                 "unsupported Runtime Session Snapshot schema version: {}",

@@ -645,13 +645,10 @@ fn relay_allows_empty_workspace(message_type: &str, request: &RelayRequest) -> b
         return true;
     }
     message_type == MCP_RELAY_MESSAGE_TYPE
-        && request
-            .headers
-            .keys()
-            .any(|key| {
-                key.eq_ignore_ascii_case("x-local-connector-mcp-manifest-id")
-                    || key.eq_ignore_ascii_case("x-local-connector-inline-mcp-runtime")
-            })
+        && request.headers.keys().any(|key| {
+            key.eq_ignore_ascii_case("x-local-connector-mcp-manifest-id")
+                || key.eq_ignore_ascii_case("x-local-connector-inline-mcp-runtime")
+        })
 }
 
 fn local_owner_user_id(state: &LocalState) -> Option<&str> {

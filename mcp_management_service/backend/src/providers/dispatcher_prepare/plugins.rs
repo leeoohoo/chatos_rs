@@ -23,7 +23,10 @@ impl ProviderDispatcher {
         runtime_session_id: &str,
         owner_user_id: &str,
         expires_at_unix: i64,
-    ) -> (HashMap<String, PluginLocalToolComponentBinding>, HashMap<String, Vec<Value>>) {
+    ) -> (
+        HashMap<String, PluginLocalToolComponentBinding>,
+        HashMap<String, Vec<Value>>,
+    ) {
         self.plugins
             .prepare_tool_component_routes(
                 immutable_bindings,
@@ -82,5 +85,4 @@ impl ProviderDispatcher {
             .close_prepared_local_bindings(owner_user_id, runtime_session_id, bindings)
             .await;
     }
-
 }

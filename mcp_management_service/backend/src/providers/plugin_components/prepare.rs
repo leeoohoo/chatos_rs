@@ -19,7 +19,10 @@ impl PluginComponentProvider {
         runtime_session_id: &str,
         owner_user_id: &str,
         expires_at_unix: i64,
-    ) -> (HashMap<String, PluginLocalToolComponentBinding>, HashMap<String, Vec<Value>>) {
+    ) -> (
+        HashMap<String, PluginLocalToolComponentBinding>,
+        HashMap<String, Vec<Value>>,
+    ) {
         let mut local_bindings = HashMap::new();
         let mut tool_snapshots = HashMap::new();
         for route in routes.iter_mut().filter(|route| self.supports(route)) {

@@ -116,7 +116,11 @@ fn prepare_binding(
                 }),
             )
         }
-        _ => return Err(format!("unsupported Local Connector MCP runtime kind: {runtime_kind}")),
+        _ => {
+            return Err(format!(
+                "unsupported Local Connector MCP runtime kind: {runtime_kind}"
+            ))
+        }
     };
     Ok(LocalConnectorMcpProviderBinding {
         provider_ref,
@@ -175,7 +179,9 @@ fn validate_inline_http_headers(
         HeaderValue::from_str(value)
             .map_err(|_| "HTTP MCP contains an invalid header value".to_string())?;
         if managed_or_unsafe_header(name.as_str()) {
-            return Err(format!("HTTP MCP header is managed and cannot be configured: {name}"));
+            return Err(format!(
+                "HTTP MCP header is managed and cannot be configured: {name}"
+            ));
         }
     }
     Ok(())

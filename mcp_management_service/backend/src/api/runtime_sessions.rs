@@ -207,13 +207,11 @@ pub(super) async fn resolve_runtime_session(
     let result = async {
         apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
         apply_live_tool_snapshots(&mut capabilities, task_runner_tool_snapshots);
-        let local_connector_mcp_bindings = state
-            .providers
-            .prepare_local_connector_mcp_routes(
-                &capabilities,
-                route_response.routes.as_mut_slice(),
-                &project_context,
-            );
+        let local_connector_mcp_bindings = state.providers.prepare_local_connector_mcp_routes(
+            &capabilities,
+            route_response.routes.as_mut_slice(),
+            &project_context,
+        );
         for route in &mut route_response.routes {
             route.cancel_supported &= state.providers.supports_cancellation(route);
         }

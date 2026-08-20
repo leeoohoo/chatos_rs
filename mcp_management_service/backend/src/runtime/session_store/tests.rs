@@ -224,9 +224,7 @@ fn encrypted_snapshot_rejects_envelope_identity_tampering_and_wrong_keys() {
 
     let document = cipher.encrypt(&snapshot("wrong-key-session")).unwrap();
     let wrong_cipher = SnapshotCipher::new("another-encryption-secret").unwrap();
-    assert!(wrong_cipher
-        .decrypt(document)
-        .is_err());
+    assert!(wrong_cipher.decrypt(document).is_err());
 
     let mut old_schema = cipher.encrypt(&snapshot("old-schema-session")).unwrap();
     old_schema.schema_version = 4;

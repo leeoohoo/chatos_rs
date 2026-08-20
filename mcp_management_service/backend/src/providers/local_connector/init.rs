@@ -32,7 +32,8 @@ impl LocalConnectorProvider {
     }
 
     pub(in crate::providers) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        if self.internal_secret.is_none() || route.provider_kind != McpProviderKind::LocalConnector {
+        if self.internal_secret.is_none() || route.provider_kind != McpProviderKind::LocalConnector
+        {
             return false;
         }
         match system_mcp_descriptor_by_resource_id(route.resource_id.as_str()) {
