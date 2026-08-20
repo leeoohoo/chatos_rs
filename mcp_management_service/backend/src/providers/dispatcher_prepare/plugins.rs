@@ -4,12 +4,11 @@
 use std::collections::HashMap;
 
 use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute};
-use chatos_plugin_management_sdk::PluginManagementClient;
 use serde_json::Value;
 
 use crate::runtime::{
-    ExternalHttpProviderBinding, PluginCloudToolComponentBinding, PluginLocalProviderBinding,
-    PluginLocalToolComponentBinding, PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+    PluginLocalProviderBinding, PluginLocalToolComponentBinding, PluginMcpRuntimeBinding,
+    PluginToolComponentRuntimeBinding,
 };
 
 use super::ProviderDispatcher;
@@ -18,21 +17,15 @@ impl ProviderDispatcher {
     #[allow(clippy::too_many_arguments)]
     pub async fn prepare_plugin_tool_component_routes(
         &self,
-        plugin_management: &PluginManagementClient,
         immutable_bindings: &HashMap<String, PluginToolComponentRuntimeBinding>,
         routes: &mut [ResolvedMcpRoute],
         context: &ProjectExecutionContext,
         runtime_session_id: &str,
         owner_user_id: &str,
         expires_at_unix: i64,
-    ) -> (
-        HashMap<String, PluginLocalToolComponentBinding>,
-        HashMap<String, PluginCloudToolComponentBinding>,
-        HashMap<String, Vec<Value>>,
-    ) {
+    ) -> (HashMap<String, PluginLocalToolComponentBinding>, HashMap<String, Vec<Value>>) {
         self.plugins
             .prepare_tool_component_routes(
-                plugin_management,
                 immutable_bindings,
                 routes,
                 context,
@@ -90,30 +83,4 @@ impl ProviderDispatcher {
             .await;
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn prepare_plugin_cloud_routes(
-        &self,
-        plugin_management: &PluginManagementClient,
-        immutable_bindings: &HashMap<String, PluginMcpRuntimeBinding>,
-        routes: &mut [ResolvedMcpRoute],
-        context: &ProjectExecutionContext,
-        runtime_session_id: &str,
-        owner_user_id: &str,
-        expires_at_unix: i64,
-    ) -> (
-        HashMap<String, ExternalHttpProviderBinding>,
-        HashMap<String, Vec<Value>>,
-    ) {
-        self.plugins
-            .prepare_cloud_routes(
-                plugin_management,
-                immutable_bindings,
-                routes,
-                context,
-                runtime_session_id,
-                owner_user_id,
-                expires_at_unix,
-            )
-            .await
-    }
 }

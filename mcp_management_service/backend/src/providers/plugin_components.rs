@@ -6,8 +6,6 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::runtime::{PluginCloudToolComponentBinding, PluginLocalToolComponentBinding};
-
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
 const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
@@ -55,12 +53,6 @@ struct PluginPrepareResponse {
     expires_at: i64,
 }
 
-pub(super) enum PreparedComponentBinding {
-    Local(PluginLocalToolComponentBinding),
-    Cloud(PluginCloudToolComponentBinding),
-}
-
-mod cloud_runtime;
 mod local_prepare;
 mod local_relay_client;
 mod local_runtime;

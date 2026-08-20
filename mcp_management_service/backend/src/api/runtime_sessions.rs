@@ -189,14 +189,9 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
-    let (
-        plugin_local_tool_component_bindings,
-        plugin_cloud_tool_component_bindings,
-        plugin_component_tool_snapshots,
-    ) = state
+    let (plugin_local_tool_component_bindings, plugin_component_tool_snapshots) = state
         .providers
         .prepare_plugin_tool_component_routes(
-            &state.plugin_management_client,
             &materialized.plugin_tool_component_bindings,
             route_response.routes.as_mut_slice(),
             &project_context,
