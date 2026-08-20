@@ -15,10 +15,7 @@ impl ProviderDispatcher {
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::Embedded => self.embedded.supports(route),
-            McpProviderKind::ExternalHttp => self.external_http.supports(route),
-            McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
-                self.plugins.supports(route)
-            }
+            McpProviderKind::PluginLocal => self.plugins.supports(route),
             _ => false,
         }
     }
@@ -31,10 +28,7 @@ impl ProviderDispatcher {
                     || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
-            McpProviderKind::ExternalHttp => self.external_http.supports(route),
-            McpProviderKind::PluginLocal | McpProviderKind::PluginCloud => {
-                self.plugins.supports_cancellation(route)
-            }
+            McpProviderKind::PluginLocal => self.plugins.supports_cancellation(route),
             _ => false,
         }
     }

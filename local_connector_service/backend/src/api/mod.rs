@@ -294,7 +294,9 @@ async fn mcp_relay(
     let workspace_id = normalize_optional_text(query.workspace_id);
     if let Some(workspace_id) = workspace_id.as_deref() {
         validate_device_workspace(&state, &user, device_id.as_str(), workspace_id).await?;
-    } else if has_nonempty_header(&headers, "x-local-connector-mcp-manifest-id") {
+    } else if has_nonempty_header(&headers, "x-local-connector-mcp-manifest-id")
+        || has_nonempty_header(&headers, "x-local-connector-inline-mcp-runtime")
+    {
         let device = load_owned_device(&state, &user, device_id.as_str(), true).await?;
         ensure_device_active_lease(&state, user.effective_owner_user_id(), device.id.as_str())
             .await?;
