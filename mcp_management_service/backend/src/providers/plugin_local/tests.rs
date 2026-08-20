@@ -290,8 +290,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         plugin_local_bindings: local_bindings,
         plugin_tool_component_bindings: Default::default(),
         plugin_local_tool_component_bindings: Default::default(),
-        plugin_cloud_tool_component_bindings: Default::default(),
-        external_http_bindings: Default::default(),
+        local_connector_mcp_bindings: Default::default(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix,
     };

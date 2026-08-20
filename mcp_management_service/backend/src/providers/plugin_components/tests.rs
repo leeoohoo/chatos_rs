@@ -14,18 +14,16 @@ use chatos_mcp_management_sdk::{
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
-    plugin_command_snapshot_sha256, PluginCloudComponentBundle, PluginComponentDescriptor,
-    PluginComponentKind, PluginExecutionHost, PluginManagementClient, PluginManagementClientConfig,
-    PluginPathRef,
+    plugin_command_snapshot_sha256, PluginComponentDescriptor, PluginComponentKind,
+    PluginExecutionHost, PluginPathRef,
 };
-use chatos_plugin_package::plugin_cloud_bundle_sha256;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::validation::{
     agent_tool_definition, command_tool_definition, sha256_text, skill_tool_definition,
-    validate_cloud_component_bundle, validate_cloud_component_policy, validate_command_snapshot,
-    validate_native_skill_snapshot, validate_native_tool_snapshot_hash, validate_tool_snapshot,
+    validate_command_snapshot, validate_native_skill_snapshot, validate_native_tool_snapshot_hash,
+    validate_tool_snapshot,
 };
 use super::*;
 use crate::runtime::{PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot};
@@ -202,7 +200,7 @@ fn route(binding: &PluginToolComponentRuntimeBinding) -> ResolvedMcpRoute {
         provider_kind: match binding.component.execution_host {
             PluginExecutionHost::Local => McpProviderKind::PluginLocal,
             PluginExecutionHost::Cloud | PluginExecutionHost::Portable => {
-                McpProviderKind::PluginCloud
+                McpProviderKind::Unavailable
             }
         },
         provider_ref: Some(binding.provider_ref.clone()),
@@ -272,8 +270,7 @@ fn snapshot(
             binding.clone(),
         )]),
         plugin_local_tool_component_bindings: HashMap::from([(binding.resource_id.clone(), local)]),
-        plugin_cloud_tool_component_bindings: HashMap::new(),
-        external_http_bindings: HashMap::new(),
+        local_connector_mcp_bindings: HashMap::new(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix,
     }
