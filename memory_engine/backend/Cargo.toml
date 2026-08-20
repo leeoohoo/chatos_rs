@@ -33,7 +33,7 @@ futures-util = "0.3"
 lapin = "2.5"
 hex = "0.4"
 sha2 = "0.11"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
 
