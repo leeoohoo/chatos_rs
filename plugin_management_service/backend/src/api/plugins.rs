@@ -473,13 +473,8 @@ mod tests {
             plugin_execution_hosts_runtime_targets([
                 PluginExecutionHost::Portable,
                 PluginExecutionHost::Local,
-                PluginExecutionHost::Cloud,
             ]),
             vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()],
-        );
-        assert_eq!(
-            plugin_execution_hosts_runtime_targets([PluginExecutionHost::Cloud]),
-            Vec::<String>::new(),
         );
         assert_eq!(
             plugin_execution_hosts_runtime_targets([PluginExecutionHost::Local]),

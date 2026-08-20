@@ -12,7 +12,7 @@ use chatos_plugin_management_sdk::{
     PLUGIN_SIGNATURE_ALGORITHM_ED25519, PLUGIN_SIGNING_KEY_USAGE_RELEASE,
 };
 use chatos_plugin_package::{
-    build_cloud_component_bundles, verify_embedded_plugin_package_files, PluginPackageLimits,
+    build_portable_component_bundles, verify_embedded_plugin_package_files, PluginPackageLimits,
 };
 use chrono::DateTime;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -38,10 +38,10 @@ const BUNDLED_MARKETPLACE_REVISION: &str = "2026-08-01.1";
 pub(super) const BUNDLED_PONYTAIL_PLUGIN_ID: &str = "bundled-plugin-ponytail";
 pub(super) const BUNDLED_PONYTAIL_AGENT_KEYS: [&str; 1] =
     [SystemAgentKey::TaskRunnerRunPhase.as_str()];
-const BUNDLED_PONYTAIL_VERSION: &str = "4.8.4-chatos.2";
+const BUNDLED_PONYTAIL_VERSION: &str = "4.8.4-chatos.3";
 const BUNDLED_PONYTAIL_RELEASE_EPOCH: &str = "2026-08-01T00:00:00Z";
 const BUNDLED_PONYTAIL_ARTIFACT_SHA256: &str =
-    "f79450f32f69fe2e23f145717e8dc381ecf42a9b72fd2cc1c8ec1194715820b1";
+    "77df53d6f84bb54c5fd97159fa3847b5571409f2bec90bbe80b26c7a03d0718b";
 
 pub(super) async fn seed_bundled_plugins(
     store: &AppStore,
@@ -67,7 +67,7 @@ async fn seed_bundled_ponytail(store: &AppStore, admin_user_id: &str) -> Result<
             return Err("bundled Ponytail Plugin identity is already claimed".to_string());
         }
     }
-    let (release, snapshots, bundles, mut catalog) = bundled_ponytail_release()?;
+    let (release, snapshots, mut catalog) = bundled_ponytail_release()?;
     store
         .set_plugin_release_publication_ready(release.id.as_str(), false)
         .await?;
@@ -78,9 +78,6 @@ async fn seed_bundled_ponytail(store: &AppStore, admin_user_id: &str) -> Result<
             release.id.as_str(),
             snapshots.as_slice(),
         )
-        .await?;
-    store
-        .insert_plugin_cloud_component_bundles(bundles.as_slice())
         .await?;
     store
         .set_plugin_release_publication_ready(release.id.as_str(), true)
@@ -124,7 +121,6 @@ fn bundled_ponytail_release() -> Result<
     (
         PluginReleaseRecord,
         Vec<PluginComponentSnapshot>,
-        Vec<chatos_plugin_management_sdk::PluginCloudComponentBundle>,
         PluginCatalogRecord,
     ),
     String,
@@ -178,8 +174,9 @@ fn bundled_ponytail_release() -> Result<
         },
     )
     .map_err(|error| format!("verify bundled Ponytail package failed: {error}"))?;
-    let bundles = build_cloud_component_bundles(&release, &package, BUNDLED_PONYTAIL_RELEASE_EPOCH)
-        .map_err(|error| format!("build bundled Ponytail cloud Bundles failed: {error}"))?;
+    let bundles =
+        build_portable_component_bundles(&release, &package, BUNDLED_PONYTAIL_RELEASE_EPOCH)
+            .map_err(|error| format!("build bundled Ponytail portable Bundles failed: {error}"))?;
     let bundle_hashes = bundles
         .iter()
         .map(|bundle| (bundle.component_key.as_str(), bundle.bundle_sha256.as_str()))
@@ -235,7 +232,7 @@ fn bundled_ponytail_release() -> Result<
         created_at: BUNDLED_PONYTAIL_RELEASE_EPOCH.to_string(),
         updated_at: BUNDLED_PONYTAIL_RELEASE_EPOCH.to_string(),
     };
-    Ok((release, snapshots, bundles, catalog))
+    Ok((release, snapshots, catalog))
 }
 
 fn embedded_ponytail_files() -> BTreeMap<String, Vec<u8>> {
@@ -263,24 +260,12 @@ fn embedded_ponytail_files() -> BTreeMap<String, Vec<u8>> {
             embedded!("CHATOS-ADAPTATION.md"),
         ),
         (
-            "agents/ponytail-full-cloud.md".to_string(),
-            embedded!("agents/ponytail-full-cloud.md"),
-        ),
-        (
             "agents/ponytail-full-local.md".to_string(),
             embedded!("agents/ponytail-full-local.md"),
         ),
         (
-            "agents/ponytail-lite-cloud.md".to_string(),
-            embedded!("agents/ponytail-lite-cloud.md"),
-        ),
-        (
             "agents/ponytail-lite-local.md".to_string(),
             embedded!("agents/ponytail-lite-local.md"),
-        ),
-        (
-            "agents/ponytail-ultra-cloud.md".to_string(),
-            embedded!("agents/ponytail-ultra-cloud.md"),
         ),
         (
             "agents/ponytail-ultra-local.md".to_string(),

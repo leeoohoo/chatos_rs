@@ -5,8 +5,8 @@
     "componentHosts": {}
   },
   "name": "ponytail",
-  "version": "4.8.4-chatos.2",
-  "description": "Ponytail lazy senior developer guidance adapted for ChatOS cloud and local execution.",
+  "version": "4.8.4-chatos.3",
+  "description": "Ponytail lazy senior developer guidance adapted for ChatOS task execution.",
   "author": {
     "name": "Dietrich Gebert",
     "url": "https://github.com/DietrichGebert"
@@ -44,25 +44,25 @@
   ],
   "agents": [
     {
-      "componentKey": "ponytail-lite-cloud",
-      "source": "./agents/ponytail-lite-cloud.md",
-      "description": "Ponytail lite mode for cloud-orchestrated tasks on any workspace.",
+      "componentKey": "ponytail-lite",
+      "source": "./agents/ponytail-lite-local.md",
+      "description": "Ponytail lite mode for tasks on any workspace.",
       "baseAgent": "task_runner_run_phase",
       "allowedTools": [],
       "maxIterations": 600
     },
     {
-      "componentKey": "ponytail-full-cloud",
-      "source": "./agents/ponytail-full-cloud.md",
-      "description": "Ponytail full mode for cloud-orchestrated tasks on any workspace.",
+      "componentKey": "ponytail-full",
+      "source": "./agents/ponytail-full-local.md",
+      "description": "Ponytail full mode for tasks on any workspace.",
       "baseAgent": "task_runner_run_phase",
       "allowedTools": [],
       "maxIterations": 600
     },
     {
-      "componentKey": "ponytail-ultra-cloud",
-      "source": "./agents/ponytail-ultra-cloud.md",
-      "description": "Ponytail ultra mode for cloud-orchestrated tasks on any workspace.",
+      "componentKey": "ponytail-ultra",
+      "source": "./agents/ponytail-ultra-local.md",
+      "description": "Ponytail ultra mode for tasks on any workspace.",
       "baseAgent": "task_runner_run_phase",
       "allowedTools": [],
       "maxIterations": 600
@@ -78,7 +78,7 @@
     "longDescription": "Prefer YAGNI, existing code, the standard library, native platform features, and the smallest maintainable correct change.",
     "developerName": "Dietrich Gebert / ChatOS adaptation",
     "category": "Productivity",
-    "capabilities": ["Instructions", "Cloud", "Portable"],
+    "capabilities": ["Instructions", "Portable"],
     "websiteURL": "https://github.com/DietrichGebert/ponytail",
     "defaultPrompt": [
       "Use Ponytail mode for this task.",

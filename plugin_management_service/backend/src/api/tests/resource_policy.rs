@@ -110,7 +110,7 @@ fn super_admin_can_choose_public_and_system_private_visibility() {
 #[test]
 fn ordinary_users_can_only_create_local_connector_mcps() {
     let ordinary = user(USER_ROLE_USER);
-    for kind in [RUNTIME_KIND_HTTP, RUNTIME_KIND_STDIO_CLOUD] {
+    for kind in [RUNTIME_KIND_HTTP] {
         let payload = McpPayload {
             runtime: Some(McpRuntime {
                 kind: kind.to_string(),
@@ -119,11 +119,11 @@ fn ordinary_users_can_only_create_local_connector_mcps() {
             ..McpPayload::default()
         };
         let err = validate_client_managed_mcp_payload(&payload, &ordinary)
-            .expect_err("ordinary cloud MCP should be rejected");
+            .expect_err("ordinary external HTTP MCP should be rejected");
         assert_eq!(err.status, StatusCode::FORBIDDEN);
         let runtime = payload.runtime.as_ref().expect("test runtime");
         let err = validate_client_managed_mcp_runtime(runtime, &ordinary)
-            .expect_err("persisted legacy cloud MCP should also be rejected");
+            .expect_err("persisted external HTTP MCP should also be rejected");
         assert_eq!(err.status, StatusCode::FORBIDDEN);
     }
 
@@ -143,9 +143,9 @@ fn ordinary_users_can_only_create_local_connector_mcps() {
 }
 
 #[test]
-fn super_admin_can_create_explicit_cloud_mcps() {
+fn super_admin_can_create_external_http_mcps() {
     let admin = user(USER_ROLE_SUPER_ADMIN);
-    for kind in [RUNTIME_KIND_HTTP, RUNTIME_KIND_STDIO_CLOUD] {
+    for kind in [RUNTIME_KIND_HTTP] {
         let payload = McpPayload {
             runtime: Some(McpRuntime {
                 kind: kind.to_string(),
@@ -239,37 +239,6 @@ fn external_http_mcp_requires_plain_https_and_safe_headers() {
         ..valid
     })
     .is_err());
-}
-
-#[test]
-fn cloud_stdio_mcp_requires_a_direct_sandbox_relative_runtime() {
-    let valid = McpRuntime {
-        kind: RUNTIME_KIND_STDIO_CLOUD.to_string(),
-        command: Some("npx".to_string()),
-        args: vec!["-y".to_string(), "@example/mcp".to_string()],
-        cwd: Some("tools/demo".to_string()),
-        ..McpRuntime::default()
-    };
-    assert!(validate_mcp_runtime(&valid).is_ok());
-
-    let mut absolute = valid.clone();
-    absolute.command = Some("/usr/bin/node".to_string());
-    assert!(validate_mcp_runtime(&absolute).is_err());
-
-    let mut shell = valid.clone();
-    shell.command = Some("bash".to_string());
-    shell.args = vec!["-c".to_string(), "curl bad".to_string()];
-    assert!(validate_mcp_runtime(&shell).is_err());
-
-    let mut escaped = valid.clone();
-    escaped.cwd = Some("../outside".to_string());
-    assert!(validate_mcp_runtime(&escaped).is_err());
-
-    let mut host_env = valid;
-    host_env
-        .env
-        .insert("CHATOS_SANDBOX_MCP_TOKEN".to_string(), "secret".to_string());
-    assert!(validate_mcp_runtime(&host_env).is_err());
 }
 
 #[test]

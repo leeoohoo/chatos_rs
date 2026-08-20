@@ -515,8 +515,8 @@ fn resolve_components(
         .components
         .iter()
         .filter(|component| selected.contains(&component.component_key))
-        .map(|component| {
-            match statuses.get(component.component_key.as_str()) {
+        .map(
+            |component| match statuses.get(component.component_key.as_str()) {
                 Some(status) if status.kind == component.kind => ResolvedPluginComponent {
                     component: component.clone(),
                     available: status.availability_status == PluginAvailabilityStatus::Ready,
@@ -540,8 +540,8 @@ fn resolve_components(
                         "Plugin component status is missing from installation".to_string(),
                     ),
                 },
-            }
-        })
+            },
+        )
         .collect())
 }
 

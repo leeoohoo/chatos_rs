@@ -275,31 +275,3 @@ fn required_plugin_is_injected_into_effective_task_config() {
         "plugin-browser"
     );
 }
-
-#[test]
-fn cloud_runtime_does_not_inject_optional_plugins_without_task_selection() {
-    let mut capabilities = local_runtime_capabilities();
-    let mut plugin = resolved_plugin(false);
-    plugin.catalog.name = "ponytail".to_string();
-    for component in &mut plugin.components {
-        component.component.execution_host =
-            chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
-    }
-    for snapshot in &mut plugin.component_snapshots {
-        snapshot.component.execution_host =
-            chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
-    }
-    if let Some(release) = plugin.release.as_mut() {
-        for component in &mut release.components {
-            component.execution_host = chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
-        }
-    }
-    capabilities.plugins = vec![plugin];
-    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("cloud Plugin policy");
-    let mut task = task();
-
-    policy
-        .apply_to_task(&mut task)
-        .expect("apply cloud Plugin policy");
-    assert!(task.plugin_config.selected_plugins.is_empty());
-}

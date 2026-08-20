@@ -26,7 +26,7 @@ const project = (overrides: Partial<Project> = {}): Project => ({
 
 const plugin = (
   id: string,
-  providers: Array<'task_runner_cloud' | 'local_connector'>,
+  hosts: Array<'local' | 'portable'>,
 ): TaskRunnerSelectablePluginResponse => ({
   id,
   plugin_key: id,
@@ -35,18 +35,18 @@ const plugin = (
   version: '1.0.0',
   release_id: `release-${id}`,
   artifact_sha256: 'a'.repeat(64),
-  execution_type: providers.includes('local_connector') ? 'local' : 'cloud',
-  requires_device: providers.includes('local_connector'),
+  execution_type: hosts.every((host) => host === 'portable') ? 'portable' : 'local',
+  requires_device: false,
   component_hosts: {},
-  component_keys: providers.map((_, index) => `component-${index}`),
-  components: providers.map((provider, index) => ({
+  component_keys: hosts.map((_, index) => `component-${index}`),
+  components: hosts.map((host, index) => ({
     component_key: `component-${index}`,
     kind: 'mcp_server',
-    execution_host: provider === 'local_connector' ? 'local' : 'cloud',
+    execution_host: host,
     available: true,
     status: 'ready',
-    prepare_provider: provider,
-    requires_workspace: provider === 'local_connector',
+    prepare_provider: 'mcp_management',
+    requires_workspace: host === 'local',
   })),
   commands: [],
 });
@@ -68,11 +68,11 @@ const renderPicker = (
 
 describe('useTaskPluginPicker project runtime gating', () => {
   it('hides the picker for a project without a Local Connector root', async () => {
-    const cloud = plugin('cloud', ['task_runner_cloud']);
-    const local = plugin('local', ['local_connector']);
+    const local = plugin('local', ['local']);
+    const portable = plugin('portable', ['portable']);
     const listLocalConnectorDevices = vi.fn();
     const listTaskRunnerAvailablePlugins = vi.fn().mockResolvedValue({
-      selectable_plugins: [cloud, local],
+      selectable_plugins: [local, portable],
     });
     const client = {
       listLocalConnectorDevices,
@@ -110,14 +110,13 @@ describe('useTaskPluginPicker project runtime gating', () => {
   });
 
   it('shows local-capable Plugins when the bound local device is online', async () => {
-    const cloud = plugin('cloud', ['task_runner_cloud']);
-    const local = plugin('local', ['local_connector']);
-    const hybrid = plugin('hybrid', ['task_runner_cloud', 'local_connector']);
+    const local = plugin('local', ['local']);
+    const portable = plugin('portable', ['portable']);
     const listLocalConnectorDevices = vi.fn().mockResolvedValue([
       { id: 'device-1', status: 'online' },
     ]);
     const listTaskRunnerAvailablePlugins = vi.fn().mockResolvedValue({
-      selectable_plugins: [cloud, local, hybrid],
+      selectable_plugins: [local, portable],
     });
     const client = {
       listLocalConnectorDevices,
@@ -129,12 +128,12 @@ describe('useTaskPluginPicker project runtime gating', () => {
     }));
 
     await waitFor(() => expect(result.current.visible).toBe(true));
-    expect(result.current.filteredPlugins).toEqual([local, hybrid]);
+    expect(result.current.filteredPlugins).toEqual([local, portable]);
     expect(listTaskRunnerAvailablePlugins).toHaveBeenCalledWith('project-1', false);
   });
 
   it('loads missing local project details before checking its device and Plugins', async () => {
-    const local = plugin('local', ['local_connector']);
+    const local = plugin('local', ['local']);
     const getProject = vi.fn().mockResolvedValue({
       id: 'project-1',
       name: 'Local project',
@@ -168,7 +167,7 @@ describe('useTaskPluginPicker project runtime gating', () => {
     const firstProject = new Promise<unknown>((resolve) => {
       resolveFirstProject = resolve;
     });
-    const local = plugin('local', ['local_connector']);
+    const local = plugin('local', ['local']);
     const getProject = vi.fn()
       .mockReturnValueOnce(firstProject)
       .mockResolvedValueOnce({

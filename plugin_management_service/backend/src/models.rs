@@ -10,27 +10,24 @@ mod plugins;
 pub use plugins::*;
 
 pub use chatos_plugin_management_sdk::{
-    AgentBindingRecord, AgentToolPlane, BeginPluginCloudOAuthAuthorizationRequest,
-    BeginPluginCloudOAuthAuthorizationResponse, BindingConditions,
+    AgentBindingRecord, AgentToolPlane, BindingConditions,
     LocalConnectorMcpStatusBatchRequest as LocalConnectorMcpStatusBatchPayload,
     LocalConnectorMcpStatusItem, LocalConnectorMcpStatusRequest as LocalConnectorMcpStatusPayload,
     LocalConnectorMcpSyncRequest as LocalConnectorMcpSyncPayload, LocalConnectorRef,
     LocalConnectorRequirement, LocalConnectorSkillInventoryItem,
     LocalConnectorSkillInventoryRequest as LocalConnectorSkillInventoryPayload, McpProviderSkill,
     McpRecord, McpRuntime, PluginAuditLogRecord, PluginAvailabilityStatus, PluginCatalogDocument,
-    PluginCatalogRecord, PluginCloudComponentBundle, PluginCloudCredentialMetadata,
-    PluginCloudOAuthConnectionRecord, PluginComponentKind, PluginComponentOwnership,
-    PluginComponentSnapshot, PluginComponentStatus, PluginExecutionHost, PluginInstallStatus,
-    PluginInstallationRecord, PluginInstallationSyncPayload, PluginInterfaceMetadata,
-    PluginLicenseMetadata, PluginManifest, PluginManifestSource, PluginMarketplaceRecord,
-    PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload, PluginPublisher,
+    PluginCatalogRecord, PluginComponentKind, PluginComponentOwnership, PluginComponentSnapshot,
+    PluginComponentStatus, PluginExecutionHost, PluginInstallStatus, PluginInstallationRecord,
+    PluginInstallationSyncPayload, PluginInterfaceMetadata, PluginLicenseMetadata, PluginManifest,
+    PluginManifestSource, PluginMarketplaceRecord, PluginOAuthConnectionRecord,
+    PluginOAuthStatusSyncPayload, PluginPortableComponentBundle, PluginPublisher,
     PluginReleaseRecord, PluginReleaseSignature, PluginRequirementStatus,
     ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
-    ResolvePluginMcpCloudCredentialsRequest,
     ResolvedAgentCapabilities as RuntimeCapabilitiesResponse, ResolvedMcp, ResolvedPlugin,
-    ResolvedPluginComponent, ResolvedPluginMcpCloudCredentials, ResolvedSkill, ResourceCheckRecord,
-    ResourceMetadata, ResourceSecurity, SigningKeyRef, SkillContent, SkillInstallationRecord,
-    SkillRecord, UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
+    ResolvedPluginComponent, ResolvedSkill, ResourceCheckRecord, ResourceMetadata,
+    ResourceSecurity, SigningKeyRef, SkillContent, SkillInstallationRecord, SkillRecord,
+    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
     UpdateUserSkillPreferenceRequest as UpdateUserSkillPreferencePayload,
     UserPluginPreferenceRecord, UserSkillCatalogItem, UserSkillCatalogResponse,
 };
@@ -55,7 +52,6 @@ pub const RUNTIME_KIND_SYSTEM: &str = chatos_plugin_management_sdk::SYSTEM_MCP_R
 pub const RUNTIME_KIND_BUILTIN: &str =
     chatos_plugin_management_sdk::LEGACY_BUILTIN_MCP_RUNTIME_KIND;
 pub const RUNTIME_KIND_HTTP: &str = "http";
-pub const RUNTIME_KIND_STDIO_CLOUD: &str = "stdio_cloud";
 pub const RUNTIME_KIND_LOCAL_CONNECTOR_STDIO: &str = "local_connector_stdio";
 pub const RUNTIME_KIND_LOCAL_CONNECTOR_HTTP: &str = "local_connector_http";
 pub const RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY: &str = "local_connector_builtin_proxy";

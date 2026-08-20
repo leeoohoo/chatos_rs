@@ -109,7 +109,7 @@ fn loads_active_skill_instructions_and_only_reachable_lazy_resources() {
 }
 
 #[test]
-fn portable_skill_uses_the_canonical_bundle_hash_and_rejects_cloud_execution() {
+fn portable_skill_uses_the_canonical_bundle_hash() {
     let temp = TempDir::new().expect("temp directory");
     let package = TestSigner::new().package_with_prompt_execution(
         temp.path(),
@@ -155,16 +155,6 @@ fn portable_skill_uses_the_canonical_bundle_hash_and_rejects_cloud_execution() {
     )
     .expect_err("raw source hash must not satisfy the portable snapshot");
     assert!(error.to_string().contains("immutable component snapshot"));
-
-    let mut cloud_installation = installation;
-    cloud_installation.version.inventory.components[0].execution_host = PluginExecutionHost::Cloud;
-    let error = super::portable_bundle::load_local_portable_bundle(
-        &cloud_installation,
-        &manifest,
-        component_key.as_str(),
-    )
-    .expect_err("cloud component must not prepare through Local Connector");
-    assert!(error.to_string().contains("cloud-only Plugin components"));
 }
 
 #[test]

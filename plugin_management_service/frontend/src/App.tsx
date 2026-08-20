@@ -13,7 +13,6 @@ import { RuntimePreviewPage } from './pages/RuntimePreviewPage';
 import { SystemAgentsPage } from './pages/SystemAgentsPage';
 import { PluginCatalogAdminPage } from './pages/PluginCatalogAdminPage';
 import { PluginAuditPage } from './pages/PluginAuditPage';
-import { PluginCloudOAuthPage } from './pages/PluginCloudOAuthPage';
 import { PluginDiagnosticsPage } from './pages/PluginDiagnosticsPage';
 import { PluginMarketplacesPage } from './pages/PluginMarketplacesPage';
 import { PluginPublishersPage } from './pages/PluginPublishersPage';
@@ -66,7 +65,6 @@ export function App() {
       {section === 'marketplaces' ? <PluginMarketplacesPage user={user} /> : null}
       {section === 'publishers' ? <PluginPublishersPage user={user} /> : null}
       {section === 'diagnostics' ? <PluginDiagnosticsPage /> : null}
-      {section === 'cloud-oauth' ? <PluginCloudOAuthPage /> : null}
       {section === 'plugins' ? (
         <PluginCatalogAdminPage
           user={user}

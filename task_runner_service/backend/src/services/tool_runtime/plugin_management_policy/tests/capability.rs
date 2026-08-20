@@ -194,17 +194,17 @@ fn write_validation_rejects_removed_builtins_but_accepts_configured_offline_reso
 }
 
 #[test]
-fn policy_exposes_cloud_and_local_connector_mcps_exactly_as_configured() {
+fn policy_exposes_http_and_local_connector_mcps_exactly_as_configured() {
     let mut local = resolved_mcp("local-user", "local_connector_http", None, false, true);
     local.resource.source_kind = "local_connector_discovered".to_string();
-    let cloud = resolved_mcp("cloud-http", "http", None, false, true);
+    let http = resolved_mcp("external-http", "http", None, false, true);
     let policy = TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         owner_user_id: "owner-1".to_string(),
         policy_revision: "revision-local".to_string(),
         generated_at: "now".to_string(),
         agent_enabled: true,
-        mcps: vec![local, cloud],
+        mcps: vec![local, http],
         skills: Vec::new(),
         plugins: Vec::new(),
         local_connector_requirements: Vec::new(),
@@ -213,6 +213,6 @@ fn policy_exposes_cloud_and_local_connector_mcps_exactly_as_configured() {
 
     assert_eq!(
         policy.selectable_external_mcp_ids(),
-        vec!["local-user".to_string(), "cloud-http".to_string()]
+        vec!["local-user".to_string(), "external-http".to_string()]
     );
 }

@@ -113,7 +113,7 @@ fn schema_v2_requires_explicit_valid_execution_policy() {
     );
 
     let mut unknown = schema_v2_prompt_manifest();
-    unknown["execution"]["componentHosts"] = json!({"missing": "cloud"});
+    unknown["execution"]["componentHosts"] = json!({"missing": "portable"});
     assert!(
         parse_plugin_manifest(unknown.to_string().as_str(), PluginManifestSource::Chatos).is_err()
     );
@@ -126,32 +126,6 @@ fn schema_v2_requires_explicit_valid_execution_policy() {
     assert!(plugin_component_descriptors(&manifest)
         .iter()
         .all(|component| component.execution_host == PluginExecutionHost::Portable));
-}
-
-#[test]
-fn schema_v2_allows_cloud_mcp_runtime_but_keeps_prompt_permissions_local() {
-    let mut mcp = schema_v2_prompt_manifest();
-    mcp["execution"]["defaultHost"] = json!("cloud");
-    mcp["mcpServers"] = json!({
-        "remote": {"type": "http", "url": "https://mcp.example.com"}
-    });
-    mcp["permissions"] = json!([{
-        "permission": "network.domain:mcp.example.com",
-        "components": ["remote"]
-    }]);
-    assert!(parse_plugin_manifest(mcp.to_string().as_str(), PluginManifestSource::Chatos).is_ok());
-
-    let mut permission = schema_v2_prompt_manifest();
-    permission["execution"]["defaultHost"] = json!("cloud");
-    permission["permissions"] = json!([{
-        "permission": "workspace.read",
-        "components": ["review"]
-    }]);
-    assert!(parse_plugin_manifest(
-        permission.to_string().as_str(),
-        PluginManifestSource::Chatos,
-    )
-    .is_err());
 }
 
 #[test]

@@ -132,13 +132,14 @@ pub(super) async fn create_plugin_release(
         published_at: now_rfc3339(),
         revoked_at: None,
     };
-    let cloud_bundles =
-        super::plugin_cloud_bundles::stage_release_cloud_bundles(&state, &release).await?;
-    let mcp_runtime_bundles = super::plugin_cloud_bundles::stage_release_cloud_mcp_runtime_bundles(
-        &state, &release, None,
-    )
-    .await?;
-    let mut component_snapshots = cloud_bundles
+    let portable_bundles =
+        super::plugin_portable_bundles::stage_release_portable_bundles(&state, &release).await?;
+    let mcp_runtime_bundles =
+        super::plugin_portable_bundles::stage_release_portable_mcp_runtime_bundles(
+            &state, &release, None,
+        )
+        .await?;
+    let mut component_snapshots = portable_bundles
         .iter()
         .map(|bundle| {
             let component = release
@@ -168,16 +169,6 @@ pub(super) async fn create_plugin_release(
     state
         .store
         .set_plugin_release_publication_ready(release.id.as_str(), false)
-        .await
-        .map_err(ApiError::internal)?;
-    state
-        .store
-        .insert_plugin_cloud_component_bundles(cloud_bundles.as_slice())
-        .await
-        .map_err(ApiError::internal)?;
-    state
-        .store
-        .insert_plugin_mcp_cloud_runtime_bundles(mcp_runtime_bundles.as_slice())
         .await
         .map_err(ApiError::internal)?;
     state

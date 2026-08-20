@@ -22,7 +22,7 @@ const project = (overrides: Partial<Project> = {}): Project => ({
 
 const plugin = (
   id: string,
-  providers: Array<'task_runner_cloud' | 'local_connector'>,
+  hosts: Array<'local' | 'portable'>,
 ): TaskRunnerSelectablePluginResponse => ({
   id,
   plugin_key: id,
@@ -31,18 +31,18 @@ const plugin = (
   version: '1.0.0',
   release_id: `release-${id}`,
   artifact_sha256: 'a'.repeat(64),
-  execution_type: providers.includes('local_connector') ? 'local' : 'cloud',
-  requires_device: providers.includes('local_connector'),
+  execution_type: hosts.every((host) => host === 'portable') ? 'portable' : 'local',
+  requires_device: false,
   component_hosts: {},
-  component_keys: providers.map((_, index) => `component-${index}`),
-  components: providers.map((provider, index) => ({
+  component_keys: hosts.map((_, index) => `component-${index}`),
+  components: hosts.map((host, index) => ({
     component_key: `component-${index}`,
     kind: 'mcp_server',
-    execution_host: provider === 'local_connector' ? 'local' : 'cloud',
+    execution_host: host,
     available: true,
     status: 'ready',
-    prepare_provider: provider,
-    requires_workspace: provider === 'local_connector',
+    prepare_provider: 'mcp_management',
+    requires_workspace: host === 'local',
   })),
   commands: [],
 });
@@ -79,12 +79,13 @@ describe('Plugin runtime scope', () => {
     )).toBeNull();
   });
 
-  it('keeps only Local Connector-capable Plugins', () => {
-    const cloud = plugin('cloud', ['task_runner_cloud']);
-    const local = plugin('local', ['local_connector']);
-    const hybrid = plugin('hybrid', ['task_runner_cloud', 'local_connector']);
+  it('keeps Plugins with an available component for Local Connector execution', () => {
+    const local = plugin('local', ['local']);
+    const portable = plugin('portable', ['portable']);
+    const unavailable = plugin('unavailable', ['local']);
+    unavailable.components[0].available = false;
 
-    expect(filterPluginsForProjectRuntime([cloud, local, hybrid], 'local_connector'))
-      .toEqual([local, hybrid]);
+    expect(filterPluginsForProjectRuntime([local, portable, unavailable], 'local_connector'))
+      .toEqual([local, portable]);
   });
 });

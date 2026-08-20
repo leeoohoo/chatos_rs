@@ -9,7 +9,6 @@ use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     verify_plugin_release_signature, PluginComponentKind, PluginExecutionHost,
 };
-use chatos_plugin_package::plugin_cloud_bundle_sha256;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -110,7 +109,7 @@ fn bundled_plugin_specs_cover_all_twenty_eight_internal_skills_once() {
 
 #[test]
 fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
-    let (release, snapshots, bundles, catalog) =
+    let (release, snapshots, catalog) =
         bundled_ponytail_release().expect("bundled Ponytail Release");
 
     assert_eq!(BUNDLED_MARKETPLACE_REVISION, "2026-08-01.1");
@@ -123,7 +122,7 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
     assert_eq!(release.artifact_sha256, BUNDLED_PONYTAIL_ARTIFACT_SHA256);
     assert_eq!(
         release.signature.manifest_sha256,
-        "c3a7ff8dde9806732bd088a859e5861da6b07ab23e588723924b4fbe5fcbb138"
+        "661868ba98f653da87aade705ffc056140d16b4c5c02931c3ca089e575ca495a"
     );
     verify_plugin_release_signature(
         PluginReleaseVerificationContext {
@@ -141,7 +140,6 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
 
     assert_eq!(release.components.len(), 8);
     assert_eq!(snapshots.len(), release.components.len());
-    assert_eq!(bundles.len(), release.components.len());
     assert!(release
         .components
         .iter()
@@ -170,13 +168,6 @@ fn bundled_ponytail_release_is_ready_for_task_runner_selection() {
             .count(),
         3
     );
-    assert!(bundles.iter().all(|bundle| {
-        plugin_cloud_bundle_sha256(bundle).is_ok_and(|sha256| sha256 == bundle.bundle_sha256)
-            && snapshots.iter().any(|snapshot| {
-                snapshot.component.component_key == bundle.component_key
-                    && snapshot.content_sha256 == bundle.bundle_sha256
-            })
-    }));
     assert_eq!(catalog.id, BUNDLED_PONYTAIL_PLUGIN_ID);
     assert_eq!(catalog.marketplace_id, BUNDLED_MARKETPLACE_ID);
     assert_eq!(catalog.latest_release_id, release.id);

@@ -20,9 +20,8 @@ interface PluginCatalogAdminPageProps {
   onOpenReleases: (pluginId: string) => void;
 }
 
-const RUNTIME_TARGET_ORDER: PluginRuntimeTarget[] = ['cloud', 'local_connector'];
+const RUNTIME_TARGET_ORDER: PluginRuntimeTarget[] = ['local_connector'];
 const RUNTIME_TARGET_COLORS: Record<PluginRuntimeTarget, string> = {
-  cloud: 'blue',
   local_connector: 'purple',
 };
 

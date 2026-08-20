@@ -420,7 +420,7 @@ fn validate_execution_policy(
     }
 
     for (index, permission) in manifest.permissions.iter().enumerate() {
-        let cloud_targets = if permission.components.is_empty() {
+        let portable_targets = if permission.components.is_empty() {
             kinds
                 .keys()
                 .filter(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
@@ -434,14 +434,14 @@ fn validate_execution_policy(
                 .map(String::as_str)
                 .collect::<Vec<_>>()
         };
-        let targets_non_mcp_cloud_component = cloud_targets
+        let targets_non_mcp_portable_component = portable_targets
             .iter()
             .any(|key| kinds.get(*key).copied() != Some("mcp_server"));
-        if targets_non_mcp_cloud_component {
+        if targets_non_mcp_portable_component {
             issue(
                 issues,
                 format!("permissions[{index}]").as_str(),
-                "cloud and portable prompt components must not request runtime permissions",
+                "portable prompt components must not request runtime permissions",
             );
         }
     }

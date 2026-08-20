@@ -6,14 +6,14 @@ use std::fs;
 use std::io::{Cursor, Write};
 
 use chatos_plugin_management_sdk::{
-    build_plugin_mcp_cloud_runtime_bundle, parse_plugin_manifest, plugin_component_descriptors,
+    build_plugin_mcp_portable_runtime_bundle, parse_plugin_manifest, plugin_component_descriptors,
     PluginManifestSource, PluginReleaseRecord, PluginReleaseSignature, SystemAgentKey,
 };
 use chatos_plugin_package::{
-    build_cloud_component_bundles, build_plugin_mcp_cloud_runtime_bundles_from_package,
+    build_plugin_mcp_portable_runtime_bundles_from_package, build_portable_component_bundles,
     load_verified_plugin_package_directory, verify_plugin_archive_bytes,
-    verify_plugin_mcp_cloud_artifact_bytes, verify_plugin_mcp_cloud_package, PluginPackageLimits,
-    VerifiedPluginPackage,
+    verify_plugin_mcp_portable_artifact_bytes, verify_plugin_mcp_portable_package,
+    PluginPackageLimits, VerifiedPluginPackage,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -89,18 +89,18 @@ fn package_files(skill_text: &str) -> BTreeMap<String, Vec<u8>> {
 }
 
 #[test]
-fn cloud_mcp_artifact_is_bound_to_the_runtime_bundle_and_file_checksums() {
+fn portable_mcp_artifact_is_bound_to_the_runtime_bundle_and_file_checksums() {
     let files = with_checksums(package_files("---\nname: demo\n---\nInstructions"));
     let bytes = normal_archive(&files);
     let release = release(sha256(bytes.as_slice()));
-    let bundle = build_plugin_mcp_cloud_runtime_bundle(&release, "runner")
-        .expect("cloud MCP runtime Bundle");
-    let package = verify_plugin_mcp_cloud_artifact_bytes(
+    let bundle = build_plugin_mcp_portable_runtime_bundle(&release, "runner")
+        .expect("portable MCP runtime Bundle");
+    let package = verify_plugin_mcp_portable_artifact_bytes(
         bytes.as_slice(),
         &bundle,
         PluginPackageLimits::default(),
     )
-    .expect("verified cloud MCP artifact");
+    .expect("verified portable MCP artifact");
     assert_eq!(
         package.file_sha256["bin/server"],
         sha256(&files["bin/server"])
@@ -112,7 +112,7 @@ fn cloud_mcp_artifact_is_bound_to_the_runtime_bundle_and_file_checksums() {
         unreachable!();
     };
     *command = "./bin/other".to_string();
-    assert!(verify_plugin_mcp_cloud_artifact_bytes(
+    assert!(verify_plugin_mcp_portable_artifact_bytes(
         bytes.as_slice(),
         &drifted,
         PluginPackageLimits::default(),
@@ -124,7 +124,7 @@ fn cloud_mcp_artifact_is_bound_to_the_runtime_bundle_and_file_checksums() {
 fn config_file_runtime_candidates_are_frozen_from_the_verified_artifact() {
     let manifest_raw = json!({
         "schemaVersion": 2,
-        "execution": {"defaultHost": "cloud", "componentHosts": {}},
+        "execution": {"defaultHost": "portable", "componentHosts": {}},
         "name": "config-package-demo",
         "version": "1.0.0",
         "description": "Config runtime fixture",
@@ -188,7 +188,7 @@ fn config_file_runtime_candidates_are_frozen_from_the_verified_artifact() {
         unpacked_bytes: 1,
     };
     let bundles =
-        build_plugin_mcp_cloud_runtime_bundles_from_package(&release, "mcp-config", &package)
+        build_plugin_mcp_portable_runtime_bundles_from_package(&release, "mcp-config", &package)
             .unwrap();
     assert_eq!(
         bundles
@@ -199,12 +199,12 @@ fn config_file_runtime_candidates_are_frozen_from_the_verified_artifact() {
     );
     assert!(bundles
         .iter()
-        .all(|bundle| verify_plugin_mcp_cloud_package(&package, bundle).is_ok()));
+        .all(|bundle| verify_plugin_mcp_portable_package(&package, bundle).is_ok()));
     assert_ne!(bundles[0].bundle_sha256, bundles[1].bundle_sha256);
 
     let mut drifted = bundles[0].clone();
     drifted.server_key = "runner".to_string();
-    assert!(verify_plugin_mcp_cloud_package(&package, &drifted).is_err());
+    assert!(verify_plugin_mcp_portable_package(&package, &drifted).is_err());
 }
 
 fn with_checksums(mut files: BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Vec<u8>> {
@@ -291,7 +291,7 @@ fn archive_and_installed_directory_produce_the_same_stable_bundle_hash() {
         verify_plugin_archive_bytes(bytes.as_slice(), &release, PluginPackageLimits::default())
             .expect("verified archive");
     let archive_bundles =
-        build_cloud_component_bundles(&release, &package, "ingested").expect("archive Bundles");
+        build_portable_component_bundles(&release, &package, "ingested").expect("archive Bundles");
 
     let directory = TempDir::new().expect("temporary Plugin directory");
     for (path, body) in &files {
@@ -307,7 +307,7 @@ fn archive_and_installed_directory_produce_the_same_stable_bundle_hash() {
     )
     .expect("verified installed directory");
     let directory_bundles =
-        build_cloud_component_bundles(&release, &directory_package, "installed")
+        build_portable_component_bundles(&release, &directory_package, "installed")
             .expect("directory Bundles");
     assert_eq!(
         archive_bundles
@@ -366,7 +366,7 @@ fn zip_traversal_case_collisions_and_symlinks_are_rejected() {
 }
 
 #[test]
-fn cloud_skill_references_cannot_escape_or_load_scripts_and_binary_files() {
+fn portable_skill_references_cannot_escape_or_load_scripts_and_binary_files() {
     for skill in [
         "---\nname: demo\n---\n[Escape](../../../outside.md)",
         "---\nname: demo\n---\n[Script](../../scripts/run.sh)",
@@ -381,12 +381,12 @@ fn cloud_skill_references_cannot_escape_or_load_scripts_and_binary_files() {
         let package =
             verify_plugin_archive_bytes(bytes.as_slice(), &release, PluginPackageLimits::default())
                 .expect("archive verification");
-        assert!(build_cloud_component_bundles(&release, &package, "ingested").is_err());
+        assert!(build_portable_component_bundles(&release, &package, "ingested").is_err());
     }
 }
 
 #[test]
-fn cloud_skill_reference_cycles_are_rejected() {
+fn portable_skill_reference_cycles_are_rejected() {
     let mut files = package_files("---\nname: demo\n---\nStart with [A](../../references/a.md).");
     files.insert(
         "references/a.md".to_string(),
@@ -402,7 +402,7 @@ fn cloud_skill_reference_cycles_are_rejected() {
     let package =
         verify_plugin_archive_bytes(bytes.as_slice(), &release, PluginPackageLimits::default())
             .expect("archive verification");
-    let error = build_cloud_component_bundles(&release, &package, "ingested")
+    let error = build_portable_component_bundles(&release, &package, "ingested")
         .expect_err("reference cycle must fail");
     assert!(error
         .to_string()

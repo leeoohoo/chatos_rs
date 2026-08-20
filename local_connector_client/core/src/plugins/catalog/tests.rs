@@ -92,41 +92,6 @@ fn trusted_network_source_merges_with_the_local_registry_catalog() {
 }
 
 #[test]
-fn cloud_only_network_source_is_ready_without_a_local_install_action() {
-    let temp = TempDir::new().expect("temp directory");
-    let package = TestSigner::new().package_with_prompt_execution(
-        temp.path(),
-        "1.0.0",
-        PluginExecutionHost::Cloud,
-    );
-    let mut snapshot = local_plugin_store_snapshot(LocalPluginStatusSnapshot {
-        registry: LocalPluginRegistry::default(),
-        transactions: PluginTransactionJournal::default(),
-        runtime: Default::default(),
-    })
-    .expect("Plugin store snapshot");
-
-    merge_network_plugin_sources(
-        &mut snapshot,
-        PluginInstallSourceList {
-            items: vec![package.install_source()],
-        },
-    )
-    .expect("merge cloud-only Marketplace source");
-
-    let item = snapshot
-        .items
-        .iter()
-        .find(|item| item.plugin_id == "plugin-demo")
-        .expect("cloud-only Plugin item");
-    assert!(!snapshot.network_install_available);
-    assert!(!item.install_available);
-    assert!(!item.requires_local_install);
-    assert_eq!(item.execution_type, "cloud");
-    assert_eq!(item.lifecycle_status, "cloud_ready");
-}
-
-#[test]
 fn network_source_signature_tampering_is_rejected() {
     let temp = TempDir::new().expect("temp directory");
     let package = TestSigner::new().package(temp.path(), "1.0.0", ArchiveMutation::None);

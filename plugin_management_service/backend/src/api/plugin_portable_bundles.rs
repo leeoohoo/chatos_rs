@@ -128,8 +128,9 @@ pub(super) async fn stage_release_portable_bundles(
         portable_plugin_package_limits(),
     )
     .map_err(|error| ApiError::conflict(format!("verify Plugin artifact failed: {error}")))?;
-    build_portable_component_bundles(release, &package, now_rfc3339().as_str())
-        .map_err(|error| ApiError::conflict(format!("build Plugin portable Bundle failed: {error}")))
+    build_portable_component_bundles(release, &package, now_rfc3339().as_str()).map_err(|error| {
+        ApiError::conflict(format!("build Plugin portable Bundle failed: {error}"))
+    })
 }
 
 fn portable_plugin_package_limits() -> PluginPackageLimits {

@@ -94,7 +94,6 @@ impl TestSigner {
         execution_host: PluginExecutionHost,
     ) -> TestPackage {
         let default_host = match execution_host {
-            PluginExecutionHost::Cloud => "cloud",
             PluginExecutionHost::Local => "local",
             PluginExecutionHost::Portable => "portable",
         };

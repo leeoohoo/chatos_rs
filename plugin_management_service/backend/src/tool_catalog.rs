@@ -14,7 +14,6 @@ use crate::config::AppConfig;
 use crate::models::{
     McpProviderSkill, McpRecord, RUNTIME_KIND_HTTP, RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY,
     RUNTIME_KIND_LOCAL_CONNECTOR_HTTP, RUNTIME_KIND_LOCAL_CONNECTOR_STDIO,
-    RUNTIME_KIND_STDIO_CLOUD,
 };
 
 #[derive(Debug, Default)]
@@ -42,7 +41,7 @@ pub(crate) async fn live_mcp_descriptor(
         // External MCP runtimes are executed and inspected only by the Local
         // Connector Client. Plugin Management may return a previously synced
         // tool snapshot, but it must never connect to the MCP endpoint itself.
-        RUNTIME_KIND_HTTP | RUNTIME_KIND_STDIO_CLOUD => Ok(None),
+        RUNTIME_KIND_HTTP => Ok(None),
         RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
         | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
         | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY => Ok(None),

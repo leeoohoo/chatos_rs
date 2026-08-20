@@ -37,7 +37,7 @@ pub(crate) use credential_oauth::{
     local_plugin_oauth_connections, local_upsert_plugin_credential,
 };
 use network_lifecycle::{
-    download_remote_plugin_artifact, fetch_remote_plugin_sources, plugin_cloud_auth,
+    download_remote_plugin_artifact, fetch_remote_plugin_sources, plugin_service_auth,
     reject_failed_plugin_download, response_bytes_limited,
 };
 pub(crate) use network_lifecycle::{local_check_plugin_updates, spawn_plugin_auto_update_checker};
@@ -414,9 +414,12 @@ pub(crate) async fn local_update_plugin_preference(
             ));
         }
     }
-    let (cloud_base_url, access_token) = plugin_cloud_auth(&runtime).await.ok_or_else(|| {
-        LocalApiError::bad_request("please login before changing Marketplace Plugin preferences")
-    })?;
+    let (service_base_url, access_token) =
+        plugin_service_auth(&runtime).await.ok_or_else(|| {
+            LocalApiError::bad_request(
+                "please login before changing Marketplace Plugin preferences",
+            )
+        })?;
     let device_id = runtime
         .state
         .read()
@@ -427,7 +430,7 @@ pub(crate) async fn local_update_plugin_preference(
     let response = runtime
         .http_client
         .put(api_url(
-            cloud_base_url.as_str(),
+            service_base_url.as_str(),
             format!(
                 "/api/plugin-management/plugins/{}/preference",
                 urlencoding::encode(plugin_id.as_str()),

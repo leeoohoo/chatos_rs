@@ -72,7 +72,7 @@ export interface SelectableTaskPlugin {
   device_id?: string | null;
   execution_type: string;
   requires_device: boolean;
-  component_hosts: Record<string, 'cloud' | 'local' | 'portable'>;
+  component_hosts: Record<string, 'local' | 'portable'>;
   component_keys: string[];
   commands: SelectableTaskPluginCommand[];
 }

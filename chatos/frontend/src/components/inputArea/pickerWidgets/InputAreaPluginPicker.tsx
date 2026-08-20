@@ -118,13 +118,11 @@ export const InputAreaPluginPicker = ({
                           </span>
                         ) : null}
                         <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-700 dark:text-violet-300">
-                          {plugin.execution_type === 'cloud'
-                            ? '云端'
-                            : plugin.execution_type === 'portable'
-                              ? '可移植'
-                              : plugin.execution_type === 'hybrid'
-                                ? 'Hybrid'
-                                : '本地'}
+                          {plugin.execution_type === 'portable'
+                            ? '可移植'
+                            : plugin.execution_type === 'hybrid'
+                              ? '本地混合'
+                              : '本地'}
                         </span>
                         {plugin.requires_device ? (
                           <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
@@ -153,17 +151,11 @@ export const InputAreaPluginPicker = ({
                                 </span>
                                 <span>{component.kind}</span>
                                 <span>
-                                  {component.execution_host === 'cloud'
-                                    ? '云端'
-                                    : component.execution_host === 'portable'
-                                      ? '可移植'
-                                      : '本地'}
+                                  {component.execution_host === 'portable' ? '可移植' : '本地'}
                                 </span>
                                 <span>{component.available ? 'ready' : component.status}</span>
                                 <span>
-                                  {component.prepare_provider === 'task_runner_cloud'
-                                    ? '云端任务'
-                                    : 'Local Connector'}
+                                  MCP Management → Local Connector
                                 </span>
                                 {component.requires_workspace ? <span>需要工作区</span> : null}
                               </span>

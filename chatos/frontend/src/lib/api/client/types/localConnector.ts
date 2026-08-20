@@ -58,12 +58,12 @@ export interface TaskRunnerSelectablePluginCommandResponse {
 export interface TaskRunnerSelectablePluginComponentResponse {
   component_key: string;
   kind: 'skill_collection' | 'mcp_server' | 'connected_app' | 'command' | 'agent' | 'hook_set' | 'ui_contribution';
-  execution_host: 'cloud' | 'local' | 'portable';
+  execution_host: 'local' | 'portable';
   available: boolean;
   status: string;
   reason?: string | null;
   content_sha256?: string | null;
-  prepare_provider: 'task_runner_cloud' | 'local_connector';
+  prepare_provider: 'mcp_management';
   requires_workspace: boolean;
 }
 
@@ -76,9 +76,9 @@ export interface TaskRunnerSelectablePluginResponse {
   release_id: string;
   artifact_sha256: string;
   device_id?: string | null;
-  execution_type: 'cloud' | 'local' | 'portable' | 'hybrid';
+  execution_type: 'local' | 'portable' | 'hybrid';
   requires_device: boolean;
-  component_hosts: Record<string, 'cloud' | 'local' | 'portable'>;
+  component_hosts: Record<string, 'local' | 'portable'>;
   component_keys: string[];
   components: TaskRunnerSelectablePluginComponentResponse[];
   commands: TaskRunnerSelectablePluginCommandResponse[];

@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chatos_plugin_management_sdk::{
-    normalized_plugin_manifest_sha256, PluginPortableComponentBundle, PluginPortableTextResource,
-    PluginComponentDescriptor, PluginComponentKind, PluginExecutionHost, PluginReleaseRecord,
+    normalized_plugin_manifest_sha256, PluginComponentDescriptor, PluginComponentKind,
+    PluginExecutionHost, PluginPortableComponentBundle, PluginPortableTextResource,
+    PluginReleaseRecord,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};

@@ -6,7 +6,6 @@ import { optionalText, parseJsonArray, parseJsonObject } from '../formUtils';
 
 export const adminRuntimeKinds: RuntimeKind[] = [
   'http',
-  'stdio_cloud',
   'local_connector_stdio',
   'local_connector_http',
   'local_connector_builtin_proxy',
@@ -54,7 +53,7 @@ export function isSystemManagedMcp(record: McpRecord): boolean {
 }
 
 export function runtimeUsesCommand(kind: RuntimeKind | undefined): boolean {
-  return kind === 'stdio_cloud' || kind === 'local_connector_stdio';
+  return kind === 'local_connector_stdio';
 }
 
 export function runtimeUsesHttp(kind: RuntimeKind | undefined): boolean {

@@ -140,57 +140,8 @@ fn portable_host_always_uses_local_connector() {
         Some("local_connector"),
         "chatos_conversation_agent"
     ));
-    assert!(portable_uses_local(Some("cloud_sandbox"), RUN_AGENT_KEY));
+    assert!(portable_uses_local(Some("remote_sandbox"), RUN_AGENT_KEY));
     assert!(portable_uses_local(None, RUN_AGENT_KEY));
-}
-
-#[test]
-fn cloud_mcp_component_is_unavailable_without_local_execution() {
-    let mut records = plugin_records();
-    records.release.components[0].execution_host = PluginExecutionHost::Cloud;
-    let snapshots = component_snapshots(&records);
-    let resolved = resolve_plugin_records(
-        records.catalog,
-        Some(records.release),
-        records.binding,
-        None,
-        Some(records.preference),
-        snapshots,
-        Vec::new(),
-        None,
-        true,
-    );
-
-    assert!(!resolved.available);
-    assert_eq!(
-        resolved.components[0].status,
-        PluginAvailabilityStatus::Unavailable
-    );
-    assert!(resolved
-        .reason
-        .as_deref()
-        .is_some_and(|reason| reason.contains("cloud Plugin execution is disabled")));
-}
-
-#[test]
-fn cloud_plugin_cannot_be_enabled_by_agent_binding() {
-    let mut records = plugin_records();
-    records.release.components[0].execution_host = PluginExecutionHost::Cloud;
-    let snapshots = component_snapshots(&records);
-    let resolved = resolve_plugin_records(
-        records.catalog,
-        Some(records.release),
-        records.binding,
-        None,
-        None,
-        snapshots,
-        Vec::new(),
-        None,
-        true,
-    );
-
-    assert!(!resolved.available);
-    assert!(resolved.preference.is_none());
 }
 
 #[test]

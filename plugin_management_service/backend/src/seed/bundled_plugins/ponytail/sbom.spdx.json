@@ -2,8 +2,8 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "ponytail-4.8.4-chatos.2",
-  "documentNamespace": "https://chatos.dev/spdx/ponytail/4.8.4-chatos.2",
+  "name": "ponytail-4.8.4-chatos.3",
+  "documentNamespace": "https://chatos.dev/spdx/ponytail/4.8.4-chatos.3",
   "creationInfo": {
     "created": "2025-01-01T00:00:00Z",
     "creators": [
@@ -14,7 +14,7 @@
     {
       "name": "ponytail",
       "SPDXID": "SPDXRef-Package",
-      "versionInfo": "4.8.4-chatos.2",
+      "versionInfo": "4.8.4-chatos.3",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": true,
       "licenseConcluded": "MIT",

@@ -4,7 +4,6 @@
 pub mod api;
 pub mod auth;
 pub(crate) mod catalog_sync_queue;
-mod cloud_secrets;
 pub mod config;
 pub mod internal_tls;
 pub mod models;

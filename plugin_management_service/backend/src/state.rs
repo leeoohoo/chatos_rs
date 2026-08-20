@@ -8,7 +8,6 @@ use chatos_queue_observability::RabbitMqQueueInspector;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::auth::login_via_user_service;
-use crate::cloud_secrets::CloudSecretCipher;
 use crate::config::AppConfig;
 use crate::models::LoginRequest;
 use crate::pressure::PluginManagementPressureState;
@@ -19,7 +18,6 @@ use crate::store::AppStore;
 pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
-    pub(crate) cloud_secret_cipher: CloudSecretCipher,
     pub(crate) user_service_http: reqwest::Client,
     pub(crate) rabbitmq_queue_inspector: RabbitMqQueueInspector,
     pub(crate) pressure: PluginManagementPressureState,
@@ -36,8 +34,6 @@ impl AppState {
         let db = client.database(config.mongodb_database.as_str());
         let store = AppStore::new(db);
         store.initialize().await?;
-        let cloud_secret_cipher =
-            CloudSecretCipher::new(config.cloud_credential_encryption_secret.as_str())?;
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
                 .map_err(|err| format!("build user_service client failed: {err}"))?;
@@ -51,7 +47,6 @@ impl AppState {
         Ok(Self {
             config,
             store,
-            cloud_secret_cipher,
             user_service_http,
             rabbitmq_queue_inspector,
             pressure,

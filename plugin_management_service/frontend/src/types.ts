@@ -12,7 +12,6 @@ export type RuntimeKind =
   | 'system'
   | 'builtin'
   | 'http'
-  | 'stdio_cloud'
   | 'local_connector_stdio'
   | 'local_connector_http'
   | 'local_connector_builtin_proxy';
@@ -173,7 +172,6 @@ export interface SkillContent {
   kind:
     | 'local_connector_bundle'
     | 'inline_content'
-    | 'cloud_package'
     | 'git_package'
     | 'local_connector_file'
     | 'local_connector_package';

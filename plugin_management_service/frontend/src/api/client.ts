@@ -25,14 +25,11 @@ import type {
 } from '../types';
 import type {
   PluginAuditLogRecord,
-  BeginPluginCloudOAuthAuthorizationResponse,
   PluginCatalogListItem,
   PluginCatalogRecord,
   PluginCatalogSyncResponse,
   PluginInstallationRecord,
-  PluginCloudOAuthConnectionRecord,
   PluginMarketplaceRecord,
-  PluginMcpCloudRuntimeMetadata,
   PluginOAuthConnectionRecord,
   PluginPublisherRecord,
   PluginReleaseRecord,
@@ -201,10 +198,6 @@ export const api = {
     request<ListResponse<PluginReleaseRecord>>(
       `/api/plugins/${encodeURIComponent(pluginId)}/releases`,
     ),
-  listPluginMcpCloudRuntimes: (pluginId: string, releaseId: string) =>
-    request<ListResponse<PluginMcpCloudRuntimeMetadata>>(
-      `/api/plugins/${encodeURIComponent(pluginId)}/releases/${encodeURIComponent(releaseId)}/cloud-mcp-runtimes`,
-    ),
   createPluginRelease: (pluginId: string, payload: unknown) =>
     request<PluginReleaseRecord>(
       `/api/admin/plugins/${encodeURIComponent(pluginId)}/releases`,
@@ -227,31 +220,6 @@ export const api = {
   listPluginOAuthConnections: (pluginId: string, params: Record<string, QueryValue>) =>
     request<ListResponse<PluginOAuthConnectionRecord>>(
       withQuery(`/api/plugins/${encodeURIComponent(pluginId)}/oauth`, params),
-    ),
-  listPluginCloudOAuthConnections: (
-    pluginId: string,
-    params: { release_id: string; component_key: string },
-  ) =>
-    request<ListResponse<PluginCloudOAuthConnectionRecord>>(
-      withQuery(`/api/plugins/${encodeURIComponent(pluginId)}/cloud-oauth`, params),
-    ),
-  beginPluginCloudOAuthAuthorization: (
-    pluginId: string,
-    releaseId: string,
-    componentKey: string,
-    payload: unknown,
-  ) =>
-    request<BeginPluginCloudOAuthAuthorizationResponse>(
-      `/api/plugins/${encodeURIComponent(pluginId)}/releases/${encodeURIComponent(releaseId)}/cloud-oauth/${encodeURIComponent(componentKey)}/authorize`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
-    ),
-  deletePluginCloudOAuthConnection: (pluginId: string, connectionId: string) =>
-    request<void>(
-      `/api/plugins/${encodeURIComponent(pluginId)}/cloud-oauth/${encodeURIComponent(connectionId)}`,
-      { method: 'DELETE' },
     ),
   listSystemAgents: () => request<SystemAgentRecord[]>('/api/system-agents'),
   createSystemAgent: (payload: unknown) =>

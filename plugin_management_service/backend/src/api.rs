@@ -36,17 +36,13 @@ mod local_connector_skills;
 mod mcps;
 mod plugin_audit;
 mod plugin_catalog_sync;
-mod plugin_cloud_bundles;
-#[path = "api/oauth/plugin_cloud_credentials.rs"]
-mod plugin_cloud_credentials;
-#[path = "api/oauth/plugin_cloud_oauth.rs"]
-mod plugin_cloud_oauth;
 mod plugin_install_sources;
 #[path = "api/installations/plugin_installations.rs"]
 mod plugin_installations;
 mod plugin_marketplaces;
 #[path = "api/oauth/plugin_oauth.rs"]
 mod plugin_oauth;
+mod plugin_portable_bundles;
 mod plugin_publishers;
 mod plugin_releases;
 mod plugin_support;
@@ -97,19 +93,6 @@ pub(crate) use plugin_catalog_sync::{
     is_syncable_network_marketplace, run_queued_plugin_catalog_sync,
 };
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
-use plugin_cloud_bundles::{
-    get_plugin_cloud_component_bundle_internal, get_plugin_mcp_cloud_runtime_bundle_internal,
-    list_plugin_mcp_cloud_runtime_metadata,
-};
-use plugin_cloud_credentials::{
-    delete_plugin_cloud_credential, delete_plugin_cloud_oauth_connection,
-    list_plugin_cloud_credentials, list_plugin_cloud_oauth_connections,
-    resolve_plugin_mcp_cloud_credentials_internal, upsert_plugin_cloud_credential,
-    upsert_plugin_cloud_oauth_connection,
-};
-use plugin_cloud_oauth::{
-    begin_plugin_cloud_oauth_authorization, complete_plugin_cloud_oauth_authorization,
-};
 use plugin_install_sources::{
     get_plugin_install_source_internal, list_plugin_install_sources_internal,
 };
@@ -302,41 +285,12 @@ pub fn build_public_router(state: AppState) -> Router {
             get(list_plugin_releases),
         )
         .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-runtimes",
-            get(list_plugin_mcp_cloud_runtime_metadata),
-        )
-        .route(
             "/api/plugins/{plugin_id}/preference",
             axum::routing::put(update_user_plugin_preference),
         )
         .route(
             "/api/plugins/{plugin_id}/oauth",
             get(list_plugin_oauth_connections),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/cloud-credentials",
-            get(list_plugin_cloud_credentials),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-credentials/{component_key}/{secret_name}",
-            axum::routing::put(upsert_plugin_cloud_credential)
-                .delete(delete_plugin_cloud_credential),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/cloud-oauth",
-            get(list_plugin_cloud_oauth_connections),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-oauth/{component_key}",
-            axum::routing::put(upsert_plugin_cloud_oauth_connection),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-oauth/{component_key}/authorize",
-            post(begin_plugin_cloud_oauth_authorization),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/cloud-oauth/{connection_id}",
-            axum::routing::delete(delete_plugin_cloud_oauth_connection),
         )
         .route(
             "/api/plugin-marketplaces",
@@ -394,10 +348,6 @@ pub fn build_public_router(state: AppState) -> Router {
             .route("/api/health", get(health_handler))
             .route("/metrics", get(prometheus_metrics))
             .route("/api/auth/login", post(login_handler))
-            .route(
-                "/api/plugins/cloud-oauth/callback",
-                get(complete_plugin_cloud_oauth_authorization),
-            )
             .merge(protected_api)
             .with_state(state),
     )
@@ -422,18 +372,6 @@ pub fn build_internal_router(state: AppState) -> Router {
         .route(
             "/api/internal/runtime/agent-capabilities/resolve",
             post(resolve_agent_capabilities_internal),
-        )
-        .route(
-            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-components/{component_key}",
-            get(get_plugin_cloud_component_bundle_internal),
-        )
-        .route(
-            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-components/{component_key}",
-            get(get_plugin_mcp_cloud_runtime_bundle_internal),
-        )
-        .route(
-            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-components/{component_key}/credentials",
-            post(resolve_plugin_mcp_cloud_credentials_internal),
         )
         .route(
             "/api/internal/local-connector/mcps",

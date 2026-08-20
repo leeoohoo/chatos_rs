@@ -157,9 +157,8 @@ fn route(binding: &PluginToolComponentRuntimeBinding) -> ResolvedMcpRoute {
         resource_id: binding.resource_id.clone(),
         server_name: "plugin_review_review".to_string(),
         provider_kind: match binding.component.execution_host {
-            PluginExecutionHost::Local => McpProviderKind::PluginLocal,
-            PluginExecutionHost::Cloud | PluginExecutionHost::Portable => {
-                McpProviderKind::Unavailable
+            PluginExecutionHost::Local | PluginExecutionHost::Portable => {
+                McpProviderKind::PluginLocal
             }
         },
         provider_ref: Some(binding.provider_ref.clone()),

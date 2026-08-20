@@ -6,7 +6,6 @@ import {
   AuditOutlined,
   BranchesOutlined,
   GlobalOutlined,
-  KeyOutlined,
   LogoutOutlined,
   MonitorOutlined,
   RocketOutlined,
@@ -27,7 +26,6 @@ export type AppSection =
   | 'marketplaces'
   | 'publishers'
   | 'diagnostics'
-  | 'cloud-oauth'
   | 'plugins'
   | 'releases'
   | 'agents'
@@ -48,7 +46,6 @@ export function AppShell({ user, section, onSectionChange, children }: AppShellP
     { key: 'marketplaces', icon: <ShopOutlined />, label: t('nav.pluginMarketplaces') },
     { key: 'publishers', icon: <SolutionOutlined />, label: t('nav.pluginPublishers') },
     { key: 'diagnostics', icon: <MonitorOutlined />, label: t('nav.pluginDiagnostics') },
-    { key: 'cloud-oauth', icon: <KeyOutlined />, label: t('nav.pluginCloudOAuth') },
     ...(user.role === 'super_admin'
       ? [
           { key: 'plugins', icon: <SafetyCertificateOutlined />, label: t('nav.plugins') },

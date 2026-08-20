@@ -121,8 +121,6 @@ pub const PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.memory_engine_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.mcp_management_internal_api_secret";
-pub const PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET_CONFIG_KEY: &str =
-    "plugin_management.security.cloud_credential_encryption_secret";
 pub const PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "plugin_management.security.require_signed_internal_requests";
 pub const PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
@@ -140,18 +138,6 @@ pub const PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY: &str =
 pub const PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY: &str =
     "plugin_management.runtime.mongodb_database";
 pub const PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY: &str = "plugin_management.http.cors_origins";
-pub const PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY: &str =
-    "plugin_management.oauth.public_base_url";
-pub const PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY: &str =
-    "plugin_management.oauth.frontend_origin";
-pub const PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS_CONFIG_KEY: &str =
-    "plugin_management.oauth.flow_ttl_seconds";
-pub const PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY: &str =
-    "plugin_management.oauth.refresh_skew_seconds";
-pub const PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "plugin_management.oauth.request_timeout_ms";
-pub const PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY: &str =
-    "plugin_management.oauth.max_response_bytes";
 pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY: &str =
     "plugin_management.local_connector.check_ttl_seconds";
 pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY: &str =

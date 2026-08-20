@@ -266,96 +266,14 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
             }
             validate_external_http_headers(&runtime.headers)?;
         }
-        RUNTIME_KIND_STDIO_CLOUD => {
-            let command = runtime
-                .command
-                .as_deref()
-                .and_then(|value| normalized(Some(value)))
-                .ok_or_else(|| ApiError::bad_request("stdio MCP requires command"))?;
-            validate_cloud_stdio_command(command.as_str(), runtime.args.as_slice())?;
-            validate_cloud_stdio_arguments(runtime.args.as_slice())?;
-            validate_cloud_stdio_environment(&runtime.env)?;
-            validate_cloud_stdio_cwd(runtime.cwd.as_deref())?;
-        }
         RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
         | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
         | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY => validate_local_connector_ref(runtime)?,
         _ => {
             return Err(ApiError::bad_request(
-                "runtime.kind must be system, http, stdio_cloud, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
+                "runtime.kind must be system, http, local_connector_stdio, local_connector_http, or local_connector_builtin_proxy",
             ));
         }
-    }
-    Ok(())
-}
-
-fn validate_cloud_stdio_command(command: &str, args: &[String]) -> Result<(), ApiError> {
-    if command.len() > 256
-        || command
-            .chars()
-            .any(|character| matches!(character, '/' | '\\' | '\0'))
-        || matches!(command, "." | "..")
-    {
-        return Err(ApiError::bad_request(
-            "stdio MCP command must be a PATH-resolved executable name",
-        ));
-    }
-    let shell = command.trim_end_matches(".exe").to_ascii_lowercase();
-    let is_shell = matches!(
-        shell.as_str(),
-        "sh" | "bash" | "dash" | "zsh" | "ksh" | "fish" | "cmd" | "powershell" | "pwsh"
-    );
-    let invokes_inline_command = args.iter().any(|arg| {
-        matches!(
-            arg.trim().to_ascii_lowercase().as_str(),
-            "-c" | "/c" | "-command" | "-encodedcommand"
-        )
-    });
-    if is_shell && invokes_inline_command {
-        return Err(ApiError::bad_request(
-            "stdio MCP shell inline command execution is forbidden",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_cloud_stdio_arguments(args: &[String]) -> Result<(), ApiError> {
-    chatos_mcp_runtime::validate_stdio_arguments(args)
-        .map_err(|_| ApiError::bad_request("stdio MCP arguments exceed the supported limits"))
-}
-
-fn validate_cloud_stdio_environment(
-    env: &std::collections::BTreeMap<String, String>,
-) -> Result<(), ApiError> {
-    chatos_mcp_runtime::validate_stdio_environment(env).map_err(|error| match error {
-        chatos_mcp_runtime::StdioPolicyViolation::EnvironmentLimits => {
-            ApiError::bad_request("stdio MCP environment exceeds the supported limits")
-        }
-        chatos_mcp_runtime::StdioPolicyViolation::EnvironmentEntry
-        | chatos_mcp_runtime::StdioPolicyViolation::Arguments => ApiError::bad_request(
-            "stdio MCP environment contains an invalid or Host-controlled entry",
-        ),
-    })
-}
-
-fn validate_cloud_stdio_cwd(cwd: Option<&str>) -> Result<(), ApiError> {
-    let Some(cwd) = cwd.and_then(|value| normalized(Some(value))) else {
-        return Ok(());
-    };
-    let path = std::path::Path::new(cwd.as_str());
-    if path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        return Err(ApiError::bad_request(
-            "stdio MCP cwd must remain relative to the sandbox workspace",
-        ));
     }
     Ok(())
 }
@@ -378,10 +296,8 @@ pub(super) fn validate_mcp_security(
             )));
         }
     }
-    if matches!(
-        runtime.kind.as_str(),
-        RUNTIME_KIND_HTTP | RUNTIME_KIND_STDIO_CLOUD
-    ) && !security.allow_writes.unwrap_or(false)
+    if runtime.kind == RUNTIME_KIND_HTTP
+        && !security.allow_writes.unwrap_or(false)
         && security.allowed_tool_names.is_empty()
     {
         return Err(ApiError::bad_request(

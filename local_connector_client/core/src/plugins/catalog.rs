@@ -331,12 +331,6 @@ pub fn merge_network_plugin_sources(
         let rollback_available = installation
             .as_ref()
             .is_some_and(has_verified_rollback_target);
-        let has_local_install_path = source.release.components.iter().any(|component| {
-            matches!(
-                component.execution_host,
-                PluginExecutionHost::Local | PluginExecutionHost::Portable
-            )
-        });
         let execution_type = plugin_execution_type(
             source
                 .release
@@ -344,18 +338,13 @@ pub fn merge_network_plugin_sources(
                 .iter()
                 .map(|component| component.execution_host),
         );
-        let lifecycle_status =
-            if !has_local_install_path && installation.is_none() && active_transaction.is_none() {
-                "cloud_ready".to_string()
-            } else {
-                lifecycle_status(
-                    installation.as_ref(),
-                    active_transaction.as_ref(),
-                    latest_transaction.as_ref(),
-                    update_available,
-                    rollback_available,
-                )
-            };
+        let lifecycle_status = lifecycle_status(
+            installation.as_ref(),
+            active_transaction.as_ref(),
+            latest_transaction.as_ref(),
+            update_available,
+            rollback_available,
+        );
         let skill_ids = source
             .release
             .components
@@ -386,9 +375,9 @@ pub fn merge_network_plugin_sources(
             artifact_revision: source.release.artifact_sha256,
             skill_ids,
             install_source: "network".to_string(),
-            install_available: has_local_install_path,
+            install_available: true,
             execution_type,
-            requires_local_install: has_local_install_path,
+            requires_local_install: true,
             lifecycle_status,
             update_available,
             rollback_available,
