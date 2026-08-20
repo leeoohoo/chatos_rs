@@ -17,6 +17,7 @@ const CALLBACK_RETRY_DELAYS: [Duration; 6] = [
     Duration::from_secs(60),
     Duration::from_secs(60),
 ];
+pub(super) const TASK_RUN_STARTED_EVENT: &str = "task.run.started";
 
 impl RunService {
     pub(in crate::services) async fn try_send_task_callback(
@@ -62,11 +63,16 @@ impl RunService {
                 "terminal callback task id does not match run"
             );
         }
-        self.deliver_pending_terminal_callback(run.id.as_str(), event, true)
+        self.deliver_pending_callback(run.id.as_str(), event, true)
             .await;
     }
 
-    pub(super) async fn deliver_pending_terminal_callback(
+    pub(in crate::services) async fn try_send_started_callback(&self, run: &TaskRunRecord) {
+        self.deliver_pending_callback(run.id.as_str(), TASK_RUN_STARTED_EVENT, true)
+            .await;
+    }
+
+    pub(super) async fn deliver_pending_callback(
         &self,
         run_id: &str,
         expected_event: &str,
@@ -79,16 +85,30 @@ impl RunService {
         let Some(mut run) = self.store.get_run(run_id).await.ok().flatten() else {
             return false;
         };
-        let Some(actual_event) = terminal_callback_event_for_status(run.status) else {
-            return false;
+        let actual_event = if expected_event == TASK_RUN_STARTED_EVENT {
+            if run.status != TaskRunStatus::Running {
+                self.record_callback_skipped(
+                    run_id,
+                    expected_event,
+                    "start callback was superseded before delivery",
+                )
+                .await;
+                return true;
+            }
+            TASK_RUN_STARTED_EVENT
+        } else {
+            let Some(event) = terminal_callback_event_for_status(run.status) else {
+                return false;
+            };
+            event
         };
         if actual_event != expected_event {
             warn!(
                 run_id,
-                expected_event, actual_event, "terminal callback event changed before delivery"
+                expected_event, actual_event, "task callback event changed before delivery"
             );
         }
-        if run.chatos_callback_delivery.is_none() {
+        if callback_delivery_for_event(&run, actual_event).is_none() {
             match self.store.save_run(run.clone()).await {
                 Ok(saved) => run = saved,
                 Err(err) => {
@@ -101,7 +121,7 @@ impl RunService {
                 }
             }
         }
-        let Some(delivery) = run.chatos_callback_delivery.as_ref() else {
+        let Some(delivery) = callback_delivery_for_event(&run, actual_event) else {
             return false;
         };
         if matches!(
@@ -125,7 +145,7 @@ impl RunService {
         let attempt = delivery.attempt_count.saturating_add(1);
         let next_attempt_at = callback_next_attempt_at(attempt);
         if let Err(err) = self
-            .update_callback_delivery(run_id, |state| {
+            .update_callback_delivery(run_id, actual_event, |state| {
                 state.status = ChatosCallbackDeliveryStatus::Pending;
                 state.attempt_count = attempt;
                 state.next_attempt_at = Some(next_attempt_at.clone());
@@ -145,12 +165,17 @@ impl RunService {
         let task = match load_task_snapshot_for_callback(&self.store, run.task_id.as_str()).await {
             Ok(Some(task)) => task,
             Ok(None) => {
-                self.record_callback_failure(run_id, "callback task snapshot is missing")
-                    .await;
+                self.record_callback_failure(
+                    run_id,
+                    actual_event,
+                    "callback task snapshot is missing",
+                )
+                .await;
                 return true;
             }
             Err(err) => {
-                self.record_callback_failure(run_id, err.as_str()).await;
+                self.record_callback_failure(run_id, actual_event, err.as_str())
+                    .await;
                 return true;
             }
         };
@@ -161,13 +186,17 @@ impl RunService {
                 || task.source_turn_id.is_some()
                 || task.source_run_id.is_some()
             {
-                self.record_callback_failure(run_id, "task callback source metadata is incomplete")
-                    .await;
+                self.record_callback_failure(
+                    run_id,
+                    actual_event,
+                    "task callback source metadata is incomplete",
+                )
+                .await;
                 return true;
             }
             let reason = "task is not linked to a ChatOS source message";
             if let Err(err) = self
-                .update_callback_delivery(run_id, |state| {
+                .update_callback_delivery(run_id, actual_event, |state| {
                     state.status = ChatosCallbackDeliveryStatus::Skipped;
                     state.next_attempt_at = None;
                     state.last_error = Some(reason.to_string());
@@ -191,7 +220,10 @@ impl RunService {
             .await
         {
             Ok(outcome) => {
-                if let Err(err) = self.record_callback_publish_outcome(run_id, outcome).await {
+                if let Err(err) = self
+                    .record_callback_publish_outcome(run_id, actual_event, outcome)
+                    .await
+                {
                     warn!(
                         run_id,
                         error = err.as_str(),
@@ -218,7 +250,7 @@ impl RunService {
             Err(err) => {
                 let error_message = err.to_string();
                 if err.is_retryable() {
-                    self.record_callback_failure(run_id, error_message.as_str())
+                    self.record_callback_failure(run_id, actual_event, error_message.as_str())
                         .await;
                     warn!(
                         task_id = payload_task_id.as_str(),
@@ -230,7 +262,7 @@ impl RunService {
                         "failed to send task callback; persisted for retry"
                     );
                 } else {
-                    self.record_callback_skipped(run_id, error_message.as_str())
+                    self.record_callback_skipped(run_id, actual_event, error_message.as_str())
                         .await;
                     warn!(
                         task_id = payload_task_id.as_str(),
@@ -253,24 +285,24 @@ impl RunService {
     async fn update_callback_delivery(
         &self,
         run_id: &str,
+        event: &str,
         update: impl FnOnce(&mut ChatosCallbackDeliveryState),
     ) -> Result<(), String> {
         let mut run =
             self.store.get_run(run_id).await?.ok_or_else(|| {
                 format!("run not found while updating callback delivery: {run_id}")
             })?;
-        let state = run
-            .chatos_callback_delivery
-            .as_mut()
-            .ok_or_else(|| format!("callback delivery state missing for run: {run_id}"))?;
+        let state = callback_delivery_for_event_mut(&mut run, event).ok_or_else(|| {
+            format!("callback delivery state missing for run {run_id} and event {event}")
+        })?;
         update(state);
         self.store.save_run(run).await?;
         Ok(())
     }
 
-    async fn record_callback_failure(&self, run_id: &str, error: &str) {
+    async fn record_callback_failure(&self, run_id: &str, event: &str, error: &str) {
         if let Err(persist_error) = self
-            .update_callback_delivery(run_id, |state| {
+            .update_callback_delivery(run_id, event, |state| {
                 state.status = ChatosCallbackDeliveryStatus::Pending;
                 state.next_attempt_at = Some(callback_next_attempt_at(state.attempt_count.max(1)));
                 state.last_error = Some(error.to_string());
@@ -286,9 +318,9 @@ impl RunService {
         }
     }
 
-    async fn record_callback_skipped(&self, run_id: &str, error: &str) {
+    async fn record_callback_skipped(&self, run_id: &str, event: &str, error: &str) {
         if let Err(persist_error) = self
-            .update_callback_delivery(run_id, |state| {
+            .update_callback_delivery(run_id, event, |state| {
                 state.status = ChatosCallbackDeliveryStatus::Skipped;
                 state.next_attempt_at = None;
                 state.last_error = Some(error.to_string());
@@ -307,9 +339,10 @@ impl RunService {
     async fn record_callback_publish_outcome(
         &self,
         run_id: &str,
+        event: &str,
         outcome: CallbackPublishOutcome,
     ) -> Result<(), String> {
-        self.update_callback_delivery(run_id, |state| {
+        self.update_callback_delivery(run_id, event, |state| {
             state.status = match outcome {
                 CallbackPublishOutcome::InlineDelivered => ChatosCallbackDeliveryStatus::Delivered,
                 CallbackPublishOutcome::RabbitMqEnqueued => ChatosCallbackDeliveryStatus::Enqueued,
@@ -324,12 +357,13 @@ impl RunService {
     pub(in crate::services) async fn record_callback_delivery_result(
         &self,
         run_id: &str,
+        event: &str,
         delivered: bool,
         failure: Option<(&str, bool)>,
     ) -> Result<(), String> {
         if delivered {
             return self
-                .update_callback_delivery(run_id, |state| {
+                .update_callback_delivery(run_id, event, |state| {
                     state.status = ChatosCallbackDeliveryStatus::Delivered;
                     state.next_attempt_at = None;
                     state.last_error = None;
@@ -340,7 +374,7 @@ impl RunService {
         let Some((error, retryable)) = failure else {
             return Ok(());
         };
-        self.update_callback_delivery(run_id, |state| {
+        self.update_callback_delivery(run_id, event, |state| {
             state.status = if retryable {
                 ChatosCallbackDeliveryStatus::Pending
             } else {
@@ -352,6 +386,28 @@ impl RunService {
             state.updated_at = now_rfc3339();
         })
         .await
+    }
+}
+
+fn callback_delivery_for_event<'a>(
+    run: &'a TaskRunRecord,
+    event: &str,
+) -> Option<&'a ChatosCallbackDeliveryState> {
+    if event == TASK_RUN_STARTED_EVENT {
+        run.chatos_started_callback_delivery.as_ref()
+    } else {
+        run.chatos_callback_delivery.as_ref()
+    }
+}
+
+fn callback_delivery_for_event_mut<'a>(
+    run: &'a mut TaskRunRecord,
+    event: &str,
+) -> Option<&'a mut ChatosCallbackDeliveryState> {
+    if event == TASK_RUN_STARTED_EVENT {
+        run.chatos_started_callback_delivery.as_mut()
+    } else {
+        run.chatos_callback_delivery.as_mut()
     }
 }
 

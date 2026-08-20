@@ -25,10 +25,16 @@ impl MongoStore {
                 "blocked": count_when(doc! { "$eq": ["$status", "blocked"] }),
                 "dispatch_paused": count_when(doc! { "$eq": ["$dispatch_paused", true] }),
                 "callback_pending": count_when(doc! {
-                    "$eq": ["$chatos_callback_delivery.status", "pending"]
+                    "$or": [
+                        { "$eq": ["$chatos_started_callback_delivery.status", "pending"] },
+                        { "$eq": ["$chatos_callback_delivery.status", "pending"] },
+                    ]
                 }),
                 "callback_enqueued": count_when(doc! {
-                    "$eq": ["$chatos_callback_delivery.status", "enqueued"]
+                    "$or": [
+                        { "$eq": ["$chatos_started_callback_delivery.status", "enqueued"] },
+                        { "$eq": ["$chatos_callback_delivery.status", "enqueued"] },
+                    ]
                 }),
                 "dispatch_outbox_pending": count_when(doc! {
                     "$eq": ["$dispatch_event_pending", true]
@@ -75,15 +81,27 @@ impl MongoStore {
         self.load_collection_items_with_query(
             &self.runs,
             doc! {
-                "chatos_callback_delivery.status": "pending",
                 "$or": [
-                    { "chatos_callback_delivery.next_attempt_at": Bson::Null },
-                    { "chatos_callback_delivery.next_attempt_at": { "$exists": false } },
-                    { "chatos_callback_delivery.next_attempt_at": { "$lte": now } },
+                    {
+                        "chatos_started_callback_delivery.status": "pending",
+                        "$or": [
+                            { "chatos_started_callback_delivery.next_attempt_at": Bson::Null },
+                            { "chatos_started_callback_delivery.next_attempt_at": { "$exists": false } },
+                            { "chatos_started_callback_delivery.next_attempt_at": { "$lte": now } },
+                        ],
+                    },
+                    {
+                        "chatos_callback_delivery.status": "pending",
+                        "$or": [
+                            { "chatos_callback_delivery.next_attempt_at": Bson::Null },
+                            { "chatos_callback_delivery.next_attempt_at": { "$exists": false } },
+                            { "chatos_callback_delivery.next_attempt_at": { "$lte": now } },
+                        ],
+                    },
                 ],
             },
             Some(mongo_find_options(
-                doc! { "chatos_callback_delivery.next_attempt_at": 1, "updated_at": 1 },
+                doc! { "updated_at": 1 },
                 None,
                 Some(limit),
             )),

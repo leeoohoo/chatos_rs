@@ -262,6 +262,9 @@ fn snapshot(
         route_revision: "route-1".to_string(),
         routes: vec![route],
         tools: Vec::new(),
+        effective_mcp_ids: Vec::new(),
+        provider_skills_prompt: None,
+        plugin_instruction_items: Vec::new(),
         plugin_mcp_bindings: HashMap::new(),
         plugin_local_bindings: HashMap::new(),
         plugin_tool_component_bindings: HashMap::from([(
@@ -316,6 +319,9 @@ fn cloud_snapshot(
         route_revision: "route-1".to_string(),
         routes: vec![route],
         tools: Vec::new(),
+        effective_mcp_ids: Vec::new(),
+        provider_skills_prompt: None,
+        plugin_instruction_items: Vec::new(),
         plugin_mcp_bindings: HashMap::new(),
         plugin_local_bindings: HashMap::new(),
         plugin_tool_component_bindings: HashMap::from([(

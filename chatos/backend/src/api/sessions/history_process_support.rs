@@ -17,6 +17,7 @@ use crate::models::message::Message;
 use crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE;
 
 const TASK_RUNNER_CALLBACK_MESSAGE_MODE: &str = "task_runner_callback";
+const TASK_RUNNER_LIFECYCLE_UPDATE_MESSAGE_KIND: &str = "task_lifecycle_update";
 const TASK_RUNNER_TERMINAL_UPDATE_MESSAGE_KIND: &str = "task_terminal_update";
 const TASK_RUNNER_ASYNC_PLAN_SUMMARY_MESSAGE_KIND: &str = "plan_summary";
 
@@ -53,7 +54,13 @@ pub(super) fn is_task_runner_callback_message(message: &Message) -> bool {
         .and_then(|value| value.get("message_kind"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .is_some_and(|value| value == TASK_RUNNER_TERMINAL_UPDATE_MESSAGE_KIND)
+        .is_some_and(|value| {
+            matches!(
+                value,
+                TASK_RUNNER_LIFECYCLE_UPDATE_MESSAGE_KIND
+                    | TASK_RUNNER_TERMINAL_UPDATE_MESSAGE_KIND
+            )
+        })
 }
 
 pub(super) fn is_task_runner_async_plan_summary_message(message: &Message) -> bool {

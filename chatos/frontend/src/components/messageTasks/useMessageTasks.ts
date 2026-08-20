@@ -19,6 +19,9 @@ interface UseMessageTasksArgs {
   open: boolean;
   messageId: string;
   lookup?: MessageTaskRunnerLookupOptions;
+  taskId?: string | null;
+  runId?: string | null;
+  revision?: string | null;
 }
 
 const RUN_EVENT_PAGE_SIZE = 40;
@@ -43,7 +46,14 @@ const mergeRunEventPage = (
   };
 };
 
-export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs) {
+export function useMessageTasks({
+  open,
+  messageId,
+  lookup,
+  taskId,
+  runId,
+  revision,
+}: UseMessageTasksArgs) {
   const apiClient = useApiClient();
   const [tasks, setTasks] = useState<MessageTaskRunnerTask[]>([]);
   const [sourceUserMessageId, setSourceUserMessageId] = useState<string | null>(null);
@@ -59,6 +69,20 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
     setLoading(true);
     setError(null);
     try {
+      if (taskId) {
+        const task = await getMessageTaskRunnerTask(
+          apiClient.getRequestFn(),
+          messageId,
+          taskId,
+          lookup,
+        );
+        setTasks([task]);
+        setSourceUserMessageId(
+          readString(task.source_user_message_id)
+          || readString(lookup?.sourceUserMessageId),
+        );
+        return;
+      }
       const response = await getMessageTaskRunnerTasks(apiClient.getRequestFn(), messageId, lookup);
       const nextTasks = Array.isArray(response.items) ? response.items : [];
       setTasks(nextTasks);
@@ -73,7 +97,7 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
     } finally {
       setLoading(false);
     }
-  }, [apiClient, messageId, lookup]);
+  }, [apiClient, messageId, lookup, revision, taskId]);
 
   const openDetail = useCallback(async (task: MessageTaskRunnerTask) => {
     const requestSequence = detailRequestSequenceRef.current + 1;
@@ -89,14 +113,14 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
         return;
       }
       setDetailTask(detail);
-      const runId = readString(detail.last_run_id) || readString(task.last_run_id);
-      if (!runId) {
+      const detailRunId = runId || readString(detail.last_run_id) || readString(task.last_run_id);
+      if (!detailRunId) {
         return;
       }
       const runDetail = await getMessageTaskRunnerRun(
         apiClient.getRequestFn(),
         messageId,
-        runId,
+        detailRunId,
         {
           ...detailLookup,
           includeEvents: false,
@@ -117,20 +141,20 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
         setLoadingDetailId(null);
       }
     }
-  }, [apiClient, messageId, lookup, sourceUserMessageId]);
+  }, [apiClient, messageId, lookup, runId, sourceUserMessageId]);
 
   const openRun = useCallback(async (task: MessageTaskRunnerTask) => {
-    const runId = readString(task.last_run_id);
-    if (!runId) {
+    const detailRunId = runId || readString(task.last_run_id);
+    if (!detailRunId) {
       return;
     }
-    setLoadingRunId(runId);
+    setLoadingRunId(detailRunId);
     setError(null);
     try {
       const detailLookup = sourceUserMessageId
         ? { ...lookup, sourceUserMessageId }
         : lookup;
-      const detail = await getMessageTaskRunnerRun(apiClient.getRequestFn(), messageId, runId, {
+      const detail = await getMessageTaskRunnerRun(apiClient.getRequestFn(), messageId, detailRunId, {
         ...detailLookup,
         eventLimit: RUN_EVENT_PAGE_SIZE,
         eventOffset: 0,
@@ -141,7 +165,7 @@ export function useMessageTasks({ open, messageId, lookup }: UseMessageTasksArgs
     } finally {
       setLoadingRunId(null);
     }
-  }, [apiClient, messageId, lookup, sourceUserMessageId]);
+  }, [apiClient, messageId, lookup, runId, sourceUserMessageId]);
 
   const loadMoreRunEvents = useCallback(async () => {
     if (!runDetail?.events_has_more) {

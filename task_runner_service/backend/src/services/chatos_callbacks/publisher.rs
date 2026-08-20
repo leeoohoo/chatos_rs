@@ -181,7 +181,7 @@ async fn handle_callback_delivery(
         Ok(()) => {
             if let Some(run_id) = queue_run_id.as_deref() {
                 if let Err(err) = run_service
-                    .record_callback_delivery_result(run_id, true, None)
+                    .record_callback_delivery_result(run_id, queue_event.as_str(), true, None)
                     .await
                 {
                     warn!(
@@ -199,6 +199,7 @@ async fn handle_callback_delivery(
                 if let Err(persist_err) = run_service
                     .record_callback_delivery_result(
                         run_id,
+                        queue_event.as_str(),
                         false,
                         Some((error_message.as_str(), err.is_retryable())),
                     )
@@ -231,7 +232,7 @@ async fn handle_callback_delivery(
 fn callback_event_tracks_delivery_state(event: &str) -> bool {
     matches!(
         event,
-        "task.completed" | "task.failed" | "task.cancelled" | "task.blocked"
+        "task.run.started" | "task.completed" | "task.failed" | "task.cancelled" | "task.blocked"
     )
 }
 
@@ -281,8 +282,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_terminal_run_callbacks_track_delivery_state() {
+    fn lifecycle_run_callbacks_track_delivery_state() {
         for event in [
+            "task.run.started",
             "task.completed",
             "task.failed",
             "task.cancelled",
@@ -290,7 +292,7 @@ mod tests {
         ] {
             assert!(callback_event_tracks_delivery_state(event));
         }
-        assert!(!callback_event_tracks_delivery_state("task.run.started"));
+        assert!(!callback_event_tracks_delivery_state("task.created"));
     }
 
     #[test]

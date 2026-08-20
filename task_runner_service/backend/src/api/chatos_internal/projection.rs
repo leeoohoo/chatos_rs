@@ -110,6 +110,7 @@ pub(super) fn trim_run_for_chatos_detail(
 ) -> crate::models::TaskRunRecord {
     run.agent_ordering_lane_key = None;
     run.execution_lane_key = None;
+    run.chatos_started_callback_delivery = None;
     run.chatos_callback_delivery = None;
     redact_plugin_command_arguments(&mut run.input_snapshot);
     run.input_snapshot = truncate_run_input_snapshot_for_chatos(run.input_snapshot);

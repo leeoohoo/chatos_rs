@@ -50,6 +50,7 @@ fn queued_run() -> TaskRunRecord {
         claim_until: None,
         attempt: 0,
         attempts: Vec::new(),
+        chatos_started_callback_delivery: None,
         chatos_callback_delivery: None,
         created_at: now.clone(),
         updated_at: now,
@@ -89,6 +90,24 @@ fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
     assert_eq!(stats.dispatch_outbox_pending, 1);
     assert_eq!(stats.cancellation_outbox_pending, 1);
     assert_eq!(stats.post_process_outbox_pending, 1);
+}
+
+#[test]
+fn running_run_initializes_a_durable_started_callback_without_terminal_delivery() {
+    let store = test_store();
+    let mut running = queued_run();
+    running.status = TaskRunStatus::Running;
+    running.started_at = Some("2026-08-20T10:00:00Z".to_string());
+    running.updated_at = "2026-08-20T10:00:00Z".to_string();
+
+    let saved = store.save_run(running).expect("save running run");
+    let delivery = saved
+        .chatos_started_callback_delivery
+        .expect("started callback delivery");
+
+    assert_eq!(delivery.event, "task.run.started");
+    assert_eq!(delivery.status, ChatosCallbackDeliveryStatus::Pending);
+    assert!(saved.chatos_callback_delivery.is_none());
 }
 
 #[test]

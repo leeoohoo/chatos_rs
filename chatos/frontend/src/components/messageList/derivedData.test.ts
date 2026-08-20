@@ -478,7 +478,7 @@ describe('buildVisibleMessageState', () => {
     ]);
   });
 
-  it('anchors task runner receipts to their source turn even when they complete after a newer user message', () => {
+  it('keeps late task runner receipts in chronological position after newer user messages', () => {
     const messages: Message[] = [
       buildUser({
         id: 'user-source',
@@ -527,8 +527,8 @@ describe('buildVisibleMessageState', () => {
     expect(state.visibleMessages.map((message) => message.id)).toEqual([
       'user-source',
       'assistant-source',
-      'task-runner-receipt',
       'user-newer',
+      'task-runner-receipt',
     ]);
   });
 });

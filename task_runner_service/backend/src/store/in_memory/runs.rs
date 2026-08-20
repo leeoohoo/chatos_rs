@@ -21,17 +21,23 @@ impl InMemoryStore {
             stats.cancellation_outbox_pending += usize::from(run.cancel_event_pending);
             stats.post_process_outbox_pending +=
                 usize::from(run.requires_post_process() && run.post_process_event_pending);
-            if let Some(callback) = run.chatos_callback_delivery.as_ref() {
-                match callback.status {
-                    ChatosCallbackDeliveryStatus::Pending => {
-                        stats.callback_pending = stats.callback_pending.saturating_add(1);
-                    }
-                    ChatosCallbackDeliveryStatus::Enqueued => {
-                        stats.callback_enqueued = stats.callback_enqueued.saturating_add(1);
-                    }
-                    ChatosCallbackDeliveryStatus::Delivered
-                    | ChatosCallbackDeliveryStatus::Skipped => {}
-                }
+            let callback_states = [
+                run.chatos_started_callback_delivery.as_ref(),
+                run.chatos_callback_delivery.as_ref(),
+            ];
+            if callback_states
+                .iter()
+                .flatten()
+                .any(|callback| callback.status == ChatosCallbackDeliveryStatus::Pending)
+            {
+                stats.callback_pending = stats.callback_pending.saturating_add(1);
+            }
+            if callback_states
+                .iter()
+                .flatten()
+                .any(|callback| callback.status == ChatosCallbackDeliveryStatus::Enqueued)
+            {
+                stats.callback_enqueued = stats.callback_enqueued.saturating_add(1);
             }
             if let Some(execution) = run.workspace_execution.as_ref() {
                 match execution.integration_status {
@@ -555,15 +561,19 @@ impl InMemoryStore {
             .runs
             .values()
             .filter(|run| {
-                run.chatos_callback_delivery
-                    .as_ref()
-                    .is_some_and(|delivery| {
-                        delivery.status == ChatosCallbackDeliveryStatus::Pending
-                            && delivery
-                                .next_attempt_at
-                                .as_deref()
-                                .is_none_or(|next_attempt_at| next_attempt_at <= now)
-                    })
+                [
+                    run.chatos_started_callback_delivery.as_ref(),
+                    run.chatos_callback_delivery.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|delivery| {
+                    delivery.status == ChatosCallbackDeliveryStatus::Pending
+                        && delivery
+                            .next_attempt_at
+                            .as_deref()
+                            .is_none_or(|next_attempt_at| next_attempt_at <= now)
+                })
             })
             .cloned()
             .collect::<Vec<_>>();

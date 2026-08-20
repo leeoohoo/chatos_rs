@@ -89,6 +89,12 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         route_revision: "route-1".to_string(),
         routes: Vec::new(),
         tools: Vec::new(),
+        effective_mcp_ids: vec!["plugin-mcp-1".to_string()],
+        provider_skills_prompt: Some("# Tool Usage Instructions".to_string()),
+        plugin_instruction_items: vec![serde_json::json!({
+            "role": "system",
+            "content": "plugin instructions"
+        })],
         plugin_mcp_bindings: HashMap::from([(
             plugin_runtime.resource_id.clone(),
             plugin_runtime.clone(),
@@ -143,6 +149,13 @@ async fn memory_store_preserves_insert_get_and_atomic_remove_semantics() {
     let second = store.get("memory-session").await.unwrap().unwrap();
     assert_eq!(first.tenant_id, "tenant-1");
     assert_eq!(first.owner_user_id, "owner-1");
+    let routes = first.routes_response();
+    assert_eq!(routes.effective_mcp_ids, ["plugin-mcp-1"]);
+    assert_eq!(
+        routes.provider_skills_prompt.as_deref(),
+        Some("# Tool Usage Instructions")
+    );
+    assert_eq!(routes.plugin_instruction_items.len(), 1);
     assert!(Arc::ptr_eq(&first, &second));
     assert!(store.remove("memory-session").await.unwrap().is_some());
     assert!(store.get("memory-session").await.unwrap().is_none());
@@ -165,6 +178,12 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
     let restored = cipher.decrypt(document, Duration::from_secs(60)).unwrap();
     assert_eq!(restored.trace_id, "00000000-0000-4000-8000-000000000001");
     assert_eq!(restored.tool_result_max_chars, Some(40_000));
+    assert_eq!(restored.effective_mcp_ids, ["plugin-mcp-1"]);
+    assert_eq!(
+        restored.provider_skills_prompt.as_deref(),
+        Some("# Tool Usage Instructions")
+    );
+    assert_eq!(restored.plugin_instruction_items.len(), 1);
     let external = restored.external_http_bindings.get("external-1").unwrap();
     assert_eq!(
         external

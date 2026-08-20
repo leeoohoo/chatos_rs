@@ -325,7 +325,8 @@ export const isTaskRunnerCallbackMessage = (
   if (messageMode === 'task_run_receipt') {
     return true;
   }
-  return readTaskRunnerAsyncMessageKind(message) === 'task_terminal_update';
+  return ['task_lifecycle_update', 'task_terminal_update']
+    .includes(readTaskRunnerAsyncMessageKind(message));
 };
 
 export const isTaskRunnerAsyncMessage = (

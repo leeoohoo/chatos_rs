@@ -256,7 +256,9 @@ const isTaskRunnerCallbackSnapshotMessage = (message: Message): boolean => {
     return true;
   }
 
-  return normalizeSnapshotCursor(message.metadata?.task_runner_async?.message_kind) === 'task_terminal_update';
+  return ['task_lifecycle_update', 'task_terminal_update'].includes(
+    normalizeSnapshotCursor(message.metadata?.task_runner_async?.message_kind),
+  );
 };
 
 const countCompactHistoryUnits = (messages: Message[]): number => {

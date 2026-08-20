@@ -98,21 +98,7 @@ impl McpManagementGatewayBuilder {
         if validate_identity {
             validate_existing_session_identity(&self.request, &session)?;
         }
-        let response = RuntimeSessionResponse {
-            session_id: session.session_id,
-            policy_revision: session.policy_revision,
-            route_revision: session.route_revision,
-            expires_at: session.expires_at,
-            mcp_server_url: session.mcp_server_url,
-            mcp_command_queue: session.mcp_command_queue,
-            runtime_token: session.runtime_token,
-            configured_mcp_count: session.routes.len(),
-            exposed_tool_count: session.tools.len(),
-            effective_mcp_ids: Vec::new(),
-            provider_skills_prompt: None,
-            plugin_instruction_items: Vec::new(),
-            unavailable_required_mcps: Vec::new(),
-        };
+        let response = existing_session_response(session);
         build_resolved_gateway(
             client,
             response,
@@ -122,6 +108,24 @@ impl McpManagementGatewayBuilder {
             false,
         )
         .await
+    }
+}
+
+fn existing_session_response(session: RuntimeSessionRoutesResponse) -> RuntimeSessionResponse {
+    RuntimeSessionResponse {
+        session_id: session.session_id,
+        policy_revision: session.policy_revision,
+        route_revision: session.route_revision,
+        expires_at: session.expires_at,
+        mcp_server_url: session.mcp_server_url,
+        mcp_command_queue: session.mcp_command_queue,
+        runtime_token: session.runtime_token,
+        configured_mcp_count: session.routes.len(),
+        exposed_tool_count: session.tools.len(),
+        effective_mcp_ids: session.effective_mcp_ids,
+        provider_skills_prompt: session.provider_skills_prompt,
+        plugin_instruction_items: session.plugin_instruction_items,
+        unavailable_required_mcps: Vec::new(),
     }
 }
 
@@ -378,6 +382,12 @@ mod tests {
             expires_at: "2099-01-01T00:00:00Z".to_string(),
             routes: Vec::new(),
             tools: Vec::new(),
+            effective_mcp_ids: vec!["local-connector".to_string()],
+            provider_skills_prompt: Some("# Tool Usage Instructions".to_string()),
+            plugin_instruction_items: vec![serde_json::json!({
+                "role": "system",
+                "content": "plugin instructions"
+            })],
             mcp_command_queue: "mcp_management.async.dispatch".to_string(),
             mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
             runtime_token: "runtime-token".to_string(),
@@ -450,6 +460,18 @@ mod tests {
         let session = routes_response(Some("run-1"));
 
         validate_existing_session_identity(&request, &session).expect("same run should match");
+    }
+
+    #[test]
+    fn existing_session_response_preserves_prompt_metadata() {
+        let response = existing_session_response(routes_response(Some("run-1")));
+
+        assert_eq!(response.effective_mcp_ids, ["local-connector"]);
+        assert_eq!(
+            response.provider_skills_prompt.as_deref(),
+            Some("# Tool Usage Instructions")
+        );
+        assert_eq!(response.plugin_instruction_items.len(), 1);
     }
 
     #[test]

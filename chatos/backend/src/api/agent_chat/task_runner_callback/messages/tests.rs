@@ -7,7 +7,8 @@ use super::{
     apply_task_runner_callback_to_user_message,
     build_task_runner_callback_assistant_message_with_contact,
     build_task_runner_callback_message_id, is_task_runner_terminal_event,
-    should_publish_task_runner_terminal_message, TaskRunnerCallbackRequest,
+    prepare_task_runner_callback_message_update, should_publish_task_runner_status_message,
+    task_runner_callback_targets_current_run, TaskRunnerCallbackRequest,
 };
 use crate::models::message::Message;
 
@@ -54,10 +55,77 @@ fn build_task_runner_callback_assistant_message(
 fn callback_message_id_is_deterministic_for_same_run() {
     let payload = sample_callback_payload();
     let id = build_task_runner_callback_message_id(&payload);
+    assert_eq!(id, "task_runner_callback::user-1::task-1::run-1");
+}
+
+#[test]
+fn started_and_terminal_callbacks_share_one_lifecycle_message_id() {
+    let mut started = sample_callback_payload();
+    started.event = "task.run.started".to_string();
+    started.status = "running".to_string();
+    started.task_status = Some("running".to_string());
+    started.result_summary = None;
+    let terminal = sample_callback_payload();
+
+    let started_message = build_task_runner_callback_assistant_message("session-1", &started);
+    let terminal_message = build_task_runner_callback_assistant_message("session-1", &terminal);
+
+    assert_eq!(started_message.id, terminal_message.id);
+    assert!(started_message.content.contains("Task “Demo task” started"));
     assert_eq!(
-        id,
-        "task_runner_callback::user-1::task-1::task.completed::run-1"
+        started_message
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .and_then(|value| value.get("message_kind"))
+            .and_then(Value::as_str),
+        Some("task_lifecycle_update")
     );
+}
+
+#[test]
+fn terminal_update_preserves_started_message_time_and_started_at() {
+    let mut started = sample_callback_payload();
+    started.event = "task.run.started".to_string();
+    started.status = "running".to_string();
+    started.callback_at = Some("2026-06-10T09:00:00Z".to_string());
+    started.result_summary = None;
+    let existing = build_task_runner_callback_assistant_message("session-1", &started);
+
+    let terminal = sample_callback_payload();
+    let mut candidate = build_task_runner_callback_assistant_message("session-1", &terminal);
+    assert!(prepare_task_runner_callback_message_update(
+        &existing,
+        &mut candidate,
+        &terminal,
+    ));
+
+    assert_eq!(candidate.created_at, "2026-06-10T09:00:00Z");
+    assert_eq!(
+        candidate
+            .metadata
+            .as_ref()
+            .and_then(|value| value.get("task_runner_async"))
+            .and_then(|value| value.get("started_at"))
+            .and_then(Value::as_str),
+        Some("2026-06-10T09:00:00Z")
+    );
+}
+
+#[test]
+fn late_started_callback_cannot_replace_terminal_message_for_same_run() {
+    let existing =
+        build_task_runner_callback_assistant_message("session-1", &sample_callback_payload());
+    let mut started = sample_callback_payload();
+    started.event = "task.run.started".to_string();
+    started.status = "running".to_string();
+    let mut candidate = build_task_runner_callback_assistant_message("session-1", &started);
+
+    assert!(!prepare_task_runner_callback_message_update(
+        &existing,
+        &mut candidate,
+        &started,
+    ));
 }
 
 #[test]
@@ -65,10 +133,7 @@ fn callback_assistant_message_carries_idempotent_identity_and_async_metadata() {
     let payload = sample_callback_payload();
     let message = build_task_runner_callback_assistant_message("session-1", &payload);
 
-    assert_eq!(
-        message.id,
-        "task_runner_callback::user-1::task-1::task.completed::run-1"
-    );
+    assert_eq!(message.id, "task_runner_callback::user-1::task-1::run-1");
     assert_eq!(message.created_at, "2026-06-10T10:00:00Z");
     assert_eq!(
         message
@@ -262,15 +327,16 @@ fn retry_start_callback_reopens_failed_task_tracking_with_new_run() {
             "running_task_ids": [],
             "terminal_task_ids": ["task-1"],
             "failed_task_ids": ["task-1"],
-            "last_run_id": "run-failed"
+            "last_run_id": "run-failed",
+            "run_ids_by_task": { "task-1": "run-failed" }
         }
     }));
 
     let mut payload = sample_callback_payload();
     payload.event = "task.run.started".to_string();
     payload.run_id = Some("run-retry".to_string());
-    payload.status = "queued".to_string();
-    payload.task_status = Some("queued".to_string());
+    payload.status = "running".to_string();
+    payload.task_status = Some("running".to_string());
     apply_task_runner_callback_to_user_message(&mut message, &payload);
 
     let task_runner_async = message
@@ -300,6 +366,71 @@ fn retry_start_callback_reopens_failed_task_tracking_with_new_run() {
         .get("failed_task_ids")
         .and_then(Value::as_array)
         .is_some_and(Vec::is_empty));
+}
+
+#[test]
+fn late_callback_for_previous_run_does_not_change_current_task_tracking() {
+    let mut message = Message::new(
+        "session-1".to_string(),
+        "user".to_string(),
+        "please handle this".to_string(),
+    );
+    message.id = "user-1".to_string();
+    let mut queued = sample_callback_payload();
+    queued.event = "task.run.queued".to_string();
+    queued.run_id = Some("run-retry".to_string());
+    queued.status = "queued".to_string();
+    queued.task_status = Some("queued".to_string());
+    apply_task_runner_callback_to_user_message(&mut message, &queued);
+
+    let task_runner_async = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .expect("task runner metadata");
+    assert_eq!(
+        task_runner_async
+            .get("run_ids_by_task")
+            .and_then(|value| value.get("task-1"))
+            .and_then(Value::as_str),
+        Some("run-retry")
+    );
+    assert!(task_runner_async
+        .get("queued_task_ids")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("task-1"))));
+
+    let mut started = queued;
+    started.event = "task.run.started".to_string();
+    started.status = "running".to_string();
+    started.task_status = Some("running".to_string());
+    apply_task_runner_callback_to_user_message(&mut message, &started);
+
+    let task_runner_async = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"))
+        .expect("task runner metadata");
+    assert!(task_runner_async
+        .get("queued_task_ids")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty));
+    assert!(task_runner_async
+        .get("running_task_ids")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("task-1"))));
+
+    let old_terminal = sample_callback_payload();
+    assert!(!task_runner_callback_targets_current_run(
+        &message,
+        &old_terminal,
+    ));
+
+    let metadata_before_old_terminal = message.metadata.clone();
+    if task_runner_callback_targets_current_run(&message, &old_terminal) {
+        apply_task_runner_callback_to_user_message(&mut message, &old_terminal);
+    }
+    assert_eq!(message.metadata, metadata_before_old_terminal);
 }
 
 #[test]
@@ -415,7 +546,7 @@ fn program_managed_planner_cancellation_does_not_create_a_chat_message() {
     payload.cancelled_by_user_id = Some("mcp-management:mcp-session-1".to_string());
     payload.cancelled_by_username = Some("mcp-management-chatos_planning_agent".to_string());
 
-    assert!(!should_publish_task_runner_terminal_message(&payload));
+    assert!(!should_publish_task_runner_status_message(&payload));
 }
 
 #[test]
@@ -426,7 +557,7 @@ fn replacement_cancellation_does_not_create_one_message_per_old_task() {
     payload.cancel_reason = Some("重新执行前继续取消旧需求执行：深渊余烬".to_string());
     payload.cancelled_by_user_id = Some("user-1".to_string());
 
-    assert!(!should_publish_task_runner_terminal_message(&payload));
+    assert!(!should_publish_task_runner_status_message(&payload));
 }
 
 #[test]
@@ -437,7 +568,7 @@ fn direct_user_cancellation_remains_visible() {
     payload.cancel_reason = Some("用户停止本次任务".to_string());
     payload.cancelled_by_user_id = Some("user-1".to_string());
 
-    assert!(should_publish_task_runner_terminal_message(&payload));
+    assert!(should_publish_task_runner_status_message(&payload));
 }
 
 #[test]
@@ -448,7 +579,7 @@ fn dependency_cascade_cancellation_does_not_create_duplicate_chat_messages() {
     payload.cancelled_because_task_id = Some("task-root".to_string());
     payload.cancelled_by_user_id = Some("user-1".to_string());
 
-    assert!(!should_publish_task_runner_terminal_message(&payload));
+    assert!(!should_publish_task_runner_status_message(&payload));
 }
 
 #[test]

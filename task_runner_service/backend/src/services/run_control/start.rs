@@ -344,10 +344,9 @@ impl RunService {
                 None,
             ))
             .await?;
-        // Publish the new run identity immediately. Retries reuse the same task
-        // id, so downstream project execution links must replace the terminal
-        // run id/status before batch pause or cancellation decisions are made.
-        self.try_send_task_callback("task.run.started", task_id, Some(&run))
+        // Keep project execution links on the newest run while it is queued.
+        // The user-visible started callback is emitted only after real execution begins.
+        self.try_send_task_callback("task.run.queued", task_id, Some(&run))
             .await;
         Ok(run)
     }

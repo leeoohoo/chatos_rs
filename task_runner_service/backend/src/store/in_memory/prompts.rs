@@ -304,6 +304,7 @@ mod tests {
             claim_until: None,
             attempt: 0,
             attempts: Vec::new(),
+            chatos_started_callback_delivery: None,
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,

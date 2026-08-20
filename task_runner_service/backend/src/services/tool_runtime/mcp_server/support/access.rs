@@ -222,6 +222,7 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
                 "claim_token",
                 "claim_until",
                 "summary_job_run_id",
+                "chatos_started_callback_delivery",
                 "chatos_callback_delivery",
             ] {
                 object.remove(field);

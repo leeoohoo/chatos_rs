@@ -28,7 +28,8 @@ use self::messages::{
     apply_task_runner_callback_to_user_message,
     build_task_runner_callback_assistant_message_with_contact,
     build_task_runner_callback_contact_display, messages_match_for_callback_upsert,
-    publish_task_runner_callback_realtime, should_publish_task_runner_terminal_message,
+    prepare_task_runner_callback_message_update, publish_task_runner_callback_realtime,
+    should_publish_task_runner_status_message, task_runner_callback_targets_current_run,
 };
 
 #[derive(Debug, Deserialize)]
@@ -224,8 +225,10 @@ async fn task_runner_callback_authorized(
         .await;
     }
 
-    let user_message_changed =
-        apply_task_runner_callback_to_user_message(&mut user_message, &payload);
+    let callback_targets_current_run =
+        task_runner_callback_targets_current_run(&user_message, &payload);
+    let user_message_changed = callback_targets_current_run
+        && apply_task_runner_callback_to_user_message(&mut user_message, &payload);
     let saved_user_message = if user_message_changed {
         match conversation_messages::upsert_message_in_session(&session, &user_message).await {
             Ok(message) => Some(message),
@@ -240,25 +243,27 @@ async fn task_runner_callback_authorized(
         Some(user_message.clone())
     };
 
-    if let Some(saved_user_message) = saved_user_message.as_ref() {
-        if let Err(err) =
-            sync_project_requirement_execution_status(saved_user_message, &payload).await
-        {
-            warn!(
-                session_id = session.id.as_str(),
-                user_message_id = user_message_id.as_str(),
-                task_id = payload.task_id.as_str(),
-                event = payload.event.as_str(),
-                error = err.as_str(),
-                "failed to sync project requirement execution status"
-            );
+    if callback_targets_current_run {
+        if let Some(saved_user_message) = saved_user_message.as_ref() {
+            if let Err(err) =
+                sync_project_requirement_execution_status(saved_user_message, &payload).await
+            {
+                warn!(
+                    session_id = session.id.as_str(),
+                    user_message_id = user_message_id.as_str(),
+                    task_id = payload.task_id.as_str(),
+                    event = payload.event.as_str(),
+                    error = err.as_str(),
+                    "failed to sync project requirement execution status"
+                );
+            }
         }
     }
 
     let (saved_assistant_message, assistant_message_changed) =
-        if should_publish_task_runner_terminal_message(&payload) {
+        if should_publish_task_runner_status_message(&payload) {
             let contact_display = build_task_runner_callback_contact_display(&session);
-            let assistant_message = build_task_runner_callback_assistant_message_with_contact(
+            let mut assistant_message = build_task_runner_callback_assistant_message_with_contact(
                 &session.id,
                 &payload,
                 Some(&contact_display),
@@ -277,15 +282,34 @@ async fn task_runner_callback_authorized(
                         ),
                     );
                 }
-                Ok(Some(existing_message))
-                    if messages_match_for_callback_upsert(
+                Ok(Some(existing_message)) => {
+                    if !prepare_task_runner_callback_message_update(
+                        &existing_message,
+                        &mut assistant_message,
+                        &payload,
+                    ) || messages_match_for_callback_upsert(
                         &existing_message,
                         &assistant_message,
-                    ) =>
-                {
-                    (Some(existing_message), false)
+                    ) {
+                        (Some(existing_message), false)
+                    } else {
+                        match conversation_messages::upsert_message_in_session(
+                            &session,
+                            &assistant_message,
+                        )
+                        .await
+                        {
+                            Ok(message) => (Some(message), true),
+                            Err(err) => {
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(json!({ "accepted": false, "error": err })),
+                                );
+                            }
+                        }
+                    }
                 }
-                Ok(_) => {
+                Ok(None) => {
                     match conversation_messages::upsert_message_in_session(
                         &session,
                         &assistant_message,

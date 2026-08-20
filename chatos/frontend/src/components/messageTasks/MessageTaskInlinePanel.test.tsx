@@ -128,6 +128,43 @@ describe('MessageTaskInlinePanel', () => {
     expect(onRequestExpandMessage).toHaveBeenCalledTimes(1);
   });
 
+  it('binds callback messages to their task without showing a task selector', () => {
+    const callbackTask: MessageTaskRunnerTask = {
+      ...baseTask,
+      id: 'task-2',
+      title: '创建并验证 Vite React 前端工程骨架',
+      status: 'running',
+      last_run_id: 'run-2',
+    };
+    const openRun = vi.fn();
+    useMessageTasksMock.mockReturnValue({
+      ...useMessageTasksMock(),
+      tasks: [baseTask, callbackTask],
+      openRun,
+    });
+
+    render(<MessageTaskInlinePanel message={{
+      ...message,
+      metadata: {
+        ...message.metadata,
+        task_runner_async: {
+          ...message.metadata?.task_runner_async,
+          task_id: 'task-2',
+          run_id: 'run-2',
+          event: 'task.run.started',
+          status: 'running',
+          callback_at: '2026-08-20T10:00:00Z',
+        },
+      },
+    }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /查看过程/i }));
+
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.getAllByText('创建并验证 Vite React 前端工程骨架').length).toBeGreaterThan(0);
+    expect(openRun).toHaveBeenCalledWith(callbackTask);
+  });
+
   it('does not repeat the summary when it is identical to the full model output', () => {
     useMessageTasksMock.mockReturnValue({
       ...useMessageTasksMock(),

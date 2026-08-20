@@ -78,7 +78,7 @@ const readTaskRunnerMessageKind = (message: Message): string => {
 
 const processLabel = (message: Message): string => {
   const messageKind = readTaskRunnerMessageKind(message);
-  if (messageKind === 'task_terminal_update') {
+  if (messageKind === 'task_lifecycle_update' || messageKind === 'task_terminal_update') {
     return '任务状态更新';
   }
   if (message.role === 'tool') {

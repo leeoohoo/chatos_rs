@@ -53,7 +53,9 @@ pub(super) async fn initialize_model_phase(
         }
         return Err(crate::store::EXECUTION_LANE_BUSY_ERROR.to_string());
     }
-    mark_task_running(service, task, &run.id).await;
+    if mark_task_running(service, task, &run.id).await {
+        service.try_send_started_callback(run).await;
+    }
     persist_prerequisite_context(service, run, prerequisite_context).await;
     let _ = (effective_workspace_dir, authoritative_policy);
     Ok(true)
@@ -144,18 +146,21 @@ async fn mark_run_running(service: &RunService, run: &mut TaskRunRecord) -> Resu
     Ok(())
 }
 
-async fn mark_task_running(service: &RunService, task: &TaskRecord, run_id: &str) {
+async fn mark_task_running(service: &RunService, task: &TaskRecord, run_id: &str) -> bool {
     if let Ok(Some(mut task_record)) = service.store.get_task(&task.id).await {
         if task_record.status == TaskStatus::Cancelled {
-            return;
+            return false;
         }
         task_record.status = TaskStatus::Running;
         task_record.updated_at = now_rfc3339();
         task_record.last_run_id = Some(run_id.to_string());
         if let Err(err) = service.store.save_task(task_record).await {
             warn!("failed to persist running task {}: {}", task.id, err);
+            return false;
         }
+        return true;
     }
+    false
 }
 
 async fn persist_prerequisite_context(

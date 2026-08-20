@@ -187,6 +187,7 @@ impl ContextualTurnRunner {
             || !self.runtime.has_record_writer()
             || !runtime_options.record_options.persist_assistant_records
             || !runtime_options.record_options.persist_tool_records
+            || current_input_items.iter().any(is_durable_history_item)
         {
             return None;
         }
@@ -197,7 +198,7 @@ impl ContextualTurnRunner {
         let sticky_input_items = if current_input_items.is_empty() {
             input_value_to_items(fallback_input.clone())
         } else {
-            compact_sticky_input_items(current_input_items)
+            current_input_items.to_vec()
         };
 
         Some(
@@ -374,12 +375,9 @@ pub async fn build_contextual_input(
         current_input_items.to_vec()
     };
     let has_durable_response_history = current_items.iter().any(is_durable_history_item);
-    let has_memory_context = memory_composer.is_some() && memory_scope.is_some();
-    let excluded_memory_turn_id = if has_durable_response_history {
-        None
-    } else {
-        excluded_memory_turn_id
-    };
+    if has_durable_response_history {
+        return Ok(Value::Array(current_items));
+    }
     let memory_items = if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
         composer
             .compose_input_items_excluding_turn(scope, excluded_memory_turn_id, None)
@@ -388,28 +386,9 @@ pub async fn build_contextual_input(
         Vec::new()
     };
 
-    let mut items = if has_durable_response_history && !has_memory_context {
-        // The first request's exact input is now an immutable cacheable prefix.
-        // Memory Engine is still composed on every turn; only genuinely new
-        // items are appended so prior prompt-cache prefixes are never rewritten.
-        current_items
-    } else {
-        let mut initial = prefixed_input_items.to_vec();
-        initial.extend(memory_items.iter().cloned());
-        if has_durable_response_history {
-            initial.extend(compact_sticky_input_items(current_items.as_slice()));
-        } else {
-            initial.extend(current_items);
-        }
-        initial
-    };
-    if has_durable_response_history && !has_memory_context {
-        for item in prefixed_input_items.iter().chain(memory_items.iter()) {
-            if !items.contains(item) {
-                items.push(item.clone());
-            }
-        }
-    }
+    let mut items = prefixed_input_items.to_vec();
+    items.extend(memory_items);
+    items.extend(current_items);
 
     Ok(Value::Array(items))
 }
@@ -428,72 +407,12 @@ fn is_responses_output_or_result_item(item: &Value) -> bool {
     ) || (item.get("type").and_then(Value::as_str) == Some("message") && item.get("id").is_some())
 }
 
-fn compact_sticky_input_items(current_input_items: &[Value]) -> Vec<Value> {
-    if !current_input_items.iter().any(is_durable_history_item) {
-        return current_input_items.to_vec();
-    }
-
-    let mut compacted = Vec::new();
-    if let Some(user_item) = current_input_items.iter().rev().find(|item| {
-        item.get("role").and_then(Value::as_str) == Some("user") && item.get("content").is_some()
-    }) {
-        compacted.push(user_item.clone());
-    }
-
-    let response_suffix_start = current_input_items
-        .iter()
-        .rposition(is_non_tool_history_item)
-        .map(|index| index + 1);
-    let suffix_start = [
-        response_suffix_start,
-        latest_chat_tool_batch_start(current_input_items),
-    ]
-    .into_iter()
-    .flatten()
-    .max()
-    .unwrap_or(0);
-    for item in &current_input_items[suffix_start..] {
-        if is_tool_exchange_item(item) && !compacted.contains(item) {
-            compacted.push(item.clone());
-        }
-    }
-
-    if compacted.is_empty() {
-        current_input_items.to_vec()
-    } else {
-        compacted
-    }
-}
-
 fn is_durable_history_item(item: &Value) -> bool {
     is_responses_output_or_result_item(item)
         || matches!(
             item.get("role").and_then(Value::as_str),
             Some("assistant" | "tool")
         )
-}
-
-fn is_non_tool_history_item(item: &Value) -> bool {
-    is_durable_history_item(item) && !is_tool_exchange_item(item)
-}
-
-fn is_tool_exchange_item(item: &Value) -> bool {
-    matches!(
-        item.get("type").and_then(Value::as_str),
-        Some("function_call")
-            | Some("function_call_output")
-            | Some("computer_call")
-            | Some("computer_call_output")
-    ) || item.get("role").and_then(Value::as_str) == Some("tool")
-        || (item.get("role").and_then(Value::as_str) == Some("assistant")
-            && (item.get("tool_calls").is_some() || item.get("function_call").is_some()))
-}
-
-fn latest_chat_tool_batch_start(items: &[Value]) -> Option<usize> {
-    items.iter().rposition(|item| {
-        item.get("role").and_then(Value::as_str) == Some("assistant")
-            && (item.get("tool_calls").is_some() || item.get("function_call").is_some())
-    })
 }
 
 pub fn input_value_to_items(input: Value) -> Vec<Value> {
@@ -529,8 +448,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        build_contextual_input, compact_sticky_input_items, input_value_to_items, user_text_item,
-        ContextualTurnRequest, RuntimeTurnSpec,
+        build_contextual_input, input_value_to_items, user_text_item, ContextualTurnRequest,
+        RuntimeTurnSpec,
     };
     use crate::{
         AiRuntime, AiRuntimeOptions, AiTurnStatus, MemoryContextComposer, MemoryScope,
@@ -615,12 +534,11 @@ mod tests {
         .expect("contextual input");
         let items = input.as_array().expect("items");
 
-        assert_eq!(&items[..durable.len()], durable.as_slice());
-        assert_eq!(items.last().unwrap()["content"], "stable prompt");
+        assert_eq!(items, durable.as_slice());
     }
 
     #[tokio::test]
-    async fn memory_context_compacts_durable_history_behind_stable_prefix() {
+    async fn durable_history_is_not_recomposed_with_memory_context() {
         async fn compose() -> Json<Value> {
             Json(json!({
                 "thread_id": "thread-1",
@@ -671,20 +589,32 @@ mod tests {
         server.abort();
 
         let items = input.as_array().expect("items");
-        assert_eq!(items[0]["content"].as_str(), Some("stable prompt"));
-        assert!(items[1].to_string().contains("thread_summary_top_level"));
-        assert!(items[1].to_string().contains("summary"));
+        assert_eq!(items, durable.as_slice());
         assert_eq!(
-            items[2]["content"].as_str(),
-            Some("implement inventory cli")
+            items
+                .iter()
+                .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+                .count(),
+            1
         );
-        assert_eq!(items[3]["call_id"].as_str(), Some("call-new"));
-        assert_eq!(items[4]["call_id"].as_str(), Some("call-new"));
-        assert!(!input.to_string().contains("old README"));
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| item.get("call_id").and_then(Value::as_str) == Some("call-old"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| item.get("call_id").and_then(Value::as_str) == Some("call-new"))
+                .count(),
+            2
+        );
     }
 
     #[tokio::test]
-    async fn durable_history_keeps_current_turn_memory_records() {
+    async fn durable_history_does_not_duplicate_current_turn_memory_records() {
         async fn compose() -> Json<Value> {
             Json(json!({
                 "thread_id": "thread-1",
@@ -746,13 +676,11 @@ mod tests {
         .expect("contextual input");
         server.abort();
 
-        assert!(input
-            .to_string()
-            .contains("backend directory was already inspected"));
+        assert_eq!(input, Value::Array(durable));
     }
 
     #[tokio::test]
-    async fn chat_style_durable_history_keeps_current_turn_memory_records() {
+    async fn chat_style_durable_history_does_not_duplicate_memory_records() {
         async fn compose() -> Json<Value> {
             Json(json!({
                 "thread_id": "thread-1",
@@ -823,10 +751,7 @@ mod tests {
         .expect("contextual input");
         server.abort();
 
-        assert!(input
-            .to_string()
-            .contains("backend file list was already read"));
-        assert!(!input.to_string().contains("old huge file output"));
+        assert_eq!(input, Value::Array(durable));
     }
 
     #[tokio::test]
@@ -890,40 +815,6 @@ mod tests {
             .to_string()
             .contains("current user prompt already persisted"));
         assert!(input.to_string().contains("build the backend"));
-    }
-
-    #[test]
-    fn compact_sticky_input_items_keeps_task_anchor_and_pending_tool_exchange() {
-        let durable = vec![
-            json!({"role":"user","content":"implement inventory cli"}),
-            json!({"type":"reasoning","id":"rs-1","summary":[]}),
-            json!({"type":"function_call","id":"fc-old","call_id":"call-old","name":"read_file","arguments":"{}"}),
-            json!({"type":"function_call_output","call_id":"call-old","output":"old README"}),
-            json!({"type":"reasoning","id":"rs-2","summary":[]}),
-            json!({"type":"function_call","id":"fc-new","call_id":"call-new","name":"run_tests","arguments":"{}"}),
-            json!({"type":"function_call_output","call_id":"call-new","output":"cargo test"}),
-        ];
-
-        let compacted = compact_sticky_input_items(durable.as_slice());
-
-        assert_eq!(compacted.len(), 3);
-        assert_eq!(compacted[0]["role"].as_str(), Some("user"));
-        assert_eq!(
-            compacted[0]["content"].as_str(),
-            Some("implement inventory cli")
-        );
-        assert_eq!(compacted[1]["call_id"].as_str(), Some("call-new"));
-        assert_eq!(compacted[2]["call_id"].as_str(), Some("call-new"));
-    }
-
-    #[test]
-    fn compact_sticky_input_items_leaves_plain_current_task_unchanged() {
-        let current = vec![
-            json!({"role":"system","content":"workspace fact"}),
-            json!({"role":"user","content":"current task"}),
-        ];
-
-        assert_eq!(compact_sticky_input_items(current.as_slice()), current);
     }
 
     #[tokio::test]
@@ -1069,6 +960,32 @@ mod tests {
         );
 
         assert!(refresh.is_some());
+    }
+
+    #[test]
+    fn contextual_turn_runner_skips_iterative_refresh_for_durable_history() {
+        let runtime = AiRuntime::new(None).with_record_writer(Some(Arc::new(NoopRecordWriter)));
+        let composer = MemoryContextComposer::new_direct(
+            "http://127.0.0.1:1",
+            Duration::from_millis(100),
+            "task_runner",
+        )
+        .expect("composer");
+        let runner = super::ContextualTurnRunner::new(runtime, Some(composer));
+        let runtime_options = AiRuntimeOptions::for_conversation("task_1")
+            .with_record_options(RuntimeRecordOptions::persist_all());
+        let refresh = runner.build_iterative_context_refresh(
+            &runtime_options,
+            Some(&MemoryScope::thread("tenant_1", "task_runner", "task_1")),
+            &[json!({"role":"system","content":"prefix"})],
+            &[
+                json!({"role":"user","content":"current"}),
+                json!({"type":"function_call","call_id":"call-1","name":"read_file","arguments":"{}"}),
+            ],
+            &Value::Null,
+        );
+
+        assert!(refresh.is_none());
     }
 
     #[test]

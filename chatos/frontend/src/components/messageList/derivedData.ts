@@ -32,8 +32,6 @@ type ParsedMessageForList = {
   historyFinalForUserMessageId: string;
   historyFinalForTurnId: string;
   isTaskRunnerCallbackAssistant: boolean;
-  taskRunnerCallbackSourceUserMessageId: string;
-  taskRunnerCallbackSourceTurnId: string;
 };
 
 const getTimeValue = (value: unknown): number => {
@@ -94,11 +92,6 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
   const isTaskRunnerCallbackAssistant = Boolean(
     message.role === 'assistant' && isTaskRunnerCallbackMessage(message),
   );
-  const taskRunnerAsync = (
-    metadataRecord?.task_runner_async
-    && typeof metadataRecord.task_runner_async === 'object'
-    && !Array.isArray(metadataRecord.task_runner_async)
-  ) ? metadataRecord.task_runner_async as Record<string, unknown> : null;
   const isAssistantToolCallCarrier = Boolean(
     message.role === 'assistant'
     && assistantToolCalls.length > 0
@@ -122,110 +115,7 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
     historyFinalForUserMessageId,
     historyFinalForTurnId,
     isTaskRunnerCallbackAssistant,
-    taskRunnerCallbackSourceUserMessageId: normalizeMetaId(
-      taskRunnerAsync?.source_user_message_id,
-    ),
-    taskRunnerCallbackSourceTurnId: normalizeTurnId(
-      taskRunnerAsync?.source_turn_id,
-    ),
   };
-};
-
-const parsedBelongsToTaskRunnerSource = (
-  parsed: ParsedMessageForList,
-  sourceUserMessageId: string,
-  sourceTurnId: string,
-): boolean => {
-  if (sourceUserMessageId) {
-    if (parsed.id === sourceUserMessageId) {
-      return true;
-    }
-    if (parsed.historyFinalForUserMessageId === sourceUserMessageId) {
-      return true;
-    }
-    if (parsed.historyProcessUserMessageId === sourceUserMessageId) {
-      return true;
-    }
-  }
-  if (!sourceTurnId) {
-    return false;
-  }
-  return (
-    parsed.conversationTurnId === sourceTurnId
-    || parsed.historyFinalForTurnId === sourceTurnId
-    || parsed.historyProcessTurnId === sourceTurnId
-  );
-};
-
-const anchorTaskRunnerCallbacksToSourceTurns = (
-  visible: ParsedMessageForList[],
-): ParsedMessageForList[] => {
-  if (visible.length <= 1) {
-    return visible;
-  }
-
-  const anchoredCallbacks = visible.filter((parsed) => (
-    parsed.isTaskRunnerCallbackAssistant
-    && (parsed.taskRunnerCallbackSourceUserMessageId || parsed.taskRunnerCallbackSourceTurnId)
-  ));
-  if (anchoredCallbacks.length === 0) {
-    return visible;
-  }
-
-  const baseOutput = visible.filter((parsed) => !anchoredCallbacks.includes(parsed));
-  const callbackGroups = new Map<string, ParsedMessageForList[]>();
-  const fallbackCallbacks: ParsedMessageForList[] = [];
-
-  anchoredCallbacks.forEach((callback) => {
-    let insertAfter = -1;
-    baseOutput.forEach((candidate, index) => {
-      if (
-        parsedBelongsToTaskRunnerSource(
-          candidate,
-          callback.taskRunnerCallbackSourceUserMessageId,
-          callback.taskRunnerCallbackSourceTurnId,
-        )
-      ) {
-        insertAfter = index;
-      }
-    });
-
-    if (insertAfter < 0) {
-      fallbackCallbacks.push(callback);
-      return;
-    }
-
-    const anchorId = baseOutput[insertAfter].id;
-    callbackGroups.set(anchorId, [
-      ...(callbackGroups.get(anchorId) || []),
-      callback,
-    ]);
-  });
-
-  const originalIndexById = new Map(visible.map((item, index) => [item.id, index]));
-  const output: ParsedMessageForList[] = [];
-  baseOutput.forEach((candidate) => {
-    output.push(candidate);
-    const callbacks = callbackGroups.get(candidate.id);
-    if (!callbacks) {
-      return;
-    }
-    callbacks.sort((left, right) => (
-      left.time - right.time
-      || (originalIndexById.get(left.id) ?? 0) - (originalIndexById.get(right.id) ?? 0)
-    ));
-    output.push(...callbacks);
-  });
-
-  fallbackCallbacks.forEach((callback) => {
-    const originalIndex = originalIndexById.get(callback.id) ?? visible.length;
-    const fallbackIndex = output.findIndex((candidate) => (
-      (originalIndexById.get(candidate.id) ?? visible.length) > originalIndex
-    ));
-    output.splice(fallbackIndex < 0 ? output.length : fallbackIndex, 0, callback);
-  });
-
-  return output;
 };
 
 export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[]) => {
@@ -312,8 +202,7 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
       }
       return bestFinalAssistantByKey.get(dedupKey)?.id === parsed.id;
     });
-    return anchorTaskRunnerCallbacksToSourceTurns(deduped)
-      .map((parsed) => parsed.message);
+    return deduped.map((parsed) => parsed.message);
   })();
 
   return {

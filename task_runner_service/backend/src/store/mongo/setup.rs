@@ -150,6 +150,12 @@ impl MongoStore {
         .await?;
         self.ensure_index(
             &self.runs,
+            doc! { "chatos_started_callback_delivery.status": 1, "chatos_started_callback_delivery.next_attempt_at": 1 },
+            false,
+        )
+        .await?;
+        self.ensure_index(
+            &self.runs,
             doc! { "post_process_event_pending": 1, "updated_at": 1 },
             false,
         )

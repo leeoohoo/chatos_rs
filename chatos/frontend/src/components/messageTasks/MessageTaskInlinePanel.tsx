@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, useMemo, useState, type FC } from 'react';
+import { useEffect, useMemo, useRef, useState, type FC } from 'react';
 import { Activity, ChevronDown, LoaderCircle, ScrollText } from 'lucide-react';
 import type { MessageTaskRunnerLookupOptions } from '../../lib/api/client/messages';
 import type { MessageTaskRunnerTask } from '../../lib/api/client/types';
@@ -86,8 +86,10 @@ const resolveLookup = (message: Message): MessageTaskRunnerLookupOptions => {
 const pickTask = (
   tasks: MessageTaskRunnerTask[],
   selectedTaskId: string | null,
+  boundTaskId?: string | null,
 ): MessageTaskRunnerTask | null => (
-  tasks.find((task) => task.id === selectedTaskId)
+  tasks.find((task) => task.id === boundTaskId)
+  || tasks.find((task) => task.id === selectedTaskId)
   || tasks[0]
   || null
 );
@@ -100,6 +102,13 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
   const [pendingView, setPendingView] = useState<InlinePanelView>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const lookup = useMemo(() => resolveLookup(message), [message]);
+  const taskRunnerAsync = message.metadata?.task_runner_async;
+  const boundTaskId = readString(taskRunnerAsync?.task_id);
+  const boundRunId = readString(taskRunnerAsync?.run_id);
+  const callbackRevision = readString(taskRunnerAsync?.callback_at)
+    || readString(taskRunnerAsync?.event)
+    || readString(taskRunnerAsync?.status);
+  const callbackRevisionRef = useRef(callbackRevision);
   const {
     tasks,
     loading,
@@ -115,14 +124,21 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
     open: expandedView !== null,
     messageId: message.id,
     lookup,
+    taskId: boundTaskId,
+    runId: boundRunId,
+    revision: callbackRevision,
   });
 
-  const selectedTask = pickTask(tasks, selectedTaskId);
-  const selectedRunId = readString(selectedTask?.last_run_id);
+  const selectedTask = pickTask(tasks, selectedTaskId, boundTaskId);
+  const selectedRunId = boundRunId || readString(selectedTask?.last_run_id);
   const processLoading = Boolean(selectedRunId && loadingRunId === selectedRunId);
-  const detailSourceTask = detailTask?.id === selectedTaskId ? detailTask : selectedTask;
-  const processSourceTask = runDetail?.task?.id === selectedTaskId ? runDetail.task : selectedTask;
-  const processTasks = runDetail?.task?.id === selectedTaskId && Array.isArray(runDetail.process_tasks)
+  const detailSourceTask = detailTask?.id === selectedTask?.id ? detailTask : selectedTask;
+  const processSourceTask = runDetail && runDetail.task?.id === selectedTask?.id
+    ? runDetail.task
+    : selectedTask;
+  const processTasks = runDetail
+    && runDetail.task?.id === selectedTask?.id
+    && Array.isArray(runDetail.process_tasks)
     ? runDetail.process_tasks
     : [];
   const processTimelineItems = buildTaskProcessTimelineItems(
@@ -145,14 +161,14 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
     if (selectedTaskId || tasks.length === 0) {
       return;
     }
-    setSelectedTaskId(tasks[0].id);
-  }, [selectedTaskId, tasks]);
+    setSelectedTaskId(boundTaskId || tasks[0].id);
+  }, [boundTaskId, selectedTaskId, tasks]);
 
   useEffect(() => {
     if (!expandedView || !pendingView) {
       return;
     }
-    const nextTask = pickTask(tasks, selectedTaskId);
+    const nextTask = pickTask(tasks, selectedTaskId, boundTaskId);
     if (!nextTask) {
       return;
     }
@@ -163,7 +179,7 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
       void openRun(nextTask);
     }
     setPendingView(null);
-  }, [expandedView, openDetail, openRun, pendingView, selectedTaskId, tasks]);
+  }, [boundTaskId, expandedView, openDetail, openRun, pendingView, selectedTaskId, tasks]);
 
   useEffect(() => {
     setExpandedView(null);
@@ -183,7 +199,7 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
     }
     onRequestExpandMessage?.();
     setExpandedView(view);
-    const nextTask = pickTask(tasks, selectedTaskId);
+    const nextTask = pickTask(tasks, selectedTaskId, boundTaskId);
     if (!nextTask) {
       setPendingView(view);
       return;
@@ -196,6 +212,24 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
     }
     setPendingView(null);
   };
+
+  useEffect(() => {
+    const previousRevision = callbackRevisionRef.current;
+    callbackRevisionRef.current = callbackRevision;
+    if (
+      !expandedView
+      || !selectedTask
+      || !callbackRevision
+      || previousRevision === callbackRevision
+    ) {
+      return;
+    }
+    if (expandedView === 'detail') {
+      void openDetail(selectedTask);
+    } else {
+      void openRun(selectedTask);
+    }
+  }, [callbackRevision, expandedView, openDetail, openRun, selectedTask]);
 
   const handleTaskChange = (taskId: string) => {
     setSelectedTaskId(taskId);
@@ -254,7 +288,7 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
 
       {expandedView ? (
         <div className="mt-3 border-t border-border/70 pt-3">
-          {tasks.length > 1 ? (
+          {!boundTaskId && tasks.length > 1 ? (
             <label className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
               <span className="shrink-0">查看任务</span>
               <select
@@ -296,7 +330,7 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
                 <span className="text-sm font-semibold text-foreground">
                   {processSourceTask?.title || selectedTask.id}
                 </span>
-                <StatusBadge status={processSourceTask?.status || selectedTask.status} />
+                <StatusBadge status={runDetail?.run?.status || processSourceTask?.status || selectedTask.status} />
               </div>
               <TaskProcessTimeline items={processTimelineItems} />
             </div>
@@ -308,7 +342,7 @@ export const MessageTaskInlinePanel: FC<MessageTaskInlinePanelProps> = ({
                 <span className="text-sm font-semibold text-foreground">
                   {detailSourceTask?.title || selectedTask.id}
                 </span>
-                <StatusBadge status={detailSourceTask?.status || selectedTask.status} />
+                <StatusBadge status={detailSourceTask?.last_run?.status || detailSourceTask?.status || selectedTask.status} />
               </div>
 
               <FieldGrid

@@ -312,6 +312,8 @@ pub struct TaskRunRecord {
     #[serde(default)]
     pub attempts: Vec<TaskRunAttemptRecord>,
     #[serde(default)]
+    pub chatos_started_callback_delivery: Option<ChatosCallbackDeliveryState>,
+    #[serde(default)]
     pub chatos_callback_delivery: Option<ChatosCallbackDeliveryState>,
     pub created_at: String,
     pub updated_at: String,
@@ -408,6 +410,7 @@ impl TaskRunRecord {
             claim_until: None,
             attempt: 0,
             attempts: Vec::new(),
+            chatos_started_callback_delivery: None,
             chatos_callback_delivery: None,
             created_at: now.clone(),
             updated_at: now,

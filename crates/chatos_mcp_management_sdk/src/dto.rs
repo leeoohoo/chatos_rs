@@ -376,6 +376,12 @@ pub struct RuntimeSessionRoutesResponse {
     pub routes: Vec<ResolvedMcpRoute>,
     pub tools: Vec<RuntimeToolDescriptor>,
     #[serde(default)]
+    pub effective_mcp_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_skills_prompt: Option<String>,
+    #[serde(default)]
+    pub plugin_instruction_items: Vec<serde_json::Value>,
+    #[serde(default)]
     pub mcp_command_queue: String,
     #[serde(default)]
     pub mcp_server_url: String,

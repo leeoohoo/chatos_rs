@@ -66,15 +66,35 @@ impl RunService {
             .await?;
         let mut attempted = 0usize;
         for run in runs {
-            let Some(event) = super::dispatch::terminal_callback_event_for_status(run.status)
-            else {
-                continue;
-            };
-            if self
-                .deliver_pending_terminal_callback(run.id.as_str(), event, force)
-                .await
+            if run
+                .chatos_started_callback_delivery
+                .as_ref()
+                .is_some_and(|delivery| {
+                    delivery.status == crate::models::ChatosCallbackDeliveryStatus::Pending
+                })
+                && self
+                    .deliver_pending_callback(
+                        run.id.as_str(),
+                        super::dispatch::TASK_RUN_STARTED_EVENT,
+                        force,
+                    )
+                    .await
             {
                 attempted += 1;
+            }
+            if let Some(event) = super::dispatch::terminal_callback_event_for_status(run.status) {
+                if run
+                    .chatos_callback_delivery
+                    .as_ref()
+                    .is_some_and(|delivery| {
+                        delivery.status == crate::models::ChatosCallbackDeliveryStatus::Pending
+                    })
+                    && self
+                        .deliver_pending_callback(run.id.as_str(), event, force)
+                        .await
+                {
+                    attempted += 1;
+                }
             }
         }
         Ok(attempted)

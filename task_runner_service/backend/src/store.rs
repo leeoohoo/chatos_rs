@@ -72,6 +72,9 @@ fn prepare_run_for_claim_guarded_persist(mut run: TaskRunRecord) -> TaskRunRecor
     if run.status != TaskRunStatus::Running || !run.cancel_requested || run.worker_id.is_none() {
         run.cancel_event_pending = false;
     }
+    if run.status == TaskRunStatus::Running && run.started_at.is_some() {
+        ensure_started_callback_pending(&mut run);
+    }
     if task_run_status_is_terminal(run.status) {
         if let Some(attempt_status) = run_attempt_status_for_run_status(run.status) {
             let finished_at = run
@@ -101,6 +104,14 @@ fn ensure_run_post_process_pending(run: &mut TaskRunRecord) {
 
 fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
     merge_run_attempts(&mut run.attempts, &current.attempts);
+    merge_callback_delivery(
+        &mut run.chatos_started_callback_delivery,
+        current.chatos_started_callback_delivery.as_ref(),
+    );
+    merge_callback_delivery(
+        &mut run.chatos_callback_delivery,
+        current.chatos_callback_delivery.as_ref(),
+    );
     run.post_process_completed |= current.post_process_completed;
     run.post_process_dead_lettered |= current.post_process_dead_lettered;
     run.memory_summary_processed |= current.memory_summary_processed;
@@ -122,6 +133,20 @@ fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
         run.post_process_event_pending = false;
     } else {
         run.post_process_event_pending |= current.post_process_event_pending;
+    }
+}
+
+fn merge_callback_delivery(
+    incoming: &mut Option<ChatosCallbackDeliveryState>,
+    current: Option<&ChatosCallbackDeliveryState>,
+) {
+    let Some(current) = current else {
+        return;
+    };
+    if incoming.as_ref().is_none_or(|incoming| {
+        incoming.event == current.event && incoming.updated_at < current.updated_at
+    }) {
+        *incoming = Some(current.clone());
     }
 }
 
@@ -169,6 +194,29 @@ fn terminal_callback_event_for_status(status: TaskRunStatus) -> Option<&'static 
         TaskRunStatus::Blocked => Some("task.blocked"),
         TaskRunStatus::Queued | TaskRunStatus::Running => None,
     }
+}
+
+fn ensure_started_callback_pending(run: &mut TaskRunRecord) {
+    const EVENT: &str = "task.run.started";
+    if run
+        .chatos_started_callback_delivery
+        .as_ref()
+        .is_some_and(|delivery| delivery.event == EVENT)
+    {
+        return;
+    }
+    let updated_at = run
+        .started_at
+        .clone()
+        .unwrap_or_else(|| run.updated_at.clone());
+    run.chatos_started_callback_delivery = Some(ChatosCallbackDeliveryState {
+        event: EVENT.to_string(),
+        status: ChatosCallbackDeliveryStatus::Pending,
+        attempt_count: 0,
+        next_attempt_at: Some(updated_at.clone()),
+        last_error: None,
+        updated_at,
+    });
 }
 
 fn ensure_terminal_callback_pending(run: &mut TaskRunRecord) {

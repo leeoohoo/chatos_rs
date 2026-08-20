@@ -41,12 +41,15 @@ pub(super) fn apply_task_runner_callback_to_user_message(
     upsert_string(task_runner_meta, "last_task_id", payload.task_id.as_str());
     if let Some(run_id) = normalize_callback_value(payload.run_id.as_deref()) {
         upsert_string(task_runner_meta, "last_run_id", run_id.as_str());
+        let run_ids_by_task = ensure_object_field(task_runner_meta, "run_ids_by_task");
+        upsert_string(run_ids_by_task, payload.task_id.as_str(), run_id.as_str());
     }
     if let Some(callback_at) = normalize_callback_value(payload.callback_at.as_deref()) {
         upsert_string(task_runner_meta, "last_event_at", callback_at.as_str());
     }
 
     let mut created_task_ids = read_string_set(task_runner_meta.get("created_task_ids"));
+    let mut queued_task_ids = read_string_set(task_runner_meta.get("queued_task_ids"));
     let mut running_task_ids = read_string_set(task_runner_meta.get("running_task_ids"));
     let mut terminal_task_ids = read_string_set(task_runner_meta.get("terminal_task_ids"));
     let mut succeeded_task_ids = read_string_set(task_runner_meta.get("succeeded_task_ids"));
@@ -71,6 +74,19 @@ pub(super) fn apply_task_runner_callback_to_user_message(
         "task.created" => {
             created_task_ids.insert(payload.task_id.clone());
         }
+        "task.run.queued" => {
+            created_task_ids.insert(payload.task_id.clone());
+            reset_task_terminal_state(
+                payload.task_id.as_str(),
+                &mut terminal_task_ids,
+                &mut succeeded_task_ids,
+                &mut failed_task_ids,
+                &mut blocked_task_ids,
+                &mut cancelled_task_ids,
+            );
+            running_task_ids.remove(payload.task_id.as_str());
+            queued_task_ids.insert(payload.task_id.clone());
+        }
         "task.run.started" => {
             created_task_ids.insert(payload.task_id.clone());
             reset_task_terminal_state(
@@ -81,10 +97,12 @@ pub(super) fn apply_task_runner_callback_to_user_message(
                 &mut blocked_task_ids,
                 &mut cancelled_task_ids,
             );
+            queued_task_ids.remove(payload.task_id.as_str());
             running_task_ids.insert(payload.task_id.clone());
         }
         "task.completed" => {
             created_task_ids.insert(payload.task_id.clone());
+            queued_task_ids.remove(payload.task_id.as_str());
             running_task_ids.remove(payload.task_id.as_str());
             reset_task_terminal_state(
                 payload.task_id.as_str(),
@@ -99,6 +117,7 @@ pub(super) fn apply_task_runner_callback_to_user_message(
         }
         "task.failed" => {
             created_task_ids.insert(payload.task_id.clone());
+            queued_task_ids.remove(payload.task_id.as_str());
             running_task_ids.remove(payload.task_id.as_str());
             reset_task_terminal_state(
                 payload.task_id.as_str(),
@@ -113,6 +132,7 @@ pub(super) fn apply_task_runner_callback_to_user_message(
         }
         "task.blocked" => {
             created_task_ids.insert(payload.task_id.clone());
+            queued_task_ids.remove(payload.task_id.as_str());
             running_task_ids.remove(payload.task_id.as_str());
             reset_task_terminal_state(
                 payload.task_id.as_str(),
@@ -127,6 +147,7 @@ pub(super) fn apply_task_runner_callback_to_user_message(
         }
         "task.cancelled" => {
             created_task_ids.insert(payload.task_id.clone());
+            queued_task_ids.remove(payload.task_id.as_str());
             running_task_ids.remove(payload.task_id.as_str());
             reset_task_terminal_state(
                 payload.task_id.as_str(),
@@ -174,6 +195,7 @@ pub(super) fn apply_task_runner_callback_to_user_message(
     );
 
     write_string_set(task_runner_meta, "created_task_ids", &created_task_ids);
+    write_string_set(task_runner_meta, "queued_task_ids", &queued_task_ids);
     write_string_set(task_runner_meta, "running_task_ids", &running_task_ids);
     write_string_set(task_runner_meta, "terminal_task_ids", &terminal_task_ids);
     write_string_set(task_runner_meta, "succeeded_task_ids", &succeeded_task_ids);
@@ -210,6 +232,43 @@ pub(super) fn apply_task_runner_callback_to_user_message(
     );
 
     message.metadata != original_metadata
+}
+
+pub(super) fn task_runner_callback_targets_current_run(
+    message: &Message,
+    payload: &TaskRunnerCallbackRequest,
+) -> bool {
+    let Some(incoming_run_id) = normalize_callback_value(payload.run_id.as_deref()) else {
+        return true;
+    };
+    let task_runner_meta = message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("task_runner_async"));
+    let current_run_id = task_runner_meta
+        .and_then(|metadata| metadata.get("run_ids_by_task"))
+        .and_then(|run_ids| run_ids.get(payload.task_id.as_str()))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let task_is_terminal = task_runner_meta
+        .and_then(|metadata| metadata.get("terminal_task_ids"))
+        .and_then(Value::as_array)
+        .is_some_and(|task_ids| {
+            task_ids
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|task_id| task_id.trim() == payload.task_id.trim())
+        });
+
+    match current_run_id {
+        Some(current_run_id) if current_run_id != incoming_run_id => matches!(
+            payload.event.as_str(),
+            "task.run.queued" | "task.run.started"
+        ),
+        Some(_) if payload.event == "task.run.started" && task_is_terminal => false,
+        _ => true,
+    }
 }
 
 pub(super) fn messages_match_for_callback_upsert(existing: &Message, candidate: &Message) -> bool {
@@ -390,9 +449,12 @@ pub(super) fn is_task_runner_terminal_event(event: &str) -> bool {
     )
 }
 
-pub(super) fn should_publish_task_runner_terminal_message(
+pub(super) fn should_publish_task_runner_status_message(
     payload: &TaskRunnerCallbackRequest,
 ) -> bool {
+    if payload.event == "task.run.started" {
+        return true;
+    }
     if !is_task_runner_terminal_event(payload.event.as_str()) {
         return false;
     }
@@ -496,7 +558,7 @@ pub(super) fn build_task_runner_callback_assistant_message_with_contact(
     }
     let task_runner_meta = ensure_object_field(metadata, "task_runner_async");
     upsert_string(task_runner_meta, "mode", "contact_async");
-    upsert_string(task_runner_meta, "message_kind", "task_terminal_update");
+    upsert_string(task_runner_meta, "message_kind", "task_lifecycle_update");
     if let Some(contact_display) = contact_display {
         if let Some(contact_id) = contact_display.contact_id.as_deref() {
             upsert_string(task_runner_meta, "contact_id", contact_id);
@@ -539,6 +601,11 @@ pub(super) fn build_task_runner_callback_assistant_message_with_contact(
     }
     if let Some(callback_at) = normalize_callback_value(payload.callback_at.as_deref()) {
         upsert_string(task_runner_meta, "callback_at", callback_at.as_str());
+        if payload.event == "task.run.started" {
+            upsert_string(task_runner_meta, "started_at", callback_at.as_str());
+        } else if is_task_runner_terminal_event(payload.event.as_str()) {
+            upsert_string(task_runner_meta, "finished_at", callback_at.as_str());
+        }
     }
     let callback_language = task_runner_callback_language(payload);
     if let Some((_, detail_source, detail)) =
@@ -555,22 +622,57 @@ pub(super) fn build_task_runner_callback_assistant_message_with_contact(
     message
 }
 
+pub(super) fn prepare_task_runner_callback_message_update(
+    existing: &Message,
+    candidate: &mut Message,
+    payload: &TaskRunnerCallbackRequest,
+) -> bool {
+    if payload.event == "task.run.started"
+        && existing
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("task_runner_async"))
+            .and_then(|metadata| metadata.get("event"))
+            .and_then(Value::as_str)
+            .is_some_and(is_task_runner_terminal_event)
+    {
+        return false;
+    }
+
+    candidate.created_at = existing.created_at.clone();
+    let existing_started_at = existing
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("task_runner_async"))
+        .and_then(|metadata| metadata.get("started_at"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    if let Some(started_at) = existing_started_at {
+        let metadata = ensure_message_metadata_object(candidate);
+        let task_runner_meta = ensure_object_field(metadata, "task_runner_async");
+        upsert_string(task_runner_meta, "started_at", started_at.as_str());
+    }
+    true
+}
+
 fn build_task_runner_callback_message_id(payload: &TaskRunnerCallbackRequest) -> String {
     let source_user_message_id =
         normalize_callback_value(payload.source_user_message_id.as_deref())
             .unwrap_or_else(|| "unknown_user_message".to_string());
     let task_id = payload.task_id.trim();
-    let event = payload.event.trim();
     let run_scope = normalize_callback_value(payload.run_id.as_deref())
         .or_else(|| normalize_callback_value(payload.source_run_id.as_deref()))
         .unwrap_or_else(|| payload.status.trim().to_string());
-    format!("task_runner_callback::{source_user_message_id}::{task_id}::{event}::{run_scope}")
+    format!("task_runner_callback::{source_user_message_id}::{task_id}::{run_scope}")
 }
 
 fn build_task_runner_callback_message_content(payload: &TaskRunnerCallbackRequest) -> String {
     let title = payload.task_title.trim();
     let language = task_runner_callback_language(payload);
     let headline = match (language, payload.event.as_str()) {
+        (TaskRunnerCallbackLanguage::EnUs, "task.run.started") => {
+            format!("Task “{title}” started")
+        }
         (TaskRunnerCallbackLanguage::EnUs, "task.completed") => {
             format!("Task “{title}” completed")
         }
@@ -585,6 +687,9 @@ fn build_task_runner_callback_message_content(payload: &TaskRunnerCallbackReques
         }
         (TaskRunnerCallbackLanguage::EnUs, _) => {
             format!("Task “{title}” status updated")
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.run.started") => {
+            format!("任务「{title}」已开始执行")
         }
         (TaskRunnerCallbackLanguage::ZhCn, "task.completed") => {
             format!("任务「{title}」已完成")
