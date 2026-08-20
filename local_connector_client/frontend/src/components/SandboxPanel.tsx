@@ -11,7 +11,6 @@ import {
 
 import {
   api,
-  type ConnectorStatus,
   type SandboxCapabilities,
   type SandboxLease,
   type SandboxSettings,
@@ -20,10 +19,8 @@ import {
 import { SandboxPolicySettings } from './SandboxPolicySettings';
 
 export function SandboxPanel({
-  status,
   onRefresh,
 }: {
-  status: ConnectorStatus;
   onRefresh: () => Promise<void>;
 }) {
   const [capabilities, setCapabilities] = React.useState<SandboxCapabilities | null>(null);
@@ -48,7 +45,7 @@ export function SandboxPanel({
   }, []);
 
   const refreshSandboxDetails = React.useCallback(async () => {
-    if (!status.sandbox.enabled) {
+    if (!settings?.enabled) {
       setLeases([]);
       return;
     }
@@ -61,7 +58,7 @@ export function SandboxPanel({
     } finally {
       setLoadingDetails(false);
     }
-  }, [status.sandbox.enabled]);
+  }, [settings?.enabled]);
 
   React.useEffect(() => {
     void refreshSandboxConfig();
@@ -73,9 +70,9 @@ export function SandboxPanel({
 
   React.useEffect(() => {
     if (
-      status.sandbox.enabled
+      settings?.enabled
       || !capabilities
-      || status.sandbox.permission_configuration_error
+      || settings?.permission_configuration_error
       || enablingSandbox.current
     ) {
       return;
@@ -84,7 +81,7 @@ export function SandboxPanel({
       (capability) => capability.backend === 'local_process' && capability.status === 'ready',
     );
     if (!preferred) {
-      setMessage('本机进程沙箱当前不可用，请检查本机沙箱组件。');
+      setMessage('本机进程权限控制当前不可用，请检查 Local Connector Core。');
       return;
     }
     enablingSandbox.current = true;
@@ -93,24 +90,24 @@ export function SandboxPanel({
       default_backend: preferred.backend,
     }).then(async (nextSettings) => {
       setSettings(nextSettings);
-      setMessage('安全沙箱已自动启用');
+      setMessage('本机权限控制已自动启用');
       await onRefresh();
     }).catch((err) => {
-      setMessage(err instanceof Error ? err.message : '启用安全沙箱失败');
+      setMessage(err instanceof Error ? err.message : '启用本机权限控制失败');
     }).finally(() => {
       enablingSandbox.current = false;
     });
-  }, [capabilities, onRefresh, status.sandbox]);
+  }, [capabilities, onRefresh, settings]);
 
   React.useEffect(() => {
-    if (!status.sandbox.enabled) {
+    if (!settings?.enabled) {
       return;
     }
     const interval = window.setInterval(() => {
       void refreshSandboxDetails();
     }, 6000);
     return () => window.clearInterval(interval);
-  }, [refreshSandboxDetails, status.sandbox.enabled]);
+  }, [refreshSandboxDetails, settings?.enabled]);
 
   const saveSandboxSettings = async (
     patch: SandboxSettingsUpdate,
@@ -135,8 +132,8 @@ export function SandboxPanel({
       <div className="panel sandboxHero">
         <div className="panelHeader">
           <div>
-            <h2><Shield size={18} />安全沙箱</h2>
-            <p>使用本机进程隔离，并管理文件、网络与 AI 审批。</p>
+            <h2><Shield size={18} />本机权限控制</h2>
+            <p>使用本机进程运行任务，并管理文件、网络与 AI 审批。</p>
           </div>
           <div className="headerActions">
             <button
@@ -146,19 +143,18 @@ export function SandboxPanel({
                 refreshSandboxDetails(),
                 onRefresh(),
               ])}
-              title="刷新安全沙箱状态"
+              title="刷新本机权限控制状态"
             >
               <RefreshCw size={17} />
             </button>
           </div>
         </div>
-        {status.sandbox.permission_configuration_error ? (
+        {settings?.permission_configuration_error ? (
           <div className="formError">
-            受管权限策略尚未安全加载，沙箱执行已阻止：{status.sandbox.permission_configuration_error}
+            受管权限策略尚未安全加载，本机任务执行已阻止：{settings.permission_configuration_error}
           </div>
         ) : null}
         <SandboxPolicySettings
-          status={status}
           settings={settings}
           capabilities={capabilities}
           saving={savingSettings}
@@ -167,31 +163,31 @@ export function SandboxPanel({
         {message ? <div className="banner">{message}</div> : null}
       </div>
 
-      {status.sandbox.enabled ? (
+      {settings?.enabled ? (
         <details className="panel sandboxAdvancedPanel">
           <summary>
             <span><Settings2 size={16} />高级运行信息</span>
-            <small>查看当前运行中的本机沙箱实例</small>
+            <small>查看当前运行中的本机任务租约</small>
           </summary>
           <div className="sandboxAdvancedContent">
           <section className="panel">
             <div className="panelHeader">
               <div>
-                <h2><Container size={18} />当前沙箱</h2>
-                <p>本地任务运行时创建的隔离实例。</p>
+                <h2><Container size={18} />当前租约</h2>
+                <p>本地任务运行时创建的授权租约。</p>
               </div>
             </div>
             {leases.length ? (
               <div className="leaseTable">
                 <div className="leaseHeader">
-                  <span>Sandbox</span>
+                  <span>Lease</span>
                   <span>Run</span>
                   <span>Backend</span>
                   <span>Status</span>
                 </div>
                 {leases.map((lease) => (
                   <div className="leaseRow" key={lease.id}>
-                    <span className="mono">{lease.sandbox_id}</span>
+                    <span className="mono">{lease.lease_id || lease.id}</span>
                     <span className="mono">{lease.run_id}</span>
                     <span>{lease.backend === 'local_process' ? '本机进程' : lease.backend}</span>
                     <span className={lease.status === 'ready' ? 'status ok' : 'status warn'}>{lease.status}</span>
@@ -199,14 +195,14 @@ export function SandboxPanel({
                 ))}
               </div>
             ) : (
-                <div className="emptyState">{loadingDetails ? '正在读取本机沙箱...' : '当前没有运行中的本机沙箱。'}</div>
+                <div className="emptyState">{loadingDetails ? '正在读取本机任务租约...' : '当前没有运行中的本机任务租约。'}</div>
             )}
           </section>
           </div>
         </details>
       ) : (
         <section className="panel">
-          <div className="emptyState">正在启用安全沙箱；如果持续不可用，请检查本机沙箱组件。</div>
+          <div className="emptyState">正在启用本机权限控制；如果持续不可用，请检查 Local Connector Core。</div>
         </section>
       )}
     </section>

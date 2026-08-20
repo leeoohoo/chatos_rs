@@ -15,7 +15,7 @@ use crate::sandbox::proxy::proxy_local_sandbox_mcp;
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::LocalState;
 
-pub(crate) async fn handle_sandbox_request(
+pub(crate) async fn handle_lease_request(
     value: Value,
     state: &LocalState,
     http_client: &reqwest::Client,
@@ -25,10 +25,10 @@ pub(crate) async fn handle_sandbox_request(
     let request = match serde_json::from_value::<RelayRequest>(value) {
         Ok(request) => request,
         Err(err) => {
-            return relay_error_response("sandbox_response", "", 400, err.to_string());
+            return relay_error_response("lease_response", "", 400, err.to_string());
         }
     };
-    match handle_local_sandbox_request(
+    match handle_local_lease_request(
         &request,
         state,
         http_client,
@@ -38,7 +38,7 @@ pub(crate) async fn handle_sandbox_request(
     .await
     {
         Ok((status, headers, body)) => RelayResponse {
-            message_type: "sandbox_response".to_string(),
+            message_type: "lease_response".to_string(),
             request_id: request.request_id,
             status,
             headers,
@@ -46,7 +46,7 @@ pub(crate) async fn handle_sandbox_request(
         }
         .into_value(),
         Err(err) => RelayResponse {
-            message_type: "sandbox_response".to_string(),
+            message_type: "lease_response".to_string(),
             request_id: request.request_id,
             status: 502,
             headers: BTreeMap::new(),
@@ -56,7 +56,7 @@ pub(crate) async fn handle_sandbox_request(
     }
 }
 
-async fn handle_local_sandbox_request(
+async fn handle_local_lease_request(
     request: &RelayRequest,
     state: &LocalState,
     http_client: &reqwest::Client,
@@ -68,7 +68,7 @@ async fn handle_local_sandbox_request(
         .as_deref()
         .unwrap_or("POST")
         .parse::<Method>()
-        .context("parse sandbox request method")?;
+        .context("parse local execution request method")?;
     let path = normalize_sandbox_http_path(request.path.as_deref().unwrap_or("/"));
     if method == Method::POST && path == "/api/sandboxes/leases" {
         return create_local_sandbox_lease(request, state, sandbox_runtime).await;
@@ -79,21 +79,21 @@ async fn handle_local_sandbox_request(
             .read()
             .await
             .values()
-            .cloned()
+            .map(super::lease::cloud_safe_local_sandbox_lease)
             .collect::<Vec<_>>();
         return Ok((200, BTreeMap::new(), json!(leases)));
     }
     let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
     if parts.len() >= 3 && parts[0] == "api" && parts[1] == "sandboxes" {
-        let sandbox_id = parts[2];
+        let runtime_id = parts[2];
         if method == Method::GET && parts.len() == 3 {
-            return get_local_sandbox(sandbox_runtime, sandbox_id).await;
+            return get_local_sandbox(sandbox_runtime, runtime_id).await;
         }
         if method == Method::GET && parts.len() == 4 && parts[3] == "health" {
-            return health_local_sandbox(http_client, sandbox_runtime, sandbox_id).await;
+            return health_local_sandbox(http_client, sandbox_runtime, runtime_id).await;
         }
         if method == Method::POST && parts.len() == 4 && parts[3] == "release" {
-            return release_local_sandbox(request, sandbox_runtime, sandbox_id).await;
+            return release_local_sandbox(request, sandbox_runtime, runtime_id).await;
         }
         if method == Method::POST && parts.len() == 4 && parts[3] == "mcp" {
             return proxy_local_sandbox_mcp(
@@ -101,7 +101,7 @@ async fn handle_local_sandbox_request(
                 state,
                 http_client,
                 sandbox_runtime,
-                sandbox_id,
+                runtime_id,
                 history_recorder,
             )
             .await;

@@ -52,9 +52,6 @@ HARNESS_GIT_BASE_URL=http://localhost:3000/git
 HARNESS_SSH_PUBLIC_HOST=localhost
 HARNESS_BASE_URL=http://harness:3000
 
-# Sandbox frontend authenticates its bootstrap proxy before it can read runtime
-# settings from Configuration Center.
-
 # Host bindings and commonly overridden ports
 CHATOS_INFRA_BIND_HOST=127.0.0.1
 CHATOS_PUBLIC_BIND_HOST=0.0.0.0

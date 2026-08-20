@@ -12,9 +12,9 @@ use crate::sandbox::types::LocalSandboxRuntime;
 
 pub(crate) async fn get_local_sandbox(
     sandbox_runtime: &LocalSandboxRuntime,
-    sandbox_id: &str,
+    runtime_id: &str,
 ) -> Result<(u16, BTreeMap<String, String>, Value)> {
-    let Some(lease) = sandbox_runtime.leases.read().await.get(sandbox_id).cloned() else {
+    let Some(lease) = sandbox_runtime.leases.read().await.get(runtime_id).cloned() else {
         return Ok((
             404,
             BTreeMap::new(),
@@ -31,9 +31,9 @@ pub(crate) async fn get_local_sandbox(
 pub(crate) async fn health_local_sandbox(
     _http_client: &reqwest::Client,
     sandbox_runtime: &LocalSandboxRuntime,
-    sandbox_id: &str,
+    runtime_id: &str,
 ) -> Result<(u16, BTreeMap<String, String>, Value)> {
-    let Some(lease) = sandbox_runtime.leases.read().await.get(sandbox_id).cloned() else {
+    let Some(lease) = sandbox_runtime.leases.read().await.get(runtime_id).cloned() else {
         return Ok((
             404,
             BTreeMap::new(),
@@ -48,7 +48,6 @@ pub(crate) async fn health_local_sandbox(
         BTreeMap::new(),
         json!({
             "ok": ok,
-            "sandbox_id": lease.sandbox_id,
             "lease_id": lease.id,
             "status": lease.status,
             "backend": lease.backend,
@@ -60,7 +59,7 @@ pub(crate) async fn health_local_sandbox(
             "checked_at": local_now_rfc3339(),
             "effective_policy": super::cloud_safe_effective_policy(&lease),
             "effective_permissions": super::cloud_safe_effective_permissions(&lease),
-            "message": if ok { "ok" } else { "local sandbox is not healthy" },
+            "message": if ok { "ok" } else { "local lease is not healthy" },
             "checks": [
                 { "name": "local_connector_client", "ok": true, "message": "connected" },
                 { "name": "workspace", "ok": workspace_alive, "message": if workspace_alive { "available" } else { "missing" } }

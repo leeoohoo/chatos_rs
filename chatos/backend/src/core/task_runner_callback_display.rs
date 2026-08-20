@@ -469,8 +469,6 @@ fn callback_detail_is_internal_platform_error(value: &str) -> bool {
         "resolve published prompt",
         "agent_prompt_",
         "plugin management request",
-        "sandbox_environment_start_failed",
-        "sandbox environment start request",
         "worker claim expired",
         "internal api secret",
         "internal api token",

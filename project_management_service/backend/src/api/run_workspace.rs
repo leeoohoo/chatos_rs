@@ -59,7 +59,7 @@ pub(in crate::api) struct FinalizeRunWorkspaceResponse {
     project_id: String,
     run_id: String,
     result_commit: Option<String>,
-    sandbox_retained_for_diagnostics: bool,
+    lease_retained_for_diagnostics: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -345,7 +345,7 @@ pub(in crate::api) async fn finalize_run_workspace(
             project_id,
             run_id,
             result_commit: None,
-            sandbox_retained_for_diagnostics: false,
+            lease_retained_for_diagnostics: false,
         }));
     };
     let project =
@@ -386,7 +386,7 @@ pub(in crate::api) async fn finalize_run_workspace(
         project_id,
         run_id,
         result_commit: Some(result_commit),
-        sandbox_retained_for_diagnostics: false,
+        lease_retained_for_diagnostics: false,
     }))
 }
 

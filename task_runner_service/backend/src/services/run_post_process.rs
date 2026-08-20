@@ -821,7 +821,7 @@ mod tests {
                 integration_last_error: None,
                 prepared_at: None,
                 finalized_at: None,
-                sandbox_retained_for_diagnostics: false,
+                lease_retained_for_diagnostics: false,
                 finalization_error: None,
                 error: None,
             });

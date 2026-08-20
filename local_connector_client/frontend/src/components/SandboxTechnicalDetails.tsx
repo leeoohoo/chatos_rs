@@ -4,18 +4,15 @@
 import { Cpu, Network, Settings2, Shield } from 'lucide-react';
 
 import type {
-  ConnectorStatus,
   SandboxBackendKind,
   SandboxSettings,
 } from '../api';
 import { sandboxBackendLabel } from './sandboxPolicyModel';
 
 export function SandboxTechnicalDetails({
-  status,
   settings,
   backend,
 }: {
-  status: ConnectorStatus;
   settings: SandboxSettings | null;
   backend: SandboxBackendKind;
 }) {
@@ -25,20 +22,20 @@ export function SandboxTechnicalDetails({
       <div className="sandboxTechnicalGrid">
         <TechnicalItem
           icon={Cpu}
-          label="当前隔离方式"
+          label="当前运行方式"
           value={sandboxBackendLabel(backend)}
-          detail="由操作系统沙箱限制本机进程；不是线程隔离。"
+          detail="通过 Local Connector 在授权工作区内运行本机进程。"
         />
         <TechnicalItem
           icon={Network}
           label="网络隔离"
-          value={status.sandbox.network_isolation === false ? '不可用' : '受策略限制'}
+          value={settings?.effective_permissions.network.type === 'unrestricted' ? '宿主机网络' : '受策略限制'}
           detail="可默认断网并按请求审批，也可开启本机受控网络代理。"
         />
         <TechnicalItem
           icon={Shield}
           label="策略版本"
-          value={settings?.policy_revision || status.sandbox.policy_revision || '默认'}
+          value={settings?.policy_revision || '默认'}
         />
       </div>
     </details>

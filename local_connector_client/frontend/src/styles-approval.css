@@ -276,6 +276,14 @@ html.approvalOverlayDocument #root {
   gap: 7px;
 }
 
+.globalApprovalReviewState {
+  align-items: center;
+  color: var(--warning);
+  display: flex;
+  font-size: 10px;
+  gap: 6px;
+}
+
 .globalApprovalAudit,
 .globalApprovalConfirmation,
 .globalApprovalWaiting {

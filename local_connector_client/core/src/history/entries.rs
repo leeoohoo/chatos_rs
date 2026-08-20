@@ -77,7 +77,7 @@ pub(crate) fn command_history_entry_from_exec_result(
         finished_at: Some(local_now_rfc3339()),
         request_id: context.request_id.clone(),
         terminal_session_id: context.terminal_session_id.clone(),
-        sandbox_id: context.sandbox_id.clone(),
+        lease_id: context.lease_id.clone(),
         tool_name: context.tool_name.clone(),
     }
 }
@@ -115,7 +115,7 @@ pub(crate) fn command_history_entry_for_interactive_submission(
         finished_at: None,
         request_id: Some(request.request_id.clone()),
         terminal_session_id: Some(terminal_session_id.to_string()),
-        sandbox_id: None,
+        lease_id: None,
         tool_name: None,
     }
 }
@@ -164,7 +164,7 @@ pub(crate) fn command_history_entry_for_sandbox_tool_call(
         finished_at: Some(local_now_rfc3339()),
         request_id: context.request_id.clone(),
         terminal_session_id: None,
-        sandbox_id: context.sandbox_id.clone(),
+        lease_id: context.lease_id.clone(),
         tool_name: context.tool_name.clone(),
     }
 }
@@ -175,7 +175,7 @@ pub(crate) fn normalize_history_source(source: &str) -> Option<String> {
         "chatos_terminal_exec"
         | "chatos_terminal_session"
         | "local_mcp"
-        | "task_runner_sandbox"
+        | "task_runner_lease"
         | "local_connector_ui" => Some(normalized),
         _ => None,
     }

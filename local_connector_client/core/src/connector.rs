@@ -37,7 +37,7 @@ use crate::remote_connection::{
 };
 use crate::remote_control_auth::RemoteControlVerifier;
 use crate::sandbox::pairing::reconcile_sandbox_pairings;
-use crate::sandbox::relay::handle_sandbox_request;
+use crate::sandbox::relay::handle_lease_request;
 use crate::sandbox::types::LocalSandboxRuntime;
 use crate::skills::{
     handle_skill_cancel, handle_skill_execute, handle_skill_prepare, skill_inventory_status_message,
@@ -416,8 +416,8 @@ async fn handle_text_message(
             )
             .await,
         ),
-        "sandbox_request" => Some(
-            handle_sandbox_request(value, state, http_client, sandbox_runtime, history_recorder)
+        "lease_request" => Some(
+            handle_lease_request(value, state, http_client, sandbox_runtime, history_recorder)
                 .await,
         ),
         "terminal_exec_request" => {
@@ -515,7 +515,7 @@ fn is_remote_control_message(message_type: &str) -> bool {
     matches!(
         message_type,
         MCP_RELAY_MESSAGE_TYPE
-            | "sandbox_request"
+            | "lease_request"
             | "terminal_exec_request"
             | "remote_connection_test_request"
             | "remote_connection_command_request"
@@ -552,7 +552,7 @@ fn is_async_relay_request(message_type: &str) -> bool {
     matches!(
         message_type,
         MCP_RELAY_MESSAGE_TYPE
-            | "sandbox_request"
+            | "lease_request"
             | "terminal_exec_request"
             | "remote_connection_test_request"
             | "remote_connection_command_request"
@@ -685,7 +685,7 @@ fn remote_control_error_response(
         .unwrap_or_default();
     let response_type = match message_type {
         MCP_RELAY_MESSAGE_TYPE => MCP_RELAY_MESSAGE_TYPE,
-        "sandbox_request" => "sandbox_response",
+        "lease_request" => "lease_response",
         "terminal_exec_request" => "terminal_response",
         "remote_connection_test_request" => "remote_connection_test_response",
         "remote_connection_command_request" => "remote_connection_command_response",

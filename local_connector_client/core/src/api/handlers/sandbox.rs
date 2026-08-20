@@ -164,7 +164,7 @@ fn validate_sandbox_settings_update(
         .is_some_and(|backend| backend != SandboxBackendKind::LocalProcess)
     {
         return Err(LocalApiError::bad_request(
-            "the local client only supports the local_process sandbox backend",
+            "the local client only supports the local_process execution backend",
         ));
     }
     let prospective = prospective_sandbox_state(req, current);
@@ -461,7 +461,7 @@ pub(crate) async fn local_sandbox_leases(
         .read()
         .await
         .values()
-        .cloned()
+        .map(crate::sandbox::lease::cloud_safe_local_sandbox_lease)
         .collect::<Vec<_>>();
     Ok(Json(json!(leases)))
 }
@@ -471,7 +471,7 @@ async fn ensure_local_sandbox_enabled(runtime: &LocalRuntime) -> Result<(), Loca
     if state.sandbox.enabled {
         Ok(())
     } else {
-        Err(LocalApiError::bad_request("local sandbox is disabled"))
+        Err(LocalApiError::bad_request("local execution is disabled"))
     }
 }
 
@@ -525,7 +525,7 @@ async fn local_sandbox_backend_capabilities() -> Vec<SandboxBackendCapability> {
 async fn ensure_sandbox_backend_ready(backend: SandboxBackendKind) -> Result<(), LocalApiError> {
     if backend != SandboxBackendKind::LocalProcess {
         return Err(LocalApiError::bad_request(
-            "the local client only supports the local_process sandbox backend",
+            "the local client only supports the local_process execution backend",
         ));
     }
     let capability = local_connector_execution_capability();
@@ -533,7 +533,7 @@ async fn ensure_sandbox_backend_ready(backend: SandboxBackendKind) -> Result<(),
         Ok(())
     } else {
         Err(LocalApiError::conflict_code(
-            "sandbox_backend_not_ready",
+            "execution_backend_not_ready",
             capability.message,
         ))
     }

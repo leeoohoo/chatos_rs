@@ -54,7 +54,7 @@ You can see:
 - Whether Okra needs more information or your confirmation
 - Success, stop, failure, and retry results
 
-Task lifecycles are managed in the cloud and can continue after you leave the page. Tasks that need local files, commands, plugins, MCP servers, or sandbox capabilities require the desktop client and Local Connector to remain online.
+Task lifecycles are managed in the cloud and can continue after you leave the page. Tasks that need local files, commands, plugins, MCP servers, or permission-controlled device capabilities require the desktop client and Local Connector to remain online.
 
 ### Remember the project, not just one conversation
 
@@ -128,9 +128,9 @@ When the work is complete, the result, project changes, and suggested next steps
 Okra has one project model. Every project binds an authorized Local Connector workspace; there is no cloud/local project type switch.
 
 - Project, session, message, task, requirement, memory, and Agent lifecycles are orchestrated by server-side services.
-- Project files, Git, search, commands, local Skills/Plugins/MCP servers, sandbox facade operations, and approvals execute through Local Connector Client.
+- Project files, Git, search, commands, local Skills/Plugins/MCP servers, permission relay operations, and approvals execute through Local Connector Client.
 - Harness can manage repository assets, branches, synchronization, CI, and integrations, but it is never used as the MCP project file or command provider.
-- If Local Connector is unavailable, workspace operations fail or wait explicitly. They do not fall back to a server filesystem, Harness, or Cloud Sandbox.
+- If Local Connector is unavailable, workspace operations fail or wait explicitly. They do not fall back to a server filesystem, Harness, or another execution host.
 
 ### Projects and privacy
 
@@ -175,7 +175,7 @@ Create agents, choose models, enable the tools and skills they need, and set def
 1. Download and install the Okra desktop connector from the Okra website.
 2. Sign in with the same account you use on the web.
 3. Add and authorize a local workspace.
-4. Configure the local tools, Skills, Plugins, MCP servers, sandbox facade, and approval permissions you need.
+4. Configure the local tools, Skills, Plugins, MCP servers, permission controls, and approval permissions you need.
 5. Create the project from that workspace in the desktop client.
 6. Add a project contact, then start a conversation or plan.
 
@@ -205,7 +205,7 @@ Task orchestration and business state continue on the server. When the next step
 
 ### Can a project fall back to a cloud workspace when my device is offline?
 
-No. Project workspace access only uses the bound Local Connector. MCP Management never silently switches to Harness, a server filesystem, Cloud Sandbox, or another device.
+No. Project workspace access only uses the bound Local Connector. MCP Management never silently switches to Harness, a server filesystem, another execution host, or another device.
 
 ## Current Product Status
 
@@ -228,7 +228,7 @@ The following section is for maintainers who deploy, debug, or extend Okra. Regu
 Okra uses one cloud business orchestration plane plus device-side capability executors:
 
 - Project, conversation, task, requirement, memory, and Agent lifecycle data is authoritative in cloud services.
-- Local Connector Core only executes capabilities that must run on the user's device, including workspace files, Git, commands, local Skill/Plugin/MCP components, sandbox operations, and approvals.
+- Local Connector Core only executes capabilities that must run on the user's device, including workspace files, Git, commands, local Skill/Plugin/MCP components, permission-controlled task leases, and approvals.
 - MCP Management routes project files, Git, search, and commands only to the bound Local Connector. Harness remains a repository and integration control plane.
 - Local Connector unavailability fails explicitly; it never moves a device-scoped operation to another execution host silently.
 

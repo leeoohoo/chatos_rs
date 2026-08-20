@@ -4,7 +4,6 @@
 import { Cloud, CloudOff, Shield, Sparkles } from 'lucide-react';
 
 import type {
-  ConnectorStatus,
   PermissionProfileId,
   SandboxCapabilities,
   SandboxNetworkAccess,
@@ -21,19 +20,17 @@ import {
 } from './sandboxPolicyModel';
 
 export function SandboxPolicySettings({
-  status,
   settings,
   capabilities,
   saving,
   onSave,
 }: {
-  status: ConnectorStatus;
   settings: SandboxSettings | null;
   capabilities: SandboxCapabilities | null;
   saving: boolean;
   onSave: (patch: SandboxSettingsUpdate, label: string) => Promise<void>;
 }) {
-  const view = resolveSandboxPolicyView(status, settings, capabilities);
+  const view = resolveSandboxPolicyView(settings, capabilities);
 
   const setPermissionProfile = async (profile: PermissionProfileId) => {
     if (profile === view.permissionProfile) {
@@ -216,7 +213,7 @@ export function SandboxPolicySettings({
         这里控制的是任务主动访问外部网络，不会让外部通过域名访问你的电脑。
       </div>
 
-      <SandboxTechnicalDetails status={status} settings={settings} backend={view.backend} />
+      <SandboxTechnicalDetails settings={settings} backend={view.backend} />
     </>
   );
 }

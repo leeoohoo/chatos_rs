@@ -31,7 +31,7 @@ pub(crate) async fn proxy_local_sandbox_mcp(
     state: &LocalState,
     _http_client: &reqwest::Client,
     sandbox_runtime: &LocalSandboxRuntime,
-    sandbox_id: &str,
+    runtime_id: &str,
     history_recorder: &CommandHistoryRecorder,
 ) -> Result<(u16, BTreeMap<String, String>, Value)> {
     let started_at = local_now_rfc3339();
@@ -46,7 +46,7 @@ pub(crate) async fn proxy_local_sandbox_mcp(
             ));
         }
     };
-    let lease = require_local_sandbox_lease(sandbox_runtime, sandbox_id).await?;
+    let lease = require_local_sandbox_lease(sandbox_runtime, runtime_id).await?;
     validate_mcp_management_lease_identity(request, &lease)?;
     let mut forwarded_body = request.body.clone();
     if let Some(tool_call) = tool_call.as_ref() {
@@ -54,7 +54,6 @@ pub(crate) async fn proxy_local_sandbox_mcp(
             request,
             state,
             &lease,
-            sandbox_id,
             history_recorder,
             tool_call,
             started_at.as_str(),
@@ -86,9 +85,9 @@ pub(crate) async fn proxy_local_sandbox_mcp(
             .append(command_history_entry_for_sandbox_tool_call(
                 state,
                 request,
-                &CommandExecutionContext::task_runner_sandbox(
+                &CommandExecutionContext::task_runner_lease(
                     request,
-                    sandbox_id,
+                    lease.id.as_str(),
                     tool_call.tool_name.as_str(),
                 ),
                 tool_call,
@@ -110,8 +109,8 @@ fn validate_mcp_management_lease_identity(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("sandbox MCP request is missing owner identity"))?;
-    let lease_id = required_relay_header(request, "x-chatos-sandbox-lease-id")?;
+        .ok_or_else(|| anyhow!("MCP request is missing owner identity"))?;
+    let lease_id = required_relay_header(request, "x-chatos-lease-id")?;
     let project_id = required_relay_header(request, "x-mcp-management-project-id")?;
     let run_id = required_relay_header(request, "x-mcp-management-run-id")?;
     validate_lease_identity(
@@ -143,7 +142,7 @@ fn validate_lease_identity(
         || run_id != expected_run_id
     {
         return Err(anyhow!(
-            "sandbox MCP request identity does not match the local lease"
+            "MCP request identity does not match the local lease"
         ));
     }
     Ok(())
@@ -163,14 +162,13 @@ fn required_relay_header<'a>(request: &'a RelayRequest, name: &str) -> Result<&'
         .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("sandbox MCP request is missing required header {name}"))
+        .ok_or_else(|| anyhow!("MCP request is missing required header {name}"))
 }
 
 async fn approve_sandbox_tool_call(
     request: &RelayRequest,
     state: &LocalState,
     lease: &LocalSandboxLease,
-    sandbox_id: &str,
     history_recorder: &CommandHistoryRecorder,
     tool_call: &SandboxToolCallDetails,
     started_at: &str,
@@ -194,7 +192,7 @@ async fn approve_sandbox_tool_call(
         return Ok(Some(denied_sandbox_tool_response(
             request,
             tool_call,
-            "temporary permission overlays are not supported by this sandbox backend".to_string(),
+            "temporary permission overlays are not supported by this execution backend".to_string(),
         )));
     }
     let Some(mode) = approval_mode_for_lease(lease) else {
@@ -206,7 +204,7 @@ async fn approve_sandbox_tool_call(
     };
     let workspace = state
         .workspace_by_id(request.workspace_id.as_str())
-        .ok_or_else(|| anyhow!("workspace not found for sandbox command approval"))?;
+        .ok_or_else(|| anyhow!("workspace not found for command approval"))?;
     let project_root_relative_path =
         relative_to_workspace(workspace, Path::new(lease.workspace_root.as_str()));
     let project_key =
@@ -224,9 +222,9 @@ async fn approve_sandbox_tool_call(
             args: tool_call.args.clone(),
             redact_arguments_in_history: false,
             cwd: cwd.clone(),
-            source: "task_runner_sandbox".to_string(),
+            source: "task_runner_lease".to_string(),
             requested_permissions: Some(requested_permissions.clone()),
-            session_id: Some(sandbox_id.to_string()),
+            session_id: Some(lease.id.clone()),
             action_audit: None,
         },
         mode,
@@ -258,9 +256,9 @@ async fn approve_sandbox_tool_call(
                 .append(command_history_entry_for_sandbox_tool_call(
                     state,
                     request,
-                    &CommandExecutionContext::task_runner_sandbox(
+                    &CommandExecutionContext::task_runner_lease(
                         request,
-                        sandbox_id,
+                        lease.id.as_str(),
                         tool_call.tool_name.as_str(),
                     ),
                     tool_call.clone(),
@@ -318,8 +316,8 @@ fn install_granted_permissions(
     body: &mut Value,
     granted_permissions: &GrantedPermissionProfile,
 ) -> Result<()> {
-    let arguments = command_arguments_mut(body)
-        .ok_or_else(|| anyhow!("sandbox command arguments are unavailable"))?;
+    let arguments =
+        command_arguments_mut(body).ok_or_else(|| anyhow!("command arguments are unavailable"))?;
     arguments.remove("_grantedPermissions");
     arguments.insert(
         "_grantedPermissions".to_string(),
@@ -404,20 +402,20 @@ fn sandbox_mcp_text_response(request_body: &Value, payload: Value) -> Value {
 
 async fn require_local_sandbox_lease(
     sandbox_runtime: &LocalSandboxRuntime,
-    sandbox_id: &str,
+    runtime_id: &str,
 ) -> Result<LocalSandboxLease> {
     let lease = sandbox_runtime
         .leases
         .read()
         .await
-        .get(sandbox_id)
+        .get(runtime_id)
         .cloned()
-        .ok_or_else(|| anyhow!("sandbox not found"))?;
+        .ok_or_else(|| anyhow!("lease not found"))?;
     if lease.status == crate::LOCAL_SANDBOX_STATUS_DESTROYED {
-        return Err(anyhow!("sandbox lease is destroyed"));
+        return Err(anyhow!("lease is destroyed"));
     }
     if local_sandbox_lease_expired(&lease) {
-        return Err(anyhow!("sandbox lease has expired"));
+        return Err(anyhow!("lease has expired"));
     }
     Ok(lease)
 }
@@ -427,7 +425,7 @@ mod identity_tests {
     use super::*;
 
     #[test]
-    fn sandbox_mcp_identity_is_bound_to_owner_lease_project_and_run() {
+    fn mcp_identity_is_bound_to_owner_lease_project_and_run() {
         validate_lease_identity(
             "user-1",
             "lease-1",

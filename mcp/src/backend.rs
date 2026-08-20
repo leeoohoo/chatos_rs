@@ -16,5 +16,4 @@ pub enum SystemMcpHost {
     TaskRunner,
     LocalConnector,
     ProjectManagementService,
-    SandboxManagerService,
 }

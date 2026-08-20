@@ -45,11 +45,11 @@ async fn reap_expired_local_sandboxes(sandbox_runtime: &LocalSandboxRuntime) {
         .collect::<Vec<_>>();
 
     for lease in expired {
-        let sandbox_id = lease.sandbox_id.clone();
-        clear_session_approvals(sandbox_id.as_str()).await;
+        let runtime_id = lease.runtime_id.clone();
+        clear_session_approvals(runtime_id.as_str()).await;
 
         let mut leases = sandbox_runtime.leases.write().await;
-        let Some(stored) = leases.get_mut(sandbox_id.as_str()) else {
+        let Some(stored) = leases.get_mut(runtime_id.as_str()) else {
             continue;
         };
         stored.updated_at = local_now_rfc3339();

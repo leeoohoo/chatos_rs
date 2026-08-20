@@ -60,7 +60,7 @@ fn workspace_execution(status: WorkspacePreparationStatus) -> TaskRunWorkspaceEx
         integration_last_error: None,
         prepared_at: None,
         finalized_at: None,
-        sandbox_retained_for_diagnostics: false,
+        lease_retained_for_diagnostics: false,
         finalization_error: None,
         error: None,
     }
@@ -664,7 +664,7 @@ pub(crate) async fn finalize_task_run_workspace(
                     service,
                     run,
                     response.result_commit,
-                    response.sandbox_retained_for_diagnostics,
+                    response.lease_retained_for_diagnostics,
                 )
                 .await?;
             }
@@ -926,13 +926,13 @@ async fn mark_workspace_finalized(
     service: &RunService,
     run: &mut TaskRunRecord,
     result_commit: Option<String>,
-    sandbox_retained_for_diagnostics: bool,
+    lease_retained_for_diagnostics: bool,
 ) -> Result<(), String> {
     if let Some(execution) = run.workspace_execution.as_mut() {
         execution.finalized_at = Some(now_rfc3339());
         execution.finalization_error = None;
         execution.result_commit = result_commit.clone();
-        execution.sandbox_retained_for_diagnostics = sandbox_retained_for_diagnostics;
+        execution.lease_retained_for_diagnostics = lease_retained_for_diagnostics;
     }
     run.updated_at = now_rfc3339();
     persist_workspace_execution(service, run).await?;
@@ -941,14 +941,14 @@ async fn mark_workspace_finalized(
         .append_run_event(crate::models::TaskRunEventRecord::new(
             run.id.clone(),
             "workspace_finalized",
-            Some(if sandbox_retained_for_diagnostics {
-                "任务工作区已导出，失败沙箱保留到租约到期以便诊断".to_string()
+            Some(if lease_retained_for_diagnostics {
+                "任务工作区已导出，失败租约保留到期以便诊断".to_string()
             } else {
                 "任务工作区已完成回收".to_string()
             }),
             Some(serde_json::json!({
                 "result_commit": result_commit,
-                "sandbox_retained_for_diagnostics": sandbox_retained_for_diagnostics,
+                "lease_retained_for_diagnostics": lease_retained_for_diagnostics,
             })),
         ))
         .await?;

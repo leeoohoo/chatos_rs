@@ -696,7 +696,7 @@ async fn sandbox_facade_impl(
     }
     let relay_timeout = state.config.relay_request_timeout;
     let request = RelayRequest {
-        message_type: "sandbox_request".to_string(),
+        message_type: "lease_request".to_string(),
         request_id: Uuid::new_v4().to_string(),
         owner_user_id: user.effective_owner_user_id().to_string(),
         device_id: pairing.device_id.clone(),

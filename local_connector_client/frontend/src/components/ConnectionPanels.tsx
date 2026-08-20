@@ -180,7 +180,7 @@ export function LocalBoundaryPanel({ status }: { status: ConnectorStatus }) {
       <div className="panelHeader">
         <div>
           <h2><CloudOff size={18} />本机边界</h2>
-          <p>目录、终端和沙箱运行在当前电脑，云端只通过已登录设备的长连接发起授权请求。</p>
+          <p>目录、终端和本机权限控制运行在当前电脑，云端只通过已登录设备的长连接发起授权请求。</p>
         </div>
       </div>
       <div className="metaGrid">
@@ -189,15 +189,15 @@ export function LocalBoundaryPanel({ status }: { status: ConnectorStatus }) {
           <strong>{status.workspaces.length} 个</strong>
         </div>
         <div>
-          <span>本地沙箱</span>
-          <strong>{status.sandbox.enabled ? '已开启' : '已关闭'}</strong>
+          <span>权限控制</span>
+          <strong>设置页管理</strong>
         </div>
-        <div><span>隔离方式</span><strong>本机进程</strong></div>
+        <div><span>运行方式</span><strong>本机进程</strong></div>
       </div>
       <div className="boundaryList">
-        <div><CheckCircle2 size={16} />Local Connector Core 执行本机沙箱、文件和终端操作。</div>
+        <div><CheckCircle2 size={16} />Local Connector Core 执行本机权限控制、文件和终端操作。</div>
         <div><CheckCircle2 size={16} />Local Connector Service 只负责登录设备、保存配对和 relay 消息。</div>
-        <div><CheckCircle2 size={16} />本地沙箱由 Local Connector Client 在用户设备上独立管理。</div>
+        <div><CheckCircle2 size={16} />本机任务租约由 Local Connector Client 在用户设备上管理。</div>
       </div>
     </section>
   );
@@ -247,7 +247,7 @@ export function WorkspacePanel({
                   if (
                     trusted
                     && !window.confirm(
-                      '信任后，ChatOS 会读取该目录中的 .chatos/config.toml。仓库内容可能改变本地沙箱权限，但仍不能突破管理员 managed requirements。确认信任？',
+                      '信任后，ChatOS 会读取该目录中的 .chatos/config.toml。仓库内容可能改变本机权限策略，但仍不能突破管理员 managed requirements。确认信任？',
                     )
                   ) {
                     return;

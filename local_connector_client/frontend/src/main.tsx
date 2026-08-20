@@ -120,9 +120,9 @@ const TABS: Array<{
   },
   {
     id: 'sandbox',
-    label: '安全沙箱',
-    eyebrow: 'SANDBOX',
-    description: '选择任务隔离方式，并管理文件、网络与 AI 审批策略。',
+    label: '权限控制',
+    eyebrow: 'PERMISSIONS',
+    description: '管理任务文件、网络与 AI 审批策略。',
     icon: Shield,
   },
 ];
@@ -318,7 +318,7 @@ function SettingsApp() {
           <section className="authIntro">
             <span className="pageEyebrow">SECURE DEVICE BRIDGE</span>
             <h2>让 Chat OS 安全地连接<br />这台电脑。</h2>
-            <p>本地目录、终端与本机沙箱始终留在当前设备。云端只能通过已配对连接发起受控请求。</p>
+            <p>本地目录、终端与权限控制始终留在当前设备。云端只能通过已配对连接发起受控请求。</p>
             <div className="authFeatures">
               <div>
                 <FolderOpen size={17} />
@@ -376,7 +376,7 @@ function SettingsApp() {
               {activeTab === 'models' ? <ModelConfigPanel /> : null}
               {activeTab === 'approval' ? <ApprovalPanel /> : null}
               {activeTab === 'settings' ? <RuntimeSettingsPanel /> : null}
-              {activeTab === 'sandbox' ? <SandboxPanel status={status} onRefresh={refresh} /> : null}
+              {activeTab === 'sandbox' ? <SandboxPanel onRefresh={refresh} /> : null}
             </div>
           </section>
         </main>

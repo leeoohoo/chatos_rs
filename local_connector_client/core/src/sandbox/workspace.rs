@@ -3,4 +3,4 @@
 
 mod request;
 
-pub(crate) use request::local_sandbox_request_body;
+pub(crate) use request::local_lease_request_body;

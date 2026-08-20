@@ -40,7 +40,7 @@ export function GlobalApprovalTray() {
   const [confirmationResponses, setConfirmationResponses] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState<Record<string, boolean>>({});
   const [error, setError] = React.useState<string | null>(null);
-  const knownPendingIds = React.useRef<Set<string>>(new Set());
+  const knownApprovalIds = React.useRef<Set<string>>(new Set());
   const knownHistoryIds = React.useRef<Set<string> | null>(null);
 
   const load = React.useCallback(async () => {
@@ -53,11 +53,19 @@ export function GlobalApprovalTray() {
       const pendingRequestIds = new Set(nextPending.map((item) => item.request_id));
       const nextReviewing = (next.reviewing || [])
         .filter((item) => !pendingRequestIds.has(item.request_id));
-      const hasNewPending = nextPending.some((item) => !knownPendingIds.current.has(item.id));
-      knownPendingIds.current = new Set(nextPending.map((item) => item.id));
+      const nextApprovalIds = new Set([
+        ...nextPending.map((item) => `pending:${item.request_id}`),
+        ...nextReviewing.map((item) => `reviewing:${item.request_id}`),
+      ]);
+      const hasNewApproval = [...nextApprovalIds]
+        .some((id) => !knownApprovalIds.current.has(id));
+      knownApprovalIds.current = nextApprovalIds;
       setPending(nextPending);
       setReviewing(nextReviewing);
-      setActiveIndex((current) => Math.min(current, Math.max(0, nextPending.length - 1)));
+      setActiveIndex((current) => Math.min(
+        current,
+        Math.max(0, nextPending.length + nextReviewing.length - 1),
+      ));
 
       if (settings) {
         const nextHistoryIds = new Set(settings.history.map((entry) => entry.id));
@@ -70,7 +78,7 @@ export function GlobalApprovalTray() {
         knownHistoryIds.current = nextHistoryIds;
       }
 
-      if (hasNewPending) {
+      if (hasNewApproval) {
         setExpanded(true);
       } else if (!nextPending.length && !nextReviewing.length) {
         setExpanded(false);
@@ -107,6 +115,13 @@ export function GlobalApprovalTray() {
   }, [outcome]);
 
   const total = pending.length + reviewing.length;
+  const visibleApprovals = React.useMemo(
+    () => [
+      ...pending.map((item) => ({ item, phase: 'pending' as const })),
+      ...reviewing.map((item) => ({ item, phase: 'reviewing' as const })),
+    ],
+    [pending, reviewing],
+  );
   const visible = Boolean(total || outcome);
   React.useEffect(() => {
     const mode = visible ? (expanded ? 'expanded' : 'compact') : 'hidden';
@@ -170,7 +185,9 @@ export function GlobalApprovalTray() {
 
   if (!visible) return null;
 
-  const activeItem = pending[activeIndex] || null;
+  const activeApproval = visibleApprovals[activeIndex] || null;
+  const activeItem = activeApproval?.item || null;
+  const isReviewing = activeApproval?.phase === 'reviewing';
   if (!expanded) {
     const showOutcome = Boolean(outcome && !pending.length);
     return (
@@ -233,6 +250,9 @@ export function GlobalApprovalTray() {
         {activeItem ? (
           <div className="globalApprovalItem">
             <div className="globalApprovalCommandLine">
+              {isReviewing ? (
+                <span className="status warn"><RefreshCw className="spinIcon" size={13} />AI 审核中</span>
+              ) : null}
               <span className={riskStatusClass(activeItem.risk)}>{riskLabel(activeItem.risk)}</span>
               <code>{activeItem.command}</code>
             </div>
@@ -270,24 +290,30 @@ export function GlobalApprovalTray() {
                 <button type="button" className="iconButton" title="上一条" aria-label="上一条" disabled={activeIndex === 0} onClick={() => setActiveIndex((current) => Math.max(0, current - 1))}>
                   <ChevronLeft size={15} />
                 </button>
-                <span>{activeIndex + 1} / {pending.length}</span>
-                <button type="button" className="iconButton" title="下一条" aria-label="下一条" disabled={activeIndex >= pending.length - 1} onClick={() => setActiveIndex((current) => Math.min(pending.length - 1, current + 1))}>
+                <span>{activeIndex + 1} / {visibleApprovals.length}</span>
+                <button type="button" className="iconButton" title="下一条" aria-label="下一条" disabled={activeIndex >= visibleApprovals.length - 1} onClick={() => setActiveIndex((current) => Math.min(visibleApprovals.length - 1, current + 1))}>
                   <ChevronRight size={15} />
                 </button>
               </div>
-              <div className="globalApprovalActions">
-                <button type="button" className="ghostButton compact dangerText" disabled={busy[activeItem.id]} onClick={() => void deny(activeItem)}>
-                  <XCircle size={15} />拒绝
-                </button>
-                <button
-                  type="button"
-                  className="primaryButton compact"
-                  disabled={busy[activeItem.id] || Boolean(activeItem.confirmation && confirmationResponses[activeItem.id]?.trim() !== activeItem.confirmation.challenge)}
-                  onClick={() => void approve(activeItem)}
-                >
-                  <CheckCircle2 size={15} />本次通过
-                </button>
-              </div>
+              {isReviewing ? (
+                <div className="globalApprovalReviewState">
+                  <RefreshCw className="spinIcon" size={13} />等待 AI 审批结果
+                </div>
+              ) : (
+                <div className="globalApprovalActions">
+                  <button type="button" className="ghostButton compact dangerText" disabled={busy[activeItem.id]} onClick={() => void deny(activeItem)}>
+                    <XCircle size={15} />拒绝
+                  </button>
+                  <button
+                    type="button"
+                    className="primaryButton compact"
+                    disabled={busy[activeItem.id] || Boolean(activeItem.confirmation && confirmationResponses[activeItem.id]?.trim() !== activeItem.confirmation.challenge)}
+                    onClick={() => void approve(activeItem)}
+                  >
+                    <CheckCircle2 size={15} />本次通过
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ) : (

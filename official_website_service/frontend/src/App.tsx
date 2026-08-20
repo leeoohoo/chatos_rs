@@ -97,7 +97,7 @@ const outcomes = [
   {
     icon: FolderLock,
     title: '工作区由你授权',
-    body: '通过桌面连接器只开放指定目录，也可以选择云端隔离沙箱，边界清晰可控。',
+    body: '通过桌面连接器只开放指定目录，本机文件和命令都在授权边界内执行。',
   },
 ];
 
@@ -110,7 +110,7 @@ const workflowSteps = [
   {
     number: '02',
     title: '确认计划与工作环境',
-    body: '选择云端沙箱或已授权的本机项目，复杂任务会进入可追踪的后台执行。',
+    body: '选择已授权的本机项目，复杂任务会进入可追踪的后台执行。',
   },
   {
     number: '03',
@@ -131,8 +131,8 @@ const useCases = [
     icon: TerminalSquare,
     eyebrow: '真实工程环境',
     title: '让 AI 进入项目，而不是复制粘贴代码',
-    body: '连接本机工作区或使用云端沙箱，让文件、终端、Git 和工具调用发生在正确的环境里。',
-    points: ['明确授权的本机目录', 'Docker 隔离运行环境', '命令输出与改动可追踪'],
+    body: '连接本机工作区，让文件、终端、Git 和工具调用发生在正确的环境里。',
+    points: ['明确授权的本机目录', 'Local Connector 权限控制', '命令输出与改动可追踪'],
   },
   {
     icon: MessageCircle,
@@ -305,7 +305,7 @@ function App() {
           <div className="hero-assurances">
             <span><Check size={15} /> 邀请测试期间免费</span>
             <span><Check size={15} /> 支持本机工作区</span>
-            <span><Check size={15} /> 云端沙箱可选</span>
+            <span><Check size={15} /> 权限控制可见</span>
           </div>
         </div>
 
@@ -400,7 +400,7 @@ function App() {
         <div className="download-copy">
           <span className="section-kicker">Okra Local Connector</span>
           <h2>让 Okra 安全地使用你的本机项目</h2>
-          <p>桌面连接器只访问你明确授权的目录。连接建立后，Okra 可以在正确的工作区里读取文件、运行终端和管理本机沙箱。</p>
+          <p>桌面连接器只访问你明确授权的目录。连接建立后，Okra 可以在正确的工作区里读取文件、运行终端和管理本机权限策略。</p>
           <div className="connector-points">
             <span><ShieldCheck size={18} /> 云端不保存本机绝对路径</span>
             <span><Laptop size={18} /> 连接器主动建立出站连接</span>

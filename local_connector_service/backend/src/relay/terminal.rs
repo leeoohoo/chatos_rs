@@ -167,7 +167,7 @@ impl ConnectorRelay {
         }
         if !matches!(
             message_type,
-            "sandbox_response"
+            "lease_response"
                 | "mcp"
                 | "model_runtime_response"
                 | "terminal_response"

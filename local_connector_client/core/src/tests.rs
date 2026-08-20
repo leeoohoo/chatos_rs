@@ -27,7 +27,7 @@ fn temp_test_dir(name: &str) -> PathBuf {
 
 fn test_relay_request(workspace_id: &str) -> RelayRequest {
     RelayRequest {
-        _message_type: "sandbox_request".to_string(),
+        _message_type: "lease_request".to_string(),
         request_id: "req-test".to_string(),
         owner_user_id: Some("user-test".to_string()),
         device_id: Some("device-test".to_string()),

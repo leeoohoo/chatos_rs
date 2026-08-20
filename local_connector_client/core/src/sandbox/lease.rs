@@ -15,19 +15,20 @@ pub(crate) use reaper::{local_sandbox_lease_expired, spawn_local_sandbox_lease_r
 pub(crate) use release::{release_local_sandbox, shutdown_local_sandboxes};
 pub(crate) use status::{get_local_sandbox, health_local_sandbox};
 
-fn cloud_safe_local_sandbox_lease(lease: &LocalSandboxLease) -> Value {
+pub(crate) fn cloud_safe_local_sandbox_lease(lease: &LocalSandboxLease) -> Value {
     let mut value = json!(lease);
     let Some(object) = value.as_object_mut() else {
         return Value::Null;
     };
     object.insert("lease_id".to_string(), Value::String(lease.id.clone()));
+    object.remove("runtime_id");
     object.insert(
         "workspace_root".to_string(),
-        Value::String("local-sandbox://workspace".to_string()),
+        Value::String("local-lease://workspace".to_string()),
     );
     object.insert(
         "run_workspace".to_string(),
-        Value::String(format!("local-sandbox://{}/workspace", lease.sandbox_id)),
+        Value::String(format!("local-lease://{}/workspace", lease.id)),
     );
     object.insert("backend_id".to_string(), Value::Null);
     object.insert("agent_endpoint".to_string(), Value::Null);
@@ -72,7 +73,7 @@ fn redact_local_output_manifest(mut manifest: Value) -> Value {
 fn redact_absolute_local_paths(value: &mut Value) {
     match value {
         Value::String(text) if looks_like_absolute_path(text) => {
-            *text = "local-sandbox://redacted".to_string();
+            *text = "local-lease://redacted".to_string();
         }
         Value::Array(items) => {
             for item in items {
@@ -113,8 +114,8 @@ mod cloud_boundary_tests {
         });
         redact_absolute_local_paths(&mut value);
 
-        assert_eq!(value["unix"], "local-sandbox://redacted");
-        assert_eq!(value["windows"], "local-sandbox://redacted");
+        assert_eq!(value["unix"], "local-lease://redacted");
+        assert_eq!(value["windows"], "local-lease://redacted");
         assert_eq!(value["relative"], "apps/backend");
     }
 

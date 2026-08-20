@@ -3,10 +3,8 @@
 
 use axum::extract::State;
 use axum::Json;
-use chatos_sandbox_contract::{PermissionProfileId, SandboxBackendCapability, SandboxBackendKind};
 use serde_json::{json, Value};
 
-use crate::sandbox::local_connector_execution_capability;
 use crate::workspace::trust::workspace_project_config_trust_is_current;
 use crate::LocalRuntime;
 
@@ -20,25 +18,6 @@ pub(crate) async fn local_status(
 
 pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
     let state = runtime.state.read().await.clone();
-    let sandbox_backend = SandboxBackendKind::LocalProcess;
-    let effective_permission_profile = state.sandbox.effective_default_permission_profile();
-    let effective_permission_profile_name =
-        state.sandbox.effective_default_permission_profile_name();
-    let effective_permission_configuration_result =
-        state.sandbox.effective_permission_profile_configuration();
-    let permission_configuration_error = effective_permission_configuration_result
-        .as_ref()
-        .err()
-        .cloned();
-    let effective_permission_configuration = effective_permission_configuration_result.ok();
-    let effective_policy = state.sandbox.effective_policy_defaults();
-    let effective_permissions = state.sandbox.effective_permissions(
-        Some(effective_permission_profile_name.as_str()),
-        &effective_policy,
-        Vec::new(),
-    );
-    let process_capability = local_connector_execution_capability();
-    let isolation = sandbox_isolation_status(effective_permission_profile, &process_capability);
     let connector_running = runtime
         .connector_task
         .lock()
@@ -80,116 +59,5 @@ pub(crate) async fn status_payload(runtime: &LocalRuntime) -> Value {
         "device_name": state.auth.as_ref().map(|auth| auth.device_name.as_str()),
         "user": state.auth.as_ref().and_then(|auth| auth.user.clone()),
         "workspaces": workspaces,
-        "sandbox": {
-            "enabled": state.sandbox.enabled,
-            "backend": sandbox_backend,
-            "default_backend": sandbox_backend,
-            "isolation": isolation.legacy_isolation,
-            "filesystem_isolation": isolation.filesystem_isolation,
-            "network_isolation": isolation.network_isolation,
-            "process_tree_control": isolation.process_tree_control,
-            "isolation_note": isolation.note,
-            "default_permission_profile_id": effective_permission_profile,
-            "default_permission_profile_name": effective_permission_profile_name,
-            "default_permission_profile_provenance": effective_permission_configuration
-                .as_ref()
-                .map(|effective| effective.default_provenance),
-            "permission_configuration_error": permission_configuration_error,
-            "custom_permission_profiles": state.sandbox.permission_profiles,
-            "effective_custom_permission_profiles": effective_permission_configuration
-                .as_ref()
-                .map(|effective| &effective.configuration.profiles),
-            "managed_permission_profiles": effective_permission_configuration
-                .as_ref()
-                .map(|effective| &effective.managed_profile_names),
-            "default_approval_policy": state.sandbox.default_approval_policy,
-            "default_approval_reviewer": state.sandbox.default_approval_reviewer,
-            "default_network_access": state.sandbox.effective_default_network_access(),
-            "default_network_requirements": state.sandbox.default_network_requirements,
-            "configured_allowed_permission_profiles": state.sandbox.allowed_permission_profiles,
-            "allowed_permission_profiles": effective_permission_configuration
-                .as_ref()
-                .and_then(|effective| effective.configuration.allowed_permission_profiles.as_ref()),
-            "permission_profiles": state.sandbox.permission_profile_catalog(),
-            "policy_revision": state.sandbox.effective_policy_revision(),
-            "effective_policy": effective_policy,
-            "effective_permissions": effective_permissions,
-        },
     })
-}
-
-#[derive(Debug, Clone)]
-struct SandboxIsolationStatus {
-    legacy_isolation: &'static str,
-    filesystem_isolation: bool,
-    network_isolation: bool,
-    process_tree_control: bool,
-    note: String,
-}
-
-fn sandbox_isolation_status(
-    permission_profile: PermissionProfileId,
-    process_capability: &SandboxBackendCapability,
-) -> SandboxIsolationStatus {
-    if permission_profile == PermissionProfileId::FullAccess {
-        return SandboxIsolationStatus {
-            legacy_isolation: "local_process",
-            filesystem_isolation: false,
-            network_isolation: false,
-            process_tree_control: process_capability.process_tree_control,
-            note: "本机进程以完全访问模式运行；仅保留进程树回收，不施加文件系统或网络沙箱"
-                .to_string(),
-        };
-    }
-    SandboxIsolationStatus {
-        legacy_isolation: "local_process",
-        filesystem_isolation: process_capability.filesystem_isolation,
-        network_isolation: process_capability.network_isolation,
-        process_tree_control: process_capability.process_tree_control,
-        note: process_capability.message.clone(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_process_status_reflects_native_capability() {
-        let capability = SandboxBackendCapability {
-            backend: SandboxBackendKind::LocalProcess,
-            status: chatos_sandbox_contract::SandboxBackendReadinessStatus::Ready,
-            selectable: true,
-            filesystem_isolation: true,
-            network_isolation: true,
-            process_tree_control: true,
-            message: "Seatbelt ready".to_string(),
-        };
-        let status = sandbox_isolation_status(PermissionProfileId::WorkspaceWrite, &capability);
-
-        assert_eq!(status.legacy_isolation, "local_process");
-        assert!(status.filesystem_isolation);
-        assert!(status.network_isolation);
-        assert!(status.process_tree_control);
-        assert!(status.note.contains("Seatbelt"));
-    }
-
-    #[test]
-    fn local_process_full_access_does_not_claim_filesystem_or_network_isolation() {
-        let capability = SandboxBackendCapability {
-            backend: SandboxBackendKind::LocalProcess,
-            status: chatos_sandbox_contract::SandboxBackendReadinessStatus::Ready,
-            selectable: true,
-            filesystem_isolation: true,
-            network_isolation: true,
-            process_tree_control: true,
-            message: "Seatbelt ready".to_string(),
-        };
-        let status = sandbox_isolation_status(PermissionProfileId::FullAccess, &capability);
-
-        assert!(!status.filesystem_isolation);
-        assert!(!status.network_isolation);
-        assert!(status.process_tree_control);
-        assert!(status.note.contains("完全访问"));
-    }
 }

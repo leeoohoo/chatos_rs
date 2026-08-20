@@ -57,12 +57,8 @@ export function formatUserVisibleRunText(
   }
   if (
     [
-      'sandbox environment',
-      'sandbox_environment',
       'docker environment image build',
       'copy failed: file not found',
-      '.chatos/sandboxes',
-      '/api/sandbox-environments/',
     ].some((marker) => lower.includes(marker))
   ) {
     return t('runs.error.environmentPreparationFailed');

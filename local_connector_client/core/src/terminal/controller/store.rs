@@ -27,7 +27,7 @@ impl TerminalControllerStore for LocalConnectorTerminalControllerStore {
     ) -> std::result::Result<Value, String> {
         if !permissions.is_empty() {
             return Err(
-                "temporary permission overlays require an active sandbox lease".to_string(),
+                "temporary permission overlays require an active lease".to_string(),
             );
         }
         let project_root = canonicalize_terminal_root(context.root.as_path())?;

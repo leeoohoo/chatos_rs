@@ -207,7 +207,7 @@ pub struct TaskRunWorkspaceExecution {
     #[serde(default)]
     pub finalized_at: Option<String>,
     #[serde(default)]
-    pub sandbox_retained_for_diagnostics: bool,
+    pub lease_retained_for_diagnostics: bool,
     #[serde(default)]
     pub finalization_error: Option<String>,
     #[serde(default)]

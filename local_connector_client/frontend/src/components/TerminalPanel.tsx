@@ -167,7 +167,7 @@ export function TerminalPanel({ status }: { status: ConnectorStatus }) {
               <div className="historyDetails">
                 {entry.request_id ? <div><span>request</span><code>{entry.request_id}</code></div> : null}
                 {entry.terminal_session_id ? <div><span>session</span><code>{entry.terminal_session_id}</code></div> : null}
-                {entry.sandbox_id ? <div><span>sandbox</span><code>{entry.sandbox_id}</code></div> : null}
+                {entry.lease_id ? <div><span>lease</span><code>{entry.lease_id}</code></div> : null}
                 {entry.error ? <pre className="historyPreview errorPreview">{entry.error}</pre> : null}
                 {entry.stdout_preview ? <pre className="historyPreview">{entry.stdout_preview}</pre> : null}
                 {entry.stderr_preview ? <pre className="historyPreview errorPreview">{entry.stderr_preview}</pre> : null}

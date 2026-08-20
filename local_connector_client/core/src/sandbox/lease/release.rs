@@ -14,17 +14,17 @@ use crate::{local_now_rfc3339, LOCAL_SANDBOX_STATUS_DESTROYED};
 pub(crate) async fn release_local_sandbox(
     request: &RelayRequest,
     sandbox_runtime: &LocalSandboxRuntime,
-    sandbox_id: &str,
+    runtime_id: &str,
 ) -> Result<(u16, BTreeMap<String, String>, Value)> {
     let input = serde_json::from_value::<ReleaseLocalSandboxRequest>(request.body.clone())
-        .context("parse local sandbox release request")?;
+        .context("parse local lease release request")?;
     let mut lease = {
         let leases = sandbox_runtime.leases.read().await;
-        let Some(lease) = leases.get(sandbox_id).cloned() else {
+        let Some(lease) = leases.get(runtime_id).cloned() else {
             return Ok((
                 404,
                 BTreeMap::new(),
-                json!({ "error": "sandbox not found" }),
+                json!({ "error": "lease not found" }),
             ));
         };
         lease
@@ -33,14 +33,13 @@ pub(crate) async fn release_local_sandbox(
         return Ok((
             400,
             BTreeMap::new(),
-            json!({ "error": "lease_id does not match sandbox" }),
+            json!({ "error": "lease_id does not match lease" }),
         ));
     }
     let change_manifest = input.export_result.then(|| {
         json!({
             "schema_version": 1,
             "run_id": lease.run_id,
-            "sandbox_id": lease.sandbox_id,
             "lease_id": lease.id,
             "generated_at": local_now_rfc3339(),
             "output_workspace": null,
@@ -60,14 +59,14 @@ pub(crate) async fn release_local_sandbox(
     if input.destroy {
         lease.status = LOCAL_SANDBOX_STATUS_DESTROYED.to_string();
         lease.destroyed_at = Some(local_now_rfc3339());
-        clear_session_approvals(sandbox_id).await;
+        clear_session_approvals(runtime_id).await;
     }
     lease.updated_at = local_now_rfc3339();
     sandbox_runtime
         .leases
         .write()
         .await
-        .insert(sandbox_id.to_string(), lease.clone());
+        .insert(runtime_id.to_string(), lease.clone());
     Ok((
         200,
         BTreeMap::new(),
@@ -90,8 +89,8 @@ pub(crate) async fn shutdown_local_sandboxes(sandbox_runtime: &LocalSandboxRunti
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    for sandbox_id in &lease_ids {
-        clear_session_approvals(sandbox_id).await;
+    for runtime_id in &lease_ids {
+        clear_session_approvals(runtime_id).await;
     }
     sandbox_runtime.leases.write().await.clear();
     json!({

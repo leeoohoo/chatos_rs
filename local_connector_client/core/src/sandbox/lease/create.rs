@@ -18,7 +18,7 @@ use crate::sandbox::types::{
     CreateLocalSandboxLeaseRequest, LocalSandboxLease, LocalSandboxNetworkPolicy,
     LocalSandboxRuntime,
 };
-use crate::sandbox::workspace::local_sandbox_request_body;
+use crate::sandbox::workspace::local_lease_request_body;
 use crate::workspace::paths::{resolve_request_workspace_dir, workspace_for_request};
 use crate::{local_now_rfc3339, LocalState, LOCAL_SANDBOX_STATUS_READY};
 
@@ -35,12 +35,12 @@ pub(crate) async fn create_local_sandbox_lease(
         return Ok((
             400,
             BTreeMap::new(),
-            json!({ "error": "local sandbox is disabled" }),
+            json!({ "error": "local execution is disabled" }),
         ));
     }
-    let body = local_sandbox_request_body(request, state, &Method::POST, "/api/sandboxes/leases")?;
+    let body = local_lease_request_body(request, state, &Method::POST, "/api/sandboxes/leases")?;
     let input = serde_json::from_value::<CreateLocalSandboxLeaseRequest>(body)
-        .context("parse local sandbox lease request")?;
+        .context("parse local lease request")?;
     let workspace = workspace_for_request(state, request.workspace_id.as_str())?;
     let project_cwd = resolve_request_workspace_dir(workspace, request, ".")?;
     let project_permissions =
@@ -49,7 +49,7 @@ pub(crate) async fn create_local_sandbox_lease(
         local_effective_policy(&input.policy, &state.sandbox, project_permissions.as_ref())?;
     let effective_policy = selection.policy;
     let lease_id = format!("lease-{}", Uuid::new_v4());
-    let sandbox_id = format!("sandbox-{}", Uuid::new_v4());
+    let runtime_id = format!("lease-runtime-{}", Uuid::new_v4());
     let run_workspace = project_cwd;
     let effective_permissions = state.sandbox.effective_permissions_with_project(
         Some(selection.profile_name.as_str()),
@@ -70,7 +70,7 @@ pub(crate) async fn create_local_sandbox_lease(
     let expires_at = (Utc::now() + ChronoDuration::seconds(ttl_seconds as i64)).to_rfc3339();
     let lease = LocalSandboxLease {
         id: lease_id.clone(),
-        sandbox_id: sandbox_id.clone(),
+        runtime_id: runtime_id.clone(),
         tenant_id: input.tenant_id,
         user_id: input.user_id,
         project_id: input.project_id,
@@ -100,7 +100,7 @@ pub(crate) async fn create_local_sandbox_lease(
         .leases
         .write()
         .await
-        .insert(sandbox_id, lease);
+        .insert(runtime_id, lease);
     Ok((201, BTreeMap::new(), response))
 }
 

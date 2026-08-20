@@ -43,7 +43,7 @@ pub(crate) struct FinalizeRunWorkspaceResponse {
     pub run_id: String,
     pub result_commit: Option<String>,
     #[serde(default)]
-    pub sandbox_retained_for_diagnostics: bool,
+    pub lease_retained_for_diagnostics: bool,
 }
 
 #[derive(Debug, Serialize)]

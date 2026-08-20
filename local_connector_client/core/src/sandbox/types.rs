@@ -362,7 +362,7 @@ impl std::fmt::Debug for LocalSandboxRuntime {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct LocalSandboxLease {
     pub(crate) id: String,
-    pub(crate) sandbox_id: String,
+    pub(crate) runtime_id: String,
     pub(crate) tenant_id: String,
     pub(crate) user_id: String,
     pub(crate) project_id: String,

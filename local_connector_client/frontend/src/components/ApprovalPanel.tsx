@@ -425,7 +425,7 @@ export function ApprovalPanel() {
     }
     if (
       remember
-      && !window.confirm('选择“本会话允许”后，仅本次沙箱会话内相同命令和相同权限请求不再询问。确认继续吗？')
+      && !window.confirm('选择“本会话允许”后，仅本次任务租约内相同命令和相同权限请求不再询问。确认继续吗？')
     ) {
       return;
     }

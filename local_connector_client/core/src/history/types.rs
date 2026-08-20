@@ -32,7 +32,8 @@ pub(crate) struct CommandHistoryEntry {
     pub(crate) finished_at: Option<String>,
     pub(crate) request_id: Option<String>,
     pub(crate) terminal_session_id: Option<String>,
-    pub(crate) sandbox_id: Option<String>,
+    #[serde(default)]
+    pub(crate) lease_id: Option<String>,
     pub(crate) tool_name: Option<String>,
 }
 
@@ -48,7 +49,7 @@ pub(crate) struct CommandExecutionContext {
     pub(crate) request_id: Option<String>,
     pub(crate) tool_name: Option<String>,
     pub(crate) terminal_session_id: Option<String>,
-    pub(crate) sandbox_id: Option<String>,
+    pub(crate) lease_id: Option<String>,
 }
 
 impl CommandHistoryRecorder {
@@ -75,7 +76,7 @@ impl CommandExecutionContext {
             request_id: Some(request.request_id.clone()),
             tool_name: None,
             terminal_session_id: None,
-            sandbox_id: None,
+            lease_id: None,
         }
     }
 
@@ -85,21 +86,21 @@ impl CommandExecutionContext {
             request_id: Some(request.request_id.clone()),
             tool_name: Some(tool_name.to_string()),
             terminal_session_id: None,
-            sandbox_id: None,
+            lease_id: None,
         }
     }
 
-    pub(crate) fn task_runner_sandbox(
+    pub(crate) fn task_runner_lease(
         request: &RelayRequest,
-        sandbox_id: &str,
+        lease_id: &str,
         tool_name: &str,
     ) -> Self {
         Self {
-            source: "task_runner_sandbox".to_string(),
+            source: "task_runner_lease".to_string(),
             request_id: Some(request.request_id.clone()),
             tool_name: Some(tool_name.to_string()),
             terminal_session_id: None,
-            sandbox_id: Some(sandbox_id.to_string()),
+            lease_id: Some(lease_id.to_string()),
         }
     }
 }

@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type {
-  ConnectorStatus,
   PermissionProfileId,
   SandboxApprovalPolicy,
   SandboxApprovalReviewer,
@@ -17,30 +16,28 @@ import type {
 export type SandboxApprovalMode = 'user' | 'auto_review' | 'never';
 
 export function resolveSandboxPolicyView(
-  status: ConnectorStatus,
   settings: SandboxSettings | null,
   capabilities: SandboxCapabilities | null,
 ) {
   const backend = normalizeSandboxBackend(
-    settings?.default_backend || status.sandbox.default_backend || status.sandbox.backend,
+    settings?.default_backend,
   );
   const permissionProfile = normalizePermissionProfile(
-    settings?.default_permission_profile_id || status.sandbox.default_permission_profile_id,
+    settings?.default_permission_profile_id,
   );
   const permissionProfileName =
     settings?.default_permission_profile_name
-    || status.sandbox.default_permission_profile_name
     || permissionProfileCodexName(permissionProfile);
   const customPermissionProfileActive = !permissionProfileName.startsWith(':');
   const approvalPolicy = normalizeApprovalPolicy(
-    settings?.default_approval_policy || status.sandbox.default_approval_policy,
+    settings?.default_approval_policy,
   );
   const approvalReviewer = normalizeApprovalReviewer(
-    settings?.default_approval_reviewer || status.sandbox.default_approval_reviewer,
+    settings?.default_approval_reviewer,
   );
   const approvalMode = approvalModeFromPolicy(approvalPolicy, approvalReviewer);
-  const network = resolveEffectiveNetwork(status, settings);
-  const profileCatalog = settings?.permission_profiles || status.sandbox.permission_profiles || [];
+  const network = resolveEffectiveNetwork(settings);
+  const profileCatalog = settings?.permission_profiles || [];
   const builtinProfiles = new Map(
     profileCatalog
       .filter((profile) => profile.id.startsWith(':'))
@@ -114,30 +111,26 @@ export function approvalModeDescription(mode: SandboxApprovalMode) {
 }
 
 export function sandboxBackendLabel(_backend: SandboxBackendKind) {
-  return '本机进程隔离';
+  return '本机进程权限';
 }
 
 export function sandboxBackendDescription(_backend: SandboxBackendKind) {
-  return '任务在本机进程中运行，由操作系统沙箱限制文件和网络；不是线程隔离。';
+  return '任务在授权工作区内通过本机进程运行；文件、网络与审批由 Local Connector 权限策略控制。';
 }
 
-function resolveEffectiveNetwork(
-  status: ConnectorStatus,
-  settings: SandboxSettings | null,
-): {
+function resolveEffectiveNetwork(settings: SandboxSettings | null): {
   access: SandboxNetworkAccess;
   unrestricted: boolean;
   requirements: SandboxNetworkRequirements;
 } {
   const fallbackRequirements =
     settings?.default_network_requirements
-    || status.sandbox.default_network_requirements
     || { enabled: false };
   const configuredAccess = normalizeNetworkAccess(
-    settings?.default_network_access || status.sandbox.default_network_access,
+    settings?.default_network_access,
     fallbackRequirements,
   );
-  const effective = settings?.effective_permissions || status.sandbox.effective_permissions;
+  const effective = settings?.effective_permissions;
   if (effective?.network.type === 'unrestricted') {
     return { access: 'host', unrestricted: true, requirements: {} };
   }

@@ -18,34 +18,6 @@ export interface WorkspaceRecord {
   project_config_trusted_at?: string | null;
 }
 
-export interface SandboxState {
-  enabled: boolean;
-  backend?: string | null;
-  default_backend?: SandboxBackendKind | null;
-  isolation?: string | null;
-  filesystem_isolation?: boolean | null;
-  network_isolation?: boolean | null;
-  process_tree_control?: boolean | null;
-  isolation_note?: string | null;
-  default_permission_profile_id?: PermissionProfileId | null;
-  default_permission_profile_name?: string | null;
-  default_permission_profile_provenance?: PermissionProfileProvenance | null;
-  permission_configuration_error?: string | null;
-  default_approval_policy?: SandboxApprovalPolicy | null;
-  default_approval_reviewer?: SandboxApprovalReviewer | null;
-  default_network_access?: SandboxNetworkAccess | null;
-  default_network_requirements?: SandboxNetworkRequirements | null;
-  allowed_permission_profiles?: Record<string, boolean> | null;
-  configured_allowed_permission_profiles?: Record<string, boolean> | null;
-  permission_profiles?: PermissionProfileSummary[] | null;
-  custom_permission_profiles?: Record<string, CustomPermissionProfile> | null;
-  effective_custom_permission_profiles?: Record<string, CustomPermissionProfile> | null;
-  managed_permission_profiles?: string[] | null;
-  policy_revision?: string | null;
-  effective_policy?: SandboxEffectivePolicy | null;
-  effective_permissions?: EffectivePermissionSnapshot | null;
-}
-
 export interface ConnectorStatus {
   configured: boolean;
   connector_running: boolean;
@@ -60,7 +32,6 @@ export interface ConnectorStatus {
   device_name?: string | null;
   user?: AuthUser | null;
   workspaces: WorkspaceRecord[];
-  sandbox: SandboxState;
 }
 
 export interface FsEntry {
@@ -105,7 +76,7 @@ export interface CommandHistoryEntry {
   finished_at?: string | null;
   request_id?: string | null;
   terminal_session_id?: string | null;
-  sandbox_id?: string | null;
+  lease_id?: string | null;
   tool_name?: string | null;
 }
 
@@ -857,7 +828,7 @@ export type SandboxSettingsUpdate = Partial<
 
 export interface SandboxLease {
   id: string;
-  sandbox_id: string;
+  lease_id?: string;
   tenant_id: string;
   user_id: string;
   project_id: string;

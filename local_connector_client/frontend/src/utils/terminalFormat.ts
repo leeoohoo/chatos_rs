@@ -13,7 +13,7 @@ export function sourceLabel(source: string) {
     chatos_terminal_exec: 'Chat OS 终端',
     chatos_terminal_session: 'Chat OS 终端',
     local_mcp: 'Task Runner',
-    task_runner_sandbox: 'Task Runner',
+    task_runner_lease: 'Task Runner',
     local_connector_ui: 'Local Connector 页面',
     plugin_computer_use: 'Computer Use 插件',
     plugin_chrome_existing_session: 'Chrome existing-session 插件',
@@ -28,7 +28,7 @@ export function sourceGroup(source: string) {
   if (source === 'chatos_terminal_exec' || source === 'chatos_terminal_session') {
     return 'chatos_terminal';
   }
-  if (source === 'local_mcp' || source === 'task_runner_sandbox') {
+  if (source === 'local_mcp' || source === 'task_runner_lease') {
     return 'task_runner';
   }
   return source;

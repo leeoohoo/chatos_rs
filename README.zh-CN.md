@@ -54,7 +54,7 @@ Okra 可以进入正确的工程环境，而不是让你不断复制粘贴代码
 - 是否需要你补充信息或确认操作
 - 成功、停止、失败与重试结果
 
-任务生命周期由云端持续管理，因此离开页面后仍可继续。使用本机文件、命令、Plugin、MCP 或沙箱能力的任务，需要桌面客户端和 Local Connector 保持在线。
+任务生命周期由云端持续管理，因此离开页面后仍可继续。使用本机文件、命令、Plugin、MCP 或受权限控制的设备能力时，需要桌面客户端和 Local Connector 保持在线。
 
 ### 记住项目，而不是只记住一轮聊天
 
@@ -128,9 +128,9 @@ Okra 会持续整理项目背景、重要决定、会话摘要和角色记忆，
 Okra 只有一种项目模型。每个项目都绑定一个已授权的 Local Connector 工作区，不再区分云端项目和本地项目。
 
 - Project、Session、Message、Task、Requirement、Memory 和 Agent 生命周期由服务端编排。
-- 项目文件、Git、搜索、命令、本地 Skill/Plugin/MCP、sandbox facade 和审批只通过 Local Connector Client 执行。
+- 项目文件、Git、搜索、命令、本地 Skill/Plugin/MCP、权限 relay 和审批只通过 Local Connector Client 执行。
 - Harness 可以管理仓库资产、分支、同步、CI 和集成，但不会作为 MCP 项目文件或命令 provider。
-- Local Connector 不可用时，工作区操作会明确失败或等待，不会回退到服务端文件系统、Harness 或 Cloud Sandbox。
+- Local Connector 不可用时，工作区操作会明确失败或等待，不会回退到服务端文件系统、Harness 或其他执行环境。
 
 ### 关于项目与隐私
 
@@ -175,7 +175,7 @@ Okra 只有一种项目模型。每个项目都绑定一个已授权的 Local Co
 1. 从 Okra 官网下载并安装 Okra 桌面连接器。
 2. 使用与 Web 端相同的账号登录。
 3. 添加并授权一个本机工作区。
-4. 配置需要使用的本地工具、Skill、Plugin、MCP、sandbox facade 和审批权限。
+4. 配置需要使用的本地工具、Skill、Plugin、MCP、权限控制和审批权限。
 5. 在桌面端从该工作区创建项目。
 6. 添加项目联系人，然后开始对话或规划。
 
@@ -205,7 +205,7 @@ Okra 只有一种项目模型。每个项目都绑定一个已授权的 Local Co
 
 ### 设备离线时，项目会回退到云端工作区吗？
 
-不会。项目工作区只使用已绑定的 Local Connector。MCP Management 不会静默切换到 Harness、服务端文件系统、Cloud Sandbox 或其他设备。
+不会。项目工作区只使用已绑定的 Local Connector。MCP Management 不会静默切换到 Harness、服务端文件系统、其他执行环境或其他设备。
 
 ## 当前产品状态
 
@@ -228,7 +228,7 @@ Okra 仍在快速迭代。当前需要留意：
 Okra 使用一套云端业务编排平面，并按需调用设备侧能力执行器：
 
 - Project、Session、Task、Requirement、Memory 和 Agent 生命周期全部以云端服务为事实数据源。
-- Local Connector Core 只执行必须在用户设备完成的 Workspace 文件、Git、命令、本地 Skill/Plugin/MCP、沙箱和审批能力。
+- Local Connector Core 只执行必须在用户设备完成的 Workspace 文件、Git、命令、本地 Skill/Plugin/MCP、受权限控制的任务租约和审批能力。
 - MCP Management 只把项目文件、Git、搜索和命令路由到已绑定的 Local Connector；Harness 只保留仓库与集成控制面职责。
 - Local Connector 不可用时明确失败，不会把设备侧操作静默切换到其他执行位置。
 

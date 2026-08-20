@@ -392,12 +392,12 @@ mod tests {
 
     #[test]
     fn local_api_error_keeps_legacy_error_string_and_optional_code() {
-        let body = LocalApiError::conflict_code("sandbox_backend_not_ready", "not ready").body();
+        let body = LocalApiError::conflict_code("execution_backend_not_ready", "not ready").body();
 
         assert_eq!(body.get("error").and_then(Value::as_str), Some("not ready"));
         assert_eq!(
             body.get("code").and_then(Value::as_str),
-            Some("sandbox_backend_not_ready")
+            Some("execution_backend_not_ready")
         );
     }
 
