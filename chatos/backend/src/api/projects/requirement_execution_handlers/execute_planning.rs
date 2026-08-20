@@ -409,32 +409,6 @@ async fn load_project_management_agent_model_config_id(
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::select_requirement_planner_model_config_id;
-
-    #[test]
-    fn explicit_requirement_model_overrides_configured_project_management_default() {
-        assert_eq!(
-            select_requirement_planner_model_config_id(
-                Some("explicit-model".to_string()),
-                Some("configured-model".to_string()),
-            )
-            .as_deref(),
-            Some("explicit-model"),
-        );
-    }
-
-    #[test]
-    fn configured_project_management_model_is_used_when_request_omits_model() {
-        assert_eq!(
-            select_requirement_planner_model_config_id(None, Some("configured-model".to_string()),)
-                .as_deref(),
-            Some("configured-model"),
-        );
-    }
-}
-
 async fn ensure_latest_cloud_execution_planner_not_active(
     auth: &AuthUser,
     project_id: &str,
@@ -501,4 +475,30 @@ async fn load_requirement_documents_for_scope(
         out.insert(requirement_id.clone(), documents);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_requirement_planner_model_config_id;
+
+    #[test]
+    fn explicit_requirement_model_overrides_configured_project_management_default() {
+        assert_eq!(
+            select_requirement_planner_model_config_id(
+                Some("explicit-model".to_string()),
+                Some("configured-model".to_string()),
+            )
+            .as_deref(),
+            Some("explicit-model"),
+        );
+    }
+
+    #[test]
+    fn configured_project_management_model_is_used_when_request_omits_model() {
+        assert_eq!(
+            select_requirement_planner_model_config_id(None, Some("configured-model".to_string()),)
+                .as_deref(),
+            Some("configured-model"),
+        );
+    }
 }

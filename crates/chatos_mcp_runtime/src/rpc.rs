@@ -147,7 +147,7 @@ pub async fn jsonrpc_http_tool_call_cancellable_with_client(
     let mut cancellation_guard =
         HttpCancellationGuard::new(url, headers, id.as_str(), timeout, client.cloned());
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
-    let result = match jsonrpc_http_call_with_id(
+    let result = jsonrpc_http_call_with_id(
         url,
         headers,
         "tools/call",
@@ -156,11 +156,7 @@ pub async fn jsonrpc_http_tool_call_cancellable_with_client(
         id.as_str(),
         client,
     )
-    .await
-    {
-        Ok(response) => Ok(response),
-        Err(error) => Err(error),
-    };
+    .await;
     cancellation_guard.disarm();
     result
 }
