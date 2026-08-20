@@ -5,9 +5,7 @@ use chatos_mcp::{
     system_mcp_descriptor_for_record, system_mcp_provider_skills, system_mcp_tool_catalog,
     SystemMcpToolCatalog,
 };
-use chatos_service_runtime::http_body::{
-    read_response_json_limited, JSON_BODY_LIMIT_BYTES,
-};
+use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::Deserialize;
 use serde_json::Value;
@@ -114,5 +112,4 @@ mod tests {
             }
         }
     }
-
 }

@@ -108,7 +108,8 @@ impl LocalConnectorProvider {
             ))
         })?;
         if let Some(workspace_id) = binding.workspace_id.as_deref() {
-            url.query_pairs_mut().append_pair("workspace_id", workspace_id);
+            url.query_pairs_mut()
+                .append_pair("workspace_id", workspace_id);
         }
         let mut request = self
             .http

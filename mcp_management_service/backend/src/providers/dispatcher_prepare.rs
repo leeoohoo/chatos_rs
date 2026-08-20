@@ -11,13 +11,18 @@ use crate::runtime::LocalConnectorMcpProviderBinding;
 use super::ProviderDispatcher;
 
 impl ProviderDispatcher {
-    pub fn prepare_local_connector_mcp_routes(
+    pub async fn prepare_local_connector_mcp_routes(
         &self,
         capabilities: &ResolvedAgentCapabilities,
         routes: &mut [ResolvedMcpRoute],
         context: &ProjectExecutionContext,
-    ) -> HashMap<String, LocalConnectorMcpProviderBinding> {
+        owner_user_id: &str,
+    ) -> (
+        HashMap<String, LocalConnectorMcpProviderBinding>,
+        HashMap<String, Vec<serde_json::Value>>,
+    ) {
         self.local_connector
-            .prepare_mcp_routes(capabilities, routes, context)
+            .prepare_mcp_routes(capabilities, routes, context, owner_user_id)
+            .await
     }
 }
