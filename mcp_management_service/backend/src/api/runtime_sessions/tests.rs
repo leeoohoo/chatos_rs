@@ -35,6 +35,7 @@ fn request() -> CreateRuntimeSessionRequest {
         locale: None,
         workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: None,
+            owned_paths: Vec::new(),
         }),
     }
 }
@@ -510,6 +511,7 @@ fn local_connector_route_pins_all_workspace_tools_to_the_authorized_workspace() 
         routes.as_mut_slice(),
         Some(&RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: None,
+            owned_paths: Vec::new(),
         }),
         &context,
     );
@@ -525,6 +527,7 @@ fn local_connector_route_pins_all_workspace_tools_to_the_authorized_workspace() 
         routes.as_slice(),
         Some(&RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: None,
+            owned_paths: Vec::new(),
         }),
         &context,
     )
@@ -535,6 +538,7 @@ fn local_connector_route_pins_all_workspace_tools_to_the_authorized_workspace() 
 fn workspace_route_binding_validation_rejects_provider_drift() {
     let route = RuntimeWorkspaceRouteTarget::LocalConnector {
         default_tool_root: None,
+        owned_paths: Vec::new(),
     };
     let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
     let context = context();
@@ -551,6 +555,7 @@ fn workspace_route_binding_validation_rejects_provider_drift() {
 fn workspace_route_binding_validation_rejects_local_connector_identity_drift() {
     let route = RuntimeWorkspaceRouteTarget::LocalConnector {
         default_tool_root: None,
+        owned_paths: Vec::new(),
     };
     let mut routes = vec![system_route(SystemMcpKey::CodeMaintainerRead)];
     let context = context();
@@ -570,6 +575,7 @@ fn local_connector_default_tool_root_is_normalized_without_overriding_project_co
     let normalized =
         normalize_runtime_workspace_route(Some(RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: Some("/backend/".to_string()),
+            owned_paths: Vec::new(),
         }))
         .expect("normalize route")
         .expect("route");
@@ -584,6 +590,27 @@ fn local_connector_default_tool_root_is_normalized_without_overriding_project_co
             .as_ref()
             .and_then(|workspace| workspace.relative_root.as_deref()),
         Some("apps")
+    );
+}
+
+#[test]
+fn local_connector_owned_paths_are_normalized_without_becoming_tool_root() {
+    let normalized =
+        normalize_runtime_workspace_route(Some(RuntimeWorkspaceRouteTarget::LocalConnector {
+            default_tool_root: None,
+            owned_paths: vec![
+                "/README.md/".to_string(),
+                "backend".to_string(),
+                "README.md".to_string(),
+            ],
+        }))
+        .expect("normalize route")
+        .expect("route");
+
+    assert_eq!(normalized.local_connector_default_tool_root(), None);
+    assert_eq!(
+        normalized.local_connector_owned_paths(),
+        &["README.md".to_string(), "backend".to_string()]
     );
 }
 

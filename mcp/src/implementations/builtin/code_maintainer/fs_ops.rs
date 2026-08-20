@@ -19,6 +19,7 @@ type FileRangeRead = (String, u64, String, usize, usize, usize, String);
 #[derive(Clone, Debug)]
 pub struct FsOps {
     root: PathBuf,
+    allowed_write_paths: Option<Vec<String>>,
     max_file_bytes: i64,
     search_limit: usize,
 }
@@ -33,6 +34,7 @@ pub struct FileEntry {
 }
 
 impl FsOps {
+    #[cfg(test)]
     pub fn new(
         root: PathBuf,
         _allow_writes: bool,
@@ -40,18 +42,61 @@ impl FsOps {
         _max_write_bytes: i64,
         search_limit: usize,
     ) -> Self {
-        let root = root.canonicalize().unwrap_or(root);
-        Self {
+        Self::new_with_allowed_write_paths(
             root,
+            _allow_writes,
+            None,
+            max_file_bytes,
+            _max_write_bytes,
+            search_limit,
+        )
+        .expect("unrestricted FsOps construction cannot fail")
+    }
+
+    pub fn new_with_allowed_write_paths(
+        root: PathBuf,
+        _allow_writes: bool,
+        allowed_write_paths: Option<Vec<String>>,
+        max_file_bytes: i64,
+        _max_write_bytes: i64,
+        search_limit: usize,
+    ) -> Result<Self, String> {
+        let root = root.canonicalize().unwrap_or(root);
+        let allowed_write_paths = allowed_write_paths
+            .map(|paths| normalize_allowed_write_paths(root.as_path(), paths))
+            .transpose()?;
+        Ok(Self {
+            root,
+            allowed_write_paths,
             max_file_bytes,
             search_limit,
-        }
+        })
     }
 
     pub fn resolve_path(&self, rel_path: &str) -> Result<PathBuf, String> {
         let normalized = rel_path.replace('\\', "/");
         let target = Path::new(&normalized);
         ensure_path_inside_root(&self.root, target)
+    }
+
+    pub fn resolve_write_path(&self, rel_path: &str) -> Result<PathBuf, String> {
+        let resolved = self.resolve_path(rel_path)?;
+        let Some(allowed_paths) = self.allowed_write_paths.as_ref() else {
+            return Ok(resolved);
+        };
+        let relative = pathdiff::diff_paths(resolved.as_path(), self.root.as_path())
+            .ok_or_else(|| format!("Resolve workspace-relative write path failed: {rel_path}"))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if allowed_paths.iter().any(|allowed| {
+            relative == *allowed || relative.starts_with(format!("{allowed}/").as_str())
+        }) {
+            return Ok(resolved);
+        }
+        Err(format!(
+            "Write path is outside the task-owned paths: {relative}. Allowed paths: {}",
+            allowed_paths.join(", ")
+        ))
     }
 
     pub fn read_file_raw(&self, rel_path: &str) -> Result<(String, u64, String, String), String> {
@@ -210,6 +255,21 @@ impl FsOps {
             max_file_bytes,
         )
     }
+}
+
+fn normalize_allowed_write_paths(root: &Path, paths: Vec<String>) -> Result<Vec<String>, String> {
+    let mut normalized = paths
+        .into_iter()
+        .map(|path| {
+            let resolved = ensure_path_inside_root(root, Path::new(path.as_str()))?;
+            pathdiff::diff_paths(resolved, root)
+                .ok_or_else(|| format!("Resolve task-owned path failed: {path}"))
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
 }
 
 #[derive(Debug, serde::Serialize)]

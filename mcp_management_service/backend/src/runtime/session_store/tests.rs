@@ -72,6 +72,7 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         expected_project_task_ids: vec!["task-1".to_string()],
         workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: Some("workspace".to_string()),
+            owned_paths: Vec::new(),
         }),
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),

@@ -14,12 +14,14 @@ use crate::{
 };
 
 use super::project::normalize_request_task_project_relative_path;
+use crate::workspace::paths::request_owned_paths;
 
 pub(crate) fn code_maintainer_service_for_root(
     root: &Path,
     project_id: Option<String>,
     conversation_id: Option<String>,
     run_id: Option<String>,
+    allowed_write_paths: Option<Vec<String>>,
     allow_writes: bool,
     enable_read_tools: bool,
     enable_write_tools: bool,
@@ -29,6 +31,7 @@ pub(crate) fn code_maintainer_service_for_root(
         root: root.to_path_buf(),
         project_id,
         allow_writes,
+        allowed_write_paths,
         max_file_bytes: MAX_LOCAL_MCP_READ_BYTES as i64,
         max_write_bytes: MAX_LOCAL_MCP_WRITE_BYTES as i64,
         search_limit: MAX_LOCAL_MCP_SEARCH_RESULTS,
@@ -63,6 +66,7 @@ pub(crate) fn code_maintainer_service_for_request(
         project_id,
         Some(session_id),
         Some(run_id),
+        request_owned_paths(request)?,
         allow_writes,
         enable_read_tools,
         enable_write_tools,

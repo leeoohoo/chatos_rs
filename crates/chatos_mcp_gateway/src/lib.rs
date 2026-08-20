@@ -512,6 +512,7 @@ mod tests {
         let mut request = create_request(Some("run-1"));
         request.workspace_route = Some(RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: None,
+            owned_paths: Vec::new(),
         });
         let session = routes_response(Some("run-1"));
 

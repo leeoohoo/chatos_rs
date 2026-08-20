@@ -88,9 +88,13 @@ pub(super) fn normalize_runtime_workspace_route(
     let Some(route) = route else {
         return Ok(None);
     };
-    let RuntimeWorkspaceRouteTarget::LocalConnector { default_tool_root } = route;
+    let RuntimeWorkspaceRouteTarget::LocalConnector {
+        default_tool_root,
+        owned_paths,
+    } = route;
     let route = RuntimeWorkspaceRouteTarget::LocalConnector {
         default_tool_root: normalized_default_tool_root(default_tool_root.as_deref())?,
+        owned_paths: normalized_owned_paths(owned_paths)?,
     };
     Ok(Some(route))
 }
@@ -253,6 +257,48 @@ fn normalized_default_tool_root(value: Option<&str>) -> Result<Option<String>, A
         return Err(ApiError::bad_request(
             "Local Connector default_tool_root must be a safe relative path",
         ));
+    }
+    Ok(Some(normalized))
+}
+
+fn normalized_owned_paths(values: Vec<String>) -> Result<Vec<String>, ApiError> {
+    let mut normalized = values
+        .into_iter()
+        .map(|value| {
+            normalized_relative_path(value.as_str(), "owned_paths")?.ok_or_else(|| {
+                ApiError::bad_request(
+                    "Local Connector owned_paths must contain non-empty safe relative paths",
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
+}
+
+fn normalized_relative_path(value: &str, field: &str) -> Result<Option<String>, ApiError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let normalized = value.trim_matches('/').to_string();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    if normalized.starts_with(['/', '\\'])
+        || normalized.as_bytes().get(1) == Some(&b':')
+        || normalized.split('/').any(|segment| {
+            segment.is_empty()
+                || matches!(segment, "." | "..")
+                || segment
+                    .chars()
+                    .any(|value| value == '\\' || value.is_control())
+        })
+    {
+        return Err(ApiError::bad_request(format!(
+            "Local Connector {field} must contain safe relative paths"
+        )));
     }
     Ok(Some(normalized))
 }

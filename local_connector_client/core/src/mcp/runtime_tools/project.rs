@@ -59,18 +59,11 @@ pub(crate) fn normalize_request_task_project_relative_path(
 pub(crate) fn normalize_request_task_existing_dir_relative_path(
     workspace: &WorkspaceState,
     request: &RelayRequest,
-    project_root: &Path,
+    _project_root: &Path,
     requested: &str,
 ) -> Result<String> {
     let project_relative = normalize_request_project_relative_path(workspace, request, requested)?;
-    let scoped = apply_default_tool_root(request, project_relative.clone())?;
-    let Some(default_root) = request_default_tool_root(request)? else {
-        return Ok(scoped);
-    };
-    if scoped == default_root && !project_root.join(default_root.as_str()).is_dir() {
-        return Ok(project_relative);
-    }
-    Ok(scoped)
+    apply_default_tool_root(request, project_relative)
 }
 
 fn apply_default_tool_root(request: &RelayRequest, project_relative: String) -> Result<String> {

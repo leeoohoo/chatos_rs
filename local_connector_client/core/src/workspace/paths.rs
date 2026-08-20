@@ -48,3 +48,30 @@ pub(crate) fn request_default_tool_root(request: &RelayRequest) -> Result<Option
         .map(normalize_relative_workspace_path)
         .transpose()
 }
+
+pub(crate) fn request_owned_paths(request: &RelayRequest) -> Result<Option<Vec<String>>> {
+    let Some(value) = request
+        .headers
+        .get("x-local-connector-owned-paths")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let decoded = urlencoding::decode(value)
+        .map_err(|error| anyhow!("invalid Local Connector owned paths encoding: {error}"))?;
+    let values = serde_json::from_str::<Vec<String>>(decoded.as_ref())
+        .map_err(|error| anyhow!("invalid Local Connector owned paths header: {error}"))?;
+    let mut normalized = values
+        .into_iter()
+        .map(|path| normalize_relative_workspace_path(path.as_str()))
+        .collect::<Result<Vec<_>>>()?;
+    normalized.sort();
+    normalized.dedup();
+    if normalized.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(normalized))
+    }
+}

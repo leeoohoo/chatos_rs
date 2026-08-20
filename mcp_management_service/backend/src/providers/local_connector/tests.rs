@@ -79,6 +79,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         expected_project_task_ids: Vec::new(),
         workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: Some("backend".to_string()),
+            owned_paths: vec!["README.md".to_string()],
         }),
         project_context: ProjectExecutionContext {
             project_id: "project-1".to_string(),
@@ -190,6 +191,12 @@ async fn start_local_connector(
                 .get(LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER)
                 .and_then(|value| value.to_str().ok()),
             Some("backend")
+        );
+        assert_eq!(
+            headers
+                .get(LOCAL_CONNECTOR_OWNED_PATHS_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("%5B%22README.md%22%5D")
         );
         let token = headers
             .get("x-local-connector-internal-token")

@@ -216,21 +216,19 @@ pub(crate) fn validate_project_execution_task_runtime_contract(
     Ok(())
 }
 
-fn single_owned_workspace_root(task: &TaskRecord) -> Result<Option<String>, String> {
+fn owned_workspace_paths(task: &TaskRecord) -> Result<Vec<String>, String> {
     let payload = task
         .input_payload
         .as_ref()
         .unwrap_or(&serde_json::Value::Null);
-    single_owned_workspace_root_from_payload(payload)
+    owned_workspace_paths_from_payload(payload)
 }
 
-fn single_owned_workspace_root_from_payload(
-    payload: &serde_json::Value,
-) -> Result<Option<String>, String> {
+fn owned_workspace_paths_from_payload(payload: &serde_json::Value) -> Result<Vec<String>, String> {
     if payload.get("source").and_then(serde_json::Value::as_str)
         != Some("chatos_project_requirement_execution")
     {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let owned_paths = payload
         .get("owned_paths")
@@ -246,11 +244,7 @@ fn single_owned_workspace_root_from_payload(
         .collect::<Vec<_>>();
     owned_paths.sort();
     owned_paths.dedup();
-    if owned_paths.len() == 1 {
-        Ok(owned_paths.pop())
-    } else {
-        Ok(None)
-    }
+    Ok(owned_paths)
 }
 
 fn normalize_owned_workspace_root(path: &str) -> Result<String, String> {
@@ -474,7 +468,8 @@ async fn prepare_workspace_inner(
             }
             Ok(PreparedWorkspaceExecution {
                 route: RuntimeWorkspaceRouteTarget::LocalConnector {
-                    default_tool_root: single_owned_workspace_root(task)?,
+                    default_tool_root: None,
+                    owned_paths: owned_workspace_paths(task)?,
                 },
                 branch_target: TaskRunBranchTarget::Local,
                 execution_group_id: run
@@ -998,31 +993,28 @@ mod tests {
     }
 
     #[test]
-    fn single_owned_project_execution_path_becomes_workspace_root() {
+    fn owned_project_execution_paths_are_preserved_as_write_scope() {
         let payload = serde_json::json!({
             "source": "chatos_project_requirement_execution",
-            "owned_paths": ["backend"]
+            "owned_paths": ["README.md", "backend", "README.md"]
         });
 
         assert_eq!(
-            single_owned_workspace_root_from_payload(&payload)
-                .unwrap()
-                .as_deref(),
-            Some("backend")
+            owned_workspace_paths_from_payload(&payload).unwrap(),
+            vec!["README.md".to_string(), "backend".to_string()]
         );
     }
 
     #[test]
-    fn multiple_owned_project_execution_paths_keep_project_root() {
+    fn unrelated_payload_has_no_owned_write_scope() {
         let payload = serde_json::json!({
-            "source": "chatos_project_requirement_execution",
-            "owned_paths": ["frontend", "backend"]
+            "source": "manual",
+            "owned_paths": ["backend"]
         });
 
-        assert_eq!(
-            single_owned_workspace_root_from_payload(&payload).unwrap(),
-            None
-        );
+        assert!(owned_workspace_paths_from_payload(&payload)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1032,7 +1024,7 @@ mod tests {
             "owned_paths": ["../backend"]
         });
 
-        let error = single_owned_workspace_root_from_payload(&payload).unwrap_err();
+        let error = owned_workspace_paths_from_payload(&payload).unwrap_err();
         assert!(error.contains("owned path"));
     }
 }

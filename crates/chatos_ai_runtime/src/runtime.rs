@@ -75,6 +75,7 @@ use self::summaries::summarize_tool_call_names;
 #[cfg(feature = "local-agent-loop")]
 use self::tool_execution::{
     execute_runtime_tools, next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
+    RepeatedToolFailureTracker,
 };
 
 pub struct AiRuntime {
@@ -193,6 +194,7 @@ impl AiRuntime {
         let mut runtime_followup_items: Vec<Value> = Vec::new();
         let mut runtime_followup_appended_to_request = false;
         let mut consecutive_failed_tool_batches = 0usize;
+        let mut repeated_tool_failure_tracker = RepeatedToolFailureTracker::default();
         let mut continuation_input = request
             .previous_response_id
             .as_ref()
@@ -600,8 +602,14 @@ impl AiRuntime {
                 return Ok(runtime_result_from_response(response));
             };
 
-            let mut tool_execution =
-                execute_runtime_tools(executor.as_ref(), &tool_calls, &options, iteration).await?;
+            let mut tool_execution = execute_runtime_tools(
+                executor.as_ref(),
+                &tool_calls,
+                &options,
+                iteration,
+                &mut repeated_tool_failure_tracker,
+            )
+            .await?;
             let provider_tool_call_count = tool_execution.tool_call_items.len();
             self.save_tool_records(&options, tool_execution.tool_results.as_slice())
                 .await?;
@@ -622,6 +630,7 @@ impl AiRuntime {
                     &Value::Array(recovery_calls),
                     &options,
                     iteration,
+                    &mut repeated_tool_failure_tracker,
                 )
                 .await?;
                 self.save_tool_records(&options, recovery_execution.tool_results.as_slice())

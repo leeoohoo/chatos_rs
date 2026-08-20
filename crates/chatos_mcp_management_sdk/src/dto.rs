@@ -34,6 +34,8 @@ pub enum RuntimeWorkspaceRouteTarget {
     LocalConnector {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_tool_root: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        owned_paths: Vec<String>,
     },
 }
 
@@ -46,7 +48,15 @@ impl RuntimeWorkspaceRouteTarget {
 
     pub fn local_connector_default_tool_root(&self) -> Option<&str> {
         match self {
-            Self::LocalConnector { default_tool_root } => default_tool_root.as_deref(),
+            Self::LocalConnector {
+                default_tool_root, ..
+            } => default_tool_root.as_deref(),
+        }
+    }
+
+    pub fn local_connector_owned_paths(&self) -> &[String] {
+        match self {
+            Self::LocalConnector { owned_paths, .. } => owned_paths.as_slice(),
         }
     }
 }

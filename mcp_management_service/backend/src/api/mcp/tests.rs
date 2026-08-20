@@ -122,6 +122,7 @@ fn explicit_workspace_route_is_the_execution_scope_provider_authority() {
     );
     snapshot.workspace_route = Some(RuntimeWorkspaceRouteTarget::LocalConnector {
         default_tool_root: Some("apps/backend".to_string()),
+        owned_paths: Vec::new(),
     });
 
     assert_eq!(

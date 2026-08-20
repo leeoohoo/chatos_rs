@@ -21,6 +21,7 @@ pub struct CodeMaintainerOptions {
     pub root: PathBuf,
     pub project_id: Option<String>,
     pub allow_writes: bool,
+    pub allowed_write_paths: Option<Vec<String>>,
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
     pub search_limit: usize,
@@ -81,13 +82,14 @@ impl CodeMaintainerService {
         let revision_guard = guard_for_workspace(root.as_path())?;
         let session_store = store_for_workspace(root.as_path())?;
 
-        let fs_ops = FsOps::new(
+        let fs_ops = FsOps::new_with_allowed_write_paths(
             root.clone(),
             opts.allow_writes,
+            opts.allowed_write_paths,
             opts.max_file_bytes,
             opts.max_write_bytes,
             opts.search_limit,
-        );
+        )?;
 
         let default_conversation_id = opts
             .conversation_id

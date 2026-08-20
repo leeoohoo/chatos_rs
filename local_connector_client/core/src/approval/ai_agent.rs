@@ -81,6 +81,7 @@ pub(crate) async fn run_auto_approval_agent(
         Some(request.project_key.workspace_id.clone()),
         Some(conversation_id.clone()),
         Some(run_id.clone()),
+        None,
         false,
         true,
         false,

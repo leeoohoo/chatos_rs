@@ -26,6 +26,18 @@ pub(super) struct RuntimeToolExecution {
     pub(super) tool_output_items: Vec<Value>,
 }
 
+const MAX_IDENTICAL_DETERMINISTIC_TOOL_FAILURES: usize = 3;
+
+#[derive(Default)]
+pub(super) struct RepeatedToolFailureTracker {
+    failures: HashMap<String, RepeatedToolFailure>,
+}
+
+struct RepeatedToolFailure {
+    count: usize,
+    last_error: String,
+}
+
 impl RuntimeToolExecution {
     pub(super) fn extend(&mut self, other: Self) {
         self.tool_results.extend(other.tool_results);
@@ -111,6 +123,7 @@ pub(super) async fn execute_runtime_tools(
     tool_calls: &Value,
     options: &AiRuntimeOptions,
     iteration: usize,
+    repeated_failure_tracker: &mut RepeatedToolFailureTracker,
 ) -> Result<RuntimeToolExecution, String> {
     let (instrumented_tool_calls, invocation_ids) = instrument_tool_calls(tool_calls)?;
     if let Some(cb) = &options.callbacks.on_tools_start {
@@ -133,14 +146,57 @@ pub(super) async fn execute_runtime_tools(
             }) as ToolResultCallback
         });
     let tool_call_values = tool_calls.as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let mut runnable_tool_calls = Vec::with_capacity(tool_call_values.len());
+    let mut suppressed_results = Vec::new();
+    let mut suppressed_call_ids = HashSet::new();
+    for call in tool_call_values {
+        if let Some(result) = repeated_failure_tracker.suppressed_result(call) {
+            suppressed_call_ids.insert(result.tool_call_id.clone());
+            suppressed_results.push(result);
+        } else {
+            runnable_tool_calls.push(call.clone());
+        }
+    }
+    if !suppressed_results.is_empty() {
+        tracing::warn!(
+            conversation_id = options.conversation_id.as_deref().unwrap_or(""),
+            conversation_turn_id = options.conversation_turn_id.as_deref().unwrap_or(""),
+            iteration,
+            suppressed_tool_call_count = suppressed_results.len(),
+            suppressed_tool_names =
+                summarize_tool_result_names(suppressed_results.as_slice(), 8).join(", "),
+            "ai runtime suppressed repeated deterministic tool calls"
+        );
+    }
     let started_at = Instant::now();
-    let tool_results = executor
-        .execute_tools_stream(
-            tool_call_values,
-            options.tool_call_context(),
-            tool_result_callback,
-        )
-        .await;
+    let mut tool_results = if runnable_tool_calls.is_empty() {
+        Vec::new()
+    } else {
+        executor
+            .execute_tools_stream(
+                runnable_tool_calls.as_slice(),
+                options.tool_call_context(),
+                tool_result_callback,
+            )
+            .await
+    };
+    tool_results.extend(suppressed_results);
+    repeated_failure_tracker.observe(
+        tool_call_values,
+        tool_results.as_mut_slice(),
+        &suppressed_call_ids,
+    );
+    let mut results_by_call_id = tool_results
+        .into_iter()
+        .map(|result| (result.tool_call_id.clone(), result))
+        .collect::<HashMap<_, _>>();
+    let tool_results = tool_call_values
+        .iter()
+        .filter_map(|call| {
+            crate::tool_call::extract_tool_call_id(call)
+                .and_then(|call_id| results_by_call_id.remove(call_id))
+        })
+        .collect::<Vec<_>>();
     if options.is_aborted() {
         return Err("aborted".to_string());
     }
@@ -185,6 +241,124 @@ pub(super) async fn execute_runtime_tools(
         tool_call_items,
         tool_output_items,
     })
+}
+
+impl RepeatedToolFailureTracker {
+    fn suppressed_result(&self, call: &Value) -> Option<ToolResult> {
+        let fingerprint = tool_call_fingerprint(call)?;
+        let failure = self.failures.get(fingerprint.as_str())?;
+        if failure.count < MAX_IDENTICAL_DETERMINISTIC_TOOL_FAILURES {
+            return None;
+        }
+        let tool_call_id = crate::tool_call::extract_tool_call_id(call)?.to_string();
+        let name = call
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_tool")
+            .to_string();
+        Some(ToolResult {
+            tool_call_id,
+            name,
+            success: false,
+            is_error: true,
+            is_stream: false,
+            conversation_turn_id: None,
+            content: format!(
+                "Duplicate deterministic tool call suppressed after {} identical failures. Do not call the same tool with the same arguments again; correct the path or choose a different inspection method. Last error: {}",
+                failure.count,
+                truncate_chars(failure.last_error.as_str(), 1_000)
+            ),
+            result: None,
+            fatal_error: false,
+            transient_model_input: None,
+        })
+    }
+
+    fn observe(
+        &mut self,
+        calls: &[Value],
+        results: &mut [ToolResult],
+        suppressed_call_ids: &HashSet<String>,
+    ) {
+        let calls_by_id = calls
+            .iter()
+            .filter_map(|call| {
+                crate::tool_call::extract_tool_call_id(call).map(|call_id| (call_id, call))
+            })
+            .collect::<HashMap<_, _>>();
+        for result in results {
+            let Some(call) = calls_by_id.get(result.tool_call_id.as_str()) else {
+                continue;
+            };
+            let Some(fingerprint) = tool_call_fingerprint(call) else {
+                continue;
+            };
+            if result.success && !result.is_error {
+                self.failures.remove(fingerprint.as_str());
+                continue;
+            }
+            if suppressed_call_ids.contains(result.tool_call_id.as_str()) {
+                continue;
+            }
+            if !looks_like_deterministic_tool_error(result.content.as_str()) {
+                self.failures.remove(fingerprint.as_str());
+                continue;
+            }
+            let failure = self
+                .failures
+                .entry(fingerprint)
+                .or_insert_with(|| RepeatedToolFailure {
+                    count: 0,
+                    last_error: String::new(),
+                });
+            failure.count = failure.count.saturating_add(1);
+            failure.last_error = result.content.clone();
+            if failure.count >= 2 {
+                result.content.push_str(
+                    format!(
+                        "\n\nThis exact tool call has now failed deterministically {} times. Do not repeat it unchanged; correct the path/root assumption or use another tool.",
+                        failure.count
+                    )
+                    .as_str(),
+                );
+            }
+        }
+    }
+}
+
+fn tool_call_fingerprint(call: &Value) -> Option<String> {
+    let name = call.pointer("/function/name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let arguments = call
+        .pointer("/function/arguments")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let arguments = arguments
+        .as_str()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .unwrap_or(arguments);
+    serde_json::to_string(&(name, arguments)).ok()
+}
+
+fn looks_like_deterministic_tool_error(value: &str) -> bool {
+    if looks_like_missing_file_error(value) {
+        return true;
+    }
+    let normalized = value.to_ascii_lowercase();
+    [
+        "not a directory",
+        "is a directory",
+        "outside current local project",
+        "outside workspace root",
+        "outside the task-owned paths",
+        "invalid path",
+        "target is not a file",
+        "target path is a directory",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 fn instrument_tool_calls(
@@ -259,7 +433,7 @@ mod tests {
     use super::{
         automatic_file_write_recovery_calls, fatal_tool_execution_error, instrument_tool_calls,
         next_consecutive_failed_tool_batch_count, repeated_tool_failure_error,
-        validate_terminal_tool_results,
+        validate_terminal_tool_results, RepeatedToolFailureTracker,
     };
 
     fn tool_result(success: bool, content: &str) -> ToolResult {
@@ -438,6 +612,63 @@ mod tests {
 
         assert!(message.contains("读取不存在的文件"));
         assert!(message.contains("不是权限问题"));
+    }
+
+    #[test]
+    fn exact_deterministic_failures_are_remembered_across_successful_sibling_calls() {
+        let failed_call = serde_json::json!({
+            "id": "failed-1",
+            "function": {
+                "name": "read_file_raw",
+                "arguments": "{\"path\":\"backend/pom.xml\"}"
+            }
+        });
+        let successful_call = serde_json::json!({
+            "id": "success-1",
+            "function": {
+                "name": "read_file_raw",
+                "arguments": "{\"path\":\"README.md\"}"
+            }
+        });
+        let mut tracker = RepeatedToolFailureTracker::default();
+
+        for attempt in 1..=3 {
+            let mut failed = tool_result(false, "No such file or directory");
+            failed.tool_call_id = format!("failed-{attempt}");
+            let mut success = tool_result(true, "ok");
+            success.tool_call_id = format!("success-{attempt}");
+            let calls = vec![
+                serde_json::json!({
+                    "id": format!("failed-{attempt}"),
+                    "function": failed_call["function"].clone()
+                }),
+                serde_json::json!({
+                    "id": format!("success-{attempt}"),
+                    "function": successful_call["function"].clone()
+                }),
+            ];
+            tracker.observe(&calls, &mut [failed, success], &Default::default());
+        }
+
+        let repeated_call = serde_json::json!({
+            "id": "failed-4",
+            "function": failed_call["function"].clone()
+        });
+        let suppressed = tracker
+            .suppressed_result(&repeated_call)
+            .expect("fourth identical deterministic call must be suppressed");
+        assert!(suppressed
+            .content
+            .contains("suppressed after 3 identical failures"));
+
+        let changed_call = serde_json::json!({
+            "id": "changed",
+            "function": {
+                "name": "read_file_raw",
+                "arguments": "{\"path\":\"backend/other.xml\"}"
+            }
+        });
+        assert!(tracker.suppressed_result(&changed_call).is_none());
     }
 
     #[test]

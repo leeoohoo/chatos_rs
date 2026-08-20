@@ -435,10 +435,10 @@ async fn code_maintainer_edit_sessions_are_isolated_between_parallel_mcp_runs() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn code_maintainer_default_tool_root_scopes_missing_owned_path() {
-    let root = temp_test_dir("default-tool-root");
-    fs::create_dir_all(root.join("frontend").as_path()).expect("create existing sibling");
-    fs::write(root.join("frontend").join("package.json"), "{}\n").expect("write frontend");
+async fn owned_paths_restrict_writes_without_scoping_project_reads_or_terminal() {
+    let root = temp_test_dir("owned-write-paths");
+    fs::create_dir_all(root.join("backend").as_path()).expect("create backend");
+    fs::write(root.join("backend").join("pom.xml"), "<project />\n").expect("write backend pom");
     let workspace = test_workspace(root.as_path());
     let state = test_state_with_full_control_workspace(workspace);
     let mut request = request_with_cwd_and_builtin_kinds(
@@ -446,28 +446,28 @@ async fn code_maintainer_default_tool_root_scopes_missing_owned_path() {
         "CodeMaintainerRead,CodeMaintainerWrite,TerminalController",
     );
     request.headers.insert(
-        "x-local-connector-default-tool-root".to_string(),
-        "backend".to_string(),
+        "x-local-connector-owned-paths".to_string(),
+        "%5B%22README.md%22%5D".to_string(),
     );
     let recorder = CommandHistoryRecorder {
         state_path: root.join("state.json"),
         state: Arc::new(RwLock::new(state.clone())),
     };
 
-    let listed = call_builtin_compatible_local_tool(
+    let read_before_write = call_builtin_compatible_local_tool(
         &request,
         &state,
-        "list_dir",
-        json!({ "path": ".", "max_entries": 20 }),
+        "read_file_raw",
+        json!({ "path": "backend/pom.xml" }),
         &recorder,
     )
     .await
-    .expect("list call")
-    .expect("list result");
-    let structured = code_maintainer_structured_result(listed);
+    .expect("read before write")
+    .expect("read result");
+    let structured = code_maintainer_structured_result(read_before_write);
     assert_eq!(
-        structured.get("entries").and_then(Value::as_array).unwrap(),
-        &Vec::<Value>::new()
+        structured.get("content").and_then(Value::as_str),
+        Some("<project />\n")
     );
 
     let opened = call_builtin_compatible_local_tool(
@@ -492,8 +492,8 @@ async fn code_maintainer_default_tool_root_scopes_missing_owned_path() {
             "session_id": session_id.clone(),
             "operations": [{
                 "kind": "write",
-                "path": "pom.xml",
-                "content": "<project />\n",
+                "path": "README.md",
+                "content": "# Project\n",
                 "expected_sha256": null
             }]
         }),
@@ -514,10 +514,59 @@ async fn code_maintainer_default_tool_root_scopes_missing_owned_path() {
     .expect("commit result");
 
     assert_eq!(
-        fs::read_to_string(root.join("backend").join("pom.xml")).expect("read backend pom"),
-        "<project />\n"
+        fs::read_to_string(root.join("README.md")).expect("read README"),
+        "# Project\n"
     );
-    assert!(!root.join("pom.xml").exists());
+
+    let read_after_write = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "read_file_raw",
+        json!({ "path": "backend/pom.xml" }),
+        &recorder,
+    )
+    .await
+    .expect("read after write")
+    .expect("read result");
+    let structured = code_maintainer_structured_result(read_after_write);
+    assert_eq!(
+        structured.get("content").and_then(Value::as_str),
+        Some("<project />\n")
+    );
+
+    let denied_session = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "open_edit_session",
+        json!({ "fresh": true }),
+        &recorder,
+    )
+    .await
+    .expect("open denied edit session")
+    .expect("open result");
+    let denied_session_id = code_maintainer_structured_result(denied_session)["result"]
+        ["session_id"]
+        .as_str()
+        .expect("denied session id")
+        .to_string();
+    let denied = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "stage_edit_batch",
+        json!({
+            "session_id": denied_session_id,
+            "operations": [{
+                "kind": "write",
+                "path": "backend/pom.xml",
+                "content": "blocked\n",
+                "expected_sha256": null
+            }]
+        }),
+        &recorder,
+    )
+    .await
+    .expect_err("write outside owned paths must fail");
+    assert!(denied.to_string().contains("outside the task-owned paths"));
 
     let cwd_command = if cfg!(windows) { "cd" } else { "pwd" };
     let executed = call_builtin_compatible_local_tool(
@@ -537,8 +586,38 @@ async fn code_maintainer_default_tool_root_scopes_missing_owned_path() {
         .and_then(Value::as_str)
         .unwrap()
         .replace('\\', "/");
-    assert!(stdout.contains("backend"));
-    assert!(!stdout.contains("frontend"));
+    assert!(stdout.contains(root.to_string_lossy().replace('\\', "/").as_str()));
+    fs::remove_dir_all(root.as_path()).expect("cleanup");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_explicit_tool_root_fails_instead_of_reporting_an_empty_workspace() {
+    let root = temp_test_dir("missing-explicit-tool-root");
+    let workspace = test_workspace(root.as_path());
+    let state = test_state_with_full_control_workspace(workspace);
+    let mut request = request_with_cwd_and_builtin_kinds(".", "CodeMaintainerRead");
+    request.headers.insert(
+        "x-local-connector-default-tool-root".to_string(),
+        "missing".to_string(),
+    );
+    let recorder = CommandHistoryRecorder {
+        state_path: root.join("state.json"),
+        state: Arc::new(RwLock::new(state.clone())),
+    };
+
+    let error = call_builtin_compatible_local_tool(
+        &request,
+        &state,
+        "list_dir",
+        json!({ "path": ".", "max_entries": 20 }),
+        &recorder,
+    )
+    .await
+    .expect_err("missing explicit root must fail clearly");
+    assert!(error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("no such file"));
     fs::remove_dir_all(root.as_path()).expect("cleanup");
 }
 

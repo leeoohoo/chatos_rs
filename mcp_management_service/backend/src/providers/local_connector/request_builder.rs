@@ -10,11 +10,11 @@ use crate::trace_context::InternalTraceContextExt;
 use super::binding::resolve_binding;
 use super::{
     LocalConnectorProvider, ProviderCallError, CALLER_SERVICE,
-    LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER, LOCAL_CONNECTOR_PROJECT_ID_HEADER,
-    MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER, MCP_MANAGEMENT_RUN_ID_HEADER,
-    MCP_MANAGEMENT_SCOPE_GENERATION_HEADER, MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER,
-    MCP_MANAGEMENT_SESSION_ID_HEADER, MCP_MANAGEMENT_TASK_ID_HEADER, MCP_RELAY_SCOPE,
-    TOKEN_AUDIENCE,
+    LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER, LOCAL_CONNECTOR_OWNED_PATHS_HEADER,
+    LOCAL_CONNECTOR_PROJECT_ID_HEADER, MCP_MANAGEMENT_EXECUTION_GROUP_ID_HEADER,
+    MCP_MANAGEMENT_RUN_ID_HEADER, MCP_MANAGEMENT_SCOPE_GENERATION_HEADER,
+    MCP_MANAGEMENT_SESSION_EXPIRES_AT_UNIX_HEADER, MCP_MANAGEMENT_SESSION_ID_HEADER,
+    MCP_MANAGEMENT_TASK_ID_HEADER, MCP_RELAY_SCOPE, TOKEN_AUDIENCE,
 };
 
 impl LocalConnectorProvider {
@@ -91,6 +91,17 @@ impl LocalConnectorProvider {
             .with_internal_trace_context();
         if let Some(default_tool_root) = binding.default_tool_root {
             request = request.header(LOCAL_CONNECTOR_DEFAULT_TOOL_ROOT_HEADER, default_tool_root);
+        }
+        if !binding.owned_paths.is_empty() {
+            let owned_paths = serde_json::to_string(binding.owned_paths).map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "serialize Local Connector owned paths failed: {error}"
+                ))
+            })?;
+            request = request.header(
+                LOCAL_CONNECTOR_OWNED_PATHS_HEADER,
+                urlencoding::encode(owned_paths.as_str()).into_owned(),
+            );
         }
         if let Some(run_id) = snapshot.run_id.as_deref() {
             request = request.header(MCP_MANAGEMENT_RUN_ID_HEADER, run_id);

@@ -107,10 +107,10 @@ use self::workspaces::{
 };
 
 const MAX_USER_SERVICE_PROXY_BODY_BYTES: usize = 2 * 1024 * 1024;
-// A command may spend up to 40 seconds in bounded local AI approval and then
-// another 30 seconds in the foreground terminal wait. Keep enough transport
-// margin for both phases instead of timing out while the Core is still working.
-const MIN_MCP_RELAY_TIMEOUT: Duration = Duration::from_secs(90);
+// Ordinary MCP tools are long-running operations. Keep this transport aligned
+// with the platform-wide two-hour MCP execution budget instead of inheriting
+// the short control-plane relay timeout.
+const STANDARD_MCP_RELAY_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 const MCP_TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
 const MCP_TERMINAL_WAIT_MAX_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 
@@ -846,7 +846,7 @@ fn relay_body(body: &[u8]) -> Value {
 }
 
 fn mcp_relay_timeout(configured_timeout: Duration, body: &Value) -> Duration {
-    let baseline = configured_timeout.max(MIN_MCP_RELAY_TIMEOUT);
+    let baseline = configured_timeout.max(STANDARD_MCP_RELAY_TIMEOUT);
     if !is_terminal_wait_mcp_call(body) {
         return baseline;
     }
@@ -918,7 +918,7 @@ mod tests {
 
     use super::{
         is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout,
-        MIN_MCP_RELAY_TIMEOUT,
+        STANDARD_MCP_RELAY_TIMEOUT,
     };
     use serde_json::json;
 
@@ -946,26 +946,26 @@ mod tests {
     }
 
     #[test]
-    fn mcp_relay_outlives_default_local_terminal_wait() {
-        assert_eq!(
-            mcp_relay_timeout(
-                Duration::from_secs(30),
-                &json!({
-                    "jsonrpc": "2.0",
-                    "id": "command-1",
-                    "method": "tools/call",
-                    "params": {
-                        "name": "execute_command",
-                        "arguments": {"command": "npm install", "background": false}
-                    }
-                })
-            ),
-            MIN_MCP_RELAY_TIMEOUT
-        );
+    fn ordinary_mcp_relay_uses_the_two_hour_platform_budget() {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": "command-1",
+            "method": "tools/call",
+            "params": {
+                "name": "execute_command",
+                "arguments": {"command": "npm install", "background": false}
+            }
+        });
+        for seconds in [30, 90, 105, 180] {
+            assert_eq!(
+                mcp_relay_timeout(Duration::from_secs(seconds), &body),
+                STANDARD_MCP_RELAY_TIMEOUT
+            );
+        }
     }
 
     #[test]
-    fn mcp_terminal_wait_relay_follows_declared_wait_budget() {
+    fn mcp_terminal_wait_relay_keeps_the_standard_two_hour_budget() {
         assert_eq!(
             mcp_relay_timeout(
                 Duration::from_secs(30),
@@ -977,7 +977,7 @@ mod tests {
                     }
                 })
             ),
-            Duration::from_millis(615_000)
+            STANDARD_MCP_RELAY_TIMEOUT
         );
         assert_eq!(
             mcp_relay_timeout(
@@ -990,7 +990,7 @@ mod tests {
                     }
                 })
             ),
-            Duration::from_millis(615_000)
+            STANDARD_MCP_RELAY_TIMEOUT
         );
     }
 }

@@ -14,6 +14,7 @@ pub(super) struct LocalConnectorBinding<'a> {
     pub(super) workspace_id: &'a str,
     pub(super) relative_root: Option<&'a str>,
     pub(super) default_tool_root: Option<&'a str>,
+    pub(super) owned_paths: &'a [String],
     pub(super) enabled_builtin_kinds: String,
 }
 
@@ -82,11 +83,20 @@ pub(super) fn resolve_binding<'a>(
     if let Some(default_tool_root) = default_tool_root {
         validate_relative_root(default_tool_root)?;
     }
+    let owned_paths = snapshot
+        .workspace_route
+        .as_ref()
+        .map(|route| route.local_connector_owned_paths())
+        .unwrap_or_default();
+    for owned_path in owned_paths {
+        validate_relative_root(owned_path)?;
+    }
     Ok(LocalConnectorBinding {
         device_id,
         workspace_id,
         relative_root,
         default_tool_root,
+        owned_paths,
         enabled_builtin_kinds,
     })
 }

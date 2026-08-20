@@ -364,6 +364,7 @@ fn apply_stage_operation(
 ) -> Result<StageOutcome, String> {
     let kind = required_string(operation, "kind")?;
     let path = required_string(operation, "path")?;
+    fs_ops.resolve_write_path(path)?;
     validate_session_path_overlaps(session, path, kind)?;
     match kind {
         "write" => stage_write(
@@ -703,7 +704,7 @@ fn commit_session(
     let mut applied = Vec::new();
     let mut rollback_applied = Vec::new();
     for state in &changed_states {
-        let resolved = fs_ops.resolve_path(state.path.as_str())?;
+        let resolved = fs_ops.resolve_write_path(state.path.as_str())?;
         let before_diff =
             read_text_for_diff(&resolved, max_file_bytes).unwrap_or_else(DiffInput::omitted);
         let commit_result = apply_path_commit(state, resolved.as_path())?;
