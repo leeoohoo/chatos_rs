@@ -12,6 +12,8 @@ const CORE_RESTART_BASE_DELAY_MS = 250;
 const CORE_RESTART_MAX_DELAY_MS = 5_000;
 const CORE_RESTART_STABLE_WINDOW_MS = 10_000;
 const USER_SHELL_PATH_TIMEOUT_MS = 2_000;
+const USER_SHELL_PATH_PREFIX = '__CHATOS_PATH_BEGIN__';
+const USER_SHELL_PATH_SUFFIX = '__CHATOS_PATH_END__';
 const UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER = 'computer-use-unsigned-local-dev.json';
 
 function existingPathDirectories(value, directoryExists = defaultDirectoryExists) {
@@ -48,17 +50,35 @@ function discoverUserShellPath({
     return [];
   }
   try {
-    const result = spawnSyncImpl(shell, ['-ilc', 'printf "%s" "$PATH"'], {
-      env,
-      encoding: 'utf8',
-      timeout: USER_SHELL_PATH_TIMEOUT_MS,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    const result = spawnSyncImpl(
+      shell,
+      ['-ilc', `printf "${USER_SHELL_PATH_PREFIX}%s${USER_SHELL_PATH_SUFFIX}" "$PATH"`],
+      {
+        env,
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024,
+        timeout: USER_SHELL_PATH_TIMEOUT_MS,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
     if (result.error || result.status !== 0) {
       return [];
     }
-    return existingPathDirectories(result.stdout, directoryExists);
+    const stdout = String(result.stdout || '');
+    const prefixIndex = stdout.lastIndexOf(USER_SHELL_PATH_PREFIX);
+    const suffixIndex = stdout.indexOf(
+      USER_SHELL_PATH_SUFFIX,
+      prefixIndex + USER_SHELL_PATH_PREFIX.length,
+    );
+    if (prefixIndex < 0 || suffixIndex < 0) {
+      return [];
+    }
+    const discoveredPath = stdout.slice(
+      prefixIndex + USER_SHELL_PATH_PREFIX.length,
+      suffixIndex,
+    );
+    return existingPathDirectories(discoveredPath, directoryExists);
   } catch (_error) {
     return [];
   }

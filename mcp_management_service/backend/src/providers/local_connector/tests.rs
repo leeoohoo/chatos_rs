@@ -143,14 +143,18 @@ fn user_http_route() -> ResolvedMcpRoute {
 async fn user_http_mcp_is_relayed_to_local_connector_with_inline_runtime() {
     const SECRET: &str = "local-connector-user-mcp-test-secret";
     async fn handler(headers: HeaderMap, Json(request): Json<Value>) -> Json<Value> {
-        assert!(headers.get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER).is_none());
+        assert!(headers
+            .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+            .is_none());
         assert_eq!(
             headers
                 .get(PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER)
                 .and_then(|value| value.to_str().ok()),
             Some("http-mcp-1")
         );
-        assert!(headers.get(LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER).is_none());
+        assert!(headers
+            .get(LOCAL_CONNECTOR_MCP_MANIFEST_ID_HEADER)
+            .is_none());
         let encoded = headers
             .get(LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER)
             .and_then(|value| value.to_str().ok())
@@ -204,7 +208,10 @@ async fn user_http_mcp_is_relayed_to_local_connector_with_inline_runtime() {
         .await
         .unwrap();
     assert_eq!(
-        outcome.result.pointer("/content/0/text").and_then(Value::as_str),
+        outcome
+            .result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str),
         Some("relayed")
     );
     server.abort();

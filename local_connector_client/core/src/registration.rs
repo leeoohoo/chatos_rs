@@ -171,10 +171,7 @@ pub(crate) async fn ensure_default_filesystem_workspace_registered(
     {
         return Ok(workspace.id.clone());
     }
-    let identity_salt = state
-        .device_public_key
-        .as_deref()
-        .unwrap_or(device_id);
+    let identity_salt = state.device_public_key.as_deref().unwrap_or(device_id);
     let fingerprint = workspace_fingerprint_with_salt(absolute_root.as_path(), Some(identity_salt));
     let workspace_config = ClientConfig {
         workspace_alias: Some(DEFAULT_FILESYSTEM_WORKSPACE_ALIAS.to_string()),

@@ -33,11 +33,19 @@ test('discovers and validates PATH entries from the interactive login shell', ()
     directoryExists: (candidate) => directories.has(candidate),
     spawnSyncImpl: (command, args, options) => {
       assert.equal(command, '/bin/zsh');
-      assert.deepEqual(args, ['-ilc', 'printf "%s" "$PATH"']);
+      assert.deepEqual(args, [
+        '-ilc',
+        'printf "__CHATOS_PATH_BEGIN__%s__CHATOS_PATH_END__" "$PATH"',
+      ]);
       assert.equal(options.timeout, 2_000);
       return {
         status: 0,
-        stdout: '/Users/test/.docker/bin:relative:/missing:/Users/test/.local/bin:/opt/homebrew/bin',
+        stdout: [
+          'shell startup message',
+          '__CHATOS_PATH_BEGIN__',
+          '/Users/test/.docker/bin:relative:/missing:/Users/test/.local/bin:/opt/homebrew/bin',
+          '__CHATOS_PATH_END__',
+        ].join(''),
       };
     },
   });
