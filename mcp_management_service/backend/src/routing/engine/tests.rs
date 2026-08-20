@@ -108,12 +108,12 @@ fn portable_stdio_is_local_and_cloud_stdio_is_rejected() {
 }
 
 #[test]
-fn external_http_and_internal_services_stay_cloud_orchestrated() {
+fn external_http_is_local_and_internal_services_remain_managed() {
     let external = resolve_one(
         context(WorkspaceProviderKind::None),
         resource(McpRouteResourceKind::ExternalHttp, None, None, false),
     );
-    assert_eq!(external.provider_kind, McpProviderKind::ExternalHttp);
+    assert_eq!(external.provider_kind, McpProviderKind::LocalConnector);
 
     let project = resolve_one(
         context(WorkspaceProviderKind::None),
@@ -125,6 +125,32 @@ fn external_http_and_internal_services_stay_cloud_orchestrated() {
         ),
     );
     assert_eq!(project.provider_kind, McpProviderKind::InternalService);
+}
+
+#[test]
+fn plugins_never_fall_back_to_cloud_execution() {
+    let portable = resolve_one(
+        context(WorkspaceProviderKind::None),
+        resource(
+            McpRouteResourceKind::Plugin,
+            None,
+            Some(McpExecutionHost::Portable),
+            false,
+        ),
+    );
+    assert_eq!(portable.provider_kind, McpProviderKind::PluginLocal);
+    assert!(portable.reason.contains("cloud fallback is disabled"));
+
+    let cloud = resolve_one(
+        context(WorkspaceProviderKind::LocalConnector),
+        resource(
+            McpRouteResourceKind::Plugin,
+            None,
+            Some(McpExecutionHost::Cloud),
+            false,
+        ),
+    );
+    assert_eq!(cloud.provider_kind, McpProviderKind::Unavailable);
 }
 
 #[test]

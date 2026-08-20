@@ -60,7 +60,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         routes: vec![ResolvedMcpRoute {
             resource_id: "mcp-1".to_string(),
             server_name: "demo".to_string(),
-            provider_kind: McpProviderKind::ExternalHttp,
+            provider_kind: McpProviderKind::LocalConnector,
             provider_ref: Some("mcp-resource:mcp-1".to_string()),
             tool_namespace: "demo".to_string(),
             allow_writes: false,

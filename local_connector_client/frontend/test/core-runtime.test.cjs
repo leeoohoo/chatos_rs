@@ -7,13 +7,55 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { coreRestartDelayMs, createCoreRuntime } = require('../electron/core-runtime.cjs');
+const {
+  coreRestartDelayMs,
+  createCoreRuntime,
+  discoverUserShellPath,
+} = require('../electron/core-runtime.cjs');
 
 test('backs off unexpected Core restarts without growing past five seconds', () => {
   assert.deepEqual(
     [0, 1, 2, 3, 4, 5, 20].map(coreRestartDelayMs),
     [250, 500, 1_000, 2_000, 4_000, 5_000, 5_000],
   );
+});
+
+test('discovers and validates PATH entries from the interactive login shell', () => {
+  const directories = new Set([
+    '/Users/test/.docker/bin',
+    '/Users/test/.local/bin',
+    '/opt/homebrew/bin',
+  ]);
+  const discovered = discoverUserShellPath({
+    platform: 'darwin',
+    env: { SHELL: '/bin/zsh', PATH: '/usr/bin:/bin' },
+    fileExists: (candidate) => candidate === '/bin/zsh',
+    directoryExists: (candidate) => directories.has(candidate),
+    spawnSyncImpl: (command, args, options) => {
+      assert.equal(command, '/bin/zsh');
+      assert.deepEqual(args, ['-ilc', 'printf "%s" "$PATH"']);
+      assert.equal(options.timeout, 2_000);
+      return {
+        status: 0,
+        stdout: '/Users/test/.docker/bin:relative:/missing:/Users/test/.local/bin:/opt/homebrew/bin',
+      };
+    },
+  });
+
+  assert.deepEqual(discovered, [
+    '/Users/test/.docker/bin',
+    '/Users/test/.local/bin',
+    '/opt/homebrew/bin',
+  ]);
+});
+
+test('falls back cleanly when user shell PATH discovery fails', () => {
+  assert.deepEqual(discoverUserShellPath({
+    platform: 'darwin',
+    env: { SHELL: '/bin/zsh' },
+    fileExists: () => true,
+    spawnSyncImpl: () => ({ status: null, error: new Error('timeout') }),
+  }), []);
 });
 
 test('prepares Chrome extension in a visible user-home directory', () => {

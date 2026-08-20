@@ -21,12 +21,13 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::validation::{
-    agent_tool_definition, command_tool_definition, sha256_text, skill_tool_definition,
-    validate_command_snapshot, validate_native_skill_snapshot, validate_native_tool_snapshot_hash,
-    validate_tool_snapshot,
+    sha256_text, validate_command_snapshot, validate_native_skill_snapshot,
+    validate_native_tool_snapshot_hash, validate_tool_snapshot,
 };
 use super::*;
-use crate::runtime::{PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot};
+use crate::runtime::{
+    PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
+};
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 

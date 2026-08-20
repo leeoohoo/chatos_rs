@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,7 +11,58 @@ const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const CORE_RESTART_BASE_DELAY_MS = 250;
 const CORE_RESTART_MAX_DELAY_MS = 5_000;
 const CORE_RESTART_STABLE_WINDOW_MS = 10_000;
+const USER_SHELL_PATH_TIMEOUT_MS = 2_000;
 const UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER = 'computer-use-unsigned-local-dev.json';
+
+function existingPathDirectories(value, directoryExists = defaultDirectoryExists) {
+  return String(value || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => path.isAbsolute(entry) && directoryExists(entry));
+}
+
+function defaultDirectoryExists(candidate) {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch (_error) {
+    return false;
+  }
+}
+
+function discoverUserShellPath({
+  platform = process.platform,
+  env = process.env,
+  spawnSyncImpl = spawnSync,
+  fileExists = fs.existsSync,
+  directoryExists = defaultDirectoryExists,
+} = {}) {
+  if (platform === 'win32') {
+    return [];
+  }
+  const configuredShell = String(env.SHELL || '').trim();
+  const fallbackShell = platform === 'darwin' ? '/bin/zsh' : '/bin/sh';
+  const shell = path.isAbsolute(configuredShell) && fileExists(configuredShell)
+    ? configuredShell
+    : fallbackShell;
+  if (!fileExists(shell)) {
+    return [];
+  }
+  try {
+    const result = spawnSyncImpl(shell, ['-ilc', 'printf "%s" "$PATH"'], {
+      env,
+      encoding: 'utf8',
+      timeout: USER_SHELL_PATH_TIMEOUT_MS,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (result.error || result.status !== 0) {
+      return [];
+    }
+    return existingPathDirectories(result.stdout, directoryExists);
+  } catch (_error) {
+    return [];
+  }
+}
 
 function coreRestartDelayMs(attempt) {
   const normalizedAttempt = Number.isInteger(attempt) && attempt > 0 ? attempt : 0;
@@ -29,6 +80,7 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   let restartTimer = null;
   let stableTimer = null;
   let stopRequested = false;
+  let cachedCoreExecutablePath = null;
 
   function resourcePath(...segments) {
     const packagedPath = path.join(process.resourcesPath, ...segments);
@@ -133,7 +185,11 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   }
 
   function coreExecutablePath() {
-    const existing = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    if (cachedCoreExecutablePath) {
+      return cachedCoreExecutablePath;
+    }
+    const existing = existingPathDirectories(process.env.PATH);
+    const userShellPath = discoverUserShellPath();
     const candidates = [bundledBrowserRuntime().toolsDir];
     if (process.platform === 'darwin') {
       candidates.push(
@@ -143,7 +199,9 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     } else if (process.platform !== 'win32') {
       candidates.push('/usr/local/bin', '/usr/bin', '/snap/bin');
     }
-    return [...new Set([...candidates, ...existing])].join(path.delimiter);
+    cachedCoreExecutablePath = [...new Set([...candidates, ...userShellPath, ...existing])]
+      .join(path.delimiter);
+    return cachedCoreExecutablePath;
   }
 
   function startCore() {
@@ -405,4 +463,4 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   };
 }
 
-module.exports = { coreRestartDelayMs, createCoreRuntime };
+module.exports = { coreRestartDelayMs, createCoreRuntime, discoverUserShellPath };
