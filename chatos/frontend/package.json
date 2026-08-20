@@ -36,7 +36,7 @@
     "date-fns": "^4.4.0",
     "framer-motion": "^12.42.2",
     "highlight.js": "^11.9.0",
-    "immer": "^11.1.16",
+    "immer": "^11.1.17",
     "katex": "^0.17.0",
     "lucide-react": "^1.24.0",
     "mermaid": "^11.16.1",
