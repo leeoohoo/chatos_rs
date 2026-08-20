@@ -21,11 +21,7 @@ pub(crate) async fn release_local_sandbox(
     let mut lease = {
         let leases = sandbox_runtime.leases.read().await;
         let Some(lease) = leases.get(runtime_id).cloned() else {
-            return Ok((
-                404,
-                BTreeMap::new(),
-                json!({ "error": "lease not found" }),
-            ));
+            return Ok((404, BTreeMap::new(), json!({ "error": "lease not found" })));
         };
         lease
     };

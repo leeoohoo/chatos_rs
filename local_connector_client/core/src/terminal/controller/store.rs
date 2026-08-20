@@ -26,9 +26,7 @@ impl TerminalControllerStore for LocalConnectorTerminalControllerStore {
         permissions: chatos_mcp::TerminalCommandPermissions,
     ) -> std::result::Result<Value, String> {
         if !permissions.is_empty() {
-            return Err(
-                "temporary permission overlays require an active lease".to_string(),
-            );
+            return Err("temporary permission overlays require an active lease".to_string());
         }
         let project_root = canonicalize_terminal_root(context.root.as_path())?;
         let cwd = resolve_terminal_controller_cwd(project_root.as_path(), path.as_str())?;
