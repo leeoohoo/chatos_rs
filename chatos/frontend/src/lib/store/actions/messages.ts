@@ -10,6 +10,7 @@ import type {
 import {
   cloneStreamingMessageDraft,
   extractCompactHistoryMessages,
+  sortMessagesChronologically,
   writeSessionMessagesCache,
 } from './sessionsUtils';
 import { createMessageLoadingActions } from './messagesLoading';
@@ -36,17 +37,7 @@ export function createMessageActions({ set, get, client }: Deps) {
 
       const mergeMessages = (messages: Message[] = []): Message[] => {
         const next = [...messages.filter((item) => item.id !== messageId), message];
-        return next
-          .map((item, index) => ({ item, index }))
-          .sort((left, right) => {
-            const leftTime = left.item.createdAt instanceof Date ? left.item.createdAt.getTime() : 0;
-            const rightTime = right.item.createdAt instanceof Date ? right.item.createdAt.getTime() : 0;
-            if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
-              return leftTime - rightTime;
-            }
-            return left.index - right.index;
-          })
-          .map(({ item }) => item);
+        return sortMessagesChronologically(next);
       };
 
       set((state) => {

@@ -260,6 +260,61 @@ describe('sessionMessagesCache', () => {
     ]);
   });
 
+  it('keeps realtime messages after older history when the history snapshot arrives later', () => {
+    const sessionId = 'session_1';
+    const olderUser: Message = {
+      id: 'user_old',
+      sessionId,
+      role: 'user',
+      content: 'older message',
+      status: 'completed',
+      createdAt: new Date('2026-08-20T09:25:41.418Z'),
+      metadata: {
+        conversation_turn_id: 'turn_old',
+      },
+    };
+    const realtimeUser: Message = {
+      id: 'user_new',
+      sessionId,
+      role: 'user',
+      content: '我修复好了 你再试试呢',
+      status: 'completed',
+      createdAt: new Date('2026-08-21T00:34:12.559Z'),
+      metadata: {
+        clientPendingSync: true,
+        conversation_turn_id: 'turn_new',
+      },
+    };
+    const realtimeAssistant: Message = {
+      id: 'assistant_new',
+      sessionId,
+      role: 'assistant',
+      content: '可以，任务已成功创建并进入执行队列。',
+      status: 'completed',
+      createdAt: new Date('2026-08-21T00:34:36.702Z'),
+      metadata: {
+        clientPendingSync: true,
+        conversation_turn_id: 'turn_new',
+      },
+    };
+
+    const merged = mergeLatestCompactHistorySnapshot(
+      [olderUser],
+      null,
+      {
+        messages: [realtimeUser, realtimeAssistant],
+        nextBefore: null,
+        loaded: false,
+      },
+    );
+
+    expect(merged.messages.map((message) => message.id)).toEqual([
+      'user_old',
+      'user_new',
+      'assistant_new',
+    ]);
+  });
+
   it('replaces a temporary optimistic message when the persisted turn reaches the snapshot', () => {
     const sessionId = 'session_1';
     const optimistic: Message = {
