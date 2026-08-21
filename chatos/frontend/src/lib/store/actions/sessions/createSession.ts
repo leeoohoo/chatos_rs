@@ -9,7 +9,7 @@ import {
   readSessionAiSelectionFromMetadata,
 } from '../../helpers/sessionAiSelection';
 import { mergeSessionRuntimeIntoMetadata } from '../../helpers/sessionRuntime';
-import { findBestMatchedSession } from '../../../domain/contactSessions';
+import { findBestMatchedSession, PUBLIC_PROJECT_ID } from '../../../domain/contactSessions';
 import type {
   ChatStoreDraft,
   SessionAiSelection,
@@ -62,7 +62,7 @@ export function createSessionCreateActions({
         const contactId = typeof payloadObject.contactId === 'string'
           ? (payloadObject.contactId.trim() || null)
           : null;
-        const effectiveProjectRoot = effectiveProjectId === '0'
+        const effectiveProjectRoot = effectiveProjectId === PUBLIC_PROJECT_ID
           ? null
           : (typeof payloadObject.projectRoot === 'string'
             ? (payloadObject.projectRoot.trim() || null)

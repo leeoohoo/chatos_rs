@@ -2,6 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { AiModelConfig } from '../../../../types';
+import {
+  normalizeProjectScopeId,
+  PUBLIC_PROJECT_ID,
+} from '../../../domain/contactSessions';
 import type { SendMessageRuntimeOptions } from '../../types';
 
 interface SessionRuntimeLike {
@@ -68,7 +72,7 @@ export const resolveRuntimeConfig = (
   const sessionProjectId = typeof sessionRuntime?.projectId === 'string'
     ? sessionRuntime.projectId.trim()
     : '';
-  const effectiveProjectId = requestedProjectId || sessionProjectId || '0';
+  const effectiveProjectId = normalizeProjectScopeId(requestedProjectId || sessionProjectId || null);
   const requestedProjectRoot = typeof runtimeOptions?.projectRoot === 'string'
     ? runtimeOptions.projectRoot.trim()
     : '';
@@ -82,7 +86,7 @@ export const resolveRuntimeConfig = (
     ? sessionRuntime.workspaceRoot.trim()
     : '';
   const effectiveWorkspaceRoot = requestedWorkspaceRoot || sessionWorkspaceRoot || null;
-  const effectiveProjectRoot = effectiveProjectId === '0'
+  const effectiveProjectRoot = effectiveProjectId === PUBLIC_PROJECT_ID
     ? null
     : (requestedProjectRoot || sessionProjectRoot || null);
   const effectiveExecutionRoot = effectiveWorkspaceRoot || effectiveProjectRoot;

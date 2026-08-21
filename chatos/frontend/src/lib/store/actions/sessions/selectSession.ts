@@ -19,8 +19,8 @@ import {
   readSessionMessagesCache,
   readVisibleSessionMessagesSnapshot,
   resolveSessionTimestamp,
-  resolveSessionProjectScopeId,
   SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+  syncCurrentProjectFromSession,
   touchSessionMessagesCacheEntry,
   trimCompactHistorySnapshotToRecent,
   writeSessionMessagesCache,
@@ -88,10 +88,10 @@ export function createSelectSessionActions({
         });
 
         if (existingSession) {
-          const sessionProjectId = resolveSessionProjectScopeId(existingSession);
           set((state: ChatStoreDraft) => {
             state.currentSessionId = sessionId;
             state.currentSession = existingSession;
+            syncCurrentProjectFromSession(state, existingSession);
             if (!options.keepActivePanel) {
               state.activePanel = 'chat';
             }
@@ -113,14 +113,6 @@ export function createSelectSessionActions({
               };
             }
 
-            if (sessionProjectId === '0') {
-              state.currentProjectId = null;
-              state.currentProject = null;
-            } else if (sessionProjectId) {
-              state.currentProjectId = sessionProjectId;
-              const matchedProject = (state.projects || []).find((project) => project.id === sessionProjectId) || null;
-              state.currentProject = matchedProject;
-            }
           });
         }
         if (!sessionSnapshot && existingSession) {
