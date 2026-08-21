@@ -15,7 +15,6 @@ import {
 } from '../../lib/store/actions/sendMessage/errorParsing';
 import { normalizePersistedMessage } from '../../lib/store/actions/sendMessage/persistedTurnMessages';
 import { createDefaultSessionChatState } from '../../lib/store/actions/sendMessage/sessionState';
-import { sortMessagesChronologically } from '../../lib/store/actions/sessionsUtils';
 import { useChatStoreContext, useChatStoreSelector } from '../../lib/store/ChatStoreContext';
 import type { Message } from '../../types';
 import type {
@@ -119,7 +118,7 @@ const upsertRealtimeMessage = (
   const existingIndex = nextMessages.findIndex((message) => message.id === incoming.id);
   if (existingIndex >= 0) {
     nextMessages[existingIndex] = mergeRealtimeMessage(nextMessages[existingIndex], incoming);
-    return sortMessagesChronologically(nextMessages);
+    return nextMessages;
   }
 
   const incomingTurnId = readTurnId(incoming);
@@ -132,11 +131,11 @@ const upsertRealtimeMessage = (
     : -1;
   if (optimisticIndex >= 0) {
     nextMessages[optimisticIndex] = mergeRealtimeMessage(nextMessages[optimisticIndex], incoming);
-    return sortMessagesChronologically(nextMessages);
+    return nextMessages;
   }
 
   nextMessages.push(incoming);
-  return sortMessagesChronologically(nextMessages);
+  return nextMessages;
 };
 
 export const applyTaskRunnerCallbackRealtimeUpdate = (

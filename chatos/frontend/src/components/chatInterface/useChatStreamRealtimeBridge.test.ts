@@ -20,15 +20,6 @@ const message = (role: 'user' | 'assistant', turnId: string): Message => ({
   metadata: { conversation_turn_id: turnId },
 });
 
-const messageAt = (
-  role: 'user' | 'assistant',
-  turnId: string,
-  createdAt: string,
-): Message => ({
-  ...message(role, turnId),
-  createdAt: new Date(createdAt),
-});
-
 const activeState = (): ChatStoreDraft => ({
   currentSessionId: 'session-1',
   messages: [],
@@ -85,27 +76,6 @@ describe('chat stream realtime persisted message reconciliation', () => {
       activeTurnId: null,
       streamingTransport: null,
     });
-  });
-
-  it('restores chronological order when realtime persistence races with history loading', () => {
-    const state = activeState();
-    state.messages = [
-      messageAt('assistant', 'turn-active', '2026-08-21T00:34:36.702Z'),
-      messageAt('user', 'turn-old', '2026-08-20T09:25:41.418Z'),
-    ];
-
-    applyTaskRunnerCallbackRealtimeUpdate(
-      state,
-      'session-1',
-      messageAt('user', 'turn-active', '2026-08-21T00:34:12.559Z'),
-      messageAt('assistant', 'turn-active', '2026-08-21T00:34:36.702Z'),
-    );
-
-    expect(state.messages.map((item) => `${item.role}:${item.metadata?.conversation_turn_id}`)).toEqual([
-      'user:turn-old',
-      'user:turn-active',
-      'assistant:turn-active',
-    ]);
   });
 
   it('does not let an older callback settle a newer active turn', () => {

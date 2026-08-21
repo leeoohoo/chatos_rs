@@ -293,53 +293,6 @@ const readMessageTurnCursor = (message: Message): string => (
   )
 );
 
-const messageCreatedAtTimestamp = (message: Message): number | null => {
-  const value = message?.createdAt;
-  const timestamp = value instanceof Date
-    ? value.getTime()
-    : Date.parse(String(value || ''));
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
-
-const messageRoleOrder = (message: Message): number => {
-  if (message.role === 'user') {
-    return 0;
-  }
-  if (message.role === 'assistant') {
-    return 1;
-  }
-  return 2;
-};
-
-export const sortMessagesChronologically = (messages: Message[]): Message[] => (
-  [...messages]
-    .map((message, index) => ({ message, index }))
-    .sort((left, right) => {
-      const leftTime = messageCreatedAtTimestamp(left.message);
-      const rightTime = messageCreatedAtTimestamp(right.message);
-      if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
-        return leftTime - rightTime;
-      }
-      if (leftTime === null && rightTime !== null) {
-        return 1;
-      }
-      if (leftTime !== null && rightTime === null) {
-        return -1;
-      }
-
-      const leftTurnId = readMessageTurnCursor(left.message);
-      const rightTurnId = readMessageTurnCursor(right.message);
-      if (leftTurnId && leftTurnId === rightTurnId) {
-        const roleDelta = messageRoleOrder(left.message) - messageRoleOrder(right.message);
-        if (roleDelta !== 0) {
-          return roleDelta;
-        }
-      }
-      return left.index - right.index;
-    })
-    .map(({ message }) => message)
-);
-
 export const trimCompactHistorySnapshotToRecent = (
   snapshot: SessionMessagesSnapshot | null | undefined,
   pageSize: number = SESSION_MESSAGES_INITIAL_PAGE_SIZE,
@@ -487,7 +440,7 @@ const preserveMissingTransientMessages = (
     }
   }
 
-  return sortMessagesChronologically(mergedMessages);
+  return mergedMessages;
 };
 
 export const extractCompactHistoryMessages = (messages: Message[]): Message[] => messages.filter((message) => {
