@@ -222,7 +222,7 @@ fn validate_installation_release(
     Ok(())
 }
 
-fn platform_constraint_matches(constraint: &str, installed_platform: &str) -> bool {
+pub(super) fn platform_constraint_matches(constraint: &str, installed_platform: &str) -> bool {
     if constraint == installed_platform {
         return true;
     }

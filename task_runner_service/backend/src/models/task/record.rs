@@ -55,10 +55,34 @@ pub struct TaskRecord {
     pub task_tool_state: TaskToolState,
     #[serde(default)]
     pub plugin_config: TaskPluginConfig,
+    #[serde(default)]
+    pub plugin_selection_audit: Option<TaskPluginSelectionAudit>,
     pub mcp_config: TaskMcpConfig,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskPluginSelectionAudit {
+    pub selection_source: String,
+    pub policy_revision: String,
+    pub selected_at: String,
+    pub project_context_revision: String,
+    #[serde(default)]
+    pub plugins: Vec<TaskSelectedPluginSnapshot>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSelectedPluginSnapshot {
+    pub plugin_id: String,
+    pub plugin_key: String,
+    pub release_id: String,
+    pub version: String,
+    pub artifact_sha256: String,
+    pub device_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 fn default_task_project_id() -> String {

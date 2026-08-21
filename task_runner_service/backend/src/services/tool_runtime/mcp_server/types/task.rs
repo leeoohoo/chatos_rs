@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::CreateTaskPluginHint;
 use chatos_plugin_management_sdk::{SelectedPluginRef, TaskPluginConfig};
 
 #[derive(Debug, Default, Deserialize)]
@@ -54,6 +55,8 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
     #[serde(default)]
+    pub(in crate::mcp_server) plugin_hints: Vec<CreateTaskPluginHint>,
+    #[serde(default)]
     pub(in crate::mcp_server) selected_plugins: Option<Vec<SelectedPluginRef>>,
     #[serde(default)]
     pub(in crate::mcp_server) prerequisite_task_ids: Option<Vec<String>>,
@@ -62,6 +65,12 @@ pub(in crate::mcp_server) struct CreateTaskArgs {
 }
 
 impl CreateTaskArgs {
+    pub(in crate::mcp_server) fn normalized_plugin_hints(
+        &self,
+    ) -> Result<Vec<CreateTaskPluginHint>, String> {
+        normalize_task_plugin_hints(self.plugin_hints.as_slice())
+    }
+
     pub(in crate::mcp_server) fn into_request(self) -> Result<CreateTaskRequest, String> {
         if self.selected_plugins.is_some() || self.mcp_config.is_some() {
             return Err(
@@ -104,6 +113,52 @@ impl CreateTaskArgs {
             prerequisite_task_ids: self.prerequisite_task_ids,
         })
     }
+}
+
+fn normalize_task_plugin_hints(
+    hints: &[CreateTaskPluginHint],
+) -> Result<Vec<CreateTaskPluginHint>, String> {
+    const MAX_HINTS: usize = 16;
+    const MAX_PLUGIN_KEY_BYTES: usize = 128;
+    const MAX_REASON_BYTES: usize = 1_000;
+    if hints.len() > MAX_HINTS {
+        return Err(format!(
+            "plugin_hints must contain at most {MAX_HINTS} items"
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    hints
+        .iter()
+        .map(|hint| {
+            let plugin_key = hint.plugin_key.trim();
+            if plugin_key.is_empty()
+                || plugin_key.len() > MAX_PLUGIN_KEY_BYTES
+                || plugin_key.contains('\0')
+            {
+                return Err("plugin_hints contains an invalid plugin_key".to_string());
+            }
+            let normalized_key = plugin_key.to_ascii_lowercase();
+            if !seen.insert(normalized_key) {
+                return Err(format!(
+                    "plugin_hints selects the same Plugin more than once: {plugin_key}"
+                ));
+            }
+            let reason = hint
+                .reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if reason.is_some_and(|value| value.len() > MAX_REASON_BYTES || value.contains('\0')) {
+                return Err(format!(
+                    "plugin_hints reason is invalid for Plugin: {plugin_key}"
+                ));
+            }
+            Ok(CreateTaskPluginHint {
+                plugin_key: plugin_key.to_string(),
+                reason: reason.map(ToOwned::to_owned),
+            })
+        })
+        .collect()
 }
 
 fn only_code_maintainer_read_selected(enabled_builtin_kinds: &[String]) -> bool {
@@ -197,6 +252,8 @@ pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
     pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
     #[serde(default)]
     pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(in crate::mcp_server) plugin_hints: Vec<CreateTaskPluginHint>,
     #[serde(default)]
     pub(in crate::mcp_server) owned_paths: Vec<String>,
     #[serde(default)]

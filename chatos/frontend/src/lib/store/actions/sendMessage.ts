@@ -3,7 +3,6 @@
 
 import type {
   Message,
-  PluginCommandInvocationPayload,
   SendMessageRuntimeOptions,
 } from '../../../types';
 import type ApiClient from '../../api/client';
@@ -56,8 +55,6 @@ import { rollbackFailedSendMessage } from './sendMessage/streamExecution';
 
 const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
 const REALTIME_TOPIC_SUBSCRIBE_GRACE_MS = 5000;
-const MAX_PLUGIN_COMMAND_INVOCATIONS = 64;
-const MAX_PLUGIN_COMMAND_ARGUMENT_BYTES = 16 * 1024;
 
 const mergeMessageByIdAndTime = (messages: Message[] = [], nextMessage: Message): Message[] => {
   const next = [...messages.filter((message) => message.id !== nextMessage.id), nextMessage];
@@ -110,50 +107,6 @@ const normalizeRuntimeIds = (value: unknown): string[] => {
     seen.add(normalized);
     return [normalized];
   });
-};
-
-const normalizePluginCommandInvocations = (
-  value: unknown,
-): PluginCommandInvocationPayload[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const seen = new Set<string>();
-  const normalized: PluginCommandInvocationPayload[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== 'object') {
-      continue;
-    }
-    const record = item as Partial<PluginCommandInvocationPayload>;
-    const pluginId = normalizeRuntimeText(record.plugin_id);
-    const commandId = normalizeRuntimeText(record.command_id);
-    if (!pluginId || !commandId) {
-      continue;
-    }
-    const key = `${pluginId}\u0000${commandId}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    const argumentsText = typeof record.arguments === 'string'
-      ? record.arguments.trim()
-      : '';
-    if (
-      argumentsText.includes('\0')
-      || new TextEncoder().encode(argumentsText).length > MAX_PLUGIN_COMMAND_ARGUMENT_BYTES
-    ) {
-      continue;
-    }
-    seen.add(key);
-    normalized.push({
-      plugin_id: pluginId,
-      command_id: commandId,
-      arguments: argumentsText || null,
-    });
-    if (normalized.length >= MAX_PLUGIN_COMMAND_INVOCATIONS) {
-      break;
-    }
-  }
-  return normalized;
 };
 
 const attachmentTypeForFile = (file: File): ApiAttachmentPayload['type'] => {
@@ -476,10 +429,9 @@ export function createSendMessageHandler({
         },
       );
 
-      const normalizedPluginCommandInvocations = normalizePluginCommandInvocations(
-        runtimeOptions.pluginCommandInvocations,
+      const normalizedTaskPluginPreferences = normalizeRuntimeIds(
+        runtimeOptions.taskPluginPreferences,
       );
-      const normalizedSelectedPluginIds = normalizeRuntimeIds(runtimeOptions.selectedPluginIds);
 
       // 创建用户消息（仅前端展示，不立即保存数据库）
       const userMessageTime = new Date();
@@ -489,12 +441,6 @@ export function createSendMessageHandler({
         conversationTurnId,
         selectedModel: selectedModelForRequest,
         previewAttachments,
-        pluginCommandInvocations: normalizedPluginCommandInvocations.map((invocation) => ({
-          plugin_id: invocation.plugin_id,
-          command_id: invocation.command_id,
-          arguments_present: Boolean(invocation.arguments),
-          arguments_sha256: null,
-        })),
         createdAt: userMessageTime,
       });
       const turnProcessKey = conversationTurnId || userMessage.id;
@@ -535,8 +481,7 @@ export function createSendMessageHandler({
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         workspaceRoot: effectiveWorkspaceRoot,
-        selectedPluginIds: normalizedSelectedPluginIds,
-        pluginCommandInvocations: normalizedPluginCommandInvocations,
+        taskPluginPreferences: normalizedTaskPluginPreferences,
         planMode,
       });
       streamRuntimeOptions.systemPrompt = activeSystemContext?.content
@@ -559,11 +504,8 @@ export function createSendMessageHandler({
         project_id: streamRuntimeOptions.projectId || undefined,
         project_root: streamRuntimeOptions.projectRoot || undefined,
         workspace_root: streamRuntimeOptions.workspaceRoot || undefined,
-        selected_plugin_ids: streamRuntimeOptions.selectedPluginIds.length
-          ? streamRuntimeOptions.selectedPluginIds
-          : undefined,
-        plugin_command_invocations: streamRuntimeOptions.pluginCommandInvocations.length
-          ? streamRuntimeOptions.pluginCommandInvocations
+        task_plugin_preferences: streamRuntimeOptions.taskPluginPreferences.length
+          ? streamRuntimeOptions.taskPluginPreferences
           : undefined,
         plan_mode: streamRuntimeOptions.planMode,
         model_config_id: selectedModelForRequest.id,

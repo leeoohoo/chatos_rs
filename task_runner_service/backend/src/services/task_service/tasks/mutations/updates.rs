@@ -142,9 +142,11 @@ impl TaskService {
                 task.mcp_config.workspace_changes_required = workspace_changes_required;
             }
         }
-        if let Some(plugin_config) = patch.plugin_config {
-            task.plugin_config = plugin_config;
-            capability_boundary_changed = true;
+        if patch.plugin_config.is_some() {
+            return Err(
+                "Task Plugin selection is frozen at creation and cannot be changed by task editing"
+                    .to_string(),
+            );
         }
         if capability_boundary_changed {
             let task_owner_user_id = task_owner_or_creator(&task);

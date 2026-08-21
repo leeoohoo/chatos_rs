@@ -75,6 +75,8 @@ mod stream_events;
 mod task_dependencies;
 mod task_manager_lifecycle;
 mod task_memory;
+#[path = "services/tool_runtime/task_plugin_runtime_context.rs"]
+mod task_plugin_runtime_context;
 mod task_process_log;
 mod task_service;
 mod task_tenant_scope;

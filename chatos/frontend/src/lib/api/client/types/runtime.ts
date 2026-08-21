@@ -2,9 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type { SessionMessageResponse } from './session';
-import type {
-  PluginCommandInvocationPayload,
-} from '../../../../types';
 
 export interface MemoryAgentSkillResponse {
   id: string;
@@ -144,8 +141,7 @@ export interface StreamChatOptions {
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
-  selectedPluginIds?: string[];
-  pluginCommandInvocations?: PluginCommandInvocationPayload[];
+  taskPluginPreferences?: string[];
   planMode?: boolean;
   systemPrompt?: string | null;
 }

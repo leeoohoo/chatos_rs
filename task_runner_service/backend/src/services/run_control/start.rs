@@ -169,6 +169,7 @@ impl RunService {
             .unwrap_or(self.resolve_task_runner_agent_key_for_task(&task).await?);
         let mut runtime_task = task.clone();
         if let Some(policy) = capability_policy.as_ref() {
+            policy.validate_task_plugin_selection_for_run(&runtime_task)?;
             policy.apply_to_task(&mut runtime_task)?;
         }
         let effective_workspace_dir =

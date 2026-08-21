@@ -24,6 +24,19 @@ use super::*;
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
+#[test]
+fn relay_error_detail_extracts_bounded_json_error() {
+    let detail = super::relay_client::relay_error_detail(
+        br#"{"error":"stdio request failed\nwithout exposing the full response"}"#,
+    );
+
+    assert_eq!(
+        detail.as_deref(),
+        Some("stdio request failed without exposing the full response")
+    );
+    assert_eq!(super::relay_client::relay_error_detail(b"not-json"), None);
+}
+
 fn immutable_binding() -> PluginMcpRuntimeBinding {
     PluginMcpRuntimeBinding {
         provider_ref: format!("plugin-binding:{}", "b".repeat(64)),

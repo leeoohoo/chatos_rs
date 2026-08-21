@@ -289,6 +289,7 @@ impl RunService {
         }
         let mut runtime_task = task.clone();
         if let Some(policy) = self.resolve_task_runner_policy_for_task(task).await? {
+            policy.validate_task_plugin_selection_for_run(&runtime_task)?;
             policy.apply_to_task(&mut runtime_task)?;
         }
         let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(

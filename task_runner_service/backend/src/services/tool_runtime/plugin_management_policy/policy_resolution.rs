@@ -9,7 +9,7 @@ impl TaskService {
         current_user: Option<&CurrentUser>,
         owner_user_id: Option<&str>,
         agent_key: SystemAgentKey,
-        _project_id: &str,
+        project_id: &str,
         task_profile: Option<&str>,
         schedule_mode: Option<&str>,
     ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
@@ -21,9 +21,11 @@ impl TaskService {
         let owner_user_id = resolved_owner_user_id(current_user, owner_user_id)?;
         resolve_policy(
             client,
+            &self.config,
             owner_user_id,
             get_current_access_token().as_deref(),
             agent_key,
+            project_id,
             task_profile,
             schedule_mode,
         )
@@ -57,9 +59,11 @@ impl RunService {
         );
         resolve_policy(
             client,
+            &self.config,
             owner_user_id,
             None,
             agent_key,
+            task.project_id.as_str(),
             Some(task.task_profile.as_str()),
             Some(task.schedule.mode.mode_key()),
         )
@@ -69,18 +73,41 @@ impl RunService {
 
 async fn resolve_policy(
     client: &PluginManagementClient,
+    config: &crate::config::AppConfig,
     owner_user_id: &str,
     access_token: Option<&str>,
     agent_key: SystemAgentKey,
+    project_id: &str,
     task_profile: Option<&str>,
     schedule_mode: Option<&str>,
 ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
+    let runtime_context =
+        crate::services::task_plugin_runtime_context::resolve_task_plugin_runtime_context(
+            config,
+            owner_user_id,
+            project_id,
+        )
+        .await?;
+    tracing::debug!(
+        owner_user_id = runtime_context.owner_user_id.as_str(),
+        project_id = runtime_context.project_id.as_str(),
+        runtime_provider = runtime_context.runtime_provider.as_str(),
+        device_id = runtime_context.device_id.as_deref().unwrap_or(""),
+        workspace_id = runtime_context.workspace_id.as_deref().unwrap_or(""),
+        project_context_revision = runtime_context
+            .project_context_revision
+            .as_deref()
+            .unwrap_or(""),
+        agent_key = agent_key.as_str(),
+        "resolved Task Runner Plugin runtime context"
+    );
     let request = ResolveAgentCapabilitiesRequest::new(agent_key, owner_user_id)
         .with_runtime_context(
             normalized_text(task_profile),
-            None,
+            Some(runtime_context.runtime_provider.clone()),
             normalized_text(schedule_mode),
-        );
+        )
+        .with_device_id(runtime_context.device_id.clone());
     let capabilities = if let Some(access_token) = access_token {
         client
             .resolve_for_user(&request, access_token)
@@ -92,7 +119,7 @@ async fn resolve_policy(
             .await
             .map_err(|err| err.to_string())?
     };
-    TaskRunnerCapabilityPolicy::new(capabilities).map(Some)
+    TaskRunnerCapabilityPolicy::new(capabilities, runtime_context).map(Some)
 }
 
 fn normalized_text(value: Option<&str>) -> Option<String> {

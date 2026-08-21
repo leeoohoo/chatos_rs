@@ -18,48 +18,63 @@ pub(super) use base_plugin::resolved_plugin;
 pub(super) use component_plugins::{resolved_agent_plugin, resolved_command_plugin};
 pub(super) use core::{resolved_mcp, resolved_skill};
 
-pub(super) fn policy() -> TaskRunnerCapabilityPolicy {
-    TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
-        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+pub(super) fn local_runtime_context(
+) -> crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext {
+    crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext {
         owner_user_id: "owner-1".to_string(),
-        policy_revision: "revision-1".to_string(),
-        generated_at: "now".to_string(),
-        agent_enabled: true,
-        mcps: vec![
-            resolved_mcp(
-                "ask-user",
-                BUILTIN_RUNTIME_KIND,
-                Some("AskUser"),
-                true,
-                true,
-            ),
-            resolved_mcp(
-                chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID,
-                chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND,
-                Some("task_process_log"),
-                true,
-                true,
-            ),
-            resolved_mcp(
-                "read",
-                BUILTIN_RUNTIME_KIND,
-                Some("CodeMaintainerRead"),
-                false,
-                true,
-            ),
-            resolved_mcp(
-                "write",
-                BUILTIN_RUNTIME_KIND,
-                Some("CodeMaintainerWrite"),
-                false,
-                false,
-            ),
-            resolved_mcp("external-1", "http", None, false, true),
-        ],
-        skills: vec![resolved_skill("plugin_skill_rendering", false, true)],
-        plugins: Vec::new(),
-        local_connector_requirements: Vec::new(),
-    })
+        project_id: "project-1".to_string(),
+        workspace_id: Some("workspace-1".to_string()),
+        device_id: Some("device-1".to_string()),
+        runtime_provider: "local_connector".to_string(),
+        project_context_revision: Some("project-revision-1".to_string()),
+    }
+}
+
+pub(super) fn policy() -> TaskRunnerCapabilityPolicy {
+    TaskRunnerCapabilityPolicy::new(
+        ResolvedAgentCapabilities {
+            agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+            owner_user_id: "owner-1".to_string(),
+            policy_revision: "revision-1".to_string(),
+            generated_at: "now".to_string(),
+            agent_enabled: true,
+            mcps: vec![
+                resolved_mcp(
+                    "ask-user",
+                    BUILTIN_RUNTIME_KIND,
+                    Some("AskUser"),
+                    true,
+                    true,
+                ),
+                resolved_mcp(
+                    chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID,
+                    chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND,
+                    Some("task_process_log"),
+                    true,
+                    true,
+                ),
+                resolved_mcp(
+                    "read",
+                    BUILTIN_RUNTIME_KIND,
+                    Some("CodeMaintainerRead"),
+                    false,
+                    true,
+                ),
+                resolved_mcp(
+                    "write",
+                    BUILTIN_RUNTIME_KIND,
+                    Some("CodeMaintainerWrite"),
+                    false,
+                    false,
+                ),
+                resolved_mcp("external-1", "http", None, false, true),
+            ],
+            skills: vec![resolved_skill("plugin_skill_rendering", false, true)],
+            plugins: Vec::new(),
+            local_connector_requirements: Vec::new(),
+        },
+        local_runtime_context(),
+    )
     .expect("policy")
 }
 
@@ -98,6 +113,7 @@ pub(super) fn task() -> TaskRecord {
         prerequisite_task_ids: Vec::new(),
         task_tool_state: TaskToolState::default(),
         plugin_config: Default::default(),
+        plugin_selection_audit: None,
         mcp_config: TaskMcpConfig {
             enabled: false,
             enabled_builtin_kinds: vec![

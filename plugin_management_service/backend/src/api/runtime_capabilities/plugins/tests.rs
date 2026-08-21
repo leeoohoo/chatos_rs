@@ -40,6 +40,26 @@ fn exact_ready_installation_resolves_selected_components() {
 }
 
 #[test]
+fn generic_release_platform_accepts_architecture_specific_installation() {
+    let mut records = plugin_records();
+    records.release.supported_platforms = vec!["macos".to_string()];
+    let snapshots = component_snapshots(&records);
+    let resolved = resolve_plugin_records(
+        records.catalog,
+        Some(records.release),
+        records.binding,
+        Some(records.installation),
+        Some(records.preference),
+        snapshots,
+        Vec::new(),
+        Some("device-1"),
+    );
+
+    assert!(resolved.available);
+    assert_eq!(resolved.status, PluginAvailabilityStatus::Ready);
+}
+
+#[test]
 fn missing_device_fails_closed() {
     let records = plugin_records();
     let snapshots = component_snapshots(&records);

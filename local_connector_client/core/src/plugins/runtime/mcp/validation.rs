@@ -21,11 +21,27 @@ pub(super) fn validate_invocation_id(invocation_id: &str) -> Result<()> {
         || invocation_id.len() > MAX_INVOCATION_ID_BYTES
         || !invocation_id
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
     {
         bail!("Plugin MCP invocation id is invalid");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_invocation_id;
+
+    #[test]
+    fn accepts_mcp_management_batch_invocation_ids() {
+        assert!(validate_invocation_id("mcp_batch_task_runner_agent_run_1_1:0").is_ok());
+    }
+
+    #[test]
+    fn rejects_path_and_control_characters() {
+        assert!(validate_invocation_id("batch/0").is_err());
+        assert!(validate_invocation_id("batch\n0").is_err());
+    }
 }
 
 pub(in crate::plugins::runtime) fn load_verified_manifest(

@@ -142,6 +142,7 @@ impl TaskService {
                 task_tool_state: TaskToolState::default(),
                 mcp_config: original.mcp_config,
                 plugin_config: original.plugin_config,
+                plugin_selection_audit: original.plugin_selection_audit,
                 created_at: now.clone(),
                 updated_at: now,
                 deleted_at: None,

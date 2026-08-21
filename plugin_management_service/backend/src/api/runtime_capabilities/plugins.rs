@@ -321,10 +321,12 @@ fn resolve_plugin_records(
             );
         }
         if !release_ref.supported_platforms.is_empty()
-            && !release_ref
-                .supported_platforms
-                .iter()
-                .any(|platform| platform == &installation_ref.platform)
+            && !release_ref.supported_platforms.iter().any(|platform| {
+                super::super::plugin_installations::platform_constraint_matches(
+                    platform,
+                    installation_ref.platform.as_str(),
+                )
+            })
         {
             return unavailable(
                 PluginAvailabilityStatus::UnsupportedPlatform,

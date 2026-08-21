@@ -73,11 +73,31 @@ impl PluginLocalProvider {
             ))
         })?;
         if !status.is_success() {
+            let detail = relay_error_detail(bytes.as_ref())
+                .map(|detail| format!(": {detail}"))
+                .unwrap_or_default();
             return Err(ProviderCallError::provider_unavailable(format!(
-                "Plugin Local Provider rejected {action} with HTTP {}",
-                status.as_u16()
+                "Plugin Local Provider rejected {action} with HTTP {}{detail}",
+                status.as_u16(),
             )));
         }
         Ok(bytes.to_vec())
     }
+}
+
+pub(super) fn relay_error_detail(bytes: &[u8]) -> Option<String> {
+    const MAX_DETAIL_CHARS: usize = 512;
+    let value = serde_json::from_slice::<Value>(bytes).ok()?;
+    let detail = value
+        .get("error")
+        .or_else(|| value.get("message"))?
+        .as_str()?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let detail = detail.trim();
+    if detail.is_empty() {
+        return None;
+    }
+    Some(detail.chars().take(MAX_DETAIL_CHARS).collect())
 }

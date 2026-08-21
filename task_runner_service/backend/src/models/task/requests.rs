@@ -3,6 +3,14 @@
 
 use super::*;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateTaskPluginHint {
+    pub plugin_key: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskMcpRequestConfig {

@@ -26,6 +26,8 @@ mod policy_resolution;
 pub(crate) mod selectable_views;
 #[path = "plugin_management_policy/task_config_application.rs"]
 mod task_config_application;
+#[path = "plugin_management_policy/trusted_task_selection.rs"]
+mod trusted_task_selection;
 
 use plugin_selection::{validate_plugin_component_selection, validate_supported_plugin};
 
@@ -37,10 +39,14 @@ const BUILTIN_RUNTIME_KIND: &str = chatos_plugin_management_sdk::LEGACY_BUILTIN_
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRunnerCapabilityPolicy {
     capabilities: ResolvedAgentCapabilities,
+    runtime_context: crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext,
 }
 
 impl TaskRunnerCapabilityPolicy {
-    fn new(capabilities: ResolvedAgentCapabilities) -> Result<Self, String> {
+    fn new(
+        capabilities: ResolvedAgentCapabilities,
+        runtime_context: crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext,
+    ) -> Result<Self, String> {
         if !capabilities.agent_enabled {
             return Err(format!(
                 "Task Runner Agent is disabled by Plugin Management: {}",
@@ -61,7 +67,10 @@ impl TaskRunnerCapabilityPolicy {
                 validate_task_process_log_mcp_runtime(item)?;
             }
         }
-        Ok(Self { capabilities })
+        Ok(Self {
+            capabilities,
+            runtime_context,
+        })
     }
 
     pub(crate) fn policy_revision(&self) -> &str {
@@ -152,12 +161,23 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn selectable_plugins(&self) -> Vec<&ResolvedPlugin> {
+        if self.runtime_context.runtime_provider != "local_connector"
+            || self.runtime_context.device_id.is_none()
+        {
+            return Vec::new();
+        }
         self.capabilities
             .selectable_plugins()
             .filter(|plugin| {
                 validate_supported_plugin(plugin, self.capabilities.agent_key.as_str()).is_ok()
             })
             .collect()
+    }
+
+    pub(crate) fn runtime_context(
+        &self,
+    ) -> &crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext {
+        &self.runtime_context
     }
 
     pub(crate) fn validate_plugin_config(&self, config: &TaskPluginConfig) -> Result<(), String> {

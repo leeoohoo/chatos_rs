@@ -16,7 +16,6 @@ import {
 } from './inputArea/InlineWidgets';
 import InputAreaComposer from './inputArea/InputAreaComposer';
 import InputAreaDragOverlay from './inputArea/InputAreaDragOverlay';
-import { InputAreaPluginCommandSuggestions } from './inputArea/InputAreaPluginCommandSuggestions';
 import { InputAreaPluginMentionSuggestions } from './inputArea/InputAreaPluginMentionSuggestions';
 import { useInputAreaController } from './inputArea/useInputAreaController';
 
@@ -84,11 +83,6 @@ export const InputArea: React.FC<InputAreaProps> = ({
     projectFilePickerRef,
     pickerOpen,
     pluginPicker,
-    pluginCommandSuggestions,
-    commandSuggestionsOpen,
-    commandSuggestionIndex,
-    setCommandSuggestionIndex,
-    selectPluginCommandSuggestion,
     pluginMentionSuggestions,
     pluginMentionSuggestionsOpen,
     pluginMentionSuggestionIndex,
@@ -169,9 +163,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     <div className="border-t bg-background p-3 sm:p-4">
       <InputAreaPluginChips
         plugins={pluginPicker.selectedPlugins}
-        commands={pluginPicker.selectedCommands}
         onRemove={pluginPicker.removePlugin}
-        onRemoveCommand={pluginPicker.removeCommand}
       />
       <InputAreaAttachmentsPreview
         attachments={attachments}
@@ -191,14 +183,6 @@ export const InputArea: React.FC<InputAreaProps> = ({
           activeIndex={pluginMentionSuggestionIndex}
           onActiveIndexChange={setPluginMentionSuggestionIndex}
           onSelect={selectPluginMentionSuggestion}
-        />
-        <InputAreaPluginCommandSuggestions
-          open={commandSuggestionsOpen}
-          loading={pluginPicker.loading}
-          suggestions={pluginCommandSuggestions}
-          activeIndex={commandSuggestionIndex}
-          onActiveIndexChange={setCommandSuggestionIndex}
-          onSelect={selectPluginCommandSuggestion}
         />
         <InputAreaComposer
           disabled={disabled}

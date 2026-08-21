@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_mcp_management_sdk::ProjectExecutionContext;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,8 @@ pub(in crate::services) const PROJECT_READ_SCOPE: &str = "project.read";
 pub(in crate::services) const PROJECT_SYNC_SCOPE: &str = "project.sync";
 pub(in crate::services) const PROJECT_MCP_SCOPE: &str = "project.mcp";
 pub(in crate::services) const PROJECT_HARNESS_SCOPE: &str = "project.harness";
+pub(in crate::services) const PROJECT_EXECUTION_CONTEXT_SCOPE: &str =
+    "project.execution_context.read";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct PreparedRunBranch {
@@ -307,6 +310,37 @@ pub async fn sync_get_project(
     get_project_with_sync_secret(&client, base_url, sync_secret, project_id)
         .await
         .map(|project| project.map(Into::into))
+}
+
+pub(crate) async fn resolve_project_execution_context(
+    config: &AppConfig,
+    project_id: &str,
+    owner_user_id: &str,
+) -> Result<ProjectExecutionContext, String> {
+    let project_id = project_id.trim();
+    let owner_user_id = owner_user_id.trim();
+    if project_id.is_empty() {
+        return Err("project_id is required for project execution context".to_string());
+    }
+    if owner_user_id.is_empty() {
+        return Err("owner_user_id is required for project execution context".to_string());
+    }
+    let base_url = required_project_service_internal_base_url(config)?;
+    let internal_secret = required_sync_secret(config)?;
+    let endpoint = format!(
+        "{}/api/internal/projects/{}/execution-context",
+        base_url.trim().trim_end_matches('/'),
+        urlencoding::encode(project_id)
+    );
+    send_json(
+        signed_project_service_request(
+            config.project_service_internal_http_client.get(endpoint),
+            internal_secret,
+            PROJECT_EXECUTION_CONTEXT_SCOPE,
+        )?
+        .query(&[("owner_user_id", owner_user_id)]),
+    )
+    .await
 }
 
 pub(crate) async fn finalize_run_workspace(
