@@ -11,6 +11,13 @@ use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
 use super::LocalDatabase;
 
 impl LocalDatabase {
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "atomic capability bundle replacement is retained and tested for the pending sync consumer"
+        )
+    )]
     pub(crate) async fn replace_capability_snapshots(
         &self,
         snapshots: &[ResolvedAgentCapabilities],
@@ -254,6 +261,13 @@ fn validate_snapshot_identity(
     Ok(())
 }
 
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "shared by the retained atomic capability bundle replacement path"
+    )
+)]
 fn normalized_generated_at(capabilities: &ResolvedAgentCapabilities, fallback: &str) -> String {
     let value = capabilities.generated_at.trim();
     if value.is_empty() {

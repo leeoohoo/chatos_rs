@@ -20,14 +20,39 @@ pub(crate) const CHROME_EXTENSION_ORIGIN: &str =
 pub(crate) const CHROME_NATIVE_HOST_NAME: &str = "com.chatos.chrome";
 pub(crate) const CHROME_NATIVE_PROTOCOL_VERSION: u32 = 1;
 
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "reserved for the tested Chrome extension command bridge until a runtime provider is connected"
+    )
+)]
 const MAX_PENDING_COMMANDS: usize = 64;
 const MAX_BRIDGE_MESSAGE_BYTES: usize = 1024 * 1024;
 const MAX_EXTENSION_VERSION_BYTES: usize = 64;
 const CONNECTION_STALE_AFTER: Duration = Duration::from_secs(35);
 const NEXT_COMMAND_WAIT: Duration = Duration::from_secs(15);
+#[allow(
+    dead_code,
+    reason = "retained entry point for the Chrome Native Messaging command integration"
+)]
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(12);
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "reserved for the tested Chrome extension command bridge until a runtime provider is connected"
+    )
+)]
 const COMMAND_CANCEL_POLL: Duration = Duration::from_millis(100);
 const CANCELLED_REQUEST_TTL: Duration = Duration::from_secs(60);
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "reserved for the tested Chrome extension command bridge until a runtime provider is connected"
+    )
+)]
 const MAX_CANCELLED_REQUESTS: usize = 128;
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,10 +130,18 @@ pub(crate) async fn next_chrome_native_command(connection_id: &str) -> Result<Op
     bridge().next_command(connection_id).await
 }
 
+#[allow(
+    dead_code,
+    reason = "retained entry point for the Chrome Native Messaging command integration"
+)]
 pub(crate) fn execute_chrome_extension_command(command: &str, arguments: Value) -> Result<Value> {
     bridge().execute_command(command, arguments, DEFAULT_COMMAND_TIMEOUT, None)
 }
 
+#[allow(
+    dead_code,
+    reason = "retained cancellable Chrome command entry point used by browser automation integrations"
+)]
 pub(crate) fn execute_chrome_extension_command_cancellable(
     command: &str,
     arguments: Value,
@@ -122,6 +155,10 @@ pub(crate) fn execute_chrome_extension_command_cancellable(
     )
 }
 
+#[allow(
+    dead_code,
+    reason = "retained timeout-aware Chrome command entry point used by browser automation integrations"
+)]
 pub(crate) fn execute_chrome_extension_command_cancellable_with_timeout(
     command: &str,
     arguments: Value,
@@ -272,6 +309,13 @@ impl ChromeBridge {
         }
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the command protocol is production code covered by bridge tests before provider wiring"
+        )
+    )]
     fn execute_command(
         &self,
         command: &str,
@@ -373,6 +417,13 @@ impl ChromeBridge {
         }
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the command protocol is production code covered by bridge tests before provider wiring"
+        )
+    )]
     fn cancel_request(&self, request_id: &str) -> Result<()> {
         let now = timestamp_ms();
         let mut state = self
