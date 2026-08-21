@@ -36,7 +36,7 @@
     "date-fns": "^4.4.0",
     "framer-motion": "^12.42.2",
     "highlight.js": "^11.9.0",
-    "immer": "^11.1.16",
+    "immer": "^11.1.17",
     "katex": "^0.17.0",
     "lucide-react": "^1.24.0",
     "mermaid": "^11.16.1",
@@ -50,18 +50,18 @@
     "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0",
     "tailwind-merge": "^3.6.0",
-    "uuid": "^14.0.1",
+    "uuid": "^14.0.2",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@rollup/plugin-typescript": "^12.3.0",
-    "@storybook/react": "^10.5.8",
-    "@storybook/react-vite": "^10.5.8",
+    "@storybook/react": "^10.5.9",
+    "@storybook/react-vite": "^10.5.9",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.4",
+    "@testing-library/user-event": "^14.6.5",
     "@types/katex": "^0.16.8",
     "@types/node": "^26.1.1",
     "@types/react": "^19.2.18",
@@ -83,7 +83,7 @@
     "vite": "^8.1.4",
     "vite-plugin-dts": "^5.0.3",
     "vite-plugin-lib-inject-css": "^2.2.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "peerDependencies": {
     "react": ">=19.2.8",
