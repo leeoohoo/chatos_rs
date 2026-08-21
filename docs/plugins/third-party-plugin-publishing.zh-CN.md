@@ -11,9 +11,9 @@ Browser CDP MCP 的专项架构、权限、Chrome Extension Bridge、完整 CDP 
 1. MCP 发布者开发 Node.js package，并在 `package.json.bin` 中声明 stdio MCP 可执行入口；远程 HTTP MCP 也必须通过一个 Marketplace npm package 描述和交付。
 2. package 使用 `npm pack` 生成标准 `.tgz`。发布者不需要手工计算 integrity、SHA-256 或填写 artifact URL。
 3. Plugin Manifest 使用 `schemaVersion: 3`，声明 MCP、权限及可选的 Command、Agent、Hook、UI 等组件，推荐放在 package 根目录的 `chatos.plugin.json` 中。
-4. 发布者先在 Plugin Management 申请 publisher 身份，由 `super_admin` 审核通过；Release signing key 由平台按 Marketplace + publisher 托管，不要求发布者上传私钥或手填签名。
+4. 平台在 Package 校验后从 Manifest `author` 自动建议 publisher identity。已有 approved publisher 会直接复用；不存在时，`super_admin` 可在确认发布时自动创建并审核。独立 Publisher 申请入口仍可用于提前占用和审核 identity。
 5. 管理员在“Plugin Catalog → 上架 Plugin”上传 `.tgz`。平台安全解析 package、校验 Manifest 和 `package.json.bin`，自动计算 npm SHA-512 integrity 与 artifact SHA-256，并显示组件和权限预览。
-6. 管理员确认 Marketplace、publisher、许可证、可再分发状态和 Release channel 后发布。平台保存不可变 Artifact，自动创建或复用 Catalog，签署并生成不可变 Release。
+6. 管理员确认 Marketplace、publisher、许可证、可再分发状态和 Release channel 后发布。平台保存不可变 Artifact，自动创建或复用 Publisher/Catalog，为 Marketplace + publisher 自动生成托管 Release signing key，并签署不可变 Release。发布者不上传私钥或 signing key JSON。
 7. Local Connector Client 只从可信 Marketplace Catalog 获取安装来源，下载 `.tgz`，验证 Catalog/Release 签名、npm SHA-512 integrity、artifact SHA-256、package identity、`package.json.bin` 和安全解包规则。
 8. 安装成功后，客户端上报可用性。ChatOS 创建任务时才能把该 Release 的不可变组件 snapshot 固定到任务中。
 
@@ -45,10 +45,10 @@ npm view ./your-package.tgz name version bin --json
 Plugin Catalog
   → 上架 Plugin
   → 选择可信 admin_registry Marketplace
-  → 选择 approved Publisher
   → 上传 npm .tgz
   → 可选上传 Manifest JSON
   → 校验并预览
+  → 确认 Manifest author 自动建议的 Publisher（已有则复用，不存在则自动创建）
   → 填写许可证与 Release channel
   → 发布
 ```

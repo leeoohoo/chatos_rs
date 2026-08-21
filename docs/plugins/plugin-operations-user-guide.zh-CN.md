@@ -68,7 +68,8 @@ Run 开始后始终使用创建任务时固定的 snapshot。Marketplace 发布�
 
 - Marketplace Catalog URL 必须是无 credential、无 fragment 的 HTTPS URL。
 - trusted Marketplace 至少保留一个未撤销的 Ed25519 Catalog signing key。
-- `super_admin` 审核 publisher identity、网站、许可证和供应链信息；平台在首次发布时为 Marketplace + publisher 创建托管的 Release-only signing key。
+- Package 校验后，平台从 Manifest `author` 自动建议 publisher identity；匹配 approved publisher 时复用，不存在时由 `super_admin` 在发布过程中自动创建并审核。独立 Publisher 申请仍可用于提前审核 identity。
+- Release signing key 不由发布者上传；平台在首次发布时为 Marketplace + publisher 创建托管的 Release-only signing key。
 - 平台托管 key 的轮换先增加 successor key，再撤销旧 key；Catalog key 和 Release key 不得混用。
 - Catalog sync 验证签名、revision/issued_at 单调性、publisher identity、Release 不可变性和 revocation。
 
@@ -77,14 +78,14 @@ Run 开始后始终使用创建任务时固定的 snapshot。Marketplace 发布�
 管理员不再分别手工创建 Catalog 和填写 Release JSON。标准上架流程是：
 
 1. 在“Marketplace”确认目标 Marketplace 已启用，类型为 `admin_registry`，信任级别为 `trusted`。
-2. 在“Publisher”确认发布者状态为 `approved`，并且属于同一个 Marketplace。
-3. 进入“Plugin Catalog”，点击“上架 Plugin”。
-4. 上传 `npm pack` 生成的 `.tgz`；包内没有 `chatos.plugin.json` 时，再上传独立 Manifest JSON。
-5. 点击“校验并预览”。平台自动解析 package name/version/bin、Manifest、组件和权限，并自动计算 npm SHA-512 integrity 与 artifact SHA-256。
-6. 选择 publisher、许可证、是否允许再分发、可见性和 Release channel 后点击发布。
-7. 平台保存不可变 Artifact，自动创建或复用 Catalog，使用平台托管 Ed25519 key 签署 Release，并打开 Release 列表供复核。
+2. 进入“Plugin Catalog”，点击“上架 Plugin”。
+3. 上传 `npm pack` 生成的 `.tgz`；包内没有 `chatos.plugin.json` 时，再上传独立 Manifest JSON。
+4. 点击“校验并预览”。平台自动解析 package name/version/bin、Manifest、组件和权限，并自动计算 npm SHA-512 integrity 与 artifact SHA-256。
+5. 确认由 Manifest `author` 建议的 publisher identity。匹配现有 approved publisher 时复用；不存在时，平台会在发布时自动创建并审核。
+6. 填写许可证、是否允许再分发、可见性和 Release channel 后点击发布。
+7. 平台保存不可变 Artifact，自动创建或复用 Publisher/Catalog，使用平台托管 Ed25519 key 签署 Release，并打开 Release 列表供复核。
 
-上架页面不要求填写 artifact URL、hash、integrity、Manifest JSON 文本或 Signature JSON。Artifact 下载地址由平台生成，客户端仍会独立复验所有签名和 hash。
+上架页面不要求填写 artifact URL、hash、integrity、Manifest JSON 文本、Publisher signing key 或 Signature JSON。Artifact 下载地址和 Release signing key 由平台生成，客户端仍会独立复验所有签名和 hash。
 
 每个 Release 必须确认：
 

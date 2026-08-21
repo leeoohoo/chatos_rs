@@ -3,15 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use chatos_plugin_management_sdk::{PluginPublisher, PLUGIN_SIGNING_KEY_USAGE_RELEASE};
-
-use super::plugin_catalog_sync::is_syncable_network_marketplace;
-use super::plugin_marketplaces::{
-    validate_marketplace_signing_key_progression, validate_marketplace_signing_keys,
-};
 use super::*;
+use chatos_plugin_management_sdk::PluginPublisher;
 
-const MAX_PUBLISHER_SIGNING_KEYS: usize = 32;
 const MAX_REVIEW_NOTE_CHARS: usize = 2_000;
 
 pub(super) async fn list_plugin_publishers(
@@ -41,6 +35,89 @@ pub(super) async fn list_admin_plugin_publishers(
         .await
         .map(Json)
         .map_err(ApiError::internal)
+}
+
+pub(super) async fn ensure_admin_managed_publisher(
+    state: &AppState,
+    user: &CurrentUser,
+    marketplace: &PluginMarketplaceRecord,
+    publisher_id: &str,
+    name: Option<&str>,
+    website: Option<&str>,
+) -> Result<PluginPublisherRecord, ApiError> {
+    ensure_super_admin(user)?;
+    ensure_publisher_onboarding_marketplace(marketplace)?;
+    let publisher_id = validate_plugin_identifier(publisher_id, "publisher_id")?;
+    if let Some(existing) = state
+        .store
+        .find_plugin_publisher(marketplace.id.as_str(), publisher_id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+    {
+        if existing.status != PLUGIN_PUBLISHER_STATUS_APPROVED {
+            return Err(ApiError::conflict(
+                "Plugin publisher exists but is not approved",
+            ));
+        }
+        return Ok(existing);
+    }
+
+    let name = required_text(name, "publisher_name")?;
+    let website = normalize_https_url(website, "publisher_website")?;
+    let now = now_rfc3339();
+    let record = PluginPublisherRecord {
+        id: Uuid::new_v4().to_string(),
+        publisher_id: publisher_id.clone(),
+        marketplace_id: marketplace.id.clone(),
+        owner_user_id: user.effective_owner_user_id().to_string(),
+        name,
+        website,
+        status: PLUGIN_PUBLISHER_STATUS_APPROVED.to_string(),
+        signing_keys: Vec::new(),
+        submitted_at: now.clone(),
+        reviewed_at: Some(now.clone()),
+        reviewed_by: Some(user.user_id.clone()),
+        review_note: Some(
+            "Created and approved during administrator package publication.".to_string(),
+        ),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    state
+        .store
+        .replace_plugin_publisher(&record)
+        .await
+        .map_err(|error| {
+            if error.contains("E11000") {
+                ApiError::conflict("Plugin publisher was created concurrently; retry publishing")
+            } else {
+                ApiError::internal(error)
+            }
+        })?;
+    let audit = plugin_audit_record(
+        PLUGIN_AUDIT_REVIEW_PUBLISHER,
+        user.user_id.as_str(),
+        None,
+        record.id.as_str(),
+        None,
+        "success",
+        BTreeMap::from([
+            ("publisher_id".to_string(), json!(record.publisher_id)),
+            ("marketplace_id".to_string(), json!(record.marketplace_id)),
+            (
+                "decision".to_string(),
+                json!(PLUGIN_PUBLISHER_DECISION_APPROVE),
+            ),
+            ("status".to_string(), json!(record.status)),
+            ("source".to_string(), json!("package_publish")),
+        ]),
+    );
+    state
+        .store
+        .insert_plugin_audit(&audit)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(record)
 }
 
 pub(super) async fn submit_plugin_publisher(
@@ -102,7 +179,7 @@ pub(super) async fn submit_plugin_publisher(
         name: payload.name,
         website: payload.website,
         status: PLUGIN_PUBLISHER_STATUS_PENDING.to_string(),
-        signing_keys: payload.signing_keys,
+        signing_keys: Vec::new(),
         submitted_at: now.clone(),
         reviewed_at: None,
         reviewed_by: None,
@@ -147,10 +224,6 @@ pub(super) async fn submit_plugin_publisher(
         BTreeMap::from([
             ("publisher_id".to_string(), json!(record.publisher_id)),
             ("marketplace_id".to_string(), json!(record.marketplace_id)),
-            (
-                "signing_key_ids".to_string(),
-                json!(publisher_signing_key_ids(record.signing_keys.as_slice())),
-            ),
         ]),
     );
     state
@@ -181,10 +254,6 @@ pub(super) async fn review_admin_plugin_publisher(
         decision.as_str(),
         review_note.as_deref(),
     )?;
-
-    if decision == PLUGIN_PUBLISHER_DECISION_APPROVE {
-        approve_publisher_signing_keys(&state, &existing).await?;
-    }
 
     let now = now_rfc3339();
     let mut updated = existing.clone();
@@ -282,67 +351,6 @@ fn marketplace_requires_approved_publisher(marketplace: &PluginMarketplaceRecord
         && marketplace.owner_user_id.is_none()
 }
 
-async fn approve_publisher_signing_keys(
-    state: &AppState,
-    publisher: &PluginPublisherRecord,
-) -> Result<(), ApiError> {
-    let marketplace = state
-        .store
-        .get_plugin_marketplace(publisher.marketplace_id.as_str())
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::conflict("Plugin marketplace not found"))?;
-    ensure_publisher_onboarding_marketplace(&marketplace)?;
-    let mut merged = marketplace.trusted_signing_keys.clone();
-    for key in &publisher.signing_keys {
-        if let Some(existing) = merged.iter().find(|item| item.key_id == key.key_id) {
-            if existing != key {
-                return Err(ApiError::conflict(format!(
-                    "Marketplace signing key ID {} is already bound to different material",
-                    key.key_id
-                )));
-            }
-        } else {
-            merged.push(key.clone());
-        }
-    }
-    merged.sort_by(|left, right| left.key_id.cmp(&right.key_id));
-    validate_marketplace_signing_keys(merged.as_slice(), true)?;
-    validate_marketplace_signing_key_progression(
-        marketplace.trusted_signing_keys.as_slice(),
-        merged.as_slice(),
-    )?;
-    if merged == marketplace.trusted_signing_keys {
-        return Ok(());
-    }
-    let mut updated = marketplace.clone();
-    updated.trusted_signing_keys = merged;
-    let replaced = state
-        .store
-        .replace_plugin_marketplace_if_matches_with_catalog_sync(
-            &marketplace,
-            &updated,
-            is_syncable_network_marketplace(&updated),
-        )
-        .await
-        .map_err(ApiError::internal)?;
-    if !replaced {
-        return Err(ApiError::conflict(
-            "Plugin marketplace changed concurrently; reload before approving publisher",
-        ));
-    }
-    if let Err(error) =
-        crate::catalog_sync_queue::publish_pending_marketplace(state, updated.id.as_str()).await
-    {
-        tracing::warn!(
-            marketplace_id = updated.id.as_str(),
-            error = error.as_str(),
-            "Plugin Management left Catalog sync event in Outbox after publisher approval"
-        );
-    }
-    Ok(())
-}
-
 fn ensure_publisher_onboarding_marketplace(
     marketplace: &PluginMarketplaceRecord,
 ) -> Result<(), ApiError> {
@@ -385,30 +393,6 @@ fn normalize_publisher_application(
         validate_plugin_identifier(payload.marketplace_id.as_str(), "marketplace_id")?;
     payload.name = required_text(Some(payload.name.as_str()), "name")?;
     payload.website = normalize_https_url(payload.website.as_deref(), "website")?;
-    if payload.signing_keys.is_empty() || payload.signing_keys.len() > MAX_PUBLISHER_SIGNING_KEYS {
-        return Err(ApiError::bad_request(format!(
-            "signing_keys must contain 1-{MAX_PUBLISHER_SIGNING_KEYS} keys"
-        )));
-    }
-    validate_marketplace_signing_keys(payload.signing_keys.as_slice(), false)?;
-    for key in &payload.signing_keys {
-        if key.publisher_id != payload.publisher_id {
-            return Err(ApiError::bad_request(
-                "signing key publisher_id must match publisher_id",
-            ));
-        }
-        if key.revoked_at.is_some()
-            || key.usages.len() != 1
-            || key.usages[0] != PLUGIN_SIGNING_KEY_USAGE_RELEASE
-        {
-            return Err(ApiError::bad_request(
-                "publisher signing keys must be active release-only keys",
-            ));
-        }
-    }
-    payload
-        .signing_keys
-        .sort_by(|left, right| left.key_id.cmp(&right.key_id));
     Ok(())
 }
 
@@ -479,36 +463,14 @@ fn is_publisher_status(value: &str) -> bool {
     )
 }
 
-fn publisher_signing_key_ids(keys: &[SigningKeyRef]) -> Vec<String> {
-    let mut ids = keys
-        .iter()
-        .map(|key| key.key_id.clone())
-        .collect::<Vec<_>>();
-    ids.sort();
-    ids
-}
-
 #[cfg(test)]
 mod tests {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use chatos_plugin_management_sdk::{
-        PLUGIN_SIGNATURE_ALGORITHM_ED25519, PLUGIN_SIGNING_KEY_USAGE_CATALOG,
-    };
-
     use super::*;
 
     #[test]
-    fn publisher_application_requires_active_release_only_keys() {
+    fn publisher_application_uses_platform_managed_signing() {
         let mut payload = test_application();
         assert!(normalize_publisher_application(&mut payload).is_ok());
-
-        let mut catalog_key = test_application();
-        catalog_key.signing_keys[0].usages = vec![PLUGIN_SIGNING_KEY_USAGE_CATALOG.to_string()];
-        assert!(normalize_publisher_application(&mut catalog_key).is_err());
-
-        let mut wrong_publisher = test_application();
-        wrong_publisher.signing_keys[0].publisher_id = "another-publisher".to_string();
-        assert!(normalize_publisher_application(&mut wrong_publisher).is_err());
     }
 
     #[test]
@@ -566,16 +528,6 @@ mod tests {
             marketplace_id: "marketplace-demo".to_string(),
             name: "Publisher Demo".to_string(),
             website: Some("https://publisher.example.com".to_string()),
-            signing_keys: vec![SigningKeyRef {
-                key_id: "publisher-release-v1".to_string(),
-                publisher_id: "publisher-demo".to_string(),
-                algorithm: PLUGIN_SIGNATURE_ALGORITHM_ED25519.to_string(),
-                public_key_base64: STANDARD.encode([7_u8; 32]),
-                usages: vec![PLUGIN_SIGNING_KEY_USAGE_RELEASE.to_string()],
-                valid_from: "2026-01-01T00:00:00Z".to_string(),
-                valid_until: Some("2027-01-01T00:00:00Z".to_string()),
-                revoked_at: None,
-            }],
         }
     }
 

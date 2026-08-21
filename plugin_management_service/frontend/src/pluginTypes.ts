@@ -232,6 +232,11 @@ export interface PluginPackageAnalysis {
     name: string;
     version: string;
     description: string;
+    author: {
+      name: string;
+      email?: string | null;
+      url?: string | null;
+    };
     license?: string | null;
     interface: PluginInterfaceMetadata;
     permissions?: PluginPermissionRequirement[];

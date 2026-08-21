@@ -113,8 +113,6 @@ pub struct PluginPublisherApplicationPayload {
     pub marketplace_id: String,
     pub name: String,
     pub website: Option<String>,
-    #[serde(default)]
-    pub signing_keys: Vec<SigningKeyRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

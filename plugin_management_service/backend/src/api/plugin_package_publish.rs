@@ -27,6 +27,7 @@ use sha2::{Digest, Sha256, Sha512};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+use super::plugin_publishers::ensure_admin_managed_publisher;
 use super::plugin_releases::publish_plugin_release_from_manifest;
 use super::plugins::publish_plugin_catalog_entry;
 use super::*;
@@ -66,6 +67,10 @@ pub(super) struct PublishUploadedPluginRequest {
     artifact_sha256: String,
     marketplace_id: String,
     publisher_id: String,
+    #[serde(default)]
+    publisher_name: Option<String>,
+    #[serde(default)]
+    publisher_website: Option<String>,
     license_id: String,
     #[serde(default)]
     license_url: Option<String>,
@@ -163,6 +168,9 @@ pub(super) async fn publish_uploaded_plugin(
     request.publisher_id =
         validate_plugin_identifier(request.publisher_id.as_str(), "publisher_id")?;
     request.license_id = required_text(Some(request.license_id.as_str()), "license_id")?;
+    request.visibility = normalize_plugin_visibility(request.visibility.as_str())?;
+    request.release_channel = normalize_release_channel(request.release_channel.as_str())?;
+    let license_url = normalize_optional_https_url(request.license_url.as_deref())?;
 
     let stored = read_stored_artifact_metadata(&state, request.artifact_sha256.as_str())?;
     verify_stored_artifact(&state, &stored)?;
@@ -180,15 +188,30 @@ pub(super) async fn publish_uploaded_plugin(
             "uploaded Plugin publishing requires an enabled trusted admin_registry marketplace",
         ));
     }
-    let publisher = state
+    let existing_catalog = state
         .store
-        .find_plugin_publisher(marketplace.id.as_str(), request.publisher_id.as_str())
+        .find_plugin_catalog_entry(
+            marketplace.id.as_str(),
+            stored.normalized_manifest.name.as_str(),
+        )
         .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::conflict("Plugin publisher is not registered"))?;
-    if publisher.status != PLUGIN_PUBLISHER_STATUS_APPROVED {
-        return Err(ApiError::conflict("Plugin publisher is not approved"));
+        .map_err(ApiError::internal)?;
+    if let Some(catalog) = existing_catalog.as_ref() {
+        if catalog.publisher.id != request.publisher_id {
+            return Err(ApiError::conflict(
+                "existing Plugin catalog entry belongs to another publisher",
+            ));
+        }
     }
+    let publisher = ensure_admin_managed_publisher(
+        &state,
+        &user,
+        &marketplace,
+        request.publisher_id.as_str(),
+        request.publisher_name.as_deref(),
+        request.publisher_website.as_deref(),
+    )
+    .await?;
     let (managed_key, key_pair) =
         ensure_managed_release_key(&state, &marketplace, &publisher).await?;
 
@@ -198,25 +221,9 @@ pub(super) async fn publish_uploaded_plugin(
         website: publisher.website.clone(),
         verified: true,
     };
-    let catalog = match state
-        .store
-        .find_plugin_catalog_entry(
-            marketplace.id.as_str(),
-            stored.normalized_manifest.name.as_str(),
-        )
-        .await
-        .map_err(ApiError::internal)?
-    {
-        Some(catalog) => {
-            if catalog.publisher.id != publisher.publisher_id {
-                return Err(ApiError::conflict(
-                    "existing Plugin catalog entry belongs to another publisher",
-                ));
-            }
-            catalog
-        }
+    let catalog = match existing_catalog {
+        Some(catalog) => catalog,
         None => {
-            let license_url = normalize_optional_https_url(request.license_url.as_deref())?;
             publish_plugin_catalog_entry(
                 &state,
                 &user,

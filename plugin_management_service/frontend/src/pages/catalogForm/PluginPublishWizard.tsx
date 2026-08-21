@@ -5,6 +5,7 @@ import { InboxOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import {
   Alert,
+  AutoComplete,
   Descriptions,
   Form,
   Input,
@@ -17,6 +18,7 @@ import {
   Upload,
   message,
 } from 'antd';
+import type { FormInstance } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -44,10 +46,15 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
   const [manifestFiles, setManifestFiles] = useState<UploadFile[]>([]);
   const [analysis, setAnalysis] = useState<PluginPackageAnalysis | null>(null);
   const selectedMarketplace = Form.useWatch('marketplace_id', form);
+  const selectedPublisherId = Form.useWatch('publisher_id', form);
   const eligiblePublishers = useMemo(
     () => publishers.filter((publisher) =>
       publisher.status === 'approved' && publisher.marketplace_id === selectedMarketplace),
     [publishers, selectedMarketplace],
+  );
+  const matchedPublisher = useMemo(
+    () => eligiblePublishers.find((publisher) => publisher.publisher_id === selectedPublisherId),
+    [eligiblePublishers, selectedPublisherId],
   );
 
   useEffect(() => {
@@ -63,13 +70,6 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
     });
   }, [form, marketplaces, open]);
 
-  useEffect(() => {
-    if (eligiblePublishers.length > 0
-      && !eligiblePublishers.some((publisher) => publisher.publisher_id === form.getFieldValue('publisher_id'))) {
-      form.setFieldValue('publisher_id', eligiblePublishers[0].publisher_id);
-    }
-  }, [eligiblePublishers, form]);
-
   const analyzeMutation = useMutation({
     mutationFn: async () => {
       const packageFile = packageFiles[0]?.originFileObj;
@@ -82,8 +82,15 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
     },
     onSuccess: (result) => {
       setAnalysis(result);
+      const suggestedPublisherId = suggestPublisherId(result);
+      const existingPublisher = eligiblePublishers.find(
+        (publisher) => publisher.publisher_id === suggestedPublisherId,
+      );
       form.setFieldsValue({
         license_id: result.manifest.license || 'NOASSERTION',
+        publisher_id: suggestedPublisherId,
+        publisher_name: existingPublisher?.name || result.manifest.author.name,
+        publisher_website: existingPublisher?.website || result.manifest.author.url || '',
       });
       message.success(t('pluginPublish.analyzed'));
     },
@@ -97,6 +104,8 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
         artifact_sha256: analysis.artifact_sha256,
         marketplace_id: values.marketplace_id,
         publisher_id: values.publisher_id,
+        publisher_name: textOrNull(values.publisher_name),
+        publisher_website: textOrNull(values.publisher_website),
         license_id: values.license_id,
         license_url: textOrNull(values.license_url),
         redistributable: values.redistributable === true,
@@ -149,19 +158,7 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
               onChange={() => setAnalysis(null)}
             />
           </Form.Item>
-          <Form.Item name="publisher_id" label={t('pluginCatalog.publisher')} rules={[{ required: true }]}>
-            <Select
-              options={eligiblePublishers.map((publisher) => ({
-                value: publisher.publisher_id,
-                label: `${publisher.name} · ${publisher.publisher_id}`,
-              }))}
-              placeholder={t('pluginPublish.publisherPlaceholder')}
-            />
-          </Form.Item>
         </div>
-        {eligiblePublishers.length === 0 ? (
-          <Alert type="warning" showIcon message={t('pluginPublish.noPublisher')} style={{ marginBottom: 16 }} />
-        ) : null}
         <div className="form-grid">
           <Form.Item label={t('pluginPublish.package')} required>
             <Upload.Dragger
@@ -224,6 +221,39 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
                 <Typography.Text code copyable ellipsis>{analysis.npm_integrity}</Typography.Text>
               </Descriptions.Item>
             </Descriptions>
+            <Typography.Title level={5}>{t('pluginPublish.publisherSection')}</Typography.Title>
+            <Alert
+              type={matchedPublisher ? 'success' : 'info'}
+              showIcon
+              message={matchedPublisher ? t('pluginPublish.publisherReuse') : t('pluginPublish.publisherCreate')}
+              description={t('pluginPublish.publisherHelp')}
+              style={{ marginBottom: 16 }}
+            />
+            <div className="form-grid">
+              <Form.Item
+                name="publisher_id"
+                label={t('pluginPublisher.id')}
+                rules={[
+                  { required: true },
+                  { pattern: /^[a-z0-9]+(?:-[a-z0-9]+)*$/, message: t('pluginPublish.publisherIdInvalid') },
+                ]}
+              >
+                <AutoComplete
+                  options={eligiblePublishers.map((publisher) => ({
+                    value: publisher.publisher_id,
+                    label: `${publisher.name} · ${publisher.publisher_id}`,
+                  }))}
+                  placeholder={t('pluginPublish.publisherPlaceholder')}
+                  onSelect={(value) => applyExistingPublisher(form, eligiblePublishers, value)}
+                />
+              </Form.Item>
+              <Form.Item name="publisher_name" label={t('pluginPublish.publisherName')} rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+              <Form.Item name="publisher_website" label={t('pluginPublish.publisherWebsite')}>
+                <Input placeholder="https://..." />
+              </Form.Item>
+            </div>
             <div className="form-grid">
               <Form.Item name="release_channel" label={t('pluginRelease.channel')} rules={[{ required: true }]}>
                 <Select options={['stable', 'beta', 'canary'].map((value) => ({ value, label: value }))} />
@@ -255,4 +285,37 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
 
 function textOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function suggestPublisherId(analysis: PluginPackageAnalysis): string {
+  const packageScope = analysis.package_name.match(/^@([^/]+)\//)?.[1];
+  return slugifyPublisherId(packageScope || analysis.manifest.author.name)
+    || slugifyPublisherId(analysis.manifest.name)
+    || 'publisher';
+}
+
+function slugifyPublisherId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+    .slice(0, 64)
+    .replace(/-+$/g, '');
+}
+
+function applyExistingPublisher(
+  form: FormInstance,
+  publishers: PluginPublisherRecord[],
+  publisherId: string,
+) {
+  const publisher = publishers.find((item) => item.publisher_id === publisherId);
+  if (!publisher) return;
+  form.setFieldsValue({
+    publisher_name: publisher.name,
+    publisher_website: publisher.website || '',
+  });
 }
