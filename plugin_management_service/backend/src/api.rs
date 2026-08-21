@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
+use axum::extract::DefaultBodyLimit;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -40,6 +41,7 @@ mod plugin_installations;
 mod plugin_marketplaces;
 #[path = "api/oauth/plugin_oauth.rs"]
 mod plugin_oauth;
+mod plugin_package_publish;
 mod plugin_publishers;
 mod plugin_releases;
 mod plugin_support;
@@ -86,14 +88,17 @@ use plugin_marketplaces::{
     list_plugin_marketplaces, update_admin_plugin_marketplace,
 };
 use plugin_oauth::{list_plugin_oauth_connections, sync_plugin_oauth_status_internal};
+use plugin_package_publish::{
+    analyze_plugin_package, download_plugin_artifact, publish_uploaded_plugin,
+};
 use plugin_publishers::{
     list_admin_plugin_publishers, list_plugin_publishers, review_admin_plugin_publisher,
     submit_plugin_publisher,
 };
-use plugin_releases::{create_plugin_release, list_plugin_releases, revoke_plugin_release};
+use plugin_releases::{list_plugin_releases, revoke_plugin_release};
 use plugin_support::*;
 use plugins::{
-    create_plugin_catalog_entry, get_plugin_catalog_entry, list_admin_plugins, list_plugin_catalog,
+    get_plugin_catalog_entry, list_admin_plugins, list_plugin_catalog,
     update_user_plugin_preference, update_user_plugin_preference_internal,
 };
 use queue_operations::replay_catalog_sync_dead_letter;
@@ -316,13 +321,20 @@ pub fn build_public_router(state: AppState) -> Router {
             "/api/admin/plugin-publishers/{publisher_record_id}/review",
             patch(review_admin_plugin_publisher),
         )
+        .route("/api/admin/plugins", get(list_admin_plugins))
         .route(
-            "/api/admin/plugins",
-            get(list_admin_plugins).post(create_plugin_catalog_entry),
+            "/api/admin/plugin-package/analyze",
+            post(analyze_plugin_package).layer(DefaultBodyLimit::max(
+                state.config.plugin_artifact_max_bytes + 2 * 1024 * 1024,
+            )),
+        )
+        .route(
+            "/api/admin/plugin-package/publish",
+            post(publish_uploaded_plugin),
         )
         .route(
             "/api/admin/plugins/{plugin_id}/releases",
-            get(list_plugin_releases).post(create_plugin_release),
+            get(list_plugin_releases),
         )
         .route(
             "/api/admin/plugin-releases/{release_id}/revoke",
@@ -334,6 +346,10 @@ pub fn build_public_router(state: AppState) -> Router {
     apply_common_layers(
         Router::new()
             .route("/api/health", get(health_handler))
+            .route(
+                "/api/plugin-artifacts/{artifact_sha256}",
+                get(download_plugin_artifact),
+            )
             .route("/metrics", get(prometheus_metrics))
             .route("/api/auth/login", post(login_handler))
             .merge(protected_api)

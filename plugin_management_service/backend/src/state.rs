@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use mongodb::Client;
+use std::fs;
 use tracing::warn;
 
 use chatos_queue_observability::RabbitMqQueueInspector;
@@ -28,6 +29,12 @@ impl AppState {
         config: AppConfig,
         pressure: PluginManagementPressureState,
     ) -> Result<Self, String> {
+        fs::create_dir_all(config.plugin_artifact_storage_dir.as_path()).map_err(|err| {
+            format!(
+                "create Plugin artifact storage directory {} failed: {err}",
+                config.plugin_artifact_storage_dir.display()
+            )
+        })?;
         let client = Client::with_uri_str(config.database_url.as_str())
             .await
             .map_err(|err| format!("connect MongoDB failed: {err}"))?;

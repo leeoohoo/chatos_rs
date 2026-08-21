@@ -9,12 +9,13 @@ Browser CDP MCP 的专项架构、权限、Chrome Extension Bridge、完整 CDP 
 ## 1. 端到端发布路径
 
 1. MCP 发布者开发 Node.js package，并在 `package.json.bin` 中声明 stdio MCP 可执行入口；远程 HTTP MCP 也必须通过一个 Marketplace npm package 描述和交付。
-2. package 使用 `npm pack` 生成标准 `.tgz`，记录 npm SHA-512 integrity、artifact SHA-256、package name、package version 和下载 URL。
-3. Plugin Manifest 使用 `schemaVersion: 3`，声明 MCP、权限及可选的 Command、Agent、Hook、UI 等组件。
-4. 发布者向 Plugin Management 提交 publisher 身份和 Ed25519 Release signing key，由 `super_admin` 审核。
-5. Marketplace 对 Manifest、npm package 元数据、权限、SBOM、许可证和供应链信息完成审核，生成不可变且签名的 Release，并写入签名 Catalog。
-6. Local Connector Client 只从可信 Marketplace Catalog 获取安装来源，下载 `.tgz`，验证 Catalog/Release 签名、npm SHA-512 integrity、artifact SHA-256、package identity、`package.json.bin` 和安全解包规则。
-7. 安装成功后，客户端上报可用性。ChatOS 创建任务时才能把该 Release 的不可变组件 snapshot 固定到任务中。
+2. package 使用 `npm pack` 生成标准 `.tgz`。发布者不需要手工计算 integrity、SHA-256 或填写 artifact URL。
+3. Plugin Manifest 使用 `schemaVersion: 3`，声明 MCP、权限及可选的 Command、Agent、Hook、UI 等组件，推荐放在 package 根目录的 `chatos.plugin.json` 中。
+4. 发布者先在 Plugin Management 申请 publisher 身份，由 `super_admin` 审核通过；Release signing key 由平台按 Marketplace + publisher 托管，不要求发布者上传私钥或手填签名。
+5. 管理员在“Plugin Catalog → 上架 Plugin”上传 `.tgz`。平台安全解析 package、校验 Manifest 和 `package.json.bin`，自动计算 npm SHA-512 integrity 与 artifact SHA-256，并显示组件和权限预览。
+6. 管理员确认 Marketplace、publisher、许可证、可再分发状态和 Release channel 后发布。平台保存不可变 Artifact，自动创建或复用 Catalog，签署并生成不可变 Release。
+7. Local Connector Client 只从可信 Marketplace Catalog 获取安装来源，下载 `.tgz`，验证 Catalog/Release 签名、npm SHA-512 integrity、artifact SHA-256、package identity、`package.json.bin` 和安全解包规则。
+8. 安装成功后，客户端上报可用性。ChatOS 创建任务时才能把该 Release 的不可变组件 snapshot 固定到任务中。
 
 不得提供直接 URL 安装、手工 MCP 配置、任意 `npx package@latest`、ZIP 上传、客户端预置包或服务端执行入口。
 
@@ -27,6 +28,7 @@ stdio MCP package 至少应满足：
 - bin 文件位于 package 内，不能通过软链接、路径穿越或安装后下载替换执行内容。
 - 运行所需 JavaScript 和生产依赖完整包含在 `.tgz` 中，安装过程不能依赖任意 install script 获取未审核代码。
 - package 可在声明支持的 macOS、Windows、Linux 架构上启动并完成 MCP initialize、`tools/list` 和 `tools/call`。
+- package 根目录应包含 `chatos.plugin.json`；如暂时无法随包交付，管理员也可以在上架时单独上传 Manifest JSON。
 
 建议在发布前运行：
 
@@ -36,6 +38,22 @@ npm test
 npm pack
 npm view ./your-package.tgz name version bin --json
 ```
+
+生成后，在 Plugin Management 管理后台执行：
+
+```text
+Plugin Catalog
+  → 上架 Plugin
+  → 选择可信 admin_registry Marketplace
+  → 选择 approved Publisher
+  → 上传 npm .tgz
+  → 可选上传 Manifest JSON
+  → 校验并预览
+  → 填写许可证与 Release channel
+  → 发布
+```
+
+后台上传接口是 `POST /api/admin/plugin-package/analyze`，发布接口是 `POST /api/admin/plugin-package/publish`。日常上架应使用管理页面，不再手填 Catalog JSON、Release JSON、integrity、artifact URL 或 Signature JSON。
 
 `.tgz` 是 npm package artifact，不是旧式 Plugin ZIP。普通桌面客户端安装包使用的 DMG、DEB 或 Windows ZIP 与 Plugin artifact 无关。
 
@@ -140,4 +158,4 @@ cargo test -p local_connector_client_core plugins
 - stdio 子进程取消、超时、退出和清理正确；HTTP MCP 超时、TLS 和 URL 策略正确。
 - 日志、审计和诊断中不包含凭据、用户文件内容、屏幕内容或完整工具 payload。
 
-正式签名必须由独立生产 signer 完成，私钥不得进入源码、npm package 或 CI 日志。
+生产环境必须持久化 Plugin Management Artifact volume，并限制平台托管签名密钥目录权限。私钥不得进入源码、npm package、数据库返回、浏览器响应或 CI 日志。

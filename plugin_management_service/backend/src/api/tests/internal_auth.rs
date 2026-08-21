@@ -523,6 +523,10 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             plugin_catalog_sync_lock_timeout: Duration::from_secs(60 * 60),
             plugin_catalog_request_timeout: Duration::from_secs(30),
             plugin_catalog_max_bytes: 8 * 1024 * 1024,
+            plugin_artifact_storage_dir: std::env::temp_dir()
+                .join("chatos-plugin-management-test-artifacts"),
+            plugin_artifact_public_base_url: "https://plugins.example.test".to_string(),
+            plugin_artifact_max_bytes: 128 * 1024 * 1024,
             super_admin_username: "admin".to_string(),
             super_admin_password: "admin".to_string(),
             seed_system_resources: false,

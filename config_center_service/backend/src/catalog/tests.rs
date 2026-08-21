@@ -747,6 +747,21 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
             "bytes",
         ),
         (
+            PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES",
+            "bytes",
+        ),
+        (
             PLUGIN_MANAGEMENT_SUPER_ADMIN_USERNAME_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME",
             "string",

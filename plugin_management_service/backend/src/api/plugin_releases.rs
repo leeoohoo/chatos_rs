@@ -4,8 +4,7 @@
 use std::collections::BTreeMap;
 
 use chatos_plugin_management_sdk::{
-    parse_plugin_manifest, plugin_component_descriptors, verify_plugin_release_signature,
-    PluginReleaseVerificationContext,
+    plugin_component_descriptors, verify_plugin_release_signature, PluginReleaseVerificationContext,
 };
 use semver::Version;
 
@@ -35,16 +34,16 @@ pub(super) async fn list_plugin_releases(
     }))
 }
 
-pub(super) async fn create_plugin_release(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(plugin_id): Path<String>,
-    Json(mut payload): Json<PluginReleasePayload>,
-) -> Result<Json<PluginReleaseRecord>, ApiError> {
-    ensure_super_admin(&user)?;
+pub(super) async fn publish_plugin_release_from_manifest(
+    state: &AppState,
+    user: &CurrentUser,
+    plugin_id: &str,
+    mut payload: PluginReleasePayload,
+    manifest: PluginManifest,
+) -> Result<PluginReleaseRecord, ApiError> {
     let mut plugin = state
         .store
-        .get_plugin_catalog_entry(plugin_id.as_str())
+        .get_plugin_catalog_entry(plugin_id)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("Plugin not found"))?;
@@ -67,10 +66,6 @@ pub(super) async fn create_plugin_release(
     )
     .await?;
 
-    let manifest_json = serde_json::to_string(&payload.manifest)
-        .map_err(|err| ApiError::bad_request(format!("serialize manifest failed: {err}")))?;
-    let manifest = parse_plugin_manifest(manifest_json.as_str())
-        .map_err(|err| ApiError::bad_request(err.to_string()))?;
     validate_release_manifest_identity(&plugin, payload.version.as_deref(), &manifest)?;
     validate_npm_package(&payload.npm_package, &manifest)?;
     payload.artifact_sha256 =
@@ -199,7 +194,7 @@ pub(super) async fn create_plugin_release(
         .insert_plugin_audit(&audit)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(release))
+    Ok(release)
 }
 
 pub(super) async fn revoke_plugin_release(

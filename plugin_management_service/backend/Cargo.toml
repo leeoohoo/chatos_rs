@@ -8,7 +8,7 @@ edition = "2021"
 
 [dependencies]
 aes-gcm = "0.11"
-axum = { version = "0.8", features = ["json"] }
+axum = { version = "0.8", features = ["json", "multipart"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
@@ -21,6 +21,7 @@ chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_s
 chatos_queue_observability = { path = "../../crates/chatos_queue_observability" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 futures-util = "0.3"
+flate2 = "1"
 lapin = "2.5"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
@@ -32,6 +33,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"
 sha2 = "0.11"
+tar = "0.4"
 hex = "0.4"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.7", features = ["cors", "trace"] }

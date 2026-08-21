@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
@@ -40,6 +40,9 @@ pub struct AppConfig {
     pub plugin_catalog_sync_lock_timeout: Duration,
     pub plugin_catalog_request_timeout: Duration,
     pub plugin_catalog_max_bytes: usize,
+    pub plugin_artifact_storage_dir: PathBuf,
+    pub plugin_artifact_public_base_url: String,
+    pub plugin_artifact_max_bytes: usize,
     pub super_admin_username: String,
     pub super_admin_password: String,
     pub seed_system_resources: bool,
@@ -58,6 +61,11 @@ impl AppConfig {
         let user_service_request_timeout_ms =
             required_u64("PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let cors_origins = require_csv("PLUGIN_MANAGEMENT_CORS_ORIGINS")?;
+        let plugin_artifact_public_base_url =
+            require_config_center_text("PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL")?
+                .trim_end_matches('/')
+                .to_string();
+        validate_artifact_public_base_url(plugin_artifact_public_base_url.as_str())?;
         let config = Self {
             host,
             port,
@@ -138,6 +146,12 @@ impl AppConfig {
             ),
             plugin_catalog_max_bytes: required_usize("PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES")?
                 .clamp(256 * 1024, 12 * 1024 * 1024),
+            plugin_artifact_storage_dir: PathBuf::from(require_config_center_text(
+                "PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR",
+            )?),
+            plugin_artifact_public_base_url,
+            plugin_artifact_max_bytes: required_usize("PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES")?
+                .clamp(1024 * 1024, 256 * 1024 * 1024),
             super_admin_username: require_config_center_text(
                 "PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME",
             )?,
@@ -201,6 +215,24 @@ impl AppConfig {
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
+}
+
+fn validate_artifact_public_base_url(value: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(value)
+        .map_err(|err| format!("PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL is invalid: {err}"))?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL must be a plain HTTPS origin or base path"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {

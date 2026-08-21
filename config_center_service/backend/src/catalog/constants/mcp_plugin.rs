@@ -181,6 +181,12 @@ pub const PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "plugin_management.catalog.request_timeout_ms";
 pub const PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY: &str =
     "plugin_management.catalog.max_bytes";
+pub const PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY: &str =
+    "plugin_management.artifact.storage_dir";
+pub const PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY: &str =
+    "plugin_management.artifact.public_base_url";
+pub const PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY: &str =
+    "plugin_management.artifact.max_bytes";
 pub const PLUGIN_MANAGEMENT_SUPER_ADMIN_USERNAME_CONFIG_KEY: &str =
     "plugin_management.bootstrap.super_admin_username";
 pub const PLUGIN_MANAGEMENT_SUPER_ADMIN_PASSWORD_CONFIG_KEY: &str =

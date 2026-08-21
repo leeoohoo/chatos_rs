@@ -65,6 +65,9 @@ use crate::catalog::{
     MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
@@ -1782,6 +1785,18 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             json!(8 * 1024 * 1024),
         ),
         (
+            PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY.to_string(),
+            json!(".chatos/plugin-artifacts"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://plugin.jgoool.com"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY.to_string(),
+            json!(128 * 1024 * 1024),
+        ),
+        (
             PLUGIN_MANAGEMENT_SUPER_ADMIN_USERNAME_CONFIG_KEY.to_string(),
             json!("admin"),
         ),
@@ -1867,6 +1882,20 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES"),
         Some(&(8 * 1024 * 1024).to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR"),
+        Some(&".chatos/plugin-artifacts".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL"),
+        Some(&"https://plugin.jgoool.com".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES"),
+        Some(&(128 * 1024 * 1024).to_string())
     );
     assert_eq!(
         snapshot

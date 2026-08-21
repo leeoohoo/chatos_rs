@@ -85,12 +85,11 @@ pub(super) async fn get_plugin_catalog_entry(
     Ok(Json(plugin))
 }
 
-pub(super) async fn create_plugin_catalog_entry(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Json(mut payload): Json<PluginCatalogPayload>,
-) -> Result<Json<PluginCatalogRecord>, ApiError> {
-    ensure_super_admin(&user)?;
+pub(super) async fn publish_plugin_catalog_entry(
+    state: &AppState,
+    user: &CurrentUser,
+    mut payload: PluginCatalogPayload,
+) -> Result<PluginCatalogRecord, ApiError> {
     normalize_catalog_payload(&mut payload)?;
     let marketplace = state
         .store
@@ -159,7 +158,7 @@ pub(super) async fn create_plugin_catalog_entry(
         .insert_plugin_audit(&audit)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(record))
+    Ok(record)
 }
 
 pub(super) async fn update_user_plugin_preference(

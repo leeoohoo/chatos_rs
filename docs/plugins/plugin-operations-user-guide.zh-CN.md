@@ -68,11 +68,23 @@ Run 开始后始终使用创建任务时固定的 snapshot。Marketplace 发布�
 
 - Marketplace Catalog URL 必须是无 credential、无 fragment 的 HTTPS URL。
 - trusted Marketplace 至少保留一个未撤销的 Ed25519 Catalog signing key。
-- `super_admin` 审核 publisher identity、网站、许可证、SBOM 和 Release-only signing key。
-- key rotation 先增加 successor key，再撤销旧 key；Catalog key 和 Release key 不得混用。
+- `super_admin` 审核 publisher identity、网站、许可证和供应链信息；平台在首次发布时为 Marketplace + publisher 创建托管的 Release-only signing key。
+- 平台托管 key 的轮换先增加 successor key，再撤销旧 key；Catalog key 和 Release key 不得混用。
 - Catalog sync 验证签名、revision/issued_at 单调性、publisher identity、Release 不可变性和 revocation。
 
 ### 3.2 Release 审核
+
+管理员不再分别手工创建 Catalog 和填写 Release JSON。标准上架流程是：
+
+1. 在“Marketplace”确认目标 Marketplace 已启用，类型为 `admin_registry`，信任级别为 `trusted`。
+2. 在“Publisher”确认发布者状态为 `approved`，并且属于同一个 Marketplace。
+3. 进入“Plugin Catalog”，点击“上架 Plugin”。
+4. 上传 `npm pack` 生成的 `.tgz`；包内没有 `chatos.plugin.json` 时，再上传独立 Manifest JSON。
+5. 点击“校验并预览”。平台自动解析 package name/version/bin、Manifest、组件和权限，并自动计算 npm SHA-512 integrity 与 artifact SHA-256。
+6. 选择 publisher、许可证、是否允许再分发、可见性和 Release channel 后点击发布。
+7. 平台保存不可变 Artifact，自动创建或复用 Catalog，使用平台托管 Ed25519 key 签署 Release，并打开 Release 列表供复核。
+
+上架页面不要求填写 artifact URL、hash、integrity、Manifest JSON 文本或 Signature JSON。Artifact 下载地址由平台生成，客户端仍会独立复验所有签名和 hash。
 
 每个 Release 必须确认：
 
@@ -115,6 +127,9 @@ Release 发布后不可覆盖。修复必须发布新版本；供应链事件使
 ### 5.1 服务端
 
 - Plugin Management Service 使用 MongoDB 保存控制面数据，客户端不能直连数据库。
+- Plugin Artifact 和平台托管签名密钥保存在 `PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR`；生产部署必须使用持久卷并备份，不能使用容器临时文件系统。
+- `PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL` 必须是客户端可访问的 HTTPS 地址；默认通过 `https://plugin.jgoool.com/api/plugin-artifacts/<sha256>` 提供不可变 `.tgz` 下载。
+- `PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES` 控制单包上传上限；反向代理的 body size 上限不得小于该值。
 - Local Connector Service 必须只接受已认证客户端的出站连接，并验证 Relay 消息的平台签名和设备绑定。
 - MCP Management 和 Task Runner 不得直接启动 npm MCP、请求外部 HTTP MCP 或访问用户机器 localhost。
 - Catalog sync、Release revoke 和 publisher suspend 应产生可审计事件。

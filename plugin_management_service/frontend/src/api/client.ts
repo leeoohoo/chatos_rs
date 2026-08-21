@@ -26,12 +26,13 @@ import type {
 import type {
   PluginAuditLogRecord,
   PluginCatalogListItem,
-  PluginCatalogRecord,
   PluginCatalogSyncResponse,
   PluginInstallationRecord,
   PluginMarketplaceRecord,
   PluginOAuthConnectionRecord,
   PluginPublisherRecord,
+  PluginPackageAnalysis,
+  PublishUploadedPluginResponse,
   PluginReleaseRecord,
 } from '../pluginTypes';
 
@@ -40,6 +41,7 @@ import {
   createBrowserAuthTokenStore,
   createJsonApiClient,
   normalizeApiBaseUrl,
+  readApiErrorMessage,
   withQuery,
   type QueryValue,
 } from '@chatos/frontend-runtime';
@@ -79,6 +81,20 @@ const request = createJsonApiClient({
   getAuthToken,
   onUnauthorized: clearAuthToken,
 });
+
+async function requestMultipart<T>(path: string, body: FormData): Promise<T> {
+  const headers = new Headers();
+  const token = getAuthToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const response = await fetch(buildApiUrl(path), { method: 'POST', headers, body });
+  if (!response.ok) {
+    if (response.status === 401) clearAuthToken();
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json() as Promise<T>;
+}
 
 export const api = {
   login: (payload: LoginPayload) =>
@@ -185,8 +201,10 @@ export const api = {
     ),
   listAdminPlugins: (params?: Record<string, QueryValue>) =>
     request<ListResponse<PluginCatalogListItem>>(withQuery('/api/admin/plugins', params || {})),
-  createPluginCatalogEntry: (payload: unknown) =>
-    request<PluginCatalogRecord>('/api/admin/plugins', {
+  analyzePluginPackage: (payload: FormData) =>
+    requestMultipart<PluginPackageAnalysis>('/api/admin/plugin-package/analyze', payload),
+  publishUploadedPlugin: (payload: unknown) =>
+    request<PublishUploadedPluginResponse>('/api/admin/plugin-package/publish', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
@@ -197,14 +215,6 @@ export const api = {
   listVisiblePluginReleases: (pluginId: string) =>
     request<ListResponse<PluginReleaseRecord>>(
       `/api/plugins/${encodeURIComponent(pluginId)}/releases`,
-    ),
-  createPluginRelease: (pluginId: string, payload: unknown) =>
-    request<PluginReleaseRecord>(
-      `/api/admin/plugins/${encodeURIComponent(pluginId)}/releases`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
     ),
   revokePluginRelease: (releaseId: string) =>
     request<PluginReleaseRecord>(

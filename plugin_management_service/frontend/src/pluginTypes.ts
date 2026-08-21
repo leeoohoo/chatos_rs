@@ -220,6 +220,31 @@ export interface PluginReleaseRecord {
   revoked_at?: string | null;
 }
 
+export interface PluginPackageAnalysis {
+  artifact_sha256: string;
+  artifact_ref: string;
+  package_name: string;
+  package_version: string;
+  npm_integrity: string;
+  package_bins: string[];
+  manifest: {
+    schemaVersion: number;
+    name: string;
+    version: string;
+    description: string;
+    license?: string | null;
+    interface: PluginInterfaceMetadata;
+    permissions?: PluginPermissionRequirement[];
+    dependencies?: Record<string, unknown>;
+  };
+  components: PluginComponentDescriptor[];
+}
+
+export interface PublishUploadedPluginResponse {
+  catalog: PluginCatalogRecord;
+  release: PluginReleaseRecord;
+}
+
 export interface PluginComponentStatusRecord {
   component_key: string;
   kind: PluginComponentKind;
