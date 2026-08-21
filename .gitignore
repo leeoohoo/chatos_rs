@@ -62,6 +62,7 @@ __pycache__/
 /docs/
 /memory_engine_ext/*
 /harness/
+/mcps/
 /users/
 /image.png
 /image copy.png
