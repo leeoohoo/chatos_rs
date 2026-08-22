@@ -16,7 +16,8 @@ import {
 } from '../utils/terminalFormat';
 
 export function TerminalPanel({ status }: { status: ConnectorStatus }) {
-  const [workspaceId, setWorkspaceId] = React.useState(status.workspaces[0]?.id || '');
+  const preferredWorkspaceId = status.default_workspace_id || status.workspaces[0]?.id || '';
+  const [workspaceId, setWorkspaceId] = React.useState(preferredWorkspaceId);
   const [command, setCommand] = React.useState('pwd');
   const [args, setArgs] = React.useState('');
   const [output, setOutput] = React.useState('');
@@ -27,10 +28,10 @@ export function TerminalPanel({ status }: { status: ConnectorStatus }) {
   const [historyError, setHistoryError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (!workspaceId && status.workspaces[0]?.id) {
-      setWorkspaceId(status.workspaces[0].id);
+    if (preferredWorkspaceId && workspaceId !== preferredWorkspaceId) {
+      setWorkspaceId(preferredWorkspaceId);
     }
-  }, [status.workspaces, workspaceId]);
+  }, [preferredWorkspaceId, workspaceId]);
 
   const refreshHistory = React.useCallback(async () => {
     setHistoryLoading(true);
@@ -109,11 +110,6 @@ export function TerminalPanel({ status }: { status: ConnectorStatus }) {
           </div>
         </div>
         <div className="terminalForm">
-          <select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
-            {status.workspaces.map((workspace) => (
-              <option value={workspace.id} key={workspace.id}>{workspace.alias}</option>
-            ))}
-          </select>
           <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="command" />
           <input value={args} onChange={(event) => setArgs(event.target.value)} placeholder="args, e.g. check -p app" />
           <button className="primaryButton compact" disabled={running || !workspaceId} onClick={() => void run()}>

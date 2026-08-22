@@ -65,6 +65,9 @@ use crate::catalog::{
     MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
@@ -83,18 +86,13 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY, PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY, PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY, PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY, PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -1622,7 +1620,6 @@ fn plugin_management_runtime_backfill_adds_all_service_defaults() {
         .contains(&PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY.to_string()));
     assert!(
         changed_keys.contains(&PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string())
     );
@@ -1712,30 +1709,6 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             json!("http://127.0.0.1:39261,http://localhost:39261"),
         ),
         (
-            PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39260"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39261"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS_CONFIG_KEY.to_string(),
-            json!(600),
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY.to_string(),
-            json!(90),
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(15_000),
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY.to_string(),
-            json!(256 * 1024),
-        ),
-        (
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY.to_string(),
             json!(60),
         ),
@@ -1812,6 +1785,18 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             json!(8 * 1024 * 1024),
         ),
         (
+            PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY.to_string(),
+            json!(".chatos/plugin-artifacts"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://plugin.jgoool.com"),
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY.to_string(),
+            json!(128 * 1024 * 1024),
+        ),
+        (
             PLUGIN_MANAGEMENT_SUPER_ADMIN_USERNAME_CONFIG_KEY.to_string(),
             json!("admin"),
         ),
@@ -1875,10 +1860,6 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
         Some(&"http://127.0.0.1:39261,http://localhost:39261".to_string())
     );
     assert_eq!(
-        snapshot.env.get("PLUGIN_MANAGEMENT_PUBLIC_BASE_URL"),
-        Some(&"http://127.0.0.1:39260".to_string())
-    );
-    assert_eq!(
         snapshot
             .env
             .get("PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS"),
@@ -1901,6 +1882,20 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES"),
         Some(&(8 * 1024 * 1024).to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR"),
+        Some(&".chatos/plugin-artifacts".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL"),
+        Some(&"https://plugin.jgoool.com".to_string())
+    );
+    assert_eq!(
+        snapshot.env.get("PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES"),
+        Some(&(128 * 1024 * 1024).to_string())
     );
     assert_eq!(
         snapshot

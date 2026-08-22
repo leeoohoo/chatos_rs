@@ -10,7 +10,6 @@ import type {
   MessageHistoryProcessState,
   ToolCall,
   UnavailableToolInfo,
-  PluginCommandInvocationPayload,
 } from '../../../../types';
 
 export type UnavailableToolEntry = UnavailableToolInfo;
@@ -110,8 +109,7 @@ export interface StreamChatRuntimeOptions {
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
-  selectedPluginIds: string[];
-  pluginCommandInvocations: PluginCommandInvocationPayload[];
+  taskPluginPreferences: string[];
   planMode: boolean;
   systemPrompt?: string | null;
 }

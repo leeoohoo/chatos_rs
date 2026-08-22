@@ -652,36 +652,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
             "string",
         ),
         (
-            PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_PUBLIC_BASE_URL",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_FRONTEND_ORIGIN",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS",
-            "integer",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS",
-            "integer",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES",
-            "bytes",
-        ),
-        (
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS",
             "integer",
@@ -774,6 +744,21 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
         (
             PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES",
+            "bytes",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES",
             "bytes",
         ),
         (
@@ -1636,12 +1621,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "plugin-management-service",
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             json!("change_me_plugin_management_mcp_management_secret"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET_CONFIG_KEY,
-            "plugin-management-service",
-            "PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET",
-            json!("change_me_plugin_management_cloud_credential_encryption_secret"),
         ),
         (
             USER_SERVICE_JWT_SECRET_CONFIG_KEY,

@@ -6,13 +6,8 @@ use super::PluginRouteDispatcher;
 impl PluginRouteDispatcher {
     pub(in crate::providers) fn new(
         local: super::PluginLocalProvider,
-        cloud: super::PluginCloudProvider,
         components: super::PluginComponentProvider,
     ) -> Self {
-        Self {
-            local,
-            cloud,
-            components,
-        }
+        Self { local, components }
     }
 }

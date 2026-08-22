@@ -3,6 +3,10 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use super::status_display::TaskScheduleModeExt;
+use super::{RunService, TaskService};
+use crate::auth::{get_current_access_token, CurrentUser};
+use crate::models::{TaskMcpConfig, TaskRecord};
 use chatos_agent::{
     is_task_runner_execution_agent as is_task_runner_execution_key,
     is_task_runner_planning_agent as is_task_runner_planning_key, parse_system_agent_key,
@@ -11,15 +15,8 @@ use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpBackend, SystemMcpDe
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 use chatos_plugin_management_sdk::{
     PluginCommandInvocation, PluginManagementClient, ResolveAgentCapabilitiesRequest,
-    ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin, ResolvedSkill, SystemAgentKey,
-    TaskPluginConfig,
+    ResolvedAgentCapabilities, ResolvedMcp, ResolvedPlugin, SystemAgentKey, TaskPluginConfig,
 };
-use serde::Serialize;
-
-use super::status_display::TaskScheduleModeExt;
-use super::{RunService, TaskService};
-use crate::auth::{get_current_access_token, CurrentUser};
-use crate::models::{TaskMcpConfig, TaskRecord};
 
 #[path = "plugin_management_policy/plugin_selection.rs"]
 mod plugin_selection;
@@ -29,6 +26,8 @@ mod policy_resolution;
 pub(crate) mod selectable_views;
 #[path = "plugin_management_policy/task_config_application.rs"]
 mod task_config_application;
+#[path = "plugin_management_policy/trusted_task_selection.rs"]
+mod trusted_task_selection;
 
 use plugin_selection::{validate_plugin_component_selection, validate_supported_plugin};
 
@@ -40,21 +39,14 @@ const BUILTIN_RUNTIME_KIND: &str = chatos_plugin_management_sdk::LEGACY_BUILTIN_
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRunnerCapabilityPolicy {
     capabilities: ResolvedAgentCapabilities,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct TaskSkillSnapshotView {
-    pub skill_id: String,
-    pub bundle_id: String,
-    pub version: String,
-    pub bundle_hash: String,
-    pub device_id: String,
-    pub platform: String,
-    pub entrypoint_kind: Option<String>,
+    runtime_context: crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext,
 }
 
 impl TaskRunnerCapabilityPolicy {
-    fn new(capabilities: ResolvedAgentCapabilities) -> Result<Self, String> {
+    fn new(
+        capabilities: ResolvedAgentCapabilities,
+        runtime_context: crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext,
+    ) -> Result<Self, String> {
         if !capabilities.agent_enabled {
             return Err(format!(
                 "Task Runner Agent is disabled by Plugin Management: {}",
@@ -75,7 +67,10 @@ impl TaskRunnerCapabilityPolicy {
                 validate_task_process_log_mcp_runtime(item)?;
             }
         }
-        Ok(Self { capabilities })
+        Ok(Self {
+            capabilities,
+            runtime_context,
+        })
     }
 
     pub(crate) fn policy_revision(&self) -> &str {
@@ -166,12 +161,23 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn selectable_plugins(&self) -> Vec<&ResolvedPlugin> {
+        if self.runtime_context.runtime_provider != "local_connector"
+            || self.runtime_context.device_id.is_none()
+        {
+            return Vec::new();
+        }
         self.capabilities
             .selectable_plugins()
             .filter(|plugin| {
                 validate_supported_plugin(plugin, self.capabilities.agent_key.as_str()).is_ok()
             })
             .collect()
+    }
+
+    pub(crate) fn runtime_context(
+        &self,
+    ) -> &crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext {
+        &self.runtime_context
     }
 
     pub(crate) fn validate_plugin_config(&self, config: &TaskPluginConfig) -> Result<(), String> {
@@ -273,44 +279,6 @@ impl TaskRunnerCapabilityPolicy {
             }
         }
         Ok(())
-    }
-
-    pub(crate) fn effective_skills<'a>(
-        &'a self,
-        task: &TaskRecord,
-    ) -> Result<Vec<&'a ResolvedSkill>, String> {
-        if let Some(skill_id) = task.mcp_config.selected_skill_ids.first() {
-            return Err(format!(
-                "Local Connector Skill is unavailable in cloud Task Runner: {skill_id}"
-            ));
-        }
-        Ok(Vec::new())
-    }
-
-    pub(crate) fn skill_snapshots(
-        &self,
-        task: &TaskRecord,
-    ) -> Result<Vec<TaskSkillSnapshotView>, String> {
-        self.effective_skills(task)?
-            .into_iter()
-            .map(|item| {
-                let installation = item.installation.as_ref().ok_or_else(|| {
-                    format!(
-                        "Skill installation snapshot is missing: {}",
-                        item.resource.id
-                    )
-                })?;
-                Ok(TaskSkillSnapshotView {
-                    skill_id: item.resource.id.clone(),
-                    bundle_id: installation.bundle_id.clone(),
-                    version: installation.version.clone(),
-                    bundle_hash: installation.bundle_hash.clone(),
-                    device_id: installation.device_id.clone(),
-                    platform: installation.platform.clone(),
-                    entrypoint_kind: item.resource.content.entrypoint_kind.clone(),
-                })
-            })
-            .collect()
     }
 
     fn is_planning_agent(&self) -> bool {

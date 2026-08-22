@@ -13,7 +13,7 @@ use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
-use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
+use chatos_plugin_management_sdk::PluginMcpServer;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -23,6 +23,19 @@ use crate::runtime::{PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
 use super::*;
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+
+#[test]
+fn relay_error_detail_extracts_bounded_json_error() {
+    let detail = super::relay_client::relay_error_detail(
+        br#"{"error":"stdio request failed\nwithout exposing the full response"}"#,
+    );
+
+    assert_eq!(
+        detail.as_deref(),
+        Some("stdio request failed without exposing the full response")
+    );
+    assert_eq!(super::relay_client::relay_error_detail(b"not-json"), None);
+}
 
 fn immutable_binding() -> PluginMcpRuntimeBinding {
     PluginMcpRuntimeBinding {
@@ -35,7 +48,6 @@ fn immutable_binding() -> PluginMcpRuntimeBinding {
         normalized_manifest_sha256: "b".repeat(64),
         component_key: "workspace".to_string(),
         component_content_sha256: "c".repeat(64),
-        declared_execution_host: PluginExecutionHost::Local,
         installation_device_id: Some("device-1".to_string()),
         permission_snapshot: vec!["workspace.read".to_string()],
         auth_connection_ids: vec!["oauth-workspace".to_string()],
@@ -290,8 +302,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         plugin_local_bindings: local_bindings,
         plugin_tool_component_bindings: Default::default(),
         plugin_local_tool_component_bindings: Default::default(),
-        plugin_cloud_tool_component_bindings: Default::default(),
-        external_http_bindings: Default::default(),
+        local_connector_mcp_bindings: Default::default(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix,
     };

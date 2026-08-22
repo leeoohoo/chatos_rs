@@ -60,7 +60,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         routes: vec![ResolvedMcpRoute {
             resource_id: "mcp-1".to_string(),
             server_name: "demo".to_string(),
-            provider_kind: McpProviderKind::ExternalHttp,
+            provider_kind: McpProviderKind::LocalConnector,
             provider_ref: Some("mcp-resource:mcp-1".to_string()),
             tool_namespace: "demo".to_string(),
             allow_writes: false,
@@ -81,8 +81,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         plugin_local_bindings: Default::default(),
         plugin_tool_component_bindings: Default::default(),
         plugin_local_tool_component_bindings: Default::default(),
-        plugin_cloud_tool_component_bindings: Default::default(),
-        external_http_bindings: Default::default(),
+        local_connector_mcp_bindings: Default::default(),
         expires_at: chrono::DateTime::from_timestamp(expires_at_unix, 0)
             .unwrap()
             .to_rfc3339(),

@@ -3,50 +3,36 @@
 
 use super::*;
 
-pub(super) fn validate_stdio_command(
+pub(super) fn validate_npm_bin(
     index: usize,
-    command: &str,
+    bin: &str,
     args: &[String],
     issues: &mut Vec<PluginManifestValidationIssue>,
 ) {
-    let field = format!("mcpServers[{index}].command");
-    if command.trim().is_empty() {
-        issue(issues, field.as_str(), "command cannot be empty");
+    let field = format!("mcpServers[{index}].bin");
+    if bin.trim().is_empty() {
+        issue(issues, field.as_str(), "bin cannot be empty");
         return;
     }
-    if command.contains('/') {
-        if let Err(message) = normalize_plugin_relative_path(command) {
-            issue(issues, field.as_str(), message);
-        }
-    } else if !command
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    if bin.contains('/')
+        || !bin
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     {
         issue(
             issues,
             field.as_str(),
-            "command must be a signed relative path or reviewed command identifier",
+            "bin must be a package.json executable name",
         );
     }
-
-    let shell = command
-        .rsplit('/')
-        .next()
-        .unwrap_or(command)
-        .to_ascii_lowercase();
-    let has_shell_eval = match shell.as_str() {
-        "sh" | "bash" | "zsh" => args.iter().any(|arg| arg == "-c"),
-        "cmd" | "cmd.exe" => args.iter().any(|arg| arg.eq_ignore_ascii_case("/c")),
-        "powershell" | "powershell.exe" | "pwsh" => args
-            .iter()
-            .any(|arg| matches!(arg.to_ascii_lowercase().as_str(), "-command" | "-c")),
-        _ => false,
-    };
-    if has_shell_eval {
+    if args
+        .iter()
+        .any(|arg| arg.contains('\0') || arg.len() > 8 * 1024)
+    {
         issue(
             issues,
-            field.as_str(),
-            "generic shell evaluation is not allowed for plugin MCP entrypoints",
+            format!("mcpServers[{index}].args").as_str(),
+            "MCP arguments must be bounded text without NUL bytes",
         );
     }
 }

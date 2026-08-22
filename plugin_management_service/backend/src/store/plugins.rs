@@ -2,12 +2,152 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 
 mod marketplace;
 mod user_state;
 
+const RETIRED_BUNDLED_MARKETPLACE_ID: &str = "chatos-bundled";
+
 impl AppStore {
+    pub async fn remove_retired_bundled_plugin_marketplaces(&self) -> Result<u64, String> {
+        let marketplace_documents = self
+            .plugin_marketplace_documents
+            .find(
+                doc! {
+                    "$or": [
+                        { "id": RETIRED_BUNDLED_MARKETPLACE_ID },
+                        { "trust_level": "bundled" },
+                    ],
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<Document>>()
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut marketplace_ids = marketplace_documents
+            .iter()
+            .filter_map(|document| document.get_str("id").ok())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if !marketplace_ids
+            .iter()
+            .any(|id| id == RETIRED_BUNDLED_MARKETPLACE_ID)
+        {
+            marketplace_ids.push(RETIRED_BUNDLED_MARKETPLACE_ID.to_string());
+        }
+
+        let catalog_documents = self
+            .database
+            .collection::<Document>("plugin_catalog_entries")
+            .find(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<Document>>()
+            .await
+            .map_err(|err| err.to_string())?;
+        let plugin_ids = catalog_documents
+            .iter()
+            .filter_map(|document| document.get_str("id").ok())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        let release_documents = if plugin_ids.is_empty() {
+            Vec::new()
+        } else {
+            self.database
+                .collection::<Document>("plugin_releases")
+                .find(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?
+                .try_collect::<Vec<Document>>()
+                .await
+                .map_err(|err| err.to_string())?
+        };
+        let release_ids = release_documents
+            .iter()
+            .filter_map(|document| document.get_str("id").ok())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+
+        if !plugin_ids.is_empty() {
+            self.bindings
+                .delete_many(
+                    doc! {
+                        "resource_kind": {
+                            "$in": [RESOURCE_KIND_PLUGIN, RESOURCE_KIND_PLUGIN_COMPONENT]
+                        },
+                        "resource_id": { "$in": &plugin_ids },
+                    },
+                    None,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+            self.plugin_installations
+                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+            self.plugin_preferences
+                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+            self.plugin_component_snapshots
+                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+            self.plugin_oauth_connections
+                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+            self.plugin_audit_logs
+                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+            self.plugin_releases
+                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        if !release_ids.is_empty() {
+            self.plugin_release_publication_states
+                .delete_many(doc! { "release_id": { "$in": &release_ids } }, None)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+
+        self.plugin_catalog_entries
+            .delete_many(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.plugin_publishers
+            .delete_many(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.plugin_catalog_syncs
+            .delete_many(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.plugin_audit_logs
+            .delete_many(
+                doc! {
+                    "plugin_id": {
+                        "$in": marketplace_ids
+                            .iter()
+                            .map(|id| format!("marketplace:{id}"))
+                            .collect::<Vec<_>>()
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.plugin_marketplaces
+            .delete_many(doc! { "id": { "$in": &marketplace_ids } }, None)
+            .await
+            .map(|result| result.deleted_count)
+            .map_err(|err| err.to_string())
+    }
+
     pub async fn delete_plugin_bindings_for_agent(&self, agent_key: &str) -> Result<(), String> {
         self.bindings
             .delete_many(
@@ -430,141 +570,5 @@ impl AppStore {
             .try_collect()
             .await
             .map_err(|err| err.to_string())
-    }
-
-    pub async fn get_plugin_cloud_component_bundle(
-        &self,
-        plugin_id: &str,
-        release_id: &str,
-        component_key: &str,
-    ) -> Result<Option<PluginCloudComponentBundle>, String> {
-        self.plugin_cloud_component_bundles
-            .find_one(
-                doc! {
-                    "plugin_id": plugin_id,
-                    "release_id": release_id,
-                    "component_key": component_key,
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn list_plugin_cloud_component_bundles(
-        &self,
-        plugin_id: &str,
-        release_id: &str,
-    ) -> Result<Vec<PluginCloudComponentBundle>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "component_key": 1 })
-            .build();
-        self.plugin_cloud_component_bundles
-            .find(
-                doc! { "plugin_id": plugin_id, "release_id": release_id },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn insert_plugin_cloud_component_bundles(
-        &self,
-        records: &[PluginCloudComponentBundle],
-    ) -> Result<(), String> {
-        for record in records {
-            if let Some(existing) = self
-                .get_plugin_cloud_component_bundle(
-                    record.plugin_id.as_str(),
-                    record.release_id.as_str(),
-                    record.component_key.as_str(),
-                )
-                .await?
-            {
-                if existing != *record {
-                    return Err(format!(
-                        "immutable Plugin cloud Bundle conflict: {}/{}/{}",
-                        record.plugin_id, record.release_id, record.component_key
-                    ));
-                }
-                continue;
-            }
-            self.plugin_cloud_component_bundles
-                .insert_one(record, None)
-                .await
-                .map_err(|err| err.to_string())?;
-        }
-        Ok(())
-    }
-
-    pub async fn get_plugin_mcp_cloud_runtime_bundle(
-        &self,
-        plugin_id: &str,
-        release_id: &str,
-        component_key: &str,
-    ) -> Result<Option<PluginMcpCloudRuntimeBundle>, String> {
-        self.plugin_mcp_cloud_runtime_bundles
-            .find_one(
-                doc! {
-                    "plugin_id": plugin_id,
-                    "release_id": release_id,
-                    "component.component_key": component_key,
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn list_plugin_mcp_cloud_runtime_bundles(
-        &self,
-        plugin_id: &str,
-        release_id: &str,
-    ) -> Result<Vec<PluginMcpCloudRuntimeBundle>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "component.component_key": 1 })
-            .build();
-        self.plugin_mcp_cloud_runtime_bundles
-            .find(
-                doc! { "plugin_id": plugin_id, "release_id": release_id },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn insert_plugin_mcp_cloud_runtime_bundles(
-        &self,
-        records: &[PluginMcpCloudRuntimeBundle],
-    ) -> Result<(), String> {
-        for record in records {
-            if let Some(existing) = self
-                .get_plugin_mcp_cloud_runtime_bundle(
-                    record.plugin_id.as_str(),
-                    record.release_id.as_str(),
-                    record.component.component_key.as_str(),
-                )
-                .await?
-            {
-                if existing != *record {
-                    return Err(format!(
-                        "immutable Plugin MCP cloud runtime Bundle conflict: {}/{}/{}",
-                        record.plugin_id, record.release_id, record.component.component_key
-                    ));
-                }
-                continue;
-            }
-            self.plugin_mcp_cloud_runtime_bundles
-                .insert_one(record, None)
-                .await
-                .map_err(|err| err.to_string())?;
-        }
-        Ok(())
     }
 }

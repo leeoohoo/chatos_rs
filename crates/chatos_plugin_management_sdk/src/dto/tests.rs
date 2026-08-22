@@ -72,34 +72,6 @@ fn resource_security_default_snapshot_matches_service_policy() {
 }
 
 #[test]
-fn local_connector_status_batch_round_trips_flattened_contract() {
-    let snapshot = serde_json::json!({
-        "items": [{
-            "mcp_id": "mcp-1",
-            "owner_user_id": "user-1",
-            "device_id": "device-1",
-            "workspace_id": "workspace-1",
-            "manifest_id": "manifest-1",
-            "status": "available",
-            "last_error": null,
-            "tool_snapshot": [{"name": "read_file"}],
-            "manifest_hash": "sha256:demo"
-        }]
-    });
-
-    let batch: LocalConnectorMcpStatusBatchRequest =
-        serde_json::from_value(snapshot.clone()).expect("decode status batch");
-    assert_eq!(
-        batch.items[0].status.workspace_id.as_deref(),
-        Some("workspace-1")
-    );
-    assert_eq!(
-        serde_json::to_value(batch).expect("encode status batch"),
-        snapshot
-    );
-}
-
-#[test]
 fn plugin_component_ownership_is_flattened_and_legacy_compatible() {
     let mut snapshot = serde_json::json!({
         "id": "mcp-1",

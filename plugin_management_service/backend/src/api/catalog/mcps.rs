@@ -143,7 +143,6 @@ pub(super) async fn create_mcp(
     validate_mcp_runtime(&runtime)?;
     let security = payload.security.unwrap_or_default();
     validate_mcp_security(&runtime, &security)?;
-    validate_mcp_visibility_for_runtime(visibility.as_str(), &runtime)?;
     let now = now_rfc3339();
     let record = McpRecord {
         id: Uuid::new_v4().to_string(),
@@ -441,7 +440,6 @@ pub(super) async fn update_mcp(
     if let Some(metadata) = payload.metadata {
         record.metadata = metadata;
     }
-    validate_mcp_visibility_for_runtime(record.visibility.as_str(), &record.runtime)?;
     validate_mcp_security(&record.runtime, &record.security)?;
     record.updated_by = user.user_id.clone();
     record.updated_at = now_rfc3339();
@@ -506,12 +504,7 @@ pub(super) async fn check_mcp(
         record.owner_user_id.as_str(),
         record.visibility.as_str(),
     )?;
-    let is_local_connector = matches!(
-        record.runtime.kind.as_str(),
-        RUNTIME_KIND_LOCAL_CONNECTOR_STDIO
-            | RUNTIME_KIND_LOCAL_CONNECTOR_HTTP
-            | RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY
-    );
+    let is_local_connector = record.runtime.kind == RUNTIME_KIND_HTTP;
     let previous_check = state
         .store
         .get_check(RESOURCE_KIND_MCP, record.id.as_str())

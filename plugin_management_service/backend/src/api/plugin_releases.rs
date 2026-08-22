@@ -4,8 +4,7 @@
 use std::collections::BTreeMap;
 
 use chatos_plugin_management_sdk::{
-    parse_plugin_manifest, plugin_component_descriptors, verify_plugin_release_signature,
-    PluginReleaseVerificationContext,
+    plugin_component_descriptors, verify_plugin_release_signature, PluginReleaseVerificationContext,
 };
 use semver::Version;
 
@@ -35,16 +34,16 @@ pub(super) async fn list_plugin_releases(
     }))
 }
 
-pub(super) async fn create_plugin_release(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(plugin_id): Path<String>,
-    Json(mut payload): Json<PluginReleasePayload>,
-) -> Result<Json<PluginReleaseRecord>, ApiError> {
-    ensure_super_admin(&user)?;
+pub(super) async fn publish_plugin_release_from_manifest(
+    state: &AppState,
+    user: &CurrentUser,
+    plugin_id: &str,
+    mut payload: PluginReleasePayload,
+    manifest: PluginManifest,
+) -> Result<PluginReleaseRecord, ApiError> {
     let mut plugin = state
         .store
-        .get_plugin_catalog_entry(plugin_id.as_str())
+        .get_plugin_catalog_entry(plugin_id)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("Plugin not found"))?;
@@ -67,16 +66,8 @@ pub(super) async fn create_plugin_release(
     )
     .await?;
 
-    let manifest_json = serde_json::to_string(&payload.manifest)
-        .map_err(|err| ApiError::bad_request(format!("serialize manifest failed: {err}")))?;
-    let manifest = parse_plugin_manifest(
-        manifest_json.as_str(),
-        payload
-            .manifest_source
-            .unwrap_or(PluginManifestSource::Codex),
-    )
-    .map_err(|err| ApiError::bad_request(err.to_string()))?;
     validate_release_manifest_identity(&plugin, payload.version.as_deref(), &manifest)?;
+    validate_npm_package(&payload.npm_package, &manifest)?;
     payload.artifact_sha256 =
         normalize_sha256(payload.artifact_sha256.as_str(), "artifact_sha256")?;
     payload.signature.manifest_sha256 = normalize_sha256(
@@ -117,6 +108,7 @@ pub(super) async fn create_plugin_release(
         version: manifest.version.clone(),
         manifest_schema_version: manifest.schema_version,
         normalized_manifest: manifest.clone(),
+        npm_package: payload.npm_package,
         artifact_ref: required_text(Some(payload.artifact_ref.as_str()), "artifact_ref")?,
         artifact_sha256: payload.artifact_sha256,
         signature: payload.signature,
@@ -132,52 +124,20 @@ pub(super) async fn create_plugin_release(
         published_at: now_rfc3339(),
         revoked_at: None,
     };
-    let cloud_bundles =
-        super::plugin_cloud_bundles::stage_release_cloud_bundles(&state, &release).await?;
-    let mcp_runtime_bundles = super::plugin_cloud_bundles::stage_release_cloud_mcp_runtime_bundles(
-        &state, &release, None,
-    )
-    .await?;
-    let mut component_snapshots = cloud_bundles
+    let component_snapshots = release
+        .components
         .iter()
-        .map(|bundle| {
-            let component = release
-                .components
-                .iter()
-                .find(|component| component.component_key == bundle.component_key)
-                .cloned()
-                .ok_or_else(|| {
-                    ApiError::internal("staged Plugin Bundle has no Release component")
-                })?;
-            Ok(PluginComponentSnapshot {
-                plugin_id: release.plugin_id.clone(),
-                release_id: release.id.clone(),
-                component,
-                content_sha256: bundle.bundle_sha256.clone(),
-            })
-        })
-        .collect::<Result<Vec<_>, ApiError>>()?;
-    for bundle in &mcp_runtime_bundles {
-        component_snapshots.push(PluginComponentSnapshot {
+        .cloned()
+        .map(|component| PluginComponentSnapshot {
             plugin_id: release.plugin_id.clone(),
             release_id: release.id.clone(),
-            component: bundle.component.clone(),
-            content_sha256: bundle.bundle_sha256.clone(),
-        });
-    }
+            component,
+            content_sha256: release.artifact_sha256.clone(),
+        })
+        .collect::<Vec<_>>();
     state
         .store
         .set_plugin_release_publication_ready(release.id.as_str(), false)
-        .await
-        .map_err(ApiError::internal)?;
-    state
-        .store
-        .insert_plugin_cloud_component_bundles(cloud_bundles.as_slice())
-        .await
-        .map_err(ApiError::internal)?;
-    state
-        .store
-        .insert_plugin_mcp_cloud_runtime_bundles(mcp_runtime_bundles.as_slice())
         .await
         .map_err(ApiError::internal)?;
     state
@@ -234,7 +194,7 @@ pub(super) async fn create_plugin_release(
         .insert_plugin_audit(&audit)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(release))
+    Ok(release)
 }
 
 pub(super) async fn revoke_plugin_release(
@@ -314,6 +274,35 @@ fn validate_release_manifest_identity(
                 "payload version does not match manifest version",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_npm_package(
+    package: &PluginNpmPackage,
+    manifest: &PluginManifest,
+) -> Result<(), ApiError> {
+    let name = package.name.trim();
+    let valid_name = !name.is_empty()
+        && name.len() <= 214
+        && !name.contains(char::is_whitespace)
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'@' | b'/' | b'-' | b'_' | b'.')
+        });
+    if !valid_name || name.starts_with('/') || name.ends_with('/') || name.matches('/').count() > 1
+    {
+        return Err(ApiError::bad_request("npm_package.name is invalid"));
+    }
+    if package.version.trim() != manifest.version {
+        return Err(ApiError::bad_request(
+            "npm_package.version must match the Plugin manifest version",
+        ));
+    }
+    let integrity = package.integrity.trim();
+    if !integrity.starts_with("sha512-") || integrity.len() <= "sha512-".len() {
+        return Err(ApiError::bad_request(
+            "npm_package.integrity must be an npm sha512 integrity value",
+        ));
     }
     Ok(())
 }
@@ -407,9 +396,9 @@ mod tests {
             "id": version,
             "plugin_id": "plugin-1",
             "version": version,
-            "manifest_schema_version": 1,
+            "manifest_schema_version": 3,
             "normalized_manifest": {
-                "schemaVersion": 1,
+                "schemaVersion": 3,
                 "name": "demo",
                 "version": version,
                 "description": "demo",
@@ -434,6 +423,11 @@ mod tests {
                 },
                 "dependencies": {"plugins": [], "executables": [], "supportedPlatforms": []},
                 "permissions": []
+            },
+            "npm_package": {
+                "name": "demo",
+                "version": version,
+                "integrity": "sha512-dGVzdA=="
             },
             "artifact_ref": "artifact",
             "artifact_sha256": "a".repeat(64),

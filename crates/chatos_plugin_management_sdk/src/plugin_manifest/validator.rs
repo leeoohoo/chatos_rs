@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 
 use semver::{Version, VersionReq};
@@ -16,10 +16,7 @@ use super::components::{
     PLUGIN_UI_SURFACE_ARTIFACT_VIEWER, PLUGIN_UI_SURFACE_DETAIL_PANEL,
     PLUGIN_UI_SURFACE_MESSAGE_PANEL, PLUGIN_UI_SURFACE_WORKBENCH,
 };
-use super::normalized::{
-    PluginExecutionHost, PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
-    PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
-};
+use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION};
 use super::paths::normalize_plugin_relative_path;
 use super::validation_support::{
     issue, required_text, validate_brand_color, validate_mcp_http_url, validate_optional_email,
@@ -55,20 +52,13 @@ pub fn validate_plugin_manifest(
 ) -> Result<(), PluginManifestValidationError> {
     let mut issues = Vec::new();
 
-    if ![
-        PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
-        PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
-    ]
-    .contains(&manifest.schema_version)
-    {
+    if manifest.schema_version != PLUGIN_MANIFEST_SCHEMA_VERSION {
         issue(
             &mut issues,
             "schemaVersion",
             format!(
-                "unsupported schema version {}; expected {} or {}",
-                manifest.schema_version,
-                PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
-                PLUGIN_MANIFEST_SCHEMA_VERSION_V2
+                "unsupported schema version {}; expected {}",
+                manifest.schema_version, PLUGIN_MANIFEST_SCHEMA_VERSION
             ),
         );
     }
@@ -146,21 +136,9 @@ pub fn validate_plugin_manifest(
             &mut issues,
         );
         match server {
-            PluginMcpServer::ConfigFile { path, .. } => {
-                validate_path(format!("mcpServers[{index}].path"), path, &mut issues)
-            }
-            PluginMcpServer::Stdio {
-                command,
-                args,
-                env,
-                cwd,
-                ..
-            } => {
-                validate_stdio_command(index, command, args, &mut issues);
+            PluginMcpServer::Stdio { bin, args, env, .. } => {
+                validate_npm_bin(index, bin, args, &mut issues);
                 validate_stdio_environment(index, env, &mut issues);
-                if let Some(cwd) = cwd {
-                    validate_path(format!("mcpServers[{index}].cwd"), cwd, &mut issues);
-                }
             }
             PluginMcpServer::Http { url, .. } => {
                 validate_mcp_http_url(format!("mcpServers[{index}].url"), url, &mut issues)
@@ -330,7 +308,7 @@ pub fn validate_plugin_manifest(
 
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
-    validate_execution_policy(manifest, &component_keys, &mut issues);
+    validate_mcp_runtime_permissions(manifest, &mut issues);
 
     let component_count = manifest.skills.len()
         + manifest.mcp_servers.len()
@@ -351,99 +329,6 @@ pub fn validate_plugin_manifest(
         Ok(())
     } else {
         Err(PluginManifestValidationError { issues })
-    }
-}
-
-fn validate_execution_policy(
-    manifest: &PluginManifest,
-    component_keys: &HashSet<String>,
-    issues: &mut Vec<PluginManifestValidationIssue>,
-) {
-    if manifest.schema_version == PLUGIN_MANIFEST_SCHEMA_VERSION_V1 {
-        if !manifest.execution.is_implicit_v1() {
-            issue(
-                issues,
-                "execution",
-                "schemaVersion 1 must not declare execution",
-            );
-        }
-        return;
-    }
-
-    let mut kinds = BTreeMap::new();
-    for (index, skill) in manifest.skills.iter().enumerate() {
-        kinds.insert(
-            component_key_from_path(skill.path.as_str(), "skills", index),
-            "skill",
-        );
-    }
-    for component in &manifest.mcp_servers {
-        kinds.insert(component.component_key().to_string(), "mcp_server");
-    }
-    for component in &manifest.apps {
-        kinds.insert(component.component_key.clone(), "connected_app");
-    }
-    for component in &manifest.commands {
-        kinds.insert(component.component_key.clone(), "command");
-    }
-    for component in &manifest.agents {
-        kinds.insert(component.component_key.clone(), "agent");
-    }
-    for component in &manifest.hooks {
-        kinds.insert(component.component_key.clone(), "hook_set");
-    }
-    for component in &manifest.ui {
-        kinds.insert(component.component_key.clone(), "ui_contribution");
-    }
-
-    for component_key in manifest.execution.component_hosts.keys() {
-        if !component_keys.contains(component_key) {
-            issue(
-                issues,
-                "execution.componentHosts",
-                format!("unknown component key {component_key}"),
-            );
-        }
-    }
-
-    for (component_key, kind) in &kinds {
-        let host = manifest.execution.host_for(component_key);
-        if host != PluginExecutionHost::Local
-            && !matches!(*kind, "skill" | "command" | "agent" | "mcp_server")
-        {
-            issue(
-                issues,
-                "execution",
-                format!("{kind} component {component_key} must use local execution"),
-            );
-        }
-    }
-
-    for (index, permission) in manifest.permissions.iter().enumerate() {
-        let cloud_targets = if permission.components.is_empty() {
-            kinds
-                .keys()
-                .filter(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-        } else {
-            permission
-                .components
-                .iter()
-                .filter(|key| manifest.execution.host_for(key) != PluginExecutionHost::Local)
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-        };
-        let targets_non_mcp_cloud_component = cloud_targets
-            .iter()
-            .any(|key| kinds.get(*key).copied() != Some("mcp_server"));
-        if targets_non_mcp_cloud_component {
-            issue(
-                issues,
-                format!("permissions[{index}]").as_str(),
-                "cloud and portable prompt components must not request runtime permissions",
-            );
-        }
     }
 }
 
@@ -789,6 +674,30 @@ fn validate_permissions(
                     format!("unknown component key {component}"),
                 );
             }
+        }
+    }
+}
+
+fn validate_mcp_runtime_permissions(
+    manifest: &PluginManifest,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, server) in manifest.mcp_servers.iter().enumerate() {
+        let PluginMcpServer::Stdio { component_key, .. } = server else {
+            continue;
+        };
+        let declares_process_spawn = manifest.permissions.iter().any(|permission| {
+            permission.permission == "process.spawn"
+                && permission.required
+                && (permission.components.is_empty()
+                    || permission.components.iter().any(|key| key == component_key))
+        });
+        if !declares_process_spawn {
+            issue(
+                issues,
+                format!("mcpServers[{index}]").as_str(),
+                "stdio MCP component requires a required process.spawn permission",
+            );
         }
     }
 }

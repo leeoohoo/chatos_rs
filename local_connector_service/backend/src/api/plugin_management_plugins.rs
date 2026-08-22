@@ -111,7 +111,7 @@ pub(super) async fn proxy_plugin_release_artifact(
         .get(url)
         .header(
             reqwest::header::ACCEPT,
-            "application/zip, application/octet-stream",
+            "application/gzip, application/octet-stream",
         )
         .send()
         .await
@@ -151,7 +151,7 @@ pub(super) async fn proxy_plugin_release_artifact(
     });
     let mut response = Response::builder()
         .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "application/zip")
+        .header(CONTENT_TYPE, "application/gzip")
         .header(
             "x-chatos-plugin-id",
             header_value(source.catalog.id.as_str())?,
@@ -333,9 +333,11 @@ mod tests {
 
     #[test]
     fn artifact_url_rejects_non_https_and_embedded_credentials() {
-        assert!(validate_artifact_url("https://plugins.example.com/demo.zip").is_ok());
-        assert!(validate_artifact_url("http://plugins.example.com/demo.zip").is_err());
-        assert!(validate_artifact_url("https://user@plugins.example.com/demo.zip").is_err());
+        assert!(validate_artifact_url("https://registry.npmjs.org/demo/-/demo-1.0.0.tgz").is_ok());
+        assert!(validate_artifact_url("http://registry.npmjs.org/demo/-/demo-1.0.0.tgz").is_err());
+        assert!(
+            validate_artifact_url("https://user@registry.npmjs.org/demo/-/demo-1.0.0.tgz").is_err()
+        );
         assert!(validate_artifact_url("https://plugins.example.com/demo.zip#hash").is_err());
     }
 

@@ -9,7 +9,7 @@ use chatos_plugin_management_sdk::*;
 use tempfile::TempDir;
 
 use super::journal::begin_transaction;
-use super::verifier::verify_plugin_artifact;
+use super::verifier::verify_plugin_package;
 use super::*;
 
 pub(super) mod fixtures;
@@ -25,7 +25,7 @@ fn installs_updates_rolls_back_and_uninstalls_atomically() {
     let installer = PluginInstaller::new(temp.path().join("plugin-store"));
 
     let first = installer
-        .install_archive(package_v1.install_request())
+        .install_package(package_v1.install_request())
         .expect("install v1");
     assert_eq!(first.installed_version.version, "1.0.0");
     assert!(first
@@ -45,10 +45,10 @@ fn installs_updates_rolls_back_and_uninstalls_atomically() {
     );
 
     restarted
-        .install_archive(package_v2.install_request())
+        .install_package(package_v2.install_request())
         .expect("update to v2");
     assert!(restarted
-        .install_archive(package_v1.install_request())
+        .install_package(package_v1.install_request())
         .expect_err("downgrade must fail")
         .to_string()
         .contains("downgrade"));
@@ -136,13 +136,13 @@ fn network_download_transaction_advances_through_verification_and_installation()
         Some(pending.relative_download_path.as_str())
     );
 
-    let archive_path = installer
+    let package_path = installer
         .plugin_root()
         .join(pending.relative_download_path.as_str());
-    fs::create_dir_all(archive_path.parent().expect("download parent"))
+    fs::create_dir_all(package_path.parent().expect("download parent"))
         .expect("create download parent");
-    fs::copy(package.archive_path(), archive_path.as_path()).expect("stage downloaded artifact");
-    let archive_bytes = fs::metadata(archive_path.as_path())
+    fs::copy(package.package_path(), package_path.as_path()).expect("stage downloaded artifact");
+    let archive_bytes = fs::metadata(package_path.as_path())
         .expect("downloaded artifact metadata")
         .len();
     installer
@@ -168,13 +168,13 @@ fn network_download_transaction_advances_through_verification_and_installation()
         .update_network_download_progress(&pending, archive_bytes, Some(archive_bytes))
         .expect("persist completed download progress");
     let outcome = installer
-        .install_downloaded_archive(
+        .install_downloaded_package(
             pending.clone(),
             PluginInstallRequest {
                 marketplace: &source.marketplace,
                 catalog: &source.catalog,
                 release: &source.release,
-                archive_path: archive_path.as_path(),
+                package_path: package_path.as_path(),
             },
         )
         .expect("install downloaded artifact");
@@ -207,21 +207,21 @@ fn network_install_rejects_artifact_without_completed_download_progress() {
     let pending = installer
         .begin_network_install(&source.marketplace, &source.catalog, &source.release)
         .expect("begin network download transaction");
-    let archive_path = installer
+    let package_path = installer
         .plugin_root()
         .join(pending.relative_download_path.as_str());
-    fs::create_dir_all(archive_path.parent().expect("download parent"))
+    fs::create_dir_all(package_path.parent().expect("download parent"))
         .expect("create download parent");
-    fs::copy(package.archive_path(), archive_path.as_path()).expect("stage downloaded artifact");
+    fs::copy(package.package_path(), package_path.as_path()).expect("stage downloaded artifact");
 
     let error = installer
-        .install_downloaded_archive(
+        .install_downloaded_package(
             pending,
             PluginInstallRequest {
                 marketplace: &source.marketplace,
                 catalog: &source.catalog,
                 release: &source.release,
-                archive_path: archive_path.as_path(),
+                package_path: package_path.as_path(),
             },
         )
         .expect_err("uncommitted download progress must fail closed");
@@ -270,7 +270,7 @@ fn failed_or_interrupted_network_downloads_are_rejected_and_recovered() {
         .join(interrupted.relative_download_path.as_str());
     fs::create_dir_all(download_path.parent().expect("download parent"))
         .expect("create download parent");
-    fs::copy(package.archive_path(), download_path.as_path()).expect("write interrupted download");
+    fs::copy(package.package_path(), download_path.as_path()).expect("write interrupted download");
     let report = installer
         .recover_incomplete_transactions()
         .expect("recover interrupted download");
@@ -299,7 +299,7 @@ fn updates_rollbacks_and_uninstalls_purge_release_scoped_credentials() {
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
 
     let v1 = installer
-        .install_archive(package_v1.install_request())
+        .install_package(package_v1.install_request())
         .expect("install v1");
     let component_key = v1.installed_version.inventory.components[0]
         .component_key
@@ -319,7 +319,7 @@ fn updates_rollbacks_and_uninstalls_purge_release_scoped_credentials() {
         .expect("issue v1 handle");
 
     let v2 = installer
-        .install_archive(package_v2.install_request())
+        .install_package(package_v2.install_request())
         .expect("update to v2");
     assert!(vault.resolve_handle(v1_handle.as_str(), &scope_v1).is_err());
     assert!(vault
@@ -375,7 +375,7 @@ fn restart_recovery_finishes_committed_installs_and_removes_orphans() {
     let package = signer.package(temp.path(), "1.0.0", ArchiveMutation::None);
     let installer = PluginInstaller::new(temp.path().join("plugin-store"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Plugin");
 
     let committed_id = "recovery-committed";
@@ -450,24 +450,23 @@ fn rejects_artifact_tampering_before_extraction() {
     let package = signer.package(temp.path(), "1.0.0", ArchiveMutation::None);
     OpenOptions::new()
         .append(true)
-        .open(&package.archive_path)
+        .open(&package.package_path)
         .expect("open artifact")
         .write_all(b"tamper")
         .expect("tamper artifact");
     let extraction = temp.path().join("extracted");
-    let error = verify_plugin_artifact(
+    let error = verify_plugin_package(
         package.verification_request(extraction.as_path()),
-        PluginArchiveLimits::default(),
+        PluginPackageLimits::default(),
     )
     .expect_err("tampered artifact must fail");
-    assert!(error.to_string().contains("artifact SHA-256"));
+    assert!(error.to_string().contains("npm integrity"), "{error:#}");
     assert!(!extraction.exists());
 }
 
 #[test]
-fn rejects_unsafe_zip_paths_symlinks_and_duplicates() {
+fn rejects_unsafe_npm_package_symlinks_and_duplicates() {
     for (label, mutation) in [
-        ("traversal", ArchiveMutation::Traversal),
         ("symlink", ArchiveMutation::Symlink),
         ("duplicate", ArchiveMutation::Duplicate),
     ] {
@@ -475,14 +474,15 @@ fn rejects_unsafe_zip_paths_symlinks_and_duplicates() {
         let signer = TestSigner::new();
         let package = signer.package(temp.path(), "1.0.0", mutation);
         let extraction = temp.path().join(format!("extract-{label}"));
-        let error = verify_plugin_artifact(
+        let error = verify_plugin_package(
             package.verification_request(extraction.as_path()),
-            PluginArchiveLimits::default(),
+            PluginPackageLimits::default(),
         )
-        .expect_err("unsafe ZIP must fail");
+        .expect_err("unsafe npm package must fail");
         assert!(
-            error.to_string().contains("unsafe path")
-                || error.to_string().contains("symlink or special file")
+            error
+                .to_string()
+                .contains("symlink, hard link, or special file")
                 || error.to_string().contains("duplicate or case-colliding")
         );
         assert!(!extraction.exists());
@@ -490,36 +490,21 @@ fn rejects_unsafe_zip_paths_symlinks_and_duplicates() {
 }
 
 #[test]
-fn rejects_incomplete_or_incorrect_file_checksums() {
-    for mutation in [
-        ArchiveMutation::MissingChecksum,
-        ArchiveMutation::WrongChecksum,
+fn rejects_missing_package_identity_or_wrong_npm_integrity() {
+    for (mutation, expected) in [
+        (ArchiveMutation::MissingPackageJson, "missing package.json"),
+        (ArchiveMutation::WrongIntegrity, "npm integrity"),
     ] {
         let temp = TempDir::new().expect("temp directory");
         let signer = TestSigner::new();
         let package = signer.package(temp.path(), "1.0.0", mutation);
         let extraction = temp.path().join("extract-checksums");
-        let error = verify_plugin_artifact(
+        let error = verify_plugin_package(
             package.verification_request(extraction.as_path()),
-            PluginArchiveLimits::default(),
+            PluginPackageLimits::default(),
         )
-        .expect_err("invalid checksums must fail");
-        assert!(error.to_string().contains("checksum"));
+        .expect_err("invalid npm package must fail");
+        assert!(error.to_string().contains(expected), "{error:#}");
         assert!(!extraction.exists());
     }
-}
-
-#[test]
-fn rejects_unrecognized_sbom_documents() {
-    let temp = TempDir::new().expect("temp directory");
-    let signer = TestSigner::new();
-    let package = signer.package(temp.path(), "1.0.0", ArchiveMutation::InvalidSbom);
-    let extraction = temp.path().join("extract-sbom");
-    let error = verify_plugin_artifact(
-        package.verification_request(extraction.as_path()),
-        PluginArchiveLimits::default(),
-    )
-    .expect_err("invalid SBOM must fail");
-    assert!(error.to_string().contains("SBOM"));
-    assert!(!extraction.exists());
 }

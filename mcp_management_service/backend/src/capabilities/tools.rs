@@ -320,8 +320,7 @@ mod tests {
     use chatos_mcp_management_sdk::{McpProviderKind, McpRetryClass};
     use chatos_plugin_management_sdk::{
         AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, PluginComponentDescriptor,
-        PluginComponentKind, PluginExecutionHost, PluginMcpServer, ResolvedMcp, ResourceMetadata,
-        ResourceSecurity,
+        PluginComponentKind, PluginMcpServer, ResolvedMcp, ResourceMetadata, ResourceSecurity,
     };
     use serde_json::json;
 
@@ -402,7 +401,7 @@ mod tests {
         ResolvedMcpRoute {
             resource_id: "external-1".to_string(),
             server_name: "demo".to_string(),
-            provider_kind: McpProviderKind::ExternalHttp,
+            provider_kind: McpProviderKind::LocalConnector,
             provider_ref: Some("mcp-resource:external-1".to_string()),
             tool_namespace: "demo".to_string(),
             allow_writes: false,
@@ -455,7 +454,6 @@ mod tests {
             normalized_manifest_sha256: "b".repeat(64),
             component_key: "workspace".to_string(),
             component_content_sha256: "c".repeat(64),
-            declared_execution_host: PluginExecutionHost::Local,
             installation_device_id: Some("device-1".to_string()),
             permission_snapshot: vec!["workspace.read".to_string()],
             auth_connection_ids: Vec::new(),
@@ -501,7 +499,6 @@ mod tests {
                 component_key: "review".to_string(),
                 kind: PluginComponentKind::Command,
                 display_name: "Review".to_string(),
-                execution_host: PluginExecutionHost::Cloud,
                 runtime_kind: "command".to_string(),
                 entrypoint: None,
                 required: false,
@@ -509,7 +506,7 @@ mod tests {
                 metadata: Default::default(),
             },
             component_content_sha256: "c".repeat(64),
-            installation_device_id: None,
+            installation_device_id: Some("device-1".to_string()),
             permission_snapshot: Vec::new(),
             auth_connection_ids: Vec::new(),
             required: true,
@@ -522,7 +519,7 @@ mod tests {
         ResolvedMcpRoute {
             resource_id: "plugin-component-review".to_string(),
             server_name: "plugin_review_review".to_string(),
-            provider_kind: McpProviderKind::PluginCloud,
+            provider_kind: McpProviderKind::PluginLocal,
             provider_ref: Some(format!("plugin-tool-binding:{}", "c".repeat(64))),
             tool_namespace: "plugin_review_review".to_string(),
             allow_writes: false,

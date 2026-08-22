@@ -178,9 +178,7 @@ export function PluginMarketplacePanel({
     const action = plugin.installation ? '更新' : '安装';
     const detail = plugin.installation
       ? `当前 v${plugin.installation.active_version}，目标 v${plugin.latest_version}。旧版本会保留为已验证回滚目标。`
-      : plugin.install_source === 'network'
-        ? `将通过已登录的 Local Connector Service 可信代理下载并校验签名 Release v${plugin.latest_version}。`
-        : `将从当前客户端的受控 bundled 资源安装 v${plugin.latest_version}。`;
+      : `将通过已登录的 Local Connector Service 可信代理下载并校验 npm MCP Release v${plugin.latest_version}。`;
     if (!window.confirm(`${action} ${plugin.display_name}？${detail}`)) return;
     setBusyPluginId(plugin.plugin_id);
     setError(null);
@@ -377,7 +375,7 @@ function PluginCard({
             {plugin.rollback_available ? <button type="button" className="iconButton compact" disabled={busy} onClick={() => void onRollback(plugin)} title="回滚"><RotateCcw size={15} /></button> : null}
             <button type="button" className="iconButton compact danger" disabled={busy} onClick={() => void onUninstall(plugin)} title="卸载"><Trash2 size={15} /></button>
           </div>
-        ) : <button type="button" className="primaryButton compact" disabled={!installAvailable || busy} onClick={() => void onInstall(plugin)} title={installAvailable ? (plugin.install_source === 'network' ? '通过可信 Marketplace 代理下载并安装' : '从客户端受控资源安装') : '当前安装来源不可用'}>{busy ? '安装中' : installAvailable ? '安装' : '资源不可用'}</button>}
+        ) : <button type="button" className="primaryButton compact" disabled={!installAvailable || busy} onClick={() => void onInstall(plugin)} title={installAvailable ? '通过可信 Marketplace 代理下载 npm tgz 并安装' : '当前安装来源不可用'}>{busy ? '安装中' : installAvailable ? '安装' : '资源不可用'}</button>}
       </footer>
     </article>
   );

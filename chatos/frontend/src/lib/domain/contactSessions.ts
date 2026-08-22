@@ -120,6 +120,56 @@ export const resolveContactIdFromSession = (
   session: unknown,
 ): string | null => resolveSessionContactIdentity(session).contactId;
 
+export const resolveSessionContactIdForProjectScope = (
+  session: unknown,
+  contacts: ContactSessionRef[],
+  projectId: string | null | undefined,
+): string | null => {
+  if (!isSessionActive(session)) {
+    return null;
+  }
+  if (resolveSessionProjectScopeId(session) !== normalizeProjectScopeId(projectId)) {
+    return null;
+  }
+
+  const identity = resolveSessionContactIdentity(session);
+  if (identity.contactId) {
+    const exactContact = (contacts || []).find((contact) => (
+      typeof contact.id === 'string' && contact.id.trim() === identity.contactId
+    ));
+    return exactContact?.id.trim() || null;
+  }
+  if (!identity.contactAgentId) {
+    return null;
+  }
+
+  const matchesById = new Map<string, ContactSessionRef>();
+  for (const contact of contacts || []) {
+    const contactId = typeof contact.id === 'string' ? contact.id.trim() : '';
+    const agentId = typeof contact.agentId === 'string' ? contact.agentId.trim() : '';
+    if (contactId && agentId === identity.contactAgentId) {
+      matchesById.set(contactId, contact);
+    }
+  }
+  if (matchesById.size !== 1) {
+    return null;
+  }
+  return matchesById.keys().next().value || null;
+};
+
+export const isSessionMatchedKnownContactAndProject = (
+  session: unknown,
+  contact: ContactSessionRef,
+  contacts: ContactSessionRef[],
+  projectId: string | null | undefined,
+): boolean => {
+  const contactId = typeof contact.id === 'string' ? contact.id.trim() : '';
+  return Boolean(
+    contactId
+    && resolveSessionContactIdForProjectScope(session, contacts, projectId) === contactId
+  );
+};
+
 export const matchSessionContactProjectScope = (
   session: unknown,
   target: {

@@ -9,8 +9,7 @@ use std::time::Duration;
 
 use chatos_plugin_management_sdk::{
     normalized_plugin_catalog_sha256, verify_plugin_catalog_document, verify_plugin_catalog_update,
-    PluginCatalogDocument, PluginMcpCloudRuntimeBundle, PluginReleaseRecord, SigningKeyRef,
-    PLUGIN_SIGNING_KEY_USAGE_CATALOG,
+    PluginCatalogDocument, PluginReleaseRecord, SigningKeyRef, PLUGIN_SIGNING_KEY_USAGE_CATALOG,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures_util::StreamExt;
@@ -304,44 +303,29 @@ async fn sync_plugin_marketplace_inner(
     }
     validate_catalog_against_store(state, &document, unchanged).await?;
 
-    let mut staged_cloud_bundles = Vec::new();
-    let mut staged_mcp_runtime_bundles = Vec::new();
     for release in &document.releases {
-        let bundles =
-            super::plugin_cloud_bundles::stage_release_cloud_bundles(state, release).await?;
-        for bundle in &bundles {
+        for component in &release.components {
             let snapshot = document
                 .component_snapshots
                 .iter()
                 .find(|snapshot| {
-                    snapshot.plugin_id == bundle.plugin_id
-                        && snapshot.release_id == bundle.release_id
-                        && snapshot.component.component_key == bundle.component_key
+                    snapshot.plugin_id == release.plugin_id
+                        && snapshot.release_id == release.id
+                        && snapshot.component == *component
                 })
                 .ok_or_else(|| {
                     ApiError::conflict(format!(
-                        "Catalog is missing cloud component snapshot {}/{}/{}",
-                        bundle.plugin_id, bundle.release_id, bundle.component_key
+                        "Catalog is missing npm MCP component snapshot {}/{}/{}",
+                        release.plugin_id, release.id, component.component_key
                     ))
                 })?;
-            if snapshot.content_sha256 != bundle.bundle_sha256
-                || snapshot.component.execution_host != bundle.execution_host
-            {
+            if snapshot.content_sha256 != release.artifact_sha256 {
                 return Err(ApiError::conflict(format!(
-                    "Catalog cloud component snapshot does not match artifact Bundle {}/{}/{}",
-                    bundle.plugin_id, bundle.release_id, bundle.component_key
+                    "Catalog npm MCP component snapshot does not match package artifact {}/{}/{}",
+                    release.plugin_id, release.id, component.component_key
                 )));
             }
         }
-        let mcp_runtime_bundles =
-            super::plugin_cloud_bundles::stage_release_cloud_mcp_runtime_bundles(
-                state,
-                release,
-                Some(document.component_snapshots.as_slice()),
-            )
-            .await?;
-        staged_cloud_bundles.extend(bundles);
-        staged_mcp_runtime_bundles.extend(mcp_runtime_bundles);
     }
 
     let synced_at = now_rfc3339();
@@ -367,14 +351,7 @@ async fn sync_plugin_marketplace_inner(
             "Plugin Catalog changed concurrently; retry the sync",
         ));
     }
-    materialize_catalog(
-        state,
-        &marketplace,
-        &document,
-        staged_cloud_bundles.as_slice(),
-        staged_mcp_runtime_bundles.as_slice(),
-    )
-    .await?;
+    materialize_catalog(state, &marketplace, &document).await?;
 
     marketplace.trusted_signing_keys = document.signing_keys.clone();
     marketplace.last_catalog_revision = Some(document.revision.clone());
@@ -805,8 +782,6 @@ async fn materialize_catalog(
     state: &AppState,
     marketplace: &PluginMarketplaceRecord,
     document: &PluginCatalogDocument,
-    cloud_bundles: &[PluginCloudComponentBundle],
-    mcp_runtime_bundles: &[PluginMcpCloudRuntimeBundle],
 ) -> Result<(), ApiError> {
     let mut staged_release_ids = Vec::new();
     for release in &document.releases {
@@ -860,16 +835,6 @@ async fn materialize_catalog(
             .await
             .map_err(ApiError::internal)?;
     }
-    state
-        .store
-        .insert_plugin_cloud_component_bundles(cloud_bundles)
-        .await
-        .map_err(ApiError::internal)?;
-    state
-        .store
-        .insert_plugin_mcp_cloud_runtime_bundles(mcp_runtime_bundles)
-        .await
-        .map_err(ApiError::internal)?;
     for release_id in staged_release_ids {
         state
             .store

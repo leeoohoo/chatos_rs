@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::PluginCommandInvocation;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -26,10 +25,8 @@ pub(crate) struct ChatStreamRequest {
     #[serde(alias = "workspaceRoot")]
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    #[serde(default, alias = "selectedPluginIds")]
-    pub selected_plugin_ids: Vec<String>,
-    #[serde(default, alias = "pluginCommandInvocations")]
-    pub plugin_command_invocations: Vec<PluginCommandInvocation>,
+    #[serde(default, alias = "taskPluginPreferences")]
+    pub task_plugin_preferences: Vec<String>,
     #[serde(
         default,
         rename = "plugin_agent_selection",

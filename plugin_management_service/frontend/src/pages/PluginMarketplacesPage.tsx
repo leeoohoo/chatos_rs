@@ -111,7 +111,7 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
         dataIndex: 'trust_level',
         width: 120,
         render: (value) => (
-          <Tag color={value === 'bundled' ? 'purple' : value === 'trusted' ? 'green' : 'red'}>
+          <Tag color={value === 'trusted' ? 'green' : 'red'}>
             {t(`pluginMarketplace.trust.${value}`)}
           </Tag>
         ),
@@ -153,8 +153,7 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
             writable &&
             record.enabled &&
             record.trust_level === 'trusted' &&
-            Boolean(record.catalog_url) &&
-            record.source_kind !== 'local_directory';
+            Boolean(record.catalog_url);
           return (
             <Space size="small">
               {isAdmin ? (
@@ -267,7 +266,7 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
               <Form.Item name="source_kind" label={t('pluginMarketplace.source')} rules={[{ required: true }]}>
                 <Select
                   disabled={Boolean(editingMarketplace)}
-                  options={['official_registry', 'admin_registry', 'local_directory'].map((value) => ({
+                  options={['official_registry', 'admin_registry'].map((value) => ({
                     value,
                     label: t(`pluginMarketplace.source.${value}`),
                   }))}
@@ -277,7 +276,7 @@ export function PluginMarketplacesPage({ user }: { user: CurrentUser }) {
             {isAdmin ? (
               <Form.Item name="trust_level" label={t('pluginMarketplace.trust')} rules={[{ required: true }]}>
                 <Select
-                  options={['bundled', 'trusted', 'untrusted'].map((value) => ({
+                  options={['trusted', 'untrusted'].map((value) => ({
                     value,
                     label: t(`pluginMarketplace.trust.${value}`),
                   }))}

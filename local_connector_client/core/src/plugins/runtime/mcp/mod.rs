@@ -7,11 +7,10 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use chatos_mcp_runtime::parse_tool_definition;
-use chatos_plugin_management_sdk::{PluginComponentKind, PluginMcpServer};
+use chatos_plugin_management_sdk::PluginComponentKind;
 use serde_json::json;
 
 use super::super::oauth_broker::PluginOAuthBroker;
-use super::config::load_configured_mcp_server;
 use crate::plugins::{PluginCredentialVault, PluginInstaller};
 
 mod preparation;
@@ -26,7 +25,6 @@ pub(in crate::plugins::runtime) use runtime_shell::{
 };
 pub(in crate::plugins::runtime) use validation::load_verified_manifest;
 
-const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_MCP_TOOLS: usize = 200;
 const MAX_MCP_TOOL_SNAPSHOT_BYTES: usize = 512 * 1024;
 const MCP_TOOL_CALL_OPERATION: &str = "mcp_tools_call";
@@ -134,17 +132,10 @@ impl PluginMcpAdapter {
             .iter()
             .find(|server| server.component_key() == component_key)
             .context("Plugin MCP component is not present in the normalized Manifest")?;
-        let server = match declared_server {
-            PluginMcpServer::ConfigFile { path, .. } => {
-                load_configured_mcp_server(&installation, path, requested_server_key)?
-            }
-            server => {
-                if requested_server_key.is_some_and(|server_key| server_key != component_key) {
-                    bail!("inline Plugin MCP component server_key must match component_key");
-                }
-                server.clone()
-            }
-        };
+        if requested_server_key.is_some_and(|server_key| server_key != component_key) {
+            bail!("Plugin MCP server_key must match component_key");
+        }
+        let server = declared_server.clone();
         let server_key = server.component_key().to_string();
         let transport = preparation::prepare_transport(
             &installation,

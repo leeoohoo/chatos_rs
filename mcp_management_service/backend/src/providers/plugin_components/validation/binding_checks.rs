@@ -2,68 +2,15 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_management_sdk::WorkspaceProviderKind;
-use chatos_plugin_management_sdk::PluginComponentKind;
 use serde_json::Value;
-
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
-use chatos_plugin_package::plugin_cloud_bundle_sha256;
 
 use super::value_helpers::is_lower_sha256;
 use crate::providers::plugin_components::PluginPrepareResponse;
 use crate::providers::ProviderCallError;
 use crate::runtime::{
-    PluginCloudToolComponentBinding, PluginLocalToolComponentBinding,
-    PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
+    PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
 };
-
-pub(in crate::providers::plugin_components) fn validate_cloud_component_bundle(
-    immutable: &PluginToolComponentRuntimeBinding,
-    bundle: &chatos_plugin_management_sdk::PluginCloudComponentBundle,
-) -> Result<(), ProviderCallError> {
-    if bundle.plugin_id != immutable.plugin_id
-        || bundle.release_id != immutable.release_id
-        || bundle.version != immutable.version
-        || bundle.component_key != immutable.component.component_key
-        || bundle.kind != immutable.component.kind
-        || bundle.execution_host != immutable.component.execution_host
-        || bundle.artifact_sha256 != immutable.artifact_sha256
-        || bundle.normalized_manifest_sha256 != immutable.normalized_manifest_sha256
-        || bundle.bundle_sha256 != immutable.component_content_sha256
-        || plugin_cloud_bundle_sha256(bundle)
-            .map_err(|error| ProviderCallError::invalid_response(error.to_string()))?
-            != bundle.bundle_sha256
-    {
-        return Err(ProviderCallError::invalid_response(
-            "Plugin cloud component Bundle does not match its immutable binding",
-        ));
-    }
-    Ok(())
-}
-
-pub(in crate::providers::plugin_components) fn validate_cloud_component_policy(
-    immutable: &PluginToolComponentRuntimeBinding,
-) -> Result<(), ProviderCallError> {
-    match immutable.component.kind {
-        PluginComponentKind::Command => {
-            if immutable
-                .component
-                .metadata
-                .get("requires_confirmation")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                return Err(ProviderCallError::provider_unavailable(
-                    "Plugin Command requires interactive confirmation that is unavailable on the cloud component path",
-                ));
-            }
-            Ok(())
-        }
-        PluginComponentKind::Agent | PluginComponentKind::SkillCollection => Ok(()),
-        _ => Err(ProviderCallError::provider_unavailable(
-            "Plugin component kind is not an Agent tool",
-        )),
-    }
-}
+use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 
 pub(in crate::providers::plugin_components) fn validate_immutable_route(
     immutable: &PluginToolComponentRuntimeBinding,
@@ -175,31 +122,6 @@ pub(in crate::providers::plugin_components) fn validate_local_bound_route(
     {
         return Err(ProviderCallError::provider_unavailable(
             "Plugin Local tool component route does not match its prepared session",
-        ));
-    }
-    Ok(())
-}
-
-pub(in crate::providers::plugin_components) fn validate_cloud_bound_route(
-    snapshot: &RuntimeSessionSnapshot,
-    route: &ResolvedMcpRoute,
-    binding: &PluginCloudToolComponentBinding,
-) -> Result<(), ProviderCallError> {
-    let immutable = snapshot
-        .plugin_tool_component_bindings
-        .get(route.resource_id.as_str())
-        .ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "immutable Plugin tool component binding is missing",
-            )
-        })?;
-    if snapshot.expires_at_unix <= chrono::Utc::now().timestamp()
-        || immutable != &binding.runtime
-        || route.provider_ref.as_deref() != Some(binding.runtime.provider_ref.as_str())
-        || route.allow_writes != binding.runtime.allow_writes
-    {
-        return Err(ProviderCallError::provider_unavailable(
-            "Plugin Cloud tool component route does not match its prepared session",
         ));
     }
     Ok(())

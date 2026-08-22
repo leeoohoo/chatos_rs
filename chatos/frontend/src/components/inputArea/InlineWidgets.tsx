@@ -8,7 +8,6 @@ import type { AiModelConfig } from '../../types';
 import type { TaskRunnerSelectablePluginResponse } from '../../lib/api/client/types';
 import { thinkingOptionsForProvider } from '../../lib/modelThinkingOptions';
 import type { InputAreaRefObject } from './InputAreaComposerTypes';
-import type { SelectedTaskPluginCommand } from './useTaskPluginPicker';
 
 interface InputAreaAttachmentsPreviewProps {
   attachments: File[];
@@ -17,12 +16,10 @@ interface InputAreaAttachmentsPreviewProps {
 
 export const InputAreaPluginChips: React.FC<{
   plugins: TaskRunnerSelectablePluginResponse[];
-  commands: SelectedTaskPluginCommand[];
   onRemove: (pluginId: string) => void;
-  onRemoveCommand: (pluginId: string, commandId: string) => void;
-}> = ({ plugins, commands, onRemove, onRemoveCommand }) => {
+}> = ({ plugins, onRemove }) => {
   const { t } = useI18n();
-  if (plugins.length === 0 && commands.length === 0) {
+  if (plugins.length === 0) {
     return null;
   }
   return (
@@ -40,32 +37,6 @@ export const InputAreaPluginChips: React.FC<{
             onClick={() => onRemove(plugin.id)}
             className="text-muted-foreground hover:text-destructive"
             aria-label={t('inputArea.plugin.remove', { name: plugin.display_name })}
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      {commands.map(({ key, plugin, command }) => (
-        <div
-          key={key}
-          className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/5 px-3 py-1.5 text-xs"
-        >
-          <span className="font-mono font-medium text-violet-700 dark:text-violet-300">
-            /{command.command_id}
-          </span>
-          <span className="max-w-40 truncate text-muted-foreground">
-            {plugin.display_name}
-          </span>
-          {command.requires_confirmation ? (
-            <span className="text-amber-700 dark:text-amber-300" title={t('inputArea.plugin.confirmationRequired')}>
-              !
-            </span>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => onRemoveCommand(plugin.id, command.command_id)}
-            className="text-muted-foreground hover:text-destructive"
-            aria-label={t('inputArea.plugin.removeCommand', { command: command.display_name })}
           >
             ×
           </button>

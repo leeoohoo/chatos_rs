@@ -579,6 +579,7 @@ mod tests {
             prerequisite_task_ids: Vec::new(),
             task_tool_state: Default::default(),
             plugin_config: Default::default(),
+            plugin_selection_audit: None,
             mcp_config: TaskMcpConfig::default(),
             created_at: now.clone(),
             updated_at: now,

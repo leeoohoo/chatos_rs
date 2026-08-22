@@ -4,8 +4,8 @@
 import { useCallback } from 'react';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import {
-  resolveContactAgentIdFromSession,
-  resolveContactIdFromSession,
+  isSessionMatchedKnownContactAndProject,
+  PUBLIC_PROJECT_ID,
 } from '../../features/contactSession/sessionResolver';
 import type ApiClient from '../../lib/api/client';
 import { deriveNameFromPath, translateSessionListMessage } from './helpers';
@@ -117,15 +117,11 @@ export const useSessionListActions = ({
         if (!contact) {
           return null;
         }
-        const currentContactId = resolveContactIdFromSession(currentSession);
-        const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
-        const currentSessionMatchesContact = Boolean(
-          currentSession?.id
-          && (
-            currentContactId
-              ? currentContactId === contact.id
-              : currentContactAgentId === contact.agentId
-          ),
+        const currentSessionMatchesContact = isSessionMatchedKnownContactAndProject(
+          currentSession,
+          contact,
+          contacts,
+          PUBLIC_PROJECT_ID,
         );
         if (currentSessionMatchesContact) {
           setActivePanel('chat');
@@ -154,7 +150,7 @@ export const useSessionListActions = ({
       console.error('Failed to select session:', error);
       return null;
     }
-  }, [contacts, currentSession?.id, ensureSessionForContact, selectSession, setActivePanel]);
+  }, [contacts, currentSession, ensureSessionForContact, selectSession, setActivePanel]);
 
   const handleOpenSummary = useCallback((sessionId: string) => {
     void handleSelectSession(sessionId).then((selectedSessionId) => {

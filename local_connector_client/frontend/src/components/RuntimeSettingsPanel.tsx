@@ -465,7 +465,6 @@ function PermissionRow({
         {permission.last_error ? <em>{permission.last_error}</em> : null}
         <div className="permissionKinds">
           {permission.builtin_kinds.map((kind) => <code key={kind}>{kind}</code>)}
-          {permission.skill_ids.map((skillId) => <code key={skillId}>{skillId}</code>)}
         </div>
       </div>
       <div className="permissionAction">

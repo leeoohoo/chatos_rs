@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
-
 use super::super::*;
 
 fn user(role: &str) -> CurrentUser {
@@ -40,27 +38,20 @@ fn binding(scope: &str) -> AgentBindingRecord {
     }
 }
 
-fn local_connector_record() -> McpRecord {
+fn http_record() -> McpRecord {
     McpRecord {
         id: "local-mcp-1".to_string(),
         owner_user_id: "user-1".to_string(),
         owner_kind: OWNER_KIND_USER.to_string(),
         visibility: VISIBILITY_PRIVATE.to_string(),
-        source_kind: SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED.to_string(),
-        name: "user_mcp_manifest1".to_string(),
-        display_name: "Local MCP".to_string(),
+        source_kind: SOURCE_KIND_USER_CREATED.to_string(),
+        name: "external_http_mcp".to_string(),
+        display_name: "External HTTP MCP".to_string(),
         description: None,
         enabled: true,
         runtime: McpRuntime {
-            kind: RUNTIME_KIND_LOCAL_CONNECTOR_STDIO.to_string(),
-            server_name: Some("user_mcp_manifest1".to_string()),
-            local_connector: Some(LocalConnectorRef {
-                device_id: Some("device-1".to_string()),
-                workspace_id: None,
-                manifest_id: Some("manifest-1".to_string()),
-                relative_path: None,
-                requires_online: true,
-            }),
+            kind: RUNTIME_KIND_HTTP.to_string(),
+            url: Some("https://mcp.example.com/rpc".to_string()),
             ..McpRuntime::default()
         },
         security: ResourceSecurity::default(),
@@ -110,7 +101,7 @@ fn super_admin_can_choose_public_and_system_private_visibility() {
 #[test]
 fn ordinary_users_can_only_create_local_connector_mcps() {
     let ordinary = user(USER_ROLE_USER);
-    for kind in [RUNTIME_KIND_HTTP, RUNTIME_KIND_STDIO_CLOUD] {
+    for kind in [RUNTIME_KIND_HTTP] {
         let payload = McpPayload {
             runtime: Some(McpRuntime {
                 kind: kind.to_string(),
@@ -119,33 +110,19 @@ fn ordinary_users_can_only_create_local_connector_mcps() {
             ..McpPayload::default()
         };
         let err = validate_client_managed_mcp_payload(&payload, &ordinary)
-            .expect_err("ordinary cloud MCP should be rejected");
+            .expect_err("ordinary external HTTP MCP should be rejected");
         assert_eq!(err.status, StatusCode::FORBIDDEN);
         let runtime = payload.runtime.as_ref().expect("test runtime");
         let err = validate_client_managed_mcp_runtime(runtime, &ordinary)
-            .expect_err("persisted legacy cloud MCP should also be rejected");
+            .expect_err("persisted external HTTP MCP should also be rejected");
         assert_eq!(err.status, StatusCode::FORBIDDEN);
-    }
-
-    for kind in [
-        RUNTIME_KIND_LOCAL_CONNECTOR_STDIO,
-        RUNTIME_KIND_LOCAL_CONNECTOR_HTTP,
-    ] {
-        let payload = McpPayload {
-            runtime: Some(McpRuntime {
-                kind: kind.to_string(),
-                ..McpRuntime::default()
-            }),
-            ..McpPayload::default()
-        };
-        assert!(validate_client_managed_mcp_payload(&payload, &ordinary).is_ok());
     }
 }
 
 #[test]
-fn super_admin_can_create_explicit_cloud_mcps() {
+fn super_admin_can_create_external_http_mcps() {
     let admin = user(USER_ROLE_SUPER_ADMIN);
-    for kind in [RUNTIME_KIND_HTTP, RUNTIME_KIND_STDIO_CLOUD] {
+    for kind in [RUNTIME_KIND_HTTP] {
         let payload = McpPayload {
             runtime: Some(McpRuntime {
                 kind: kind.to_string(),
@@ -195,19 +172,6 @@ fn system_private_resources_require_system_or_global_binding() {
 }
 
 #[test]
-fn local_connector_mcp_requires_connector_reference() {
-    let runtime = McpRuntime {
-        kind: RUNTIME_KIND_LOCAL_CONNECTOR_STDIO.to_string(),
-        command: Some("tool".to_string()),
-        ..McpRuntime::default()
-    };
-    assert_eq!(
-        validate_mcp_runtime(&runtime).unwrap_err().status,
-        StatusCode::BAD_REQUEST
-    );
-}
-
-#[test]
 fn external_http_mcp_requires_plain_https_and_safe_headers() {
     let valid = McpRuntime {
         kind: RUNTIME_KIND_HTTP.to_string(),
@@ -242,37 +206,6 @@ fn external_http_mcp_requires_plain_https_and_safe_headers() {
 }
 
 #[test]
-fn cloud_stdio_mcp_requires_a_direct_sandbox_relative_runtime() {
-    let valid = McpRuntime {
-        kind: RUNTIME_KIND_STDIO_CLOUD.to_string(),
-        command: Some("npx".to_string()),
-        args: vec!["-y".to_string(), "@example/mcp".to_string()],
-        cwd: Some("tools/demo".to_string()),
-        ..McpRuntime::default()
-    };
-    assert!(validate_mcp_runtime(&valid).is_ok());
-
-    let mut absolute = valid.clone();
-    absolute.command = Some("/usr/bin/node".to_string());
-    assert!(validate_mcp_runtime(&absolute).is_err());
-
-    let mut shell = valid.clone();
-    shell.command = Some("bash".to_string());
-    shell.args = vec!["-c".to_string(), "curl bad".to_string()];
-    assert!(validate_mcp_runtime(&shell).is_err());
-
-    let mut escaped = valid.clone();
-    escaped.cwd = Some("../outside".to_string());
-    assert!(validate_mcp_runtime(&escaped).is_err());
-
-    let mut host_env = valid;
-    host_env
-        .env
-        .insert("CHATOS_SANDBOX_MCP_TOKEN".to_string(), "secret".to_string());
-    assert!(validate_mcp_runtime(&host_env).is_err());
-}
-
-#[test]
 fn read_only_external_http_mcp_requires_an_explicit_tool_allowlist() {
     let runtime = McpRuntime {
         kind: RUNTIME_KIND_HTTP.to_string(),
@@ -300,7 +233,7 @@ fn read_only_external_http_mcp_requires_an_explicit_tool_allowlist() {
 
 #[test]
 fn public_mcp_responses_redact_runtime_credentials() {
-    let mut record = local_connector_record();
+    let mut record = http_record();
     record.owner_user_id = "user-2".to_string();
     record.runtime.headers = std::collections::BTreeMap::from([(
         "authorization".to_string(),
@@ -319,96 +252,13 @@ fn public_mcp_responses_redact_runtime_credentials() {
         Some("https://mcp.example.com/rpc")
     );
 
-    let mut owner_record = local_connector_record();
+    let mut owner_record = http_record();
     owner_record.runtime.headers = std::collections::BTreeMap::from([(
         "authorization".to_string(),
         "Bearer owner-secret".to_string(),
     )]);
     redact_mcp_runtime_secrets_for_user(&mut owner_record, &user(USER_ROLE_USER));
     assert_eq!(owner_record.runtime.headers.len(), 1);
-}
-
-#[test]
-fn local_connector_user_mcp_does_not_require_workspace() {
-    let runtime = McpRuntime {
-        kind: RUNTIME_KIND_LOCAL_CONNECTOR_STDIO.to_string(),
-        server_name: Some("user_mcp_manifest1".to_string()),
-        local_connector: Some(LocalConnectorRef {
-            device_id: Some("device-1".to_string()),
-            workspace_id: None,
-            manifest_id: Some("manifest-1".to_string()),
-            relative_path: None,
-            requires_online: true,
-        }),
-        ..McpRuntime::default()
-    };
-
-    assert!(validate_mcp_runtime(&runtime).is_ok());
-}
-
-#[test]
-fn local_connector_user_mcp_scope_is_private_and_owner_isolated() {
-    let record = local_connector_record();
-    assert!(
-        ensure_local_connector_record_scope(&record, "user-1", "device-1", "manifest-1",).is_ok()
-    );
-
-    let mut public = record.clone();
-    public.visibility = VISIBILITY_PUBLIC.to_string();
-    assert_eq!(
-        ensure_local_connector_record_scope(&public, "user-1", "device-1", "manifest-1",)
-            .unwrap_err()
-            .status,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        ensure_local_connector_record_scope(&record, "user-2", "device-1", "manifest-1",)
-            .unwrap_err()
-            .status,
-        StatusCode::NOT_FOUND
-    );
-}
-
-#[test]
-fn local_connector_status_rejects_manifest_hash_mismatch() {
-    let check = ResourceCheckRecord {
-        id: "mcp:local-mcp-1".to_string(),
-        resource_kind: RESOURCE_KIND_MCP.to_string(),
-        resource_id: "local-mcp-1".to_string(),
-        owner_user_id: "user-1".to_string(),
-        status: "available".to_string(),
-        last_checked_at: now_rfc3339(),
-        last_error: None,
-        tool_snapshot: vec![json!({"name": "demo"})],
-        manifest_hash: Some("hash-1".to_string()),
-    };
-
-    assert!(ensure_local_connector_manifest_hash_matches(Some(&check), Some("hash-1")).is_ok());
-    assert_eq!(
-        ensure_local_connector_manifest_hash_matches(Some(&check), Some("hash-2"))
-            .unwrap_err()
-            .status,
-        StatusCode::CONFLICT
-    );
-}
-
-#[test]
-fn local_connector_availability_check_expires_after_ttl() {
-    let now = chrono::Utc::now().to_rfc3339();
-    let stale = (chrono::Utc::now() - chrono::Duration::seconds(61)).to_rfc3339();
-
-    assert!(local_connector_check_is_fresh(
-        now.as_str(),
-        Duration::from_secs(60)
-    ));
-    assert!(!local_connector_check_is_fresh(
-        stale.as_str(),
-        Duration::from_secs(60)
-    ));
-    assert!(!local_connector_check_is_fresh(
-        "invalid",
-        Duration::from_secs(60)
-    ));
 }
 
 #[test]

@@ -20,16 +20,16 @@ pub use invocation_store::{
     RuntimeInvocationStore, RuntimeInvocationStoreStats,
 };
 pub use plugin_mcp::{
-    PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
-    PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+    PluginLocalProviderBinding, PluginLocalToolComponentBinding, PluginMcpRuntimeBinding,
+    PluginToolComponentRuntimeBinding,
 };
 pub use quota::{
     RuntimeInvocationQuota, RuntimeInvocationQuotaLimits, RuntimeInvocationQuotaReserveError,
 };
 pub use session_close_store::RuntimeSessionCloseStore;
 pub use session_store::{
-    ExternalHttpProviderBinding, RuntimeSessionCacheLimits, RuntimeSessionSnapshot,
-    RuntimeSessionStore, RuntimeSessionStoreStats,
+    LocalConnectorInlineHttpRuntime, LocalConnectorMcpProviderBinding, RuntimeSessionCacheLimits,
+    RuntimeSessionSnapshot, RuntimeSessionStore, RuntimeSessionStoreStats,
 };
 pub use tool_batch_store::{
     RuntimeToolBatchPendingEvent, RuntimeToolBatchRecord, RuntimeToolBatchStatus,

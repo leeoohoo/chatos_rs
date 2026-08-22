@@ -386,7 +386,7 @@ mod tests {
         let installed_package = signer.package(temp.path(), "1.0.0", ArchiveMutation::None);
         let installer = PluginInstaller::new(temp.path().join("plugin-store"));
         installer
-            .install_archive(installed_package.install_request())
+            .install_package(installed_package.install_request())
             .expect("install current Plugin");
         let update_package = signer.package(temp.path(), "1.1.0", ArchiveMutation::None);
         let mut source = update_package.install_source();

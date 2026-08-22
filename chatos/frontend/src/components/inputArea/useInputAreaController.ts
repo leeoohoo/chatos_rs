@@ -23,11 +23,6 @@ import { useWorkspaceDirectoryPicker } from './useWorkspaceDirectoryPicker';
 import { useInputAreaContextModel } from './useInputAreaContextModel';
 import { useInputAreaMessageDraft } from './useInputAreaMessageDraft';
 import {
-  parseLeadingPluginCommand,
-  replaceLeadingPluginCommand,
-  type TaskPluginCommandOption,
-} from './pluginCommands';
-import {
   findPluginMentionAtCursor,
   replacePluginMention,
 } from './pluginMentions';
@@ -96,15 +91,10 @@ export function useInputAreaController({
   const effectiveAllowAttachments = allowAttachments;
 
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [commandSuggestionIndex, setCommandSuggestionIndex] = useState(0);
   const [pluginMentionSuggestionIndex, setPluginMentionSuggestionIndex] = useState(0);
   const [messageCursor, setMessageCursor] = useState(0);
-  const [dismissedCommandSuggestionMessage, setDismissedCommandSuggestionMessage] = useState<
-    string | null
-  >(null);
   const [dismissedPluginMentionKey, setDismissedPluginMentionKey] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const commandDiscoveryRequestedRef = useRef(false);
   const pluginMentionDiscoveryRequestedRef = useRef(false);
   const client = useApiClient();
   const { alert } = useDialogService();
@@ -355,26 +345,6 @@ export function useInputAreaController({
     return false;
   }, [alert, effectiveSelectedModelId, showModelSelector, t]);
 
-  const requireValidPluginSelection = useCallback(() => {
-    if (pluginPicker.selectedPluginIds.length === 0) {
-      return false;
-    }
-    if (pluginPicker.commandArgumentIssue) {
-      void alert({
-        title: t('inputArea.plugin.invalidTitle'),
-        message: t('inputArea.plugin.commandArgumentsInvalid'),
-        type: 'warning',
-      });
-      return true;
-    }
-    return false;
-  }, [
-    alert,
-    pluginPicker.commandArgumentIssue,
-    pluginPicker.selectedPluginIds.length,
-    t,
-  ]);
-
   const {
     message,
     textareaRef,
@@ -391,10 +361,7 @@ export function useInputAreaController({
     maxLength,
     onSend,
     requireModelSelection,
-    requireValidPluginSelection,
-    selectedPluginIds: pluginPicker.selectedPluginIds,
-    pluginCommandInvocations: pluginPicker.pluginCommandInvocations,
-    commandMessageFallback: pluginPicker.commandMessageFallback,
+    selectedPluginKeys: pluginPicker.selectedPlugins.map((plugin) => plugin.plugin_key),
     clearSelectedPlugins: pluginPicker.clearSelectedPlugins,
     selectedProjectId,
     selectedRuntimeProject,
@@ -409,30 +376,6 @@ export function useInputAreaController({
     setMessageCursor(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
   }, []);
 
-  const leadingPluginCommand = useMemo(
-    () => parseLeadingPluginCommand(message),
-    [message],
-  );
-  const pluginCommandSuggestions = useMemo(() => (
-    leadingPluginCommand
-      ? pluginPicker.commandSuggestions(leadingPluginCommand.query).slice(0, 24)
-      : []
-  ), [leadingPluginCommand, pluginPicker]);
-  const selectedLeadingPluginCommand = useMemo(() => (
-    leadingPluginCommand?.query
-      ? pluginPicker.selectedCommands.find(({ command }) => (
-          command.command_id.toLowerCase() === leadingPluginCommand.query
-        )) || null
-      : null
-  ), [leadingPluginCommand, pluginPicker.selectedCommands]);
-  const leadingCommandAlreadySelected = Boolean(selectedLeadingPluginCommand);
-  const commandSuggestionsOpen = Boolean(
-    pluginPicker.enabled
-    && leadingPluginCommand
-    && !pluginPicker.open
-    && !leadingCommandAlreadySelected
-    && dismissedCommandSuggestionMessage !== message
-  );
   const pluginMention = useMemo(
     () => findPluginMentionAtCursor(message, messageCursor),
     [message, messageCursor],
@@ -447,21 +390,8 @@ export function useInputAreaController({
     pluginPicker.enabled
     && pluginMention
     && !pluginPicker.open
-    && !commandSuggestionsOpen
     && dismissedPluginMentionKey !== pluginMentionKey
   );
-
-  useEffect(() => {
-    if (!leadingPluginCommand || !pluginPicker.enabled) {
-      commandDiscoveryRequestedRef.current = false;
-      return;
-    }
-    if (commandDiscoveryRequestedRef.current) {
-      return;
-    }
-    commandDiscoveryRequestedRef.current = true;
-    void pluginPicker.loadPicker();
-  }, [leadingPluginCommand, pluginPicker.enabled, pluginPicker.loadPicker]);
 
   useEffect(() => {
     if (!pluginMention || !pluginPicker.enabled) {
@@ -476,50 +406,12 @@ export function useInputAreaController({
   }, [pluginMention, pluginPicker.enabled, pluginPicker.loadPicker]);
 
   useEffect(() => {
-    if (!leadingPluginCommand || !selectedLeadingPluginCommand) {
-      return;
-    }
-    if (selectedLeadingPluginCommand.arguments === leadingPluginCommand.arguments) {
-      return;
-    }
-    pluginPicker.setCommandArguments(
-      selectedLeadingPluginCommand.plugin.id,
-      selectedLeadingPluginCommand.command.command_id,
-      leadingPluginCommand.arguments,
-    );
-  }, [leadingPluginCommand, pluginPicker, selectedLeadingPluginCommand]);
-
-  useEffect(() => {
-    setCommandSuggestionIndex((current) => (
-      pluginCommandSuggestions.length === 0
-        ? 0
-        : Math.min(current, pluginCommandSuggestions.length - 1)
-    ));
-  }, [pluginCommandSuggestions.length, leadingPluginCommand?.query]);
-
-  useEffect(() => {
     setPluginMentionSuggestionIndex((current) => (
       pluginMentionSuggestions.length === 0
         ? 0
         : Math.min(current, pluginMentionSuggestions.length - 1)
     ));
   }, [pluginMention?.query, pluginMentionSuggestions.length]);
-
-  const selectPluginCommandSuggestion = useCallback((option: TaskPluginCommandOption) => {
-    const argumentsText = leadingPluginCommand?.arguments || '';
-    pluginPicker.selectCommand(
-      option.plugin.id,
-      option.command.command_id,
-      argumentsText,
-    );
-    setMessageValue(replaceLeadingPluginCommand(
-      message,
-      option.command.command_id,
-      Boolean(option.command.argument_hint),
-    ));
-    setDismissedCommandSuggestionMessage(null);
-    window.requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [leadingPluginCommand?.arguments, message, pluginPicker, setMessageValue, textareaRef]);
 
   const selectPluginMentionSuggestion = useCallback((
     plugin: TaskRunnerSelectablePluginResponse,
@@ -543,37 +435,6 @@ export function useInputAreaController({
   }, [maxLength, message, pluginMention, pluginPicker, setMessageValue, textareaRef]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (commandSuggestionsOpen) {
-      if (event.key === 'ArrowDown' && pluginCommandSuggestions.length > 0) {
-        event.preventDefault();
-        setCommandSuggestionIndex((current) => (
-          (current + 1) % pluginCommandSuggestions.length
-        ));
-        return;
-      }
-      if (event.key === 'ArrowUp' && pluginCommandSuggestions.length > 0) {
-        event.preventDefault();
-        setCommandSuggestionIndex((current) => (
-          (current - 1 + pluginCommandSuggestions.length) % pluginCommandSuggestions.length
-        ));
-        return;
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setDismissedCommandSuggestionMessage(message);
-        return;
-      }
-      if (event.key === 'Enter' && !event.shiftKey && pluginCommandSuggestions.length > 0) {
-        event.preventDefault();
-        selectPluginCommandSuggestion(
-          pluginCommandSuggestions[Math.min(
-            commandSuggestionIndex,
-            pluginCommandSuggestions.length - 1,
-          )],
-        );
-        return;
-      }
-    }
     if (pluginMentionSuggestionsOpen) {
       if (event.key === 'ArrowDown' && pluginMentionSuggestions.length > 0) {
         event.preventDefault();
@@ -610,17 +471,12 @@ export function useInputAreaController({
     }
     handleDraftKeyDown(event);
   }, [
-    commandSuggestionIndex,
-    commandSuggestionsOpen,
     handleDraftKeyDown,
-    message,
     pluginMentionKey,
     pluginMentionSuggestionIndex,
     pluginMentionSuggestions,
     pluginMentionSuggestionsOpen,
-    pluginCommandSuggestions,
     selectPluginMentionSuggestion,
-    selectPluginCommandSuggestion,
   ]);
 
   return {
@@ -643,11 +499,6 @@ export function useInputAreaController({
     projectFilePickerRef,
     pickerOpen,
     pluginPicker,
-    pluginCommandSuggestions,
-    commandSuggestionsOpen,
-    commandSuggestionIndex,
-    setCommandSuggestionIndex,
-    selectPluginCommandSuggestion,
     pluginMentionSuggestions,
     pluginMentionSuggestionsOpen,
     pluginMentionSuggestionIndex,

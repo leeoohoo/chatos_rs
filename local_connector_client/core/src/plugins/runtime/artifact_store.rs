@@ -24,14 +24,13 @@ use chrono::Utc;
 use ring::hmac;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use crate::relay::RelayRequest;
 use crate::secure_storage::SecureStorage;
-use crate::skills::native::safe_workspace_path;
+use crate::workspace::paths::safe_workspace_path;
 use crate::LocalState;
 
 const MAX_REGISTERED_PLUGIN_ARTIFACTS: usize = 1_024;
@@ -86,21 +85,6 @@ pub(super) struct PluginUiArtifactGrant {
     pub ui: PluginUiSnapshot,
     pub permission_snapshot: BTreeSet<String>,
     pub expires_at: i64,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct PluginArtifactProducer<'a> {
-    pub owner_user_id: &'a str,
-    pub device_id: &'a str,
-    pub workspace_id: &'a str,
-    pub run_id: &'a str,
-    pub plugin_id: &'a str,
-    pub release_id: &'a str,
-    pub artifact_sha256: &'a str,
-    pub component_key: &'a str,
-    pub adapter_session_id: &'a str,
-    pub skill_id: &'a str,
-    pub tool_name: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,117 +187,6 @@ impl PluginArtifactStore {
             .ok_or_else(|| (404, "Plugin UI Artifact session is unavailable".to_string()))?;
         grant.validate_request(request, access, capability)?;
         Ok(grant)
-    }
-
-    pub fn register_native_outputs(
-        &self,
-        state_snapshot: &LocalState,
-        request: &RelayRequest,
-        producer: PluginArtifactProducer<'_>,
-        arguments: &Value,
-        result: &Value,
-    ) -> Result<Vec<PluginArtifactDescriptor>> {
-        if !is_artifact_skill(producer.skill_id) {
-            return Ok(Vec::new());
-        }
-        let candidates = output_candidates(arguments);
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut store = self.lock()?;
-        let previous = store.clone();
-        prune_expired(&mut store);
-        let allowed_media_types = store
-            .ui_grants
-            .values()
-            .filter(|grant| grant.matches_producer(&producer))
-            .filter(|grant| grant.allows_any_artifact_read())
-            .flat_map(|grant| grant.ui.artifact_mime_types.iter().cloned())
-            .collect::<BTreeSet<_>>();
-        if allowed_media_types.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut registered = Vec::new();
-        let mut seen_paths = BTreeSet::new();
-        for requested_path in candidates {
-            let (absolute_path, relative_path) =
-                safe_workspace_path(state_snapshot, request, requested_path.as_str())?;
-            if !seen_paths.insert(relative_path.clone())
-                || !result_contains_string(result, relative_path.as_str())
-            {
-                continue;
-            }
-            validate_regular_workspace_file(
-                state_snapshot,
-                request,
-                absolute_path.as_path(),
-                relative_path.as_str(),
-            )?;
-            let media_type = artifact_media_type(absolute_path.as_path())
-                .ok_or_else(|| anyhow!("Plugin Artifact output type is unsupported"))?;
-            if !allowed_media_types.contains(media_type) {
-                continue;
-            }
-            let metadata = fs::metadata(absolute_path.as_path())
-                .with_context(|| format!("read Plugin Artifact metadata: {relative_path}"))?;
-            if metadata.len() > PLUGIN_ARTIFACT_MAX_BYTES {
-                return Err(anyhow!("Plugin Artifact exceeds the local size limit"));
-            }
-            let bytes = fs::read(absolute_path.as_path())
-                .with_context(|| format!("read Plugin Artifact: {relative_path}"))?;
-            if u64::try_from(bytes.len()).ok() != Some(metadata.len()) {
-                return Err(anyhow!(
-                    "Plugin Artifact changed while it was being registered"
-                ));
-            }
-            let created_at = Utc::now();
-            let created_at_epoch_seconds = created_at.timestamp();
-            let descriptor = PluginArtifactDescriptor {
-                artifact_id: format!("pa_{}", Uuid::new_v4().simple()),
-                owner: PluginArtifactOwner {
-                    owner_user_id: producer.owner_user_id.to_string(),
-                    run_id: producer.run_id.to_string(),
-                    device_id: producer.device_id.to_string(),
-                    workspace_id: producer.workspace_id.to_string(),
-                    plugin_id: producer.plugin_id.to_string(),
-                    release_id: producer.release_id.to_string(),
-                    artifact_sha256: producer.artifact_sha256.to_string(),
-                    component_key: producer.component_key.to_string(),
-                    adapter_session_id: producer.adapter_session_id.to_string(),
-                },
-                workspace_relative_path: relative_path.clone(),
-                display_name: Path::new(relative_path.as_str())
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .ok_or_else(|| anyhow!("Plugin Artifact filename is not valid UTF-8"))?
-                    .to_string(),
-                media_type: media_type.to_string(),
-                size_bytes: metadata.len(),
-                sha256: hex::encode(Sha256::digest(bytes.as_slice())),
-                created_at: created_at.to_rfc3339(),
-                producer_tool_name: producer.tool_name.to_string(),
-                downloadable: true,
-                mutable: false,
-            };
-            store.artifacts.insert(
-                descriptor.artifact_id.clone(),
-                RegisteredPluginArtifact {
-                    descriptor: descriptor.clone(),
-                    created_at_epoch_seconds,
-                },
-            );
-            registered.push(descriptor);
-        }
-        prune_artifact_capacity(&mut store);
-        if !registered.is_empty() {
-            if let Err(error) = self.persist(&store) {
-                *store = previous;
-                return Err(error);
-            }
-        }
-        Ok(registered)
     }
 
     pub fn list(
@@ -615,43 +488,6 @@ impl PluginArtifactStore {
             persistence.save(state)?;
         }
         Ok(())
-    }
-}
-
-fn output_candidates(arguments: &Value) -> Vec<String> {
-    let Some(arguments) = arguments.as_object() else {
-        return Vec::new();
-    };
-    ["target_path", "pdf_target_path"]
-        .into_iter()
-        .filter_map(|field| arguments.get(field).and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-fn is_artifact_skill(skill_id: &str) -> bool {
-    matches!(
-        skill_id,
-        "internal_skill_documents"
-            | "internal_skill_pdf"
-            | "internal_skill_spreadsheets"
-            | "internal_skill_presentations"
-            | "internal_skill_template_creator"
-    )
-}
-
-fn result_contains_string(value: &Value, expected: &str) -> bool {
-    match value {
-        Value::String(value) => value == expected,
-        Value::Array(values) => values
-            .iter()
-            .any(|value| result_contains_string(value, expected)),
-        Value::Object(values) => values
-            .values()
-            .any(|value| result_contains_string(value, expected)),
-        _ => false,
     }
 }
 

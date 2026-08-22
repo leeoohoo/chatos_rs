@@ -3,8 +3,6 @@
 
 use super::core::{bearer_token_from_headers, current_user_from_user_service_token};
 use super::*;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use chatos_agent::{
     chatos_task_runner_tool_profile, is_chatos_callback_agent, is_chatos_plan_task_profile,
     is_task_runner_phase_agent,
@@ -12,7 +10,6 @@ use chatos_agent::{
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::internal_auth::{
@@ -23,13 +20,6 @@ use super::internal_auth::{
 mod headers;
 use headers::*;
 
-const PLUGIN_SELECTION_HEADER_LIMIT_BYTES: usize = 16 * 1024;
-const PLUGIN_SELECTION_MAX_ITEMS: usize = 50;
-const PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES: usize = 256 * 1024;
-const PLUGIN_COMMAND_INVOCATION_HEADER_ENCODED_LIMIT_BYTES: usize =
-    PLUGIN_COMMAND_INVOCATION_HEADER_JSON_LIMIT_BYTES.div_ceil(3) * 4;
-const PLUGIN_COMMAND_INVOCATION_MAX_ITEMS: usize = 64;
-const PLUGIN_COMMAND_ARGUMENT_LIMIT_BYTES: usize = 16 * 1024;
 const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
 pub(super) async fn list_mcp_catalog(
@@ -446,7 +436,6 @@ async fn dispatch_bound_task_runner_tool(
         builtin_prompt_locale: None,
         chatos_plan_mode: is_chatos_plan,
         expected_project_task_ids: binding.expected_project_task_ids.clone(),
-        plugin_config_override: None,
     };
     state
         .task_runner_mcp_service

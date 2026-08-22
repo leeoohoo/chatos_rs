@@ -12,7 +12,6 @@ use chatos_agent::{
     parse_chatos_task_runner_tool_profile, ChatosTaskRunnerToolProfile,
 };
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
-use chatos_plugin_management_sdk::TaskPluginConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum McpToolProfile {
@@ -34,7 +33,6 @@ pub struct McpRequestContext {
     pub builtin_prompt_locale: Option<String>,
     pub chatos_plan_mode: bool,
     pub expected_project_task_ids: BTreeSet<String>,
-    pub plugin_config_override: Option<TaskPluginConfig>,
 }
 
 impl McpRequestContext {
@@ -107,7 +105,8 @@ impl McpRequestContext {
         }
     }
 
-    pub(super) fn enforce_created_task_kind(&self, input: &mut CreateTaskRequest) {
+    pub(super) fn enforce_created_task_context(&self, input: &mut CreateTaskRequest) {
+        input.project_id = self.project_scope_id();
         if !self.is_chatos_plan_task_profile() {
             input.task_profile = Some(TASK_PROFILE_DEFAULT.to_string());
             return;
@@ -130,12 +129,6 @@ impl McpRequestContext {
             _ => BuiltinMcpPromptLocale::DEFAULT_KEY,
         };
         key.to_string()
-    }
-
-    pub(super) fn enforce_plugin_config(&self, input: &mut CreateTaskRequest) {
-        if let Some(plugin_config) = self.plugin_config_override.as_ref() {
-            input.plugin_config = plugin_config.clone();
-        }
     }
 }
 

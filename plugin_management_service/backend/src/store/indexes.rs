@@ -22,20 +22,6 @@ impl AppStore {
             doc! { "plugin_id": 1, "release_id": 1, "component_key": 1 },
         )
         .await?;
-        create_index(
-            &self.mcps,
-            doc! { "runtime.local_connector.device_id": 1, "runtime.local_connector.workspace_id": 1 },
-        )
-        .await?;
-        create_local_manifest_unique_index(
-            &self.mcps,
-            doc! {
-                "owner_user_id": 1,
-                "runtime.local_connector.device_id": 1,
-                "runtime.local_connector.manifest_id": 1,
-            },
-        )
-        .await?;
 
         create_unique_index(&self.skills, doc! { "id": 1 }).await?;
         create_index(
@@ -99,27 +85,6 @@ impl AppStore {
 
         create_unique_index(&self.checks, doc! { "id": 1 }).await?;
         create_index(&self.checks, doc! { "resource_kind": 1, "resource_id": 1 }).await?;
-        create_unique_index(
-            &self.skill_preferences,
-            doc! { "owner_user_id": 1, "skill_id": 1 },
-        )
-        .await?;
-        create_index(
-            &self.skill_preferences,
-            doc! { "owner_user_id": 1, "enabled": 1 },
-        )
-        .await?;
-        create_unique_index(
-            &self.skill_installations,
-            doc! { "owner_user_id": 1, "device_id": 1, "skill_id": 1 },
-        )
-        .await?;
-        create_index(
-            &self.skill_installations,
-            doc! { "owner_user_id": 1, "skill_id": 1, "status": 1 },
-        )
-        .await?;
-
         create_unique_index(&self.plugin_marketplaces, doc! { "id": 1 }).await?;
         create_unique_index(&self.plugin_marketplaces, doc! { "name": 1 }).await?;
         create_index(
@@ -232,75 +197,6 @@ impl AppStore {
         )
         .await?;
 
-        create_unique_index(
-            &self.plugin_cloud_component_bundles,
-            doc! { "plugin_id": 1, "release_id": 1, "component_key": 1 },
-        )
-        .await?;
-        create_index(
-            &self.plugin_cloud_component_bundles,
-            doc! { "release_id": 1, "execution_host": 1 },
-        )
-        .await?;
-
-        create_unique_index(
-            &self.plugin_mcp_cloud_runtime_bundles,
-            doc! { "plugin_id": 1, "release_id": 1, "component.component_key": 1 },
-        )
-        .await?;
-        create_index(
-            &self.plugin_mcp_cloud_runtime_bundles,
-            doc! { "release_id": 1, "component.execution_host": 1 },
-        )
-        .await?;
-
-        create_unique_index(&self.plugin_cloud_credentials, doc! { "id": 1 }).await?;
-        create_unique_index(
-            &self.plugin_cloud_credentials,
-            doc! {
-                "owner_user_id": 1,
-                "plugin_id": 1,
-                "release_id": 1,
-                "component_key": 1,
-                "secret_name": 1,
-            },
-        )
-        .await?;
-
-        create_unique_index(&self.plugin_cloud_oauth_connections, doc! { "id": 1 }).await?;
-        create_unique_index(
-            &self.plugin_cloud_oauth_connections,
-            doc! {
-                "owner_user_id": 1,
-                "plugin_id": 1,
-                "release_id": 1,
-                "component_key": 1,
-                "provider": 1,
-                "resource": 1,
-            },
-        )
-        .await?;
-
-        create_unique_index(
-            &self.plugin_cloud_oauth_authorizations,
-            doc! { "state_sha256": 1 },
-        )
-        .await?;
-        self.plugin_cloud_oauth_authorizations
-            .create_index(
-                mongodb::IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .expire_after(std::time::Duration::from_secs(0))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-
         create_unique_index(&self.plugin_oauth_connections, doc! { "id": 1 }).await?;
         create_unique_index(
             &self.plugin_oauth_connections,
@@ -357,26 +253,5 @@ where
         .create_index(model, None)
         .await
         .map_err(|err| format!("create mongodb unique index failed: {err}"))?;
-    Ok(())
-}
-
-async fn create_local_manifest_unique_index<T>(
-    collection: &Collection<T>,
-    keys: mongodb::bson::Document,
-) -> Result<(), String>
-where
-    T: Send + Sync,
-{
-    let options = IndexOptions::builder()
-        .unique(true)
-        .partial_filter_expression(doc! {
-            "runtime.local_connector.manifest_id": { "$type": "string" }
-        })
-        .build();
-    let model = IndexModel::builder().keys(keys).options(options).build();
-    collection
-        .create_index(model, None)
-        .await
-        .map_err(|err| format!("create local manifest MongoDB unique index failed: {err}"))?;
     Ok(())
 }

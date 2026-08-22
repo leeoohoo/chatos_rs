@@ -3,7 +3,6 @@
 
 mod archive;
 mod auto_update;
-mod bundled;
 mod catalog;
 mod credentials;
 mod installer;
@@ -16,7 +15,7 @@ mod state;
 mod status_sync;
 mod verifier;
 
-pub use archive::{PluginArchiveLimits, VerifiedArchiveFiles};
+pub use archive::{PluginPackageLimits, VerifiedPackageFiles};
 pub(crate) use auto_update::{evaluate_auto_update, PluginAutoUpdateDecision};
 pub use auto_update::{PluginAutoUpdateRecord, PluginAutoUpdateState};
 pub use catalog::{
@@ -49,8 +48,8 @@ pub use runtime::{
 pub use state::{InstalledPluginVersion, LocalInstalledPlugin, LocalPluginRegistry};
 pub(crate) use status_sync::installation_status_message;
 pub use verifier::{
-    verify_plugin_install_source, PluginArtifactVerificationRequest, PluginRequirementInventory,
-    VerifiedPluginArtifact,
+    verify_plugin_install_source, PluginPackageVerificationRequest, PluginRequirementInventory,
+    VerifiedPluginPackage,
 };
 
 #[cfg(test)]

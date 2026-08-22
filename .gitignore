@@ -60,8 +60,16 @@ __pycache__/
 /chatos/backend/docs
 /chatos/backend/docs/*
 /docs/
+!/docs/
+/docs/*
+!/docs/ui-redesign/
+!/docs/ui-redesign/**
+!/docs/plugins/
+!/docs/plugins/**
+/docs/**/.DS_Store
 /memory_engine_ext/*
 /harness/
+/mcps/
 /users/
 /image.png
 /image copy.png

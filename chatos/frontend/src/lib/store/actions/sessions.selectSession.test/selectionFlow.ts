@@ -154,6 +154,8 @@ describe('selectSession', () => {
 
     expect(state.currentSessionId).toBe('session_1');
     expect(state.currentSession?.id).toBe('session_1');
+    expect(state.currentProjectId).toBeNull();
+    expect(state.currentProject).toBeNull();
     expect(state.activePanel).toBe('chat');
     expect(state.sessionChatState.session_1).toMatchObject({
       isLoading: true,

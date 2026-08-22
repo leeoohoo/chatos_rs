@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 
 use crate::runtime::PluginMcpRuntimeBinding;
-use chatos_mcp_management_sdk::{McpExecutionHost, McpRouteCandidate, McpRouteResourceKind};
+use chatos_mcp_management_sdk::{McpRouteCandidate, McpRouteResourceKind};
 use chatos_plugin_management_sdk::{
-    normalized_plugin_manifest_sha256, PluginComponentKind, PluginExecutionHost, ResolvedPlugin,
+    normalized_plugin_manifest_sha256, PluginComponentKind, ResolvedPlugin,
 };
 use sha2::Digest;
 
@@ -93,7 +93,6 @@ pub(super) fn materialize_plugin_mcp_components(
             normalized_manifest_sha256: manifest_sha256.clone(),
             component_key: component.component_key.clone(),
             component_content_sha256: snapshot.content_sha256.clone(),
-            declared_execution_host: component.execution_host,
             installation_device_id: plugin
                 .installation
                 .as_ref()
@@ -126,11 +125,6 @@ pub(super) fn materialize_plugin_mcp_components(
             ),
             resource_kind: McpRouteResourceKind::Plugin,
             system_key: None,
-            execution_host: Some(match component.execution_host {
-                PluginExecutionHost::Cloud => McpExecutionHost::Cloud,
-                PluginExecutionHost::Local => McpExecutionHost::Local,
-                PluginExecutionHost::Portable => McpExecutionHost::Portable,
-            }),
             provider_ref: Some(provider_ref),
             required,
             allow_writes,

@@ -42,8 +42,6 @@ fn runtime_preserves_agent_selection_and_adds_required_mcps() {
         .external_mcp_config_ids
         .contains(&chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID.to_string()));
     assert!(task.mcp_config.selected_skill_ids.is_empty());
-    let snapshots = policy().skill_snapshots(&task).expect("skill snapshots");
-    assert!(snapshots.is_empty());
 }
 
 #[test]
@@ -137,7 +135,7 @@ fn planning_policy_accepts_explicitly_configured_mutating_tools() {
     write.status = "available".to_string();
     write.reason = None;
 
-    let policy = TaskRunnerCapabilityPolicy::new(capabilities)
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities, local_runtime_context())
         .expect("Plugin Management configuration is authoritative");
     let mut task = task();
     policy.apply_to_task(&mut task).expect("apply policy");
@@ -162,7 +160,7 @@ fn policy_rejects_mutating_mcp_when_required_read_dependency_is_not_bound() {
     write.status = "available".to_string();
     write.reason = None;
 
-    let policy = TaskRunnerCapabilityPolicy::new(capabilities)
+    let policy = TaskRunnerCapabilityPolicy::new(capabilities, local_runtime_context())
         .expect("Plugin Management configuration is authoritative");
     let config = TaskMcpConfig {
         enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
@@ -175,8 +173,8 @@ fn policy_rejects_mutating_mcp_when_required_read_dependency_is_not_bound() {
 fn disabled_task_runner_agent_fails_closed() {
     let mut capabilities = policy().capabilities;
     capabilities.agent_enabled = false;
-    let error =
-        TaskRunnerCapabilityPolicy::new(capabilities).expect_err("disabled Agent must not execute");
+    let error = TaskRunnerCapabilityPolicy::new(capabilities, local_runtime_context())
+        .expect_err("disabled Agent must not execute");
     assert!(error.contains("disabled by Plugin Management"));
 }
 
@@ -194,25 +192,26 @@ fn write_validation_rejects_removed_builtins_but_accepts_configured_offline_reso
 }
 
 #[test]
-fn policy_exposes_cloud_and_local_connector_mcps_exactly_as_configured() {
-    let mut local = resolved_mcp("local-user", "local_connector_http", None, false, true);
-    local.resource.source_kind = "local_connector_discovered".to_string();
-    let cloud = resolved_mcp("cloud-http", "http", None, false, true);
-    let policy = TaskRunnerCapabilityPolicy::new(ResolvedAgentCapabilities {
-        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
-        owner_user_id: "owner-1".to_string(),
-        policy_revision: "revision-local".to_string(),
-        generated_at: "now".to_string(),
-        agent_enabled: true,
-        mcps: vec![local, cloud],
-        skills: Vec::new(),
-        plugins: Vec::new(),
-        local_connector_requirements: Vec::new(),
-    })
+fn policy_exposes_http_mcps_exactly_as_configured() {
+    let http = resolved_mcp("external-http", "http", None, false, true);
+    let policy = TaskRunnerCapabilityPolicy::new(
+        ResolvedAgentCapabilities {
+            agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+            owner_user_id: "owner-1".to_string(),
+            policy_revision: "revision-local".to_string(),
+            generated_at: "now".to_string(),
+            agent_enabled: true,
+            mcps: vec![http],
+            skills: Vec::new(),
+            plugins: Vec::new(),
+            local_connector_requirements: Vec::new(),
+        },
+        local_runtime_context(),
+    )
     .expect("policy");
 
     assert_eq!(
         policy.selectable_external_mcp_ids(),
-        vec!["local-user".to_string(), "cloud-http".to_string()]
+        vec!["external-http".to_string()]
     );
 }

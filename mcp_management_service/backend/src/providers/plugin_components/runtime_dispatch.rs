@@ -16,18 +16,13 @@ impl PluginComponentProvider {
         original_tool_name: &str,
         arguments: Value,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        match route.provider_kind {
-            McpProviderKind::PluginLocal => {
-                self.call_local(snapshot, route, original_tool_name, arguments)
-                    .await
-            }
-            McpProviderKind::PluginCloud => {
-                self.call_cloud(snapshot, route, original_tool_name, arguments)
-            }
-            _ => Err(ProviderCallError::provider_unavailable(
-                "Plugin component route uses an unsupported provider",
-            )),
+        if route.provider_kind != McpProviderKind::PluginLocal {
+            return Err(ProviderCallError::provider_unavailable(
+                "Plugin component route is not local",
+            ));
         }
+        self.call_local(snapshot, route, original_tool_name, arguments)
+            .await
     }
 
     pub(in crate::providers) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {

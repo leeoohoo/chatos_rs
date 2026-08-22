@@ -5,13 +5,13 @@ This directory contains the local-side Connector implementation.
 Current status:
 
 1. `core` is a Rust local daemon.
-2. `frontend` is the local React client UI for login, workspace grants, Skill enablement, terminal testing, permission controls, and image creation.
+2. `frontend` is the local React client UI for login, Marketplace Plugin management, terminal testing, and permission controls.
 3. The daemon registers a device against `local_connector_service`.
-4. It stores the local-only mapping from cloud `workspace_id` to the real local root.
-5. It opens an outbound WebSocket to the cloud service.
-6. It handles MCP, Skill prepare/execute/cancel, terminal PTY, terminal exec, and compatibility permission-lease relay messages from the cloud service.
+4. It automatically registers a device-scoped local filesystem route while preserving existing workspace mappings for project compatibility.
+5. It opens an outbound WebSocket to Local Connector Service.
+6. It handles Marketplace Plugin/MCP, terminal PTY, terminal exec, and permission-lease relay messages from Local Connector Service.
 7. One owner can hold only one active Local Connector session lease; a second client is rejected with `409 connector_already_active`.
-8. The installer embeds all 28 internal Skill Bundles. Fourteen currently have implemented adapters; Browser includes its pinned native `agent-browser` and Chrome for Testing runtime, while Chrome includes a user-authorized macOS/Windows extension and user-level Native Messaging Host path with approved snapshots, same-origin navigation, short-lived target click/type/select actions, bounded scrolling/history/tab activation, workspace upload, hash-verified create-new download handoff and transient viewport capture; the other fourteen fail closed as unsupported.
+8. The installer contains no built-in document, PDF, Computer Use, or similar capability packages. Capabilities are installed only from approved Plugin Management releases as pinned npm MCP packages.
 
 ## Run the Local Client
 
@@ -56,21 +56,13 @@ Run the reusable packaging script on macOS:
 ./local_connector_client/package-electron-macos-client.sh
 ```
 
-The macOS package includes a ChatOS-owned document runtime for Word/PDF tooling. The script looks for the runtime source in this order:
-
-1. `CHATOS_DOCUMENT_RUNTIME_SOURCE`, for CI or release builds that provide a verified runtime source explicitly.
-2. `local_connector_client/runtime_assets/document-runtime-source/<platform>`, for a repo- or artifact-provided ChatOS runtime source.
-3. `~/Library/Caches/chatos-local-connector/document-runtime-source/<platform>`, for the local ChatOS runtime cache.
-
-For temporary local verification only, `CHATOS_USE_CODEX_DOCUMENT_RUNTIME_SOURCE=1` imports Codex's bundled LibreOffice/Poppler source into the ChatOS cache and then packages from that ChatOS-owned cache. Official builds should provide the ChatOS runtime source directly instead of using the Codex import option.
-
-The script validates the 28-entry Skill catalog, stages the 12 signed-control-plane Plugin Bundles with exact manifest/artifact hashes, checksums, and SPDX SBOMs, filters platform assets, verifies the staged Plugin index, detects Apple Silicon versus Intel, builds the desktop resources, and writes a DMG under:
+The script detects Apple Silicon versus Intel, builds the desktop resources, and writes a DMG under:
 
 ```text
 local_connector_client/dist/electron-macos/
 ```
 
-Before accepting the DMG, packaging runs `verify-installed-package.mjs` against the final `.app/Contents/Resources` directory. The verifier does not launch Electron, Chrome, LibreOffice, or any service. It checks executable architecture, critical non-symlink paths, the fixed least-privilege Chrome extension, Browser and Document runtimes, document hashes, the 28-Skill/12-Plugin catalogs, the packaged Electron resource bindings, and internal resource-tree symlink/case-collision safety. A redacted JSON report is written beside the DMG as `*.dmg.verification.json`. When `CHATOS_MAC_SIGN=1`, the same pass also requires strict app/Core/helper signatures and one shared Team Identifier.
+Before accepting the DMG, packaging runs `verify-installed-package.mjs` against the final `.app/Contents/Resources` directory. It checks executable architecture, critical non-symlink paths, the Chrome extension and browser runtime, confirms removed built-in capabilities are absent, and validates resource-tree safety. A redacted JSON report is written beside the DMG as `*.dmg.verification.json`.
 
 Packaging is unsigned by default so an invalid or revoked local certificate is not selected accidentally. After installing a valid `Developer ID Application` certificate, enable signing explicitly:
 
@@ -88,7 +80,7 @@ Windows desktop packaging must run in PowerShell on Windows:
 powershell -ExecutionPolicy Bypass -File .\local_connector_client\package-electron-windows-client.ps1
 ```
 
-Before creating the archive, the script stages and re-verifies the same 12 Plugin Bundles for the detected Windows architecture, then runs the same final-resources verifier without launching the app or opening a port. Core, Native Host, and Sandbox binaries must match the package architecture; Windows ARM64 explicitly permits the pinned x64 `agent-browser` and Chrome for Testing runtimes through Windows x64 emulation. It writes:
+Before creating the archive, the script verifies final resources without launching the app or opening a port. Marketplace MCP plugins are installed separately into the client's managed npm package directory. Core and Native Host binaries must match the package architecture; Windows ARM64 explicitly permits the pinned x64 browser runtime through Windows x64 emulation. It writes:
 
 1. `local_connector_client/dist/electron-windows/Chat OS Local Connector/Chat OS Local Connector.exe`
 2. `local_connector_client/dist/electron-windows/Chat-OS-Local-Connector-windows-<architecture>.zip`
@@ -100,8 +92,6 @@ An existing unpacked app can be checked again without rebuilding it. Supply its 
 node local_connector_client/verify-installed-package.mjs \
   --platform macos-arm64 \
   --resources "/Applications/Chat OS Local Connector.app/Contents/Resources" \
-  --plugin-catalog local_connector_client/plugin_bundles/catalog/bundled-plugin-catalog.json \
-  --skill-catalog local_connector_client/skill_bundles/catalog/internal-skill-catalog.json \
   --report /tmp/chatos-installed-package-verification.json \
   --require-signed
 ```
@@ -118,16 +108,15 @@ Run the Linux packager on the target Linux architecture:
 ./local_connector_client/package-electron-linux-client.sh
 ```
 
-The script detects `linux-arm64` versus `linux-x64`, builds the two React frontends and native Rust
-executables on Linux, stages and verifies all 12 Plugin Bundles and 28 Skill Bundles, and creates a
-DEB under:
+The script detects `linux-arm64` versus `linux-x64`, builds the React frontend and native Rust
+executables on Linux, verifies that removed built-in capabilities are absent, and creates a DEB under:
 
 ```text
 local_connector_client/dist/electron-linux/
 ```
 
 Linux currently ships the explicit `linux-browser` runtime profile. It contains the desktop app,
-Local Connector Core, bundled `rg`, Plugin/Skill catalogs, SQLite migrations,
+Local Connector Core, bundled `rg`, SQLite migrations,
 the fixed-identity Chrome extension, and the Linux native messaging host. The desktop shell loads
 the hosted ChatOS web application at runtime instead of packaging a local ChatOS frontend bundle. The
 client registers user-scoped manifests for both Google Chrome and Chromium when the user explicitly
@@ -137,11 +126,10 @@ the private rendezvous file into the active Snap revision's user home. The final
 `verify-installed-package.mjs`, and a redacted `*.deb.verification.json` report is written beside the
 DEB.
 
-The `linux-browser` profile still excludes Computer Use, `agent-browser`/Chrome for Testing, and the
-bundled LibreOffice/Poppler document runtime. These features fail closed until Linux-native runtime
-assets and adapters are added; the package must not be represented as equivalent to the full macOS
-or Windows release profile. The verifier retains `linux-core` for validating older core-only Linux
-packages.
+The `linux-browser` profile still excludes `agent-browser`/Chrome for Testing. Computer Use,
+document, PDF, and similar capabilities are not desktop-bundled runtimes; they must be installed as
+approved Marketplace npm MCP plugins. The verifier retains `linux-core` for validating older
+core-only Linux desktop packages.
 
 To publish the ZIP to the official website's MinIO release bucket:
 
@@ -177,10 +165,10 @@ The UI supports:
 3. Local directory browsing and multi-directory grants.
 4. Terminal relay testing through `local_connector_service`.
 5. Native local-process readiness, policy controls, and lease handling in the Local Connector core.
-6. A dedicated Skills page where Admin-provided internal Skills are visible to every user but remain disabled until the user enables them.
+6. Marketplace npm MCP installation, activation, permission, credential, and availability status.
 7. A persistent developer-mode switch. It uses local ChatOS (`127.0.0.1:8088`), Local Connector Service (`127.0.0.1:39230`), and User Service (`127.0.0.1:39190`) with a separate Electron cookie partition; the local development stack continues to use the configured online MinIO endpoint by default.
 8. Settings render inside the main Electron window instead of a second macOS Space-aware window. The hosted ChatOS surface continues to live in its own `WebContentsView`; main/settings views are restored and repainted when the app becomes active, and a failed ChatOS renderer is recreated automatically.
-9. The system-permissions panel derives workspace, process, browser, network, Accessibility, Screen Recording, and Office Automation mappings from the signed Skill catalog. A Skill cannot be enabled while one of its mapped capabilities is not ready; on macOS, Office Automation remains enableable because its consent prompt is issued on first use.
+9. The system-permissions panel reports device-owned workspace, process, browser, network, Accessibility, Screen Recording, and Office Automation readiness used by installed MCP plugins and local runtime controls.
 10. The signed macOS app declares Apple Events automation and user-selected Desktop/Documents/Downloads/network-volume/removable-volume usage descriptions. Accessibility is requested through Electron, while Screen Recording and other privacy categories link to the matching macOS settings pages.
 
 Legacy env-driven mode is still supported:
@@ -201,9 +189,9 @@ through `GET /api/local-connectors/config/runtime`. The client rejects MCP/termi
 commands unless they carry a trusted Ed25519 platform signature from that managed control-plane
 bundle.
 
-Command Approval Agent 完整保留在客户端本地：模型循环只使用本地只读项目工具和本地 `approval_decision`，风险判断、人工确认、白名单、Session Approval 与审批历史也都在设备侧完成。它不会创建云端 MCP Runtime Session，也不会调用云端 MCP 工具。Agent Prompt、能力策略和 Memory 可继续通过普通受认证 REST 获取，但这些控制面请求不会成为工具调用链。
+Command Approval Agent 完整保留在客户端本地：模型循环只使用本地只读项目工具和本地 `approval_decision`，风险判断、人工确认、白名单、Session Approval 与审批历史也都在设备侧完成。它不会创建服务端 MCP Runtime Session，也不会在服务端调用 MCP 工具。Agent Prompt、能力策略和 Memory 可继续通过普通受认证 REST 获取，但这些控制面请求不会成为工具调用链。
 
-The local state file stores `device_id` and the local-only mapping from cloud `workspace_id` to an absolute local root. The cloud service only stores the alias and fingerprint.
+The local state file stores `device_id` and the local-only mapping from server-issued `workspace_id` to an absolute local root. The backend service only stores the alias and fingerprint.
 
 Terminal support:
 
@@ -214,7 +202,7 @@ Terminal support:
 
 Terminal exec remains available for MCP tools and relay diagnostics:
 
-1. Cloud calls `POST /api/local-connectors/relay/{device_id}/terminal/exec`.
+1. ChatOS, Task Runner, or MCP Management calls `POST /api/local-connectors/relay/{device_id}/terminal/exec`.
 2. The service forwards a `terminal_exec_request` through the outbound WebSocket.
 3. The client runs `command` plus `args` directly inside the authorized workspace. It does not use shell expansion by default.
 4. Optional `cwd` must still resolve inside the authorized workspace.

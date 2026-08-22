@@ -16,12 +16,9 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SAFE_PLATFORM = /^(?:macos|windows|linux)-(?:arm64|x64)$/;
 const SAFE_RUNTIME_PROFILES = new Set(['full', 'linux-core', 'linux-browser']);
 const SAFE_SHA256 = /^[0-9a-f]{64}$/;
-const SAFE_RUNTIME_REVISION = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/;
 const MAX_RESOURCE_FILES = 300_000;
 const MAX_RESOURCE_BYTES = 8 * 1024 * 1024 * 1024;
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
-const EXPECTED_SKILL_COUNT = 28;
-const EXPECTED_PLUGIN_COUNT = 12;
 const EXPECTED_CHROME_EXTENSION_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwtyBLDERxm2J31roRxBzHGFmtn03x51KFG7KLXkLNzNVaEnk6Np4ZnQMiu7ADkVykLoDtBUZCcJ5/Ol7Ceo9eYGOdtKp1KPpW5tM16vj+y0NkwOi27Ofr9ak0P3MvHQnJjAFOHd/vOSF8El94VV6A6iWuhlGSbnvbj+oZ+w3RWQkqKiXr/Qkd77DvvJhQghcz0V5JhVqrMANxOW1kPDVPIZvPfrxh4+LX4jrzPSLzgQcsG6q6M4dkdIH7UeymQv12XVdP2UtSrLyTRC2MpzuohQmau334GnZAGfkfg9ODXbrVdlabFb4JnhZHVCEoMwNI0wNhbkTlxG1bhZlgQTQawIDAQAB';
 const EXPECTED_CHROME_PERMISSIONS = [
   'activeTab',
@@ -65,7 +62,7 @@ function parseArgs(argv) {
     const key = argument.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     args[key] = argv[++index];
   }
-  for (const required of ['platform', 'resources', 'pluginCatalog', 'skillCatalog']) {
+  for (const required of ['platform', 'resources']) {
     if (!args[required]) {
       const name = required.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
       throw new Error(`Missing required --${name}`);
@@ -82,8 +79,6 @@ function parseArgs(argv) {
     throw new Error(`${args.runtimeProfile} runtime profile is only valid for Linux packages`);
   }
   args.resources = path.resolve(args.resources);
-  args.pluginCatalog = path.resolve(args.pluginCatalog);
-  args.skillCatalog = path.resolve(args.skillCatalog);
   args.electronRuntimeSource = path.resolve(
     args.electronRuntimeSource || path.join(SCRIPT_DIR, 'frontend', 'electron', 'core-runtime.cjs'),
   );
@@ -454,148 +449,18 @@ async function verifyBrowserRuntime(args) {
   };
 }
 
-async function verifyDocumentRuntime(args) {
-  const runtimeRelative = `bundled-tools/${args.platform}/documents-runtime`;
-  const runtimeRoot = requireDirectory(args.resources, runtimeRelative, 'Document runtime');
-  const manifestPath = requireRegularFile(runtimeRoot, 'runtime.json', 'Document runtime manifest').absolute;
-  const manifest = readJson(manifestPath, 'Document runtime manifest');
-  if (manifest.schema_version !== 1 || manifest.platform !== args.platform) {
-    throw new Error('Document runtime manifest schema/platform does not match the package');
-  }
-  if (typeof manifest.runtime_revision !== 'string' || !SAFE_RUNTIME_REVISION.test(manifest.runtime_revision)) {
-    throw new Error('Document runtime revision is invalid');
-  }
-  const macos = args.platform.startsWith('macos-');
-  const expectedSoffice = macos
-    ? /^libreoffice\/(?:LibreOffice|LibreOfficeDev)\.app\/Contents\/MacOS\/soffice$/
-    : /^libreoffice\/program\/soffice\.exe$/;
-  const expectedPdftoppm = macos
-    ? /^poppler\/bin\/pdftoppm$/
-    : /^poppler\/(?:Library\/)?bin\/pdftoppm\.exe$/;
-
-  async function verifyManifestFile(entry, label, expectedPath) {
-    if (!entry || typeof entry !== 'object' || typeof entry.path !== 'string'
-      || typeof entry.sha256 !== 'string' || typeof entry.version !== 'string') {
-      throw new Error(`${label} manifest entry is incomplete`);
-    }
-    normalizeRelativePath(entry.path, `${label} path`);
-    if (!expectedPath.test(entry.path) || !SAFE_SHA256.test(entry.sha256) || entry.version.trim().length === 0) {
-      throw new Error(`${label} manifest entry is invalid for ${args.platform}`);
-    }
-    const file = requireRegularFile(runtimeRoot, entry.path, label, { executable: macos });
-    const actualSha256 = await sha256File(file.absolute);
-    if (actualSha256 !== entry.sha256) {
-      throw new Error(`${label} SHA-256 does not match runtime.json`);
-    }
-    return { path: entry.path, bytes: file.size, sha256: actualSha256, version: entry.version };
-  }
-
-  const soffice = await verifyManifestFile(manifest.soffice, 'LibreOffice soffice', expectedSoffice);
-  const pdftoppm = await verifyManifestFile(manifest.pdftoppm, 'Poppler pdftoppm', expectedPdftoppm);
-  if (manifest.font_directory !== 'fonts' || !Array.isArray(manifest.fonts) || manifest.fonts.length !== 1) {
-    throw new Error('Document runtime must contain the pinned fallback font contract');
-  }
-  const font = manifest.fonts[0];
-  if (!font || font.path !== 'fonts/NotoSansSC-Regular.ttf' || !SAFE_SHA256.test(font.sha256)) {
-    throw new Error('Document runtime fallback font entry is invalid');
-  }
-  const fontFile = requireRegularFile(runtimeRoot, font.path, 'Document fallback font');
-  const fontSha256 = await sha256File(fontFile.absolute);
-  if (fontSha256 !== font.sha256) {
-    throw new Error('Document fallback font SHA-256 does not match runtime.json');
-  }
-  requireRegularFile(runtimeRoot, 'fonts/NotoSansSC-OFL.txt', 'Document fallback font license');
-  if (macos) {
-    if (manifest.poppler_library_dir !== 'poppler/lib') {
-      throw new Error('macOS document runtime Poppler library directory is invalid');
-    }
-    requireDirectory(runtimeRoot, manifest.poppler_library_dir, 'Poppler library directory');
-  } else if (manifest.poppler_library_dir !== null) {
-    throw new Error('Windows document runtime must not declare a Poppler library directory override');
-  }
-  return {
-    schema_version: manifest.schema_version,
-    runtime_revision: manifest.runtime_revision,
-    platform: manifest.platform,
-    soffice,
-    pdftoppm,
-    fallback_font: { path: font.path, bytes: fontFile.size, sha256: fontSha256 },
-  };
-}
-
-async function verifySkillAndPluginBundles(args) {
-  const sourcePluginCatalog = readJson(args.pluginCatalog, 'Source Plugin catalog');
-  const sourceSkillCatalog = readJson(args.skillCatalog, 'Source Skill catalog');
-  const packagedCatalogRelative = 'skill-bundles/catalog/internal-skill-catalog.json';
-  const packagedCatalogPath = requireRegularFile(args.resources, packagedCatalogRelative, 'Packaged Skill catalog').absolute;
-  const packagedSkillCatalog = readJson(packagedCatalogPath, 'Packaged Skill catalog');
-  if (sourcePluginCatalog.schema_version !== 1 || !Array.isArray(sourcePluginCatalog.plugins)
-    || sourcePluginCatalog.plugins.length !== EXPECTED_PLUGIN_COUNT) {
-    throw new Error(`Source Plugin catalog must contain exactly ${EXPECTED_PLUGIN_COUNT} schema-v1 entries`);
-  }
-  if (sourceSkillCatalog.schema_version !== 1 || !Array.isArray(sourceSkillCatalog.skills)
-    || sourceSkillCatalog.skills.length !== EXPECTED_SKILL_COUNT) {
-    throw new Error(`Source Skill catalog must contain exactly ${EXPECTED_SKILL_COUNT} schema-v1 entries`);
-  }
-  if (stableJson(sourceSkillCatalog) !== stableJson(packagedSkillCatalog)) {
-    throw new Error('Packaged Skill catalog differs from the release source catalog');
-  }
-  if (!sourcePluginCatalog.catalog_revision
-    || sourcePluginCatalog.catalog_revision !== sourceSkillCatalog.catalog_revision) {
-    throw new Error('Plugin and Skill catalog revisions do not match');
-  }
-  const sourceSkillRoot = path.resolve(path.dirname(args.skillCatalog), '..', 'internal');
-  const packagedSkillRoot = requireDirectory(args.resources, 'skill-bundles/internal', 'Packaged Skill root');
-  const seenSkillIds = new Set();
-  for (const skill of sourceSkillCatalog.skills) {
-    if (!skill || typeof skill.skill_id !== 'string' || typeof skill.name !== 'string' || typeof skill.version !== 'string') {
-      throw new Error('Skill catalog contains an invalid entry');
-    }
-    if (seenSkillIds.has(skill.skill_id)) {
-      throw new Error(`Skill catalog contains duplicate id: ${skill.skill_id}`);
-    }
-    seenSkillIds.add(skill.skill_id);
-    const bundleRelative = `${skill.name}/${skill.version}`;
-    for (const fileName of ['skill.json', 'instructions.md']) {
-      const relativePath = `${bundleRelative}/${fileName}`;
-      const sourceFile = requireRegularFile(sourceSkillRoot, relativePath, `Source Skill ${skill.skill_id}`).absolute;
-      const packagedFile = requireRegularFile(packagedSkillRoot, relativePath, `Packaged Skill ${skill.skill_id}`).absolute;
-      if (await sha256File(sourceFile) !== await sha256File(packagedFile)) {
-        throw new Error(`Packaged Skill differs from its release source: ${skill.skill_id}/${fileName}`);
-      }
+function assertNoRemovedBuiltinCapabilities(args) {
+  const forbiddenPaths = [
+    'skill-bundles',
+    'chatos_computer_use_helper',
+    'chatos_computer_use_helper.exe',
+    `bundled-tools/${args.platform}/documents-runtime`,
+  ];
+  for (const relativePath of forbiddenPaths) {
+    if (fs.existsSync(path.join(args.resources, ...relativePath.split('/')))) {
+      throw new Error(`Installed package contains removed built-in capability: ${relativePath}`);
     }
   }
-  const pluginRoot = requireDirectory(args.resources, 'plugin-bundles', 'Packaged Plugin Bundles');
-  const indexPath = requireRegularFile(pluginRoot, 'plugin-bundle-index.json', 'Packaged Plugin Bundle index').absolute;
-  const index = readJson(indexPath, 'Packaged Plugin Bundle index');
-  if (index.schema_version !== 1 || index.platform !== args.platform
-    || index.catalog_revision !== sourcePluginCatalog.catalog_revision
-    || !Array.isArray(index.plugins) || index.plugins.length !== EXPECTED_PLUGIN_COUNT
-    || index.plugins.flatMap((plugin) => plugin.skills || []).length !== EXPECTED_SKILL_COUNT) {
-    throw new Error('Packaged Plugin Bundle index does not match the release catalogs/platform');
-  }
-  const bundleTool = path.join(SCRIPT_DIR, 'prepare-plugin-bundles.mjs');
-  requireRegularFile(SCRIPT_DIR, 'prepare-plugin-bundles.mjs', 'Plugin Bundle verification tool');
-  const verification = spawnSync(process.execPath, [
-    bundleTool,
-    '--verify-only',
-    '--plugin-catalog', args.pluginCatalog,
-    '--skill-catalog', packagedCatalogPath,
-    '--skill-root', packagedSkillRoot,
-    '--output', pluginRoot,
-    '--platform', args.platform,
-  ], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
-  if (verification.error || verification.status !== 0) {
-    const detail = String(verification.stderr || verification.stdout || verification.error?.message || '').trim();
-    throw new Error(`Packaged Plugin Bundle verification failed${detail ? `: ${detail}` : ''}`);
-  }
-  return {
-    catalog_revision: sourcePluginCatalog.catalog_revision,
-    release_version: sourcePluginCatalog.release_version,
-    plugins: index.plugins.length,
-    skills: EXPECTED_SKILL_COUNT,
-    index_sha256: await sha256File(indexPath),
-  };
 }
 
 async function verifyElectronRuntime(args) {
@@ -617,9 +482,6 @@ async function verifyElectronRuntime(args) {
   const requiredPatterns = [
     /process\.resourcesPath/,
     /CHATOS_BUNDLED_TOOLS_DIR:\s*resourcePath\('bundled-tools'\)/,
-    /CHATOS_DOCUMENT_RUNTIME_DIR:\s*path\.join\(browserRuntime\.toolsDir,\s*'documents-runtime'\)/,
-    /CHATOS_BUNDLED_SKILLS_DIR:\s*resourcePath\('skill-bundles'\)/,
-    /CHATOS_BUNDLED_PLUGINS_DIR:\s*resourcePath\('plugin-bundles'\)/,
     /CHATOS_CHROME_NATIVE_HOST_PATH:\s*resourcePath\(chromeNativeHostName\)/,
     /CHATOS_CHROME_EXTENSION_DIR:\s*chromeExtensionPath\(\)/,
     /env\.AGENT_BROWSER_BIN\s*=\s*browserRuntime\.agentBrowser/,
@@ -627,10 +489,6 @@ async function verifyElectronRuntime(args) {
   ];
   if (requiredPatterns.some((pattern) => !pattern.test(runtime))) {
     throw new Error('Packaged Electron core runtime is missing a required packaged-resource binding');
-  }
-  if (!/process\.platform === 'darwin'[\s\S]{0,400}CHATOS_COMPUTER_USE_HELPER_PATH\s*=\s*resourcePath\(computerUseHelperName\)/.test(runtime)
-    || !/app\.isPackaged[\s\S]{0,200}CHATOS_COMPUTER_USE_HELPER_REQUIRE_SIGNED\s*=\s*'1'/.test(runtime)) {
-    throw new Error('Packaged Electron core runtime is missing the macOS signed Computer Use helper contract');
   }
   return { packaged_path: candidates[0], bytes: fs.lstatSync(packaged).size, sha256: packagedHash };
 }
@@ -653,16 +511,13 @@ function verifyLinuxCoreRuntimeProfile(args) {
   return {
     chrome_extension: { verified: false, reason: 'not included in the linux-core runtime profile' },
     browser_runtime: { verified: false, reason: 'not included in the linux-core runtime profile' },
-    document_runtime: { verified: false, reason: 'not included in the linux-core runtime profile' },
   };
 }
 
 async function verifyLinuxBrowserRuntimeProfile(args) {
   const forbiddenPaths = [
-    'chatos_computer_use_helper',
     `bundled-tools/${args.platform}/agent-browser`,
     `bundled-tools/${args.platform}/browser`,
-    `bundled-tools/${args.platform}/documents-runtime`,
   ];
   for (const relativePath of forbiddenPaths) {
     const absolutePath = path.join(args.resources, ...relativePath.split('/'));
@@ -673,7 +528,6 @@ async function verifyLinuxBrowserRuntimeProfile(args) {
   return {
     chrome_extension: await verifyChromeExtension(args),
     browser_runtime: { verified: false, reason: 'bundled browser automation runtime is not included in the linux-browser profile' },
-    document_runtime: { verified: false, reason: 'bundled document runtime is not included in the linux-browser profile' },
   };
 }
 
@@ -698,8 +552,6 @@ function sanitizedError(error, args) {
   let message = String(error?.stack || error);
   const replacements = [
     [args?.resources, '<resources>'],
-    [args?.pluginCatalog, '<plugin-catalog>'],
-    [args?.skillCatalog, '<skill-catalog>'],
     [args?.electronRuntimeSource, '<electron-runtime-source>'],
     [args?.chromeExtensionSource, '<chrome-extension-source>'],
     [SCRIPT_DIR, '<local-connector-client>'],
@@ -714,6 +566,7 @@ function sanitizedError(error, args) {
 async function main(args) {
   assertRootDirectory(args.resources, 'Installed package resources root');
   assertNoObsoleteCriticalAliases(args.resources, args.platform);
+  assertNoRemovedBuiltinCapabilities(args);
   const tree = scanResourceTree(args.resources);
   const migrations = requireDirectory(args.resources, 'sqlite-migrations', 'SQLite migrations');
 
@@ -725,7 +578,6 @@ async function main(args) {
     ? [
         ['local_connector_client_core', 'Local Connector Core'],
         ['chatos_chrome_native_host', 'Chrome Native Messaging Host'],
-        ['chatos_computer_use_helper', 'Computer Use helper'],
       ]
     : windows
       ? [
@@ -750,20 +602,17 @@ async function main(args) {
     runtimeVerification = Promise.all([
         verifyChromeExtension(args),
         verifyBrowserRuntime(args),
-        verifyDocumentRuntime(args),
-      ]).then(([chromeExtension, browserRuntime, documentRuntime]) => ({
+      ]).then(([chromeExtension, browserRuntime]) => ({
         chrome_extension: chromeExtension,
         browser_runtime: browserRuntime,
-        document_runtime: documentRuntime,
       }));
   } else if (args.runtimeProfile === 'linux-browser') {
     runtimeVerification = verifyLinuxBrowserRuntimeProfile(args);
   } else {
     runtimeVerification = Promise.resolve(verifyLinuxCoreRuntimeProfile(args));
   }
-  const [runtime, bundles, electronRuntime] = await Promise.all([
+  const [runtime, electronRuntime] = await Promise.all([
     runtimeVerification,
-    verifySkillAndPluginBundles(args),
     verifyElectronRuntime(args),
   ]);
   const codeSigning = verifyMacCodeSigning(args, executablePaths);
@@ -777,9 +626,7 @@ async function main(args) {
     executables,
     chrome_extension: runtime.chrome_extension,
     browser_runtime: runtime.browser_runtime,
-    document_runtime: runtime.document_runtime,
     local_runtime_migrations: localRuntimeMigrations,
-    plugin_bundles: bundles,
     electron_runtime: electronRuntime,
     code_signing: codeSigning,
   };

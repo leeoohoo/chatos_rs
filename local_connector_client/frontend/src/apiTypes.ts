@@ -31,19 +31,8 @@ export interface ConnectorStatus {
   device_id?: string | null;
   device_name?: string | null;
   user?: AuthUser | null;
+  default_workspace_id?: string | null;
   workspaces: WorkspaceRecord[];
-}
-
-export interface FsEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
-}
-
-export interface FsListResponse {
-  path: string;
-  parent?: string | null;
-  entries: FsEntry[];
 }
 
 export interface TerminalExecResponse {
@@ -438,8 +427,10 @@ export interface LocalPluginStoreItem {
   published_at: string;
   artifact_revision: string;
   skill_ids: string[];
-  install_source: 'bundled' | 'network' | 'installed';
+  install_source: 'network' | 'installed';
   install_available: boolean;
+  execution_type: 'local_npm_mcp';
+  requires_local_install: true;
   lifecycle_status: string;
   update_available: boolean;
   rollback_available: boolean;
@@ -455,7 +446,6 @@ export interface LocalPluginStoreSnapshot {
   catalog_revision: string;
   marketplace_id: string;
   marketplace_name: string;
-  bundled_install_available: boolean;
   network_install_available: boolean;
   network_catalog_error?: string | null;
   auto_update_error?: string | null;
@@ -586,7 +576,6 @@ export interface SystemPermissionItem {
   request_label: string;
   settings_target?: string | null;
   builtin_kinds: string[];
-  skill_ids: string[];
   note: string;
   last_error?: string | null;
 }
@@ -595,95 +584,6 @@ export interface SystemPermissionsResponse {
   platform: string;
   platform_label: string;
   items: SystemPermissionItem[];
-}
-
-export type LocalMcpTransport = 'stdio' | 'http';
-
-export interface LocalMcpConfig {
-  manifest_id: string;
-  plugin_mcp_id?: string | null;
-  internal_name: string;
-  display_name: string;
-  description?: string | null;
-  transport: LocalMcpTransport;
-  command?: string | null;
-  args: string[];
-  env: Record<string, string>;
-  url?: string | null;
-  headers: Record<string, string>;
-  timeout_ms?: number | null;
-  enabled: boolean;
-  sync_status: string;
-  last_check_status: string;
-  last_checked_at?: string | null;
-  last_error?: string | null;
-  tool_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface LocalMcpConfigDraft {
-  manifest_id?: string | null;
-  display_name: string;
-  description?: string | null;
-  transport: LocalMcpTransport;
-  enabled?: boolean | null;
-  command?: string | null;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string | null;
-  headers?: Record<string, string>;
-  timeout_ms?: number | null;
-}
-
-export interface LocalSkillInstallation {
-  id: string;
-  owner_user_id: string;
-  device_id: string;
-  skill_id: string;
-  bundle_id: string;
-  version: string;
-  bundle_hash: string;
-  platform: string;
-  status: string;
-  dependency_status: string;
-  last_error?: string | null;
-  last_checked_at: string;
-}
-
-export interface LocalSkillRecord {
-  id: string;
-  name: string;
-  display_name: string;
-  description?: string | null;
-  enabled: boolean;
-  content: {
-    kind: string;
-    bundle_id?: string | null;
-    bundle_version?: string | null;
-    bundle_hash?: string | null;
-    entrypoint_kind?: string | null;
-  };
-  metadata: {
-    version?: string | null;
-    category?: string | null;
-    tags: string[];
-    extra: Record<string, unknown>;
-  };
-}
-
-export interface LocalSkillCatalogItem {
-  skill: LocalSkillRecord;
-  user_enabled: boolean;
-  available: boolean;
-  status: string;
-  reason?: string | null;
-  installation?: LocalSkillInstallation | null;
-}
-
-export interface LocalSkillCatalogResponse {
-  items: LocalSkillCatalogItem[];
-  total: number;
 }
 
 export type SandboxBackendKind = 'local_process';

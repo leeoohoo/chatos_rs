@@ -172,13 +172,13 @@ pub(super) async fn reject_failed_plugin_download(
 pub(super) async fn fetch_remote_plugin_sources(
     runtime: &LocalRuntime,
 ) -> anyhow::Result<Option<PluginInstallSourceList>> {
-    let Some((cloud_base_url, access_token)) = plugin_cloud_auth(runtime).await else {
+    let Some((service_base_url, access_token)) = plugin_service_auth(runtime).await else {
         return Ok(None);
     };
     let response = runtime
         .http_client
         .get(api_url(
-            cloud_base_url.as_str(),
+            service_base_url.as_str(),
             "/api/plugin-management/plugins/install-sources",
         ))
         .bearer_auth(access_token)
@@ -222,7 +222,7 @@ pub(super) async fn fetch_remote_plugin_sources(
     Ok(Some(sources))
 }
 
-pub(super) async fn plugin_cloud_auth(runtime: &LocalRuntime) -> Option<(String, String)> {
+pub(super) async fn plugin_service_auth(runtime: &LocalRuntime) -> Option<(String, String)> {
     let state = runtime.state.read().await;
     state
         .auth
@@ -236,13 +236,13 @@ pub(super) async fn download_remote_plugin_artifact(
     pending: &PendingPluginInstall,
     path: PathBuf,
 ) -> Result<DownloadedPluginArtifact, LocalApiError> {
-    let (cloud_base_url, access_token) = plugin_cloud_auth(runtime).await.ok_or_else(|| {
+    let (service_base_url, access_token) = plugin_service_auth(runtime).await.ok_or_else(|| {
         LocalApiError::bad_request("please login before downloading Marketplace Plugins")
     })?;
     let response = runtime
         .http_client
         .get(api_url(
-            cloud_base_url.as_str(),
+            service_base_url.as_str(),
             format!(
                 "/api/plugin-management/plugins/{}/releases/{}/artifact",
                 urlencoding::encode(source.catalog.id.as_str()),
@@ -289,7 +289,7 @@ pub(super) async fn download_remote_plugin_artifact(
         "x-chatos-plugin-artifact-sha256",
         source.release.artifact_sha256.as_str(),
     )?;
-    let limit = runtime.plugin_installer.archive_limits().max_archive_bytes;
+    let limit = runtime.plugin_installer.package_limits().max_package_bytes;
     let expected_total = response.content_length();
     if expected_total.is_some_and(|length| length > limit) {
         return Err(LocalApiError::bad_gateway(

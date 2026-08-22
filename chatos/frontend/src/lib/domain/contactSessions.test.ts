@@ -12,6 +12,7 @@ import {
   normalizeMemoryContact,
   normalizeProjectScopeId,
   PUBLIC_PROJECT_ID,
+  resolveSessionContactIdForProjectScope,
   resolveSessionProjectScopeId,
   splitSessionsByMappedContacts,
 } from './contactSessions';
@@ -108,6 +109,27 @@ describe('domain/contactSessions', () => {
       id: 'contact_2',
       agentId: 'agent_shared',
     }, 'project_1')).toBeNull();
+  });
+
+  it('resolves legacy agent-only sessions only when the contact is unique in the project scope', () => {
+    const session = buildSession({
+      metadata: {
+        chat_runtime: { project_id: 'project_1', contact_agent_id: 'agent_shared' },
+      },
+    });
+
+    expect(resolveSessionContactIdForProjectScope(session, [
+      { id: 'contact_1', agentId: 'agent_shared' },
+    ], 'project_1')).toBe('contact_1');
+
+    expect(resolveSessionContactIdForProjectScope(session, [
+      { id: 'contact_1', agentId: 'agent_shared' },
+      { id: 'contact_2', agentId: 'agent_shared' },
+    ], 'project_1')).toBeNull();
+
+    expect(resolveSessionContactIdForProjectScope(session, [
+      { id: 'contact_1', agentId: 'agent_shared' },
+    ], PUBLIC_PROJECT_ID)).toBeNull();
   });
 
   it('recovers the best legacy session when contact id was not persisted', () => {

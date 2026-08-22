@@ -8,7 +8,7 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 use super::*;
 use crate::{
     parse_plugin_manifest, plugin_component_descriptors, PluginCatalogRecord,
-    PluginComponentSnapshot, PluginLicenseMetadata, PluginManifestSource, PluginPublisher,
+    PluginComponentSnapshot, PluginLicenseMetadata, PluginNpmPackage, PluginPublisher,
     PluginReleaseRecord,
 };
 
@@ -192,7 +192,6 @@ fn signed_fixture() -> SignedFixture {
           "skills":"./skills",
           "interface":{"displayName":"Demo","shortDescription":"Demo","longDescription":"Demo plugin","developerName":"ChatOS","category":"Developer Tools"}
         }"#,
-        PluginManifestSource::Codex,
     )
     .expect("manifest");
     let keypair_bytes = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).expect("test key");
@@ -247,7 +246,6 @@ fn signed_catalog_fixture() -> SignedCatalogFixture {
           "skills":"./skills",
           "interface":{"displayName":"Demo","shortDescription":"Demo","longDescription":"Demo plugin","developerName":"Demo Publisher","category":"Developer Tools"}
         }"#,
-        PluginManifestSource::Codex,
     )
     .expect("Catalog manifest");
     let catalog_signer = test_signer(
@@ -286,7 +284,12 @@ fn signed_catalog_fixture() -> SignedCatalogFixture {
         version: manifest.version.clone(),
         manifest_schema_version: manifest.schema_version,
         normalized_manifest: manifest.clone(),
-        artifact_ref: "https://plugins.example.com/demo-1.0.0.zip".to_string(),
+        npm_package: PluginNpmPackage {
+            name: "demo-plugin".to_string(),
+            version: manifest.version.clone(),
+            integrity: "sha512-ZGVtby1pbnRlZ3JpdHk=".to_string(),
+        },
+        artifact_ref: "https://registry.npmjs.org/demo-plugin/-/demo-plugin-1.0.0.tgz".to_string(),
         artifact_sha256: ARTIFACT_SHA256.to_string(),
         signature: release_signature,
         sbom_ref: Some("./sbom.json".to_string()),

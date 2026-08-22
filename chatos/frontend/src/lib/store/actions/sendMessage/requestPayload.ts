@@ -4,7 +4,6 @@
 import type {
   AiModelConfig,
   ChatConfig,
-  PluginCommandInvocationPayload,
 } from '../../../../types';
 import { PUBLIC_PROJECT_ID } from '../../../domain/contactSessions';
 import type {
@@ -124,8 +123,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectId,
   projectRoot,
   workspaceRoot,
-  selectedPluginIds,
-  pluginCommandInvocations,
+  taskPluginPreferences,
   planMode,
 }: {
   turnId: string;
@@ -134,8 +132,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectId: string;
   projectRoot: string | null;
   workspaceRoot: string | null;
-  selectedPluginIds: string[];
-  pluginCommandInvocations: PluginCommandInvocationPayload[];
+  taskPluginPreferences: string[];
   planMode: boolean;
 }): StreamChatRuntimeOptions => ({
   turnId,
@@ -144,7 +141,6 @@ export const buildStreamChatRuntimeOptions = ({
   projectId,
   projectRoot,
   workspaceRoot,
-  selectedPluginIds,
-  pluginCommandInvocations,
+  taskPluginPreferences,
   planMode,
 });

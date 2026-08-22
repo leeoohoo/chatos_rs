@@ -6,34 +6,27 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chatos_plugin_management_sdk::{
-    normalize_plugin_relative_path, parse_plugin_manifest, plugin_component_descriptors,
-    verify_plugin_release_signature, PluginCatalogRecord, PluginComponentDescriptor,
-    PluginDependencySpec, PluginInstallSource, PluginManifest, PluginManifestSource,
-    PluginMarketplaceRecord, PluginPermissionRequirement, PluginReleaseRecord,
-    PluginReleaseVerificationContext,
+    normalize_plugin_relative_path, plugin_component_descriptors, verify_plugin_release_signature,
+    PluginCatalogRecord, PluginComponentDescriptor, PluginDependencySpec, PluginInstallSource,
+    PluginManifest, PluginMarketplaceRecord, PluginMcpServer, PluginPermissionRequirement,
+    PluginReleaseRecord, PluginReleaseVerificationContext,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha512};
 
-use super::archive::{
-    extract_plugin_archive, sha256_file, PluginArchiveLimits, VerifiedArchiveFiles,
-};
+use super::archive::{extract_npm_package, sha256_file, PluginPackageLimits, VerifiedPackageFiles};
 
 const TRUST_LEVEL_TRUSTED: &str = "trusted";
-const CHECKSUM_SCHEMA_VERSION: u32 = 1;
-const CODEX_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
-const CHATOS_MANIFEST_PATH: &str = ".chatos-plugin/plugin.json";
-const CODEX_CHECKSUMS_PATH: &str = ".codex-plugin/checksums.json";
-const CHATOS_CHECKSUMS_PATH: &str = ".chatos-plugin/checksums.json";
-const MAX_METADATA_BYTES: u64 = 1024 * 1024;
-const MAX_SBOM_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_PACKAGE_JSON_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
-pub struct PluginArtifactVerificationRequest<'a> {
+pub struct PluginPackageVerificationRequest<'a> {
     pub marketplace: &'a PluginMarketplaceRecord,
     pub catalog: &'a PluginCatalogRecord,
     pub release: &'a PluginReleaseRecord,
-    pub archive_path: &'a Path,
+    pub package_path: &'a Path,
     pub extraction_root: &'a Path,
 }
 
@@ -46,10 +39,9 @@ pub struct PluginRequirementInventory {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VerifiedPluginArtifact {
+pub struct VerifiedPluginPackage {
     pub root: PathBuf,
     pub manifest: PluginManifest,
-    pub manifest_source: PluginManifestSource,
     pub artifact_sha256: String,
     pub package_file_sha256: BTreeMap<String, String>,
     pub unpacked_bytes: u64,
@@ -57,24 +49,46 @@ pub struct VerifiedPluginArtifact {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PluginChecksumIndex {
-    schema_version: u32,
-    files: BTreeMap<String, String>,
+struct NpmPackageJson {
+    name: String,
+    version: String,
+    bin: NpmBin,
 }
 
-pub fn verify_plugin_artifact(
-    request: PluginArtifactVerificationRequest<'_>,
-    limits: PluginArchiveLimits,
-) -> Result<VerifiedPluginArtifact> {
-    verify_plugin_install_source_records(request.marketplace, request.catalog, request.release)?;
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum NpmBin {
+    One(String),
+    Many(BTreeMap<String, String>),
+}
 
-    let artifact_sha256 = sha256_file(request.archive_path, limits.max_archive_bytes)?;
-    if artifact_sha256 != request.release.artifact_sha256 {
-        bail!("downloaded Plugin artifact SHA-256 does not match the signed Release");
+impl NpmPackageJson {
+    fn bins(&self) -> BTreeMap<String, String> {
+        match &self.bin {
+            NpmBin::One(path) => BTreeMap::from([(
+                unscoped_package_name(self.name.as_str()).to_string(),
+                path.clone(),
+            )]),
+            NpmBin::Many(values) => values.clone(),
+        }
     }
-    let extracted = extract_plugin_archive(request.archive_path, request.extraction_root, limits)?;
-    match finish_artifact_verification(request, extracted, artifact_sha256) {
+}
+
+pub fn verify_plugin_package(
+    request: PluginPackageVerificationRequest<'_>,
+    limits: PluginPackageLimits,
+) -> Result<VerifiedPluginPackage> {
+    verify_plugin_install_source_records(request.marketplace, request.catalog, request.release)?;
+    verify_npm_integrity(
+        request.package_path,
+        request.release.npm_package.integrity.as_str(),
+    )?;
+    let artifact_sha256 = sha256_file(request.package_path, limits.max_package_bytes)?;
+    if artifact_sha256 != request.release.artifact_sha256 {
+        bail!("downloaded npm package SHA-256 does not match the signed Release");
+    }
+    let extracted = extract_npm_package(request.package_path, request.extraction_root, limits)?;
+    match finish_package_verification(request, extracted, artifact_sha256) {
         Ok(verified) => Ok(verified),
         Err(error) => {
             let _ = fs::remove_dir_all(request.extraction_root);
@@ -131,6 +145,9 @@ fn validate_control_plane_records(
         bail!("revoked Plugin Releases cannot be installed");
     }
     if release.version != release.normalized_manifest.version
+        || release.npm_package.version != release.version
+        || release.npm_package.name.trim().is_empty()
+        || !release.npm_package.integrity.starts_with("sha512-")
         || catalog.name != release.normalized_manifest.name
         || release.manifest_schema_version != release.normalized_manifest.schema_version
         || release.dependencies != release.normalized_manifest.dependencies
@@ -138,42 +155,34 @@ fn validate_control_plane_records(
         || release.supported_platforms
             != release.normalized_manifest.dependencies.supported_platforms
     {
-        bail!("Plugin Release identity does not match its normalized Manifest");
+        bail!("Plugin Release identity does not match its npm package and normalized Manifest");
     }
     Ok(())
 }
 
-fn finish_artifact_verification(
-    request: PluginArtifactVerificationRequest<'_>,
-    extracted: VerifiedArchiveFiles,
+fn finish_package_verification(
+    request: PluginPackageVerificationRequest<'_>,
+    extracted: VerifiedPackageFiles,
     artifact_sha256: String,
-) -> Result<VerifiedPluginArtifact> {
-    let (manifest_path, source, checksum_path) = package_metadata_paths(&extracted)?;
-    let manifest_raw = read_limited_file(
-        extracted.root.join(manifest_path).as_path(),
-        MAX_METADATA_BYTES,
-        "Plugin Manifest",
+) -> Result<VerifiedPluginPackage> {
+    let raw = read_limited_file(
+        extracted.root.join("package.json").as_path(),
+        MAX_PACKAGE_JSON_BYTES,
+        "npm package.json",
     )?;
-    let manifest = parse_plugin_manifest(manifest_raw.as_str(), source)
-        .context("parse installed Plugin Manifest")?;
-    if manifest != request.release.normalized_manifest {
-        bail!("Plugin archive Manifest does not match the signed normalized Release Manifest");
+    let package: NpmPackageJson =
+        serde_json::from_str(raw.as_str()).context("parse npm package.json")?;
+    if package.name != request.release.npm_package.name
+        || package.version != request.release.npm_package.version
+    {
+        bail!("npm package.json identity does not match the signed Plugin Release");
     }
-
-    let checksum_raw = read_limited_file(
-        extracted.root.join(checksum_path).as_path(),
-        MAX_METADATA_BYTES,
-        "Plugin checksum index",
+    validate_declared_bins(
+        &request.release.normalized_manifest,
+        &package,
+        &extracted.file_sha256,
     )?;
-    let checksum_index: PluginChecksumIndex =
-        serde_json::from_str(checksum_raw.as_str()).context("parse Plugin checksum index")?;
-    let package_file_sha256 = verify_checksum_index(&extracted, checksum_path, checksum_index)?;
-    verify_relative_sbom(
-        request.release,
-        extracted.root.as_path(),
-        &package_file_sha256,
-    )?;
-
+    let manifest = request.release.normalized_manifest.clone();
     let components = plugin_component_descriptors(&manifest);
     let auth_component_keys = manifest
         .apps
@@ -186,138 +195,92 @@ fn finish_artifact_verification(
         auth_component_keys,
         components,
     };
-    Ok(VerifiedPluginArtifact {
+    Ok(VerifiedPluginPackage {
         root: extracted.root,
         manifest,
-        manifest_source: source,
         artifact_sha256,
-        package_file_sha256,
+        package_file_sha256: extracted.file_sha256,
         unpacked_bytes: extracted.unpacked_bytes,
         inventory,
     })
 }
 
-fn package_metadata_paths(
-    extracted: &VerifiedArchiveFiles,
-) -> Result<(&'static str, PluginManifestSource, &'static str)> {
-    let has_codex_manifest = extracted.file_sha256.contains_key(CODEX_MANIFEST_PATH);
-    let has_chatos_manifest = extracted.file_sha256.contains_key(CHATOS_MANIFEST_PATH);
-    match (has_codex_manifest, has_chatos_manifest) {
-        (true, false) => {
-            if !extracted.file_sha256.contains_key(CODEX_CHECKSUMS_PATH) {
-                bail!("Codex Plugin archive is missing .codex-plugin/checksums.json");
-            }
-            Ok((
-                CODEX_MANIFEST_PATH,
-                PluginManifestSource::Codex,
-                CODEX_CHECKSUMS_PATH,
-            ))
-        }
-        (false, true) => {
-            if !extracted.file_sha256.contains_key(CHATOS_CHECKSUMS_PATH) {
-                bail!("ChatOS Plugin archive is missing .chatos-plugin/checksums.json");
-            }
-            Ok((
-                CHATOS_MANIFEST_PATH,
-                PluginManifestSource::Chatos,
-                CHATOS_CHECKSUMS_PATH,
-            ))
-        }
-        (true, true) => bail!("Plugin archive contains both Codex and ChatOS root Manifests"),
-        (false, false) => bail!("Plugin archive is missing a root Plugin Manifest"),
-    }
-}
-
-fn verify_checksum_index(
-    extracted: &VerifiedArchiveFiles,
-    checksum_path: &str,
-    index: PluginChecksumIndex,
-) -> Result<BTreeMap<String, String>> {
-    if index.schema_version != CHECKSUM_SCHEMA_VERSION {
-        bail!("unsupported Plugin checksum index schema version");
-    }
-    let mut normalized = BTreeMap::new();
-    for (path, digest) in index.files {
-        let normalized_path = normalize_plugin_relative_path(path.as_str())
+fn validate_declared_bins(
+    manifest: &PluginManifest,
+    package: &NpmPackageJson,
+    files: &BTreeMap<String, String>,
+) -> Result<()> {
+    let bins = package.bins();
+    for server in &manifest.mcp_servers {
+        let PluginMcpServer::Stdio { bin, .. } = server else {
+            continue;
+        };
+        let path = bins
+            .get(bin)
+            .with_context(|| format!("npm package.json does not publish MCP bin: {bin}"))?;
+        let normalized = normalize_plugin_relative_path(path)
             .map_err(anyhow::Error::msg)?
             .trim_start_matches("./")
             .to_string();
-        if normalized_path == checksum_path || normalized.insert(normalized_path, digest).is_some()
-        {
-            bail!("Plugin checksum index contains a duplicate or self-referential path");
+        if !files.contains_key(normalized.as_str()) {
+            bail!("npm MCP bin is missing from the verified package: {bin}");
         }
-    }
-    let mut actual = extracted.file_sha256.clone();
-    actual.remove(checksum_path);
-    if normalized.keys().ne(actual.keys()) {
-        bail!("Plugin checksum index must cover every package file exactly once");
-    }
-    for (path, actual_digest) in &actual {
-        let expected_digest = normalized
-            .get(path)
-            .context("missing Plugin file checksum")?;
-        if !is_sha256(expected_digest) || expected_digest != actual_digest {
-            bail!("Plugin file checksum mismatch: {path}");
-        }
-    }
-    Ok(extracted.file_sha256.clone())
-}
-
-fn verify_relative_sbom(
-    release: &PluginReleaseRecord,
-    root: &Path,
-    files: &BTreeMap<String, String>,
-) -> Result<()> {
-    let sbom_ref = release
-        .sbom_ref
-        .as_deref()
-        .context("network Plugin Release must declare an embedded SBOM")?;
-    if sbom_ref.contains("://") {
-        bail!("network Plugin Release SBOM must be embedded in the signed artifact");
-    }
-    let normalized = normalize_plugin_relative_path(sbom_ref).map_err(anyhow::Error::msg)?;
-    let path = normalized.trim_start_matches("./");
-    if !files.contains_key(path) {
-        bail!("Plugin Release SBOM reference is missing from the verified package");
-    }
-    let raw = read_limited_file(root.join(path).as_path(), MAX_SBOM_BYTES, "Plugin SBOM")?;
-    let document: serde_json::Value =
-        serde_json::from_str(raw.as_str()).context("parse Plugin SBOM JSON")?;
-    let is_cyclonedx = document
-        .get("bomFormat")
-        .and_then(serde_json::Value::as_str)
-        == Some("CycloneDX")
-        && document
-            .get("specVersion")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty());
-    let is_spdx = document
-        .get("spdxVersion")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| value.starts_with("SPDX-"))
-        && document
-            .get("SPDXID")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty());
-    if !is_cyclonedx && !is_spdx {
-        bail!("Plugin SBOM must be CycloneDX JSON or SPDX JSON");
     }
     Ok(())
 }
 
-fn read_limited_file(path: &Path, max_bytes: u64, label: &str) -> Result<String> {
-    let metadata = fs::metadata(path).with_context(|| format!("read {label} metadata"))?;
-    if !metadata.is_file() || metadata.len() > max_bytes {
-        bail!("{label} is missing, not a file, or exceeds the size limit");
+fn verify_npm_integrity(path: &Path, integrity: &str) -> Result<()> {
+    let encoded = integrity
+        .trim()
+        .strip_prefix("sha512-")
+        .context("npm package integrity must use sha512")?;
+    let expected = STANDARD
+        .decode(encoded)
+        .context("decode npm package sha512 integrity")?;
+    let bytes = fs::read(path).context("read npm package for integrity verification")?;
+    let actual = Sha512::digest(bytes.as_slice());
+    if expected.as_slice() != actual.as_slice() {
+        bail!("downloaded npm package does not match npm integrity");
     }
-    fs::read_to_string(path).with_context(|| format!("read UTF-8 {label}"))
+    Ok(())
 }
 
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .as_bytes()
-            .iter()
-            .copied()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+fn read_limited_file(path: &Path, limit: u64, label: &str) -> Result<String> {
+    let metadata = fs::symlink_metadata(path).with_context(|| format!("read {label} metadata"))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > limit {
+        bail!("{label} is missing, unsafe, or exceeds its size limit");
+    }
+    fs::read_to_string(path).with_context(|| format!("read {label}"))
+}
+
+fn unscoped_package_name(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn npm_package_identity_parser_ignores_untrusted_metadata() {
+        let package: NpmPackageJson = serde_json::from_str(
+            r#"{
+                "name":"open-computer-use",
+                "version":"0.3.1",
+                "description":"Computer Use MCP",
+                "license":"MIT",
+                "repository":{"type":"git","url":"https://example.com/repository.git"},
+                "scripts":{"postinstall":"node scripts/postinstall.mjs"},
+                "bin":{"open-computer-use":"bin/open-computer-use"}
+            }"#,
+        )
+        .expect("real-world npm package metadata");
+
+        assert_eq!(package.name, "open-computer-use");
+        assert_eq!(package.version, "0.3.1");
+        assert_eq!(
+            package.bins().get("open-computer-use").map(String::as_str),
+            Some("bin/open-computer-use")
+        );
+    }
 }

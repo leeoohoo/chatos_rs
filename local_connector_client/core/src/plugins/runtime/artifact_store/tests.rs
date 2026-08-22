@@ -4,7 +4,6 @@
 use super::*;
 use crate::WorkspaceState;
 use chatos_plugin_management_sdk::{
-    PluginArtifactListRequest, PluginArtifactReadRequest,
     PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD,
     PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ,
     PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE, PLUGIN_UI_BRIDGE_PROTOCOL_VERSION_V1,
@@ -127,80 +126,6 @@ fn fixture() -> (
 }
 
 #[test]
-fn registers_lists_and_revalidates_exact_plugin_artifact_files() {
-    let (_temp, state, request, store, access) = fixture();
-    let workspace = &state.workspaces[0].absolute_root;
-    fs::write(workspace.join("artifacts/report.docx"), b"docx fixture").expect("write artifact");
-    let descriptors = store
-        .register_native_outputs(
-            &state,
-            &request,
-            PluginArtifactProducer {
-                owner_user_id: "owner-a",
-                device_id: "device-a",
-                workspace_id: "workspace-a",
-                run_id: "run-a",
-                plugin_id: "plugin-a",
-                release_id: "release-a",
-                artifact_sha256: &"a".repeat(64),
-                component_key: "documents",
-                adapter_session_id: "native-session-a",
-                skill_id: "internal_skill_documents",
-                tool_name: "create_docx",
-            },
-            &json!({"target_path": "artifacts/report.docx"}),
-            &json!({"created": true, "path": "artifacts/report.docx"}),
-        )
-        .expect("register Artifact");
-    assert_eq!(descriptors.len(), 1);
-    let grant = store
-        .ui_grant(
-            &request,
-            &PluginArtifactListRequest {
-                access: access.clone(),
-            }
-            .access,
-            PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST,
-        )
-        .expect("UI grant");
-    let listed = store.list(&grant, access.clone()).expect("list Artifacts");
-    assert_eq!(listed.artifacts, descriptors);
-
-    let read_request = PluginArtifactReadRequest {
-        access: access.clone(),
-        artifact_id: descriptors[0].artifact_id.clone(),
-        mode: PluginArtifactReadMode::Download,
-    };
-    let read = store
-        .read(
-            &state,
-            &request,
-            &grant,
-            read_request.access,
-            read_request.artifact_id.as_str(),
-            read_request.mode,
-        )
-        .expect("read Artifact");
-    assert_eq!(
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, read.body_base64,)
-            .expect("decode Artifact"),
-        b"docx fixture"
-    );
-
-    fs::write(workspace.join("artifacts/report.docx"), b"tampered").expect("tamper Artifact");
-    assert!(store
-        .read(
-            &state,
-            &request,
-            &grant,
-            access,
-            descriptors[0].artifact_id.as_str(),
-            PluginArtifactReadMode::Download,
-        )
-        .is_err());
-}
-
-#[test]
 fn creates_and_optimistically_updates_ui_owned_mutable_artifacts() {
     let (temp, state, request, _ephemeral_store, access) = fixture();
     let state_path = temp.path().join("state.json");
@@ -218,46 +143,6 @@ fn creates_and_optimistically_updates_ui_owned_mutable_artifacts() {
             PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE,
         )
         .expect("create grant");
-    fs::write(
-        state.workspaces[0]
-            .absolute_root
-            .join("artifacts/native.docx"),
-        b"immutable native artifact",
-    )
-    .expect("write immutable native Artifact");
-    let immutable = store
-        .register_native_outputs(
-            &state,
-            &request,
-            PluginArtifactProducer {
-                owner_user_id: "owner-a",
-                device_id: "device-a",
-                workspace_id: "workspace-a",
-                run_id: "run-a",
-                plugin_id: "plugin-a",
-                release_id: "release-a",
-                artifact_sha256: &"a".repeat(64),
-                component_key: "documents",
-                adapter_session_id: "native-session-a",
-                skill_id: "internal_skill_documents",
-                tool_name: "create_docx",
-            },
-            &json!({"target_path": "artifacts/native.docx"}),
-            &json!({"created": true, "path": "artifacts/native.docx"}),
-        )
-        .expect("register immutable native Artifact");
-    let immutable_update = store
-        .update(
-            &state,
-            &request,
-            &grant,
-            write_access.clone(),
-            immutable[0].artifact_id.as_str(),
-            immutable[0].sha256.as_str(),
-            b"must not overwrite native Artifact",
-        )
-        .expect_err("immutable native Artifact update must fail");
-    assert_eq!(immutable_update.0, 409);
     let created = store
         .create(
             &state,
@@ -339,43 +224,6 @@ fn creates_and_optimistically_updates_ui_owned_mutable_artifacts() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn rejects_symbolic_links_during_registration() {
-    use std::os::unix::fs::symlink;
-
-    let (_temp, state, request, store, _access) = fixture();
-    let workspace = &state.workspaces[0].absolute_root;
-    fs::write(workspace.join("outside.docx"), b"outside").expect("write source");
-    symlink(
-        workspace.join("outside.docx"),
-        workspace.join("artifacts/link.docx"),
-    )
-    .expect("create symlink");
-    let error = store
-        .register_native_outputs(
-            &state,
-            &request,
-            PluginArtifactProducer {
-                owner_user_id: "owner-a",
-                device_id: "device-a",
-                workspace_id: "workspace-a",
-                run_id: "run-a",
-                plugin_id: "plugin-a",
-                release_id: "release-a",
-                artifact_sha256: &"a".repeat(64),
-                component_key: "documents",
-                adapter_session_id: "native-session-a",
-                skill_id: "internal_skill_documents",
-                tool_name: "create_docx",
-            },
-            &json!({"target_path": "artifacts/link.docx"}),
-            &json!({"created": true, "path": "artifacts/link.docx"}),
-        )
-        .expect_err("symlink must fail");
-    assert!(error.to_string().contains("symbolic link"));
-}
-
 #[test]
 fn persists_and_restores_exact_artifact_registry_state() {
     let (temp, state, request, _ephemeral_store, access) = fixture();
@@ -387,34 +235,24 @@ fn persists_and_restores_exact_artifact_registry_state() {
     store
         .register_ui_grant(test_grant(&mut persisted_access))
         .expect("persist UI grant");
-    let workspace = &state.workspaces[0].absolute_root;
-    fs::write(
-        workspace.join("artifacts/restored.docx"),
-        b"restart fixture",
-    )
-    .expect("write persisted Artifact");
-    let descriptors = store
-        .register_native_outputs(
+    let grant = store
+        .ui_grant(
+            &request,
+            &persisted_access,
+            PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE,
+        )
+        .expect("create grant");
+    let created = store
+        .create(
             &state,
             &request,
-            PluginArtifactProducer {
-                owner_user_id: "owner-a",
-                device_id: "device-a",
-                workspace_id: "workspace-a",
-                run_id: "run-a",
-                plugin_id: "plugin-a",
-                release_id: "release-a",
-                artifact_sha256: &"a".repeat(64),
-                component_key: "documents",
-                adapter_session_id: "native-session-a",
-                skill_id: "internal_skill_documents",
-                tool_name: "create_docx",
-            },
-            &json!({"target_path": "artifacts/restored.docx"}),
-            &json!({"created": true, "path": "artifacts/restored.docx"}),
+            &grant,
+            persisted_access.clone(),
+            "restored.json",
+            "application/json",
+            br#"{"restored":true}"#,
         )
         .expect("persist Artifact");
-    assert_eq!(descriptors.len(), 1);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -446,7 +284,7 @@ fn persists_and_restores_exact_artifact_registry_state() {
             .list(&grant, persisted_access.clone())
             .expect("list restored Artifacts")
             .artifacts,
-        descriptors
+        vec![created.artifact.clone()]
     );
     let read = restored
         .read(
@@ -454,14 +292,14 @@ fn persists_and_restores_exact_artifact_registry_state() {
             &request,
             &grant,
             persisted_access,
-            descriptors[0].artifact_id.as_str(),
+            created.artifact.artifact_id.as_str(),
             PluginArtifactReadMode::Download,
         )
         .expect("read restored Artifact");
     assert_eq!(
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, read.body_base64,)
             .expect("decode restored Artifact"),
-        b"restart fixture"
+        br#"{"restored":true}"#
     );
 }
 

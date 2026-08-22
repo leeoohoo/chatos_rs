@@ -7,8 +7,8 @@ mod mcp_management_gateway;
 mod policy;
 #[path = "runtime_context/support.rs"]
 mod support;
-#[path = "runtime_context/task_runner.rs"]
-mod task_runner;
+#[path = "runtime_context/task_plugin_catalog.rs"]
+mod task_plugin_catalog;
 #[path = "runtime_context/workspace.rs"]
 mod workspace;
 
@@ -16,9 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
-use chatos_plugin_management_sdk::{PluginCommandInvocation, SelectedPluginRef};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use self::mcp_management_gateway::{
@@ -27,7 +25,7 @@ use self::mcp_management_gateway::{
 };
 use self::policy::merge_optional_system_prompts;
 use self::support::{is_concrete_project_id, normalize_optional_text};
-use self::task_runner::{normalize_plugin_command_invocations, normalize_selected_plugin_ids};
+use self::task_plugin_catalog::resolve_task_plugin_catalog_prompt;
 use self::workspace::{authorize_runtime_workspace_dir, resolve_runtime_project_root};
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
@@ -55,8 +53,7 @@ pub struct ConversationRuntimeRequest {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    pub selected_plugin_ids: Vec<String>,
-    pub plugin_command_invocations: Vec<PluginCommandInvocation>,
+    pub task_plugin_preferences: Vec<String>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
     pub project_requirement_execution_task_ids: Vec<String>,
@@ -238,37 +235,8 @@ pub async fn resolve_runtime_context(
     let mut mcp_command_queue = None;
     let agent_profile =
         ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
-    let normalized_selected_plugin_ids =
-        normalize_selected_plugin_ids(req.selected_plugin_ids.as_slice());
-    let normalized_plugin_command_invocations = normalize_plugin_command_invocations(
-        normalized_selected_plugin_ids.as_slice(),
-        req.plugin_command_invocations.as_slice(),
-    );
-    let plugin_command_invocations_for_snapshot = normalized_plugin_command_invocations
-        .iter()
-        .map(|invocation| TurnRuntimeSnapshotPluginCommandInvocationDto {
-            plugin_id: invocation.plugin_id.clone(),
-            command_id: invocation.command_id.clone(),
-            arguments_present: invocation.arguments.is_some(),
-            arguments_sha256: invocation
-                .arguments
-                .as_deref()
-                .map(|arguments| hex::encode(Sha256::digest(arguments.as_bytes()))),
-        })
-        .collect::<Vec<_>>();
-    let selected_plugins_for_runtime = normalized_selected_plugin_ids
-        .iter()
-        .map(|plugin_id| SelectedPluginRef {
-            plugin_id: plugin_id.clone(),
-            selected_skill_ids: Vec::new(),
-            selected_command_ids: normalized_plugin_command_invocations
-                .iter()
-                .filter(|invocation| invocation.plugin_id == *plugin_id)
-                .map(|invocation| invocation.command_id.clone())
-                .collect(),
-            selected_agent_ids: Vec::new(),
-        })
-        .collect::<Vec<_>>();
+    let plugin_command_invocations_for_snapshot =
+        Vec::<TurnRuntimeSnapshotPluginCommandInvocationDto>::new();
 
     let agent_system_prompt = match plugin_management_prompts::resolve_for_model(
         agent_profile.key(),
@@ -296,6 +264,29 @@ pub async fn resolve_runtime_context(
     if requires_concrete_project && task_runner_project_id.is_none() {
         runtime_error = Some("当前智能体运行需要先选择一个有效项目。".to_string());
     }
+    let task_plugin_catalog_prompt = match task_runner_project_id {
+        Some(project_id) => {
+            match resolve_task_plugin_catalog_prompt(
+                project_id,
+                req.plan_mode,
+                req.task_plugin_preferences.as_slice(),
+                user_output_locale,
+            )
+            .await
+            {
+                Ok(prompt) => prompt,
+                Err(error) => {
+                    warn!(
+                        project_id,
+                        detail = error.as_str(),
+                        "Task Plugin catalog is unavailable for ChatOS prompt"
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
 
     let mcp_management_gateway = if runtime_error.is_none() {
         match resolve_mcp_management_gateway(McpManagementGatewayRequest {
@@ -310,8 +301,8 @@ pub async fn resolve_runtime_context(
             contact_agent_id: contact_agent_id.as_deref(),
             default_model_config_id: req.model_config_id.as_deref(),
             expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
-            selected_plugins: selected_plugins_for_runtime,
-            plugin_command_invocations: normalized_plugin_command_invocations.clone(),
+            selected_plugins: Vec::new(),
+            plugin_command_invocations: Vec::new(),
             locale: Some(if user_output_locale.is_english() {
                 InternalContextLocale::ENGLISH_KEY
             } else {
@@ -350,6 +341,8 @@ pub async fn resolve_runtime_context(
     if runtime_error.is_none() {
         contact_system_prompt =
             merge_optional_system_prompts(contact_system_prompt, gateway_provider_skills_prompt);
+        contact_system_prompt =
+            merge_optional_system_prompts(contact_system_prompt, task_plugin_catalog_prompt);
     }
 
     let enabled_mcp_ids_for_snapshot = effective_mcp_resource_ids;

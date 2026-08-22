@@ -61,8 +61,7 @@ pub(super) async fn update_admin_plugin_marketplace(
     )?;
     validate_marketplace_signing_keys(
         payload.trusted_signing_keys.as_slice(),
-        trust_level == PLUGIN_TRUST_TRUSTED
-            && existing.source_kind != PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY,
+        trust_level == PLUGIN_TRUST_TRUSTED,
     )?;
     validate_marketplace_signing_key_progression(
         existing.trusted_signing_keys.as_slice(),
@@ -173,11 +172,7 @@ pub(super) async fn create_plugin_marketplace(
         )?;
     }
     let trusted_signing_keys = payload.trusted_signing_keys.unwrap_or_default();
-    validate_marketplace_signing_keys(
-        &trusted_signing_keys,
-        trust_level == PLUGIN_TRUST_TRUSTED
-            && source_kind != PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY,
-    )?;
+    validate_marketplace_signing_keys(&trusted_signing_keys, trust_level == PLUGIN_TRUST_TRUSTED)?;
 
     if state
         .store
@@ -290,37 +285,26 @@ fn normalize_marketplace_source(value: Option<&str>) -> Result<String, ApiError>
         PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY => {
             Ok(PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY.to_string())
         }
-        PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY => {
-            Ok(PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY.to_string())
-        }
         _ => Err(ApiError::bad_request(
-            "source_kind must be official_registry, admin_registry, or local_directory",
+            "source_kind must be official_registry or admin_registry",
         )),
     }
 }
 
-fn normalize_marketplace_trust(value: Option<&str>, source_kind: &str) -> Result<String, ApiError> {
+fn normalize_marketplace_trust(
+    value: Option<&str>,
+    _source_kind: &str,
+) -> Result<String, ApiError> {
     let trust = value
-        .unwrap_or(
-            if source_kind == PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY {
-                PLUGIN_TRUST_UNTRUSTED
-            } else {
-                PLUGIN_TRUST_TRUSTED
-            },
-        )
+        .unwrap_or(PLUGIN_TRUST_TRUSTED)
         .trim()
         .to_ascii_lowercase();
     if !matches!(
         trust.as_str(),
-        PLUGIN_TRUST_BUNDLED | PLUGIN_TRUST_TRUSTED | PLUGIN_TRUST_UNTRUSTED
+        PLUGIN_TRUST_TRUSTED | PLUGIN_TRUST_UNTRUSTED
     ) {
         return Err(ApiError::bad_request(
-            "trust_level must be bundled, trusted, or untrusted",
-        ));
-    }
-    if source_kind == PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY && trust != PLUGIN_TRUST_UNTRUSTED {
-        return Err(ApiError::bad_request(
-            "local_directory marketplaces must remain untrusted",
+            "trust_level must be trusted or untrusted",
         ));
     }
     Ok(trust)
@@ -515,20 +499,6 @@ fn parse_timestamp(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn local_directory_marketplaces_cannot_claim_trusted_status() {
-        assert!(normalize_marketplace_trust(
-            Some(PLUGIN_TRUST_TRUSTED),
-            PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY,
-        )
-        .is_err());
-        assert_eq!(
-            normalize_marketplace_trust(None, PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY,)
-                .expect("default local trust"),
-            PLUGIN_TRUST_UNTRUSTED
-        );
-    }
 
     #[test]
     fn trusted_network_marketplaces_require_an_explicit_catalog_root() {

@@ -161,14 +161,6 @@ export const useTeamMembersContactResources = ({
     });
   }, [normalizedProjectId, projectMembers, sessions]);
 
-  const { ensureContactSession: ensureContactSessionFromResolver } = useContactSessionResolver({
-    sessions: sessions || [],
-    currentSession,
-    createSession,
-    apiClient,
-    defaultProjectId: normalizedProjectId,
-  });
-
   const projectContacts = useMemo<ProjectContactRow[]>(() => {
     const normalizedContactById = new Map(
       normalizedContacts.map((contact) => [contact.id, contact]),
@@ -208,6 +200,19 @@ export const useTeamMembersContactResources = ({
   ]);
 
   const projectContactsOptions = useMemo(() => normalizedContacts, [normalizedContacts]);
+  const projectSessionContacts = useMemo(
+    () => projectContacts.map((item) => item.contact),
+    [projectContacts],
+  );
+
+  const { ensureContactSession: ensureContactSessionFromResolver } = useContactSessionResolver({
+    sessions: sessions || [],
+    currentSession,
+    knownContacts: projectSessionContacts,
+    createSession,
+    apiClient,
+    defaultProjectId: normalizedProjectId,
+  });
 
   const {
     summaryPaneSessionId,

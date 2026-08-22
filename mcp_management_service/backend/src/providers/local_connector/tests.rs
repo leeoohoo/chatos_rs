@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use axum::extract::{Query, State};
@@ -13,9 +13,15 @@ use chatos_mcp_management_sdk::{
     RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER;
+use chatos_plugin_management_sdk::{
+    AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
+    ResolvedMcp, ResourceMetadata, ResourceSecurity,
+};
 use serde_json::{json, Value};
 
-use crate::runtime::RuntimeSessionSnapshot;
+use crate::runtime::{
+    LocalConnectorInlineHttpRuntime, LocalConnectorMcpProviderBinding, RuntimeSessionSnapshot,
+};
 
 use super::binding::validate_relative_root;
 use super::*;
@@ -103,8 +109,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         plugin_local_bindings: Default::default(),
         plugin_tool_component_bindings: Default::default(),
         plugin_local_tool_component_bindings: Default::default(),
-        plugin_cloud_tool_component_bindings: Default::default(),
-        external_http_bindings: Default::default(),
+        local_connector_mcp_bindings: Default::default(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix: i64::MAX,
     }
@@ -122,6 +127,215 @@ fn code_read_route() -> ResolvedMcpRoute {
         cancel_supported: true,
         reason: "test".to_string(),
     }
+}
+
+fn user_http_route() -> ResolvedMcpRoute {
+    ResolvedMcpRoute {
+        resource_id: "http-mcp-1".to_string(),
+        server_name: "demo_http".to_string(),
+        provider_kind: McpProviderKind::LocalConnector,
+        provider_ref: Some("mcp-resource:http-mcp-1".to_string()),
+        tool_namespace: "demo_http".to_string(),
+        allow_writes: false,
+        retry_class: McpRetryClass::IdempotentRead,
+        cancel_supported: false,
+        reason: "HTTP MCP executes through Local Connector Client".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn http_mcp_tools_are_inspected_only_through_local_connector() {
+    const SECRET: &str = "local-connector-user-mcp-inspection-secret";
+    async fn handler(headers: HeaderMap, Json(request): Json<Value>) -> Json<Value> {
+        assert_eq!(
+            headers
+                .get(PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("http-mcp-1")
+        );
+        assert!(headers
+            .get(LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER)
+            .is_some());
+        assert_eq!(
+            request.get("method").and_then(Value::as_str),
+            Some("tools/list")
+        );
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"tools": [{
+                "name": "search",
+                "description": "Search locally relayed HTTP MCP",
+                "inputSchema": {"type": "object"}
+            }]}
+        }))
+    }
+    let app = Router::new().route("/api/local-connectors/relay/device-1/mcp", post(handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = LocalConnectorProvider::new(
+        reqwest::Client::new(),
+        format!("http://{address}"),
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let mut route = user_http_route();
+    let capabilities = ResolvedAgentCapabilities {
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+            .as_str()
+            .to_string(),
+        owner_user_id: "user-1".to_string(),
+        policy_revision: "policy-1".to_string(),
+        generated_at: "now".to_string(),
+        agent_enabled: true,
+        mcps: vec![ResolvedMcp {
+            resource: McpRecord {
+                id: "http-mcp-1".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_kind: "user".to_string(),
+                visibility: "private".to_string(),
+                source_kind: "user_created".to_string(),
+                name: "demo_http".to_string(),
+                display_name: "Demo HTTP".to_string(),
+                description: None,
+                enabled: true,
+                runtime: McpRuntime {
+                    kind: "http".to_string(),
+                    server_name: Some("demo_http".to_string()),
+                    url: Some("https://mcp.example.com/rpc".to_string()),
+                    ..McpRuntime::default()
+                },
+                security: ResourceSecurity {
+                    allow_writes: Some(false),
+                    allowed_tool_names: vec!["search".to_string()],
+                    ..ResourceSecurity::default()
+                },
+                metadata: ResourceMetadata::default(),
+                plugin_component: Default::default(),
+                created_by: "user-1".to_string(),
+                updated_by: "user-1".to_string(),
+                created_at: "now".to_string(),
+                updated_at: "now".to_string(),
+            },
+            binding: AgentBindingRecord {
+                id: "binding-http-mcp-1".to_string(),
+                agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
+                    .as_str()
+                    .to_string(),
+                binding_scope: "user".to_string(),
+                owner_user_id: Some("user-1".to_string()),
+                resource_kind: "mcp".to_string(),
+                resource_id: "http-mcp-1".to_string(),
+                enabled: true,
+                required: true,
+                priority: 0,
+                conditions: BindingConditions::default(),
+                component_allowlist: Vec::new(),
+                tool_allowlist: Vec::new(),
+                tool_blocklist: Vec::new(),
+                created_by: "user-1".to_string(),
+                updated_by: "user-1".to_string(),
+                created_at: "now".to_string(),
+                updated_at: "now".to_string(),
+            },
+            available: true,
+            status: "available".to_string(),
+            reason: None,
+            tool_snapshot: Vec::new(),
+        }],
+        skills: Vec::new(),
+        plugins: Vec::new(),
+        local_connector_requirements: Vec::new(),
+    };
+    let (bindings, tools) = provider
+        .prepare_mcp_routes(
+            &capabilities,
+            std::slice::from_mut(&mut route),
+            &snapshot().project_context,
+            "user-1",
+        )
+        .await;
+    assert!(bindings.contains_key("http-mcp-1"));
+    assert_eq!(tools["http-mcp-1"][0]["name"], "search");
+    assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
+    server.abort();
+}
+
+#[tokio::test]
+async fn user_http_mcp_is_relayed_to_local_connector_with_inline_runtime() {
+    const SECRET: &str = "local-connector-user-mcp-test-secret";
+    async fn handler(headers: HeaderMap, Json(request): Json<Value>) -> Json<Value> {
+        assert!(headers
+            .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+            .is_none());
+        assert_eq!(
+            headers
+                .get(PLUGIN_MANAGEMENT_RESOURCE_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("http-mcp-1")
+        );
+        let encoded = headers
+            .get(LOCAL_CONNECTOR_INLINE_MCP_RUNTIME_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .expect("inline HTTP runtime header");
+        let decoded = urlencoding::decode(encoded).unwrap();
+        let runtime: Value = serde_json::from_str(decoded.as_ref()).unwrap();
+        assert_eq!(runtime["url"], "https://mcp.example.com/rpc");
+        assert_eq!(runtime["headers"]["authorization"], "Bearer local-only");
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"content": [{"type":"text","text":"relayed"}]}
+        }))
+    }
+    let app = Router::new().route("/api/local-connectors/relay/device-1/mcp", post(handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = LocalConnectorProvider::new(
+        reqwest::Client::new(),
+        format!("http://{address}"),
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let route = user_http_route();
+    let mut runtime = snapshot();
+    runtime.local_connector_mcp_bindings.insert(
+        route.resource_id.clone(),
+        LocalConnectorMcpProviderBinding {
+            provider_ref: route.provider_ref.clone().unwrap(),
+            device_id: "device-1".to_string(),
+            workspace_id: None,
+            inline_http: Some(LocalConnectorInlineHttpRuntime {
+                url: "https://mcp.example.com/rpc".to_string(),
+                headers: BTreeMap::from([(
+                    "authorization".to_string(),
+                    "Bearer local-only".to_string(),
+                )]),
+                timeout_ms: 30_000,
+            }),
+            allow_writes: false,
+            allowed_tool_names: HashSet::from(["search".to_string()]),
+            blocked_tool_names: HashSet::new(),
+        },
+    );
+    let outcome = provider
+        .call_tool(&runtime, &route, "search", json!({}), "invocation-1")
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome
+            .result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str),
+        Some("relayed")
+    );
+    server.abort();
 }
 
 async fn start_local_connector(

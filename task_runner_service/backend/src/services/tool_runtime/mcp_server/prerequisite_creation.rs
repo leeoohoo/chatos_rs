@@ -201,6 +201,7 @@ impl TaskRunnerMcpService {
                     schedule: Some(TaskScheduleConfig::default()),
                     enabled_builtin_kinds: item.enabled_builtin_kinds,
                     external_mcp_config_ids: item.external_mcp_config_ids,
+                    plugin_hints: item.plugin_hints,
                     selected_plugins: None,
                     prerequisite_task_ids: Some(item.prerequisite_task_ids),
                     mcp_config: None,
@@ -381,6 +382,7 @@ impl TaskRunnerMcpService {
             } = item;
             let client_ref = client_ref.trim().to_string();
             let is_prerequisite_node = prerequisite_ref_targets.contains(client_ref.as_str());
+            let plugin_hints = task.normalized_plugin_hints()?;
             let mut request = task.into_request()?;
             if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
                 let workspace_write_selected = request.mcp_config.as_ref().is_some_and(|config| {
@@ -402,14 +404,12 @@ impl TaskRunnerMcpService {
                 client_ref.as_str(),
                 context_refs.as_slice(),
             );
-            request_context.enforce_plugin_config(&mut request);
-            request_context.enforce_created_task_kind(&mut request);
+            request_context.enforce_created_task_context(&mut request);
             request.status = if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
                 Some(TaskStatus::Ready)
             } else {
                 None
             };
-            request.project_id = request_context.project_scope_id();
             let prerequisite_task_ids = request.prerequisite_task_ids.clone().unwrap_or_default();
             if matches!(
                 tool_profile,
@@ -434,12 +434,22 @@ impl TaskRunnerMcpService {
                     planner_root_create_request(request, request_context)?
                 };
             }
+            let plugin_selection = self
+                .task_service
+                .resolve_trusted_task_plugin_selection(
+                    &request,
+                    plugin_hints.as_slice(),
+                    current_user,
+                )
+                .await?;
+            request.plugin_config = plugin_selection.plugin_config;
             let task = self
                 .task_service
-                .create_task(
+                .create_task_with_plugin_selection_audit(
                     request,
                     Some(current_user),
                     request_context.task_source_context()?,
+                    plugin_selection.audit,
                 )
                 .await?;
             ref_to_task_id.insert(client_ref.clone(), task.id.clone());

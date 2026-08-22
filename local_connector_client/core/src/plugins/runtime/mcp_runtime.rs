@@ -6,8 +6,6 @@
 // scattered transport and credential internals.
 #[path = "mcp/mod.rs"]
 mod adapter;
-#[path = "mcp_config.rs"]
-mod config;
 #[path = "mcp_credentials.rs"]
 mod credentials;
 

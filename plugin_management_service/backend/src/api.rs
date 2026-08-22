@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
+use axum::extract::DefaultBodyLimit;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -30,23 +31,17 @@ mod availability;
 #[path = "api/runtime_capabilities.rs"]
 mod capabilities;
 mod internal_auth;
-mod local_connector;
-mod local_connector_skills;
 #[path = "api/catalog/mcps.rs"]
 mod mcps;
 mod plugin_audit;
 mod plugin_catalog_sync;
-mod plugin_cloud_bundles;
-#[path = "api/oauth/plugin_cloud_credentials.rs"]
-mod plugin_cloud_credentials;
-#[path = "api/oauth/plugin_cloud_oauth.rs"]
-mod plugin_cloud_oauth;
 mod plugin_install_sources;
 #[path = "api/installations/plugin_installations.rs"]
 mod plugin_installations;
 mod plugin_marketplaces;
 #[path = "api/oauth/plugin_oauth.rs"]
 mod plugin_oauth;
+mod plugin_package_publish;
 mod plugin_publishers;
 mod plugin_releases;
 mod plugin_support;
@@ -74,19 +69,6 @@ use availability::*;
 use capabilities::automatic_user_binding;
 use capabilities::{resolve_agent_capabilities, resolve_agent_capabilities_internal};
 use internal_auth::*;
-use local_connector::{
-    delete_local_connector_mcp_internal, list_local_connector_mcps_internal,
-    sync_local_connector_mcp_internal, truncate_text, update_local_connector_mcp_internal,
-    update_local_connector_mcp_status_batch_internal, update_local_connector_mcp_status_internal,
-};
-#[cfg(test)]
-use local_connector::{
-    ensure_local_connector_manifest_hash_matches, ensure_local_connector_record_scope,
-};
-use local_connector_skills::{
-    list_user_skill_catalog_internal, sync_skill_inventory_internal,
-    update_user_skill_preference_internal,
-};
 use mcps::{
     check_mcp, create_mcp, delete_mcp, get_mcp, get_mcp_descriptor, list_admin_ai_models,
     list_mcps, optimize_mcp_provider_skill, optimize_mcp_provider_skill_stream, update_mcp,
@@ -97,19 +79,6 @@ pub(crate) use plugin_catalog_sync::{
     is_syncable_network_marketplace, run_queued_plugin_catalog_sync,
 };
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
-use plugin_cloud_bundles::{
-    get_plugin_cloud_component_bundle_internal, get_plugin_mcp_cloud_runtime_bundle_internal,
-    list_plugin_mcp_cloud_runtime_metadata,
-};
-use plugin_cloud_credentials::{
-    delete_plugin_cloud_credential, delete_plugin_cloud_oauth_connection,
-    list_plugin_cloud_credentials, list_plugin_cloud_oauth_connections,
-    resolve_plugin_mcp_cloud_credentials_internal, upsert_plugin_cloud_credential,
-    upsert_plugin_cloud_oauth_connection,
-};
-use plugin_cloud_oauth::{
-    begin_plugin_cloud_oauth_authorization, complete_plugin_cloud_oauth_authorization,
-};
 use plugin_install_sources::{
     get_plugin_install_source_internal, list_plugin_install_sources_internal,
 };
@@ -119,14 +88,17 @@ use plugin_marketplaces::{
     list_plugin_marketplaces, update_admin_plugin_marketplace,
 };
 use plugin_oauth::{list_plugin_oauth_connections, sync_plugin_oauth_status_internal};
+use plugin_package_publish::{
+    analyze_plugin_package, download_plugin_artifact, publish_uploaded_plugin,
+};
 use plugin_publishers::{
     list_admin_plugin_publishers, list_plugin_publishers, review_admin_plugin_publisher,
     submit_plugin_publisher,
 };
-use plugin_releases::{create_plugin_release, list_plugin_releases, revoke_plugin_release};
+use plugin_releases::{list_plugin_releases, revoke_plugin_release};
 use plugin_support::*;
 use plugins::{
-    create_plugin_catalog_entry, get_plugin_catalog_entry, list_admin_plugins, list_plugin_catalog,
+    get_plugin_catalog_entry, list_admin_plugins, list_plugin_catalog,
     update_user_plugin_preference, update_user_plugin_preference_internal,
 };
 use queue_operations::replay_catalog_sync_dead_letter;
@@ -147,6 +119,10 @@ const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
     "memory-engine",
     "mcp-management-service",
 ];
+
+fn truncate_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -302,41 +278,12 @@ pub fn build_public_router(state: AppState) -> Router {
             get(list_plugin_releases),
         )
         .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-runtimes",
-            get(list_plugin_mcp_cloud_runtime_metadata),
-        )
-        .route(
             "/api/plugins/{plugin_id}/preference",
             axum::routing::put(update_user_plugin_preference),
         )
         .route(
             "/api/plugins/{plugin_id}/oauth",
             get(list_plugin_oauth_connections),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/cloud-credentials",
-            get(list_plugin_cloud_credentials),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-credentials/{component_key}/{secret_name}",
-            axum::routing::put(upsert_plugin_cloud_credential)
-                .delete(delete_plugin_cloud_credential),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/cloud-oauth",
-            get(list_plugin_cloud_oauth_connections),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-oauth/{component_key}",
-            axum::routing::put(upsert_plugin_cloud_oauth_connection),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/releases/{release_id}/cloud-oauth/{component_key}/authorize",
-            post(begin_plugin_cloud_oauth_authorization),
-        )
-        .route(
-            "/api/plugins/{plugin_id}/cloud-oauth/{connection_id}",
-            axum::routing::delete(delete_plugin_cloud_oauth_connection),
         )
         .route(
             "/api/plugin-marketplaces",
@@ -374,13 +321,20 @@ pub fn build_public_router(state: AppState) -> Router {
             "/api/admin/plugin-publishers/{publisher_record_id}/review",
             patch(review_admin_plugin_publisher),
         )
+        .route("/api/admin/plugins", get(list_admin_plugins))
         .route(
-            "/api/admin/plugins",
-            get(list_admin_plugins).post(create_plugin_catalog_entry),
+            "/api/admin/plugin-package/analyze",
+            post(analyze_plugin_package).layer(DefaultBodyLimit::max(
+                state.config.plugin_artifact_max_bytes + 2 * 1024 * 1024,
+            )),
+        )
+        .route(
+            "/api/admin/plugin-package/publish",
+            post(publish_uploaded_plugin),
         )
         .route(
             "/api/admin/plugins/{plugin_id}/releases",
-            get(list_plugin_releases).post(create_plugin_release),
+            get(list_plugin_releases),
         )
         .route(
             "/api/admin/plugin-releases/{release_id}/revoke",
@@ -392,12 +346,12 @@ pub fn build_public_router(state: AppState) -> Router {
     apply_common_layers(
         Router::new()
             .route("/api/health", get(health_handler))
+            .route(
+                "/api/plugin-artifacts/{artifact_sha256}",
+                get(download_plugin_artifact),
+            )
             .route("/metrics", get(prometheus_metrics))
             .route("/api/auth/login", post(login_handler))
-            .route(
-                "/api/plugins/cloud-oauth/callback",
-                get(complete_plugin_cloud_oauth_authorization),
-            )
             .merge(protected_api)
             .with_state(state),
     )
@@ -424,34 +378,6 @@ pub fn build_internal_router(state: AppState) -> Router {
             post(resolve_agent_capabilities_internal),
         )
         .route(
-            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-components/{component_key}",
-            get(get_plugin_cloud_component_bundle_internal),
-        )
-        .route(
-            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-components/{component_key}",
-            get(get_plugin_mcp_cloud_runtime_bundle_internal),
-        )
-        .route(
-            "/api/internal/plugins/{plugin_id}/releases/{release_id}/cloud-mcp-components/{component_key}/credentials",
-            post(resolve_plugin_mcp_cloud_credentials_internal),
-        )
-        .route(
-            "/api/internal/local-connector/mcps",
-            get(list_local_connector_mcps_internal).post(sync_local_connector_mcp_internal),
-        )
-        .route(
-            "/api/internal/local-connector/skills/catalog",
-            get(list_user_skill_catalog_internal),
-        )
-        .route(
-            "/api/internal/local-connector/skills/inventory",
-            axum::routing::put(sync_skill_inventory_internal),
-        )
-        .route(
-            "/api/internal/local-connector/skills/{skill_id}/preference",
-            axum::routing::put(update_user_skill_preference_internal),
-        )
-        .route(
             "/api/internal/local-connector/plugins/installations",
             axum::routing::put(sync_plugin_installation_internal),
         )
@@ -470,18 +396,6 @@ pub fn build_internal_router(state: AppState) -> Router {
         .route(
             "/api/internal/local-connector/plugins/oauth",
             axum::routing::put(sync_plugin_oauth_status_internal),
-        )
-        .route(
-            "/api/internal/local-connector/mcps/{mcp_id}",
-            patch(update_local_connector_mcp_internal).delete(delete_local_connector_mcp_internal),
-        )
-        .route(
-            "/api/internal/local-connector/mcps/{mcp_id}/status",
-            axum::routing::put(update_local_connector_mcp_status_internal),
-        )
-        .route(
-            "/api/internal/local-connector/mcps/status/batch",
-            axum::routing::put(update_local_connector_mcp_status_batch_internal),
         );
 
     apply_common_layers(internal_api.with_state(state))

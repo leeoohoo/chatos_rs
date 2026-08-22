@@ -51,7 +51,7 @@ describe('direct API transport surface header', () => {
     expect(requestedHeaders(fetchMock).has('X-Requested-With')).toBe(false);
   });
 
-  it('forwards the exact user Plugin selection with the cloud chat command', async () => {
+  it('does not send Conversation-level Plugin authorization', async () => {
     enableDesktopBridge();
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ accepted: true }),
@@ -72,23 +72,14 @@ describe('direct API transport surface header', () => {
       [],
       false,
       {
-        selectedPluginIds: ['plugin-browser'],
-        pluginCommandInvocations: [{
-          plugin_id: 'plugin-browser',
-          command_id: 'inspect',
-          arguments: 'https://example.com',
-        }],
+        taskPluginPreferences: ['open-computer-use'],
       },
     );
 
-    expect(requestedJsonBody(fetchMock)).toMatchObject({
-      selected_plugin_ids: ['plugin-browser'],
-      plugin_command_invocations: [{
-        plugin_id: 'plugin-browser',
-        command_id: 'inspect',
-        arguments: 'https://example.com',
-      }],
-    });
+    const body = requestedJsonBody(fetchMock);
+    expect(body).toMatchObject({ task_plugin_preferences: ['open-computer-use'] });
+    expect(body).not.toHaveProperty('selected_plugin_ids');
+    expect(body).not.toHaveProperty('plugin_command_invocations');
   });
 
   it('marks cloud file downloads from the desktop client', async () => {

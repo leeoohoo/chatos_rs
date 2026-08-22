@@ -7,43 +7,15 @@ use crate::plugins::{LocalPluginRegistry, PluginTransactionJournal};
 use tempfile::TempDir;
 
 #[test]
-fn bundled_store_catalog_covers_featured_categories_and_all_internal_skills() {
+fn local_store_catalog_has_no_bundled_plugins() {
     let snapshot = local_plugin_store_snapshot(LocalPluginStatusSnapshot {
         registry: LocalPluginRegistry::default(),
         transactions: PluginTransactionJournal::default(),
         runtime: Default::default(),
     })
     .expect("Plugin store snapshot");
-    assert_eq!(snapshot.items.len(), 12);
-    assert_eq!(
-        snapshot
-            .items
-            .iter()
-            .flat_map(|plugin| plugin.skill_ids.iter())
-            .count(),
-        28
-    );
-    assert_eq!(
-        snapshot
-            .items
-            .iter()
-            .filter(|plugin| plugin.featured)
-            .count(),
-        4
-    );
-    assert!(snapshot.items.iter().all(|plugin| {
-        plugin.visibility == "public" && plugin.lifecycle_status == "not_installed"
-    }));
-    let presentations = snapshot
-        .items
-        .iter()
-        .find(|plugin| plugin.name == "presentations")
-        .expect("Presentations Plugin");
-    assert_eq!(presentations.latest_version, "1.32.0");
-    assert_eq!(
-        presentations.latest_release_id,
-        "bundled-release-presentations-1-32-0"
-    );
+    assert!(snapshot.items.is_empty());
+    assert!(!snapshot.network_install_available);
 }
 
 #[test]
@@ -80,7 +52,7 @@ fn trusted_network_source_merges_with_the_local_registry_catalog() {
         .iter()
         .find(|item| item.plugin_id == "plugin-demo")
         .expect("network Plugin item");
-    assert_eq!(snapshot.items.len(), 13);
+    assert_eq!(snapshot.items.len(), 1);
     assert!(snapshot.network_install_available);
     assert_eq!(item.install_source, "network");
     assert!(item.install_available);
@@ -89,41 +61,6 @@ fn trusted_network_source_merges_with_the_local_registry_catalog() {
     assert!(item.preference.as_ref().is_some_and(|preference| {
         preference.enabled && preference.auto_update && preference.release_channel == "stable"
     }));
-}
-
-#[test]
-fn cloud_only_network_source_is_ready_without_a_local_install_action() {
-    let temp = TempDir::new().expect("temp directory");
-    let package = TestSigner::new().package_with_prompt_execution(
-        temp.path(),
-        "1.0.0",
-        PluginExecutionHost::Cloud,
-    );
-    let mut snapshot = local_plugin_store_snapshot(LocalPluginStatusSnapshot {
-        registry: LocalPluginRegistry::default(),
-        transactions: PluginTransactionJournal::default(),
-        runtime: Default::default(),
-    })
-    .expect("Plugin store snapshot");
-
-    merge_network_plugin_sources(
-        &mut snapshot,
-        PluginInstallSourceList {
-            items: vec![package.install_source()],
-        },
-    )
-    .expect("merge cloud-only Marketplace source");
-
-    let item = snapshot
-        .items
-        .iter()
-        .find(|item| item.plugin_id == "plugin-demo")
-        .expect("cloud-only Plugin item");
-    assert!(!snapshot.network_install_available);
-    assert!(!item.install_available);
-    assert!(!item.requires_local_install);
-    assert_eq!(item.execution_type, "cloud");
-    assert_eq!(item.lifecycle_status, "cloud_ready");
 }
 
 #[test]
@@ -146,5 +83,5 @@ fn network_source_signature_tampering_is_rejected() {
         },
     )
     .is_err());
-    assert_eq!(snapshot.items.len(), 12);
+    assert!(snapshot.items.is_empty());
 }

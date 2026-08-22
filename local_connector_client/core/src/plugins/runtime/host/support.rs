@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
     internal_error, required_body_text, required_envelope_text, required_sha256,
-    PluginNativeSkillBindingSnapshot, PluginRuntimeTelemetryIdentity, PreparedPluginSession,
+    PluginRuntimeTelemetryIdentity, PreparedPluginSession,
 };
 use crate::relay::RelayRequest;
 
@@ -231,30 +231,9 @@ pub(super) fn session_audit_hash(session: &PreparedPluginSession) -> String {
         payload.push('\n');
         payload.push_str(mcp.snapshot().snapshot_sha256.as_str());
     }
-    if let Some(native_skill) = &session.native_skill {
-        payload.push('\n');
-        payload.push_str(native_skill.binding.snapshot_sha256.as_str());
-        payload.push('\n');
-        payload.push_str(native_skill.tool_snapshot_sha256.as_str());
-    }
     for permission in &session.permission_snapshot {
         payload.push('\n');
         payload.push_str(permission.as_str());
     }
     hex::encode(Sha256::digest(payload.as_bytes()))
-}
-
-pub(super) fn native_tool_snapshot_sha256(
-    binding: &PluginNativeSkillBindingSnapshot,
-    tools: &[Value],
-) -> Result<String> {
-    let mut payload = format!(
-        "chatos.plugin.native-tools.snapshot.v1\n{}",
-        binding.snapshot_sha256
-    );
-    for tool in tools {
-        payload.push('\n');
-        payload.push_str(serde_json::to_string(tool)?.as_str());
-    }
-    Ok(hex::encode(Sha256::digest(payload.as_bytes())))
 }

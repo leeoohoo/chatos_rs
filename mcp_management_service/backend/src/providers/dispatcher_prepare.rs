@@ -3,21 +3,26 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::ResolvedMcpRoute;
+use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute};
 use chatos_plugin_management_sdk::ResolvedAgentCapabilities;
 
-use crate::runtime::ExternalHttpProviderBinding;
+use crate::runtime::LocalConnectorMcpProviderBinding;
 
 use super::ProviderDispatcher;
 
 impl ProviderDispatcher {
-    pub async fn prepare_external_http_routes(
+    pub async fn prepare_local_connector_mcp_routes(
         &self,
         capabilities: &ResolvedAgentCapabilities,
         routes: &mut [ResolvedMcpRoute],
-    ) -> HashMap<String, ExternalHttpProviderBinding> {
-        self.external_http
-            .prepare_routes(capabilities, routes)
+        context: &ProjectExecutionContext,
+        owner_user_id: &str,
+    ) -> (
+        HashMap<String, LocalConnectorMcpProviderBinding>,
+        HashMap<String, Vec<serde_json::Value>>,
+    ) {
+        self.local_connector
+            .prepare_mcp_routes(capabilities, routes, context, owner_user_id)
             .await
     }
 }

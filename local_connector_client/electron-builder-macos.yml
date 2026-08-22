@@ -9,26 +9,17 @@ files:
 asar: true
 asarUnpack:
   - electron/core-runtime.cjs
-afterPack: electron/sign-macos-local-dev.cjs
 extraResources:
   - from: ../.package/macos/local_connector_client_core
     to: local_connector_client_core
   - from: ../.package/macos/chatos_chrome_native_host
     to: chatos_chrome_native_host
-  - from: ../.package/macos/chatos_computer_use_helper
-    to: chatos_computer_use_helper
   - from: ../.package/macos/bundled-tools
     to: bundled-tools
-  - from: ../.package/macos/skill-bundles
-    to: skill-bundles
-  - from: ../.package/macos/plugin-bundles
-    to: plugin-bundles
   - from: ../.package/macos/chrome-extension
     to: chrome-extension
   - from: ../.package/macos/sqlite-migrations
     to: sqlite-migrations
-  - from: ../.package/macos/computer-use-unsigned-local-dev.json
-    to: computer-use-unsigned-local-dev.json
 mac:
   category: public.app-category.developer-tools
   icon: ../.package/macos/ChatOS.icns
@@ -36,12 +27,12 @@ mac:
   entitlements: ../entitlements.mac.plist
   entitlementsInherit: ../entitlements.mac.plist
   extendInfo:
-    NSAppleEventsUsageDescription: Chat OS Local Connector 仅在用户启用对应 Skill 后控制 Microsoft Excel 等明确授权的应用。
-    NSDesktopFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的桌面目录。
-    NSDocumentsFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的文稿目录。
-    NSDownloadsFolderUsageDescription: Chat OS Local Connector 仅访问用户主动开放的下载目录。
-    NSNetworkVolumesUsageDescription: Chat OS Local Connector 仅访问用户主动开放的网络卷目录。
-    NSRemovableVolumesUsageDescription: Chat OS Local Connector 仅访问用户主动开放的可移动卷目录。
+    NSAppleEventsUsageDescription: Chat OS Local Connector 仅在用户授权并安装相应 MCP 后控制明确授权的应用。
+    NSDesktopFolderUsageDescription: Chat OS Local Connector 在任务权限允许时访问桌面目录，实际访问仍受 macOS 系统权限控制。
+    NSDocumentsFolderUsageDescription: Chat OS Local Connector 在任务权限允许时访问文稿目录，实际访问仍受 macOS 系统权限控制。
+    NSDownloadsFolderUsageDescription: Chat OS Local Connector 在任务权限允许时访问下载目录，实际访问仍受 macOS 系统权限控制。
+    NSNetworkVolumesUsageDescription: Chat OS Local Connector 在任务权限允许时访问网络卷，实际访问仍受 macOS 系统权限控制。
+    NSRemovableVolumesUsageDescription: Chat OS Local Connector 在任务权限允许时访问可移动卷，实际访问仍受 macOS 系统权限控制。
   target:
     - dmg
   artifactName: Chat-OS-Local-Connector-${version}-${arch}.${ext}

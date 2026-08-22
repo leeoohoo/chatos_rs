@@ -150,7 +150,7 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     assert_eq!(identity.scope, CAPABILITIES_RESOLVE_SCOPE);
     uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("signed trace id");
     let err =
-        require_internal_api_secret(&state, &headers, "task-runner", LOCAL_CONNECTOR_WRITE_SCOPE)
+        require_internal_api_secret(&state, &headers, "task-runner", PLUGIN_INSTALL_MANAGE_SCOPE)
             .expect_err("scope mismatch must be rejected");
     assert_eq!(err.status, StatusCode::UNAUTHORIZED);
 
@@ -503,13 +503,6 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             task_runner_base_url: "http://127.0.0.1:39090".to_string(),
             cors_origins: vec!["http://127.0.0.1:39261".to_string()],
             internal_api_secrets,
-            cloud_credential_encryption_secret: "test-cloud-credential-secret".to_string(),
-            oauth_public_base_url: "http://127.0.0.1:39260".to_string(),
-            oauth_frontend_origin: "http://127.0.0.1:39261".to_string(),
-            oauth_flow_ttl: Duration::from_secs(10 * 60),
-            oauth_refresh_skew: Duration::from_secs(90),
-            oauth_request_timeout: Duration::from_secs(15),
-            oauth_max_response_bytes: 256 * 1024,
             require_signed_internal_requests: true,
             local_connector_check_ttl: Duration::from_secs(60),
             local_connector_max_tool_snapshot_bytes: 512 * 1024,
@@ -530,15 +523,15 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             plugin_catalog_sync_lock_timeout: Duration::from_secs(60 * 60),
             plugin_catalog_request_timeout: Duration::from_secs(30),
             plugin_catalog_max_bytes: 8 * 1024 * 1024,
+            plugin_artifact_storage_dir: std::env::temp_dir()
+                .join("chatos-plugin-management-test-artifacts"),
+            plugin_artifact_public_base_url: "https://plugins.example.test".to_string(),
+            plugin_artifact_max_bytes: 128 * 1024 * 1024,
             super_admin_username: "admin".to_string(),
             super_admin_password: "admin".to_string(),
             seed_system_resources: false,
         },
         store,
-        cloud_secret_cipher: crate::cloud_secrets::CloudSecretCipher::new(
-            "test-cloud-credential-secret",
-        )
-        .expect("create cloud secret cipher"),
         user_service_http: chatos_service_runtime::build_http_client(
             chatos_service_runtime::HttpClientTimeouts::new(Duration::from_secs(1)),
         )

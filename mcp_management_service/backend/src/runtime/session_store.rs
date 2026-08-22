@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::net::SocketAddr;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,22 +15,17 @@ use futures_util::TryStreamExt;
 use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
 use mongodb::options::{IndexOptions, ReplaceOptions};
 use mongodb::{Client, Collection, IndexModel};
-#[cfg(test)]
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use crate::runtime::{
-    PluginCloudToolComponentBinding, PluginLocalProviderBinding, PluginLocalToolComponentBinding,
-    PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding,
+    PluginLocalProviderBinding, PluginLocalToolComponentBinding, PluginMcpRuntimeBinding,
+    PluginToolComponentRuntimeBinding,
 };
 
 #[path = "session_store/cache.rs"]
 mod cache;
-#[path = "session_store/external_http.rs"]
-mod external_http;
-
 #[cfg(test)]
 use self::cache::cache_snapshot_with_limits;
 pub use self::cache::RuntimeSessionCacheLimits;
@@ -40,51 +33,38 @@ use self::cache::{
     cache_snapshot, cache_snapshot_arc, estimate_snapshot_cache_bytes, saturating_u64_to_usize,
     summarize_snapshot_sizes, RuntimeSessionCache,
 };
-use self::external_http::{
-    persist_external_http_binding, restore_external_http_binding,
-    PersistedExternalHttpProviderBinding,
-};
-
-const SNAPSHOT_SCHEMA_VERSION: i32 = 9;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 11;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
-const MAX_PERSISTED_HEADERS: usize = 64;
-const MAX_PERSISTED_HEADER_BYTES: usize = 32 * 1024;
-const MAX_PERSISTED_TOOL_POLICY_ITEMS: usize = 512;
-const MAX_PERSISTED_TOOL_NAME_BYTES: usize = 256;
 const MAX_PERSISTED_SNAPSHOT_BYTES: usize = 12 * 1024 * 1024;
-#[derive(Clone)]
-pub struct ExternalHttpProviderBinding {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalConnectorInlineHttpRuntime {
+    pub url: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalConnectorMcpProviderBinding {
     pub provider_ref: String,
-    pub endpoint: reqwest::Url,
-    pub headers: reqwest::header::HeaderMap,
-    pub http: reqwest::Client,
-    pub resolved_addresses: Vec<SocketAddr>,
+    pub device_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_http: Option<LocalConnectorInlineHttpRuntime>,
     pub allow_writes: bool,
+    #[serde(default)]
     pub allowed_tool_names: HashSet<String>,
+    #[serde(default)]
     pub blocked_tool_names: HashSet<String>,
 }
 
-impl ExternalHttpProviderBinding {
+impl LocalConnectorMcpProviderBinding {
     pub fn allows_tool(&self, tool_name: &str) -> bool {
         let tool_name = tool_name.trim();
         !tool_name.is_empty()
             && (self.allowed_tool_names.is_empty() || self.allowed_tool_names.contains(tool_name))
             && !self.blocked_tool_names.contains(tool_name)
-    }
-}
-
-impl fmt::Debug for ExternalHttpProviderBinding {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ExternalHttpProviderBinding")
-            .field("provider_ref", &self.provider_ref)
-            .field("endpoint", &"[redacted]")
-            .field("headers", &"[redacted]")
-            .field("resolved_addresses", &"[redacted]")
-            .field("allow_writes", &self.allow_writes)
-            .field("allowed_tool_names", &self.allowed_tool_names)
-            .field("blocked_tool_names", &self.blocked_tool_names)
-            .finish()
     }
 }
 
@@ -124,8 +104,7 @@ pub struct RuntimeSessionSnapshot {
     pub plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
     pub plugin_tool_component_bindings: HashMap<String, PluginToolComponentRuntimeBinding>,
     pub plugin_local_tool_component_bindings: HashMap<String, PluginLocalToolComponentBinding>,
-    pub plugin_cloud_tool_component_bindings: HashMap<String, PluginCloudToolComponentBinding>,
-    pub external_http_bindings: HashMap<String, ExternalHttpProviderBinding>,
+    pub local_connector_mcp_bindings: HashMap<String, LocalConnectorMcpProviderBinding>,
     pub expires_at: String,
     pub expires_at_unix: i64,
 }
@@ -196,7 +175,6 @@ enum RuntimeSessionStoreBackend {
 struct MongoRuntimeSessionStore {
     collection: Collection<StoredRuntimeSessionDocument>,
     cipher: SnapshotCipher,
-    external_http_request_timeout: Duration,
     cache_limits: RuntimeSessionCacheLimits,
     cache: RwLock<RuntimeSessionCache>,
 }
@@ -257,8 +235,8 @@ struct PersistedRuntimeSessionSnapshot {
     plugin_local_bindings: HashMap<String, PluginLocalProviderBinding>,
     plugin_tool_component_bindings: HashMap<String, PluginToolComponentRuntimeBinding>,
     plugin_local_tool_component_bindings: HashMap<String, PluginLocalToolComponentBinding>,
-    plugin_cloud_tool_component_bindings: HashMap<String, PluginCloudToolComponentBinding>,
-    external_http_bindings: HashMap<String, PersistedExternalHttpProviderBinding>,
+    #[serde(default)]
+    local_connector_mcp_bindings: HashMap<String, LocalConnectorMcpProviderBinding>,
     expires_at: String,
     expires_at_unix: i64,
 }
@@ -280,7 +258,6 @@ impl RuntimeSessionStore {
     pub async fn connect(
         database_url: &str,
         encryption_secret: &str,
-        external_http_request_timeout: Duration,
         cache_limits: RuntimeSessionCacheLimits,
     ) -> Result<Self, String> {
         let client = Client::with_uri_str(database_url)
@@ -311,7 +288,6 @@ impl RuntimeSessionStore {
                 MongoRuntimeSessionStore {
                     collection,
                     cipher: SnapshotCipher::new(encryption_secret)?,
-                    external_http_request_timeout,
                     cache_limits,
                     cache: RwLock::new(RuntimeSessionCache::default()),
                 },
@@ -393,9 +369,7 @@ impl RuntimeSessionStore {
                         return Ok(Some(snapshot));
                     }
                 }
-                let snapshot = store
-                    .cipher
-                    .decrypt(document, store.external_http_request_timeout)?;
+                let snapshot = store.cipher.decrypt(document)?;
                 let snapshot = Arc::new(snapshot);
                 let mut cache = store.cache.write().await;
                 cache_snapshot_arc(
@@ -436,11 +410,7 @@ impl RuntimeSessionStore {
                         return Ok(Some(cached.snapshot));
                     }
                 }
-                store
-                    .cipher
-                    .decrypt(document, store.external_http_request_timeout)
-                    .map(Arc::new)
-                    .map(Some)
+                store.cipher.decrypt(document).map(Arc::new).map(Some)
             }
         }
     }
@@ -633,7 +603,6 @@ impl SnapshotCipher {
     fn decrypt(
         &self,
         document: StoredRuntimeSessionDocument,
-        external_http_request_timeout: Duration,
     ) -> Result<RuntimeSessionSnapshot, String> {
         if document.schema_version != SNAPSHOT_SCHEMA_VERSION {
             return Err(format!(
@@ -669,7 +638,7 @@ impl SnapshotCipher {
                 "Runtime Session Snapshot metadata does not match its envelope".to_string(),
             );
         }
-        persisted.into_runtime(external_http_request_timeout)
+        persisted.into_runtime()
     }
 }
 
@@ -687,14 +656,6 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
     type Error = String;
 
     fn try_from(snapshot: &RuntimeSessionSnapshot) -> Result<Self, Self::Error> {
-        let external_http_bindings = snapshot
-            .external_http_bindings
-            .iter()
-            .map(|(resource_id, binding)| {
-                persist_external_http_binding(binding)
-                    .map(|persisted| (resource_id.clone(), persisted))
-            })
-            .collect::<Result<HashMap<_, _>, _>>()?;
         Ok(Self {
             session_id: snapshot.session_id.clone(),
             caller_service: snapshot.caller_service.clone(),
@@ -732,10 +693,7 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             plugin_local_tool_component_bindings: snapshot
                 .plugin_local_tool_component_bindings
                 .clone(),
-            plugin_cloud_tool_component_bindings: snapshot
-                .plugin_cloud_tool_component_bindings
-                .clone(),
-            external_http_bindings,
+            local_connector_mcp_bindings: snapshot.local_connector_mcp_bindings.clone(),
             expires_at: snapshot.expires_at.clone(),
             expires_at_unix: snapshot.expires_at_unix,
         })
@@ -743,18 +701,7 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
 }
 
 impl PersistedRuntimeSessionSnapshot {
-    fn into_runtime(
-        self,
-        external_http_request_timeout: Duration,
-    ) -> Result<RuntimeSessionSnapshot, String> {
-        let external_http_bindings = self
-            .external_http_bindings
-            .into_iter()
-            .map(|(resource_id, binding)| {
-                restore_external_http_binding(binding, external_http_request_timeout)
-                    .map(|restored| (resource_id, restored))
-            })
-            .collect::<Result<HashMap<_, _>, _>>()?;
+    fn into_runtime(self) -> Result<RuntimeSessionSnapshot, String> {
         Ok(RuntimeSessionSnapshot {
             session_id: self.session_id,
             caller_service: self.caller_service,
@@ -790,8 +737,7 @@ impl PersistedRuntimeSessionSnapshot {
             plugin_local_bindings: self.plugin_local_bindings,
             plugin_tool_component_bindings: self.plugin_tool_component_bindings,
             plugin_local_tool_component_bindings: self.plugin_local_tool_component_bindings,
-            plugin_cloud_tool_component_bindings: self.plugin_cloud_tool_component_bindings,
-            external_http_bindings,
+            local_connector_mcp_bindings: self.local_connector_mcp_bindings,
             expires_at: self.expires_at,
             expires_at_unix: self.expires_at_unix,
         })

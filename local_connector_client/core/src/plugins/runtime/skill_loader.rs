@@ -8,19 +8,10 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use chatos_plugin_management_sdk::PluginComponentKind;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::mcp_runtime::load_verified_manifest;
-use super::portable_bundle::validate_local_portable_bundle;
 use super::skill_document::{extract_references, parse_skill_document, resolve_reference_path};
 use crate::plugins::{ActivePluginInstallation, PluginInstaller};
-use crate::skills::{
-    internal_skill_bundle_hash, internal_skill_catalog, internal_skill_instructions,
-    internal_skill_manifest,
-};
-
-const BUNDLED_MARKETPLACE_ID: &str = "chatos-bundled";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PluginSkillLoaderLimits {
@@ -85,24 +76,6 @@ pub struct PluginSkillSnapshot {
     pub metadata: PluginSkillMetadata,
     pub instructions: String,
     pub resources: Vec<PluginSkillResourceDescriptor>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginNativeSkillBindingSnapshot {
-    pub plugin_id: String,
-    pub release_id: String,
-    pub plugin_version: String,
-    pub artifact_sha256: String,
-    pub component_key: String,
-    pub skill_key: String,
-    pub skill_id: String,
-    pub bundle_id: String,
-    pub bundle_version: String,
-    pub bundle_hash: String,
-    pub requires_workspace: bool,
-    pub permissions: Vec<String>,
-    pub skill_snapshot_sha256: String,
-    pub snapshot_sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -183,24 +156,18 @@ impl PluginSkillLoader {
             .installer
             .active_installation(plugin_id)?
             .context("Plugin is not installed and active")?;
-        let component = installation
+        installation
             .version
             .inventory
             .components
             .iter()
             .find(|component| component.component_key == component_key)
             .context("Plugin Skill component is missing from the signed installation inventory")?;
-        match component.execution_host {
-            chatos_plugin_management_sdk::PluginExecutionHost::Local => return Ok(()),
-            chatos_plugin_management_sdk::PluginExecutionHost::Cloud => {
-                bail!("cloud-only Plugin Skill cannot execute through Local Connector")
-            }
-            chatos_plugin_management_sdk::PluginExecutionHost::Portable => {}
+        if expected_content_sha256
+            .is_some_and(|expected| expected != installation.version.artifact_sha256)
+        {
+            bail!("Plugin Skill component snapshot does not match the installed npm package");
         }
-        let expected = expected_content_sha256
-            .context("portable Plugin Skill is missing its immutable Bundle SHA-256")?;
-        let manifest = load_verified_manifest(&installation)?;
-        validate_local_portable_bundle(&installation, &manifest, component_key, expected)?;
         Ok(())
     }
 
@@ -234,193 +201,6 @@ impl PluginSkillLoader {
             bail!("Plugin Skill resource no longer matches the prepared snapshot");
         }
         String::from_utf8(bytes).context("Plugin Skill text resource is not UTF-8")
-    }
-
-    pub fn load_bundled_native_binding(
-        &self,
-        plugin_id: &str,
-        component_key: &str,
-        runtime_kind: Option<&str>,
-        metadata: Option<&Value>,
-        content_sha256: Option<&str>,
-        selected_skills: &BTreeMap<String, PluginSkillSnapshot>,
-    ) -> Result<Option<PluginNativeSkillBindingSnapshot>> {
-        if selected_skills.len() != 1 {
-            if runtime_kind == Some("native_adapter") {
-                bail!("bundled native Plugin components must select exactly one Skill");
-            }
-            return Ok(None);
-        }
-        let skill = selected_skills
-            .values()
-            .next()
-            .context("selected Plugin Skill is unavailable")?;
-        let installation = self
-            .installer
-            .active_installation(plugin_id)?
-            .context("Plugin is not installed and active")?;
-        validate_active_snapshot(&installation, skill)?;
-        let skill_root = Path::new(skill.relative_skill_path.as_str())
-            .parent()
-            .context("Plugin Skill document has no parent directory")?;
-        let manifest_path = skill_root.join("skill.json");
-        let manifest_path = manifest_path
-            .to_str()
-            .context("Plugin Skill manifest path is not UTF-8")?;
-        let has_bundle_manifest = installation
-            .version
-            .package_file_sha256
-            .contains_key(manifest_path);
-        if !has_bundle_manifest {
-            if runtime_kind == Some("native_adapter") {
-                bail!("native Plugin Skill component is missing its signed skill.json");
-            }
-            return Ok(None);
-        }
-        let manifest_bytes =
-            read_verified_file(&installation, manifest_path, self.limits.max_resource_bytes)?;
-        let manifest: Value = serde_json::from_slice(manifest_bytes.as_slice())
-            .context("decode signed Plugin Skill bundle manifest")?;
-        let entrypoint_kind = manifest
-            .pointer("/entrypoint/kind")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if entrypoint_kind != "native_adapter" {
-            if runtime_kind == Some("native_adapter") {
-                bail!("Plugin component runtime_kind does not match signed skill.json");
-            }
-            return Ok(None);
-        }
-        if runtime_kind != Some("native_adapter") {
-            bail!("signed native Plugin Skill is missing its native_adapter runtime snapshot");
-        }
-
-        let registry = self.installer.registry()?;
-        let installed_plugin = registry
-            .plugins
-            .get(plugin_id)
-            .context("Plugin is missing from the local registry")?;
-        if installed_plugin.marketplace_id != BUNDLED_MARKETPLACE_ID {
-            bail!(
-                "native internal Skill adapters are restricted to the chatos-bundled Marketplace"
-            );
-        }
-
-        let skill_id = required_metadata_text(metadata, "skill_id")?;
-        let bundle_id = required_metadata_text(metadata, "bundle_id")?;
-        let bundle_hash = required_metadata_text(metadata, "bundle_hash")?;
-        let content_sha256 = content_sha256
-            .context("native Plugin Skill component is missing its immutable content SHA-256")?;
-        if content_sha256 != bundle_hash {
-            bail!("native Plugin Skill content hash does not match bundle_hash metadata");
-        }
-        let catalog = internal_skill_catalog()?;
-        let item = catalog
-            .skills
-            .iter()
-            .find(|item| item.skill_id == skill_id)
-            .context("native Plugin Skill is not present in the embedded inventory")?;
-        if item.implementation_status != "ready" || item.entrypoint_kind != "native_adapter" {
-            bail!("native Plugin Skill adapter is not ready in this Local Connector build");
-        }
-        if item.bundle_id != bundle_id
-            || item.version != manifest_text(&manifest, "version")?
-            || item.name != manifest_text(&manifest, "name")?
-            || item.name != component_key
-            || item.name != skill.skill_key
-            || internal_skill_bundle_hash(item) != bundle_hash
-        {
-            bail!("native Plugin Skill metadata does not match the embedded inventory");
-        }
-        for (field, expected) in [
-            ("skill_id", item.skill_id.as_str()),
-            ("bundle_id", item.bundle_id.as_str()),
-            ("version", item.version.as_str()),
-            ("name", item.name.as_str()),
-        ] {
-            if manifest.get(field).and_then(Value::as_str) != Some(expected) {
-                bail!("signed native Plugin Skill manifest has mismatched {field}");
-            }
-        }
-        let embedded_manifest = internal_skill_manifest(item.skill_id.as_str())
-            .context("embedded native Plugin Skill manifest is missing")?;
-        let embedded_manifest: Value = serde_json::from_str(embedded_manifest)
-            .context("decode embedded native Plugin Skill manifest")?;
-        if manifest != embedded_manifest {
-            bail!("signed native Plugin Skill manifest differs from the embedded adapter bundle");
-        }
-        let instructions_path = skill_root.join("instructions.md");
-        let instructions_path = instructions_path
-            .to_str()
-            .context("Plugin Skill instructions path is not UTF-8")?;
-        let packaged_instructions = read_verified_file(
-            &installation,
-            instructions_path,
-            self.limits.max_instructions_bytes,
-        )?;
-        let embedded_instructions = internal_skill_instructions(item.skill_id.as_str())
-            .context("embedded native Plugin Skill instructions are missing")?;
-        if packaged_instructions.as_slice() != embedded_instructions.as_bytes() {
-            bail!(
-                "signed native Plugin Skill instructions differ from the embedded adapter bundle"
-            );
-        }
-
-        let snapshot_sha256 = native_binding_sha256(
-            &installation,
-            skill,
-            item.skill_id.as_str(),
-            item.bundle_id.as_str(),
-            item.version.as_str(),
-            bundle_hash,
-        );
-        Ok(Some(PluginNativeSkillBindingSnapshot {
-            plugin_id: installation.plugin_id,
-            release_id: installation.version.release_id,
-            plugin_version: installation.version.version,
-            artifact_sha256: installation.version.artifact_sha256,
-            component_key: component_key.to_string(),
-            skill_key: skill.skill_key.clone(),
-            skill_id: item.skill_id.clone(),
-            bundle_id: item.bundle_id.clone(),
-            bundle_version: item.version.clone(),
-            bundle_hash: bundle_hash.to_string(),
-            requires_workspace: item.requires_workspace,
-            permissions: item.permissions.clone(),
-            skill_snapshot_sha256: skill.snapshot_sha256.clone(),
-            snapshot_sha256,
-        }))
-    }
-
-    pub fn validate_bundled_native_binding(
-        &self,
-        snapshot: &PluginNativeSkillBindingSnapshot,
-    ) -> Result<()> {
-        let skills = self
-            .load_component(snapshot.plugin_id.as_str(), snapshot.component_key.as_str())?
-            .into_iter()
-            .filter(|skill| skill.skill_key == snapshot.skill_key)
-            .map(|skill| (skill.skill_key.clone(), skill))
-            .collect::<BTreeMap<_, _>>();
-        let metadata = serde_json::json!({
-            "skill_id": snapshot.skill_id,
-            "bundle_id": snapshot.bundle_id,
-            "bundle_hash": snapshot.bundle_hash,
-        });
-        let active = self
-            .load_bundled_native_binding(
-                snapshot.plugin_id.as_str(),
-                snapshot.component_key.as_str(),
-                Some("native_adapter"),
-                Some(&metadata),
-                Some(snapshot.bundle_hash.as_str()),
-                &skills,
-            )?
-            .context("native Plugin Skill binding is no longer available")?;
-        if active != *snapshot {
-            bail!("native Plugin Skill binding no longer matches the prepared snapshot");
-        }
-        Ok(())
     }
 
     fn load_component_from_installation(
@@ -710,49 +490,6 @@ fn snapshot_sha256(
         payload.push_str(resource.sha256.as_str());
     }
     sha256_bytes(payload.as_bytes())
-}
-
-fn native_binding_sha256(
-    installation: &ActivePluginInstallation,
-    skill: &PluginSkillSnapshot,
-    skill_id: &str,
-    bundle_id: &str,
-    bundle_version: &str,
-    bundle_hash: &str,
-) -> String {
-    let payload = format!(
-        "chatos.plugin.native-skill.snapshot.v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-        installation.plugin_id,
-        installation.version.release_id,
-        installation.version.version,
-        installation.version.artifact_sha256,
-        skill.component_key,
-        skill.snapshot_sha256,
-        skill_id,
-        bundle_id,
-        bundle_version,
-        bundle_hash,
-    );
-    sha256_bytes(payload.as_bytes())
-}
-
-fn required_metadata_text<'a>(metadata: Option<&'a Value>, field: &str) -> Result<&'a str> {
-    metadata
-        .and_then(Value::as_object)
-        .and_then(|metadata| metadata.get(field))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .with_context(|| format!("native Plugin Skill metadata is missing {field}"))
-}
-
-fn manifest_text<'a>(manifest: &'a Value, field: &str) -> Result<&'a str> {
-    manifest
-        .get(field)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .with_context(|| format!("signed native Plugin Skill manifest is missing {field}"))
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {

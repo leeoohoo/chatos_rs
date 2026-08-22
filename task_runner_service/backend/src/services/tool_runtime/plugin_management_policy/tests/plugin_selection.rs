@@ -7,6 +7,8 @@ use chatos_plugin_management_sdk::{
 };
 use serde_json::json;
 
+use crate::models::CreateTaskPluginHint;
+
 use super::super::{TaskRunnerCapabilityPolicy, BUILTIN_RUNTIME_KIND};
 use super::fixtures::*;
 
@@ -20,7 +22,97 @@ fn local_runtime_capabilities() -> ResolvedAgentCapabilities {
 fn local_runtime_policy(
     capabilities: ResolvedAgentCapabilities,
 ) -> Result<TaskRunnerCapabilityPolicy, String> {
-    TaskRunnerCapabilityPolicy::new(capabilities)
+    TaskRunnerCapabilityPolicy::new(capabilities, local_runtime_context())
+}
+
+#[test]
+fn trusted_plugin_hints_resolve_plugin_key_to_internal_id() {
+    let mut capabilities = local_runtime_capabilities();
+    capabilities.plugins = vec![resolved_plugin(false)];
+    let policy = local_runtime_policy(capabilities).expect("Plugin policy");
+    let selection = policy
+        .plugin_selection_from_hints(&[CreateTaskPluginHint {
+            plugin_key: "browser@official".to_string(),
+            reason: Some("Task needs browser control".to_string()),
+        }])
+        .expect("trusted Plugin selection");
+    let config = selection.plugin_config;
+
+    assert_eq!(config.selected_plugins.len(), 1);
+    assert_eq!(config.selected_plugins[0].plugin_id, "plugin-browser");
+    let audit = selection.audit.expect("Plugin selection audit");
+    assert_eq!(audit.policy_revision, "revision-1");
+    assert_eq!(audit.project_context_revision, "project-revision-1");
+    assert_eq!(audit.plugins[0].plugin_key, "browser@official");
+    assert_eq!(audit.plugins[0].device_id, "device-1");
+    assert_eq!(
+        audit.plugins[0].reason.as_deref(),
+        Some("Task needs browser control")
+    );
+}
+
+#[test]
+fn trusted_plugin_hints_reject_unknown_plugin_key() {
+    let mut capabilities = local_runtime_capabilities();
+    capabilities.plugins = vec![resolved_plugin(false)];
+    let policy = local_runtime_policy(capabilities).expect("Plugin policy");
+    let error = policy
+        .plugin_selection_from_hints(&[CreateTaskPluginHint {
+            plugin_key: "unknown-plugin".to_string(),
+            reason: None,
+        }])
+        .expect_err("unknown Plugin hint must fail closed");
+
+    assert!(error.contains("not selectable"));
+}
+
+#[test]
+fn plugin_hints_require_a_local_connector_device() {
+    let mut capabilities = local_runtime_capabilities();
+    capabilities.plugins = vec![resolved_plugin(false)];
+    let policy = TaskRunnerCapabilityPolicy::new(
+        capabilities,
+        crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext::server(
+            "owner-1", "public",
+        ),
+    )
+    .expect("server capability policy");
+
+    assert!(policy.selectable_plugins().is_empty());
+    let error = policy
+        .plugin_selection_from_hints(&[CreateTaskPluginHint {
+            plugin_key: "browser@official".to_string(),
+            reason: None,
+        }])
+        .expect_err("Plugin selection without a local device must fail closed");
+
+    assert!(error.contains("Local Connector project device"));
+}
+
+#[test]
+fn run_validation_rejects_plugin_release_drift() {
+    let mut capabilities = local_runtime_capabilities();
+    capabilities.plugins = vec![resolved_plugin(false)];
+    let policy = local_runtime_policy(capabilities).expect("Plugin policy");
+    let selection = policy
+        .plugin_selection_from_hints(&[CreateTaskPluginHint {
+            plugin_key: "browser@official".to_string(),
+            reason: Some("Task needs browser control".to_string()),
+        }])
+        .expect("trusted Plugin selection");
+    let mut task = task();
+    task.plugin_config = selection.plugin_config;
+    task.plugin_selection_audit = selection.audit;
+
+    policy
+        .validate_task_plugin_selection_for_run(&task)
+        .expect("unchanged Plugin snapshot");
+    task.plugin_selection_audit.as_mut().expect("audit").plugins[0].version = "2.0.0".to_string();
+    let error = policy
+        .validate_task_plugin_selection_for_run(&task)
+        .expect_err("Release drift must fail closed");
+
+    assert!(error.contains("Plugin release changed"));
 }
 
 #[test]
@@ -264,7 +356,19 @@ fn required_plugin_is_injected_into_effective_task_config() {
     ));
     let policy = local_runtime_policy(capabilities).expect("required Plugin policy");
     let mut task = task();
+    assert!(policy
+        .validate_task_plugin_selection_for_run(&task)
+        .expect_err("required Plugin without an audit snapshot must fail closed")
+        .contains("audit snapshot is missing"));
+    let selection = policy
+        .plugin_selection_from_hints(&[])
+        .expect("required Plugin trusted selection");
+    task.plugin_config = selection.plugin_config;
+    task.plugin_selection_audit = selection.audit;
 
+    policy
+        .validate_task_plugin_selection_for_run(&task)
+        .expect("validate required Plugin snapshot");
     policy
         .apply_to_task(&mut task)
         .expect("apply required Plugin");
@@ -274,32 +378,4 @@ fn required_plugin_is_injected_into_effective_task_config() {
         task.plugin_config.selected_plugins[0].plugin_id,
         "plugin-browser"
     );
-}
-
-#[test]
-fn cloud_runtime_does_not_inject_optional_plugins_without_task_selection() {
-    let mut capabilities = local_runtime_capabilities();
-    let mut plugin = resolved_plugin(false);
-    plugin.catalog.name = "ponytail".to_string();
-    for component in &mut plugin.components {
-        component.component.execution_host =
-            chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
-    }
-    for snapshot in &mut plugin.component_snapshots {
-        snapshot.component.execution_host =
-            chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
-    }
-    if let Some(release) = plugin.release.as_mut() {
-        for component in &mut release.components {
-            component.execution_host = chatos_plugin_management_sdk::PluginExecutionHost::Cloud;
-        }
-    }
-    capabilities.plugins = vec![plugin];
-    let policy = TaskRunnerCapabilityPolicy::new(capabilities).expect("cloud Plugin policy");
-    let mut task = task();
-
-    policy
-        .apply_to_task(&mut task)
-        .expect("apply cloud Plugin policy");
-    assert!(task.plugin_config.selected_plugins.is_empty());
 }

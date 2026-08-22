@@ -72,12 +72,6 @@ export const InputAreaPluginPicker = ({
           {pluginPicker.error ? (
             <div className="mt-2 text-xs text-destructive">{pluginPicker.error}</div>
           ) : null}
-          {pluginPicker.commandArgumentIssue ? (
-            <div className="mt-2 text-xs text-destructive">
-              {t('inputArea.plugin.commandArgumentsInvalid')}
-            </div>
-          ) : null}
-
           <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
             {pluginPicker.loading ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
@@ -117,15 +111,6 @@ export const InputAreaPluginPicker = ({
                             Browser
                           </span>
                         ) : null}
-                        <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-700 dark:text-violet-300">
-                          {plugin.execution_type === 'cloud'
-                            ? '云端'
-                            : plugin.execution_type === 'portable'
-                              ? '可移植'
-                              : plugin.execution_type === 'hybrid'
-                                ? 'Hybrid'
-                                : '本地'}
-                        </span>
                         {plugin.requires_device ? (
                           <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
                             需要设备
@@ -152,18 +137,9 @@ export const InputAreaPluginPicker = ({
                                   {component.component_key}
                                 </span>
                                 <span>{component.kind}</span>
-                                <span>
-                                  {component.execution_host === 'cloud'
-                                    ? '云端'
-                                    : component.execution_host === 'portable'
-                                      ? '可移植'
-                                      : '本地'}
-                                </span>
                                 <span>{component.available ? 'ready' : component.status}</span>
                                 <span>
-                                  {component.prepare_provider === 'task_runner_cloud'
-                                    ? '云端任务'
-                                    : 'Local Connector'}
+                                  MCP Management → Local Connector
                                 </span>
                                 {component.requires_workspace ? <span>需要工作区</span> : null}
                               </span>
@@ -184,83 +160,6 @@ export const InputAreaPluginPicker = ({
                     </span>
                   </label>
 
-                  {(Array.isArray(plugin.commands) ? plugin.commands : []).length > 0 ? (
-                    <div className="mt-3 space-y-2 border-t pt-2">
-                      <div className="text-[11px] font-medium text-muted-foreground">
-                        {t('inputArea.plugin.commands')}
-                      </div>
-                      {(Array.isArray(plugin.commands) ? plugin.commands : []).map((command) => {
-                        const invocation = pluginPicker.selectedCommandInvocations.find((item) => (
-                          item.plugin_id === plugin.id && item.command_id === command.command_id
-                        ));
-                        const commandSelected = Boolean(invocation);
-                        const commandKey = `${plugin.id}\u0000${command.command_id}`;
-                        const argumentsInvalid = pluginPicker.commandArgumentIssue?.key === commandKey;
-                        return (
-                          <div
-                            key={command.command_id}
-                            className={cn(
-                              'rounded-md border bg-background/70 p-2',
-                              commandSelected && 'border-primary/50',
-                            )}
-                          >
-                            <label className="flex cursor-pointer items-start gap-2">
-                              <input
-                                type="checkbox"
-                                checked={commandSelected}
-                                onChange={() => pluginPicker.toggleCommand(
-                                  plugin.id,
-                                  command.command_id,
-                                )}
-                                className="mt-0.5"
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="flex flex-wrap items-center gap-1.5">
-                                  <span className="font-mono text-xs text-primary">
-                                    /{command.command_id}
-                                  </span>
-                                  <span className="text-xs font-medium">
-                                    {command.display_name}
-                                  </span>
-                                  {command.requires_confirmation ? (
-                                    <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
-                                      {t('inputArea.plugin.confirmationRequired')}
-                                    </span>
-                                  ) : null}
-                                </span>
-                                {command.description ? (
-                                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                                    {command.description}
-                                  </span>
-                                ) : null}
-                              </span>
-                            </label>
-                            {commandSelected ? (
-                              <input
-                                value={typeof invocation?.arguments === 'string'
-                                  ? invocation.arguments
-                                  : ''}
-                                onChange={(event) => pluginPicker.setCommandArguments(
-                                  plugin.id,
-                                  command.command_id,
-                                  event.target.value,
-                                )}
-                                placeholder={command.argument_hint
-                                  || t('inputArea.plugin.commandArgumentsOptional')}
-                                aria-label={t('inputArea.plugin.commandArgumentsLabel', {
-                                  command: command.display_name,
-                                })}
-                                className={cn(
-                                  'mt-2 w-full rounded-md border bg-background px-2 py-1.5 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-primary',
-                                  argumentsInvalid && 'border-destructive focus:ring-destructive',
-                                )}
-                              />
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
                 </div>
               );
             })}

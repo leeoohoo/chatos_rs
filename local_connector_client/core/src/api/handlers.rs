@@ -8,12 +8,10 @@ mod browser_sessions;
 mod chrome;
 mod helpers;
 mod history;
-mod mcp_configs;
 mod model_configs;
 mod plugins;
 mod runtime_settings;
 mod sandbox;
-mod skills;
 mod status;
 mod system_permissions;
 mod terminal;
@@ -36,11 +34,6 @@ pub(super) use chrome::{
     local_enable_chrome_integration,
 };
 pub(super) use history::{local_clear_command_history, local_command_history};
-pub(super) use mcp_configs::{
-    local_delete_mcp_config, local_disable_mcp_config, local_enable_mcp_config,
-    local_get_mcp_config, local_mcp_configs, local_save_mcp_config, local_sync_mcp_config,
-    local_test_mcp_config, local_update_mcp_config,
-};
 pub(super) use model_configs::{
     local_model_configs, local_model_settings, local_refresh_model_configs,
     local_update_model_settings,
@@ -59,7 +52,6 @@ pub(super) use sandbox::{
     local_sandbox_capabilities, local_sandbox_leases, local_sandbox_settings,
     local_shutdown_sandboxes, local_toggle_sandbox, local_update_sandbox_settings,
 };
-pub(super) use skills::{local_skills, local_sync_skill_inventory, local_update_skill_preference};
 pub(super) use status::local_status;
 pub(super) use system_permissions::{local_request_system_permission, local_system_permissions};
 pub(super) use terminal::local_terminal_exec;

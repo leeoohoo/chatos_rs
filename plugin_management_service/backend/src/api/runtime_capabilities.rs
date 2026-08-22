@@ -202,29 +202,14 @@ async fn resolve_agent_capabilities_for_owner(
                 ) {
                     continue;
                 }
-                if resource.content.kind == SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE
-                    && !user_skill_enabled(state, owner_user_id.as_str(), resource.id.as_str())
-                        .await?
-                {
-                    continue;
-                }
-                let (available, status, reason, installation) =
-                    availability_for_skill_with_plugin_gate(
-                        state,
-                        &resource,
-                        owner_user_id.as_str(),
-                        device_id.as_deref(),
-                        runtime_context.runtime_provider.as_deref(),
-                    )
-                    .await?;
-                collect_local_connector_requirement_for_skill(
-                    &mut local_connector_requirements,
+                let (available, status, reason) = availability_for_skill_with_plugin_gate(
+                    state,
                     &resource,
-                    &binding,
-                    available,
-                    reason.clone(),
-                    installation.as_ref(),
-                );
+                    owner_user_id.as_str(),
+                    device_id.as_deref(),
+                    runtime_context.runtime_provider.as_deref(),
+                )
+                .await?;
                 if available || include_unavailable {
                     skills.push(ResolvedSkill {
                         resource,
@@ -232,7 +217,6 @@ async fn resolve_agent_capabilities_for_owner(
                         available,
                         status,
                         reason,
-                        installation,
                     });
                 }
             }
@@ -272,29 +256,14 @@ async fn resolve_agent_capabilities_for_owner(
                     ) {
                         continue;
                     }
-                    if resource.content.kind == SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE
-                        && !user_skill_enabled(state, owner_user_id.as_str(), resource.id.as_str())
-                            .await?
-                    {
-                        continue;
-                    }
-                    let (available, status, reason, installation) =
-                        availability_for_skill_with_plugin_gate(
-                            state,
-                            &resource,
-                            owner_user_id.as_str(),
-                            device_id.as_deref(),
-                            runtime_context.runtime_provider.as_deref(),
-                        )
-                        .await?;
-                    collect_local_connector_requirement_for_skill(
-                        &mut local_connector_requirements,
+                    let (available, status, reason) = availability_for_skill_with_plugin_gate(
+                        state,
                         &resource,
-                        &binding,
-                        available,
-                        reason.clone(),
-                        installation.as_ref(),
-                    );
+                        owner_user_id.as_str(),
+                        device_id.as_deref(),
+                        runtime_context.runtime_provider.as_deref(),
+                    )
+                    .await?;
                     if available || include_unavailable {
                         skills.push(ResolvedSkill {
                             resource,
@@ -302,7 +271,6 @@ async fn resolve_agent_capabilities_for_owner(
                             available,
                             status,
                             reason,
-                            installation,
                         });
                     }
                 }
@@ -399,28 +367,14 @@ async fn resolve_agent_capabilities_for_owner(
                 RESOURCE_KIND_SKILL,
                 resource.id.as_str(),
             );
-            if resource.content.kind == SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE
-                && !user_skill_enabled(state, owner_user_id.as_str(), resource.id.as_str()).await?
-            {
-                continue;
-            }
-            let (available, status, reason, installation) =
-                availability_for_skill_with_plugin_gate(
-                    state,
-                    &resource,
-                    owner_user_id.as_str(),
-                    device_id.as_deref(),
-                    runtime_context.runtime_provider.as_deref(),
-                )
-                .await?;
-            collect_local_connector_requirement_for_skill(
-                &mut local_connector_requirements,
+            let (available, status, reason) = availability_for_skill_with_plugin_gate(
+                state,
                 &resource,
-                &binding,
-                available,
-                reason.clone(),
-                installation.as_ref(),
-            );
+                owner_user_id.as_str(),
+                device_id.as_deref(),
+                runtime_context.runtime_provider.as_deref(),
+            )
+            .await?;
             if available || include_unavailable {
                 skills.push(ResolvedSkill {
                     resource,
@@ -428,7 +382,6 @@ async fn resolve_agent_capabilities_for_owner(
                     available,
                     status,
                     reason,
-                    installation,
                 });
             }
         }
@@ -575,19 +528,6 @@ fn condition_matches(expected: Option<&str>, actual: Option<&str>) -> bool {
         return true;
     };
     normalized(actual).is_some_and(|actual| actual.eq_ignore_ascii_case(expected.as_str()))
-}
-
-async fn user_skill_enabled(
-    state: &AppState,
-    owner_user_id: &str,
-    skill_id: &str,
-) -> Result<bool, ApiError> {
-    state
-        .store
-        .get_user_skill_preference(owner_user_id, skill_id)
-        .await
-        .map(|record| record.is_some_and(|record| record.enabled))
-        .map_err(ApiError::internal)
 }
 
 pub(super) fn automatic_user_binding(

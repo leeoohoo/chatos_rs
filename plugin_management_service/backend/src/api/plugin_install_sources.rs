@@ -8,6 +8,9 @@ use chatos_plugin_management_sdk::{
     PluginInstallSourceList, PluginReleaseVerificationContext,
 };
 
+use super::plugin_publishers::{
+    require_approved_publisher_identity, require_approved_publisher_release_key,
+};
 use super::*;
 
 pub(super) async fn list_plugin_install_sources_internal(
@@ -122,21 +125,67 @@ async fn load_install_source(
             "Plugin Marketplace is not enabled and trusted for network installation",
         ));
     }
-    let sync = state
-        .store
-        .get_plugin_catalog_sync(marketplace.id.as_str())
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| {
-            ApiError::conflict("network Plugin Marketplace has no verified Catalog snapshot")
-        })?;
-    let mut plugin = sync
-        .document
-        .plugins
-        .iter()
-        .find(|item| item.id == plugin.id)
-        .cloned()
-        .ok_or_else(|| ApiError::not_found("Plugin install source not found"))?;
+    let (mut plugin, release) = if requires_verified_catalog_snapshot(&marketplace) {
+        let sync = state
+            .store
+            .get_plugin_catalog_sync(marketplace.id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| {
+                ApiError::conflict("network Plugin Marketplace has no verified Catalog snapshot")
+            })?;
+        let plugin = sync
+            .document
+            .plugins
+            .iter()
+            .find(|item| item.id == plugin.id)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found("Plugin install source not found"))?;
+        let release_id = requested_release_id.unwrap_or(plugin.latest_release_id.as_str());
+        if release_id != plugin.latest_release_id {
+            return Err(ApiError::conflict(
+                "only the current signed stable Plugin Release can be installed",
+            ));
+        }
+        let release = sync
+            .document
+            .releases
+            .iter()
+            .find(|item| item.id == release_id && item.plugin_id == plugin.id)
+            .cloned()
+            .ok_or_else(|| ApiError::not_found("Plugin Release not found"))?;
+        marketplace.trusted_signing_keys = sync.document.signing_keys;
+        marketplace.last_catalog_revision = Some(sync.revision);
+        marketplace.last_synced_at = Some(sync.synced_at);
+        (plugin, release)
+    } else if is_direct_admin_registry_marketplace(&marketplace) {
+        let release_id = requested_release_id.unwrap_or(plugin.latest_release_id.as_str());
+        if release_id != plugin.latest_release_id {
+            return Err(ApiError::conflict(
+                "only the current signed stable Plugin Release can be installed",
+            ));
+        }
+        let release = state
+            .store
+            .get_plugin_release(release_id)
+            .await
+            .map_err(ApiError::internal)?
+            .filter(|release| release.plugin_id == plugin.id)
+            .ok_or_else(|| ApiError::not_found("Plugin Release not found"))?;
+        require_approved_publisher_identity(state, &marketplace, &plugin.publisher).await?;
+        require_approved_publisher_release_key(
+            state,
+            &marketplace,
+            &plugin.publisher,
+            release.signature.key_id.as_str(),
+        )
+        .await?;
+        (plugin, release)
+    } else {
+        return Err(ApiError::conflict(
+            "network Plugin Marketplace requires a verified Catalog snapshot",
+        ));
+    };
     apply_marketplace_catalog_scope(&marketplace, &mut plugin);
     ensure_catalog_visible_to_owner(owner_user_id, &plugin)?;
     if !plugin.license.redistributable || plugin.license.reviewed_at.is_none() {
@@ -144,19 +193,6 @@ async fn load_install_source(
             "Plugin license is not approved for artifact proxy installation",
         ));
     }
-    let release_id = requested_release_id.unwrap_or(plugin.latest_release_id.as_str());
-    if release_id != plugin.latest_release_id {
-        return Err(ApiError::conflict(
-            "only the current signed stable Plugin Release can be installed",
-        ));
-    }
-    let release = sync
-        .document
-        .releases
-        .iter()
-        .find(|item| item.id == release_id && item.plugin_id == plugin.id)
-        .cloned()
-        .ok_or_else(|| ApiError::not_found("Plugin Release not found"))?;
     let preference = state
         .store
         .get_user_plugin_preference(owner_user_id, plugin.id.as_str())
@@ -169,9 +205,6 @@ async fn load_install_source(
             "Plugin preference identity differs from the requested owner or Plugin",
         ));
     }
-    marketplace.trusted_signing_keys = sync.document.signing_keys;
-    marketplace.last_catalog_revision = Some(sync.revision);
-    marketplace.last_synced_at = Some(sync.synced_at);
     validate_install_source(&marketplace, &plugin, &release)?;
     Ok(PluginInstallSource {
         marketplace,
@@ -191,22 +224,27 @@ fn validate_install_source(
             "Plugin Marketplace is not enabled and trusted for network installation",
         ));
     }
-    let catalog_url = marketplace
-        .catalog_url
-        .as_deref()
-        .ok_or_else(|| ApiError::conflict("network Plugin Marketplace is missing catalog_url"))?;
-    validate_https_url(catalog_url, "Marketplace catalog_url")?;
-    if marketplace
-        .last_catalog_revision
-        .as_deref()
-        .is_none_or(str::is_empty)
-        || marketplace
-            .last_synced_at
+    if requires_verified_catalog_snapshot(marketplace) {
+        let catalog_url = marketplace.catalog_url.as_deref().ok_or_else(|| {
+            ApiError::conflict("network Plugin Marketplace is missing catalog_url")
+        })?;
+        validate_https_url(catalog_url, "Marketplace catalog_url")?;
+        if marketplace
+            .last_catalog_revision
             .as_deref()
             .is_none_or(str::is_empty)
-    {
+            || marketplace
+                .last_synced_at
+                .as_deref()
+                .is_none_or(str::is_empty)
+        {
+            return Err(ApiError::conflict(
+                "network Plugin Marketplace has no synchronized Catalog revision",
+            ));
+        }
+    } else if !is_direct_admin_registry_marketplace(marketplace) {
         return Err(ApiError::conflict(
-            "network Plugin Marketplace has no synchronized Catalog revision",
+            "network Plugin Marketplace requires a verified Catalog snapshot",
         ));
     }
     if plugin.marketplace_id != marketplace.id
@@ -231,14 +269,12 @@ fn validate_install_source(
             "Plugin Release identity differs from its normalized Manifest",
         ));
     }
-    let sbom_ref = release
-        .sbom_ref
-        .as_deref()
-        .ok_or_else(|| ApiError::conflict("network Plugin Release is missing an embedded SBOM"))?;
-    if sbom_ref.contains("://") || normalize_plugin_relative_path(sbom_ref).is_err() {
-        return Err(ApiError::conflict(
-            "network Plugin Release SBOM must be a Plugin-relative artifact path",
-        ));
+    if let Some(sbom_ref) = release.sbom_ref.as_deref() {
+        if sbom_ref.contains("://") || normalize_plugin_relative_path(sbom_ref).is_err() {
+            return Err(ApiError::conflict(
+                "network Plugin Release SBOM must be a Plugin-relative artifact path",
+            ));
+        }
     }
     validate_https_url(release.artifact_ref.as_str(), "Plugin artifact_ref")?;
     let key = marketplace
@@ -270,6 +306,17 @@ fn is_network_marketplace(marketplace: &PluginMarketplaceRecord) -> bool {
         )
 }
 
+fn requires_verified_catalog_snapshot(marketplace: &PluginMarketplaceRecord) -> bool {
+    marketplace.catalog_url.is_some()
+}
+
+fn is_direct_admin_registry_marketplace(marketplace: &PluginMarketplaceRecord) -> bool {
+    marketplace.source_kind == PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY
+        && marketplace.catalog_url.is_none()
+        && marketplace.visibility == PLUGIN_VISIBILITY_PUBLIC
+        && marketplace.owner_user_id.is_none()
+}
+
 fn validate_https_url(value: &str, field: &str) -> Result<(), ApiError> {
     let url = reqwest::Url::parse(value)
         .map_err(|_| ApiError::conflict(format!("{field} is not a valid URL")))?;
@@ -292,11 +339,21 @@ mod tests {
 
     #[test]
     fn artifact_urls_must_be_plain_https_urls() {
-        assert!(validate_https_url("https://plugins.example.com/demo.zip", "artifact").is_ok());
-        assert!(validate_https_url("http://plugins.example.com/demo.zip", "artifact").is_err());
-        assert!(
-            validate_https_url("https://user@plugins.example.com/demo.zip", "artifact").is_err()
-        );
+        assert!(validate_https_url(
+            "https://registry.npmjs.org/demo/-/demo-1.0.0.tgz",
+            "artifact"
+        )
+        .is_ok());
+        assert!(validate_https_url(
+            "http://registry.npmjs.org/demo/-/demo-1.0.0.tgz",
+            "artifact"
+        )
+        .is_err());
+        assert!(validate_https_url(
+            "https://user@registry.npmjs.org/demo/-/demo-1.0.0.tgz",
+            "artifact"
+        )
+        .is_err());
         assert!(
             validate_https_url("https://plugins.example.com/demo.zip#fragment", "artifact")
                 .is_err()
@@ -304,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_and_local_marketplaces_are_not_network_install_sources() {
+    fn only_enabled_trusted_registry_marketplaces_are_network_install_sources() {
         let mut marketplace = PluginMarketplaceRecord {
             id: "marketplace".to_string(),
             name: "marketplace".to_string(),
@@ -319,10 +376,29 @@ mod tests {
             last_synced_at: Some("2026-07-25T00:00:00Z".to_string()),
         };
         assert!(is_network_marketplace(&marketplace));
-        marketplace.trust_level = PLUGIN_TRUST_BUNDLED.to_string();
+        marketplace.trust_level = PLUGIN_TRUST_UNTRUSTED.to_string();
         assert!(!is_network_marketplace(&marketplace));
         marketplace.trust_level = PLUGIN_TRUST_TRUSTED.to_string();
-        marketplace.source_kind = PLUGIN_MARKETPLACE_SOURCE_LOCAL_DIRECTORY.to_string();
+        marketplace.enabled = false;
         assert!(!is_network_marketplace(&marketplace));
+    }
+
+    #[test]
+    fn public_admin_registry_without_catalog_url_is_directly_curated() {
+        let marketplace = PluginMarketplaceRecord {
+            id: "marketplace".to_string(),
+            name: "marketplace".to_string(),
+            owner_user_id: None,
+            visibility: PLUGIN_VISIBILITY_PUBLIC.to_string(),
+            source_kind: PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY.to_string(),
+            catalog_url: None,
+            enabled: true,
+            trust_level: PLUGIN_TRUST_TRUSTED.to_string(),
+            trusted_signing_keys: Vec::new(),
+            last_catalog_revision: None,
+            last_synced_at: None,
+        };
+        assert!(is_direct_admin_registry_marketplace(&marketplace));
+        assert!(!requires_verified_catalog_snapshot(&marketplace));
     }
 }

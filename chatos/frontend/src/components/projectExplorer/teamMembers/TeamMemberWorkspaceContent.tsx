@@ -110,6 +110,8 @@ export const TeamMemberWorkspaceContent: React.FC<TeamMemberWorkspaceContentProp
       anchorRequestKey={anchorRequestKey}
       autoScrollToLatest={false}
       onAnchorClear={onAnchorClear}
+      hasMore={hasMoreMessages}
+      onLoadMore={onLoadMore}
     />
   );
 };

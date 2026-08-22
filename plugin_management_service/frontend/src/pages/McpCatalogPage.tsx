@@ -25,7 +25,6 @@ import {
   adminRuntimeKinds,
   buildMcpPayload,
   isSystemManagedMcp,
-  userRuntimeKinds,
 } from './mcpCatalog/support';
 import { jsonText } from './formUtils';
 
@@ -54,7 +53,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
   const [optimizeStreaming, setOptimizeStreaming] = useState(false);
   const optimizeAbortRef = useRef<AbortController | null>(null);
   const isAdmin = user.role === 'super_admin';
-  const runtimeKinds = isAdmin ? adminRuntimeKinds : userRuntimeKinds;
+  const runtimeKinds = adminRuntimeKinds;
   const runtimeKind = Form.useWatch('runtime_kind', form) as RuntimeKind | undefined;
   const editingSystemManaged = editing ? isSystemManagedMcp(editing) : false;
 
@@ -230,11 +229,8 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
     form.setFieldsValue({
       visibility: 'private',
       enabled: true,
-      runtime_kind: isAdmin ? 'http' : 'local_connector_stdio',
-      args_json: '[]',
-      env_json: '{}',
+      runtime_kind: 'http',
       headers_json: '{}',
-      local_connector_json: '',
     });
     setModalOpen(true);
   }
@@ -253,10 +249,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
       command: record.runtime.command,
       cwd: record.runtime.cwd,
       url: record.runtime.url,
-      args_json: jsonText(record.runtime.args || []),
-      env_json: jsonText(record.runtime.env || {}),
       headers_json: jsonText(record.runtime.headers || {}),
-      local_connector_json: jsonText(record.runtime.local_connector),
     });
     setModalOpen(true);
   }
@@ -358,9 +351,11 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
           <Typography.Title level={3}>{t('mcp.title')}</Typography.Title>
           <Typography.Text type="secondary">{t('mcp.description')}</Typography.Text>
         </Space>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          {t('mcp.add')}
-        </Button>
+        {isAdmin ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            {t('mcp.add')}
+          </Button>
+        ) : null}
       </div>
       <Table
         rowKey="id"

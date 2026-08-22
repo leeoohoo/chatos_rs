@@ -152,23 +152,22 @@ impl TaskRunnerMcpService {
                 }
             }
         }
-        if tool_profile != McpToolProfile::ChatosAsyncPlanner {
-            match self
-                .task_mcp_schema_choices(current_user, request_context)
-                .await
-            {
-                Ok((builtin_choices, external_choices)) => {
-                    enrich_tool_schemas_with_task_mcp_choices(
-                        &mut tools,
-                        builtin_choices.as_slice(),
-                        external_choices.as_slice(),
-                    );
-                }
-                Err(err) => tracing::warn!(
-                    error = err.as_str(),
-                    "task runner could not enrich MCP tool schemas with Agent-bound MCP choices"
-                ),
+        match self
+            .task_mcp_schema_choices(current_user, request_context)
+            .await
+        {
+            Ok((builtin_choices, external_choices, plugin_choices)) => {
+                enrich_tool_schemas_with_task_mcp_choices(
+                    &mut tools,
+                    builtin_choices.as_slice(),
+                    external_choices.as_slice(),
+                    plugin_choices.as_slice(),
+                );
             }
+            Err(err) => tracing::warn!(
+                error = err.as_str(),
+                "task runner could not enrich MCP tool schemas with Agent-bound MCP choices"
+            ),
         }
         if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
             enrich_project_execution_task_scope_schema(
@@ -195,7 +194,14 @@ impl TaskRunnerMcpService {
         &self,
         current_user: &CurrentUser,
         request_context: &McpRequestContext,
-    ) -> Result<(Vec<TaskMcpSchemaChoice>, Vec<TaskMcpSchemaChoice>), String> {
+    ) -> Result<
+        (
+            Vec<TaskMcpSchemaChoice>,
+            Vec<TaskMcpSchemaChoice>,
+            Vec<TaskMcpSchemaChoice>,
+        ),
+        String,
+    > {
         let owner_user_id = current_user
             .effective_owner_user_id()
             .ok_or_else(|| "current Agent is missing owner scope".to_string())?;
@@ -217,6 +223,7 @@ impl TaskRunnerMcpService {
         ];
         let mut builtin = BTreeMap::<String, String>::new();
         let mut external = BTreeMap::<String, String>::new();
+        let mut plugins = BTreeMap::<String, String>::new();
         for (task_profile, requires_execution, target_label) in targets {
             let agent_key =
                 crate::models::task_runner_agent_key_for(task_profile, requires_execution);
@@ -240,6 +247,10 @@ impl TaskRunnerMcpService {
             for (value, title) in policy.selectable_external_mcp_choices() {
                 merge_mcp_choice(&mut external, value, title, target_label);
             }
+            for plugin in policy.selectable_plugin_views() {
+                let title = format!("{} — {}", plugin.display_name, plugin.description);
+                merge_mcp_choice(&mut plugins, plugin.plugin_key, title, target_label);
+            }
         }
         Ok((
             builtin
@@ -247,6 +258,10 @@ impl TaskRunnerMcpService {
                 .map(|(value, title)| TaskMcpSchemaChoice { value, title })
                 .collect(),
             external
+                .into_iter()
+                .map(|(value, title)| TaskMcpSchemaChoice { value, title })
+                .collect(),
+            plugins
                 .into_iter()
                 .map(|(value, title)| TaskMcpSchemaChoice { value, title })
                 .collect(),

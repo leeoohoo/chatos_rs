@@ -3,49 +3,26 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::panic::{resume_unwind, AssertUnwindSafe};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
-use axum::body::{to_bytes, Body};
-use axum::http::{HeaderMap, Request, StatusCode};
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Form, Json, Router};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
-use chat_app_server_rs::{
-    prepare_plugin_artifact_relay_request_for_test,
-    validate_plugin_artifact_list_response_for_test,
-    validate_plugin_artifact_read_response_for_test,
-    validate_plugin_artifact_write_response_for_test, PreparedPluginArtifactRelayRequest,
-};
 use chatos_agent::SystemAgentKey;
-use chatos_plugin_management_sdk::{
-    PluginArtifactListResponse, PluginArtifactReadResponse, PluginArtifactUiAccess,
-    PluginArtifactWriteOperation, PluginArtifactWriteResponse, PluginExecutionHost,
-    PluginUiReadyEventPayload, PLUGIN_UI_READY_EVENT_VERSION_V1,
-};
 use chatos_sandbox_contract::{
     CommandExecutionApprovalDecision, SimpleCommandExecutionApprovalDecision,
 };
-use futures_util::FutureExt;
 use local_connector_service_backend::relay::{ConnectorRelay, RelayRequest as ServiceRelayRequest};
-use local_connector_service_backend::{
-    build_plugin_artifact_relay_store_test_router, build_plugin_artifact_relay_test_router,
-    models::{LocalConnectorDevice, LocalConnectorSession, LocalConnectorWorkspace},
-    store::ConnectorStore,
-    AppConfig as LocalConnectorServiceConfig, PluginArtifactRelayTestScope,
-};
-use mongodb::Client as MongoClient;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::sync::{mpsc, Notify, RwLock};
 use tokio_util::sync::CancellationToken;
-use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::mcp_runtime::{
@@ -56,7 +33,6 @@ use crate::approval::{approve_pending_approval, list_pending_approvals};
 use crate::plugins::tests::fixtures::{ArchiveMutation, TestSigner, PLUGIN_ID};
 use crate::plugins::PluginInstaller;
 use crate::plugins::{PluginCredentialScope, PluginCredentialVault};
-use crate::secure_storage::SecureStorage;
 use crate::state::WorkspaceState;
 use crate::LocalState;
 
@@ -68,7 +44,7 @@ fn loads_active_skill_instructions_and_only_reachable_lazy_resources() {
     let package = TestSigner::new().package(temp.path(), "1.0.0", ArchiveMutation::None);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Plugin");
     let loader = PluginSkillLoader::new(installer);
 
@@ -109,65 +85,6 @@ fn loads_active_skill_instructions_and_only_reachable_lazy_resources() {
 }
 
 #[test]
-fn portable_skill_uses_the_canonical_bundle_hash_and_rejects_cloud_execution() {
-    let temp = TempDir::new().expect("temp directory");
-    let package = TestSigner::new().package_with_prompt_execution(
-        temp.path(),
-        "1.0.0",
-        PluginExecutionHost::Portable,
-    );
-    let installer = PluginInstaller::new(temp.path().join("plugins"));
-    installer
-        .install_archive(package.install_request())
-        .expect("install portable Plugin");
-    let installation = installer
-        .active_installation(PLUGIN_ID)
-        .expect("read active installation")
-        .expect("active installation");
-    let manifest = super::mcp_runtime::load_verified_manifest(&installation)
-        .expect("verified installed Manifest");
-    let component_key = installation.version.inventory.components[0]
-        .component_key
-        .clone();
-    let bundle = super::portable_bundle::load_local_portable_bundle(
-        &installation,
-        &manifest,
-        component_key.as_str(),
-    )
-    .expect("build portable Bundle")
-    .expect("portable Bundle");
-    assert!(super::portable_bundle::validate_local_portable_bundle(
-        &installation,
-        &manifest,
-        component_key.as_str(),
-        bundle.bundle_sha256.as_str(),
-    )
-    .expect("canonical Bundle hash")
-    .is_some());
-
-    let raw_source_sha256 = &installation.version.package_file_sha256["skills/demo/SKILL.md"];
-    assert_ne!(raw_source_sha256, &bundle.bundle_sha256);
-    let error = super::portable_bundle::validate_local_portable_bundle(
-        &installation,
-        &manifest,
-        component_key.as_str(),
-        raw_source_sha256,
-    )
-    .expect_err("raw source hash must not satisfy the portable snapshot");
-    assert!(error.to_string().contains("immutable component snapshot"));
-
-    let mut cloud_installation = installation;
-    cloud_installation.version.inventory.components[0].execution_host = PluginExecutionHost::Cloud;
-    let error = super::portable_bundle::load_local_portable_bundle(
-        &cloud_installation,
-        &manifest,
-        component_key.as_str(),
-    )
-    .expect_err("cloud component must not prepare through Local Connector");
-    assert!(error.to_string().contains("cloud-only Plugin components"));
-}
-
-#[test]
 fn rejects_reference_cycles_and_plugin_root_escape() {
     for (mutation, expected) in [
         (ArchiveMutation::SkillReferenceCycle, "cycle"),
@@ -177,7 +94,7 @@ fn rejects_reference_cycles_and_plugin_root_escape() {
         let package = TestSigner::new().package(temp.path(), "1.0.0", mutation);
         let installer = PluginInstaller::new(temp.path().join("plugins"));
         installer
-            .install_archive(package.install_request())
+            .install_package(package.install_request())
             .expect("install structurally valid Plugin");
         let error = PluginSkillLoader::new(installer)
             .load_component(PLUGIN_ID, "skills")
@@ -194,7 +111,7 @@ fn active_release_change_invalidates_prepared_skill_snapshot() {
     let package_v2 = signer.package(temp.path(), "1.1.0", ArchiveMutation::None);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     installer
-        .install_archive(package_v1.install_request())
+        .install_package(package_v1.install_request())
         .expect("install v1");
     let loader = PluginSkillLoader::new(installer.clone());
     let snapshot = loader
@@ -202,7 +119,7 @@ fn active_release_change_invalidates_prepared_skill_snapshot() {
         .expect("prepare v1 Skill");
 
     installer
-        .install_archive(package_v2.install_request())
+        .install_package(package_v2.install_request())
         .expect("update to v2");
     let error = loader
         .load_text_resource(&snapshot, "skills/demo/references/guide.md")
@@ -216,7 +133,7 @@ fn installed_file_tampering_and_resource_limits_fail_closed() {
     let package = TestSigner::new().package(temp.path(), "1.0.0", ArchiveMutation::None);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Plugin");
     let limited = PluginSkillLoader::new(installer.clone()).with_limits(PluginSkillLoaderLimits {
         max_resource_bytes: 8,
@@ -234,7 +151,12 @@ fn installed_file_tampering_and_resource_limits_fail_closed() {
     let error = PluginSkillLoader::new(installer)
         .load_component(PLUGIN_ID, "skills")
         .expect_err("tampered installation must fail");
-    assert!(error.to_string().contains("installed Plugin files"));
+    assert!(
+        error
+            .to_string()
+            .contains("installed npm MCP files do not match"),
+        "{error:#}"
+    );
 }
 
 #[test]
@@ -243,7 +165,7 @@ fn rejects_non_skill_components_and_unknown_skill_names() {
     let package = TestSigner::new().package(temp.path(), "1.0.0", ArchiveMutation::None);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Plugin");
     let loader = PluginSkillLoader::new(installer);
     assert!(loader.load_component(PLUGIN_ID, "missing").is_err());
@@ -256,7 +178,7 @@ async fn plugin_relay_prepares_exact_snapshots_and_loads_only_published_resource
     let package = TestSigner::new().package(temp.path(), "1.0.0", ArchiveMutation::None);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -399,7 +321,7 @@ async fn plugin_relay_prepares_signed_command_arguments_and_requires_local_confi
     let package = signer.package_with_command(temp.path(), "1.0.0", false);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install command Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -466,7 +388,7 @@ async fn plugin_relay_prepares_signed_command_arguments_and_requires_local_confi
     let confirmed = signer.package_with_command(temp.path(), "1.1.0", true);
     let installer = PluginInstaller::new(temp.path().join("plugins-confirmed"));
     let installed = installer
-        .install_archive(confirmed.install_request())
+        .install_package(confirmed.install_request())
         .expect("install confirmation command Plugin");
     let unavailable_host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -562,7 +484,7 @@ async fn command_catalog_prepare_defers_confirmation_until_exact_tool_invocation
     let package = signer.package_with_command(temp.path(), "1.0.0", true);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install confirmation command Plugin");
     let command_sha256 = hex::encode(Sha256::digest(
         b"---\nname: review\n---\n\nReview the current change and report concrete findings.\n",
@@ -739,7 +661,7 @@ async fn command_catalog_prepare_defers_confirmation_until_exact_tool_invocation
     );
     let updated = signer.package_with_command(temp.path(), "1.1.0", true);
     installer
-        .install_archive(updated.install_request())
+        .install_package(updated.install_request())
         .expect("update confirmation command Plugin");
     let drifted = drift_host
         .handle_execute(plugin_request(
@@ -768,7 +690,7 @@ async fn plugin_relay_prepares_exact_signed_agent_profile() {
     let package = TestSigner::new().package_with_agent(temp.path(), "1.0.0");
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Agent Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -895,7 +817,7 @@ async fn plugin_relay_prepares_signed_ui_descriptor_without_exposing_asset_conte
     let package = TestSigner::new().package_with_ui(temp.path(), "1.0.0", html);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install UI Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -970,7 +892,7 @@ async fn plugin_ui_asset_relay_reads_only_the_exact_prepared_allowlist() {
     let package = TestSigner::new().package_with_ui(temp.path(), "1.0.0", html);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install UI Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -1097,7 +1019,7 @@ async fn plugin_ui_asset_relay_rejects_tampering_and_release_changes_after_prepa
     );
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package_v1.install_request())
+        .install_package(package_v1.install_request())
         .expect("install UI Plugin v1");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -1142,7 +1064,7 @@ async fn plugin_ui_asset_relay_rejects_tampering_and_release_changes_after_prepa
     assert_eq!(tampered.get("status").and_then(Value::as_u64), Some(409));
 
     installer
-        .install_archive(package_v2.install_request())
+        .install_package(package_v2.install_request())
         .expect("update UI Plugin to v2");
     let changed_release = host.handle_ui_asset(read_request()).await;
     assert_eq!(
@@ -1161,7 +1083,7 @@ async fn plugin_ui_prepare_fails_closed_on_forbidden_html_primitives() {
     );
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install structurally signed UI Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -1193,749 +1115,6 @@ async fn plugin_ui_prepare_fails_closed_on_forbidden_html_primitives() {
         .is_some_and(|error| error.contains("forbidden browser primitive")));
 }
 
-#[tokio::test]
-async fn signed_multicomponent_plugin_runs_packaged_artifact_workbench_end_to_end() {
-    run_signed_multicomponent_plugin_artifact_workbench_end_to_end(None).await;
-}
-
-#[tokio::test]
-#[ignore = "requires CHATOS_PLUGIN_ARTIFACT_TEST_MONGODB_URL_TEMPLATE with one {database} placeholder"]
-async fn signed_multicomponent_plugin_runs_packaged_artifact_workbench_with_real_mongodb() {
-    let database = PluginArtifactMongoTestDatabase::connect_from_env()
-        .await
-        .expect("connect isolated Plugin Artifact MongoDB test database");
-    let outcome = AssertUnwindSafe(
-        run_signed_multicomponent_plugin_artifact_workbench_end_to_end(Some(
-            database.store.clone(),
-        )),
-    )
-    .catch_unwind()
-    .await;
-    let cleanup = database.drop().await;
-    if let Err(payload) = outcome {
-        if let Err(error) = cleanup {
-            eprintln!("failed to drop isolated Plugin Artifact MongoDB test database: {error:#}");
-        }
-        resume_unwind(payload);
-    }
-    cleanup.expect("drop isolated Plugin Artifact MongoDB test database");
-}
-
-struct PluginArtifactMongoTestDatabase {
-    client: MongoClient,
-    database_name: String,
-    store: ConnectorStore,
-}
-
-impl PluginArtifactMongoTestDatabase {
-    async fn connect_from_env() -> Result<Self> {
-        const URL_TEMPLATE_ENV: &str = "CHATOS_PLUGIN_ARTIFACT_TEST_MONGODB_URL_TEMPLATE";
-        let template = std::env::var(URL_TEMPLATE_ENV)
-            .with_context(|| format!("{URL_TEMPLATE_ENV} is required"))?;
-        anyhow::ensure!(
-            template.matches("{database}").count() == 1,
-            "{URL_TEMPLATE_ENV} must contain exactly one {{database}} placeholder"
-        );
-        let database_name = format!("chatos_plugin_artifact_it_{}", Uuid::new_v4().simple());
-        let database_url = template.replace("{database}", database_name.as_str());
-        let client = MongoClient::with_uri_str(database_url.as_str())
-            .await
-            .context("create isolated MongoDB test client")?;
-        let selected_database = client
-            .default_database()
-            .context("MongoDB test URL template must select the generated database")?;
-        anyhow::ensure!(
-            selected_database.name() == database_name,
-            "MongoDB test URL template must place {{database}} in the database-name path"
-        );
-        selected_database
-            .drop(None)
-            .await
-            .context("remove stale isolated MongoDB test database")?;
-
-        let setup = async {
-            let store = ConnectorStore::connect(database_url.as_str())
-                .await
-                .map_err(anyhow::Error::msg)?;
-            let mut device = LocalConnectorDevice::new(
-                "owner-a".to_string(),
-                "Packaged Connector MongoDB fixture".to_string(),
-                "fixture-public-key".to_string(),
-                Some("test".to_string()),
-                Some("test".to_string()),
-            );
-            device.id = "device-a".to_string();
-            store
-                .create_device(&device)
-                .await
-                .map_err(anyhow::Error::msg)?;
-
-            let mut workspace = LocalConnectorWorkspace::new(
-                "owner-a".to_string(),
-                "device-a".to_string(),
-                "Packaged workspace MongoDB fixture".to_string(),
-                "fixture-workspace".to_string(),
-                "fixture-workspace-fingerprint".to_string(),
-                Vec::new(),
-            );
-            workspace.id = "workspace-a".to_string();
-            store
-                .create_workspace(&workspace)
-                .await
-                .map_err(anyhow::Error::msg)?;
-
-            let session = LocalConnectorSession::new(
-                "owner-a".to_string(),
-                "device-a".to_string(),
-                std::time::Duration::from_secs(300),
-            );
-            store
-                .open_session(&session)
-                .await
-                .map_err(|error| match error {
-                    local_connector_service_backend::store::SessionAcquireError::AlreadyActive => {
-                        anyhow::anyhow!("isolated MongoDB unexpectedly has an active session")
-                    }
-                    local_connector_service_backend::store::SessionAcquireError::Store(error) => {
-                        anyhow::anyhow!(error)
-                    }
-                })?;
-            Ok::<_, anyhow::Error>(store)
-        }
-        .await;
-        let store = match setup {
-            Ok(store) => store,
-            Err(error) => {
-                let cleanup = selected_database.drop(None).await;
-                return match cleanup {
-                    Ok(()) => Err(error),
-                    Err(cleanup_error) => Err(error.context(format!(
-                        "also failed to drop isolated MongoDB test database after setup error: {cleanup_error}"
-                    ))),
-                };
-            }
-        };
-
-        Ok(Self {
-            client,
-            database_name,
-            store,
-        })
-    }
-
-    async fn drop(self) -> Result<()> {
-        self.client
-            .database(self.database_name.as_str())
-            .drop(None)
-            .await
-            .context("drop isolated MongoDB test database")
-    }
-}
-
-async fn run_signed_multicomponent_plugin_artifact_workbench_end_to_end(
-    service_store: Option<ConnectorStore>,
-) {
-    let temp = TempDir::new().expect("temp directory");
-    let html = br#"<!doctype html><html><head><link rel="stylesheet" href="./styles.css"></head><body><main id="app"></main><script src="./app.js"></script></body></html>"#;
-    let package =
-        TestSigner::new_bundled().package_with_artifact_workbench(temp.path(), "1.0.0", html);
-    let installer = PluginInstaller::new(temp.path().join("installed-plugins"));
-    let installed = installer
-        .install_archive(package.install_request())
-        .expect("install signed multi-component Plugin");
-    let mut component_keys = installed
-        .installed_version
-        .inventory
-        .components
-        .iter()
-        .map(|component| component.component_key.as_str())
-        .collect::<Vec<_>>();
-    component_keys.sort_unstable();
-    assert_eq!(
-        component_keys,
-        vec!["artifact-workbench", "demo", "documents"]
-    );
-
-    let workspace_root = temp.path().join("workspace");
-    fs::create_dir_all(workspace_root.join("artifacts")).expect("create Artifact workspace");
-    let local_state = Arc::new(RwLock::new(LocalState {
-        workspaces: vec![WorkspaceState {
-            id: "workspace-a".to_string(),
-            absolute_root: workspace_root.clone(),
-            alias: "workspace-a".to_string(),
-            fingerprint: "workspace-a-fingerprint".to_string(),
-            project_config_trust: None,
-        }],
-        ..LocalState::default()
-    }));
-    let state_directory = temp.path().join("runtime-state");
-    fs::create_dir_all(state_directory.as_path()).expect("create runtime state directory");
-    let state_path = state_directory.join("connector.json");
-    let secure_storage = SecureStorage::in_memory("packaged Artifact E2E");
-    let host = PluginRuntimeHost::new(
-        PluginSkillLoader::new(installer.clone()),
-        PluginMcpAdapter::new(installer.clone()),
-    )
-    .with_local_state(local_state.clone())
-    .with_approval_state_path(state_path.clone())
-    .with_artifact_persistence_for_tests(state_path.clone(), secure_storage.clone());
-
-    let release_id = installed.installed_version.release_id.clone();
-    let package_sha256 = installed.installed_version.artifact_sha256.clone();
-    let prompt_prepare = host
-        .handle_prepare(plugin_request_for_workspace(
-            "plugin_prepare_request",
-            "workspace-a",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": release_id,
-                "artifact_sha256": package_sha256,
-                "component_key": "demo",
-                "skill_keys": ["demo"],
-                "permission_snapshot": ["workspace.read"],
-            }),
-        ))
-        .await;
-    assert_eq!(
-        prompt_prepare.get("status").and_then(Value::as_u64),
-        Some(200)
-    );
-    assert!(prompt_prepare
-        .pointer("/body/session_sha256")
-        .and_then(Value::as_str)
-        .is_some_and(|digest| digest.len() == 64));
-
-    let ui_sha256 = installed.installed_version.package_file_sha256["ui/index.html"].clone();
-    let ui_prepare = host
-        .handle_prepare(plugin_request_for_workspace(
-            "plugin_prepare_request",
-            "workspace-a",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": release_id,
-                "artifact_sha256": package_sha256,
-                "component_key": "artifact-workbench",
-                "content_sha256": ui_sha256,
-                "permission_snapshot": ["artifact.read"],
-            }),
-        ))
-        .await;
-    assert_eq!(ui_prepare.get("status").and_then(Value::as_u64), Some(200));
-    let ui_body = ui_prepare.get("body").expect("UI prepare body");
-    assert_eq!(
-        ui_body.pointer("/ui/0/bridge_capabilities"),
-        Some(&json!([
-            "artifact.create",
-            "artifact.download",
-            "artifact.list",
-            "artifact.read",
-            "artifact.update",
-            "host.context.read"
-        ]))
-    );
-    let access = json!({
-        "run_id": "run-a",
-        "plugin_id": PLUGIN_ID,
-        "release_id": ui_body["release_id"],
-        "artifact_sha256": ui_body["artifact_sha256"],
-        "component_key": "artifact-workbench",
-        "adapter_session_id": ui_body["adapter_session_id"],
-        "ui_snapshot_sha256": ui_body["ui"][0]["snapshot_sha256"],
-    });
-    let chatos_ready = PluginUiReadyEventPayload {
-        event_schema_version: PLUGIN_UI_READY_EVENT_VERSION_V1,
-        run_id: "run-a".to_string(),
-        device_id: "device-a".to_string(),
-        workspace_id: Some("workspace-a".to_string()),
-        plugin_id: PLUGIN_ID.to_string(),
-        release_id: ui_body["release_id"]
-            .as_str()
-            .expect("UI release ID")
-            .to_string(),
-        artifact_sha256: ui_body["artifact_sha256"]
-            .as_str()
-            .expect("UI Artifact SHA-256")
-            .to_string(),
-        component_key: "artifact-workbench".to_string(),
-        adapter_session_id: ui_body["adapter_session_id"]
-            .as_str()
-            .expect("UI Adapter session ID")
-            .to_string(),
-        ui: serde_json::from_value(ui_body["ui"][0].clone()).expect("UI snapshot"),
-    };
-    let ui_asset_request = || {
-        plugin_request_for_workspace(
-            "plugin_ui_asset_request",
-            "workspace-a",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": ui_body["release_id"],
-                "artifact_sha256": ui_body["artifact_sha256"],
-                "component_key": "artifact-workbench",
-                "adapter_session_id": ui_body["adapter_session_id"],
-                "ui_snapshot_sha256": ui_body["ui"][0]["snapshot_sha256"],
-                "relative_path": "./ui/app.js",
-            }),
-        )
-    };
-    let ui_asset = host.handle_ui_asset(ui_asset_request()).await;
-    assert_eq!(ui_asset.get("status").and_then(Value::as_u64), Some(200));
-
-    let documents = crate::skills::local_skill_inventory()
-        .expect("local Skill inventory")
-        .into_iter()
-        .find(|item| item.skill_id == "internal_skill_documents")
-        .expect("Documents inventory");
-    let documents_prepare = host
-        .handle_prepare(plugin_request_for_workspace(
-            "plugin_prepare_request",
-            "workspace-a",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": release_id,
-                "artifact_sha256": package_sha256,
-                "component_key": "documents",
-                "skill_keys": ["documents"],
-                "permission_snapshot": inventory_permissions(&documents),
-                "runtime_kind": "native_adapter",
-                "runtime_metadata": {
-                    "skill_id": documents.skill_id,
-                    "bundle_id": documents.bundle_id,
-                    "bundle_hash": documents.bundle_hash,
-                },
-                "content_sha256": documents.bundle_hash,
-            }),
-        ))
-        .await;
-    assert_eq!(
-        documents_prepare.get("status").and_then(Value::as_u64),
-        Some(200)
-    );
-    let documents_body = documents_prepare
-        .get("body")
-        .expect("Documents prepare body");
-    let native_execute = host
-        .handle_execute(plugin_request_for_workspace(
-            "plugin_execute_request",
-            "workspace-a",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": documents_body["release_id"],
-                "artifact_sha256": documents_body["artifact_sha256"],
-                "component_key": "documents",
-                "adapter_session_id": documents_body["adapter_session_id"],
-                "operation": "native_skill_tool_call",
-                "tool_name": "create_docx",
-                "arguments": {
-                    "target_path": "artifacts/native.docx",
-                    "title": "Signed fixture",
-                    "paragraphs": ["Generated by the exact embedded Documents adapter."],
-                },
-            }),
-        ))
-        .await;
-    assert_eq!(
-        native_execute.get("status").and_then(Value::as_u64),
-        Some(200)
-    );
-    let native_artifact = native_execute
-        .pointer("/body/result/_plugin_artifacts/0")
-        .expect("registered native Artifact");
-    assert_eq!(
-        native_artifact.get("mutable").and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        native_artifact
-            .get("producer_tool_name")
-            .and_then(Value::as_str),
-        Some("create_docx")
-    );
-
-    let service_relay = ConnectorRelay::default();
-    let (service_outbound, mut connector_inbound) = mpsc::channel(4);
-    service_relay
-        .register_session(
-            "device-a".to_string(),
-            "owner-a".to_string(),
-            "packaged-connector-session".to_string(),
-            service_outbound,
-        )
-        .await;
-    let connector_relay = service_relay.clone();
-    let connector_host = host.clone();
-    let packaged_connector = tokio::spawn(async move {
-        while let Some(text) = connector_inbound.recv().await {
-            let request: ServiceRelayRequest =
-                serde_json::from_str(text.as_str()).expect("decode Service relay request");
-            assert_eq!(request.owner_user_id, "owner-a");
-            assert_eq!(request.device_id, "device-a");
-            assert_eq!(request.workspace_id, "workspace-a");
-            assert_eq!(request.method, "POST");
-            assert!(request.headers.is_empty());
-            let request_value = serde_json::to_value(&request).expect("encode Connector request");
-            let response = match request.message_type.as_str() {
-                "plugin_artifact_list_request" => {
-                    assert_eq!(request.path, "/plugins/artifacts/list");
-                    connector_host.handle_artifact_list(request_value).await
-                }
-                "plugin_artifact_read_request" => {
-                    assert_eq!(request.path, "/plugins/artifacts/read");
-                    connector_host.handle_artifact_read(request_value).await
-                }
-                "plugin_artifact_create_request" => {
-                    assert_eq!(request.path, "/plugins/artifacts/create");
-                    connector_host.handle_artifact_create(request_value).await
-                }
-                "plugin_artifact_update_request" => {
-                    assert_eq!(request.path, "/plugins/artifacts/update");
-                    connector_host.handle_artifact_update(request_value).await
-                }
-                other => panic!("unexpected packaged Connector relay request: {other}"),
-            };
-            assert!(connector_relay
-                .handle_inbound_text(response.to_string().as_str())
-                .await
-                .expect("complete packaged Connector relay response"));
-        }
-    });
-
-    let service_secret = "a-long-chatos-local-connector-secret";
-    let service_config =
-        LocalConnectorServiceConfig::for_plugin_artifact_relay_test(service_secret);
-    let service_router = match service_store {
-        Some(store) => build_plugin_artifact_relay_store_test_router(
-            service_config,
-            service_relay.clone(),
-            store,
-        )
-        .expect("build real-Mongo no-port Plugin Artifact relay Router"),
-        None => build_plugin_artifact_relay_test_router(
-            service_config,
-            service_relay.clone(),
-            PluginArtifactRelayTestScope::new("owner-a", "device-a", "workspace-a"),
-        )
-        .expect("build fixed-scope no-port Plugin Artifact relay Router"),
-    };
-    let list_relay_request = prepare_plugin_artifact_relay_request_for_test(
-        "owner-a",
-        &chatos_ready,
-        "list",
-        "http://local-connector.test",
-        service_secret,
-        100,
-    )
-    .expect("prepare ChatOS Artifact list relay request");
-
-    let (listed_status, listed) = plugin_artifact_http_request(
-        &service_router,
-        &list_relay_request,
-        json!({"access": access.clone()}),
-    )
-    .await;
-    assert_eq!(listed_status, StatusCode::OK);
-    let typed_access: PluginArtifactUiAccess =
-        serde_json::from_value(access.clone()).expect("typed Artifact UI access");
-    let typed_listed: PluginArtifactListResponse =
-        serde_json::from_value(listed.clone()).expect("typed Artifact list response");
-    validate_plugin_artifact_list_response_for_test(
-        "owner-a",
-        &chatos_ready,
-        &typed_access,
-        &typed_listed,
-    )
-    .expect("ChatOS validates Artifact list response");
-    assert_eq!(
-        listed
-            .pointer("/artifacts")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(1)
-    );
-    let native_artifact_id = native_artifact["artifact_id"]
-        .as_str()
-        .expect("native Artifact ID");
-    let read_relay_request = prepare_plugin_artifact_relay_request_for_test(
-        "owner-a",
-        &chatos_ready,
-        "read",
-        "http://local-connector.test",
-        service_secret,
-        100,
-    )
-    .expect("prepare ChatOS Artifact read relay request");
-    let (native_read_status, native_read) = plugin_artifact_http_request(
-        &service_router,
-        &read_relay_request,
-        json!({
-            "access": access.clone(),
-            "artifact_id": native_artifact_id,
-            "mode": "download",
-        }),
-    )
-    .await;
-    assert_eq!(native_read_status, StatusCode::OK);
-    let typed_native_read: PluginArtifactReadResponse =
-        serde_json::from_value(native_read.clone()).expect("typed Artifact read response");
-    validate_plugin_artifact_read_response_for_test(
-        "owner-a",
-        &chatos_ready,
-        &typed_access,
-        native_artifact_id,
-        &typed_native_read,
-    )
-    .expect("ChatOS validates Artifact read response");
-    assert!(BASE64_STANDARD
-        .decode(
-            native_read
-                .pointer("/body_base64")
-                .and_then(Value::as_str)
-                .expect("native Artifact body")
-        )
-        .expect("decode native Artifact")
-        .starts_with(b"PK"));
-
-    let mut wrong_scope_request = list_relay_request.clone();
-    wrong_scope_request.url = wrong_scope_request
-        .url
-        .strip_suffix("/list")
-        .expect("list relay URL")
-        .to_string()
-        + "/create";
-    let (wrong_scope_status, _) =
-        plugin_artifact_http_request(&service_router, &wrong_scope_request, json!({})).await;
-    assert_eq!(wrong_scope_status, StatusCode::UNAUTHORIZED);
-    let mut wrong_workspace_ready = chatos_ready.clone();
-    wrong_workspace_ready.workspace_id = Some("workspace-other".to_string());
-    let wrong_workspace_request = prepare_plugin_artifact_relay_request_for_test(
-        "owner-a",
-        &wrong_workspace_ready,
-        "list",
-        "http://local-connector.test",
-        service_secret,
-        100,
-    )
-    .expect("prepare wrong-workspace ChatOS Artifact relay request");
-    let (wrong_workspace_status, _) = plugin_artifact_http_request(
-        &service_router,
-        &wrong_workspace_request,
-        json!({"access": access.clone()}),
-    )
-    .await;
-    assert_eq!(wrong_workspace_status, StatusCode::NOT_FOUND);
-
-    let update_relay_request = prepare_plugin_artifact_relay_request_for_test(
-        "owner-a",
-        &chatos_ready,
-        "update",
-        "http://local-connector.test",
-        service_secret,
-        1_000,
-    )
-    .expect("prepare ChatOS Artifact update relay request");
-    let (immutable_update_status, _) = approve_plugin_artifact_http_write(
-        &service_router,
-        &update_relay_request,
-        json!({
-            "access": access.clone(),
-            "artifact_id": native_artifact_id,
-            "expected_sha256": native_artifact["sha256"],
-            "body_base64": BASE64_STANDARD.encode(b"immutable"),
-        }),
-        "artifact.update",
-    )
-    .await;
-    assert_eq!(immutable_update_status, StatusCode::CONFLICT);
-
-    let create_relay_request = prepare_plugin_artifact_relay_request_for_test(
-        "owner-a",
-        &chatos_ready,
-        "create",
-        "http://local-connector.test",
-        service_secret,
-        1_000,
-    )
-    .expect("prepare ChatOS Artifact create relay request");
-    let created_body = br#"{"version":1}"#;
-    let (created_status, created) = approve_plugin_artifact_http_write(
-        &service_router,
-        &create_relay_request,
-        json!({
-            "access": access.clone(),
-            "display_name": "report.json",
-            "media_type": "application/json",
-            "body_base64": BASE64_STANDARD.encode(created_body),
-        }),
-        "artifact.create",
-    )
-    .await;
-    assert_eq!(created_status, StatusCode::OK);
-    let typed_created: PluginArtifactWriteResponse =
-        serde_json::from_value(created.clone()).expect("typed Artifact create response");
-    validate_plugin_artifact_write_response_for_test(
-        "owner-a",
-        &chatos_ready,
-        &typed_access,
-        PluginArtifactWriteOperation::Create,
-        None,
-        Some(("report.json", "application/json")),
-        created_body,
-        &typed_created,
-    )
-    .expect("ChatOS validates Artifact create response");
-    assert_eq!(
-        created
-            .pointer("/artifact/mutable")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-    let mutable_artifact_id = created
-        .pointer("/artifact/artifact_id")
-        .and_then(Value::as_str)
-        .expect("mutable Artifact ID")
-        .to_string();
-    let created_sha256 = created
-        .pointer("/artifact/sha256")
-        .and_then(Value::as_str)
-        .expect("created Artifact hash")
-        .to_string();
-
-    let updated_body = br#"{"version":2}"#;
-    let (stale_update_status, _) = approve_plugin_artifact_http_write(
-        &service_router,
-        &update_relay_request,
-        json!({
-            "access": access.clone(),
-            "artifact_id": mutable_artifact_id,
-            "expected_sha256": "0".repeat(64),
-            "body_base64": BASE64_STANDARD.encode(updated_body),
-        }),
-        "artifact.update",
-    )
-    .await;
-    assert_eq!(stale_update_status, StatusCode::CONFLICT);
-
-    let (updated_status, updated) = approve_plugin_artifact_http_write(
-        &service_router,
-        &update_relay_request,
-        json!({
-            "access": access.clone(),
-            "artifact_id": mutable_artifact_id,
-            "expected_sha256": created_sha256,
-            "body_base64": BASE64_STANDARD.encode(updated_body),
-        }),
-        "artifact.update",
-    )
-    .await;
-    assert_eq!(updated_status, StatusCode::OK);
-    let typed_updated: PluginArtifactWriteResponse =
-        serde_json::from_value(updated.clone()).expect("typed Artifact update response");
-    validate_plugin_artifact_write_response_for_test(
-        "owner-a",
-        &chatos_ready,
-        &typed_access,
-        PluginArtifactWriteOperation::Update,
-        Some(mutable_artifact_id.as_str()),
-        None,
-        updated_body,
-        &typed_updated,
-    )
-    .expect("ChatOS validates Artifact update response");
-    let updated_relative_path = updated
-        .pointer("/artifact/workspace_relative_path")
-        .and_then(Value::as_str)
-        .expect("updated Artifact path")
-        .to_string();
-    service_relay
-        .unregister_session("device-a", "packaged-connector-session")
-        .await;
-    packaged_connector
-        .await
-        .expect("packaged Connector relay task");
-    drop(host);
-
-    let restored_host = PluginRuntimeHost::new(
-        PluginSkillLoader::new(installer.clone()),
-        PluginMcpAdapter::new(installer.clone()),
-    )
-    .with_local_state(local_state)
-    .with_approval_state_path(state_path.clone())
-    .with_artifact_persistence_for_tests(state_path, secure_storage);
-    let restored_list = restored_host
-        .handle_artifact_list(plugin_artifact_request(
-            "plugin_artifact_list_request",
-            "workspace-a",
-            json!({"access": access.clone()}),
-        ))
-        .await;
-    assert_eq!(
-        restored_list.get("status").and_then(Value::as_u64),
-        Some(200)
-    );
-    assert_eq!(
-        restored_list
-            .pointer("/body/artifacts")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(2)
-    );
-    let restored_read = restored_host
-        .handle_artifact_read(plugin_artifact_request(
-            "plugin_artifact_read_request",
-            "workspace-a",
-            json!({
-                "access": access.clone(),
-                "artifact_id": mutable_artifact_id,
-                "mode": "inline",
-            }),
-        ))
-        .await;
-    assert_eq!(
-        restored_read.get("status").and_then(Value::as_u64),
-        Some(200)
-    );
-    assert_eq!(
-        BASE64_STANDARD
-            .decode(
-                restored_read
-                    .pointer("/body/body_base64")
-                    .and_then(Value::as_str)
-                    .expect("restored Artifact body")
-            )
-            .expect("decode restored Artifact"),
-        br#"{"version":2}"#
-    );
-
-    fs::write(
-        workspace_root.join(updated_relative_path.as_str()),
-        b"tampered Artifact",
-    )
-    .expect("tamper persisted Artifact");
-    let tampered_artifact = restored_host
-        .handle_artifact_read(plugin_artifact_request(
-            "plugin_artifact_read_request",
-            "workspace-a",
-            json!({
-                "access": access,
-                "artifact_id": mutable_artifact_id,
-                "mode": "inline",
-            }),
-        ))
-        .await;
-    assert_eq!(
-        tampered_artifact.get("status").and_then(Value::as_u64),
-        Some(409)
-    );
-
-    fs::write(
-        installed.installation_path.join("ui/app.js"),
-        "window.__tampered = true;",
-    )
-    .expect("tamper installed UI asset");
-    let tampered_ui = restored_host.handle_ui_asset(ui_asset_request()).await;
-    assert_eq!(tampered_ui.get("status").and_then(Value::as_u64), Some(409));
-}
-
 #[test]
 fn signed_multicomponent_plugin_rejects_release_and_archive_tampering() {
     let temp = TempDir::new().expect("temp directory");
@@ -1943,14 +1122,11 @@ fn signed_multicomponent_plugin_rejects_release_and_archive_tampering() {
 
     let signature_root = temp.path().join("signature");
     fs::create_dir_all(signature_root.as_path()).expect("signature fixture root");
-    let mut signature_package = TestSigner::new_bundled().package_with_artifact_workbench(
-        signature_root.as_path(),
-        "1.0.0",
-        html,
-    );
+    let mut signature_package =
+        TestSigner::new().package_with_artifact_workbench(signature_root.as_path(), "1.0.0", html);
     signature_package.corrupt_release_signature();
     let signature_error = PluginInstaller::new(temp.path().join("signature-install"))
-        .install_archive(signature_package.install_request())
+        .install_package(signature_package.install_request())
         .expect_err("corrupted Release signature must fail");
     assert!(
         signature_error.to_string().contains("signature"),
@@ -1959,17 +1135,14 @@ fn signed_multicomponent_plugin_rejects_release_and_archive_tampering() {
 
     let archive_root = temp.path().join("archive");
     fs::create_dir_all(archive_root.as_path()).expect("archive fixture root");
-    let archive_package = TestSigner::new_bundled().package_with_artifact_workbench(
-        archive_root.as_path(),
-        "1.0.0",
-        html,
-    );
-    fs::write(archive_package.archive_path(), b"tampered archive").expect("tamper signed archive");
+    let archive_package =
+        TestSigner::new().package_with_artifact_workbench(archive_root.as_path(), "1.0.0", html);
+    fs::write(archive_package.package_path(), b"tampered archive").expect("tamper signed archive");
     let archive_error = PluginInstaller::new(temp.path().join("archive-install"))
-        .install_archive(archive_package.install_request())
+        .install_package(archive_package.install_request())
         .expect_err("tampered archive must fail");
     assert!(
-        archive_error.to_string().contains("SHA-256"),
+        archive_error.to_string().contains("npm integrity"),
         "{archive_error:#}"
     );
 }
@@ -1980,7 +1153,7 @@ async fn plugin_relay_prepares_exact_signed_hook_set_without_exposing_output() {
     let package = TestSigner::new().package_with_hooks(temp.path(), "1.0.0");
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Hook Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -2039,7 +1212,7 @@ async fn plugin_disabled_dispatches_signed_hooks_and_cancels_active_sessions() {
     let package = TestSigner::new().package_with_hooks(temp.path(), "1.0.0");
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install Hook Plugin");
     let release_id = installed.installed_version.release_id.clone();
     let artifact_sha256 = installed.installed_version.artifact_sha256.clone();
@@ -2166,7 +1339,7 @@ async fn workspace_write_hook_requires_one_invocation_user_approval() {
     let package = TestSigner::new().package_with_workspace_write_hook(temp.path(), "1.0.0");
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install writable Hook Plugin");
     let release_id = installed.installed_version.release_id.clone();
     let artifact_sha256 = installed.installed_version.artifact_sha256.clone();
@@ -2308,7 +1481,7 @@ async fn signed_packaged_connector_hooks_run_end_to_end_without_a_listener() {
     let package = TestSigner::new().package_with_packaged_hook_suite(temp.path(), "1.0.0");
     let installer = PluginInstaller::new(temp.path().join("installed-plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install signed packaged Hook Plugin");
     let mut component_keys = installed
         .installed_version
@@ -2795,7 +1968,7 @@ async fn plugin_relay_rejects_identity_snapshot_and_release_changes() {
     let package_v2 = signer.package(temp.path(), "1.1.0", ArchiveMutation::None);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package_v1.install_request())
+        .install_package(package_v1.install_request())
         .expect("install v1");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -2873,7 +2046,7 @@ async fn plugin_relay_rejects_identity_snapshot_and_release_changes() {
     );
 
     installer
-        .install_archive(package_v2.install_request())
+        .install_package(package_v2.install_request())
         .expect("update to v2");
     let stale = host
         .handle_execute(plugin_request(
@@ -2891,242 +2064,6 @@ async fn plugin_relay_rejects_identity_snapshot_and_release_changes() {
         ))
         .await;
     assert_eq!(stale.get("status").and_then(Value::as_u64), Some(409));
-}
-
-#[tokio::test]
-async fn bundled_native_plugin_skill_prepares_and_executes_published_tools() {
-    let temp = TempDir::new().expect("temp directory");
-    let installer = install_test_native_skill(temp.path(), "chatos-bundled");
-    let workspace_root = temp.path().join("workspace");
-    fs::create_dir_all(workspace_root.as_path()).expect("create test workspace");
-    let state = Arc::new(RwLock::new(LocalState {
-        workspaces: vec![WorkspaceState {
-            id: "workspace-a".to_string(),
-            absolute_root: workspace_root,
-            alias: "workspace-a".to_string(),
-            fingerprint: "test-fingerprint".to_string(),
-            project_config_trust: None,
-        }],
-        ..LocalState::default()
-    }));
-    let host = PluginRuntimeHost::new(
-        PluginSkillLoader::new(installer.clone()),
-        PluginMcpAdapter::new(installer.clone()),
-    )
-    .with_local_state(state);
-    let inventory = crate::skills::local_skill_inventory()
-        .expect("local Skill inventory")
-        .into_iter()
-        .find(|item| item.skill_id == "internal_skill_skill_creator")
-        .expect("Skill Creator inventory");
-    let active = installer
-        .active_installation("bundled-plugin-skill-creator")
-        .expect("load active Plugin")
-        .expect("active Plugin");
-    let prepare = host
-        .handle_prepare(plugin_request_for_workspace(
-            "plugin_prepare_request",
-            "workspace-a",
-            json!({
-                "plugin_id": "bundled-plugin-skill-creator",
-                "release_id": active.version.release_id,
-                "artifact_sha256": active.version.artifact_sha256,
-                "component_key": "skill-creator",
-                "skill_keys": ["skill-creator"],
-                "permission_snapshot": inventory_permissions(&inventory),
-                "runtime_kind": "native_adapter",
-                "runtime_metadata": {
-                    "skill_id": inventory.skill_id,
-                    "bundle_id": inventory.bundle_id,
-                    "bundle_hash": inventory.bundle_hash,
-                },
-                "content_sha256": inventory.bundle_hash,
-            }),
-        ))
-        .await;
-    assert_eq!(prepare.get("status").and_then(Value::as_u64), Some(200));
-    assert_eq!(
-        prepare
-            .pointer("/body/native_skill/skill_id")
-            .and_then(Value::as_str),
-        Some("internal_skill_skill_creator")
-    );
-    assert!(prepare
-        .pointer("/body/native_skill/tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| tools.iter().any(|tool| {
-            tool.get("name").and_then(Value::as_str) == Some("validate_skill_bundle_manifest")
-        })));
-    let body = prepare.get("body").expect("prepare body");
-    let execute_body = json!({
-        "plugin_id": "bundled-plugin-skill-creator",
-        "release_id": body.get("release_id").expect("release id"),
-        "artifact_sha256": body.get("artifact_sha256").expect("artifact hash"),
-        "component_key": "skill-creator",
-        "adapter_session_id": body.get("adapter_session_id").expect("adapter session"),
-        "operation": "native_skill_tool_call",
-        "tool_name": "validate_skill_bundle_manifest",
-        "arguments": {
-            "manifest": {
-                "bundle_id": "chatos.internal.demo-skill",
-                "skill_id": "internal_skill_demo",
-                "name": "demo-skill",
-                "version": "1.0.0",
-                "entrypoint": {"kind": "native_adapter"}
-            }
-        }
-    });
-    let execute = host
-        .handle_execute(plugin_request_for_workspace(
-            "plugin_execute_request",
-            "workspace-a",
-            execute_body.clone(),
-        ))
-        .await;
-    assert_eq!(execute.get("status").and_then(Value::as_u64), Some(200));
-    assert_eq!(
-        execute
-            .pointer("/body/result/valid")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-
-    use crate::plugins::state::save_registry;
-    let mut registry = installer.registry().expect("load Plugin registry");
-    registry
-        .plugins
-        .get_mut("bundled-plugin-skill-creator")
-        .expect("installed Plugin")
-        .versions
-        .get_mut("1.0.0")
-        .expect("installed Plugin version")
-        .release_id = "bundled-release-skill-creator-drifted".to_string();
-    save_registry(installer.plugin_root(), &registry).expect("persist Release drift");
-    let stale = host
-        .handle_execute(plugin_request_for_workspace(
-            "plugin_execute_request",
-            "workspace-a",
-            execute_body,
-        ))
-        .await;
-    assert_eq!(stale.get("status").and_then(Value::as_u64), Some(409));
-}
-
-#[tokio::test]
-async fn third_party_marketplace_cannot_bind_internal_native_skill_adapter() {
-    let temp = TempDir::new().expect("temp directory");
-    let installer = install_test_native_skill(temp.path(), "trusted-marketplace");
-    let state = Arc::new(RwLock::new(LocalState::default()));
-    let host = PluginRuntimeHost::new(
-        PluginSkillLoader::new(installer.clone()),
-        PluginMcpAdapter::new(installer.clone()),
-    )
-    .with_local_state(state);
-    let inventory = crate::skills::local_skill_inventory()
-        .expect("local Skill inventory")
-        .into_iter()
-        .find(|item| item.skill_id == "internal_skill_skill_creator")
-        .expect("Skill Creator inventory");
-    let active = installer
-        .active_installation("bundled-plugin-skill-creator")
-        .expect("load active Plugin")
-        .expect("active Plugin");
-    let prepare = host
-        .handle_prepare(plugin_request(
-            "plugin_prepare_request",
-            json!({
-                "plugin_id": "bundled-plugin-skill-creator",
-                "release_id": active.version.release_id,
-                "artifact_sha256": active.version.artifact_sha256,
-                "component_key": "skill-creator",
-                "skill_keys": ["skill-creator"],
-                "permission_snapshot": inventory_permissions(&inventory),
-                "runtime_kind": "native_adapter",
-                "runtime_metadata": {
-                    "skill_id": inventory.skill_id,
-                    "bundle_id": inventory.bundle_id,
-                    "bundle_hash": inventory.bundle_hash,
-                },
-                "content_sha256": inventory.bundle_hash,
-            }),
-        ))
-        .await;
-    assert_eq!(prepare.get("status").and_then(Value::as_u64), Some(409));
-    assert!(prepare
-        .pointer("/body/error")
-        .and_then(Value::as_str)
-        .is_some_and(|error| error.contains("chatos-bundled")));
-}
-
-#[tokio::test]
-async fn bundled_native_plugin_skill_fails_closed_on_permission_and_bundle_drift() {
-    let temp = TempDir::new().expect("temp directory");
-    let installer = install_test_native_skill(temp.path(), "chatos-bundled");
-    let workspace_root = temp.path().join("workspace");
-    fs::create_dir_all(workspace_root.as_path()).expect("create test workspace");
-    let state = Arc::new(RwLock::new(LocalState {
-        workspaces: vec![WorkspaceState {
-            id: "workspace-a".to_string(),
-            absolute_root: workspace_root,
-            alias: "workspace-a".to_string(),
-            fingerprint: "test-fingerprint".to_string(),
-            project_config_trust: None,
-        }],
-        ..LocalState::default()
-    }));
-    let host = PluginRuntimeHost::new(
-        PluginSkillLoader::new(installer.clone()),
-        PluginMcpAdapter::new(installer.clone()),
-    )
-    .with_local_state(state);
-    let inventory = crate::skills::local_skill_inventory()
-        .expect("local Skill inventory")
-        .into_iter()
-        .find(|item| item.skill_id == "internal_skill_skill_creator")
-        .expect("Skill Creator inventory");
-    let active = installer
-        .active_installation("bundled-plugin-skill-creator")
-        .expect("load active Plugin")
-        .expect("active Plugin");
-    let base_body = json!({
-        "plugin_id": "bundled-plugin-skill-creator",
-        "release_id": active.version.release_id,
-        "artifact_sha256": active.version.artifact_sha256,
-        "component_key": "skill-creator",
-        "skill_keys": ["skill-creator"],
-        "runtime_kind": "native_adapter",
-        "runtime_metadata": {
-            "skill_id": inventory.skill_id,
-            "bundle_id": inventory.bundle_id,
-            "bundle_hash": inventory.bundle_hash,
-        },
-        "content_sha256": inventory.bundle_hash,
-    });
-
-    let missing_permission = host
-        .handle_prepare(plugin_request_for_workspace(
-            "plugin_prepare_request",
-            "workspace-a",
-            base_body.clone(),
-        ))
-        .await;
-    assert_eq!(
-        missing_permission.get("status").and_then(Value::as_u64),
-        Some(403)
-    );
-
-    let mut drifted = base_body;
-    drifted["permission_snapshot"] = json!(inventory_permissions(&inventory));
-    drifted["runtime_metadata"]["bundle_hash"] = json!("d".repeat(64));
-    drifted["content_sha256"] = json!("d".repeat(64));
-    let drifted = host
-        .handle_prepare(plugin_request_for_workspace(
-            "plugin_prepare_request",
-            "workspace-a",
-            drifted,
-        ))
-        .await;
-    assert_eq!(drifted.get("status").and_then(Value::as_u64), Some(409));
 }
 
 #[derive(Default)]
@@ -3220,7 +2157,7 @@ async fn plugin_stdio_mcp_prepares_filtered_tools_calls_and_cancels_exact_sessio
     let package = TestSigner::new().package_with_stdio_mcp(temp.path(), "1.0.0");
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install stdio MCP Plugin");
     let invoker = Arc::new(MockPluginMcpInvoker::default());
     let host = PluginRuntimeHost::new(
@@ -3363,7 +2300,7 @@ async fn plugin_stdio_mcp_injects_vault_environment_without_persisting_secrets()
     let installer =
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install credential stdio MCP Plugin");
     let scope = PluginCredentialScope::new(
         "owner-a",
@@ -3527,7 +2464,7 @@ async fn plugin_stdio_mcp_cancel_terminates_real_process_tree() {
     let installer =
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install hanging stdio MCP Plugin");
     let scope = PluginCredentialScope::new(
         "owner-a",
@@ -3600,7 +2537,7 @@ async fn plugin_stdio_mcp_cancel_terminates_real_process_tree() {
     let execute_host = host.clone();
     let execute = tokio::spawn(async move { execute_host.handle_execute(execute_request).await });
 
-    let descendant_path = installed.installation_path.join("mcp/descendant.pid");
+    let descendant_path = installed.installation_path.join("descendant.pid");
     let descendant_pid = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             if let Ok(value) = fs::read_to_string(descendant_path.as_path()) {
@@ -3661,7 +2598,7 @@ async fn plugin_http_mcp_requires_exact_domain_permission_and_invalidates_on_upd
     let package_v2 = signer.package_with_http_mcp(temp.path(), "1.1.0", url);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package_v1.install_request())
+        .install_package(package_v1.install_request())
         .expect("install HTTP MCP Plugin");
     let invoker = Arc::new(MockPluginMcpInvoker::default());
     let host = PluginRuntimeHost::new(
@@ -3708,7 +2645,7 @@ async fn plugin_http_mcp_requires_exact_domain_permission_and_invalidates_on_upd
     let artifact_sha256 = body["artifact_sha256"].as_str().expect("artifact");
 
     installer
-        .install_archive(package_v2.install_request())
+        .install_package(package_v2.install_request())
         .expect("update HTTP MCP Plugin");
     let stale = host
         .handle_execute(plugin_request(
@@ -3736,7 +2673,7 @@ async fn plugin_mcp_health_probe_reports_degraded_and_recovers_without_error_lea
     let package = TestSigner::new().package_with_http_mcp(temp.path(), "1.0.0", url);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install health-check HTTP MCP Plugin");
     let invoker = Arc::new(MockPluginMcpInvoker::default());
     let host = PluginRuntimeHost::new(
@@ -3841,7 +2778,7 @@ async fn stale_mcp_health_is_reprobed_and_fails_closed_before_tool_call() {
     let package = TestSigner::new().package_with_http_mcp(temp.path(), "1.0.0", url);
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install stale-health HTTP MCP Plugin");
     let invoker = Arc::new(MockPluginMcpInvoker::default());
     let adapter = PluginMcpAdapter::with_invoker(installer, invoker.clone());
@@ -3914,47 +2851,14 @@ async fn plugin_http_mcp_executes_real_tools_list_and_call_through_shared_runtim
     });
 
     let temp = TempDir::new().expect("temp directory");
-    let package = TestSigner::new().package_with_mcp_config(temp.path(), "1.0.0", url.as_str());
+    let package = TestSigner::new().package_with_http_mcp(temp.path(), "1.0.0", url.as_str());
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install real HTTP MCP Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
         PluginMcpAdapter::new(installer),
-    );
-    let missing_selection = host
-        .handle_prepare(plugin_request(
-            "plugin_prepare_request",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": installed.installed_version.release_id,
-                "artifact_sha256": installed.installed_version.artifact_sha256,
-                "component_key": "mcp-config",
-                "permission_snapshot": ["network.domain:127.0.0.1"],
-            }),
-        ))
-        .await;
-    assert_eq!(
-        missing_selection.get("status").and_then(Value::as_u64),
-        Some(409)
-    );
-    let unknown_server = host
-        .handle_prepare(plugin_request(
-            "plugin_prepare_request",
-            json!({
-                "plugin_id": PLUGIN_ID,
-                "release_id": installed.installed_version.release_id,
-                "artifact_sha256": installed.installed_version.artifact_sha256,
-                "component_key": "mcp-config",
-                "server_key": "missing",
-                "permission_snapshot": ["network.domain:127.0.0.1"],
-            }),
-        ))
-        .await;
-    assert_eq!(
-        unknown_server.get("status").and_then(Value::as_u64),
-        Some(409)
     );
     let prepare = host
         .handle_prepare(plugin_request(
@@ -3963,8 +2867,7 @@ async fn plugin_http_mcp_executes_real_tools_list_and_call_through_shared_runtim
                 "plugin_id": PLUGIN_ID,
                 "release_id": installed.installed_version.release_id,
                 "artifact_sha256": installed.installed_version.artifact_sha256,
-                "component_key": "mcp-config",
-                "server_key": "config-http",
+                "component_key": "demo-http",
                 "permission_snapshot": ["network.domain:127.0.0.1"],
             }),
         ))
@@ -3974,7 +2877,7 @@ async fn plugin_http_mcp_executes_real_tools_list_and_call_through_shared_runtim
         prepare
             .pointer("/body/mcp/server_key")
             .and_then(Value::as_str),
-        Some("config-http")
+        Some("demo-http")
     );
     let body = prepare.get("body").expect("prepare body");
     let health = host
@@ -3984,7 +2887,7 @@ async fn plugin_http_mcp_executes_real_tools_list_and_call_through_shared_runtim
                 "plugin_id": PLUGIN_ID,
                 "release_id": body["release_id"],
                 "artifact_sha256": body["artifact_sha256"],
-                "component_key": "mcp-config",
+                "component_key": "demo-http",
                 "adapter_session_id": body["adapter_session_id"],
                 "operation": "mcp_health_check",
             }),
@@ -4004,7 +2907,7 @@ async fn plugin_http_mcp_executes_real_tools_list_and_call_through_shared_runtim
                 "plugin_id": PLUGIN_ID,
                 "release_id": body["release_id"],
                 "artifact_sha256": body["artifact_sha256"],
-                "component_key": "mcp-config",
+                "component_key": "demo-http",
                 "adapter_session_id": body["adapter_session_id"],
                 "operation": "mcp_tools_call",
                 "invocation_id": "invocation-config-http",
@@ -4076,7 +2979,7 @@ async fn plugin_http_mcp_cancel_aborts_an_inflight_request() {
     let package = TestSigner::new().package_with_http_mcp(temp.path(), "1.0.0", url.as_str());
     let installer = PluginInstaller::new(temp.path().join("plugins"));
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install cancellable HTTP MCP Plugin");
     let host = PluginRuntimeHost::new(
         PluginSkillLoader::new(installer.clone()),
@@ -4219,7 +3122,7 @@ async fn plugin_http_mcp_injects_exact_vault_headers_without_exposing_secrets() 
     let installer =
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install credential HTTP MCP Plugin");
     let scope = PluginCredentialScope::new(
         "owner-a",
@@ -4432,7 +3335,7 @@ async fn plugin_oauth_pkce_exchange_persists_tokens_locally_and_authorizes_mcp()
     let installer =
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install OAuth MCP Plugin");
     let broker = PluginOAuthBroker::new(installer.clone(), vault);
     let authorization = broker
@@ -4653,7 +3556,7 @@ async fn plugin_oauth_refresh_is_deduplicated_and_rotates_the_refresh_token() {
     let installer =
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install refreshable OAuth Plugin");
     let broker = PluginOAuthBroker::new(installer, vault.clone());
     let authorization = broker
@@ -4798,7 +3701,7 @@ async fn plugin_oauth_refresh_failure_requires_reauthorization_and_deletes_token
     let installer =
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install rejecting OAuth Plugin");
     let broker = PluginOAuthBroker::new(installer, vault.clone());
     let authorization = broker
@@ -4888,7 +3791,7 @@ fn plugin_oauth_callback_errors_are_explicit_and_consume_state_once() {
     let installer =
         PluginInstaller::new(temp.path().join("plugins")).with_credential_vault(vault.clone());
     let installed = installer
-        .install_archive(package.install_request())
+        .install_package(package.install_request())
         .expect("install callback-error OAuth Plugin");
     let broker = PluginOAuthBroker::new(installer, vault);
     let authorization = broker
@@ -4931,200 +3834,8 @@ fn plugin_oauth_callback_errors_are_explicit_and_consume_state_once() {
         .contains("invalid or expired"));
 }
 
-fn install_test_native_skill(root: &Path, marketplace_id: &str) -> PluginInstaller {
-    use chatos_plugin_management_sdk::{
-        PluginComponentDescriptor, PluginComponentKind, PluginDependencySpec, PluginPathRef,
-    };
-    use sha2::{Digest, Sha256};
-
-    use crate::plugins::state::{
-        save_registry, InstalledPluginVersion, LocalInstalledPlugin, LocalPluginRegistry,
-    };
-    use crate::plugins::verifier::PluginRequirementInventory;
-
-    let plugin_root = root.join("plugins");
-    let relative_installation_path = "installed/bundled-plugin-skill-creator/1.0.0";
-    let installation_path = plugin_root.join(relative_installation_path);
-    let skill_root = installation_path.join("skills/skill-creator");
-    fs::create_dir_all(skill_root.as_path()).expect("create native Skill installation");
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("Local Connector root")
-        .join("skill_bundles/internal/skill-creator/1.0.0");
-    let manifest = fs::read(source_root.join("skill.json")).expect("read Skill manifest");
-    let instructions =
-        fs::read(source_root.join("instructions.md")).expect("read Skill instructions");
-    let skill_document = format!(
-        "---\nname: skill-creator\ndescription: \"Create validated ChatOS Skill bundles.\"\ndisable-model-invocation: false\n---\n\n{}\n",
-        String::from_utf8(instructions.clone())
-            .expect("UTF-8 instructions")
-            .trim_end()
-    )
-    .into_bytes();
-    let files = BTreeMap::from([
-        ("skills/skill-creator/SKILL.md".to_string(), skill_document),
-        (
-            "skills/skill-creator/instructions.md".to_string(),
-            instructions,
-        ),
-        ("skills/skill-creator/skill.json".to_string(), manifest),
-    ]);
-    let mut package_file_sha256 = BTreeMap::new();
-    for (relative_path, bytes) in &files {
-        fs::write(installation_path.join(relative_path), bytes).expect("write native Skill file");
-        package_file_sha256.insert(
-            relative_path.clone(),
-            hex::encode(Sha256::digest(bytes.as_slice())),
-        );
-    }
-    let component = PluginComponentDescriptor {
-        component_key: "skill-creator".to_string(),
-        kind: PluginComponentKind::SkillCollection,
-        execution_host: PluginExecutionHost::Local,
-        display_name: "Skill Creator".to_string(),
-        runtime_kind: "skill_collection".to_string(),
-        entrypoint: Some(PluginPathRef::new("./skills/skill-creator")),
-        required: true,
-        permissions: Vec::new(),
-        metadata: BTreeMap::new(),
-    };
-    let version = InstalledPluginVersion {
-        release_id: "bundled-release-skill-creator-1-0-0".to_string(),
-        version: "1.0.0".to_string(),
-        artifact_sha256: "a".repeat(64),
-        manifest_sha256: "b".repeat(64),
-        signature_key_id: "chatos-bundled-attestation-v1".to_string(),
-        relative_installation_path: relative_installation_path.to_string(),
-        installed_at: "2026-07-22T00:00:00Z".to_string(),
-        package_file_sha256,
-        inventory: PluginRequirementInventory {
-            dependencies: PluginDependencySpec::default(),
-            permissions: Vec::new(),
-            auth_component_keys: Vec::new(),
-            components: vec![component],
-        },
-    };
-    let mut registry = LocalPluginRegistry::default();
-    registry.plugins.insert(
-        "bundled-plugin-skill-creator".to_string(),
-        LocalInstalledPlugin {
-            plugin_id: "bundled-plugin-skill-creator".to_string(),
-            marketplace_id: marketplace_id.to_string(),
-            plugin_name: "skill-creator".to_string(),
-            active_version: Some("1.0.0".to_string()),
-            previous_version: None,
-            versions: BTreeMap::from([("1.0.0".to_string(), version)]),
-        },
-    );
-    save_registry(plugin_root.as_path(), &registry).expect("save native Plugin registry");
-    PluginInstaller::new(plugin_root)
-}
-
-fn inventory_permissions(inventory: &crate::skills::LocalSkillInventoryItem) -> Vec<String> {
-    crate::skills::internal_skill_catalog()
-        .expect("internal Skill catalog")
-        .skills
-        .into_iter()
-        .find(|item| item.skill_id == inventory.skill_id)
-        .expect("internal Skill catalog item")
-        .permissions
-}
-
 fn plugin_request(message_type: &str, body: Value) -> Value {
     plugin_request_for_workspace(message_type, "", body)
-}
-
-async fn approve_plugin_artifact_http_write(
-    router: &Router,
-    prepared: &PreparedPluginArtifactRelayRequest,
-    body: Value,
-    operation: &str,
-) -> (StatusCode, Value) {
-    let task = tokio::spawn({
-        let router = router.clone();
-        let prepared = prepared.clone();
-        async move { plugin_artifact_http_request(&router, &prepared, body).await }
-    });
-    let request_suffix = format!(":{operation}");
-    let pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if let Some(item) = list_pending_approvals().await.into_iter().find(|item| {
-                item.source == "plugin_artifact_write"
-                    && item.request_id.ends_with(request_suffix.as_str())
-            }) {
-                break item;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("Plugin Artifact approval request");
-    assert!(pending.requested_permissions.is_some());
-    assert!(!pending
-        .available_decisions
-        .contains(&CommandExecutionApprovalDecision::Simple(
-            SimpleCommandExecutionApprovalDecision::AcceptForSession,
-        )));
-    assert!(approve_pending_approval(
-        pending.id.as_str(),
-        CommandExecutionApprovalDecision::Simple(SimpleCommandExecutionApprovalDecision::Accept,),
-        None,
-        None,
-    )
-    .await
-    .expect("approve Plugin Artifact write"));
-    task.await.expect("Plugin Artifact HTTP write task")
-}
-
-async fn plugin_artifact_http_request(
-    router: &Router,
-    prepared: &PreparedPluginArtifactRelayRequest,
-    body: Value,
-) -> (StatusCode, Value) {
-    let url = url::Url::parse(prepared.url.as_str()).expect("parse ChatOS Artifact relay URL");
-    assert!(url.query().is_none(), "ChatOS relay URL must be query-free");
-    let uri = format!(
-        "{}?workspace_id={}",
-        url.path(),
-        urlencoding::encode(prepared.workspace_id.as_str())
-    );
-    let request = Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header("content-type", "application/json")
-        .header("x-local-connector-caller", "chatos-backend")
-        .header("x-local-connector-internal-token", prepared.token.as_str())
-        .header(
-            "x-local-connector-owner-user-id",
-            prepared.owner_user_id.as_str(),
-        )
-        .body(Body::from(
-            serde_json::to_vec(&body).expect("encode Plugin Artifact HTTP body"),
-        ))
-        .expect("build Plugin Artifact HTTP request");
-    let response = router
-        .clone()
-        .oneshot(request)
-        .await
-        .expect("execute no-port Plugin Artifact Router");
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .expect("read Plugin Artifact HTTP response");
-    let body =
-        serde_json::from_slice(bytes.as_ref()).expect("decode Plugin Artifact HTTP response");
-    (status, body)
-}
-
-fn plugin_artifact_request(message_type: &str, workspace_id: &str, body: Value) -> Value {
-    json!({
-        "type": message_type,
-        "request_id": Uuid::new_v4().to_string(),
-        "owner_user_id": "owner-a",
-        "device_id": "device-a",
-        "workspace_id": workspace_id,
-        "body": body,
-    })
 }
 
 fn plugin_request_for_workspace(message_type: &str, workspace_id: &str, mut body: Value) -> Value {

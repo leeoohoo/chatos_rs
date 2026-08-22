@@ -3,8 +3,7 @@
 
 use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::{
-    parse_plugin_manifest, plugin_component_descriptors, PluginManifestSource,
-    PLUGIN_SIGNATURE_ALGORITHM_ED25519,
+    parse_plugin_manifest, plugin_component_descriptors, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
 };
 
 use super::*;
@@ -32,14 +31,32 @@ fn exact_ready_installation_resolves_selected_components() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
-        true,
     );
 
     assert!(resolved.available);
     assert_eq!(resolved.status, PluginAvailabilityStatus::Ready);
     assert_eq!(resolved.components.len(), 1);
     assert_eq!(resolved.components[0].component.component_key, "main");
+}
+
+#[test]
+fn generic_release_platform_accepts_architecture_specific_installation() {
+    let mut records = plugin_records();
+    records.release.supported_platforms = vec!["macos".to_string()];
+    let snapshots = component_snapshots(&records);
+    let resolved = resolve_plugin_records(
+        records.catalog,
+        Some(records.release),
+        records.binding,
+        Some(records.installation),
+        Some(records.preference),
+        snapshots,
+        Vec::new(),
+        Some("device-1"),
+    );
+
+    assert!(resolved.available);
+    assert_eq!(resolved.status, PluginAvailabilityStatus::Ready);
 }
 
 #[test]
@@ -55,8 +72,6 @@ fn missing_device_fails_closed() {
         snapshots,
         Vec::new(),
         None,
-        &std::collections::HashSet::new(),
-        true,
     );
 
     assert!(!resolved.available);
@@ -80,8 +95,6 @@ fn artifact_hash_mismatch_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
-        true,
     );
 
     assert!(!resolved.available);
@@ -105,8 +118,6 @@ fn missing_component_status_fails_closed() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
-        true,
     );
 
     assert!(!resolved.available);
@@ -128,8 +139,6 @@ fn missing_immutable_component_snapshot_fails_closed() {
         Vec::new(),
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
-        true,
     );
 
     assert!(!resolved.available);
@@ -140,68 +149,7 @@ fn missing_immutable_component_snapshot_fails_closed() {
 }
 
 #[test]
-fn portable_host_uses_runtime_project_provider_before_legacy_agent_name() {
-    assert!(portable_uses_local(
-        Some("local_connector"),
-        "chatos_conversation_agent"
-    ));
-    assert!(!portable_uses_local(Some("cloud_sandbox"), RUN_AGENT_KEY));
-    assert!(!portable_uses_local(None, RUN_AGENT_KEY));
-}
-
-#[test]
-fn cloud_mcp_component_uses_immutable_runtime_bundle_without_local_installation() {
-    let mut records = plugin_records();
-    records.release.components[0].execution_host = PluginExecutionHost::Cloud;
-    let snapshots = component_snapshots(&records);
-    let resolved = resolve_plugin_records(
-        records.catalog,
-        Some(records.release),
-        records.binding,
-        None,
-        Some(records.preference),
-        snapshots,
-        Vec::new(),
-        None,
-        &std::collections::HashSet::from(["main".to_string()]),
-        false,
-    );
-
-    assert!(resolved.available);
-    assert_eq!(
-        resolved.components[0].status,
-        PluginAvailabilityStatus::Ready
-    );
-    assert_eq!(
-        resolved.components[0].component.execution_host,
-        PluginExecutionHost::Cloud
-    );
-}
-
-#[test]
-fn cloud_plugin_is_enabled_by_agent_binding_without_local_user_preference() {
-    let mut records = plugin_records();
-    records.release.components[0].execution_host = PluginExecutionHost::Cloud;
-    let snapshots = component_snapshots(&records);
-    let resolved = resolve_plugin_records(
-        records.catalog,
-        Some(records.release),
-        records.binding,
-        None,
-        None,
-        snapshots,
-        Vec::new(),
-        None,
-        &std::collections::HashSet::from(["main".to_string()]),
-        false,
-    );
-
-    assert!(resolved.available);
-    assert!(resolved.preference.is_none());
-}
-
-#[test]
-fn local_plugin_still_requires_an_explicit_user_preference() {
+fn local_plugin_requires_an_explicit_user_preference() {
     let records = plugin_records();
     let snapshots = component_snapshots(&records);
     let resolved = resolve_plugin_records(
@@ -213,8 +161,6 @@ fn local_plugin_still_requires_an_explicit_user_preference() {
         snapshots,
         Vec::new(),
         Some("device-1"),
-        &std::collections::HashSet::new(),
-        true,
     );
 
     assert!(!resolved.available);
@@ -242,7 +188,7 @@ fn component_snapshots(records: &PluginRecords) -> Vec<PluginComponentSnapshot> 
 fn plugin_records() -> PluginRecords {
     let manifest = parse_plugin_manifest(
         r#"{
-            "schemaVersion": 1,
+            "schemaVersion": 3,
             "name": "demo-plugin",
             "version": "1.0.0",
             "description": "Demo plugin",
@@ -262,7 +208,6 @@ fn plugin_records() -> PluginRecords {
             },
             "permissions": ["network.domain:mcp.example.com"]
         }"#,
-        PluginManifestSource::Chatos,
     )
     .expect("valid test manifest");
     let components = plugin_component_descriptors(&manifest);
@@ -301,7 +246,12 @@ fn plugin_records() -> PluginRecords {
         version: manifest.version.clone(),
         manifest_schema_version: manifest.schema_version,
         normalized_manifest: manifest.clone(),
-        artifact_ref: "https://plugins.example.com/demo-plugin.zip".to_string(),
+        npm_package: chatos_plugin_management_sdk::PluginNpmPackage {
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            integrity: "sha512-dGVzdA==".to_string(),
+        },
+        artifact_ref: "https://registry.npmjs.org/demo-plugin/-/demo-plugin-1.0.0.tgz".to_string(),
         artifact_sha256: "a".repeat(64),
         signature: PluginReleaseSignature {
             key_id: "key-1".to_string(),

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::PluginMcpCloudRuntimeBundle;
 use chrono::Utc;
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Document, Regex};
-use mongodb::options::{FindOneOptions, FindOptions, ReplaceOptions};
+use mongodb::options::{FindOptions, ReplaceOptions};
 use mongodb::{Collection, Database};
 
 use crate::models::*;
@@ -16,6 +15,7 @@ mod plugins;
 
 #[derive(Clone)]
 pub struct AppStore {
+    database: Database,
     mcps: Collection<McpRecord>,
     skills: Collection<SkillRecord>,
     skill_packages: Collection<SkillPackageRecord>,
@@ -25,8 +25,6 @@ pub struct AppStore {
     agent_prompt_releases: Collection<AgentPromptVersionRecord>,
     bindings: Collection<AgentBindingRecord>,
     checks: Collection<ResourceCheckRecord>,
-    skill_preferences: Collection<UserSkillPreferenceRecord>,
-    skill_installations: Collection<SkillInstallationRecord>,
     plugin_marketplaces: Collection<PluginMarketplaceRecord>,
     plugin_marketplace_documents: Collection<Document>,
     plugin_publishers: Collection<PluginPublisherRecord>,
@@ -37,11 +35,6 @@ pub struct AppStore {
     plugin_installations: Collection<PluginInstallationRecord>,
     plugin_preferences: Collection<UserPluginPreferenceRecord>,
     plugin_component_snapshots: Collection<PluginComponentSnapshot>,
-    plugin_cloud_component_bundles: Collection<PluginCloudComponentBundle>,
-    plugin_mcp_cloud_runtime_bundles: Collection<PluginMcpCloudRuntimeBundle>,
-    plugin_cloud_credentials: Collection<StoredPluginCloudCredential>,
-    plugin_cloud_oauth_connections: Collection<StoredPluginCloudOAuthConnection>,
-    plugin_cloud_oauth_authorizations: Collection<StoredPluginCloudOAuthAuthorizationSession>,
     plugin_oauth_connections: Collection<PluginOAuthConnectionRecord>,
     plugin_audit_logs: Collection<PluginAuditLogRecord>,
 }
@@ -49,6 +42,7 @@ pub struct AppStore {
 impl AppStore {
     pub fn new(db: Database) -> Self {
         Self {
+            database: db.clone(),
             mcps: db.collection("plugin_mcps"),
             skills: db.collection("plugin_skills"),
             skill_packages: db.collection("plugin_skill_packages"),
@@ -58,8 +52,6 @@ impl AppStore {
             agent_prompt_releases: db.collection("plugin_agent_prompt_releases"),
             bindings: db.collection("plugin_agent_bindings"),
             checks: db.collection("plugin_resource_checks"),
-            skill_preferences: db.collection("plugin_user_skill_preferences"),
-            skill_installations: db.collection("plugin_skill_installations"),
             plugin_marketplaces: db.collection("plugin_marketplaces"),
             plugin_marketplace_documents: db.collection("plugin_marketplaces"),
             plugin_publishers: db.collection("plugin_publishers"),
@@ -70,11 +62,6 @@ impl AppStore {
             plugin_installations: db.collection("plugin_installations"),
             plugin_preferences: db.collection("plugin_user_preferences"),
             plugin_component_snapshots: db.collection("plugin_component_snapshots"),
-            plugin_cloud_component_bundles: db.collection("plugin_cloud_component_bundles"),
-            plugin_mcp_cloud_runtime_bundles: db.collection("plugin_mcp_cloud_runtime_bundles"),
-            plugin_cloud_credentials: db.collection("plugin_cloud_credentials"),
-            plugin_cloud_oauth_connections: db.collection("plugin_cloud_oauth_connections"),
-            plugin_cloud_oauth_authorizations: db.collection("plugin_cloud_oauth_authorizations"),
             plugin_oauth_connections: db.collection("plugin_oauth_connections"),
             plugin_audit_logs: db.collection("plugin_audit_logs"),
         }
@@ -107,55 +94,6 @@ impl AppStore {
     pub async fn get_mcp(&self, id: &str) -> Result<Option<McpRecord>, String> {
         self.mcps
             .find_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn list_local_connector_mcps(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-    ) -> Result<Vec<McpRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "updated_at": -1, "created_at": -1 })
-            .build();
-        self.mcps
-            .find(
-                doc! {
-                    "owner_user_id": owner_user_id,
-                    "visibility": VISIBILITY_PRIVATE,
-                    "source_kind": SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED,
-                    "runtime.kind": {
-                        "$in": [RUNTIME_KIND_LOCAL_CONNECTOR_STDIO, RUNTIME_KIND_LOCAL_CONNECTOR_HTTP]
-                    },
-                    "runtime.local_connector.device_id": device_id,
-                },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn find_local_connector_mcp(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-        manifest_id: &str,
-    ) -> Result<Option<McpRecord>, String> {
-        self.mcps
-            .find_one(
-                doc! {
-                    "owner_user_id": owner_user_id,
-                    "visibility": VISIBILITY_PRIVATE,
-                    "source_kind": SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED,
-                    "runtime.local_connector.device_id": device_id,
-                    "runtime.local_connector.manifest_id": manifest_id,
-                },
-                None,
-            )
             .await
             .map_err(|err| err.to_string())
     }
@@ -236,6 +174,49 @@ impl AppStore {
         Ok(())
     }
 
+    pub async fn remove_retired_direct_local_mcps(&self) -> Result<u64, String> {
+        let filter = doc! { "source_kind": "local_connector_discovered" };
+        let resource_ids = self
+            .mcps
+            .find(filter.clone(), None)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<McpRecord>>()
+            .await
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        if resource_ids.is_empty() {
+            return Ok(0);
+        }
+        self.bindings
+            .delete_many(
+                doc! {
+                    "resource_kind": RESOURCE_KIND_MCP,
+                    "resource_id": { "$in": &resource_ids },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.checks
+            .delete_many(
+                doc! {
+                    "resource_kind": RESOURCE_KIND_MCP,
+                    "resource_id": { "$in": &resource_ids },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.mcps
+            .delete_many(filter, None)
+            .await
+            .map(|result| result.deleted_count)
+            .map_err(|err| err.to_string())
+    }
+
     pub async fn list_enabled_user_mcps(
         &self,
         owner_user_id: &str,
@@ -245,9 +226,7 @@ impl AppStore {
             "$or": [
                 {
                     "owner_user_id": owner_user_id,
-                    "source_kind": {
-                        "$in": [SOURCE_KIND_USER_CREATED, SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED]
-                    },
+                    "source_kind": SOURCE_KIND_USER_CREATED,
                     "visibility": VISIBILITY_PRIVATE,
                 },
                 { "visibility": VISIBILITY_PUBLIC },
@@ -315,87 +294,54 @@ impl AppStore {
             .map_err(|err| err.to_string())
     }
 
-    pub async fn list_internal_bundle_skills(&self) -> Result<Vec<SkillRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "metadata.category": 1, "display_name": 1, "name": 1 })
-            .build();
-        self.skills
-            .find(
-                doc! {
-                    "visibility": VISIBILITY_SYSTEM_PRIVATE,
-                    "content.kind": SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE,
-                },
-                options,
-            )
+    pub async fn remove_retired_builtin_skills(&self) -> Result<u64, String> {
+        let filter = doc! {
+            "visibility": VISIBILITY_SYSTEM_PRIVATE,
+            "id": { "$regex": "^internal_skill_" },
+        };
+        let ids = self
+            .skills
+            .find(filter.clone(), None)
             .await
             .map_err(|err| err.to_string())?
-            .try_collect()
+            .try_collect::<Vec<SkillRecord>>()
             .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn get_user_skill_preference(
-        &self,
-        owner_user_id: &str,
-        skill_id: &str,
-    ) -> Result<Option<UserSkillPreferenceRecord>, String> {
-        self.skill_preferences
-            .find_one(
-                doc! { "owner_user_id": owner_user_id, "skill_id": skill_id },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_user_skill_preference(
-        &self,
-        record: &UserSkillPreferenceRecord,
-    ) -> Result<(), String> {
-        self.skill_preferences
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn get_skill_installation(
-        &self,
-        owner_user_id: &str,
-        skill_id: &str,
-    ) -> Result<Option<SkillInstallationRecord>, String> {
-        let options = FindOneOptions::builder()
-            .sort(doc! { "last_checked_at": -1 })
-            .build();
-        self.skill_installations
-            .find_one(
-                doc! { "owner_user_id": owner_user_id, "skill_id": skill_id },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn replace_device_skill_installations(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-        records: &[SkillInstallationRecord],
-    ) -> Result<(), String> {
-        self.skill_installations
-            .delete_many(
-                doc! { "owner_user_id": owner_user_id, "device_id": device_id },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        for record in records {
-            self.skill_installations
-                .replace_one(doc! { "id": &record.id }, record, upsert_options())
-                .await
-                .map_err(|err| err.to_string())?;
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(0);
         }
-        Ok(())
+        self.bindings
+            .delete_many(
+                doc! { "resource_kind": RESOURCE_KIND_SKILL, "resource_id": { "$in": &ids } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.checks
+            .delete_many(
+                doc! { "resource_kind": RESOURCE_KIND_SKILL, "resource_id": { "$in": &ids } },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        self.database
+            .collection::<Document>("plugin_user_skill_preferences")
+            .delete_many(doc! { "skill_id": { "$in": &ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.database
+            .collection::<Document>("plugin_skill_installations")
+            .delete_many(doc! { "skill_id": { "$in": &ids } }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.skills
+            .delete_many(filter, None)
+            .await
+            .map(|result| result.deleted_count)
+            .map_err(|err| err.to_string())
     }
 
     pub async fn list_enabled_user_skills(
@@ -407,21 +353,10 @@ impl AppStore {
             "$or": [
                 {
                     "owner_user_id": owner_user_id,
-                    "source_kind": {
-                        "$in": [SOURCE_KIND_USER_CREATED, SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED]
-                    },
+                    "source_kind": SOURCE_KIND_USER_CREATED,
                     "visibility": VISIBILITY_PRIVATE,
                 },
-                {
-                    "visibility": VISIBILITY_PUBLIC,
-                    "runtime.kind": {
-                        "$nin": [
-                            RUNTIME_KIND_LOCAL_CONNECTOR_STDIO,
-                            RUNTIME_KIND_LOCAL_CONNECTOR_HTTP,
-                            RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY,
-                        ]
-                    }
-                },
+                { "visibility": VISIBILITY_PUBLIC },
             ],
         };
         self.skills

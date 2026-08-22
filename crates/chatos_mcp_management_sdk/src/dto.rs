@@ -79,7 +79,6 @@ pub enum McpProviderKind {
     LocalConnector,
     ExternalHttp,
     PluginLocal,
-    PluginCloud,
     Unavailable,
 }
 
@@ -91,7 +90,6 @@ impl McpProviderKind {
             Self::LocalConnector => "local_connector",
             Self::ExternalHttp => "external_http",
             Self::PluginLocal => "plugin_local",
-            Self::PluginCloud => "plugin_cloud",
             Self::Unavailable => "unavailable",
         }
     }
@@ -110,14 +108,6 @@ pub enum McpRouteResourceKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum McpExecutionHost {
-    Cloud,
-    Local,
-    Portable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum McpRetryClass {
     IdempotentRead,
     ProviderDeclared,
@@ -130,7 +120,6 @@ pub struct McpRouteCandidate {
     pub server_name: String,
     pub resource_kind: McpRouteResourceKind,
     pub system_key: Option<String>,
-    pub execution_host: Option<McpExecutionHost>,
     pub provider_ref: Option<String>,
     #[serde(default)]
     pub required: bool,
