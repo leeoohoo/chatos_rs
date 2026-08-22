@@ -412,6 +412,15 @@ mod tests {
                 assert!(content.contains("`/tmp` 和用户主目录容量受限"));
                 assert!(content.contains(".chatos/tmp"));
                 assert!(content.contains("不得写入项目依赖清单"));
+                assert!(content.contains("Observe → Act → Verify"));
+                assert!(content.contains("不得继续盲用旧的元素序号"));
+                assert!(content.contains("工具 `isError=false`"));
+                assert!(content.contains("默认不得抢占用户正在使用的前台应用"));
+                assert!(content.contains("`sky_click`"));
+                assert!(content.contains("background window outside the current Space was captured"));
+                assert!(content.contains("AskUser 审批可能让用户切换到 ChatOS 所在 Space"));
+                assert!(content.contains("优先向目标应用调用 `press_key(Return)`"));
+                assert!(content.contains("不得仅因根窗口暴露 `Secondary Actions: Raise`"));
                 assert!(!content.contains("Provider"));
                 assert!(!content.contains("Harness"));
                 assert!(!content.contains("Local Connector"));
