@@ -22,7 +22,6 @@ export interface ConnectorStatus {
   configured: boolean;
   connector_running: boolean;
   developer_mode?: boolean;
-  browser_full_cdp_access_enabled?: boolean;
   developer_cloud_base_url?: string | null;
   developer_user_service_base_url?: string | null;
   developer_chatos_web_url?: string | null;
@@ -33,6 +32,26 @@ export interface ConnectorStatus {
   user?: AuthUser | null;
   default_workspace_id?: string | null;
   workspaces: WorkspaceRecord[];
+}
+
+export interface PluginRuntimeVisualSession {
+  session_id: string;
+  adapter_session_id: string;
+  plugin_id: string;
+  component_key: string;
+  title: string;
+  target_app?: string | null;
+  status: 'running';
+  mime_type?: 'image/jpeg' | 'image/png' | null;
+  frame_sequence: number;
+  captured_at: string;
+  width?: number | null;
+  height?: number | null;
+  frame_data_url?: string | null;
+}
+
+export interface PluginRuntimeVisualSessionResponse {
+  session: PluginRuntimeVisualSession | null;
 }
 
 export interface TerminalExecResponse {
@@ -237,7 +256,6 @@ export interface LocalModelConfigListResponse {
 
 export interface LocalRuntimeSettings {
   developer_mode: boolean;
-  browser_full_cdp_access_enabled: boolean;
   developer_cloud_base_url: string;
   developer_user_service_base_url: string;
   developer_chatos_web_url: string;
@@ -290,6 +308,7 @@ export interface LocalInstalledPluginVersion {
   relative_installation_path: string;
   installed_at: string;
   package_file_sha256: Record<string, string>;
+  granted_permissions: string[];
   inventory: {
     dependencies: Record<string, unknown>;
     permissions: LocalPluginPermissionRequirement[];
@@ -379,6 +398,14 @@ export interface PluginRuntimeSessionTelemetry {
   completed_at?: string | null;
   expires_at: number;
   last_error?: string | null;
+}
+
+export interface PluginFileGrantSummary {
+  file_grant_id: string;
+  display_name: string;
+  size: number;
+  sha256: string;
+  expires_at_unix_ms: number;
 }
 
 export interface PluginRuntimeTelemetryEvent {
@@ -512,34 +539,7 @@ export interface PluginOAuthAuthorizationStart {
   browser_error?: string | null;
 }
 
-export interface UpdateLocalRuntimeSettingsPayload extends Partial<LocalRuntimeSettings> {
-  acknowledge_browser_full_cdp_risk?: boolean;
-}
-
-export interface ChromeBridgeStatus {
-  connected: boolean;
-  extension_id: string;
-  extension_version?: string | null;
-  extension_compatible: boolean;
-  connected_at_ms?: number | null;
-  last_seen_at_ms?: number | null;
-  claimed_tab_count: number;
-  authorized_origin_count: number;
-  pending_command_count: number;
-}
-
-export interface ChromeIntegrationStatus {
-  platform_supported: boolean;
-  enabled: boolean;
-  native_host_available: boolean;
-  native_host_manifest_path?: string | null;
-  extension_available: boolean;
-  extension_directory?: string | null;
-  extension_id: string;
-  bridge: ChromeBridgeStatus;
-  setup_note: string;
-  last_error?: string | null;
-}
+export type UpdateLocalRuntimeSettingsPayload = Partial<LocalRuntimeSettings>;
 
 export interface AgentPromptUpdateStatus {
   configured: boolean;
@@ -563,7 +563,17 @@ export type SystemPermissionStatus =
   | 'needs_attention'
   | 'missing_dependency'
   | 'not_applicable'
+  | 'on_demand'
   | 'unknown';
+
+export interface PluginSystemPermissionSubject {
+  plugin_id: string;
+  display_name: string;
+  version: string;
+  component_keys: string[];
+  runtime_granted: boolean;
+  onboarding_available: boolean;
+}
 
 export interface SystemPermissionItem {
   id: string;
@@ -576,6 +586,7 @@ export interface SystemPermissionItem {
   request_label: string;
   settings_target?: string | null;
   builtin_kinds: string[];
+  plugin_subjects: PluginSystemPermissionSubject[];
   note: string;
   last_error?: string | null;
 }

@@ -61,8 +61,6 @@ pub const MCP_MANAGEMENT_RUNTIME_GRANT_SECRET_CONFIG_KEY: &str =
     "mcp_management.runtime.grant_secret";
 pub const MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET_CONFIG_KEY: &str =
     "mcp_management.runtime.session_encryption_secret";
-pub const MCP_MANAGEMENT_EMBEDDED_WORK_DIR_CONFIG_KEY: &str =
-    "mcp_management.runtime.embedded_work_dir";
 pub const MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "mcp_management.runtime.downstream_request_timeout_ms";
 pub const MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =

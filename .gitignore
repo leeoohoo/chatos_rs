@@ -63,7 +63,7 @@ __pycache__/
 !/docs/
 /docs/*
 !/docs/ui-redesign/
-!/docs/ui-redesign/**
+
 !/docs/plugins/
 !/docs/plugins/**
 /docs/**/.DS_Store
@@ -79,3 +79,5 @@ __pycache__/
 /.chatos-local-dev
 /docker/secrets/
 /.chatos-ci-images
+/docs
+/docs/ui-redesign

@@ -21,7 +21,6 @@ const TOKEN_AUDIENCE: &str = "chatos";
 const CHATOS_MCP_SCOPE: &str = "mcp.tools.call";
 const CHATOS_PROVIDER_REF: &str = "chatos";
 const CHATOS_MEMORY_PROVIDER_REF_PREFIX: &str = "chatos:memory:";
-const CLOUD_BROWSER_SESSION_CLOSE_METHOD: &str = "browser/session/close";
 
 pub(super) struct ChatosRequestBinding<'a> {
     owner_user_id: &'a str,
@@ -66,7 +65,6 @@ pub(super) struct ChatosProvider {
     internal_secret: Option<String>,
     request_timeout: Duration,
     ask_user_request_timeout: Duration,
-    browser_request_timeout: Duration,
     response_limit_bytes: usize,
 }
 

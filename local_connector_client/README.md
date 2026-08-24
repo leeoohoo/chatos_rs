@@ -98,8 +98,6 @@ node local_connector_client/verify-installed-package.mjs \
 
 Use `windows-x64` or `windows-arm64` and the unpacked app's `resources` directory on Windows; omit `--require-signed`, which is the macOS Developer ID contract.
 
-The Windows package includes `chatos_chrome_native_host.exe` and the fixed-identity MV3 extension. Enabling Chrome integration in Local Connector requires an explicit risk acknowledgement, writes the owned manifest under the current user's ChatOS state directory, and registers only `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.chatos.chrome`. Existing registry or manifest ownership conflicts fail closed; disabling removes only the exact ChatOS-owned user registration.
-
 ### Linux
 
 Run the Linux packager on the target Linux architecture:
@@ -115,21 +113,11 @@ executables on Linux, verifies that removed built-in capabilities are absent, an
 local_connector_client/dist/electron-linux/
 ```
 
-Linux currently ships the explicit `linux-browser` runtime profile. It contains the desktop app,
-Local Connector Core, bundled `rg`, SQLite migrations,
-the fixed-identity Chrome extension, and the Linux native messaging host. The desktop shell loads
-the hosted ChatOS web application at runtime instead of packaging a local ChatOS frontend bundle. The
-client registers user-scoped manifests for both Google Chrome and Chromium when the user explicitly
-enables Chrome integration. When Ubuntu's Snap Chromium is installed, the client also writes the
-Snap profile manifest, copies the Native Host into the Snap-accessible user directory, and publishes
-the private rendezvous file into the active Snap revision's user home. The final unpacked resources are checked by
-`verify-installed-package.mjs`, and a redacted `*.deb.verification.json` report is written beside the
-DEB.
-
-The `linux-browser` profile still excludes `agent-browser`/Chrome for Testing. Computer Use,
-document, PDF, and similar capabilities are not desktop-bundled runtimes; they must be installed as
-approved Marketplace npm MCP plugins. The verifier retains `linux-core` for validating older
-core-only Linux desktop packages.
+Linux ships the `linux-core` runtime profile: the desktop app, Local Connector Core, bundled `rg`,
+and SQLite migrations. Browser, Computer Use, document, PDF, and similar capabilities are not
+desktop-bundled runtimes; they must be installed as approved Marketplace npm MCP plugins. The final
+unpacked resources are checked by `verify-installed-package.mjs`, and a redacted
+`*.deb.verification.json` report is written beside the DEB.
 
 To publish the ZIP to the official website's MinIO release bucket:
 
@@ -155,7 +143,7 @@ two UI surfaces separate:
 The hosted ChatOS page is treated as a remote application inside a managed desktop web container,
 not as the owner of desktop state. Its Electron bridge is intentionally narrow: desktop ticket
 authentication, opening the local settings surface, and restricted Local Connector runtime calls
-for browser sessions and workspace selection. Local approvals, permission policy, and device
+for workspace selection and generic Plugin Runtime operations. Local approvals, permission policy, and device
 administration remain in the local shell and core.
 
 The UI supports:
@@ -168,7 +156,7 @@ The UI supports:
 6. Marketplace npm MCP installation, activation, permission, credential, and availability status.
 7. A persistent developer-mode switch. It uses local ChatOS (`127.0.0.1:8088`), Local Connector Service (`127.0.0.1:39230`), and User Service (`127.0.0.1:39190`) with a separate Electron cookie partition; the local development stack continues to use the configured online MinIO endpoint by default.
 8. Settings render inside the main Electron window instead of a second macOS Space-aware window. The hosted ChatOS surface continues to live in its own `WebContentsView`; main/settings views are restored and repainted when the app becomes active, and a failed ChatOS renderer is recreated automatically.
-9. The system-permissions panel reports device-owned workspace, process, browser, network, Accessibility, Screen Recording, and Office Automation readiness used by installed MCP plugins and local runtime controls.
+9. The system-permissions panel reports device-owned workspace, process, network, Accessibility, Screen Recording, and Office Automation readiness used by installed MCP plugins and local runtime controls. Browser-specific permissions and Extension authorization are owned by the installed Browser MCP.
 10. The signed macOS app declares Apple Events automation and user-selected Desktop/Documents/Downloads/network-volume/removable-volume usage descriptions. Accessibility is requested through Electron, while Screen Recording and other privacy categories link to the matching macOS settings pages.
 
 Legacy env-driven mode is still supported:

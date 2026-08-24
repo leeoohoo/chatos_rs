@@ -102,7 +102,6 @@ impl AppState {
             config.local_connector_http_client.clone(),
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),
-            config.embedded_work_dir.clone(),
             ProviderRuntimeConfig {
                 downstream_request_timeout: config.downstream_request_timeout,
                 local_connector_request_timeout: local_connector_tool_timeout(

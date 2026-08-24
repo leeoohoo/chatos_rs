@@ -188,6 +188,12 @@ mod tests {
         release.permissions = manifest.permissions.clone();
         let installation = plugin.installation.as_mut().unwrap();
         installation.version = release.version.clone();
+        installation.granted_permissions = release
+            .permissions
+            .iter()
+            .filter(|permission| permission.required)
+            .map(|permission| permission.permission.clone())
+            .collect();
         installation.component_statuses = components
             .iter()
             .map(|component| PluginComponentStatus {

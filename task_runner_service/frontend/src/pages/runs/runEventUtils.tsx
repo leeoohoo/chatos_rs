@@ -103,9 +103,6 @@ export function describeRunEventType(event: TaskRunEventRecord, t: TranslateFn):
   if (event.event_type === 'thinking') {
     return t('runs.event.thinking');
   }
-  if (event.event_type === 'browser_session') {
-    return t('runs.event.browserSession');
-  }
   if (event.event_type === 'plugin_runtime') {
     return t('runs.event.pluginRuntime');
   }

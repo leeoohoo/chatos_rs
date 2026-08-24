@@ -335,7 +335,6 @@ export const zhCNSettings: MessageDictionary = {
   'runs.events.title': '事件轨迹',
   'runs.event.modelReply': '模型回复',
   'runs.event.thinking': '思考过程',
-  'runs.event.browserSession': '浏览器会话状态',
   'runs.event.pluginRuntime': '外挂程式运行状态',
   'runs.event.fragmentSummary': '{count} 条分片 / {chars} chars',
   'runs.viewPayload': '查看 payload',

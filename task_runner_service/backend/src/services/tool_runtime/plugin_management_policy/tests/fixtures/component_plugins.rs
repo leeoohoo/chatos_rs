@@ -27,7 +27,7 @@ pub(in super::super) fn resolved_command_plugin(requires_confirmation: bool) -> 
                     "argumentHint": "[path]",
                     "requiresConfirmation": {requires_confirmation},
                     "targetAgent": "{RUN_AGENT_KEY}",
-                    "allowedTools": ["browser_tools_browser_snapshot"]
+                    "allowedTools": ["plugin_snapshot"]
                 }}],
                 "interface": {{
                     "displayName": "Review Command",
@@ -109,7 +109,7 @@ pub(in super::super) fn resolved_agent_plugin(base_agent: &str) -> ResolvedPlugi
                     "source": "./agents/reviewer.md",
                     "description": "Review the current change",
                     "baseAgent": "{base_agent}",
-                    "allowedTools": ["browser_tools_browser_snapshot"],
+                    "allowedTools": ["plugin_snapshot"],
                     "maxIterations": 12
                 }}],
                 "interface": {{

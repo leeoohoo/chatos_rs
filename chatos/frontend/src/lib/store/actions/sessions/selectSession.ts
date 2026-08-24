@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import type { Message, Session } from '../../../../types';
+import type { Session } from '../../../../types';
 import { debugLog } from '@/lib/utils';
-import { getRealtimeConnectionStateSnapshot } from '../../../realtime/state';
 import { fetchSession } from '../../helpers/sessions';
 import { fetchSessionMessages } from '../../helpers/messages';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
@@ -13,24 +12,14 @@ import type {
 } from '../../types';
 import {
   createPerfMeasureStopper,
-  extractCompactHistoryMessages,
-  mergeLatestCompactHistorySnapshot,
-  isSessionMessagesCacheFresh,
-  readSessionMessagesCache,
-  readVisibleSessionMessagesSnapshot,
-  resolveSessionTimestamp,
   SESSION_MESSAGES_INITIAL_PAGE_SIZE,
   syncCurrentProjectFromSession,
-  touchSessionMessagesCacheEntry,
-  trimCompactHistorySnapshotToRecent,
-  writeSessionMessagesCache,
 } from '../sessionsUtils';
 import { applySelectSessionState } from '../sessionsSelectHelpers';
 import { restoreSessionRuntimeState } from './runtimeRecovery';
 import type { SessionActionDeps } from './types';
 
 let latestSelectRequestSeq = 0;
-const SESSION_MESSAGES_BACKGROUND_SYNC_MAX_AGE_MS = 30_000;
 
 export function createSelectSessionActions({
   set,
@@ -48,21 +37,11 @@ export function createSelectSessionActions({
       const stopPerfMeasure = createPerfMeasureStopper(`store.selectSession.${sessionId}.${selectStartedAt}`);
       const beforeSelect = get();
       const previousSessionId = beforeSelect.currentSessionId;
-      if (previousSessionId && previousSessionId !== sessionId) {
-        const previousVisibleSnapshot = readVisibleSessionMessagesSnapshot(beforeSelect, previousSessionId);
-        if (previousVisibleSnapshot) {
-          set((state: ChatStoreDraft) => {
-            writeSessionMessagesCache(state, previousSessionId, previousVisibleSnapshot);
-          });
-        }
-      }
       const requestedInitialPageSize = Number.isFinite(options.initialPageSize)
         ? Math.max(1, Math.floor(options.initialPageSize as number))
         : SESSION_MESSAGES_INITIAL_PAGE_SIZE;
-      const forceRefreshMessages = options.forceRefreshMessages === true;
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
-        // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
         if (!options.keepActivePanel && beforeSelect.activePanel !== 'chat') {
           set((state: ChatStoreDraft) => {
             state.activePanel = 'chat';
@@ -73,124 +52,42 @@ export function createSelectSessionActions({
       }
 
       try {
-        const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
-        const visibleSnapshot = forceRefreshMessages ? null : readVisibleSessionMessagesSnapshot(get(), sessionId);
-        const cachedPage = forceRefreshMessages ? null : readSessionMessagesCache(get(), sessionId);
-        const sessionSnapshot = trimCompactHistorySnapshotToRecent(
-          visibleSnapshot ?? cachedPage,
-          requestedInitialPageSize,
-        );
-        const hasImmediateSnapshot = Boolean(existingSession && sessionSnapshot);
+        const existingSession = (beforeSelect.sessions || [])
+          .find((item: Session) => item.id === sessionId) || null;
 
         set((state: ChatStoreDraft) => {
-          state.isLoading = !hasImmediateSnapshot;
+          state.isLoading = true;
           state.error = null;
-        });
-
-        if (existingSession) {
-          set((state: ChatStoreDraft) => {
+          state.messages = [];
+          state.hasMoreMessages = false;
+          if (!state.sessionMessagePaginationState) {
+            state.sessionMessagePaginationState = {};
+          }
+          state.sessionMessagePaginationState[sessionId] = {
+            nextBefore: null,
+            loaded: false,
+          };
+          if (existingSession) {
             state.currentSessionId = sessionId;
             state.currentSession = existingSession;
             syncCurrentProjectFromSession(state, existingSession);
             if (!options.keepActivePanel) {
               state.activePanel = 'chat';
             }
-            if (!state.sessionChatState[sessionId]) {
-              state.sessionChatState[sessionId] = {
-                isLoading: !hasImmediateSnapshot,
-                isStreaming: false,
-                isStopping: false,
-                streamingMessageId: null,
-                activeTurnId: null,
-                streamingPreviewText: '',
-                streamingTransport: null,
-                runtimeContextRefreshNonce: 0,
-              };
-            } else {
-              state.sessionChatState[sessionId] = {
-                ...state.sessionChatState[sessionId],
-                isLoading: !hasImmediateSnapshot,
-              };
-            }
-
-          });
-        }
-        if (!sessionSnapshot && existingSession) {
-          set((state: ChatStoreDraft) => {
-            state.messages = [];
-            state.hasMoreMessages = false;
-            state.isStreaming = state.sessionChatState?.[sessionId]?.isStreaming ?? false;
-            state.streamingMessageId = state.sessionChatState?.[sessionId]?.streamingMessageId ?? null;
-            if (!state.sessionMessagePaginationState) {
-              state.sessionMessagePaginationState = {};
-            }
-            state.sessionMessagePaginationState[sessionId] = {
-              nextBefore: null,
-              loaded: false,
-            };
-          });
-        }
-        if (sessionSnapshot && existingSession) {
-          if (!visibleSnapshot && cachedPage) {
-            set((state: ChatStoreDraft) => {
-              touchSessionMessagesCacheEntry(state, sessionId);
-            });
           }
-          const cachedSessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(existingSession?.metadata);
-
-          set((state: ChatStoreDraft) => {
-            applySelectSessionState({
-              state,
-              sessionId,
-              session: existingSession,
-              messages: sessionSnapshot.messages,
-              previousSessionId,
-              sessionAiSelectionFromMetadata: cachedSessionAiSelectionFromMetadata,
-              keepActivePanel: options.keepActivePanel,
-            });
-            if (!state.sessionMessagePaginationState) {
-              state.sessionMessagePaginationState = {};
-            }
-            state.sessionMessagePaginationState[sessionId] = {
-              nextBefore: sessionSnapshot.nextBefore,
-              loaded: sessionSnapshot.loaded,
-            };
-            state.hasMoreMessages = Boolean(sessionSnapshot.nextBefore);
-            const currentChatState = state.sessionChatState?.[sessionId];
-            if (currentChatState) {
-              state.sessionChatState[sessionId] = {
-                ...currentChatState,
-                isLoading: Boolean(currentChatState.isStreaming || currentChatState.isStopping),
-              };
-            }
-            state.isLoading = false;
-          });
-          const shouldBackgroundSync = (() => {
-            if (options.skipBackgroundSync) {
-              return false;
-            }
-            if (getRealtimeConnectionStateSnapshot() !== 'connected') {
-              return true;
-            }
-            const sessionUpdatedAt = resolveSessionTimestamp(existingSession);
-            return !isSessionMessagesCacheFresh(get(), sessionId, {
-              minFetchedAt: sessionUpdatedAt,
-              maxAgeMs: SESSION_MESSAGES_BACKGROUND_SYNC_MAX_AGE_MS,
-            });
-          })();
-          if (shouldBackgroundSync) {
-            void get().syncSessionMessagesInBackground(sessionId);
-          }
-          void restoreSessionRuntimeState({ client, set, get, sessionId });
-          debugLog('[Store] selectSession served from cache', {
-            sessionId,
-            previousSessionId,
-            messageCount: sessionSnapshot.messages.length,
-            nextBefore: sessionSnapshot.nextBefore,
-            backgroundSync: shouldBackgroundSync,
-          });
-          return;
-        }
+          const previousChatState = state.sessionChatState[sessionId];
+          state.sessionChatState[sessionId] = {
+            isLoading: true,
+            isStreaming: previousChatState?.isStreaming ?? false,
+            isStopping: previousChatState?.isStopping ?? false,
+            streamingPhase: previousChatState?.streamingPhase ?? null,
+            streamingMessageId: previousChatState?.streamingMessageId ?? null,
+            activeTurnId: previousChatState?.activeTurnId ?? null,
+            streamingPreviewText: previousChatState?.streamingPreviewText ?? '',
+            streamingTransport: previousChatState?.streamingTransport ?? null,
+            runtimeContextRefreshNonce: previousChatState?.runtimeContextRefreshNonce ?? 0,
+          };
+        });
 
         const [session, messageResult] = await Promise.all([
           existingSession ? Promise.resolve(existingSession) : fetchSession(client, sessionId),
@@ -199,13 +96,7 @@ export function createSelectSessionActions({
             before: null,
           }),
         ]);
-        const mergedSnapshot = mergeLatestCompactHistorySnapshot(
-          messageResult.messages,
-          messageResult.nextBefore,
-          sessionSnapshot,
-        );
-        const messages = mergedSnapshot.messages;
-        const effectiveNextBefore = mergedSnapshot.nextBefore;
+
         if (requestSeq !== latestSelectRequestSeq) {
           debugLog('[Store] selectSession ignored stale result', {
             sessionId,
@@ -214,47 +105,28 @@ export function createSelectSessionActions({
           });
           return;
         }
-        set((state) => {
-          writeSessionMessagesCache(state, sessionId, {
-            messages,
-            nextBefore: effectiveNextBefore,
-            loaded: true,
-          });
-        });
-        const sessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(session?.metadata);
-        const stateSnapshot = get();
-        const selectionChatState = stateSnapshot.sessionChatState?.[sessionId];
-        if (selectionChatState) {
-          set((state: ChatStoreDraft) => {
-            const currentChatState = state.sessionChatState?.[sessionId];
-            if (!currentChatState) {
-              return;
-            }
-            state.sessionChatState[sessionId] = {
-              ...currentChatState,
-              isLoading: Boolean(currentChatState.isStreaming || currentChatState.isStopping),
-            };
-          });
-        }
 
+        const sessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(session?.metadata);
         set((state: ChatStoreDraft) => {
+          const currentChatState = state.sessionChatState[sessionId];
+          state.sessionChatState[sessionId] = {
+            ...currentChatState,
+            isLoading: Boolean(currentChatState?.isStreaming || currentChatState?.isStopping),
+          };
           applySelectSessionState({
             state,
             sessionId,
             session,
-            messages,
+            messages: messageResult.messages,
             previousSessionId,
             sessionAiSelectionFromMetadata,
             keepActivePanel: options.keepActivePanel,
           });
-          if (!state.sessionMessagePaginationState) {
-            state.sessionMessagePaginationState = {};
-          }
           state.sessionMessagePaginationState[sessionId] = {
-            nextBefore: effectiveNextBefore,
+            nextBefore: messageResult.nextBefore,
             loaded: true,
           };
-          state.hasMoreMessages = Boolean(effectiveNextBefore);
+          state.hasMoreMessages = Boolean(messageResult.nextBefore);
         });
         void restoreSessionRuntimeState({ client, set, get, sessionId });
 
@@ -265,22 +137,10 @@ export function createSelectSessionActions({
             debugLog('🔍 保存会话ID到 localStorage:', sessionId);
           }
         }
-        const latestMessagesForSession = (get().messages || []).filter((message: Message) => message?.sessionId === sessionId);
-        const latestCompactMessagesForSession = extractCompactHistoryMessages(latestMessagesForSession);
-        set((state) => {
-          writeSessionMessagesCache(state, sessionId, {
-            messages: latestCompactMessagesForSession.length > 0
-              ? latestCompactMessagesForSession
-              : messages,
-            nextBefore: effectiveNextBefore,
-            loaded: true,
-          });
-        });
-        debugLog('[Store] selectSession completed', {
+        debugLog('[Store] selectSession completed without message cache', {
           sessionId,
           previousSessionId,
-          messageCount: messages.length,
-          cacheHit: Boolean(sessionSnapshot),
+          messageCount: messageResult.messages.length,
           perfMs: stopPerfMeasure() ?? null,
           elapsedMs: Date.now() - selectStartedAt,
         });
@@ -304,8 +164,10 @@ export function createSelectSessionActions({
               isLoading: false,
             };
           }
-          state.error = error instanceof Error ? error.message : 'Failed to select session';
-          state.isLoading = false;
+          if (state.currentSessionId === sessionId || !state.currentSessionId) {
+            state.error = error instanceof Error ? error.message : 'Failed to select session';
+            state.isLoading = false;
+          }
         });
       }
     },

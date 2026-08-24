@@ -1,0 +1,159 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
+/* Required Notice: Copyright (c) 2025 AI Chat Team */
+
+html.visualPreviewDocument,
+html.visualPreviewDocument body,
+html.visualPreviewDocument #root {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+.visualPreviewPanel {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: 50px minmax(0, 1fr) 28px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 14px;
+  background: rgb(20 20 24 / 96%);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 48%);
+  color: #f7f7f8;
+}
+
+.visualPreviewHeader {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgb(255 255 255 / 9%);
+}
+
+.visualPreviewIcon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  background: rgb(116 112 245 / 22%);
+  color: #aaa7ff;
+}
+
+.visualPreviewTitle {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.visualPreviewTitle strong,
+.visualPreviewTitle small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualPreviewTitle strong {
+  font-size: 12px;
+}
+
+.visualPreviewTitle small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  color: #a7a7b0;
+  font-size: 10px;
+}
+
+.visualPreviewHeader button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #aaaab3;
+  cursor: pointer;
+}
+
+.visualPreviewHeader button:hover {
+  background: rgb(255 255 255 / 9%);
+  color: #fff;
+}
+
+.visualPreviewLiveDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #42d99b;
+  box-shadow: 0 0 0 3px rgb(66 217 155 / 13%);
+}
+
+.visualPreviewFrame {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #09090b;
+}
+
+.visualPreviewFrame img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.visualPreviewWaiting {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: #9b9ba5;
+  font-size: 11px;
+}
+
+.visualPreviewWaiting svg {
+  animation: visualPreviewSpin 1s linear infinite;
+}
+
+.visualPreviewFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  color: #85858f;
+  font-size: 9px;
+}
+
+.visualPreviewCollapsed {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 12px;
+  background: rgb(20 20 24 / 96%);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 42%);
+  color: #f7f7f8;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@keyframes visualPreviewSpin {
+  to { transform: rotate(360deg); }
+}

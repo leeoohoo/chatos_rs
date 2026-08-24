@@ -97,6 +97,17 @@ pub(crate) fn plugin_permission_snapshot(
     plugin: &ResolvedPlugin,
     component_key: &str,
 ) -> Vec<String> {
+    let granted = plugin
+        .installation
+        .as_ref()
+        .map(|installation| {
+            installation
+                .granted_permissions
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
     let mut permissions = plugin
         .release
         .iter()
@@ -118,7 +129,7 @@ pub(crate) fn plugin_permission_snapshot(
                 .map(|permission| permission.permission.as_str()),
         )
         .map(str::trim)
-        .filter(|permission| !permission.is_empty())
+        .filter(|permission| !permission.is_empty() && granted.contains(permission))
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     permissions.sort();
@@ -293,6 +304,11 @@ mod tests {
             availability_status: PluginAvailabilityStatus::Ready,
             dependency_status: PluginRequirementStatus::Satisfied,
             permission_status: PluginRequirementStatus::Satisfied,
+            granted_permissions: release
+                .permissions
+                .iter()
+                .map(|permission| permission.permission.clone())
+                .collect(),
             auth_status: PluginRequirementStatus::Satisfied,
             component_statuses: components
                 .iter()

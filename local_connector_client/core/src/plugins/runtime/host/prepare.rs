@@ -102,6 +102,33 @@ impl PluginRuntimeHost {
                 )
             }
             PluginComponentKind::McpServer => {
+                if permission_snapshot.contains("workspace.write") {
+                    return Err((
+                        409,
+                        "Plugin MCP workspace.write is unavailable until per-call workspace approval is enforced"
+                            .to_string(),
+                    ));
+                }
+                let workspace_root = if permission_snapshot.contains("workspace.read") {
+                    let workspace_id = request.workspace_id.trim();
+                    if workspace_id.is_empty() {
+                        return Err((
+                            409,
+                            "Plugin MCP workspace.read requires a bound Local Connector workspace"
+                                .to_string(),
+                        ));
+                    }
+                    let state = self.state_snapshot().await?;
+                    let workspace = state.workspace_by_id(workspace_id).ok_or_else(|| {
+                        (
+                            409,
+                            "Plugin MCP workspace is not registered locally".to_string(),
+                        )
+                    })?;
+                    Some(approved_workspace_root(workspace.absolute_root.as_path())?)
+                } else {
+                    None
+                };
                 let server_key = optional_body_text(&request.body, "server_key")?;
                 let tool_allowlist = optional_body_text_set(&request.body, "tool_allowlist", 200)?;
                 let tool_blocklist = optional_body_text_set(&request.body, "tool_blocklist", 200)?;
@@ -114,6 +141,7 @@ impl PluginRuntimeHost {
                         adapter_session_id.as_str(),
                         owner_user_id.as_str(),
                         device_id.as_str(),
+                        workspace_root.as_deref(),
                         &permission_snapshot,
                         &tool_allowlist,
                         &tool_blocklist,

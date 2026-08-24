@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::models::CreateTaskPluginHint;
 
-use super::super::{TaskRunnerCapabilityPolicy, BUILTIN_RUNTIME_KIND};
+use super::super::TaskRunnerCapabilityPolicy;
 use super::fixtures::*;
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
@@ -44,6 +44,7 @@ fn trusted_plugin_hints_resolve_plugin_key_to_internal_id() {
     assert_eq!(audit.policy_revision, "revision-1");
     assert_eq!(audit.project_context_revision, "project-revision-1");
     assert_eq!(audit.plugins[0].plugin_key, "browser@official");
+    assert_eq!(audit.plugins[0].display_name, "Browser");
     assert_eq!(audit.plugins[0].device_id, "device-1");
     assert_eq!(
         audit.plugins[0].reason.as_deref(),
@@ -116,16 +117,74 @@ fn run_validation_rejects_plugin_release_drift() {
 }
 
 #[test]
+fn manual_retry_refresh_rebinds_to_the_current_installed_release() {
+    let mut initial_capabilities = local_runtime_capabilities();
+    initial_capabilities.plugins = vec![resolved_plugin(false)];
+    let initial_policy = local_runtime_policy(initial_capabilities).expect("initial Plugin policy");
+    let selection = initial_policy
+        .plugin_selection_from_hints(&[CreateTaskPluginHint {
+            plugin_key: "browser@official".to_string(),
+            reason: Some("Task needs browser control".to_string()),
+        }])
+        .expect("initial trusted Plugin selection");
+    let mut task = task();
+    task.plugin_config = selection.plugin_config;
+    task.plugin_selection_audit = selection.audit;
+
+    let mut upgraded_plugin = resolved_plugin(false);
+    upgraded_plugin.catalog.latest_release_id = "release-browser-2".to_string();
+    let release = upgraded_plugin.release.as_mut().expect("upgraded release");
+    release.id = "release-browser-2".to_string();
+    release.version = "2.0.0".to_string();
+    release.normalized_manifest.version = "2.0.0".to_string();
+    release.npm_package.version = "2.0.0".to_string();
+    release.artifact_sha256 = "d".repeat(64);
+    let installation = upgraded_plugin
+        .installation
+        .as_mut()
+        .expect("upgraded installation");
+    installation.release_id = release.id.clone();
+    installation.version = release.version.clone();
+    installation.artifact_sha256 = release.artifact_sha256.clone();
+    for component in &mut upgraded_plugin.component_snapshots {
+        component.release_id = release.id.clone();
+    }
+    let mut upgraded_capabilities = local_runtime_capabilities();
+    upgraded_capabilities.plugins = vec![upgraded_plugin];
+    let upgraded_policy =
+        local_runtime_policy(upgraded_capabilities).expect("upgraded Plugin policy");
+
+    assert!(upgraded_policy
+        .validate_task_plugin_selection_for_run(&task)
+        .expect_err("normal run must still reject release drift")
+        .contains("Plugin release changed"));
+    assert!(upgraded_policy
+        .refresh_task_plugin_selection_for_manual_retry(&mut task)
+        .expect("manual retry refresh"));
+
+    let audit = task
+        .plugin_selection_audit
+        .as_ref()
+        .expect("refreshed audit");
+    assert_eq!(audit.selection_source, "manual_retry_refresh");
+    assert_eq!(audit.plugins[0].release_id, "release-browser-2");
+    assert_eq!(audit.plugins[0].version, "2.0.0");
+    assert_eq!(
+        audit.plugins[0].reason.as_deref(),
+        Some("Task needs browser control")
+    );
+    upgraded_policy
+        .validate_task_plugin_selection_for_run(&task)
+        .expect("refreshed task must validate");
+    assert!(!upgraded_policy
+        .refresh_task_plugin_selection_for_manual_retry(&mut task)
+        .expect("idempotent manual retry refresh"));
+}
+
+#[test]
 fn plugin_selection_omits_plugin_agent_profiles() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];
-    capabilities.mcps.push(resolved_mcp(
-        "browser-tools",
-        BUILTIN_RUNTIME_KIND,
-        Some("BrowserTools"),
-        false,
-        true,
-    ));
     let policy = local_runtime_policy(capabilities).expect("Plugin policy");
     let mut task = task();
     task.plugin_config = TaskPluginConfig {
@@ -144,11 +203,6 @@ fn plugin_selection_omits_plugin_agent_profiles() {
     assert!(task.plugin_config.selected_plugins[0]
         .selected_agent_ids
         .is_empty());
-    assert!(task
-        .mcp_config
-        .enabled_builtin_kinds
-        .iter()
-        .any(|kind| kind == "BrowserTools"));
 }
 
 #[test]
@@ -347,13 +401,6 @@ fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
 fn required_plugin_is_injected_into_effective_task_config() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_plugin(true)];
-    capabilities.mcps.push(resolved_mcp(
-        "browser-tools",
-        BUILTIN_RUNTIME_KIND,
-        Some("BrowserTools"),
-        false,
-        true,
-    ));
     let policy = local_runtime_policy(capabilities).expect("required Plugin policy");
     let mut task = task();
     assert!(policy

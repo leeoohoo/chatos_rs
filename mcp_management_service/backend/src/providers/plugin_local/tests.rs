@@ -158,6 +158,11 @@ async fn start_local_connector(
                 })];
                 let tool_snapshot_sha256 =
                     hex::encode(Sha256::digest(serde_json::to_vec(&tools).unwrap()));
+                let server_instructions =
+                    Some("Observe again after every UI mutation.".to_string());
+                let server_instructions_sha256 = hex::encode(Sha256::digest(
+                    serde_json::to_vec(&server_instructions).unwrap(),
+                ));
                 Json(json!({
                     "run_id": "session-1",
                     "plugin_id": "plugin-workspace",
@@ -172,8 +177,11 @@ async fn start_local_connector(
                         "artifact_sha256": "a".repeat(64),
                         "component_key": "workspace",
                         "oauth_connection_id": "oauth-workspace",
+                        "server_instructions": server_instructions,
+                        "server_instructions_sha256": server_instructions_sha256,
                         "tools": tools,
-                        "tool_snapshot_sha256": tool_snapshot_sha256
+                        "tool_snapshot_sha256": tool_snapshot_sha256,
+                        "snapshot_sha256": "f".repeat(64)
                     },
                     "operations": [MCP_TOOL_CALL_OPERATION, "mcp_health_check"],
                     "adapter_session_id": "adapter-1",
@@ -262,6 +270,12 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         )
         .await;
     assert_eq!(local_bindings.len(), 1);
+    assert_eq!(
+        local_bindings[&immutable.resource_id]
+            .server_instructions
+            .as_deref(),
+        Some("Observe again after every UI mutation.")
+    );
     assert_eq!(
         tool_snapshots[&immutable.resource_id][0]["name"],
         "read_file"

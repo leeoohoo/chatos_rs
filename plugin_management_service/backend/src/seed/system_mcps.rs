@@ -8,6 +8,13 @@ use super::*;
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
 
 pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), String> {
+    let active_resource_ids = system_mcp_catalog()
+        .iter()
+        .map(|descriptor| descriptor.resource_id.to_string())
+        .collect::<Vec<_>>();
+    store
+        .remove_system_seed_mcps_except(active_resource_ids.as_slice())
+        .await?;
     store.delete_retired_task_manager_mcp().await?;
     for resource_id in [
         "system_mcp_sandbox_images",

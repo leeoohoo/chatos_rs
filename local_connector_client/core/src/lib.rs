@@ -12,9 +12,6 @@ use tokio::sync::RwLock;
 
 mod api;
 mod approval;
-mod chrome_bridge;
-mod chrome_integration;
-mod chrome_native_host;
 mod config;
 mod connector;
 mod device_keys;
@@ -53,8 +50,6 @@ pub(crate) use runtime::LocalRuntime;
 pub(crate) use state::{
     AuthState, AuthUserState, LocalState, WorkspaceProjectConfigTrust, WorkspaceState,
 };
-
-pub use chrome_native_host::run_chrome_native_host;
 
 pub fn local_runtime_migration_versions() -> Vec<i64> {
     local_runtime::embedded_migration_versions()

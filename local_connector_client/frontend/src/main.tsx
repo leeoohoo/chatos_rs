@@ -35,6 +35,7 @@ import { ModelConfigPanel } from './components/ModelConfigPanel';
 import { RuntimeSettingsPanel } from './components/RuntimeSettingsPanel';
 import { SandboxPanel } from './components/SandboxPanel';
 import { PluginMarketplacePanel } from './components/plugins/PluginMarketplacePanel';
+import { PluginVisualPreview } from './components/PluginVisualPreview';
 import { TerminalPanel } from './components/TerminalPanel';
 import './styles.css';
 import './styles-controls.css';
@@ -46,6 +47,7 @@ import './styles-sandbox.css';
 import './styles-skills.css';
 import './styles-plugins.css';
 import './styles-responsive.css';
+import './styles-visual-preview.css';
 
 type AppTab = 'overview' | 'plugins' | 'terminal' | 'models' | 'approval' | 'settings' | 'sandbox';
 type LocalIcon = typeof Server;
@@ -388,6 +390,7 @@ function Root() {
   const view = params.get('view');
   if (view === 'shell') return <ShellApp />;
   if (view === 'approval-overlay') return <ApprovalOverlayApp />;
+  if (view === 'visual-preview') return <PluginVisualPreview />;
   return <SettingsApp />;
 }
 

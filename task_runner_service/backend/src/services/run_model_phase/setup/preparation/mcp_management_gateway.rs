@@ -166,9 +166,9 @@ mod tests {
     fn authoritative_task_mcp_config_maps_to_runtime_resource_scope() {
         let config = TaskMcpConfig {
             enabled_builtin_kinds: vec![
-                "BrowserTools".to_string(),
                 "CodeMaintainerRead".to_string(),
-                "BrowserTools".to_string(),
+                "ProjectManagement".to_string(),
+                "CodeMaintainerRead".to_string(),
             ],
             external_mcp_config_ids: vec![
                 " external-mcp-1 ".to_string(),
@@ -180,8 +180,8 @@ mod tests {
         assert_eq!(
             requested_mcp_resource_ids(&config),
             vec![
-                "builtin_browser_tools".to_string(),
                 "builtin_code_maintainer_read".to_string(),
+                "builtin_project_management".to_string(),
                 "external-mcp-1".to_string(),
                 "system_mcp_task_process_log".to_string(),
             ]

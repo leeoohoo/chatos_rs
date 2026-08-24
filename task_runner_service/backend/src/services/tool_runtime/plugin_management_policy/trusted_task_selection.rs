@@ -254,6 +254,98 @@ impl TaskRunnerCapabilityPolicy {
         self.validate_plugin_config(&task.plugin_config)
             .map_err(|error| format!("task_plugin_unavailable: {error}"))
     }
+
+    pub(crate) fn refresh_task_plugin_selection_for_manual_retry(
+        &self,
+        task: &mut crate::models::TaskRecord,
+    ) -> Result<bool, String> {
+        if self.runtime_context().runtime_provider != "local_connector" {
+            return Err(
+                "task_plugin_unavailable: Plugin retry refresh requires a Local Connector project device"
+                    .to_string(),
+            );
+        }
+        let device_id = self.runtime_context().device_id.as_deref().ok_or_else(|| {
+            "task_plugin_unavailable: Local Connector device is missing".to_string()
+        })?;
+        let project_context_revision = self
+            .runtime_context()
+            .project_context_revision
+            .as_deref()
+            .ok_or_else(|| {
+            "task_plugin_unavailable: project execution context revision is missing".to_string()
+        })?;
+        let reasons_by_plugin_id = task
+            .plugin_selection_audit
+            .as_ref()
+            .map(|audit| {
+                audit
+                    .plugins
+                    .iter()
+                    .map(|snapshot| (snapshot.plugin_id.clone(), snapshot.reason.clone()))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let mut selected_ids = task
+            .plugin_config
+            .selected_plugins
+            .iter()
+            .map(|selected| selected.plugin_id.clone())
+            .collect::<HashSet<_>>();
+        selected_ids.extend(
+            self.capabilities
+                .required_plugins()
+                .map(|plugin| plugin.catalog.id.clone()),
+        );
+        if selected_ids.is_empty() {
+            let changed = task.plugin_selection_audit.take().is_some();
+            return Ok(changed);
+        }
+
+        self.validate_plugin_config(&task.plugin_config)
+            .map_err(|error| format!("task_plugin_unavailable: {error}"))?;
+        let mut selected_ids = selected_ids.into_iter().collect::<Vec<_>>();
+        selected_ids.sort();
+        let plugins = selected_ids
+            .iter()
+            .map(|plugin_id| {
+                let plugin = self
+                    .capabilities
+                    .plugins
+                    .iter()
+                    .find(|plugin| plugin.catalog.id == *plugin_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "task_plugin_unavailable: Plugin is no longer present in policy: {plugin_id}"
+                        )
+                    })?;
+                selected_plugin_snapshot(
+                    plugin,
+                    device_id,
+                    reasons_by_plugin_id
+                        .get(plugin_id.as_str())
+                        .cloned()
+                        .flatten(),
+                )
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let refreshed = TaskPluginSelectionAudit {
+            selection_source: "manual_retry_refresh".to_string(),
+            policy_revision: self.policy_revision().to_string(),
+            selected_at: now_rfc3339(),
+            project_context_revision: project_context_revision.to_string(),
+            plugins,
+        };
+        let changed = task.plugin_selection_audit.as_ref().is_none_or(|current| {
+            current.policy_revision != refreshed.policy_revision
+                || current.project_context_revision != refreshed.project_context_revision
+                || current.plugins != refreshed.plugins
+        });
+        if changed {
+            task.plugin_selection_audit = Some(refreshed);
+        }
+        Ok(changed)
+    }
 }
 
 fn selected_plugin_snapshot(
@@ -303,6 +395,7 @@ fn selected_plugin_snapshot(
     Ok(TaskSelectedPluginSnapshot {
         plugin_id: plugin.catalog.id.clone(),
         plugin_key: plugin.catalog.plugin_key.clone(),
+        display_name: plugin.catalog.display_name.clone(),
         release_id: release.id.clone(),
         version: release.version.clone(),
         artifact_sha256: release.artifact_sha256.clone(),

@@ -297,19 +297,15 @@ pub(super) fn caller_builtin_capability_requirements(
 
 fn chatos_plan_profile_requirements() -> Vec<McpCapabilityRequirement> {
     use BuiltinMcpKind::*;
-    [
-        CodeMaintainerRead,
-        ProjectManagement,
-        Notepad,
-        AskUser,
-        WebTools,
-        BrowserTools,
-    ]
-    .into_iter()
-    .map(|kind| {
-        McpCapabilityRequirement::new(kind, McpCapabilityRequirementSource::TaskProfileChatosPlan)
-    })
-    .collect()
+    [CodeMaintainerRead, ProjectManagement, Notepad, AskUser]
+        .into_iter()
+        .map(|kind| {
+            McpCapabilityRequirement::new(
+                kind,
+                McpCapabilityRequirementSource::TaskProfileChatosPlan,
+            )
+        })
+        .collect()
 }
 
 fn chatos_async_planner_requirements() -> Vec<McpCapabilityRequirement> {

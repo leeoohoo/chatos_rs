@@ -365,7 +365,7 @@ async fn plugin_relay_prepares_signed_command_arguments_and_requires_local_confi
     );
     assert_eq!(
         prepare.pointer("/body/commands/0/allowed_tools"),
-        Some(&json!(["browser_tools_browser_snapshot"]))
+        Some(&json!(["plugin_snapshot"]))
     );
     assert_eq!(
         prepare
@@ -727,7 +727,7 @@ async fn plugin_relay_prepares_exact_signed_agent_profile() {
     );
     assert_eq!(
         prepare.pointer("/body/agents/0/allowed_tools"),
-        Some(&json!(["browser_tools_browser_snapshot"]))
+        Some(&json!(["plugin_snapshot"]))
     );
     assert_eq!(
         prepare
@@ -2072,20 +2072,36 @@ struct MockPluginMcpInvoker {
     cancellations: AtomicUsize,
     fail_health_checks: AtomicBool,
     mutate_health_catalog: AtomicBool,
+    per_call_policy: AtomicBool,
     stdio_environments: Mutex<Vec<std::collections::HashMap<String, String>>>,
     transport_debug: Mutex<Vec<String>>,
+    request_timeouts: Mutex<Vec<Option<std::time::Duration>>>,
 }
 
 #[async_trait]
 impl PluginMcpInvoker for MockPluginMcpInvoker {
+    async fn initialize(&self, _transport: &PreparedPluginMcpTransport) -> Result<Value> {
+        Ok(json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "serverInfo": {"name": "mock-plugin-mcp", "version": "1.0.0"},
+            "instructions": "Observe again after every UI mutation."
+        }))
+    }
+
     async fn call(
         &self,
         transport: &PreparedPluginMcpTransport,
         method: &str,
         params: Value,
         _invocation_cancellation: Option<CancellationToken>,
+        request_timeout: Option<std::time::Duration>,
     ) -> Result<Value> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.request_timeouts
+            .lock()
+            .expect("capture Plugin MCP request timeout")
+            .push(request_timeout);
         self.transport_debug
             .lock()
             .expect("capture Plugin MCP transport debug")
@@ -2108,24 +2124,37 @@ impl PluginMcpInvoker for MockPluginMcpInvoker {
             anyhow::bail!("simulated-secret-health-failure");
         }
         match method {
-            "tools/list" => Ok(json!({
-                "tools": [
-                    {
-                        "name": "echo",
-                        "description": if self.mutate_health_catalog.load(Ordering::SeqCst) {
-                            "Changed echo input"
-                        } else {
-                            "Echo input"
-                        },
-                        "inputSchema": {"type": "object"}
+            "tools/list" => {
+                let mut echo = json!({
+                    "name": "echo",
+                    "description": if self.mutate_health_catalog.load(Ordering::SeqCst) {
+                        "Changed echo input"
+                    } else {
+                        "Echo input"
                     },
-                    {
-                        "name": "hidden",
-                        "description": "Filtered tool",
-                        "inputSchema": {"type": "object"}
-                    }
-                ]
-            })),
+                    "inputSchema": {"type": "object"}
+                });
+                if self.per_call_policy.load(Ordering::SeqCst) {
+                    echo["_meta"] = json!({
+                        "chatos/policyVersion": 1,
+                        "chatos/requiredPermissions": ["process.spawn"],
+                        "chatos/riskLevel": "high",
+                        "chatos/approvalMode": "per_call",
+                        "chatos/parallelSafe": false,
+                        "chatos/timeoutMs": 30000
+                    });
+                }
+                Ok(json!({
+                    "tools": [
+                        echo,
+                        {
+                            "name": "hidden",
+                            "description": "Filtered tool",
+                            "inputSchema": {"type": "object"}
+                        }
+                    ]
+                }))
+            }
             "tools/call" => Ok(json!({"content": params})),
             other => anyhow::bail!("unexpected MCP method: {other}"),
         }
@@ -2149,6 +2178,87 @@ impl PluginMcpInvoker for MockPluginMcpInvoker {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn plugin_mcp_per_call_denial_happens_before_tools_call() {
+    let temp = TempDir::new().expect("temp directory");
+    let package = TestSigner::new().package_with_stdio_mcp(temp.path(), "1.0.0");
+    let installer = PluginInstaller::new(temp.path().join("plugins"));
+    let installed = installer
+        .install_package(package.install_request())
+        .expect("install stdio MCP Plugin");
+    let invoker = Arc::new(MockPluginMcpInvoker::default());
+    invoker.per_call_policy.store(true, Ordering::SeqCst);
+    let host = PluginRuntimeHost::new(
+        PluginSkillLoader::new(installer.clone()),
+        PluginMcpAdapter::with_invoker(installer, invoker.clone()),
+    )
+    .with_local_state(Arc::new(RwLock::new(LocalState::default())))
+    .with_approval_state_path(temp.path().join("approval-state.json"));
+    let prepare = host
+        .handle_prepare(plugin_request(
+            "plugin_prepare_request",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "demo-stdio",
+                "permission_snapshot": ["process.spawn"],
+                "tool_allowlist": ["echo"],
+            }),
+        ))
+        .await;
+    assert_eq!(prepare.get("status").and_then(Value::as_u64), Some(200));
+    let body = prepare.get("body").expect("prepare body");
+    let execute_request = plugin_request(
+        "plugin_execute_request",
+        json!({
+            "plugin_id": PLUGIN_ID,
+            "release_id": body["release_id"],
+            "artifact_sha256": body["artifact_sha256"],
+            "component_key": "demo-stdio",
+            "adapter_session_id": body["adapter_session_id"],
+            "operation": "mcp_tools_call",
+            "invocation_id": "per-call-denied",
+            "tool_name": "echo",
+            "arguments": {"secret": "not-persisted"},
+        }),
+    );
+    let approval_request_id = format!(
+        "{}:plugin-mcp:per-call-denied",
+        execute_request["request_id"].as_str().expect("request id")
+    );
+    let execute_task = tokio::spawn({
+        let host = host.clone();
+        async move { host.handle_execute(execute_request).await }
+    });
+    let pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(item) = list_pending_approvals()
+                .await
+                .into_iter()
+                .find(|item| item.request_id == approval_request_id)
+            {
+                break item;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Plugin MCP per-call approval request");
+    assert_eq!(pending.source, "plugin_mcp_tool_call");
+    assert!(approve_pending_approval(
+        pending.id.as_str(),
+        CommandExecutionApprovalDecision::Simple(SimpleCommandExecutionApprovalDecision::Decline),
+        None,
+        None,
+    )
+    .await
+    .expect("deny Plugin MCP call"));
+    let execute = execute_task.await.expect("execute task");
+    assert_eq!(execute.get("status").and_then(Value::as_u64), Some(403));
+    assert_eq!(invoker.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -2289,7 +2399,111 @@ async fn plugin_stdio_mcp_prepares_filtered_tools_calls_and_cancels_exact_sessio
         Some(true)
     );
     assert_eq!(invoker.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        invoker
+            .request_timeouts
+            .lock()
+            .expect("read Plugin MCP request timeouts")
+            .as_slice(),
+        &[None, Some(std::time::Duration::from_secs(2 * 60 * 60))]
+    );
     assert_eq!(invoker.cancellations.load(Ordering::SeqCst), 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn plugin_stdio_mcp_receives_and_revalidates_bound_workspace() {
+    let temp = TempDir::new().expect("temp directory");
+    let workspace_root = temp.path().join("workspace-a");
+    let replacement_root = temp.path().join("workspace-b");
+    fs::create_dir_all(workspace_root.as_path()).expect("create workspace A");
+    fs::create_dir_all(replacement_root.as_path()).expect("create workspace B");
+    let package = TestSigner::new().package_with_workspace_stdio_mcp(temp.path(), "1.0.0");
+    let installer = PluginInstaller::new(temp.path().join("plugins"));
+    let installed = installer
+        .install_package(package.install_request())
+        .expect("install workspace stdio MCP Plugin");
+    let state = Arc::new(RwLock::new(LocalState {
+        workspaces: vec![WorkspaceState {
+            id: "workspace-a".to_string(),
+            absolute_root: workspace_root
+                .canonicalize()
+                .expect("canonical workspace A"),
+            alias: "Workspace A".to_string(),
+            fingerprint: "workspace-a-fingerprint".to_string(),
+            project_config_trust: None,
+        }],
+        ..LocalState::default()
+    }));
+    let host = PluginRuntimeHost::new(
+        PluginSkillLoader::new(installer.clone()),
+        PluginMcpAdapter::with_stdio_execution_for_tests(installer),
+    )
+    .with_local_state(state.clone());
+
+    let prepare = host
+        .handle_prepare(plugin_request_for_workspace(
+            "plugin_prepare_request",
+            "workspace-a",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": installed.installed_version.release_id,
+                "artifact_sha256": installed.installed_version.artifact_sha256,
+                "component_key": "demo-stdio",
+                "permission_snapshot": ["process.spawn", "workspace.read"],
+            }),
+        ))
+        .await;
+    assert_eq!(prepare.get("status").and_then(Value::as_u64), Some(200));
+    assert!(prepare
+        .pointer("/body/mcp/workspace_snapshot_sha256")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.len() == 64));
+    let body = prepare.get("body").expect("prepare body");
+
+    let execute = host
+        .handle_execute(plugin_request_for_workspace(
+            "plugin_execute_request",
+            "workspace-a",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": body["release_id"],
+                "artifact_sha256": body["artifact_sha256"],
+                "component_key": "demo-stdio",
+                "adapter_session_id": body["adapter_session_id"],
+                "operation": "mcp_tools_call",
+                "invocation_id": "workspace-inspect-a",
+                "tool_name": "inspect",
+                "arguments": {},
+            }),
+        ))
+        .await;
+    assert_eq!(execute.get("status").and_then(Value::as_u64), Some(200));
+
+    state.write().await.workspaces[0].absolute_root = replacement_root
+        .canonicalize()
+        .expect("canonical workspace B");
+    let drifted = host
+        .handle_execute(plugin_request_for_workspace(
+            "plugin_execute_request",
+            "workspace-a",
+            json!({
+                "plugin_id": PLUGIN_ID,
+                "release_id": body["release_id"],
+                "artifact_sha256": body["artifact_sha256"],
+                "component_key": "demo-stdio",
+                "adapter_session_id": body["adapter_session_id"],
+                "operation": "mcp_tools_call",
+                "invocation_id": "workspace-inspect-b",
+                "tool_name": "inspect",
+                "arguments": {},
+            }),
+        ))
+        .await;
+    assert_eq!(drifted.get("status").and_then(Value::as_u64), Some(409));
+    assert!(drifted
+        .to_string()
+        .contains("workspace registration changed"));
 }
 
 #[tokio::test]
@@ -2496,7 +2710,11 @@ async fn plugin_stdio_mcp_cancel_terminates_real_process_tree() {
             }),
         ))
         .await;
-    assert_eq!(prepare.get("status").and_then(Value::as_u64), Some(200));
+    assert_eq!(
+        prepare.get("status").and_then(Value::as_u64),
+        Some(200),
+        "unexpected prepare response: {prepare}"
+    );
     assert!(!prepare.to_string().contains("stdio-top-secret"));
     let body = prepare.get("body").expect("prepare body");
     let health = host
@@ -2790,6 +3008,7 @@ async fn stale_mcp_health_is_reprobed_and_fails_closed_before_tool_call() {
             "health-session",
             "owner-a",
             "device-a",
+            None,
             &std::collections::BTreeSet::from(["network.domain:127.0.0.1".to_string()]),
             &std::collections::BTreeSet::from(["echo".to_string()]),
             &std::collections::BTreeSet::new(),
@@ -2820,6 +3039,13 @@ async fn plugin_http_mcp_executes_real_tools_list_and_call_through_shared_runtim
         "/mcp",
         post(|Json(request): Json<Value>| async move {
             let result = match request.get("method").and_then(Value::as_str) {
+                Some("initialize") => json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "serverInfo": {"name": "test-http-mcp", "version": "1.0.0"},
+                    "instructions": "Observe again after every action."
+                }),
+                Some("notifications/initialized") => json!({}),
                 Some("tools/list") => json!({
                     "tools": [{
                         "name": "echo",
@@ -2948,6 +3174,18 @@ async fn plugin_http_mcp_cancel_aborts_an_inflight_request() {
                         "jsonrpc": "2.0",
                         "id": request.get("id").cloned().unwrap_or(Value::Null),
                         "result": {"content": {"status": "fast"}}
+                    }));
+                }
+                if request.get("method").and_then(Value::as_str) == Some("initialize") {
+                    return Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": request.get("id").cloned().unwrap_or(Value::Null),
+                        "result": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "serverInfo": {"name": "cancellable-http-mcp", "version": "1.0.0"},
+                            "instructions": "Observe again after every action."
+                        }
                     }));
                 }
                 Json(json!({
@@ -3086,6 +3324,13 @@ async fn plugin_http_mcp_injects_exact_vault_headers_without_exposing_secrets() 
                     .expect("capture Plugin MCP headers")
                     .push(authorization);
                 let result = match request.get("method").and_then(Value::as_str) {
+                    Some("initialize") => json!({
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "serverInfo": {"name": "credential-http-mcp", "version": "1.0.0"},
+                        "instructions": "Observe again after every action."
+                    }),
+                    Some("notifications/initialized") => json!({}),
                     Some("tools/list") => json!({
                         "tools": [{
                             "name": "echo",
@@ -3201,7 +3446,11 @@ async fn plugin_http_mcp_injects_exact_vault_headers_without_exposing_secrets() 
             .lock()
             .expect("read captured prepare header")
             .as_slice(),
-        ["Bearer top-secret-token"]
+        [
+            "Bearer top-secret-token",
+            "Bearer top-secret-token",
+            "Bearer top-secret-token"
+        ]
     );
     let body = prepare.get("body").expect("prepare body");
     let execute_request = || {
@@ -3228,7 +3477,7 @@ async fn plugin_http_mcp_injects_exact_vault_headers_without_exposing_secrets() 
             .lock()
             .expect("read captured execute header")
             .len(),
-        2
+        4
     );
 
     std::thread::sleep(std::time::Duration::from_millis(1));
@@ -3242,7 +3491,7 @@ async fn plugin_http_mcp_injects_exact_vault_headers_without_exposing_secrets() 
             .lock()
             .expect("read captured stale header count")
             .len(),
-        2
+        4
     );
     server.abort();
 }
@@ -3292,18 +3541,23 @@ async fn plugin_oauth_pkce_exchange_persists_tokens_locally_and_authorizes_mcp()
                                 .unwrap_or_default()
                                 .to_string(),
                         );
-                    let result =
-                        if request.get("method").and_then(Value::as_str) == Some("tools/list") {
-                            json!({
-                                "tools": [{
-                                    "name": "echo",
-                                    "description": "OAuth echo",
-                                    "inputSchema": {"type": "object"}
-                                }]
-                            })
-                        } else {
-                            json!({"content": {"ok": true}})
-                        };
+                    let result = match request.get("method").and_then(Value::as_str) {
+                        Some("initialize") => json!({
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "serverInfo": {"name": "oauth-http-mcp", "version": "1.0.0"},
+                            "instructions": "Observe again after every action."
+                        }),
+                        Some("notifications/initialized") => json!({}),
+                        Some("tools/list") => json!({
+                            "tools": [{
+                                "name": "echo",
+                                "description": "OAuth echo",
+                                "inputSchema": {"type": "object"}
+                            }]
+                        }),
+                        _ => json!({"content": {"ok": true}}),
+                    };
                     Json(json!({
                         "jsonrpc": "2.0",
                         "id": request.get("id").cloned().unwrap_or(Value::Null),
@@ -3434,7 +3688,11 @@ async fn plugin_oauth_pkce_exchange_persists_tokens_locally_and_authorizes_mcp()
             .lock()
             .expect("read OAuth prepare header")
             .as_slice(),
-        ["Bearer oauth-access-token"]
+        [
+            "Bearer oauth-access-token",
+            "Bearer oauth-access-token",
+            "Bearer oauth-access-token"
+        ]
     );
     let body = prepare.get("body").expect("OAuth prepare body");
     let execute_request = || {
@@ -3460,7 +3718,7 @@ async fn plugin_oauth_pkce_exchange_persists_tokens_locally_and_authorizes_mcp()
             .lock()
             .expect("read OAuth execute headers")
             .len(),
-        2
+        4
     );
     assert!(broker
         .disconnect("owner-a", "device-a", PLUGIN_ID, "demo", "demo")
@@ -3482,7 +3740,7 @@ async fn plugin_oauth_pkce_exchange_persists_tokens_locally_and_authorizes_mcp()
             .lock()
             .expect("read disconnected header count")
             .len(),
-        2
+        4
     );
     server.abort();
 }

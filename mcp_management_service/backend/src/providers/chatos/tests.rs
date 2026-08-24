@@ -12,8 +12,6 @@ use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
     WorkspaceProviderKind,
 };
-use chatos_mcp_service::METHOD_TOOLS_LIST;
-use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::{json, Value};
 
 use super::*;
@@ -165,32 +163,6 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
     let outcome = provider
         .call_tool(
             &snapshot(),
-            &route(SystemMcpKey::BrowserTools, CHATOS_PROVIDER_REF.to_string()),
-            "browser_navigate",
-            json!({"url": "https://example.com"}),
-            "invocation-browser",
-        )
-        .await
-        .expect("browser provider call");
-    assert_eq!(outcome.result["content"][0]["text"], "ok");
-    let (system_key, headers, body) = captured
-        .0
-        .lock()
-        .expect("captured browser request")
-        .clone()
-        .expect("browser request was captured");
-    assert_eq!(system_key, SystemMcpKey::BrowserTools.as_str());
-    assert_eq!(headers["x-mcp-management-session-id"], "session-1");
-    assert_eq!(
-        headers["x-mcp-management-source-session-id"],
-        "conversation-1"
-    );
-    assert_eq!(body["params"]["name"], "browser_navigate");
-    assert!(body["params"]["arguments"].get("session_id").is_none());
-
-    let outcome = provider
-        .call_tool(
-            &snapshot(),
             &route(
                 SystemMcpKey::MemorySkillReader,
                 memory_provider_ref("contact-agent-1"),
@@ -217,200 +189,6 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
     assert!(body["params"]["arguments"].get("agent_id").is_none());
 }
 
-#[tokio::test]
-async fn prepare_routes_materializes_the_live_chatos_browser_catalog() {
-    let captured = CapturedRequest::default();
-    let app = Router::new()
-        .route(
-            "/internal/mcp-management/mcp/{system_key}",
-            post(
-                |State(captured): State<CapturedRequest>,
-                 Path(system_key): Path<String>,
-                 headers: HeaderMap,
-                 Json(body): Json<Value>| async move {
-                    *captured.0.lock().expect("capture tools/list request") =
-                        Some((system_key, headers, body.clone()));
-                    Json(json!({
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {
-                            "tools": [
-                                {
-                                    "name": "browser_navigate",
-                                    "description": "Navigate",
-                                    "inputSchema": {"type": "object"}
-                                },
-                                {
-                                    "name": "browser_snapshot",
-                                    "description": "Snapshot",
-                                    "inputSchema": {"type": "object"}
-                                }
-                            ]
-                        }
-                    }))
-                },
-            ),
-        )
-        .with_state(captured.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind mock ChatOS tools/list endpoint");
-    let address = listener.local_addr().expect("mock tools/list address");
-    tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("serve mock ChatOS tools/list endpoint");
-    });
-    let provider = ChatosProvider::new(
-        reqwest::Client::new(),
-        format!("http://{address}"),
-        Duration::from_secs(5),
-        Duration::from_secs(60),
-        Duration::from_secs(120),
-        Some("chatos-provider-secret".to_string()),
-        1024 * 1024,
-    )
-    .expect("provider");
-    let mut routes = vec![route(
-        SystemMcpKey::BrowserTools,
-        CHATOS_PROVIDER_REF.to_string(),
-    )];
-
-    let snapshots = provider
-        .prepare_routes(
-            routes.as_mut_slice(),
-            "session-1",
-            "user-1",
-            SystemAgentKey::ChatosConversationAgent,
-            "project-1",
-            None,
-            Some("conversation-1"),
-            i64::MAX,
-        )
-        .await;
-
-    let tools = snapshots
-        .get("builtin_browser_tools")
-        .expect("live browser snapshot");
-    assert_eq!(tools.len(), 2);
-    assert_eq!(routes[0].provider_kind, McpProviderKind::InternalService);
-    let (system_key, headers, body) = captured
-        .0
-        .lock()
-        .expect("captured tools/list")
-        .clone()
-        .expect("tools/list request was captured");
-    assert_eq!(system_key, SystemMcpKey::BrowserTools.as_str());
-    assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
-    assert_eq!(
-        headers["x-mcp-management-source-session-id"],
-        "conversation-1"
-    );
-    assert_eq!(body["method"], METHOD_TOOLS_LIST);
-}
-
-#[tokio::test]
-async fn prepare_routes_marks_cloud_browser_unavailable_without_source_session() {
-    let provider = ChatosProvider::new(
-        reqwest::Client::new(),
-        "http://127.0.0.1:3997",
-        Duration::from_secs(5),
-        Duration::from_secs(60),
-        Duration::from_secs(120),
-        Some("secret".to_string()),
-        1024,
-    )
-    .expect("provider");
-    let mut routes = vec![route(
-        SystemMcpKey::BrowserTools,
-        CHATOS_PROVIDER_REF.to_string(),
-    )];
-
-    let snapshots = provider
-        .prepare_routes(
-            routes.as_mut_slice(),
-            "session-1",
-            "user-1",
-            SystemAgentKey::ChatosConversationAgent,
-            "project-1",
-            None,
-            None,
-            i64::MAX,
-        )
-        .await;
-
-    assert!(snapshots.is_empty());
-    assert_eq!(routes[0].provider_kind, McpProviderKind::Unavailable);
-    assert!(routes[0].reason.contains("source_session_id"));
-}
-
-#[tokio::test]
-async fn close_session_releases_the_bound_chatos_browser_runtime() {
-    let captured = CapturedRequest::default();
-    let app = Router::new()
-        .route(
-            "/internal/mcp-management/mcp/browser_tools/sessions/{session_id}/close",
-            post(
-                |State(captured): State<CapturedRequest>,
-                 Path(session_id): Path<String>,
-                 headers: HeaderMap,
-                 Json(body): Json<Value>| async move {
-                    *captured.0.lock().expect("capture close request") =
-                        Some((session_id, headers, body.clone()));
-                    Json(json!({
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"closed": true}
-                    }))
-                },
-            ),
-        )
-        .with_state(captured.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind mock ChatOS close endpoint");
-    let address = listener.local_addr().expect("mock close address");
-    tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("serve mock ChatOS close endpoint");
-    });
-    let provider = ChatosProvider::new(
-        reqwest::Client::new(),
-        format!("http://{address}"),
-        Duration::from_secs(5),
-        Duration::from_secs(60),
-        Duration::from_secs(120),
-        Some("chatos-provider-secret".to_string()),
-        1024 * 1024,
-    )
-    .expect("provider");
-    let mut snapshot = snapshot();
-    snapshot.routes = vec![route(
-        SystemMcpKey::BrowserTools,
-        CHATOS_PROVIDER_REF.to_string(),
-    )];
-
-    provider
-        .close_session(&snapshot)
-        .await
-        .expect("close browser runtime");
-
-    let (session_id, headers, body) = captured
-        .0
-        .lock()
-        .expect("captured close request")
-        .clone()
-        .expect("close request was captured");
-    assert_eq!(session_id, "session-1");
-    assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
-    assert_eq!(
-        headers["x-mcp-management-source-session-id"],
-        "conversation-1"
-    );
-    assert_eq!(body["method"], CLOUD_BROWSER_SESSION_CLOSE_METHOD);
-}
-
 #[test]
 fn provider_only_supports_chatos_owned_routes() {
     let provider = ChatosProvider::new(
@@ -427,10 +205,6 @@ fn provider_only_supports_chatos_owned_routes() {
     assert!(provider.supports(&ask_user));
     assert!(provider.supports(&route(
         SystemMcpKey::AgentBuilder,
-        CHATOS_PROVIDER_REF.to_string(),
-    )));
-    assert!(provider.supports(&route(
-        SystemMcpKey::BrowserTools,
         CHATOS_PROVIDER_REF.to_string(),
     )));
     assert!(provider.supports(&route(

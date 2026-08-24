@@ -27,7 +27,10 @@ pub use internal_headers::{headers_require_per_request_signing, prepare_http_hea
 
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};
-pub use stdio::{invalidate_stdio_session, jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout};
+pub use stdio::{
+    invalidate_stdio_session, jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout,
+    jsonrpc_stdio_initialize_result,
+};
 #[derive(Clone)]
 struct ToolsListCacheEntry {
     expires_at: Instant,
@@ -110,6 +113,43 @@ pub async fn jsonrpc_http_call_with_client(
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     jsonrpc_http_call_with_id(url, headers, method, params, timeout, id.as_str(), client).await
+}
+
+pub async fn jsonrpc_http_notification(
+    url: &str,
+    headers: Option<&HashMap<String, String>>,
+    method: &str,
+    params: Option<Value>,
+    timeout: Option<Duration>,
+) -> Result<(), String> {
+    let mut payload = json!({"jsonrpc": "2.0", "method": method});
+    if let Some(params) = params {
+        payload["params"] = params;
+    }
+    let client = mcp_http_client()?;
+    let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
+    let mut request = client.post(url).timeout(request_timeout).json(&payload);
+    if let Some(headers) = headers {
+        for (key, value) in prepare_http_headers(headers)? {
+            request = request.header(key.as_str(), value.as_str());
+        }
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|err| format_http_send_error(method, url, request_timeout, &err))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    let status = response.status();
+    let body = read_http_response_body_limited(response, MCP_HTTP_ERROR_BODY_PREVIEW_BYTES)
+        .await
+        .map(|body| String::from_utf8_lossy(body.as_slice()).into_owned())
+        .unwrap_or_else(|error| error);
+    Err(format!(
+        "{method} {url} returned HTTP {status}: {}",
+        response_preview(body.as_str())
+    ))
 }
 
 pub async fn jsonrpc_http_tool_call_cancellable(

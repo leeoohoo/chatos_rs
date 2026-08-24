@@ -8,13 +8,9 @@ use serde_json::json;
 use super::{
     builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
     compose_builtin_mcp_system_prompt, compose_effective_builtin_mcp_system_prompt,
-    inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
-    BuiltinMcpPromptLocale,
+    inspect_builtin_mcp_system_prompt, BuiltinMcpPromptLocale,
 };
-use crate::{
-    BuiltinMcpKind, McpAsyncResultTransport, McpBuiltinServer, ToolInfo, BROWSER_TOOLS_SERVER_NAME,
-    WEB_TOOLS_SERVER_NAME,
-};
+use crate::{BuiltinMcpKind, McpAsyncResultTransport, McpBuiltinServer, ToolInfo};
 
 fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
     kind.default_server(".")
@@ -77,30 +73,6 @@ fn includes_global_and_selected_sections_only() {
     assert!(prompt.contains("`ask_user_prompt_choices`"));
     assert!(!prompt.contains("task_manager"));
     assert!(!prompt.contains("`code_maintainer_read_read_file`"));
-}
-
-#[test]
-fn keeps_browser_and_web_sections_together_in_stable_order() {
-    let prompt = compose_builtin_mcp_system_prompt(
-        &[
-            build_builtin_server(BuiltinMcpKind::WebTools),
-            build_builtin_server(BuiltinMcpKind::BrowserTools),
-            build_builtin_server(BuiltinMcpKind::BrowserTools),
-        ],
-        BuiltinMcpPromptLocale::ZhCn,
-    )
-    .expect("prompt");
-
-    let browser_idx = prompt
-        .find(format!("`{}_browser_inspect`", BROWSER_TOOLS_SERVER_NAME).as_str())
-        .expect("browser section");
-    let web_idx = prompt
-        .find(format!("`{}_web_research`", WEB_TOOLS_SERVER_NAME).as_str())
-        .expect("web section");
-    assert!(browser_idx < web_idx);
-    assert!(prompt.contains("只要问题和当前浏览器页有关"));
-    assert!(!prompt.contains("Local Connector"));
-    assert!(!prompt.contains("设备端"));
 }
 
 #[test]
@@ -169,26 +141,6 @@ fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
         .contains("这一 section 由系统根据当前实际成功注册与失败不可用的内置 MCP 工具动态补全。"));
     assert!(prompt.contains("`memory_plugin_reader_get_plugin_detail`"));
     assert!(prompt.contains("plugin source unavailable"));
-}
-
-#[test]
-fn effective_prompt_drops_fully_unavailable_sections() {
-    let mut server = build_builtin_server(BuiltinMcpKind::BrowserTools);
-    server.name = "builtin".to_string();
-    let info = inspect_effective_builtin_mcp_system_prompt(
-        &[server],
-        &HashMap::new(),
-        &[json!({
-            "server_name": "builtin",
-            "tool_name": "browser_inspect",
-            "reason": "agent-browser unavailable"
-        })],
-        BuiltinMcpPromptLocale::ZhCn,
-    );
-
-    assert!(info.prompt.is_none());
-    assert_eq!(info.omitted_section_ids, vec!["builtin_browser_tools"]);
-    assert_eq!(info.omitted_builtin_server_names, vec!["builtin"]);
 }
 
 #[test]

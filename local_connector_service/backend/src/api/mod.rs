@@ -527,11 +527,12 @@ async fn plugin_relay(
     } else {
         validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
     }
-    let relay_timeout = if is_plugin_hook_dispatch(action, &body) {
-        state.config.plugin_hook_relay_request_timeout
-    } else {
-        state.config.relay_request_timeout
-    };
+    let relay_timeout = plugin_relay_timeout(
+        state.config.relay_request_timeout,
+        state.config.plugin_hook_relay_request_timeout,
+        action,
+        &body,
+    );
     let request = RelayRequest {
         message_type: format!("plugin_{action}_request"),
         request_id: Uuid::new_v4().to_string(),
@@ -832,13 +833,31 @@ fn is_plugin_hook_dispatch(action: &str, body: &Value) -> bool {
         && body.get("operation").and_then(Value::as_str) == Some("dispatch_hook_event")
 }
 
+fn plugin_relay_timeout(
+    configured_timeout: Duration,
+    plugin_hook_timeout: Duration,
+    action: &str,
+    body: &Value,
+) -> Duration {
+    let configured_timeout = if is_plugin_hook_dispatch(action, body) {
+        plugin_hook_timeout
+    } else {
+        configured_timeout
+    };
+    if matches!(action, "prepare" | "execute") {
+        configured_timeout.max(STANDARD_MCP_RELAY_TIMEOUT)
+    } else {
+        configured_timeout
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::{
         is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout,
-        STANDARD_MCP_RELAY_TIMEOUT,
+        plugin_relay_timeout, STANDARD_MCP_RELAY_TIMEOUT,
     };
     use serde_json::json;
 
@@ -856,6 +875,37 @@ mod tests {
             "prepare",
             &json!({"operation": "dispatch_hook_event"})
         ));
+    }
+
+    #[test]
+    fn plugin_prepare_and_execute_use_the_two_hour_platform_budget() {
+        let control_plane_timeout = Duration::from_secs(30);
+        let hook_timeout = Duration::from_secs(5 * 60 + 15);
+        for (action, body) in [
+            ("prepare", json!({})),
+            ("execute", json!({"operation": "mcp_tools_call"})),
+            ("execute", json!({"operation": "command_invoke"})),
+            ("execute", json!({"operation": "agent_apply"})),
+            ("execute", json!({"operation": "dispatch_hook_event"})),
+        ] {
+            assert_eq!(
+                plugin_relay_timeout(control_plane_timeout, hook_timeout, action, &body),
+                STANDARD_MCP_RELAY_TIMEOUT
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_cancel_keeps_the_short_control_plane_timeout() {
+        assert_eq!(
+            plugin_relay_timeout(
+                Duration::from_secs(30),
+                Duration::from_secs(5 * 60 + 15),
+                "cancel",
+                &json!({})
+            ),
+            Duration::from_secs(30)
+        );
     }
 
     #[test]

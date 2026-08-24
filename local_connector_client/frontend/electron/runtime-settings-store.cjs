@@ -6,7 +6,6 @@ const path = require('node:path');
 
 const DEFAULT_RUNTIME_SETTINGS = Object.freeze({
   developer_mode: false,
-  browser_full_cdp_access_enabled: false,
   developer_cloud_base_url: 'http://127.0.0.1:39230',
   developer_user_service_base_url: 'http://127.0.0.1:39190',
   developer_chatos_web_url: 'http://127.0.0.1:8088',
@@ -57,7 +56,6 @@ function normalizeRuntimeSettings(value = {}) {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
     developer_mode: Boolean(input.developer_mode),
-    browser_full_cdp_access_enabled: Boolean(input.browser_full_cdp_access_enabled),
     developer_cloud_base_url: normalizeLoopbackDeveloperUrl(
       input.developer_cloud_base_url,
       DEFAULT_RUNTIME_SETTINGS.developer_cloud_base_url,
@@ -99,13 +97,6 @@ function updateRuntimeSettings(patch, statePath = runtimeStatePath()) {
     ...current,
     ...(patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}),
   });
-  if (
-    next.browser_full_cdp_access_enabled
-    && !current.browser_full_cdp_access_enabled
-    && !patch?.acknowledge_browser_full_cdp_risk
-  ) {
-    throw new Error('enabling full browser CDP access requires explicit risk acknowledgement');
-  }
   const state = readStateValue(statePath);
   writeStateValue(statePath, {
     ...state,

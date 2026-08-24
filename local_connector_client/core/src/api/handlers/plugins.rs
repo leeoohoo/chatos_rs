@@ -20,7 +20,8 @@ use crate::plugins::{
 use crate::{tracing_stdout, LocalRuntime};
 
 use super::super::types::{
-    LocalApiError, PluginEventsQuery, UninstallPluginRequest, UpdatePluginPreferenceRequest,
+    CreatePluginFileGrantsRequest, LocalApiError, PluginEventsQuery, UninstallPluginRequest,
+    UpdatePluginPermissionGrantsRequest, UpdatePluginPreferenceRequest,
 };
 
 mod credential_oauth;
@@ -179,6 +180,67 @@ pub(crate) async fn local_install_plugin(
 ) -> Result<Json<LocalPluginStatusSnapshot>, LocalApiError> {
     validate_plugin_id(plugin_id.as_str())?;
     local_install_network_plugin(runtime, plugin_id).await
+}
+
+pub(crate) async fn local_update_plugin_permission_grants(
+    State(runtime): State<LocalRuntime>,
+    Path(plugin_id): Path<String>,
+    Json(request): Json<UpdatePluginPermissionGrantsRequest>,
+) -> Result<Json<LocalPluginStatusSnapshot>, LocalApiError> {
+    validate_plugin_id(plugin_id.as_str())?;
+    if request.granted_permissions.len() > 256 {
+        return Err(LocalApiError::bad_request(
+            "Plugin permission grant contains too many items",
+        ));
+    }
+    let mut grants = std::collections::BTreeSet::new();
+    for permission in request.granted_permissions {
+        let permission = permission.trim();
+        if permission.is_empty()
+            || permission.len() > 256
+            || permission
+                .bytes()
+                .any(|byte| !(byte.is_ascii_alphanumeric() || b"._:-".contains(&byte)))
+        {
+            return Err(LocalApiError::bad_request(
+                "Plugin permission grant contains an invalid permission",
+            ));
+        }
+        grants.insert(permission.to_string());
+    }
+    let installer = runtime.plugin_installer.clone();
+    let plugin_id_for_update = plugin_id.clone();
+    let mut snapshot = tokio::task::spawn_blocking(move || {
+        installer.update_permission_grants(plugin_id_for_update.as_str(), grants)?;
+        installer.status_snapshot()
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("join Plugin permission update failed: {error}"))?
+    .map_err(|error: anyhow::Error| LocalApiError::conflict(error.to_string()))?;
+    runtime
+        .plugin_runtime
+        .invalidate_plugin_sessions(plugin_id.as_str())
+        .await;
+    snapshot.runtime = runtime.plugin_runtime.telemetry_snapshot();
+    Ok(Json(snapshot))
+}
+
+pub(crate) async fn local_create_plugin_file_grants(
+    State(runtime): State<LocalRuntime>,
+    Path(adapter_session_id): Path<String>,
+    Json(request): Json<CreatePluginFileGrantsRequest>,
+) -> Result<Json<Vec<crate::plugins::PluginFileGrantSummary>>, LocalApiError> {
+    let adapter_session_id = adapter_session_id.trim();
+    if adapter_session_id.is_empty() || adapter_session_id.len() > 256 {
+        return Err(LocalApiError::bad_request(
+            "Plugin adapter_session_id is invalid",
+        ));
+    }
+    runtime
+        .plugin_runtime
+        .create_file_grants(adapter_session_id, request.paths)
+        .map(Json)
+        .map_err(|error| LocalApiError::conflict(error.to_string()))
 }
 
 async fn local_install_network_plugin(

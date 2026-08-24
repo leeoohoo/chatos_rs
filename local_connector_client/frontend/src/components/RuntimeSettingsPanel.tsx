@@ -5,7 +5,6 @@ import React from 'react';
 import {
   Accessibility,
   AppWindow,
-  Copy,
   ExternalLink,
   FolderOpen,
   Globe2,
@@ -13,7 +12,6 @@ import {
   Network,
   RefreshCw,
   Settings2,
-  ShieldAlert,
   ShieldCheck,
   Terminal,
 } from 'lucide-react';
@@ -21,7 +19,6 @@ import {
 import {
   api,
   type LocalRuntimeSettings,
-  type ChromeIntegrationStatus,
   type SystemPermissionItem,
   type SystemPermissionsResponse,
 } from '../api';
@@ -36,7 +33,6 @@ type PermissionIcon = typeof Settings2;
 export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?: boolean }) {
   const [settings, setSettings] = React.useState<LocalRuntimeSettings>({
     developer_mode: false,
-    browser_full_cdp_access_enabled: false,
     developer_cloud_base_url: DEFAULT_DEVELOPER_CLOUD_BASE_URL,
     developer_user_service_base_url: DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL,
     developer_chatos_web_url: DEFAULT_DEVELOPER_CHATOS_WEB_URL,
@@ -54,7 +50,6 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
       const next = await api.runtimeSettings();
       setSettings({
         developer_mode: Boolean(next.developer_mode),
-        browser_full_cdp_access_enabled: Boolean(next.browser_full_cdp_access_enabled),
         developer_cloud_base_url: next.developer_cloud_base_url || DEFAULT_DEVELOPER_CLOUD_BASE_URL,
         developer_user_service_base_url:
           next.developer_user_service_base_url || DEFAULT_DEVELOPER_USER_SERVICE_BASE_URL,
@@ -79,21 +74,10 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
     setMessage(null);
     setError(null);
     try {
-      const next = await api.updateRuntimeSettings({
-        developer_mode: settings.developer_mode,
-        browser_full_cdp_access_enabled: settings.browser_full_cdp_access_enabled,
-        acknowledge_browser_full_cdp_risk: settings.browser_full_cdp_access_enabled,
-      });
+      const next = await api.updateRuntimeSettings({ developer_mode: settings.developer_mode });
       setSettings(next);
       await window.chatosLocalConnector?.setDeveloperMode?.(next.developer_mode);
-      setMessage([
-        next.developer_mode
-          ? '本机服务开发者模式已开启。'
-          : '本机服务开发者模式已关闭。',
-        next.browser_full_cdp_access_enabled
-          ? '浏览器完整 CDP 存取已开启；每条命令仍需本机逐次批准。'
-          : '浏览器完整 CDP 存取已关闭。',
-      ].join(' '));
+      setMessage(next.developer_mode ? '本机服务开发者模式已开启。' : '本机服务开发者模式已关闭。');
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存运行配置失败');
     } finally {
@@ -109,33 +93,18 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
     setMessage(null);
     setError(null);
     try {
-      if (permission.id !== 'accessibility_control' && permission.id !== 'screen_recording') {
-        await window.chatosLocalConnector?.requestDesktopSystemPermission?.(permission.id);
-      }
       await api.requestSystemPermission(permission.id);
       setPermissions(await loadSystemPermissions());
-      setMessage('已打开系统设置。完成授权后请刷新状态。');
+      setMessage(
+        permission.plugin_subjects.length
+          ? '已启动相关插件自己的权限检查与授权引导。请给实际插件授权后重试任务。'
+          : '已打开系统设置。完成授权后请刷新状态。',
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : '打开系统权限设置失败');
     } finally {
       setRequestingPermissionId(null);
     }
-  };
-
-  const setBrowserFullCdpAccessEnabled = (enabled: boolean) => {
-    if (
-      enabled
-      && !settings.browser_full_cdp_access_enabled
-      && !window.confirm(
-        '完整 CDP 存取属于较高风险能力，可能读取 Cookie、储存空间、页面内容和浏览器诊断资料，也可能导航、修改或关闭页面。\n\n开启后，每一条 CDP 命令仍需在本机逐次明确批准。确认开启吗？',
-      )
-    ) {
-      return;
-    }
-    setSettings((current) => ({
-      ...current,
-      browser_full_cdp_access_enabled: enabled,
-    }));
   };
 
   if (loading) {
@@ -182,31 +151,6 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
           </div>
           <small>切换时会主动断开当前环境的 Connector 长连接，防止本地页面与线上 Relay 混用；目标页面登录后会自动重新配对。</small>
         </div>
-        <div className={`developerModeCard highRisk ${settings.browser_full_cdp_access_enabled ? 'active' : ''}`}>
-          <div className="developerModeHeading">
-            <div className="permissionIcon"><ShieldAlert size={18} /></div>
-            <div>
-              <strong>启用完整 CDP 存取权限</strong>
-              <span className="riskLabel">较高风险</span>
-              <span>
-                启用完整 CDP 存取权限后，Chat OS 可在已连接的 Browser Use 会话中检查和控制敏感的浏览器内部机制。
-                工具默认不发布；开启后每一条完整 CDP 命令仍需在本机逐次明确批准。
-              </span>
-            </div>
-            <label className="switch" title="启用完整 CDP 存取权限">
-              <input
-                type="checkbox"
-                checked={settings.browser_full_cdp_access_enabled}
-                onChange={(event) => setBrowserFullCdpAccessEnabled(event.target.checked)}
-              />
-              <span />
-            </label>
-          </div>
-          <small>
-            完整 CDP 可能读取 Cookie、储存空间、页面内容和浏览器诊断资料，也可能导航、修改或关闭页面。
-            调试端口与 WebSocket 地址不会提供给网页前端或模型。
-          </small>
-        </div>
         <button className="primaryButton compact" disabled={saving} onClick={() => void save()}>
           {saving ? '保存中' : '保存配置'}
         </button>
@@ -214,7 +158,6 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
       {!developerOnly ? (
         <>
           <AgentPromptUpdateSettings />
-          <ChromeIntegrationPanel />
           <SystemPermissionsPanel
             permissions={permissions}
             requestingPermissionId={requestingPermissionId}
@@ -222,175 +165,6 @@ export function RuntimeSettingsPanel({ developerOnly = false }: { developerOnly?
             onRequest={requestPermission}
           />
         </>
-      ) : null}
-    </section>
-  );
-}
-
-function ChromeIntegrationPanel() {
-  const [status, setStatus] = React.useState<ChromeIntegrationStatus | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [setupMessage, setSetupMessage] = React.useState<string | null>(null);
-
-  const load = React.useCallback(async () => {
-    setError(null);
-    try {
-      setStatus(await api.chromeIntegration());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '读取 Chrome 整合状态失败');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void load();
-  }, [load]);
-
-  const enable = async () => {
-    if (!window.confirm(
-      'Chrome 整合可以读取你明确授权并连接的已登录网页内容。扩展不会申请 Cookie、历史记录、下载或书签权限；每次从 Chat OS 读取标签页仍需本机批准。\n\n确认注册 ChatOS Native Host 吗？',
-    )) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    setSetupMessage(null);
-    try {
-      setStatus(await api.enableChromeIntegration());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '启用 Chrome 整合失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const disable = async () => {
-    if (!window.confirm('确认移除 ChatOS Chrome Native Host 注册吗？')) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    setSetupMessage(null);
-    try {
-      setStatus(await api.disableChromeIntegration());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '停用 Chrome 整合失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const openExtensionDirectory = async () => {
-    setError(null);
-    try {
-      await window.chatosLocalConnector?.showChromeExtensionDirectory?.();
-      setSetupMessage('已打开可加载的 ChatOS Chrome 扩展目录。Chrome 里点击“加载已解压的扩展程序”后选择这个目录即可。');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '打开 Chrome 扩展目录失败');
-    }
-  };
-
-  const openChromeExtensionsPage = async () => {
-    setError(null);
-    try {
-      await window.chatosLocalConnector?.openChromeExtensionsPage?.();
-      setSetupMessage('已打开 Chrome 扩展管理页。请开启“开发者模式”，再点击“加载已解压的扩展程序”。');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '打开 Chrome 扩展页失败');
-    }
-  };
-
-  const copyExtensionPath = async () => {
-    setError(null);
-    try {
-      const path = await window.chatosLocalConnector?.copyChromeExtensionInstallPath?.();
-      if (path) {
-        setSetupMessage(`已复制扩展目录路径：${path}`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '复制 Chrome 扩展目录失败');
-    }
-  };
-
-  return (
-    <section className="panel">
-      <div className="panelHeader">
-        <div>
-          <h2><Globe2 size={18} />Chrome existing-session</h2>
-          <p>连接用户现有 Chrome；站点权限和标签页连接都由扩展弹窗显式控制</p>
-        </div>
-        <button className="iconButton" onClick={() => void load()} title="刷新 Chrome 状态">
-          <RefreshCw size={17} />
-        </button>
-      </div>
-      {error ? <div className="formError">{error}</div> : null}
-      {loading ? <div className="emptyState">正在读取 Chrome 整合状态...</div> : null}
-      {status ? (
-        <div className={`developerModeCard ${status.enabled ? 'active' : ''}`}>
-          <div className="developerModeHeading">
-            <div className="permissionIcon"><Globe2 size={18} /></div>
-            <div>
-              <strong>{status.bridge.connected ? 'Chrome 扩展已连接' : status.enabled ? 'Native Host 已注册' : 'Chrome 整合未启用'}</strong>
-              <span>{status.setup_note}</span>
-            </div>
-          </div>
-          <div className="developerEndpointGrid">
-            <div><span>Native Host</span><code>{status.enabled ? 'registered' : 'disabled'}</code></div>
-            <div><span>Extension</span><code>{status.bridge.extension_version ? `${status.bridge.extension_version}${status.bridge.extension_compatible ? '' : ' · update required'}` : 'not connected'}</code></div>
-            <div><span>Connected tabs</span><code>{status.bridge.claimed_tab_count}</code></div>
-            <div><span>Authorized sites</span><code>{status.bridge.authorized_origin_count}</code></div>
-          </div>
-          <small>
-            Extension ID: {status.extension_id}。模型不会获得 Native Host 路径、认证 token 或未授权标签页。
-          </small>
-          {status.last_error ? <div className="formError">{status.last_error}</div> : null}
-          {setupMessage ? <div className="banner">{setupMessage}</div> : null}
-          {status.enabled && !status.bridge.connected ? (
-            <div className="chromeSetupGuide">
-              <strong>首次连接现有 Chrome 需要加载一次扩展：</strong>
-              <ol>
-                <li>点“打开 Chrome 扩展页”，打开右上角“开发者模式”。</li>
-                <li>点“打开扩展目录”，在 Chrome 里选择打开的 <code>ChatOS Chrome Extension</code> 文件夹。</li>
-                <li>加载后回到这里点刷新，再在 Chrome 扩展弹窗里授权当前网页。</li>
-              </ol>
-            </div>
-          ) : null}
-          <div className="buttonRow">
-            {status.enabled ? (
-              <button className="ghostButton compact" disabled={saving} onClick={() => void disable()}>
-                {saving ? '处理中' : '停用 Native Host'}
-              </button>
-            ) : (
-              <button className="primaryButton compact" disabled={saving || !status.platform_supported} onClick={() => void enable()}>
-                {saving ? '处理中' : '启用 Chrome 整合'}
-              </button>
-            )}
-            <button
-              className="ghostButton compact"
-              disabled={!status.platform_supported}
-              onClick={() => void openChromeExtensionsPage()}
-            >
-              <ExternalLink size={14} />打开 Chrome 扩展页
-            </button>
-            <button
-              className="ghostButton compact"
-              disabled={!status.extension_available}
-              onClick={() => void openExtensionDirectory()}
-            >
-              <FolderOpen size={14} />打开扩展目录
-            </button>
-            <button
-              className="ghostButton compact"
-              disabled={!status.extension_available}
-              onClick={() => void copyExtensionPath()}
-            >
-              <Copy size={14} />复制目录路径
-            </button>
-          </div>
-        </div>
       ) : null}
     </section>
   );
@@ -450,7 +224,7 @@ function PermissionRow({
   onRequest: (permission: SystemPermissionItem) => Promise<void>;
 }) {
   const Icon = permissionIcon(permission.id);
-  const ready = permissionReady(permission);
+  const ready = systemPermissionReady(permission);
   const disabled = requesting || ready || !permission.can_request;
   return (
     <div className="permissionRow">
@@ -465,13 +239,16 @@ function PermissionRow({
         {permission.last_error ? <em>{permission.last_error}</em> : null}
         <div className="permissionKinds">
           {permission.builtin_kinds.map((kind) => <code key={kind}>{kind}</code>)}
+          {permission.plugin_subjects.map((subject) => (
+            <code key={subject.plugin_id}>
+              {subject.display_name} v{subject.version}
+              {subject.runtime_granted ? '' : ' · 未授予 Plugin 权限'}
+            </code>
+          ))}
         </div>
       </div>
       <div className="permissionAction">
-        <label
-          className="switch"
-          title={permission.can_request ? permission.request_label : permission.status_label}
-        >
+        <label className="switch" title={permission.can_request ? permission.request_label : permission.status_label}>
           <input
             type="checkbox"
             checked={ready}
@@ -507,10 +284,6 @@ function permissionIcon(permissionId: string): PermissionIcon {
       return FolderOpen;
     case 'terminal_execution':
       return Terminal;
-    case 'browser_automation':
-      return Globe2;
-    case 'chrome_existing_session':
-      return Globe2;
     case 'network_access':
       return Network;
     case 'accessibility_control':
@@ -524,12 +297,8 @@ function permissionIcon(permissionId: string): PermissionIcon {
   }
 }
 
-function permissionReady(permission: SystemPermissionItem): boolean {
-  return systemPermissionReady(permission);
-}
-
 function statusTone(status: string): 'ok' | 'warn' | 'bad' {
-  if (status === 'ready' || status === 'not_applicable' || status === 'on_demand') {
+  if (status === 'ready' || status === 'not_applicable') {
     return 'ok';
   }
   if (status === 'missing_dependency') {

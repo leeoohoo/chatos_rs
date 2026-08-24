@@ -26,10 +26,6 @@ function Get-CoreBin {
   Join-Path (Get-CargoTargetDir) "release\local_connector_client_core.exe"
 }
 
-function Get-ChromeNativeHostBin {
-  Join-Path (Get-CargoTargetDir) "release\chatos_chrome_native_host.exe"
-}
-
 function Get-PlatformDir {
   $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
   switch ($arch) {
@@ -53,7 +49,6 @@ function Invoke-InstalledPackageVerification {
     "--platform", $Platform,
     "--resources", $ResourcesDir,
     "--electron-runtime-source", (Join-Path $FrontendDir "electron\core-runtime.cjs"),
-    "--chrome-extension-source", (Join-Path $ClientDir "chrome_extension"),
     "--report", $ReportPath
   )
   & node @arguments | Out-Null
@@ -92,8 +87,6 @@ function Sync-ElectronResources {
 
   New-Item -ItemType Directory -Force -Path $ElectronResourcesDir | Out-Null
   Copy-Item -LiteralPath (Get-CoreBin) -Destination (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Force
-  Copy-Item -LiteralPath (Get-ChromeNativeHostBin) -Destination (Join-Path $ElectronResourcesDir "chatos_chrome_native_host.exe") -Force
-  Copy-Item -LiteralPath (Join-Path $ClientDir "chrome_extension") -Destination (Join-Path $ElectronResourcesDir "chrome-extension") -Recurse -Force
 
   $platform = Get-PlatformDir
   $sourceTools = Join-Path $RootDir "bundled-tools\$platform"
@@ -105,8 +98,6 @@ function Sync-ElectronResources {
     throw "Bundled tools not found for $platform`: $sourceTools"
   }
 
-  $prepareBrowserRuntime = Join-Path $ClientDir "prepare-browser-runtime-windows.ps1"
-  & $prepareBrowserRuntime -DestinationDir (Join-Path $destToolsRoot $platform) -Platform $platform
   Copy-Item -LiteralPath (Join-Path $ClientDir "core\migrations") -Destination (Join-Path $ElectronResourcesDir "sqlite-migrations") -Recurse -Force
 }
 
@@ -148,9 +139,7 @@ function New-ManualElectronPackage {
   Set-Content -LiteralPath (Join-Path $appResourcesDir "package.json") -Value $appPackageJson -Encoding ASCII
 
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "local_connector_client_core.exe") -Destination (Join-Path $resourcesDir "local_connector_client_core.exe") -Force
-  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chatos_chrome_native_host.exe") -Destination (Join-Path $resourcesDir "chatos_chrome_native_host.exe") -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "bundled-tools") -Destination $resourcesDir -Recurse -Force
-  Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "chrome-extension") -Destination $resourcesDir -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $ElectronResourcesDir "sqlite-migrations") -Destination $resourcesDir -Recurse -Force
 
   $platform = Get-PlatformDir

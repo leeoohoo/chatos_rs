@@ -20,10 +20,13 @@ test('allows only the packaged local frontend documents', () => {
   settingsUrl.searchParams.set('view', 'settings');
   const approvalOverlayUrl = pathToFileURL(indexPath);
   approvalOverlayUrl.searchParams.set('view', 'approval-overlay');
+  const visualPreviewUrl = pathToFileURL(indexPath);
+  visualPreviewUrl.searchParams.set('view', 'visual-preview');
 
   assert.equal(isAllowedLocalFrontendUrl(shellUrl.toString(), indexPath), true);
   assert.equal(isAllowedLocalFrontendUrl(settingsUrl.toString(), indexPath), true);
   assert.equal(isAllowedLocalFrontendUrl(approvalOverlayUrl.toString(), indexPath), true);
+  assert.equal(isAllowedLocalFrontendUrl(visualPreviewUrl.toString(), indexPath), true);
   assert.equal(
     isAllowedLocalFrontendUrl('https://example.com/index.html?view=shell', indexPath),
     false,

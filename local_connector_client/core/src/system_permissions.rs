@@ -6,20 +6,23 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use chatos_mcp::browser_runtime::browser_backend_available;
 use chatos_mcp_service::{
-    BUILTIN_KIND_BROWSER_TOOLS, BUILTIN_KIND_CODE_MAINTAINER_READ,
-    BUILTIN_KIND_CODE_MAINTAINER_WRITE, BUILTIN_KIND_TERMINAL_CONTROLLER,
+    BUILTIN_KIND_CODE_MAINTAINER_READ, BUILTIN_KIND_CODE_MAINTAINER_WRITE,
+    BUILTIN_KIND_TERMINAL_CONTROLLER,
 };
 use serde::Serialize;
 use tokio::process::Command;
 
+use crate::plugins::PluginInstaller;
 use crate::{select_local_shell, LocalState};
+
+mod plugin_onboarding;
+
+use plugin_onboarding::installed_plugin_permission_subjects;
+pub(crate) use plugin_onboarding::request_plugin_system_permission;
 
 const PERMISSION_WORKSPACE_FILES: &str = "workspace_files";
 const PERMISSION_TERMINAL_EXECUTION: &str = "terminal_execution";
-const PERMISSION_BROWSER_AUTOMATION: &str = "browser_automation";
-const PERMISSION_CHROME_EXISTING_SESSION: &str = "chrome_existing_session";
 const PERMISSION_NETWORK_ACCESS: &str = "network_access";
 const PERMISSION_ACCESSIBILITY_CONTROL: &str = "accessibility_control";
 const PERMISSION_SCREEN_RECORDING: &str = "screen_recording";
@@ -44,23 +47,41 @@ pub(crate) struct SystemPermissionItem {
     pub(crate) request_label: String,
     pub(crate) settings_target: Option<String>,
     pub(crate) builtin_kinds: Vec<String>,
+    pub(crate) plugin_subjects: Vec<PluginSystemPermissionSubject>,
     pub(crate) note: String,
     pub(crate) last_error: Option<String>,
 }
 
-pub(crate) async fn system_permissions_response(state: &LocalState) -> SystemPermissionsResponse {
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PluginSystemPermissionSubject {
+    pub(crate) plugin_id: String,
+    pub(crate) display_name: String,
+    pub(crate) version: String,
+    pub(crate) component_keys: Vec<String>,
+    pub(crate) runtime_granted: bool,
+    pub(crate) onboarding_available: bool,
+}
+
+pub(crate) async fn system_permissions_response(
+    state: &LocalState,
+    plugin_installer: &PluginInstaller,
+) -> SystemPermissionsResponse {
     let platform = std::env::consts::OS.to_string();
+    let accessibility_subjects =
+        installed_plugin_permission_subjects(plugin_installer, "computer.accessibility")
+            .unwrap_or_default();
+    let screen_recording_subjects =
+        installed_plugin_permission_subjects(plugin_installer, "computer.screen-recording")
+            .unwrap_or_default();
     SystemPermissionsResponse {
         platform: platform.clone(),
         platform_label: platform_label(platform.as_str()).to_string(),
         items: vec![
             workspace_files_permission(state),
             terminal_execution_permission().await,
-            browser_automation_permission(),
-            chrome_existing_session_permission(),
             network_access_permission(),
-            accessibility_control_permission(),
-            screen_recording_permission(),
+            accessibility_control_permission(accessibility_subjects),
+            screen_recording_permission(screen_recording_subjects),
             office_automation_permission(),
         ],
     }
@@ -117,6 +138,7 @@ fn workspace_files_permission(state: &LocalState) -> SystemPermissionItem {
             BUILTIN_KIND_CODE_MAINTAINER_READ.to_string(),
             BUILTIN_KIND_CODE_MAINTAINER_WRITE.to_string(),
         ],
+        plugin_subjects: Vec::new(),
         note: workspace_files_note(),
         last_error,
     }
@@ -139,73 +161,8 @@ async fn terminal_execution_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_TERMINAL_EXECUTION).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_TERMINAL_EXECUTION),
         builtin_kinds: vec![BUILTIN_KIND_TERMINAL_CONTROLLER.to_string()],
+        plugin_subjects: Vec::new(),
         note: terminal_execution_note(),
-        last_error,
-    }
-}
-
-fn browser_automation_permission() -> SystemPermissionItem {
-    let browser_runtime_error = browser_backend_available().err();
-    let browser_runtime_available = browser_runtime_error.is_none();
-    let (status, status_label, last_error) = if browser_runtime_available {
-        ("ready", "已就绪", None)
-    } else {
-        ("missing_dependency", "缺少运行时", browser_runtime_error)
-    };
-
-    SystemPermissionItem {
-        id: PERMISSION_BROWSER_AUTOMATION.to_string(),
-        label: "浏览器操作".to_string(),
-        summary: "用于 MCP 浏览器导航、快照、点击、输入、控制台检查和页面研究。".to_string(),
-        status: status.to_string(),
-        status_label: status_label.to_string(),
-        required: false,
-        can_request: settings_target_for_permission(PERMISSION_BROWSER_AUTOMATION).is_some(),
-        request_label: request_label_for_permission(PERMISSION_BROWSER_AUTOMATION).to_string(),
-        settings_target: settings_target_label_for_permission(PERMISSION_BROWSER_AUTOMATION),
-        builtin_kinds: vec![BUILTIN_KIND_BROWSER_TOOLS.to_string()],
-        note: browser_automation_note(browser_runtime_available),
-        last_error,
-    }
-}
-
-fn chrome_existing_session_permission() -> SystemPermissionItem {
-    let integration = crate::chrome_integration::chrome_integration_status();
-    let (status, status_label, last_error) = if !integration.platform_supported {
-        (
-            "not_applicable",
-            "当前平台未启用",
-            integration.last_error.clone(),
-        )
-    } else if !integration.native_host_available || !integration.extension_available {
-        (
-            "missing_dependency",
-            "安装资源缺失",
-            integration.last_error.clone(),
-        )
-    } else if integration.enabled && integration.bridge.connected {
-        ("ready", "已连接", None)
-    } else {
-        (
-            "needs_attention",
-            "等待用户设置",
-            Some(integration.setup_note.clone()),
-        )
-    };
-    SystemPermissionItem {
-        id: PERMISSION_CHROME_EXISTING_SESSION.to_string(),
-        label: "Chrome existing-session".to_string(),
-        summary: "用于连接用户明确授权的现有 Chrome 站点和标签页。".to_string(),
-        status: status.to_string(),
-        status_label: status_label.to_string(),
-        required: false,
-        can_request: false,
-        request_label: "请在 Chrome 整合面板设置".to_string(),
-        settings_target: None,
-        builtin_kinds: Vec::new(),
-        note:
-            "扩展不申请 Cookie、历史记录、下载、书签或全站静默权限；敏感页面读取还需本机逐次批准。"
-                .to_string(),
         last_error,
     }
 }
@@ -214,7 +171,7 @@ fn network_access_permission() -> SystemPermissionItem {
     SystemPermissionItem {
         id: PERMISSION_NETWORK_ACCESS.to_string(),
         label: "HTTPS 网络访问".to_string(),
-        summary: "用于 OpenAI 官方文档检索、图片模型请求和本机浏览器访问网络。".to_string(),
+        summary: "用于 OpenAI 官方文档检索、图片模型请求和插件网络访问。".to_string(),
         status: "ready".to_string(),
         status_label: "无需额外授权".to_string(),
         required: false,
@@ -222,17 +179,26 @@ fn network_access_permission() -> SystemPermissionItem {
         request_label: "无需设置".to_string(),
         settings_target: None,
         builtin_kinds: Vec::new(),
+        plugin_subjects: Vec::new(),
         note: "公网 HTTPS 由当前用户网络环境、防火墙和代理策略控制；Local Connector 不绕过系统网络策略。".to_string(),
         last_error: None,
     }
 }
 
-fn accessibility_control_permission() -> SystemPermissionItem {
+fn accessibility_control_permission(
+    plugin_subjects: Vec<PluginSystemPermissionSubject>,
+) -> SystemPermissionItem {
     let (status, status_label, note, last_error) = match std::env::consts::OS {
+        "macos" if plugin_subjects.is_empty() => (
+            "not_applicable",
+            "暂无相关插件",
+            "当前没有已安装的插件声明辅助功能控制权限。",
+            None,
+        ),
         "macos" => (
             "on_demand",
-            "按需授权",
-            "安装的桌面控制 MCP 首次使用辅助功能能力时，由 macOS 按实际执行进程请求授权。",
+            "由插件授权",
+            "macOS 按实际插件进程授予辅助功能权限；Local Connector 自身的授权不代表这些插件已授权。",
             None,
         ),
         "windows" => (
@@ -255,21 +221,32 @@ fn accessibility_control_permission() -> SystemPermissionItem {
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
-        can_request: settings_target_for_permission(PERMISSION_ACCESSIBILITY_CONTROL).is_some(),
+        can_request: plugin_subjects
+            .iter()
+            .any(|subject| subject.runtime_granted && subject.onboarding_available),
         request_label: request_label_for_permission(PERMISSION_ACCESSIBILITY_CONTROL).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_ACCESSIBILITY_CONTROL),
         builtin_kinds: Vec::new(),
+        plugin_subjects,
         note: note.to_string(),
         last_error,
     }
 }
 
-fn screen_recording_permission() -> SystemPermissionItem {
+fn screen_recording_permission(
+    plugin_subjects: Vec<PluginSystemPermissionSubject>,
+) -> SystemPermissionItem {
     let (status, status_label, note, last_error) = match std::env::consts::OS {
+        "macos" if plugin_subjects.is_empty() => (
+            "not_applicable",
+            "暂无相关插件",
+            "当前没有已安装的插件声明屏幕录制权限。",
+            None,
+        ),
         "macos" => (
             "on_demand",
-            "按需授权",
-            "安装的桌面观察 MCP 首次读取其他应用画面时，由 macOS 按实际执行进程请求授权。",
+            "由插件授权",
+            "macOS 按实际插件进程授予屏幕录制权限；Local Connector 自身的授权不代表这些插件已授权。",
             None,
         ),
         "windows" => (
@@ -292,10 +269,13 @@ fn screen_recording_permission() -> SystemPermissionItem {
         status: status.to_string(),
         status_label: status_label.to_string(),
         required: false,
-        can_request: settings_target_for_permission(PERMISSION_SCREEN_RECORDING).is_some(),
+        can_request: plugin_subjects
+            .iter()
+            .any(|subject| subject.runtime_granted && subject.onboarding_available),
         request_label: request_label_for_permission(PERMISSION_SCREEN_RECORDING).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_SCREEN_RECORDING),
         builtin_kinds: Vec::new(),
+        plugin_subjects,
         note: note.to_string(),
         last_error,
     }
@@ -330,6 +310,7 @@ fn office_automation_permission() -> SystemPermissionItem {
         request_label: request_label_for_permission(PERMISSION_OFFICE_AUTOMATION).to_string(),
         settings_target: settings_target_label_for_permission(PERMISSION_OFFICE_AUTOMATION),
         builtin_kinds: Vec::new(),
+        plugin_subjects: Vec::new(),
         note: note.to_string(),
         last_error: None,
     }
@@ -399,12 +380,6 @@ fn macos_settings_target(permission_id: &str) -> Option<SettingsTarget> {
             value: "x-apple.systempreferences:com.apple.preference.security?Privacy_DeveloperTools",
             label: "macOS 隐私与安全性 · 开发者工具",
         }),
-        PERMISSION_BROWSER_AUTOMATION => Some(SettingsTarget {
-            kind: SettingsTargetKind::Macos,
-            opener: "open",
-            value: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
-            label: "macOS 隐私与安全性 · 自动化",
-        }),
         PERMISSION_ACCESSIBILITY_CONTROL => Some(SettingsTarget {
             kind: SettingsTargetKind::Macos,
             opener: "open",
@@ -473,16 +448,12 @@ fn request_label_for_permission(permission_id: &str) -> &'static str {
             "windows" => "打开开发者选项",
             _ => "打开系统设置",
         },
-        PERMISSION_BROWSER_AUTOMATION => match std::env::consts::OS {
-            "macos" => "打开自动化权限",
-            _ => "打开系统设置",
-        },
         PERMISSION_ACCESSIBILITY_CONTROL => match std::env::consts::OS {
-            "macos" => "打开辅助功能权限",
+            "macos" => "启动插件权限引导",
             _ => "打开系统设置",
         },
         PERMISSION_SCREEN_RECORDING => match std::env::consts::OS {
-            "macos" => "打开屏幕录制权限",
+            "macos" => "启动插件权限引导",
             _ => "打开系统设置",
         },
         PERMISSION_OFFICE_AUTOMATION => match std::env::consts::OS {
@@ -506,19 +477,6 @@ fn terminal_execution_note() -> String {
         "macos" => "执行 shell 本身通常不需要隐私授权；命令访问受保护路径时仍会受文件权限限制，高风险命令继续由命令审批控制。".to_string(),
         "windows" => "命令以当前用户权限执行，不会自动提权到管理员；实际访问仍受目录 ACL、Defender 和命令审批控制。".to_string(),
         _ => "命令以当前用户权限执行；实际访问仍受文件权限和命令审批控制。".to_string(),
-    }
-}
-
-fn browser_automation_note(runtime_available: bool) -> String {
-    let runtime_note = if runtime_available {
-        "已检测到 Local Connector 内置的 agent-browser 浏览器运行时。"
-    } else {
-        "当前客户端安装包缺少 agent-browser 浏览器运行时，请重新安装完整客户端。"
-    };
-    match std::env::consts::OS {
-        "macos" => format!("{runtime_note} 当前浏览器 MCP 走 agent-browser/DevTools，不做全屏录制；只有未来改为控制已安装浏览器 App 时，才可能需要 macOS 自动化或辅助功能权限。"),
-        "windows" => format!("{runtime_note} 当前浏览器 MCP 走 agent-browser/DevTools，通常不需要 Windows 隐私权限；浏览器内摄像头、麦克风、位置等权限由浏览器自己管理。"),
-        _ => format!("{runtime_note} 当前浏览器 MCP 走 agent-browser/DevTools，通常不需要额外系统隐私权限。"),
     }
 }
 
@@ -571,8 +529,10 @@ mod tests {
 
     #[tokio::test]
     async fn system_permissions_include_platform_capabilities() {
-        let response = system_permissions_response(&LocalState::default()).await;
-        assert_eq!(response.items.len(), 8);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let installer = PluginInstaller::new(temp.path().join("plugins"));
+        let response = system_permissions_response(&LocalState::default(), &installer).await;
+        assert_eq!(response.items.len(), 6);
         assert!(response
             .items
             .iter()
@@ -581,5 +541,15 @@ mod tests {
             .items
             .iter()
             .any(|item| item.id == PERMISSION_ACCESSIBILITY_CONTROL));
+        let accessibility = response
+            .items
+            .iter()
+            .find(|item| item.id == PERMISSION_ACCESSIBILITY_CONTROL)
+            .expect("accessibility permission");
+        assert!(accessibility.plugin_subjects.is_empty());
+        if cfg!(target_os = "macos") {
+            assert_eq!(accessibility.status, "not_applicable");
+            assert!(!accessibility.can_request);
+        }
     }
 }

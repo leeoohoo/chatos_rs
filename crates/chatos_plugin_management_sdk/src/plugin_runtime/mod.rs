@@ -203,6 +203,8 @@ pub struct PluginInstallationRecord {
     pub availability_status: PluginAvailabilityStatus,
     pub dependency_status: PluginRequirementStatus,
     pub permission_status: PluginRequirementStatus,
+    #[serde(default)]
+    pub granted_permissions: Vec<String>,
     pub auth_status: PluginRequirementStatus,
     #[serde(default)]
     pub component_statuses: Vec<PluginComponentStatus>,
@@ -228,6 +230,8 @@ pub struct PluginInstallationSyncPayload {
     pub availability_status: PluginAvailabilityStatus,
     pub dependency_status: PluginRequirementStatus,
     pub permission_status: PluginRequirementStatus,
+    #[serde(default)]
+    pub granted_permissions: Vec<String>,
     pub auth_status: PluginRequirementStatus,
     #[serde(default)]
     pub component_statuses: Vec<PluginComponentStatus>,

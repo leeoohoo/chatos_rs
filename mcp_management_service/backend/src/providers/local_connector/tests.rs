@@ -591,7 +591,7 @@ async fn call_uses_signed_identity_workspace_snapshot_and_original_tool_name() {
     )
     .unwrap();
     let mut route = code_read_route();
-    route.server_name = "browser_tools".to_string();
+    route.server_name = "plugin_tools".to_string();
     assert!(provider.supports(&route));
     let mut runtime_snapshot = snapshot();
     runtime_snapshot.tool_result_max_chars = Some(40_000);

@@ -55,6 +55,8 @@ Plugin Catalog
 
 后台上传接口是 `POST /api/admin/plugin-package/analyze`，发布接口是 `POST /api/admin/plugin-package/publish`。日常上架应使用管理页面，不再手填 Catalog JSON、Release JSON、integrity、artifact URL 或 Signature JSON。
 
+本地开发栈会把 Artifact public base 固定为本机 Plugin Management 地址。Artifact 代理只为 `localhost`、`127.0.0.1` 和 `::1` 接受 HTTP，并在 DNS 解析后再次要求所有地址都是 loopback；任何非 loopback Artifact 仍必须使用 HTTPS 并解析到公网地址。
+
 `.tgz` 是 npm package artifact，不是旧式 Plugin ZIP。普通桌面客户端安装包使用的 DMG、DEB 或 Windows ZIP 与 Plugin artifact 无关。
 
 ## 3. Manifest schema v3
@@ -111,9 +113,28 @@ HTTP MCP 使用 `type: "http"` 和 `url`。它仍由 Local Connector Client 发�
 
 - token、cookie、API key、refresh token 和 webhook secret 不得写入 npm package、Manifest、Catalog、Release、审计或日志。
 - stdio MCP 环境变量只能引用受管理的 credential；不能在 Manifest 中固定秘密值。
+- 需要向用户展示本地隔离桌面或其他实时画面的 MCP，可使用 Host 注入的 `CHATOS_PLUGIN_VISUAL_SESSION_DIR`。Host 在 turn-scoped 私有目录写入 `host.json`，Plugin 以原子替换方式更新 `session.json` 和 `frame.jpg` / `frame.png`；元数据最大 16 KiB、单帧最大 2 MiB，running 会话至少每 15 秒更新一次 `captured_at`，结束时写入 `status: "ended"`。视觉帧不得通过 Relay 或远端 HTTP 上传。
 - HTTP MCP 的 OAuth/credential 由客户端在执行时注入，服务端只下发经过策略过滤的临时调用参数。
 - 权限必须声明到组件粒度。读取、写入、执行、部署、屏幕控制、文件访问和网络访问应分别声明。
 - 高风险能力必须在客户端完成操作系统授权、用户确认和本地策略检查。
+
+### 4.1 桌面系统权限 onboarding 约定
+
+声明 `computer.accessibility` 或 `computer.screen-recording` 的 stdio MCP，必须在同一个、已由 `package.json.bin` 发布的可执行入口上实现：
+
+```text
+<manifest mcpServers.*.bin> doctor
+```
+
+`doctor` 由用户在 Local Connector 权限页点击“启动插件权限引导”后显式启动。Local Connector 只执行已安装 Release 中经过签名、文件 hash 校验且属于相关 MCP 组件的 bin，不执行 Manifest 外路径或 shell 字符串。Local Connector 不替 Plugin 请求 TCC 权限，也不使用自己的 Electron 权限覆盖 Plugin 状态。该命令应：
+
+- 检查实际 Plugin App / 原生进程的辅助功能和屏幕录制状态；
+- 缺失时启动该 Plugin 自己的 macOS onboarding，使 TCC 绑定到实际执行主体；
+- 输出中不得包含屏幕内容、窗口内容、凭据或本机敏感路径；
+- 完成引导启动后及时退出，退出码 `0` 表示检查/引导命令已正常执行；
+- 不得把 Local Connector Electron 进程的权限当成 Plugin 权限。
+
+系统权限按实际 executable、App bundle 和代码签名身份授予。Manifest permission 与本机 `granted_permissions` 只表示用户允许 Plugin 使用这项能力，不代表 macOS TCC 已经授权；Plugin 在每次敏感工具调用前仍须自行检查并在缺失时失败关闭。
 
 ## 5. 签名与不可变性
 

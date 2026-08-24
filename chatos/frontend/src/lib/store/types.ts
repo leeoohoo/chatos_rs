@@ -36,8 +36,6 @@ export type {
   ConversationRuntimeSliceState,
   SessionChatState,
   SessionMessagePaginationState,
-  SessionMessagesCacheEntry,
-  SessionMessagesSnapshot,
 } from './slices/conversationRuntimeSlice';
 export type {
   RemoteConnectionCreatePayload,

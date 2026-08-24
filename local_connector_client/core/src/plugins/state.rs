@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -34,6 +34,8 @@ pub struct InstalledPluginVersion {
     pub installed_at: String,
     pub package_file_sha256: BTreeMap<String, String>,
     pub inventory: PluginRequirementInventory,
+    #[serde(default)]
+    pub granted_permissions: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

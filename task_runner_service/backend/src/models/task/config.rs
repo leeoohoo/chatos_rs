@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use serde::Deserializer;
 use std::collections::BTreeMap;
 
 pub const TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC: &str = "project_service_sync";
@@ -99,7 +100,7 @@ pub struct TaskMcpConfig {
     pub workspace_changes_required: bool,
     #[serde(default)]
     pub execution_service_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_external_mcp_config_ids")]
     pub external_mcp_config_ids: Vec<String>,
     #[serde(default)]
     pub selected_skill_ids: Vec<String>,
@@ -155,6 +156,29 @@ fn task_mcp_builtin_kinds_default() -> Vec<String> {
     Vec::new()
 }
 
+pub(crate) fn is_reserved_internal_mcp_resource_id(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    value.starts_with("builtin_") || value.starts_with("system_mcp_")
+}
+
+pub(crate) fn normalize_external_mcp_config_ids(values: Vec<String>) -> Vec<String> {
+    let mut normalized = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && !is_reserved_internal_mcp_resource_id(value))
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn deserialize_external_mcp_config_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer).map(normalize_external_mcp_config_ids)
+}
+
 #[cfg(test)]
 mod task_mcp_config_tests {
     use super::*;
@@ -164,6 +188,19 @@ mod task_mcp_config_tests {
         let config = serde_json::from_value::<TaskMcpConfig>(serde_json::json!({}))
             .expect("legacy task config");
         assert!(config.requires_execution);
+    }
+
+    #[test]
+    fn legacy_internal_resource_ids_are_not_restored_as_external_mcps() {
+        let config = serde_json::from_value::<TaskMcpConfig>(serde_json::json!({
+            "external_mcp_config_ids": [
+                " external-mcp-1 ",
+                "builtin_removed_resource",
+                "system_mcp_removed_resource"
+            ]
+        }))
+        .expect("legacy task config");
+        assert_eq!(config.external_mcp_config_ids, vec!["external-mcp-1"]);
     }
 }
 

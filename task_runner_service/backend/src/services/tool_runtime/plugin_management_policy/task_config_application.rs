@@ -3,10 +3,10 @@
 
 use std::collections::HashSet;
 
-use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies};
 use chatos_plugin_management_sdk::SelectedPluginRef;
 
-use crate::models::TaskRecord;
+use crate::models::{is_reserved_internal_mcp_resource_id, TaskRecord};
 
 use super::{
     dedupe_builtin_kinds, normalized_command_invocation, normalized_unique_ids,
@@ -47,6 +47,7 @@ impl TaskRunnerCapabilityPolicy {
                 .filter(|item| {
                     plugin_builtin_kind(item).is_none() && !plugin_task_process_log_mcp(item)
                 })
+                .filter(|item| !is_reserved_internal_mcp_resource_id(item.resource.id.as_str()))
                 .map(|item| item.resource.id.clone()),
         );
         effective_external.sort();
@@ -135,71 +136,6 @@ impl TaskRunnerCapabilityPolicy {
             .collect::<Result<Vec<_>, _>>()?;
         task.plugin_config.selected_plugins = effective;
         task.plugin_config.command_invocations = command_invocations;
-        self.inject_plugin_builtin_dependencies(task)?;
         Ok(())
     }
-
-    fn inject_plugin_builtin_dependencies(&self, task: &mut TaskRecord) -> Result<(), String> {
-        if self.is_planning_agent() {
-            return Ok(());
-        }
-        let mut dependencies = Vec::new();
-        for selected in &task.plugin_config.selected_plugins {
-            let plugin = self
-                .capabilities
-                .plugins
-                .iter()
-                .find(|plugin| {
-                    plugin.catalog.id == selected.plugin_id
-                        && (plugin.available
-                            || plugin.status
-                                == chatos_plugin_management_sdk::PluginAvailabilityStatus::PartiallyAvailable)
-                })
-                .ok_or_else(|| {
-                    format!("effective Plugin is unavailable: {}", selected.plugin_id)
-                })?;
-            if plugin.catalog.name == "browser" {
-                dependencies.push(BuiltinMcpKind::BrowserTools);
-            }
-        }
-        for dependency in dependencies {
-            let available = self.capabilities.mcps.iter().any(|item| {
-                item.binding.enabled
-                    && item.resource.enabled
-                    && plugin_builtin_kind(item) == Some(dependency)
-            });
-            if !available {
-                return Err(format!(
-                    "Plugin builtin dependency is unavailable for {}: {}",
-                    self.capabilities.agent_key,
-                    dependency.kind_name()
-                ));
-            }
-            if !task
-                .mcp_config
-                .enabled_builtin_kinds
-                .iter()
-                .filter_map(|value| builtin_kind_by_any(value))
-                .any(|kind| kind == dependency)
-            {
-                task.mcp_config
-                    .enabled_builtin_kinds
-                    .push(dependency.kind_name().to_string());
-            }
-        }
-        dedupe_task_builtin_kind_names(&mut task.mcp_config.enabled_builtin_kinds);
-        Ok(())
-    }
-}
-
-fn dedupe_task_builtin_kind_names(values: &mut Vec<String>) {
-    let mut kinds = values
-        .iter()
-        .filter_map(|value| builtin_kind_by_any(value))
-        .collect::<Vec<_>>();
-    dedupe_builtin_kinds(&mut kinds);
-    *values = kinds
-        .into_iter()
-        .map(|kind| kind.kind_name().to_string())
-        .collect();
 }

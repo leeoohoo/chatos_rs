@@ -77,6 +77,8 @@ pub struct TaskPluginSelectionAudit {
 pub struct TaskSelectedPluginSnapshot {
     pub plugin_id: String,
     pub plugin_key: String,
+    #[serde(default)]
+    pub display_name: String,
     pub release_id: String,
     pub version: String,
     pub artifact_sha256: String,

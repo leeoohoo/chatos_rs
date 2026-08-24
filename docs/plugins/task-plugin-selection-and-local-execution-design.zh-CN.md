@@ -31,7 +31,7 @@ ChatOS 收到用户请求
 4. Task Runner 是可信 Plugin 选择和持久化边界。
 5. Plugin Management 是 Catalog、Release、安装、权限、认证和 Agent policy 的控制面。
 6. MCP Management 只准备和路由执行；所有 stdio/HTTP Plugin MCP 都必须由 Local Connector Client 本地执行。
-7. 不允许服务端直接执行、Cloud fallback、设备替换或插件不可用时静默降级。
+7. 不允许服务端直接执行、服务端 fallback、设备替换或插件不可用时静默降级。
 
 ## 2. 职责边界
 

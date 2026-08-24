@@ -10,10 +10,11 @@ import type {
   UserMessageTurnResponse,
 } from '../../lib/api/client/types';
 import { normalizeRawMessages } from '../../lib/domain/messages';
+import { SESSION_MESSAGES_INITIAL_PAGE_SIZE } from '../../lib/store/actions/sessionsUtils';
 import type { Message } from '../../types';
 import type { UserMessageTaskState, UserMessageTurn } from './types';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = SESSION_MESSAGES_INITIAL_PAGE_SIZE;
 const LIVE_TASK_POLL_INTERVAL_MS = 12000;
 const EXTERNAL_REFRESH_DELAY_MS = 350;
 const EXTERNAL_REFRESH_RETRY_DELAYS_MS = [600, 1400, 3000, 5000];

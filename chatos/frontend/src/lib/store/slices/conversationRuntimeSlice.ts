@@ -23,16 +23,6 @@ export interface SessionMessagePaginationState {
   loaded: boolean;
 }
 
-export interface SessionMessagesSnapshot {
-  messages: Message[];
-  nextBefore: string | null;
-  loaded: boolean;
-}
-
-export interface SessionMessagesCacheEntry extends SessionMessagesSnapshot {
-  fetchedAt: number;
-}
-
 export interface ConversationRuntimeSliceState {
   messages: Message[];
   isLoading: boolean;
@@ -41,8 +31,6 @@ export interface ConversationRuntimeSliceState {
   hasMoreMessages: boolean;
   sessionChatState: Record<string, SessionChatState>;
   sessionMessagePaginationState: Record<string, SessionMessagePaginationState>;
-  sessionMessagesCache: Record<string, SessionMessagesCacheEntry>;
-  sessionMessagesCacheOrder: string[];
 }
 
 export const conversationRuntimeInitialState: ConversationRuntimeSliceState = {
@@ -53,8 +41,6 @@ export const conversationRuntimeInitialState: ConversationRuntimeSliceState = {
   hasMoreMessages: true,
   sessionChatState: {},
   sessionMessagePaginationState: {},
-  sessionMessagesCache: {},
-  sessionMessagesCacheOrder: [],
 };
 
 export interface ConversationRuntimeSliceActions {

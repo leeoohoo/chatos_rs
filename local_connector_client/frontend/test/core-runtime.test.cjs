@@ -9,12 +9,50 @@ const test = require('node:test');
 const { EventEmitter } = require('node:events');
 
 const {
+  allowAdhocMacosPluginApps,
   coreRestartDelayMs,
   createCoreRuntime,
   discoverUserShellPath,
   readCachedUserShellPath,
   writeCachedUserShellPath,
 } = require('../electron/core-runtime.cjs');
+
+test('allows ad-hoc macOS plugin apps only for an explicit override or ad-hoc host app', () => {
+  assert.equal(allowAdhocMacosPluginApps({
+    platform: 'darwin',
+    env: { CHATOS_ALLOW_ADHOC_MACOS_PLUGIN_APPS: '1' },
+    executablePath: '/Applications/Chat OS Local Connector.app/Contents/MacOS/Chat OS Local Connector',
+    spawnSyncImpl: () => {
+      throw new Error('codesign should not run for an explicit override');
+    },
+  }), true);
+  assert.equal(allowAdhocMacosPluginApps({
+    platform: 'darwin',
+    env: { CHATOS_ALLOW_ADHOC_MACOS_PLUGIN_APPS: '0' },
+    executablePath: '/Applications/Chat OS Local Connector.app/Contents/MacOS/Chat OS Local Connector',
+    spawnSyncImpl: () => ({ status: 0, stderr: 'Signature=adhoc\n' }),
+  }), false);
+  assert.equal(allowAdhocMacosPluginApps({
+    platform: 'darwin',
+    env: {},
+    executablePath: '/Applications/Chat OS Local Connector.app/Contents/MacOS/Chat OS Local Connector',
+    spawnSyncImpl: (command, args) => {
+      assert.equal(command, '/usr/bin/codesign');
+      assert.deepEqual(args, [
+        '--display',
+        '--verbose=4',
+        '/Applications/Chat OS Local Connector.app/Contents/MacOS/Chat OS Local Connector',
+      ]);
+      return { status: 0, stdout: '', stderr: 'Identifier=com.chatos.local-connector\nSignature=adhoc\n' };
+    },
+  }), true);
+  assert.equal(allowAdhocMacosPluginApps({
+    platform: 'darwin',
+    env: {},
+    executablePath: '/Applications/Chat OS Local Connector.app/Contents/MacOS/Chat OS Local Connector',
+    spawnSyncImpl: () => ({ status: 0, stdout: '', stderr: 'Authority=Developer ID Application: Example\n' }),
+  }), false);
+});
 
 test('backs off unexpected Core restarts without growing past five seconds', () => {
   assert.deepEqual(
@@ -130,6 +168,7 @@ test('passes cached user shell PATH to the spawned Core when discovery fails', (
         onDiagnostic({ status: 'spawn-error', elapsedMs: 10_000, errorCode: 'ETIMEDOUT' });
         return [];
       },
+      allowAdhocMacosPluginAppsImpl: () => true,
       spawnImpl: (command, args, options) => {
         spawned = { command, args, options };
         return child;
@@ -138,49 +177,19 @@ test('passes cached user shell PATH to the spawned Core when discovery fails', (
 
     runtime.startCore();
     assert.ok(spawned.options.env.PATH.split(path.delimiter).includes(cachedBin));
+    assert.equal(spawned.options.env.LOCAL_CONNECTOR_PARENT_PID, String(process.pid));
+    assert.equal(spawned.options.env.CHATOS_ALLOW_ADHOC_MACOS_PLUGIN_APPS, '1');
     const log = fs.readFileSync(
       path.join(tempRoot, 'logs', 'local-connector-core.log'),
       'utf8',
     );
     assert.match(
       log,
-      /core PATH source=cache .*shell_discovery=spawn-error .*shell_error_code=ETIMEDOUT/,
+      /core PATH source=cache .*shell_discovery=spawn-error .*shell_error_code=ETIMEDOUT .*adhoc_plugin_apps=enabled/,
     );
     child.exitCode = 0;
     child.emit('exit', 0, null);
     runtime.cleanupIpcEndpoint();
-  } finally {
-    if (previousResourcesPath === undefined) {
-      delete process.resourcesPath;
-    } else {
-      process.resourcesPath = previousResourcesPath;
-    }
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-  }
-});
-
-test('prepares Chrome extension in a visible user-home directory', () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-core-runtime-'));
-  const previousResourcesPath = process.resourcesPath;
-  try {
-    process.resourcesPath = path.join(tempRoot, 'resources');
-    const source = path.join(process.resourcesPath, 'chrome-extension');
-    fs.mkdirSync(source, { recursive: true });
-    fs.writeFileSync(path.join(source, 'manifest.json'), '{"manifest_version":3}\n');
-    fs.writeFileSync(path.join(source, 'background.js'), 'self;\n');
-
-    const runtime = createCoreRuntime({
-      app: { getPath: (name) => {
-        assert.equal(name, 'home');
-        return path.join(tempRoot, 'home');
-      } },
-      desktopAuthToken: 'test-token',
-    });
-
-    const destination = runtime.prepareChromeExtensionInstallDirectory();
-    assert.equal(destination, path.join(tempRoot, 'home', 'ChatOS Chrome Extension'));
-    assert.equal(fs.readFileSync(path.join(destination, 'manifest.json'), 'utf8'), '{"manifest_version":3}\n');
-    assert.equal(fs.readFileSync(path.join(destination, 'background.js'), 'utf8'), 'self;\n');
   } finally {
     if (previousResourcesPath === undefined) {
       delete process.resourcesPath;

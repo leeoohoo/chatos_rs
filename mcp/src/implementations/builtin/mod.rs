@@ -3,9 +3,6 @@
 
 pub mod agent_builder;
 pub mod ask_user;
-pub mod browser_command_support;
-pub mod browser_runtime;
-pub mod browser_tools;
 pub mod bundled_tools;
 pub mod catalog;
 pub mod code_maintainer;
@@ -16,14 +13,7 @@ pub mod remote_connection_controller;
 pub mod terminal_controller;
 pub mod terminal_controller_response;
 mod terminal_process;
-pub mod web_tools;
 
-pub(crate) mod browser_page_insights;
-pub(crate) mod browser_page_state_view;
-pub mod research_findings;
-pub mod research_output;
-pub mod research_payloads;
-pub mod research_summary;
 pub mod research_summary_view;
 pub(crate) mod tool_registry;
 
@@ -36,15 +26,9 @@ pub use ask_user::{
     AskUserResponseSubmission, AskUserService, AskUserStore, AskUserStoreRef,
     AskUserStreamChunkCallback, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };
-pub use browser_tools::{
-    browser_interactive_approval_command, BrowserToolCallContext, BrowserToolsOptions,
-    BrowserToolsService, BrowserVisionAdapter, BrowserVisionAdapterRef, BrowserVisionFailure,
-    BrowserVisionRequest, BrowserVisionResponse,
-};
 pub use bundled_tools::{
-    agent_browser_binary_path, bundled_tool_path, discover_bundled_tool_dirs,
-    path_with_bundled_tools, AGENT_BROWSER_BIN_ENV, CHATOS_BUNDLED_TOOLS_DIR_ENV,
-    CHATOS_BUNDLED_TOOLS_PATH_ENV,
+    bundled_tool_path, discover_bundled_tool_dirs, path_with_bundled_tools,
+    CHATOS_BUNDLED_TOOLS_DIR_ENV, CHATOS_BUNDLED_TOOLS_PATH_ENV,
 };
 pub use catalog::builtin_tool_catalog;
 pub use code_maintainer::{
@@ -82,4 +66,3 @@ pub use terminal_controller_response::{
     TerminalProcessSnapshot, TerminalProcessWaitResponse, TerminalRecentLogsEntry,
 };
 pub use terminal_process::{configure_child_process_group, terminate_child_process_tree};
-pub use web_tools::{WebToolsOptions, WebToolsService};

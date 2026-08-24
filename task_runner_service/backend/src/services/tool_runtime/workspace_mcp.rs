@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::models::{TaskMcpConfig, TaskMcpResolutionResponse, TaskRecord};
+use crate::models::{
+    normalize_external_mcp_config_ids, TaskMcpConfig, TaskMcpResolutionResponse, TaskRecord,
+};
 use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
 
 use super::mcp_resolution::{
@@ -65,7 +67,8 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
         .retain(|kind| kind != BuiltinMcpKind::RemoteConnectionController.kind_name());
     config.workspace_dir = normalized_optional(config.workspace_dir);
     config.execution_service_id = normalized_optional(config.execution_service_id);
-    config.external_mcp_config_ids = normalize_strings(config.external_mcp_config_ids);
+    config.external_mcp_config_ids =
+        normalize_external_mcp_config_ids(config.external_mcp_config_ids);
     config.selected_skill_ids = normalize_strings(config.selected_skill_ids);
     config.skill_policy_revision = normalized_optional(config.skill_policy_revision);
     // Runtime provider endpoints are never persisted in a task. All actual MCP

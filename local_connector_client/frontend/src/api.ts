@@ -19,8 +19,9 @@ import type {
   LocalPluginAutoUpdateReport,
   LocalPluginOAuthConnection,
   PluginOAuthAuthorizationStart,
+  PluginFileGrantSummary,
+  PluginRuntimeVisualSessionResponse,
   UserPluginPreferenceRecord,
-  ChromeIntegrationStatus,
   UpdateLocalRuntimeSettingsPayload,
   PendingApprovalsResponse,
   SandboxCapabilities,
@@ -134,18 +135,6 @@ export const api = {
       throw error;
     }
   },
-  chromeIntegration: () => request<ChromeIntegrationStatus>('/api/local/chrome-integration'),
-  enableChromeIntegration: () => request<ChromeIntegrationStatus>(
-    '/api/local/chrome-integration/enable',
-    {
-      method: 'POST',
-      body: JSON.stringify({ acknowledge_sensitive_browser_access: true }),
-    },
-  ),
-  disableChromeIntegration: () => request<ChromeIntegrationStatus>(
-    '/api/local/chrome-integration/disable',
-    { method: 'POST' },
-  ),
   agentPromptStatus: () =>
     request<AgentPromptUpdateStatus>('/api/local/agent-prompts/status'),
   checkAgentPromptUpdates: () =>
@@ -213,6 +202,9 @@ export const api = {
     if (cursor) query.set('cursor', cursor);
     return request<LocalPluginStatusEvent>(`/api/local/plugins/events?${query.toString()}`);
   },
+  pluginRuntimeVisualSession: () => request<PluginRuntimeVisualSessionResponse>(
+    '/api/local/plugins/runtime-visual-session',
+  ),
   recoverPlugins: () => request<{
     completed_transactions: number;
     rolled_back_transactions: number;
@@ -244,6 +236,16 @@ export const api = {
     request<LocalPluginStatusSnapshot>(
       `/api/local/plugins/${encodeURIComponent(pluginId)}/install`,
       { method: 'POST' },
+    ),
+  updatePluginPermissionGrants: (pluginId: string, grantedPermissions: string[]) =>
+    request<LocalPluginStatusSnapshot>(
+      `/api/local/plugins/${encodeURIComponent(pluginId)}/permission-grants`,
+      { method: 'PUT', body: JSON.stringify({ granted_permissions: grantedPermissions }) },
+    ),
+  createPluginFileGrants: (adapterSessionId: string, paths: string[]) =>
+    request<PluginFileGrantSummary[]>(
+      `/api/local/plugins/runtime-sessions/${encodeURIComponent(adapterSessionId)}/file-grants`,
+      { method: 'POST', body: JSON.stringify({ paths }) },
     ),
   uninstallPlugin: (pluginId: string) =>
     request<LocalPluginStatusSnapshot>(`/api/local/plugins/${encodeURIComponent(pluginId)}`, {

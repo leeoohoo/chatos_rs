@@ -440,9 +440,9 @@ mod tests {
             plugin_command_invocations: &[],
             plugin_agent_selection: None,
             unavailable_builtin_tools: &[json!({
-                "server_name": "browser_tools",
-                "tool_name": "browser_inspect",
-                "reason": "agent-browser unavailable"
+                "server_name": "terminal_controller",
+                "tool_name": "process_wait",
+                "reason": "runtime unavailable"
             })],
             builtin_mcp_prompt_debug: None,
             actual_context_mode: None,
@@ -454,15 +454,15 @@ mod tests {
         assert_eq!(runtime.unavailable_builtin_tools.len(), 1);
         assert_eq!(
             runtime.unavailable_builtin_tools[0].server_name,
-            "browser_tools"
+            "terminal_controller"
         );
         assert_eq!(
             runtime.unavailable_builtin_tools[0].tool_name,
-            "browser_inspect"
+            "process_wait"
         );
         assert_eq!(
             runtime.unavailable_builtin_tools[0].reason.as_deref(),
-            Some("agent-browser unavailable")
+            Some("runtime unavailable")
         );
     }
 
@@ -493,11 +493,14 @@ mod tests {
             builtin_mcp_prompt_debug: Some(&BuiltinMcpPromptBuildResult {
                 prompt: Some("builtin mcp prompt".to_string()),
                 selected_section_ids: vec!["global".to_string(), "builtin_ask_user".to_string()],
-                omitted_section_ids: vec!["builtin_browser_tools".to_string()],
-                requested_builtin_server_names: vec!["ask_user".to_string(), "browser_tools".to_string()],
+                omitted_section_ids: vec!["builtin_notepad".to_string()],
+                requested_builtin_server_names: vec!["ask_user".to_string(), "notepad".to_string()],
                 active_builtin_server_names: vec!["ask_user".to_string()],
-                omitted_builtin_server_names: vec!["browser_tools".to_string()],
-                runtime_limitations: Some("当前运行时限制：\n- 当前不要依赖以下内置 MCP 工具：`browser_tools_browser_inspect`。".to_string()),
+                omitted_builtin_server_names: vec!["notepad".to_string()],
+                runtime_limitations: Some(
+                    "当前运行时限制：\n- 当前不要依赖以下内置 MCP 工具：`notepad_list_notes`。"
+                        .to_string(),
+                ),
             }),
             actual_context_mode: None,
             actual_context_items: &[],
@@ -519,9 +522,9 @@ mod tests {
             builtin.selected_section_ids,
             vec!["global", "builtin_ask_user"]
         );
-        assert_eq!(builtin.omitted_section_ids, vec!["builtin_browser_tools"]);
+        assert_eq!(builtin.omitted_section_ids, vec!["builtin_notepad"]);
         assert_eq!(builtin.active_builtin_server_names, vec!["ask_user"]);
-        assert_eq!(builtin.omitted_builtin_server_names, vec!["browser_tools"]);
+        assert_eq!(builtin.omitted_builtin_server_names, vec!["notepad"]);
     }
 
     #[test]

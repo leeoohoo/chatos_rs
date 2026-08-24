@@ -14,39 +14,11 @@ import { verifyMacCodeSigning } from './verify-installed-package/codesign.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SAFE_PLATFORM = /^(?:macos|windows|linux)-(?:arm64|x64)$/;
-const SAFE_RUNTIME_PROFILES = new Set(['full', 'linux-core', 'linux-browser']);
+const SAFE_RUNTIME_PROFILES = new Set(['full', 'linux-core']);
 const SAFE_SHA256 = /^[0-9a-f]{64}$/;
 const MAX_RESOURCE_FILES = 300_000;
 const MAX_RESOURCE_BYTES = 8 * 1024 * 1024 * 1024;
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
-const EXPECTED_CHROME_EXTENSION_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwtyBLDERxm2J31roRxBzHGFmtn03x51KFG7KLXkLNzNVaEnk6Np4ZnQMiu7ADkVykLoDtBUZCcJ5/Ol7Ceo9eYGOdtKp1KPpW5tM16vj+y0NkwOi27Ofr9ak0P3MvHQnJjAFOHd/vOSF8El94VV6A6iWuhlGSbnvbj+oZ+w3RWQkqKiXr/Qkd77DvvJhQghcz0V5JhVqrMANxOW1kPDVPIZvPfrxh4+LX4jrzPSLzgQcsG6q6M4dkdIH7UeymQv12XVdP2UtSrLyTRC2MpzuohQmau334GnZAGfkfg9ODXbrVdlabFb4JnhZHVCEoMwNI0wNhbkTlxG1bhZlgQTQawIDAQAB';
-const EXPECTED_CHROME_PERMISSIONS = [
-  'activeTab',
-  'nativeMessaging',
-  'scripting',
-  'storage',
-];
-const FORBIDDEN_CHROME_PERMISSIONS = new Set([
-  'bookmarks',
-  'browsingData',
-  'clipboardRead',
-  'clipboardWrite',
-  'contentSettings',
-  'cookies',
-  'debugger',
-  'downloads',
-  'downloads.open',
-  'geolocation',
-  'history',
-  'management',
-  'privacy',
-  'proxy',
-  'sessions',
-  'tabs',
-  'webNavigation',
-  'webRequest',
-  'webRequestBlocking',
-]);
 
 function parseArgs(argv) {
   const args = { requireSigned: false };
@@ -82,15 +54,11 @@ function parseArgs(argv) {
   args.electronRuntimeSource = path.resolve(
     args.electronRuntimeSource || path.join(SCRIPT_DIR, 'frontend', 'electron', 'core-runtime.cjs'),
   );
-  args.chromeExtensionSource = path.resolve(
-    args.chromeExtensionSource || path.join(SCRIPT_DIR, 'chrome_extension'),
-  );
   if (args.report) {
     args.report = path.resolve(args.report);
   }
   return args;
 }
-
 function assertRootDirectory(root, label) {
   let stat;
   try {
@@ -385,75 +353,19 @@ function verifyEmbeddedSqliteMigrations(args, executablePath, migrationsDir) {
   };
 }
 
-async function verifyChromeExtension(args) {
-  const packagedRoot = requireDirectory(args.resources, 'chrome-extension', 'Chrome extension');
-  const sourceComparison = await compareExactTrees(args.chromeExtensionSource, packagedRoot, 'Chrome extension');
-  const manifestPath = requireRegularFile(packagedRoot, 'manifest.json', 'Chrome extension manifest').absolute;
-  const manifest = readJson(manifestPath, 'Chrome extension manifest');
-  if (manifest.manifest_version !== 3 || manifest.key !== EXPECTED_CHROME_EXTENSION_KEY) {
-    throw new Error('Chrome extension must use Manifest V3 and the fixed ChatOS public key');
-  }
-  if (!Array.isArray(manifest.permissions)) {
-    throw new Error('Chrome extension permissions must be an array');
-  }
-  const permissions = [...new Set(manifest.permissions)].sort();
-  if (permissions.length !== manifest.permissions.length
-    || JSON.stringify(permissions) !== JSON.stringify([...EXPECTED_CHROME_PERMISSIONS].sort())) {
-    throw new Error('Chrome extension permissions differ from the least-privilege allowlist');
-  }
-  for (const permission of permissions) {
-    if (FORBIDDEN_CHROME_PERMISSIONS.has(permission)) {
-      throw new Error(`Chrome extension contains forbidden permission: ${permission}`);
-    }
-  }
-  const optionalHosts = [...(manifest.optional_host_permissions || [])].sort();
-  if (JSON.stringify(optionalHosts) !== JSON.stringify(['http://*/*', 'https://*/*'])) {
-    throw new Error('Chrome extension optional host permissions must remain user-granted HTTP/HTTPS only');
-  }
-  if (manifest.host_permissions || manifest.content_scripts || manifest.externally_connectable) {
-    throw new Error('Chrome extension must not declare eager hosts, content scripts, or externally connectable origins');
-  }
-  for (const referenced of [manifest.background?.service_worker, manifest.action?.default_popup]) {
-    if (typeof referenced !== 'string') {
-      throw new Error('Chrome extension is missing a required background or popup entrypoint');
-    }
-    requireRegularFile(packagedRoot, normalizeRelativePath(referenced, 'Chrome extension entrypoint'), 'Chrome extension entrypoint');
-  }
-  return {
-    manifest_version: manifest.manifest_version,
-    version: manifest.version,
-    fixed_key_sha256: sha256Text(manifest.key),
-    permissions,
-    optional_host_permissions: optionalHosts,
-    files: sourceComparison.file_count,
-  };
-}
 
-async function verifyBrowserRuntime(args) {
-  const platformRoot = `bundled-tools/${args.platform}`;
-  requireDirectory(args.resources, platformRoot, 'Bundled tools platform directory');
-  const packageArchitecture = args.platform.endsWith('-arm64') ? 'arm64' : 'x64';
-  const agentRelative = `${platformRoot}/${args.platform.startsWith('windows-') ? 'agent-browser.exe' : 'agent-browser'}`;
-  const chromeRelative = args.platform.startsWith('macos-')
-    ? `${platformRoot}/browser/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`
-    : `${platformRoot}/browser/chrome-win64/chrome.exe`;
-  const browserArchitecture = args.platform.startsWith('windows-') ? 'x64' : packageArchitecture;
-  const agent = await verifyBinary(args.resources, agentRelative, 'agent-browser runtime', args.platform, browserArchitecture);
-  const chrome = await verifyBinary(args.resources, chromeRelative, 'Chrome for Testing runtime', args.platform, browserArchitecture);
-  requireRegularFile(args.resources, `${platformRoot}/agent-browser.LICENSE`, 'agent-browser license');
-  return {
-    platform: args.platform,
-    windows_arm64_x64_emulation: args.platform === 'windows-arm64',
-    agent_browser: agent,
-    chrome_for_testing: chrome,
-  };
-}
 
 function assertNoRemovedBuiltinCapabilities(args) {
   const forbiddenPaths = [
     'skill-bundles',
+    'chrome-extension',
+    'chatos_chrome_native_host',
+    'chatos_chrome_native_host.exe',
     'chatos_computer_use_helper',
     'chatos_computer_use_helper.exe',
+    `bundled-tools/${args.platform}/agent-browser`,
+    `bundled-tools/${args.platform}/agent-browser.exe`,
+    `bundled-tools/${args.platform}/browser`,
     `bundled-tools/${args.platform}/documents-runtime`,
   ];
   for (const relativePath of forbiddenPaths) {
@@ -482,10 +394,6 @@ async function verifyElectronRuntime(args) {
   const requiredPatterns = [
     /process\.resourcesPath/,
     /CHATOS_BUNDLED_TOOLS_DIR:\s*resourcePath\('bundled-tools'\)/,
-    /CHATOS_CHROME_NATIVE_HOST_PATH:\s*resourcePath\(chromeNativeHostName\)/,
-    /CHATOS_CHROME_EXTENSION_DIR:\s*chromeExtensionPath\(\)/,
-    /env\.AGENT_BROWSER_BIN\s*=\s*browserRuntime\.agentBrowser/,
-    /env\.AGENT_BROWSER_EXECUTABLE_PATH\s*=\s*browserRuntime\.browserExecutable/,
   ];
   if (requiredPatterns.some((pattern) => !pattern.test(runtime))) {
     throw new Error('Packaged Electron core runtime is missing a required packaged-resource binding');
@@ -493,43 +401,7 @@ async function verifyElectronRuntime(args) {
   return { packaged_path: candidates[0], bytes: fs.lstatSync(packaged).size, sha256: packagedHash };
 }
 
-function verifyLinuxCoreRuntimeProfile(args) {
-  const forbiddenPaths = [
-    'chrome-extension',
-    'chatos_chrome_native_host',
-    'chatos_computer_use_helper',
-    `bundled-tools/${args.platform}/agent-browser`,
-    `bundled-tools/${args.platform}/browser`,
-    `bundled-tools/${args.platform}/documents-runtime`,
-  ];
-  for (const relativePath of forbiddenPaths) {
-    const absolutePath = path.join(args.resources, ...relativePath.split('/'));
-    if (fs.existsSync(absolutePath)) {
-      throw new Error(`Linux core package contains an unsupported full-runtime resource: ${relativePath}`);
-    }
-  }
-  return {
-    chrome_extension: { verified: false, reason: 'not included in the linux-core runtime profile' },
-    browser_runtime: { verified: false, reason: 'not included in the linux-core runtime profile' },
-  };
-}
 
-async function verifyLinuxBrowserRuntimeProfile(args) {
-  const forbiddenPaths = [
-    `bundled-tools/${args.platform}/agent-browser`,
-    `bundled-tools/${args.platform}/browser`,
-  ];
-  for (const relativePath of forbiddenPaths) {
-    const absolutePath = path.join(args.resources, ...relativePath.split('/'));
-    if (fs.existsSync(absolutePath)) {
-      throw new Error(`Linux browser package contains an unsupported full-runtime resource: ${relativePath}`);
-    }
-  }
-  return {
-    chrome_extension: await verifyChromeExtension(args),
-    browser_runtime: { verified: false, reason: 'bundled browser automation runtime is not included in the linux-browser profile' },
-  };
-}
 
 
 function writeReport(reportPath, report) {
@@ -553,7 +425,6 @@ function sanitizedError(error, args) {
   const replacements = [
     [args?.resources, '<resources>'],
     [args?.electronRuntimeSource, '<electron-runtime-source>'],
-    [args?.chromeExtensionSource, '<chrome-extension-source>'],
     [SCRIPT_DIR, '<local-connector-client>'],
     [process.env.HOME, '<home>'],
   ];
@@ -573,21 +444,11 @@ async function main(args) {
   const packageArchitecture = args.platform.endsWith('-arm64') ? 'arm64' : 'x64';
   const macos = args.platform.startsWith('macos-');
   const windows = args.platform.startsWith('windows-');
-  const linuxBrowser = args.runtimeProfile === 'linux-browser';
   const binarySpecs = macos
-    ? [
-        ['local_connector_client_core', 'Local Connector Core'],
-        ['chatos_chrome_native_host', 'Chrome Native Messaging Host'],
-      ]
+    ? [['local_connector_client_core', 'Local Connector Core']]
     : windows
-      ? [
-        ['local_connector_client_core.exe', 'Local Connector Core'],
-        ['chatos_chrome_native_host.exe', 'Chrome Native Messaging Host'],
-      ]
-      : [
-        ['local_connector_client_core', 'Local Connector Core'],
-        ...(linuxBrowser ? [['chatos_chrome_native_host', 'Chrome Native Messaging Host']] : []),
-      ];
+      ? [['local_connector_client_core.exe', 'Local Connector Core']]
+      : [['local_connector_client_core', 'Local Connector Core']];
   const executables = [];
   const executablePaths = [];
   for (const [relativePath, label] of binarySpecs) {
@@ -597,24 +458,7 @@ async function main(args) {
   }
   const localRuntimeMigrations = verifyEmbeddedSqliteMigrations(args, executablePaths[0], migrations);
 
-  let runtimeVerification;
-  if (args.runtimeProfile === 'full') {
-    runtimeVerification = Promise.all([
-        verifyChromeExtension(args),
-        verifyBrowserRuntime(args),
-      ]).then(([chromeExtension, browserRuntime]) => ({
-        chrome_extension: chromeExtension,
-        browser_runtime: browserRuntime,
-      }));
-  } else if (args.runtimeProfile === 'linux-browser') {
-    runtimeVerification = verifyLinuxBrowserRuntimeProfile(args);
-  } else {
-    runtimeVerification = Promise.resolve(verifyLinuxCoreRuntimeProfile(args));
-  }
-  const [runtime, electronRuntime] = await Promise.all([
-    runtimeVerification,
-    verifyElectronRuntime(args),
-  ]);
+  const electronRuntime = await verifyElectronRuntime(args);
   const codeSigning = verifyMacCodeSigning(args, executablePaths);
   const report = {
     schema_version: 1,
@@ -624,8 +468,6 @@ async function main(args) {
     runtime_profile: args.runtimeProfile,
     resource_tree: tree,
     executables,
-    chrome_extension: runtime.chrome_extension,
-    browser_runtime: runtime.browser_runtime,
     local_runtime_migrations: localRuntimeMigrations,
     electron_runtime: electronRuntime,
     code_signing: codeSigning,

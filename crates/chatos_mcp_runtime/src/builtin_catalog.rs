@@ -46,14 +46,6 @@ pub const REMOTE_CONNECTION_CONTROLLER_MCP_ID: &str = "builtin_remote_connection
 pub const REMOTE_CONNECTION_CONTROLLER_SERVER_NAME: &str = "remote_connection_controller";
 pub const REMOTE_CONNECTION_CONTROLLER_COMMAND: &str = "builtin:remote_connection_controller";
 
-pub const WEB_TOOLS_MCP_ID: &str = "builtin_web_tools";
-pub const WEB_TOOLS_SERVER_NAME: &str = "web_tools";
-pub const WEB_TOOLS_COMMAND: &str = "builtin:web_tools";
-
-pub const BROWSER_TOOLS_MCP_ID: &str = "builtin_browser_tools";
-pub const BROWSER_TOOLS_SERVER_NAME: &str = "browser_tools";
-pub const BROWSER_TOOLS_COMMAND: &str = "builtin:browser_tools";
-
 pub const MEMORY_SKILL_READER_SERVER_NAME: &str = "memory_skill_reader";
 pub const MEMORY_COMMAND_READER_SERVER_NAME: &str = "memory_command_reader";
 pub const MEMORY_PLUGIN_READER_SERVER_NAME: &str = "memory_plugin_reader";
@@ -144,8 +136,6 @@ pub enum BuiltinMcpKind {
     AgentBuilder,
     AskUser,
     RemoteConnectionController,
-    WebTools,
-    BrowserTools,
     MemorySkillReader,
     MemoryCommandReader,
     MemoryPluginReader,
@@ -163,8 +153,6 @@ impl BuiltinMcpKind {
             Self::AgentBuilder => "AgentBuilder",
             Self::AskUser => "AskUser",
             Self::RemoteConnectionController => "RemoteConnectionController",
-            Self::WebTools => "WebTools",
-            Self::BrowserTools => "BrowserTools",
             Self::MemorySkillReader => "MemorySkillReader",
             Self::MemoryCommandReader => "MemoryCommandReader",
             Self::MemoryPluginReader => "MemoryPluginReader",
@@ -182,8 +170,6 @@ impl BuiltinMcpKind {
             Self::AgentBuilder => AGENT_BUILDER_SERVER_NAME,
             Self::AskUser => ASK_USER_SERVER_NAME,
             Self::RemoteConnectionController => REMOTE_CONNECTION_CONTROLLER_SERVER_NAME,
-            Self::WebTools => WEB_TOOLS_SERVER_NAME,
-            Self::BrowserTools => BROWSER_TOOLS_SERVER_NAME,
             Self::MemorySkillReader => MEMORY_SKILL_READER_SERVER_NAME,
             Self::MemoryCommandReader => MEMORY_COMMAND_READER_SERVER_NAME,
             Self::MemoryPluginReader => MEMORY_PLUGIN_READER_SERVER_NAME,
@@ -201,8 +187,6 @@ impl BuiltinMcpKind {
             Self::AgentBuilder => Some(AGENT_BUILDER_MCP_ID),
             Self::AskUser => Some(ASK_USER_MCP_ID),
             Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_MCP_ID),
-            Self::WebTools => Some(WEB_TOOLS_MCP_ID),
-            Self::BrowserTools => Some(BROWSER_TOOLS_MCP_ID),
             Self::MemorySkillReader | Self::MemoryCommandReader | Self::MemoryPluginReader => None,
         }
     }
@@ -218,8 +202,6 @@ impl BuiltinMcpKind {
             Self::AgentBuilder => Some(AGENT_BUILDER_COMMAND),
             Self::AskUser => Some(ASK_USER_COMMAND),
             Self::RemoteConnectionController => Some(REMOTE_CONNECTION_CONTROLLER_COMMAND),
-            Self::WebTools => Some(WEB_TOOLS_COMMAND),
-            Self::BrowserTools => Some(BROWSER_TOOLS_COMMAND),
             Self::MemorySkillReader | Self::MemoryCommandReader | Self::MemoryPluginReader => None,
         }
     }
@@ -277,8 +259,6 @@ pub fn builtin_kind_by_kind_name(value: &str) -> Option<BuiltinMcpKind> {
         "AgentBuilder" => Some(BuiltinMcpKind::AgentBuilder),
         "AskUser" => Some(BuiltinMcpKind::AskUser),
         "RemoteConnectionController" => Some(BuiltinMcpKind::RemoteConnectionController),
-        "WebTools" => Some(BuiltinMcpKind::WebTools),
-        "BrowserTools" => Some(BuiltinMcpKind::BrowserTools),
         "MemorySkillReader" => Some(BuiltinMcpKind::MemorySkillReader),
         "MemoryCommandReader" => Some(BuiltinMcpKind::MemoryCommandReader),
         "MemoryPluginReader" => Some(BuiltinMcpKind::MemoryPluginReader),
@@ -298,8 +278,6 @@ pub fn builtin_kind_by_server_name(value: &str) -> Option<BuiltinMcpKind> {
         REMOTE_CONNECTION_CONTROLLER_SERVER_NAME => {
             Some(BuiltinMcpKind::RemoteConnectionController)
         }
-        WEB_TOOLS_SERVER_NAME => Some(BuiltinMcpKind::WebTools),
-        BROWSER_TOOLS_SERVER_NAME => Some(BuiltinMcpKind::BrowserTools),
         MEMORY_SKILL_READER_SERVER_NAME => Some(BuiltinMcpKind::MemorySkillReader),
         MEMORY_COMMAND_READER_SERVER_NAME => Some(BuiltinMcpKind::MemoryCommandReader),
         MEMORY_PLUGIN_READER_SERVER_NAME => Some(BuiltinMcpKind::MemoryPluginReader),
@@ -319,8 +297,6 @@ pub fn builtin_kind_by_config_id(value: &str) -> Option<BuiltinMcpKind> {
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
         ASK_USER_MCP_ID => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::RemoteConnectionController),
-        WEB_TOOLS_MCP_ID => Some(BuiltinMcpKind::WebTools),
-        BROWSER_TOOLS_MCP_ID => Some(BuiltinMcpKind::BrowserTools),
         _ => None,
     }
 }
@@ -337,8 +313,6 @@ pub fn builtin_kind_by_command(value: &str) -> Option<BuiltinMcpKind> {
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
         ASK_USER_COMMAND => Some(BuiltinMcpKind::AskUser),
         REMOTE_CONNECTION_CONTROLLER_COMMAND => Some(BuiltinMcpKind::RemoteConnectionController),
-        WEB_TOOLS_COMMAND => Some(BuiltinMcpKind::WebTools),
-        BROWSER_TOOLS_COMMAND => Some(BuiltinMcpKind::BrowserTools),
         _ => None,
     }
 }
@@ -352,8 +326,6 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
         BuiltinMcpKind::Notepad,
         BuiltinMcpKind::AgentBuilder,
         BuiltinMcpKind::AskUser,
-        BuiltinMcpKind::WebTools,
-        BuiltinMcpKind::BrowserTools,
     ]
 }
 
@@ -498,7 +470,6 @@ mod tests {
 
         let runtime = default_runtime_builtin_kinds();
         assert!(!runtime.contains(&BuiltinMcpKind::TaskManager));
-        assert!(runtime.contains(&BuiltinMcpKind::BrowserTools));
         assert!(!runtime.contains(&BuiltinMcpKind::AgentBuilder));
         assert!(!runtime.contains(&BuiltinMcpKind::ProjectManagement));
         assert!(!runtime.contains(&BuiltinMcpKind::MemorySkillReader));

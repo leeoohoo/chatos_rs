@@ -126,30 +126,6 @@ impl RoutingEngine {
                 "Notepad is owned by the cloud ChatOS user store",
                 allow_writes,
             ),
-            SystemMcpKey::BrowserTools
-                if context.workspace_provider == WorkspaceProviderKind::LocalConnector =>
-            {
-                local_connector_route(
-                    context,
-                    resource,
-                    allow_writes,
-                    "local project browser tools are routed through Local Connector",
-                )
-            }
-            SystemMcpKey::BrowserTools => available_route(
-                resource,
-                McpProviderKind::InternalService,
-                Some("chatos".to_string()),
-                "cloud browser tools are owned by the ChatOS Browser Runtime",
-                allow_writes,
-            ),
-            SystemMcpKey::WebTools => available_route(
-                resource,
-                McpProviderKind::Embedded,
-                Some("mcp-management-service".to_string()),
-                "capability uses the cloud embedded provider",
-                allow_writes,
-            ),
             SystemMcpKey::RemoteConnectionController => unavailable_route(
                 resource,
                 "remote connection controller has no registered management provider",

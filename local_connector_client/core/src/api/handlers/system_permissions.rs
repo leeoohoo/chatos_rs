@@ -6,7 +6,8 @@ use axum::Json;
 
 use crate::api::types::LocalApiError;
 use crate::system_permissions::{
-    open_system_permission_settings, system_permissions_response, SystemPermissionsResponse,
+    open_system_permission_settings, request_plugin_system_permission, system_permissions_response,
+    SystemPermissionsResponse,
 };
 use crate::LocalRuntime;
 
@@ -14,16 +15,26 @@ pub(crate) async fn local_system_permissions(
     State(runtime): State<LocalRuntime>,
 ) -> Result<Json<SystemPermissionsResponse>, LocalApiError> {
     let state = runtime.state.read().await;
-    Ok(Json(system_permissions_response(&state).await))
+    Ok(Json(
+        system_permissions_response(&state, &runtime.plugin_installer).await,
+    ))
 }
 
 pub(crate) async fn local_request_system_permission(
     State(runtime): State<LocalRuntime>,
     AxumPath(permission_id): AxumPath<String>,
 ) -> Result<Json<SystemPermissionsResponse>, LocalApiError> {
-    open_system_permission_settings(permission_id.as_str())
-        .await
-        .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    let plugin_doctors =
+        request_plugin_system_permission(&runtime.plugin_installer, permission_id.as_str())
+            .await
+            .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    if plugin_doctors == 0 {
+        open_system_permission_settings(permission_id.as_str())
+            .await
+            .map_err(|err| LocalApiError::bad_request(err.to_string()))?;
+    }
     let state = runtime.state.read().await;
-    Ok(Json(system_permissions_response(&state).await))
+    Ok(Json(
+        system_permissions_response(&state, &runtime.plugin_installer).await,
+    ))
 }

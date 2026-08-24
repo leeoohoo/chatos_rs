@@ -12,8 +12,13 @@ mod task_types;
 mod tool_catalog;
 
 pub use contracts::project_management as project_management_contract;
+pub(crate) use implementations::builtin::tool_registry;
 pub use implementations::builtin::{
-    agent_browser_binary_path, browser_interactive_approval_command,
+    agent_builder, ask_user, bundled_tools, code_maintainer, memory_readers, notepad,
+    remote_connection_controller, research_summary_view, terminal_controller,
+    terminal_controller_response,
+};
+pub use implementations::builtin::{
     build_builtin_tool_service_with_dependencies, build_shared_builtin_provider,
     build_shared_builtin_registry, build_shared_builtin_tool_service, builtin_tool_catalog,
     bundled_tool_path, coerce_process_identifier, configure_child_process_group,
@@ -24,9 +29,7 @@ pub use implementations::builtin::{
     terminate_child_process_tree, AgentBuilderOptions, AgentBuilderService, AgentBuilderSkill,
     AgentBuilderStore, AgentBuilderStoreRef, AskUserDecision, AskUserOptions, AskUserPromptPayload,
     AskUserResponseSubmission, AskUserService, AskUserStore, AskUserStoreRef,
-    AskUserStreamChunkCallback, BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService,
-    BrowserVisionAdapter, BrowserVisionAdapterRef, BrowserVisionFailure, BrowserVisionRequest,
-    BrowserVisionResponse, BuiltinToolServiceDependencies, CodeMaintainerHooks,
+    AskUserStreamChunkCallback, BuiltinToolServiceDependencies, CodeMaintainerHooks,
     CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
     MemoryCommandReaderOptions, MemoryCommandReaderService, MemoryFullPlugin, MemoryFullSkill,
     MemoryInlineSkill, MemoryPluginReaderOptions, MemoryPluginReaderService, MemoryReaderStore,
@@ -38,21 +41,11 @@ pub use implementations::builtin::{
     SharedBuiltinToolService, TerminalCommandPermissions, TerminalControllerContext,
     TerminalControllerOptions, TerminalControllerService, TerminalControllerStore,
     TerminalControllerStoreRef, TerminalProcessPollDetails, TerminalProcessSnapshot,
-    TerminalProcessWaitResponse, TerminalRecentLogsEntry, WebToolsOptions, WebToolsService,
-    AGENT_BROWSER_BIN_ENV, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT, CHATOS_BUNDLED_TOOLS_DIR_ENV,
-    CHATOS_BUNDLED_TOOLS_PATH_ENV, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS,
-    DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS, PROCESS_LIST_MAX_LIMIT,
-    PROCESS_POLL_MAX_LIMIT, PROCESS_WAIT_MAX_TIMEOUT_MS, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT,
-    RECENT_LOGS_MAX_TERMINAL_LIMIT,
-};
-pub use implementations::builtin::{
-    agent_builder, ask_user, browser_command_support, browser_runtime, browser_tools,
-    bundled_tools, code_maintainer, memory_readers, notepad, remote_connection_controller,
-    research_findings, research_output, research_payloads, research_summary, research_summary_view,
-    terminal_controller, terminal_controller_response, web_tools,
-};
-pub(crate) use implementations::builtin::{
-    browser_page_insights, browser_page_state_view, tool_registry,
+    TerminalProcessWaitResponse, TerminalRecentLogsEntry, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
+    CHATOS_BUNDLED_TOOLS_DIR_ENV, CHATOS_BUNDLED_TOOLS_PATH_ENV, DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_MAX_OUTPUT_CHARS, DEFAULT_MAX_READ_FILE_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
+    PROCESS_LIST_MAX_LIMIT, PROCESS_POLL_MAX_LIMIT, PROCESS_WAIT_MAX_TIMEOUT_MS,
+    RECENT_LOGS_MAX_PER_TERMINAL_LIMIT, RECENT_LOGS_MAX_TERMINAL_LIMIT,
 };
 pub use task_types::{
     TaskClosureDecision, TaskDraft, TaskOutcomeItem, TaskUpdatePatch, TASK_NOT_FOUND_ERR,

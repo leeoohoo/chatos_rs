@@ -254,14 +254,51 @@ impl AppStore {
             .delete_one(doc! { "id": id }, None)
             .await
             .map_err(|err| err.to_string())?;
+        self.bindings
+            .delete_many(
+                doc! { "resource_kind": RESOURCE_KIND_MCP, "resource_id": id },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         self.checks
-            .delete_one(
+            .delete_many(
                 doc! { "resource_kind": RESOURCE_KIND_MCP, "resource_id": id },
                 None,
             )
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    pub async fn remove_system_seed_mcps_except(
+        &self,
+        active_resource_ids: &[String],
+    ) -> Result<u64, String> {
+        if active_resource_ids.is_empty() {
+            return Err("refusing to reconcile system MCP seeds with an empty catalog".to_string());
+        }
+        let retired_ids = self
+            .mcps
+            .find(
+                doc! {
+                    "source_kind": SOURCE_KIND_SYSTEM_SEED,
+                    "id": { "$nin": active_resource_ids },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect::<Vec<McpRecord>>()
+            .await
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        for resource_id in &retired_ids {
+            self.delete_mcp(resource_id).await?;
+        }
+        Ok(retired_ids.len() as u64)
     }
 
     pub async fn list_skills(

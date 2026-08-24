@@ -6,8 +6,7 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::{
-    is_chatos_callback_agent, parse_system_agent_key, uses_chatos_browser_callback,
-    uses_chatos_notepad_callback,
+    is_chatos_callback_agent, parse_system_agent_key, uses_chatos_notepad_callback,
 };
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_service::{
@@ -24,16 +23,13 @@ use crate::api::internal_audit::{
 };
 use crate::config::Config;
 use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
-use crate::services::shared_cloud_browser_runtime::CloudBrowserRuntimeBinding;
 use crate::services::{chatos_agents, chatos_sessions};
 
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 const CHATOS_TOKEN_AUDIENCE: &str = "chatos";
 const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
-const CLOUD_BROWSER_SESSION_CLOSE_METHOD: &str = "browser/session/close";
 const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
-mod browser;
 mod builtins;
 mod validation;
 use validation::*;
@@ -51,10 +47,6 @@ pub fn router() -> Router {
         .route(
             "/internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}",
             post(mcp_management_ask_user_prompt),
-        )
-        .route(
-            "/internal/mcp-management/mcp/browser_tools/sessions/{session_id}/close",
-            post(browser::close_bound_cloud_browser_session),
         )
 }
 
@@ -162,14 +154,11 @@ async fn dispatch_mcp_management_request(
         Ok(system_key) => system_key,
         Err(message) => return jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message),
     };
-    if system_key == SystemMcpKey::BrowserTools && request.method == METHOD_TOOLS_LIST {
-        return browser::dispatch_bound_browser_tools_list(request, &binding).await;
-    }
     if request.method != METHOD_TOOLS_CALL {
         return jsonrpc_error(
             id,
             MCP_ERROR_METHOD_NOT_FOUND,
-            "ChatOS internal MCP Provider only accepts tools/call, plus tools/list for Browser Tools",
+            "ChatOS internal MCP Provider only accepts tools/call",
         );
     }
     match system_key {
@@ -177,9 +166,6 @@ async fn dispatch_mcp_management_request(
             builtins::dispatch_bound_agent_builder(request, &binding).await
         }
         SystemMcpKey::AskUser => builtins::dispatch_bound_ask_user(request, &binding).await,
-        SystemMcpKey::BrowserTools => {
-            browser::dispatch_bound_browser_tools(request, &binding).await
-        }
         SystemMcpKey::Notepad => builtins::dispatch_bound_notepad(request, &binding).await,
         SystemMcpKey::MemorySkillReader
         | SystemMcpKey::MemoryCommandReader
@@ -297,10 +283,6 @@ fn message_matches_turn(message: &crate::models::message::Message, turn_id: &str
 
 fn is_chatos_agent(agent_key: SystemAgentKey) -> bool {
     is_chatos_callback_agent(agent_key)
-}
-
-fn is_browser_agent(agent_key: SystemAgentKey) -> bool {
-    uses_chatos_browser_callback(agent_key)
 }
 
 fn is_notepad_agent(agent_key: SystemAgentKey) -> bool {

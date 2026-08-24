@@ -104,16 +104,10 @@ process.stdin.on("data", (chunk) => input += chunk);
 process.stdin.on("end", () => process.stdout.write(JSON.parse(input).target_directory));
 ')"
 CORE_BIN="$TARGET_DIR/release/local_connector_client_core"
-CHROME_NATIVE_HOST_BIN="$TARGET_DIR/release/chatos_chrome_native_host"
 TOOLS_DIR="$ROOT_DIR/bundled-tools/$TOOLS_PLATFORM"
 
 if [[ ! -x "$CORE_BIN" ]]; then
   echo "Local Connector Core was not built: $CORE_BIN" >&2
-  exit 1
-fi
-
-if [[ ! -x "$CHROME_NATIVE_HOST_BIN" ]]; then
-  echo "ChatOS Chrome Native Host was not built: $CHROME_NATIVE_HOST_BIN" >&2
   exit 1
 fi
 
@@ -127,22 +121,14 @@ if [[ -e "$STAGING_DIR" ]]; then
 fi
 mkdir -p \
   "$STAGING_DIR/bundled-tools" \
-  "$STAGING_DIR/chrome-extension" \
   "$STAGING_DIR/sqlite-migrations"
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
-cp "$CHROME_NATIVE_HOST_BIN" "$STAGING_DIR/chatos_chrome_native_host"
-cp -R "$CLIENT_DIR/chrome_extension/." "$STAGING_DIR/chrome-extension/"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
-chmod +x \
-  "$STAGING_DIR/local_connector_client_core" \
-  "$STAGING_DIR/chatos_chrome_native_host"
+chmod +x "$STAGING_DIR/local_connector_client_core"
 bash "$CLIENT_DIR/prepare-app-icon-macos.sh" \
   "$APP_ICON_SOURCE" \
   "$STAGING_DIR/ChatOS.icns"
-"$CLIENT_DIR/prepare-browser-runtime-macos.sh" \
-  "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM" \
-  "$TOOLS_PLATFORM"
 
 ELECTRON_VERSION="$(node -p "require('$FRONTEND_DIR/node_modules/electron/package.json').version")"
 ELECTRON_DIST_DIR="$STAGING_DIR/electron-dist"
@@ -202,7 +188,7 @@ fi
     ./node_modules/.bin/electron-builder "${BUILD_ARGS[@]}"
   else
     CSC_IDENTITY_AUTO_DISCOVERY=false \
-      ./node_modules/.bin/electron-builder "${BUILD_ARGS[@]}"
+      ./node_modules/.bin/electron-builder "${BUILD_ARGS[@]}" --config.mac.identity=-
   fi
 )
 
@@ -231,8 +217,6 @@ VERIFY_ARGS=(
   "$RESOURCES_PATH"
   --electron-runtime-source
   "$FRONTEND_DIR/electron/core-runtime.cjs"
-  --chrome-extension-source
-  "$CLIENT_DIR/chrome_extension"
   --report
   "$VERIFICATION_REPORT"
 )
@@ -247,5 +231,5 @@ echo "[OK] Installed-package verification: $VERIFICATION_REPORT"
 echo "[OK] SHA-256: $(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
 
 if [[ "${CHATOS_MAC_SIGN:-0}" != "1" ]]; then
-  echo "[INFO] Package is unsigned. Set CHATOS_MAC_SIGN=1 after installing a valid Developer ID Application certificate."
+  echo "[INFO] Package uses an ad-hoc signature for local development. Set CHATOS_MAC_SIGN=1 after installing a valid Developer ID Application certificate."
 fi

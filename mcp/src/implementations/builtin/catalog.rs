@@ -10,11 +10,10 @@ use serde_json::Value;
 use crate::{
     build_shared_builtin_tool_service, AgentBuilderOptions, AgentBuilderService, AskUserDecision,
     AskUserOptions, AskUserPromptPayload, AskUserService, AskUserStore, AskUserStoreRef,
-    AskUserStreamChunkCallback, BrowserToolsOptions, BrowserToolsService,
-    MemoryCommandReaderOptions, MemoryCommandReaderService, MemoryFullPlugin, MemoryFullSkill,
-    MemoryPluginReaderOptions, MemoryPluginReaderService, MemoryReaderStore, MemoryReaderStoreRef,
-    MemoryRuntimeContext, MemorySkillReaderOptions, MemorySkillReaderService,
-    NotepadBuiltinService, NotepadOptions, NotepadStore, NotepadStoreRef,
+    AskUserStreamChunkCallback, MemoryCommandReaderOptions, MemoryCommandReaderService,
+    MemoryFullPlugin, MemoryFullSkill, MemoryPluginReaderOptions, MemoryPluginReaderService,
+    MemoryReaderStore, MemoryReaderStoreRef, MemoryRuntimeContext, MemorySkillReaderOptions,
+    MemorySkillReaderService, NotepadBuiltinService, NotepadOptions, NotepadStore, NotepadStoreRef,
     RemoteConnectionControllerContext, RemoteConnectionControllerOptions,
     RemoteConnectionControllerService, RemoteConnectionControllerStore,
     RemoteConnectionControllerStoreRef, TerminalControllerContext, TerminalControllerOptions,
@@ -34,9 +33,7 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
     let store = Arc::new(SchemaOnlyStore);
     let server_name = kind.server_name().to_string();
     match kind {
-        BuiltinMcpKind::CodeMaintainerRead
-        | BuiltinMcpKind::CodeMaintainerWrite
-        | BuiltinMcpKind::WebTools => {
+        BuiltinMcpKind::CodeMaintainerRead | BuiltinMcpKind::CodeMaintainerWrite => {
             let server = kind.default_server(".");
             build_shared_builtin_tool_service(&server)?
                 .map(|service| {
@@ -52,14 +49,6 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
                 })
                 .ok_or_else(|| format!("builtin tool service is unavailable: {}", kind.kind_name()))
         }
-        BuiltinMcpKind::BrowserTools => BrowserToolsService::new(BrowserToolsOptions {
-            server_name,
-            workspace_dir: std::env::current_dir()
-                .map_err(|err| format!("resolve schema catalog cwd failed: {err}"))?,
-            schema_catalog_only: true,
-            ..BrowserToolsOptions::default()
-        })
-        .map(|service| service.list_tools()),
         BuiltinMcpKind::TerminalController => {
             TerminalControllerService::new(TerminalControllerOptions {
                 root: std::env::current_dir()
@@ -398,8 +387,6 @@ mod tests {
             AgentBuilder,
             AskUser,
             RemoteConnectionController,
-            WebTools,
-            BrowserTools,
             MemorySkillReader,
             MemoryCommandReader,
             MemoryPluginReader,

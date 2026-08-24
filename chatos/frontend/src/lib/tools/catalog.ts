@@ -4,7 +4,6 @@
 import { getToolDisplayName } from './displayName';
 
 export type ToolFamily =
-  | 'browser'
   | 'web'
   | 'code'
   | 'process'
@@ -26,53 +25,6 @@ const CODE_TOOL_NAMES = new Set([
   'stage_edit_batch',
   'commit_edit_session',
   'abort_edit_session',
-]);
-
-const BROWSER_TOOL_NAMES = new Set([
-  'browser_tabs',
-  'browser_tab_new',
-  'browser_tab_switch',
-  'browser_tab_close',
-  'browser_navigate',
-  'browser_snapshot',
-  'browser_click',
-  'browser_type',
-  'browser_scroll',
-  'browser_back',
-  'browser_press',
-  'browser_upload',
-  'browser_download',
-  'browser_console',
-  'browser_network',
-  'browser_network_request',
-  'browser_har_start',
-  'browser_har_stop',
-  'browser_websocket_start',
-  'browser_websocket_frames',
-  'browser_websocket_stop',
-  'browser_route_add',
-  'browser_route_list',
-  'browser_route_remove',
-  'browser_route_clear',
-  'browser_cdp_command',
-  'browser_get_images',
-  'browser_inspect',
-  'browser_research',
-  'browser_vision',
-  'chrome_status',
-  'chrome_tabs',
-  'chrome_tab_snapshot',
-  'chrome_tab_navigate',
-  'chrome_tab_click',
-  'chrome_tab_type_text',
-  'chrome_tab_select',
-  'chrome_tab_scroll',
-  'chrome_tab_history',
-  'chrome_tab_activate',
-  'chrome_tab_upload',
-  'chrome_tab_download',
-  'chrome_tab_screenshot',
-  'chrome_tab_release',
 ]);
 
 const WEB_TOOL_NAMES = new Set([
@@ -138,8 +90,7 @@ const MEMORY_TOOL_NAMES = new Set([
 ]);
 
 const RAW_PREFIXES: Record<Exclude<ToolFamily, 'generic'>, string[]> = {
-  browser: ['builtin_browser_tools_', 'browser_tools_', 'browser_'],
-  web: ['builtin_web_tools_', 'web_tools_', 'web_'],
+  web: ['web_'],
   code: [
     'builtin_code_maintainer_read_',
     'builtin_code_maintainer_write_',
@@ -175,10 +126,6 @@ export const resolveToolFamily = (
 ): ToolFamily => {
   const displayName = explicitDisplayName ?? getToolDisplayName(rawName);
   const normalizedRaw = rawName.trim();
-
-  if (startsWithAny(normalizedRaw, RAW_PREFIXES.browser) || BROWSER_TOOL_NAMES.has(displayName)) {
-    return 'browser';
-  }
 
   if (startsWithAny(normalizedRaw, RAW_PREFIXES.web) || WEB_TOOL_NAMES.has(displayName)) {
     return 'web';

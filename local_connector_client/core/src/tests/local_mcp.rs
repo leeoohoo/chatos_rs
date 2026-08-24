@@ -14,7 +14,7 @@ use crate::mcp::provider::{
     call_builtin_compatible_local_tool, local_mcp_builtin_compatible_tools,
 };
 use crate::mcp::service::handle_mcp_body;
-use crate::mcp::tools::{code_maintainer_structured_result, local_browser_tools_service_for_root};
+use crate::mcp::tools::code_maintainer_structured_result;
 use crate::terminal::controller::{
     local_terminal_controller_context_for_root, LocalConnectorTerminalControllerStore,
 };
@@ -29,7 +29,7 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
     let state = test_state_with_full_control_workspace(workspace);
     let request = request_with_cwd_and_builtin_kinds(
         "apps/web",
-        "CodeMaintainerRead,CodeMaintainerWrite,TerminalController,BrowserTools",
+        "CodeMaintainerRead,CodeMaintainerWrite,TerminalController",
     );
     let recorder = CommandHistoryRecorder {
         state_path: root.join("state.json"),
@@ -58,38 +58,6 @@ async fn exposes_builtin_compatible_tools_and_project_relative_args() {
     assert!(names.contains("process_kill"));
     assert!(!names.contains("local_fs_read"));
     assert!(!names.contains("local_terminal_exec"));
-    let browser_service = local_browser_tools_service_for_root(project.as_path(), &request, false)
-        .expect("browser service");
-    let browser_names = browser_service
-        .list_tools()
-        .into_iter()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_string))
-        .collect::<BTreeSet<_>>();
-    if browser_names.contains("browser_navigate") {
-        assert!(names.contains("browser_tabs"));
-        assert!(names.contains("browser_tab_new"));
-        assert!(names.contains("browser_tab_switch"));
-        assert!(names.contains("browser_tab_close"));
-        assert!(names.contains("browser_navigate"));
-        assert!(names.contains("browser_snapshot"));
-        assert!(names.contains("browser_inspect"));
-        assert!(names.contains("browser_upload"));
-        assert!(names.contains("browser_download"));
-        assert!(names.contains("browser_network"));
-        assert!(names.contains("browser_network_request"));
-        assert!(names.contains("browser_har_start"));
-        assert!(names.contains("browser_har_stop"));
-        assert!(names.contains("browser_websocket_start"));
-        assert!(names.contains("browser_websocket_frames"));
-        assert!(names.contains("browser_websocket_stop"));
-        assert!(names.contains("browser_route_add"));
-        assert!(names.contains("browser_route_list"));
-        assert!(names.contains("browser_route_remove"));
-        assert!(names.contains("browser_route_clear"));
-        assert!(!names.contains("browser_cdp_command"));
-        assert!(!names.contains("browser_vision"));
-    }
-
     let mut legacy_request =
         request_with_cwd_and_builtin_kinds("apps/web", "CodeMaintainerRead,CodeMaintainerWrite");
     legacy_request.body = json!({
@@ -619,39 +587,6 @@ async fn missing_explicit_tool_root_fails_instead_of_reporting_an_empty_workspac
         .to_ascii_lowercase()
         .contains("no such file"));
     fs::remove_dir_all(root.as_path()).expect("cleanup");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn full_browser_cdp_tool_tracks_the_device_runtime_setting() {
-    let root = temp_test_dir("browser-full-cdp-setting");
-    let workspace = test_workspace(root.as_path());
-    let mut state = test_state_with_full_control_workspace(workspace);
-    let request = request_with_cwd_and_builtin_kinds(".", "BrowserTools");
-
-    let disabled = local_mcp_builtin_compatible_tools(&request, &state).expect("list tools");
-    let disabled_names = disabled
-        .iter()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-        .collect::<BTreeSet<_>>();
-    if !disabled_names.contains("browser_navigate") {
-        return;
-    }
-    assert!(!disabled_names.contains("browser_cdp_command"));
-
-    state.runtime_settings.browser_full_cdp_access_enabled = true;
-    let enabled = local_mcp_builtin_compatible_tools(&request, &state).expect("list enabled tools");
-    let enabled_names = enabled
-        .iter()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-        .collect::<BTreeSet<_>>();
-    assert!(enabled_names.contains("browser_cdp_command"));
-
-    state.runtime_settings.browser_full_cdp_access_enabled = false;
-    let disabled_again =
-        local_mcp_builtin_compatible_tools(&request, &state).expect("list disabled tools again");
-    assert!(!disabled_again
-        .iter()
-        .any(|tool| { tool.get("name").and_then(Value::as_str) == Some("browser_cdp_command") }));
 }
 
 #[tokio::test(flavor = "multi_thread")]

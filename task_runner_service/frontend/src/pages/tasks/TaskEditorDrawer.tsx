@@ -14,6 +14,7 @@ import {
   Select,
   Space,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 
@@ -23,6 +24,7 @@ import {
   scheduleModeDescriptionKeys,
   scheduleModeLabelKeys,
   taskProfileColorMap,
+  taskPluginDisplay,
   taskProfileLabel,
   taskStatusValues,
   type TaskFormValues,
@@ -159,25 +161,42 @@ export function TaskEditorDrawer({
             <Descriptions.Item label={t('tasks.detail.plugins')}>
               {editingTask.plugin_config.selected_plugins.length ? (
                 <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                  {editingTask.plugin_config.selected_plugins.map((plugin) => (
-                    <Space
-                      key={plugin.plugin_id}
-                      direction="vertical"
-                      size={0}
-                      style={{ width: '100%' }}
-                    >
-                      <Tag color="purple">{plugin.plugin_id}</Tag>
-                      {plugin.selected_command_ids.length ? (
-                        <Typography.Text type="secondary">
-                          {t('tasks.detail.pluginCommandList', {
-                            commands: plugin.selected_command_ids.map((commandId) => (
-                              `/${commandId}`
-                            )).join(', '),
-                          })}
-                        </Typography.Text>
-                      ) : null}
-                    </Space>
-                  ))}
+                  {editingTask.plugin_config.selected_plugins.map((plugin) => {
+                    const display = taskPluginDisplay(editingTask, plugin.plugin_id);
+                    return (
+                      <Space
+                        key={plugin.plugin_id}
+                        direction="vertical"
+                        size={0}
+                        style={{ width: '100%' }}
+                      >
+                        <Tooltip
+                          title={t('tasks.detail.pluginIdTooltip', { id: plugin.plugin_id })}
+                        >
+                          <Tag color="purple">
+                            {display.displayName}
+                            {display.version ? ` · v${display.version}` : ''}
+                          </Tag>
+                        </Tooltip>
+                        {display.pluginKey ? (
+                          <Typography.Text type="secondary">
+                            {t('tasks.detail.pluginIdentity', {
+                              pluginKey: display.pluginKey,
+                            })}
+                          </Typography.Text>
+                        ) : null}
+                        {plugin.selected_command_ids.length ? (
+                          <Typography.Text type="secondary">
+                            {t('tasks.detail.pluginCommandList', {
+                              commands: plugin.selected_command_ids.map((commandId) => (
+                                `/${commandId}`
+                              )).join(', '),
+                            })}
+                          </Typography.Text>
+                        ) : null}
+                      </Space>
+                    );
+                  })}
                 </Space>
               ) : t('tasks.detail.pluginsPendingRun')}
             </Descriptions.Item>

@@ -20,6 +20,7 @@ import {
 import {
   api,
   type LocalPluginOAuthConnection,
+  type PluginFileGrantSummary,
   type LocalPluginStoreItem,
   type LocalPluginTransactionRecord,
   type PluginRuntimeTelemetrySnapshot,
@@ -37,6 +38,7 @@ export function PluginDetailDrawer({
   onRollback,
   onUninstall,
   onAutoUpdateChange,
+  onPermissionsSaved,
   onOpenPermissions,
 }: {
   plugin: LocalPluginStoreItem;
@@ -48,6 +50,7 @@ export function PluginDetailDrawer({
   onRollback: (plugin: LocalPluginStoreItem) => void;
   onUninstall: (plugin: LocalPluginStoreItem) => void;
   onAutoUpdateChange: (plugin: LocalPluginStoreItem, enabled: boolean) => void;
+  onPermissionsSaved?: () => void;
   onOpenPermissions?: () => void;
 }) {
   const [tab, setTab] = React.useState<DetailTab>('overview');
@@ -56,6 +59,11 @@ export function PluginDetailDrawer({
   const [connectionError, setConnectionError] = React.useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = React.useState<string | null>(null);
   const [busyConnection, setBusyConnection] = React.useState<string | null>(null);
+  const [permissionGrants, setPermissionGrants] = React.useState<string[]>([]);
+  const [savingPermissions, setSavingPermissions] = React.useState(false);
+  const [permissionNotice, setPermissionNotice] = React.useState<string | null>(null);
+  const [fileGrants, setFileGrants] = React.useState<PluginFileGrantSummary[]>([]);
+  const [creatingFileGrants, setCreatingFileGrants] = React.useState(false);
   const activeVersion = plugin.installation?.active_version || null;
   const installed = activeVersion
     ? plugin.installation?.versions[activeVersion] || null
@@ -96,6 +104,44 @@ export function PluginDetailDrawer({
     setConnectionNotice(null);
     void loadConnections();
   }, [loadConnections, plugin.plugin_id]);
+
+  React.useEffect(() => {
+    setPermissionGrants(installed?.granted_permissions || []);
+    setPermissionNotice(null);
+  }, [installed?.version, installed?.granted_permissions.join('\n'), plugin.plugin_id]);
+
+  const savePermissionGrants = async () => {
+    if (!installed || savingPermissions) return;
+    setSavingPermissions(true);
+    setPermissionNotice(null);
+    try {
+      await api.updatePluginPermissionGrants(plugin.plugin_id, permissionGrants);
+      setPermissionNotice('权限授权已保存；已有运行会话已失效，下一次任务会固定新的授权快照。');
+      onPermissionsSaved?.();
+    } catch (err) {
+      setPermissionNotice(err instanceof Error ? err.message : '保存 Plugin 权限授权失败');
+    } finally {
+      setSavingPermissions(false);
+    }
+  };
+
+  const createFileGrants = async () => {
+    const session = activeRuntimeSessions[0];
+    if (!session || creatingFileGrants) return;
+    const paths = await window.chatosLocalConnector?.selectPluginFiles?.();
+    if (!paths?.length) return;
+    setCreatingFileGrants(true);
+    setPermissionNotice(null);
+    try {
+      const grants = await api.createPluginFileGrants(session.adapter_session_id, paths);
+      setFileGrants(grants);
+      setPermissionNotice('文件授权已创建。请把 file_grant_id 交给当前任务；授权十分钟后或会话结束时失效。');
+    } catch (err) {
+      setPermissionNotice(err instanceof Error ? err.message : '创建 Plugin 文件授权失败');
+    } finally {
+      setCreatingFileGrants(false);
+    }
+  };
 
   const beginConnection = async (componentKey: string) => {
     setBusyConnection(componentKey);
@@ -249,7 +295,9 @@ export function PluginDetailDrawer({
             <section className="pluginDetailStack">
               {permissions.length === 0 ? (
                 <div className="pluginNotice neutral"><ShieldCheck size={17} /><div><strong>没有已安装权限快照</strong><p>安装后会显示签名 Manifest 中的精确权限要求。</p></div></div>
-              ) : permissions.map((permission) => (
+              ) : permissions.map((permission) => {
+                const granted = permissionGrants.includes(permission.permission);
+                return (
                 <article className="pluginPermissionCard" key={`${permission.permission}:${permission.components?.join(',') || ''}`}>
                   <ShieldCheck size={17} />
                   <div>
@@ -257,12 +305,41 @@ export function PluginDetailDrawer({
                     <p>{permission.reason || 'Plugin Manifest permission requirement'}</p>
                     <span>{permission.required ? '必需权限' : '可选权限'}{permission.components?.length ? ` · ${permission.components.join('、')}` : ''}</span>
                   </div>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={granted}
+                      disabled={permission.required || savingPermissions}
+                      onChange={(event) => setPermissionGrants((current) => event.target.checked
+                        ? Array.from(new Set([...current, permission.permission])).sort()
+                        : current.filter((value) => value !== permission.permission))}
+                    />
+                    {granted ? '已授权' : '未授权'}
+                  </label>
                 </article>
-              ))}
+                );
+              })}
+              {permissionNotice ? <div className="pluginNotice neutral"><ShieldCheck size={17} /><div><p>{permissionNotice}</p></div></div> : null}
+              {permissions.length > 0 ? (
+                <button type="button" className="primaryButton compact" disabled={!installed || savingPermissions} onClick={() => void savePermissionGrants()}>
+                  {savingPermissions ? '正在保存' : '保存 Plugin 权限'}
+                </button>
+              ) : null}
               {installed?.inventory.auth_component_keys.length ? (
                 <div className="pluginNotice warning"><KeyRound size={17} /><div><strong>需要账号连接</strong><p>{installed.inventory.auth_component_keys.join('、')}</p></div></div>
               ) : null}
-              {permissions.length > 0 ? <button type="button" className="ghostButton compact" onClick={onOpenPermissions}>打开系统权限</button> : null}
+              {permissions.length > 0 && onOpenPermissions ? <button type="button" className="ghostButton compact" onClick={onOpenPermissions}>打开系统权限</button> : null}
+              {activeRuntimeSessions.length > 0 ? (
+                <button type="button" className="ghostButton compact" disabled={creatingFileGrants} onClick={() => void createFileGrants()}>
+                  {creatingFileGrants ? '正在创建文件授权' : '为当前运行选择文件'}
+                </button>
+              ) : null}
+              {fileGrants.map((grant) => (
+                <article className="pluginPermissionCard" key={grant.file_grant_id}>
+                  <KeyRound size={17} />
+                  <div><h4>{grant.display_name}</h4><p>{grant.file_grant_id}</p><span>{grant.size} bytes · {grant.sha256.slice(0, 12)}…</span></div>
+                </article>
+              ))}
             </section>
           ) : null}
 

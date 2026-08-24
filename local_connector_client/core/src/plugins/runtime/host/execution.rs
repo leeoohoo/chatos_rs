@@ -300,6 +300,7 @@ impl PluginRuntimeHost {
                     .as_ref()
                     .context("prepared Plugin MCP session is unavailable")
                     .map_err(internal_error)?;
+                self.validate_mcp_workspace_binding(session, mcp).await?;
                 mcp.validate_active()
                     .map_err(|error| (409, error.to_string()))?;
                 let health = mcp.check_health().await.map_err(internal_error)?;
@@ -322,12 +323,12 @@ impl PluginRuntimeHost {
             {
                 let tool_name = required_body_text(&request.body, "tool_name")?;
                 let invocation_id = required_body_text(&request.body, "invocation_id")?;
-                let arguments = request
+                let requested_arguments = request
                     .body
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                if !arguments.is_object() {
+                if !requested_arguments.is_object() {
                     return Err((
                         400,
                         "Plugin MCP tool arguments must be an object".to_string(),
@@ -344,9 +345,123 @@ impl PluginRuntimeHost {
                         format!("Plugin MCP tool was not published during prepare: {tool_name}"),
                     ));
                 }
+                let arguments = mcp
+                    .apply_host_argument_defaults(tool_name.as_str(), requested_arguments)
+                    .map_err(|error| (409, error.to_string()))?;
+                self.validate_mcp_workspace_binding(session, mcp).await?;
                 mcp.validate_active()
                     .map_err(|error| (409, error.to_string()))?;
-                let result = mcp
+                let policy = mcp
+                    .tool_policy_for_call(tool_name.as_str(), &arguments)
+                    .map_err(|error| (409, error.to_string()))?;
+                if policy.approval_mode == "per_call" {
+                    let arguments_sha256 = hex::encode(Sha256::digest(
+                        serde_json::to_vec(&arguments)
+                            .map_err(|error| internal_error(error.into()))?,
+                    ));
+                    self.load_exact_session(request, adapter_session_id)?;
+                    let state = self.state_snapshot().await?;
+                    let approval = self
+                        .approval_service()?
+                        .approve_interactive(CommandApprovalRequest {
+                            request_id: format!(
+                                "{}:plugin-mcp:{}",
+                                request.request_id, invocation_id
+                            ),
+                            project_key: approval_project_key_for_relay_scope(&state, request),
+                            command: "plugin-mcp-tool-call".to_string(),
+                            args: vec![
+                                session.plugin_id.clone(),
+                                session.release_id.clone(),
+                                session.component_key.clone(),
+                                tool_name.clone(),
+                                invocation_id.clone(),
+                                arguments_sha256.clone(),
+                            ],
+                            redact_arguments_in_history: false,
+                            cwd: ".".to_string(),
+                            source: "plugin_mcp_tool_call".to_string(),
+                            requested_permissions: None,
+                            session_id: Some(adapter_session_id.to_string()),
+                            action_audit: Some(ApprovalActionAudit {
+                                kind: "plugin_mcp_tool_call".to_string(),
+                                operation: tool_name.clone(),
+                                details: vec![
+                                    ApprovalActionAuditDetail {
+                                        key: "owner_user_id".to_string(),
+                                        value: session.owner_user_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "device_id".to_string(),
+                                        value: session.device_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "run_id".to_string(),
+                                        value: session.run_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "plugin_id".to_string(),
+                                        value: session.plugin_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "release_id".to_string(),
+                                        value: session.release_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "component_key".to_string(),
+                                        value: session.component_key.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "invocation_id".to_string(),
+                                        value: invocation_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "arguments_sha256".to_string(),
+                                        value: arguments_sha256,
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "risk_level".to_string(),
+                                        value: policy.risk_level.clone(),
+                                    },
+                                ],
+                                privacy: Some(
+                                    "Tool arguments and results are not persisted; approval history stores only the arguments SHA-256."
+                                        .to_string(),
+                                ),
+                                safety: Some(
+                                    "Approval authorizes exactly one invocation of this immutable Plugin MCP tool snapshot."
+                                        .to_string(),
+                                ),
+                                recovery: Some(
+                                    "Deny the request to prevent tools/call from being sent to the Plugin MCP."
+                                        .to_string(),
+                                ),
+                            }),
+                        })
+                        .await
+                        .map_err(internal_error)?;
+                    if let ApprovalDecision::Denied { reason, .. } = approval {
+                        return Err((
+                            403,
+                            format!("Plugin MCP tool call was not approved: {reason}"),
+                        ));
+                    }
+                    self.load_exact_session(request, adapter_session_id)?;
+                    self.validate_mcp_workspace_binding(session, mcp).await?;
+                    mcp.validate_active()
+                        .map_err(|error| (409, error.to_string()))?;
+                    if mcp
+                        .tool_policy_for_call(tool_name.as_str(), &arguments)
+                        .map_err(|error| (409, error.to_string()))?
+                        != policy
+                    {
+                        return Err((
+                            409,
+                            "Plugin MCP tool policy changed while awaiting approval".to_string(),
+                        ));
+                    }
+                }
+                let mut result = mcp
                     .call_tool(
                         invocation_id.as_str(),
                         tool_name.as_str(),
@@ -359,6 +474,13 @@ impl PluginRuntimeHost {
                     )
                     .await
                     .map_err(|error| (502, error.to_string()))?;
+                self.register_mcp_artifacts(
+                    session,
+                    adapter_session_id,
+                    tool_name.as_str(),
+                    &mut result,
+                )
+                .map_err(|error| (409, error.to_string()))?;
                 let health = mcp.health_snapshot().map_err(internal_error)?;
                 Ok(json!({
                     "plugin_id": session.plugin_id,

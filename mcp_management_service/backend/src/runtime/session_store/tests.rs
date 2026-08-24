@@ -104,7 +104,10 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
                 adapter_session_id: "adapter-private-1".to_string(),
                 operation: "mcp_tools_call".to_string(),
                 session_sha256: "d".repeat(64),
+                snapshot_sha256: "f".repeat(64),
                 tool_snapshot_sha256: "e".repeat(64),
+                server_instructions_sha256: "a".repeat(64),
+                server_instructions: Some("Observe again after every UI mutation.".to_string()),
                 tools: vec![serde_json::json!({
                     "name": "read_file",
                     "inputSchema": {"type": "object"}

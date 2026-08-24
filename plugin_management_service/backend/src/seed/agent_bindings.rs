@@ -382,8 +382,6 @@ pub(super) fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpK
         (TerminalController, 120),
         (ProjectManagement, 130),
         (Notepad, 140),
-        (WebTools, 160),
-        (BrowserTools, 170),
     ]
 }
 
@@ -394,8 +392,6 @@ pub(super) fn task_runner_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
         ProjectManagement,
         Notepad,
         AskUser,
-        WebTools,
-        BrowserTools,
         MemorySkillReader,
         MemoryCommandReader,
         MemoryPluginReader,

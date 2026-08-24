@@ -110,28 +110,35 @@ impl PreparedSingleModelStep {
                 let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)
                     .ok_or_else(|| format!("pending tool call {index} has no name"))?;
                 let success = result.get("status").and_then(Value::as_str) == Some("completed");
-                let structured_result = result.get("result").cloned();
-                let content = if success {
-                    structured_result.clone().unwrap_or(Value::Null).to_string()
+                if success {
+                    Ok(
+                        chatos_mcp_runtime::execution::external_tool_result_from_value(
+                            tool_call_id.to_string(),
+                            name.to_string(),
+                            Some(self.run_spec.run_id.clone()),
+                            result.get("result").unwrap_or(&Value::Null),
+                            None,
+                        ),
+                    )
                 } else {
-                    result
+                    let content = result
                         .get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("MCP tool call failed")
-                        .to_string()
-                };
-                Ok(chatos_mcp_runtime::ToolResult {
-                    tool_call_id: tool_call_id.to_string(),
-                    name: name.to_string(),
-                    success,
-                    is_error: !success,
-                    is_stream: false,
-                    conversation_turn_id: Some(self.run_spec.run_id.clone()),
-                    content,
-                    result: structured_result,
-                    fatal_error: false,
-                    transient_model_input: None,
-                })
+                        .to_string();
+                    Ok(chatos_mcp_runtime::ToolResult {
+                        tool_call_id: tool_call_id.to_string(),
+                        name: name.to_string(),
+                        success: false,
+                        is_error: true,
+                        is_stream: false,
+                        conversation_turn_id: Some(self.run_spec.run_id.clone()),
+                        content,
+                        result: None,
+                        fatal_error: false,
+                        transient_model_input: None,
+                    })
+                }
             })
             .collect::<Result<Vec<_>, String>>()?;
         let batch_identity = calls

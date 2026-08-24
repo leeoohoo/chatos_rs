@@ -1,8 +1,10 @@
-# Browser CDP MCP 开发、发布与安装规范
+# Browser CDP MCP 开发者接入与发布规范
 
-本文定义 Chatos Browser CDP MCP 的开发边界、参考实现、运行架构、权限模型、npm 交付格式、Marketplace 发布流程和端到端验收标准。目标产物必须能够像 Open Computer Use 一样，以签名 npm Release 发布到 Chatos Plugin Marketplace，由 Local Connector Client 下载、验证、安装并作为本地 stdio MCP 启动。
+本文面向 Browser MCP 开发者，定义 Browser CDP MCP 的实现边界、协议契约、权限声明、npm 交付格式、Marketplace 发布流程和端到端验收标准。目标产物必须能够像 Open Computer Use 一样，以签名 npm Release 发布到 Chatos Plugin Marketplace，由 Local Connector Client 下载、验证、安装并作为本地 stdio MCP 启动。
 
-本文是 Browser CDP Plugin 的实施基线。实现不得以 Chatos 内置 BrowserTools、直接 MCP 配置、运行时 `npx @latest`、ZIP 包或未安装 fallback 作为生产执行路径。
+本文只规定 Browser MCP 包自身需要实现的内容，不要求也不允许 Chatos、Task Runner 或 Local Connector 增加任何浏览器专用服务。实现不得以直接 MCP 配置、运行时 `npx @latest`、ZIP 包或未安装 fallback 作为生产执行路径。
+
+Chatos 平台侧的通用 Plugin MCP 选择、路由、权限、审批和本地执行机制见 [Plugin MCP 平台实现说明](./plugin-mcp-platform-implementation.zh-CN.md)。
 
 通用 Plugin 发布规则见 [第三方 Plugin 发布与接入手册](./third-party-plugin-publishing.zh-CN.md)，用户和运维流程见 [Plugin 用户与运维手册](./plugin-operations-user-guide.zh-CN.md)。
 
@@ -18,8 +20,8 @@ Browser CDP MCP 采用以下固定技术路线：
 - npm package 只包含 Node 跨平台 launcher 和已审核的原生二进制，不在安装后下载 Chrome 或其他代码。
 - 同时支持“受管隔离浏览器”和“用户现有 Chrome”两种后端。
 - 完整 CDP 通过一个通用 raw command 工具和有界事件订阅工具开放，不为每个 CDP method 创建一个 MCP tool。
-- 高风险能力由签名 Manifest permission、工具级 policy 和 Local Connector 本机审批共同强制执行。
-- 最终删除 Task Runner 对 `plugin.catalog.name == "browser"` 的内置 BrowserTools 注入逻辑。
+- 高风险能力由签名 Manifest permission、工具级 policy 和 Local Connector 的通用本机审批机制共同强制执行。
+- Browser MCP 自己负责 Chrome、CDP、Extension、Native Messaging、配对和浏览器权限；Host 不提供浏览器专用 API 或 Bridge。
 
 ## 2. 已克隆项目的参考优先级
 
@@ -110,7 +112,7 @@ mcps/rust-headless-chrome
 
 - 只借鉴状态机、消息路由和错误处理结构。
 - 在 Rust 中重新实现 transport trait、callback registry、session registry 和 target registry。
-- Extension transport 必须接入 Chatos Local Connector Browser Bridge，不允许浏览器扩展直连 Task Runner 或 MCP Management。
+- Extension transport、Native Messaging Host、loopback bridge 和配对协议必须全部由 Browser MCP 包自行提供，不允许浏览器扩展直连 Task Runner、MCP Management 或 Local Connector Service。
 
 禁止照搬的部分：
 
@@ -143,8 +145,8 @@ Task Runner
   -> npm bin/chatos-browser-cdp
   -> Rust Browser CDP MCP
        -> DirectCdpBackend -> managed Chrome CDP WebSocket
-       -> ExtensionCdpBackend -> Local Connector Browser Bridge
-                              -> Chrome Extension
+       -> ExtensionCdpBackend -> Browser MCP 自带 Bridge/Native Host
+                              -> Browser MCP Chrome Extension
                               -> chrome.debugger
 ```
 
@@ -154,9 +156,9 @@ Task Runner
 - Task Runner 只使用任务创建时固定的 plugin/release/component/tool snapshot。
 - MCP Management 只准备和路由调用，不直接连接 Chrome。
 - Local Connector Service 只做双向 Relay。
-- Local Connector Client 验证、安装、授权、审批并启动 stdio MCP。
-- Rust Browser MCP 管理 browser session、target、CDP session、事件队列和工具行为。
-- Chrome Extension 只能和本机 Local Connector Browser Bridge 通信。
+- Local Connector Client 通过通用 Plugin Runtime 验证、安装、授权、审批并启动 stdio MCP，不包含浏览器专用代码。
+- Rust Browser MCP 管理 browser session、target、CDP session、事件队列、Extension Bridge、Native Host 和工具行为。
+- Chrome Extension 只能和 Browser MCP 包提供的本机 Bridge 或 Native Host 通信。
 
 ## 4. Browser Backend 抽象
 
@@ -184,7 +186,7 @@ pub trait BrowserBackend: Send + Sync {
 实现：
 
 - `DirectCdpBackend`：封装 Chromiumoxide。
-- `ExtensionCdpBackend`：封装 Browser Bridge transport。
+- `ExtensionCdpBackend`：封装 Browser MCP 自带的 Extension/Native Messaging transport。
 
 上层 session、tool 和 policy 层不得依赖 Chromiumoxide 的具体 `Page` 或 Puppeteer 风格对象。
 
@@ -208,7 +210,7 @@ chatos-browser-cdp/
 │   ├── package.json
 │   ├── bin/chatos-browser-cdp
 │   ├── dist/
-│   ├── manifest/chatos-plugin.json
+│   ├── chatos.plugin.json
 │   ├── sbom.cdx.json
 │   ├── THIRD_PARTY_NOTICES.md
 │   ├── README.md
@@ -230,7 +232,7 @@ crate 职责：
 | `browser-cdp-mcp` | JSON-RPC、MCP lifecycle、tools/list、tools/call |
 | `browser-cdp-core` | browser/session/tab/CDP session/event queue/element ref |
 | `browser-cdp-direct` | Chromiumoxide direct CDP backend |
-| `browser-cdp-extension` | Browser Bridge 和 Chrome Extension backend |
+| `browser-cdp-extension` | Browser MCP 自带的 Bridge、Native Host 和 Chrome Extension backend |
 | `browser-cdp-policy` | URL policy、权限、审批摘要、敏感信息和日志脱敏 |
 | `browser-cdp-protocol` | 各 crate 和 Extension Bridge 共享的稳定数据结构 |
 
@@ -247,7 +249,7 @@ dist/linux/arm64/chatos-browser-cdp
 dist/linux/x64/chatos-browser-cdp
 dist/windows/arm64/chatos-browser-cdp.exe
 dist/windows/x64/chatos-browser-cdp.exe
-manifest/chatos-plugin.json
+chatos.plugin.json
 sbom.cdx.json
 THIRD_PARTY_NOTICES.md
 README.md
@@ -435,7 +437,7 @@ launcher 必须：
 }
 ```
 
-`minimumHostVersion` 必须等于首个完整支持本文第 13 节平台改造的 Local Connector 产品版本。若实际产品发版号不是 `2.1.0`，必须在发布前同时更新本文示例、Manifest 和发布测试，不能删除最低版本限制。
+`minimumHostVersion` 必须等于首个完整支持标准 MCP initialize、通用 Tool Policy、Plugin runtime 目录和本地 Plugin MCP 执行的 Local Connector 产品版本。若实际产品发版号不是 `2.1.0`，必须在发布前同时更新本文示例、Manifest 和发布测试，不能删除最低版本限制。
 
 ## 9. MCP 协议和进程生命周期
 
@@ -462,8 +464,6 @@ Chatos 当前 stdio runtime 使用一行一个 JSON-RPC 2.0 对象，不使用 `
 - `notifications/cancelled`
 - 兼容性 `shutdown` / `exit`
 - `SIGINT` / `SIGTERM` 清理
-
-在 Chatos stdio runtime 完成标准 initialize 改造前，MCP 还必须兼容“进程启动后直接收到 `tools/list`”。该兼容路径只用于 Host 迁移，不能改变 tools schema 或权限行为。
 
 取消和关闭：
 
@@ -633,6 +633,7 @@ Browser Plugin 不得通过工具名称硬编码接入审批。每个 MCP tool �
     "additionalProperties": false
   },
   "_meta": {
+    "chatos/policyVersion": 1,
     "chatos/requiredPermissions": ["browser.cdp.raw"],
     "chatos/riskLevel": "critical",
     "chatos/approvalMode": "per_call",
@@ -642,7 +643,7 @@ Browser Plugin 不得通过工具名称硬编码接入审批。每个 MCP tool �
 }
 ```
 
-Local Connector 必须：
+Browser MCP 必须提供完整 metadata；Chatos Host 会通过通用 Plugin Runtime：
 
 1. 在 prepare 阶段验证 tool metadata。
 2. 验证 tool 所需 permission 已存在于签名 Manifest 对应 component。
@@ -650,7 +651,7 @@ Local Connector 必须：
 4. 在 tools/call 前检查 permission snapshot。
 5. 根据 approval mode 发起本机审批。
 6. 审批日志只记录 tool、risk、CDP method 和 params hash。
-7. 拒绝旧 Host 无法理解的 policy version。
+7. 拒绝 Host 不支持的 policy version。
 
 审批建议：
 
@@ -664,96 +665,9 @@ Local Connector 必须：
 | raw CDP | 每次调用审批 |
 | Cookie、Storage、credential-like CDP | 高敏感提示并逐次审批 |
 
-## 13. Chatos 平台改造
+## 13. 两种浏览器模式
 
-以下平台改造完成前，Browser Plugin 不能被认定为生产可发布。
-
-### 13.1 删除 Browser 内置注入
-
-删除以下文件中基于 catalog name 的特殊逻辑：
-
-[Task Runner Plugin 应用逻辑](../../task_runner_service/backend/src/services/tool_runtime/plugin_management_policy/task_config_application.rs)
-
-当前逻辑：
-
-```text
-plugin.catalog.name == "browser"
--> inject BuiltinMcpKind::BrowserTools
-```
-
-目标逻辑：
-
-```text
-selected signed Plugin MCP component
--> pinned Plugin MCP tools
-```
-
-生产环境不保留“插件不可用时自动切回内置 BrowserTools”的 fallback。
-
-### 13.2 通用 Plugin Tool Policy
-
-修改 Local Connector Plugin MCP prepare/execute：
-
-- 保存并校验 `_meta.chatos/*`。
-- permission 必须属于 signed component inventory。
-- policy metadata 纳入 snapshot hash。
-- execute 前执行 permission 和 approval 检查。
-- 增加 tool-level timeout 上限。
-
-主要实现入口：
-
-- [Plugin MCP preparation](../../local_connector_client/core/src/plugins/runtime/mcp/preparation.rs)
-- [Plugin MCP runtime shell](../../local_connector_client/core/src/plugins/runtime/mcp/runtime_shell.rs)
-- [Plugin Runtime Host](../../local_connector_client/core/src/plugins/runtime/host.rs)
-
-### 13.3 标准 MCP initialize
-
-修改 `chatos_mcp_runtime` stdio session：
-
-- spawn 后执行一次 `initialize`。
-- 发送 `notifications/initialized`。
-- 之后才执行 `tools/list`/`tools/call`。
-- session cache 复用时不重复 initialize。
-- cancel/evict 时完成进程清理。
-
-当前实现入口：
-
-[stdio MCP runtime](../../crates/chatos_mcp_runtime/src/rpc/stdio.rs)
-
-### 13.4 Plugin data 和 artifact 目录
-
-Local Connector 为每个 installation/adapter session 创建并注入：
-
-```text
-CHATOS_PLUGIN_ROOT
-CHATOS_PLUGIN_DATA_DIR
-CHATOS_PLUGIN_CACHE_DIR
-CHATOS_PLUGIN_ARTIFACT_DIR
-```
-
-规则：
-
-- Plugin root 只读。
-- profile 和 cache 只能写 data/cache 目录。
-- artifact 目录按 adapter session 隔离。
-- session 关闭后清理未注册 artifact。
-- artifact 注册前验证路径、size、SHA-256 和 MIME。
-
-### 13.5 Browser Extension Bridge
-
-Local Connector 新增设备级 Browser Bridge：
-
-- 只监听 loopback 或使用 Native Messaging。
-- 校验固定 Chrome Extension ID。
-- 用户显式配对。
-- 每个 adapter session 颁发短期 token。
-- token 绑定 user/device/plugin ID/release ID/session ID。
-- token 不进入服务端任务 snapshot、Catalog、Manifest 或日志。
-- MCP 通过 `CHATOS_BROWSER_BRIDGE_ENDPOINT` 和临时 credential 获取连接。
-
-## 14. 两种浏览器模式
-
-### 14.1 Managed Chrome
+### 13.1 Managed Chrome
 
 `browser_session_open(mode="managed")`：
 
@@ -766,13 +680,13 @@ Local Connector 新增设备级 Browser Bridge：
 
 不得启用 Chromiumoxide fetcher 或 Rust Headless Chrome fetch feature 在运行时下载浏览器。
 
-### 14.2 用户现有 Chrome
+### 13.2 用户现有 Chrome
 
 `browser_session_open(mode="chrome_extension")`：
 
 ```text
 Chrome Extension
--> Local Connector Browser Bridge
+-> Browser MCP 自带 Bridge 或 Native Messaging Host
 -> ExtensionCdpBackend
 -> Browser CDP MCP tools
 ```
@@ -784,9 +698,16 @@ Extension 使用：
 - `chrome.debugger.onEvent`
 - `chrome.tabs`
 
+Browser MCP 开发者同时负责：
+
+- Extension 安装说明、Extension ID 校验和用户显式配对。
+- Native Messaging Host 或 loopback bridge 的安装、启动、认证和清理。
+- 配对 token 只保存在本机，并绑定当前 MCP session；不得进入任务 snapshot、Catalog、Manifest 或日志。
+- 浏览器扩展权限由 Extension 自己声明并由 Chrome 向用户展示，Local Connector 不代替 Extension 获取浏览器权限。
+
 Extension backend 应参考 Puppeteer `ExtensionTransport` 对 browser/target command 的兼容处理，但必须向 MCP 返回明确 capability 信息。Extension API 无法实现的 CDP method 必须返回 `unsupported_by_backend`，不能静默伪造成功。
 
-## 15. 发布流水线
+## 14. 发布流水线
 
 发布产物：
 
@@ -827,7 +748,7 @@ release-signature.json
 - 路径长度、深度满足 Local Connector 限制。
 - package bin 被 package file SHA-256 覆盖。
 
-## 16. 安装和运行预期
+## 15. 安装和运行预期
 
 安装目录由 Local Connector 分配：
 
@@ -838,7 +759,7 @@ release-signature.json
         ├── package.json
         ├── bin/chatos-browser-cdp
         ├── dist/...
-        ├── manifest/chatos-plugin.json
+        ├── chatos.plugin.json
         ├── sbom.cdx.json
         └── .chatos-installation.json
 ```
@@ -867,9 +788,9 @@ Task Runner
 -> 原路返回
 ```
 
-## 17. 自动化验收
+## 16. 自动化验收
 
-### 17.1 Marketplace 安装
+### 16.1 Marketplace 安装
 
 - 签名 Catalog/Release 可以安装。
 - SHA-512、SHA-256、package identity、bin 全部复验。
@@ -877,17 +798,16 @@ Task Runner
 - 撤销 Release 后新的 prepare/call 失败关闭。
 - `state.json` 和 `.chatos-installation.json` 与 Release 一致。
 
-### 17.2 MCP 合约
+### 16.2 MCP 合约
 
 - 六个平台 launcher 选择正确二进制。
 - stdout 无非 JSON-RPC 内容。
 - `initialize`、`tools/list`、`tools/call` 成功。
-- 兼容路径直接 `tools/list` 成功。
 - tool 顺序和 schema 重启后稳定。
 - tool catalog 小于 200 项和 512 KiB。
 - 取消、timeout、MCP crash 和 Host close 能正确清理。
 
-### 17.3 Managed browser
+### 16.3 Managed browser
 
 - 启动已安装 Chrome。
 - 打开本地测试站点。
@@ -898,7 +818,7 @@ Task Runner
 - raw `Runtime.evaluate`、`Page.*`、`Network.*` 等 CDP command 成功。
 - Chrome crash 后返回结构化错误并清理 session。
 
-### 17.4 Existing Chrome
+### 16.4 Existing Chrome
 
 - Extension 配对必须用户确认。
 - 只能访问用户明确 attach 的 Chrome/tab。
@@ -906,18 +826,18 @@ Task Runner
 - token 过期、Extension disabled/uninstalled 后立即失败。
 - 其他进程不能冒充 Extension 或复用旧 token。
 
-### 17.5 安全
+### 16.5 安全
 
 - 未授予 permission 时工具调用被 Local Connector 拒绝。
 - raw CDP 未审批时命令不发送。
 - 不能访问其他 adapter session 的 browser/tab/CDP session。
 - Cookie、Authorization、表单密码不进入日志和审计。
-- 不暴露 debugger endpoint、Browser Bridge token。
+- 不暴露 debugger endpoint、Extension 配对 token 或 Native Messaging credential。
 - upload 只能使用 file grant。
 - download/HAR 只能写 artifact 目录。
 - oversized command/event/result 被有界拒绝或截断。
 
-### 17.6 真实端到端链
+### 16.6 真实端到端链
 
 下列流程必须在测试环境全链路通过：
 
@@ -938,7 +858,7 @@ Marketplace 安装
 
 只有这条链完整通过，才能认定 Browser CDP MCP 可以像 Open Computer Use 一样发布、安装和运行。
 
-## 18. 明确不采用的方案
+## 17. 明确不采用的方案
 
 - 不直接把 Playwright MCP 的 Node package 重新打包上架。
 - 不把 Puppeteer 作为运行时依赖。
@@ -947,21 +867,21 @@ Marketplace 安装
 - 不在运行时下载浏览器或执行 `npx @latest`。
 - 不允许调用方传入 debugger WebSocket URL。
 - 不接受任意 absolute upload/download path。
-- 不通过插件名称硬编码注入内置 BrowserTools。
-- 不保留未安装 Plugin 时的内置 Browser fallback。
+- 不要求 Chatos、Task Runner 或 Local Connector 提供任何浏览器专用实现。
+- 不保留未安装 Plugin 时的浏览器 fallback。
 - 不把 raw CDP params/result、Cookie、Header 或页面内容写入普通日志和审计。
 
-## 19. Definition of Done
+## 18. Definition of Done
 
 Browser CDP Plugin 只有同时满足以下条件才算完成：
 
 - 独立 Rust stdio MCP 和六平台 npm launcher 完成。
 - DirectCdpBackend 和 ExtensionCdpBackend 通过同一 trait 工作。
 - 高层工具和完整 raw CDP 工具可用。
-- Tool Policy、permission 和本机审批由 Local Connector 强制执行。
-- Browser Extension Bridge 完成设备绑定和短期 token。
-- Task Runner 的 `browser` 名称硬编码已删除。
-- 最终生产路径不再使用内置 BrowserTools fallback。
+- Tool Policy、permission 和本机审批由 Local Connector 的通用 Plugin Runtime 强制执行。
+- Browser MCP 自带的 Extension Bridge 或 Native Messaging Host 完成设备绑定和短期 token。
+- Browser MCP 不依赖任何 Chatos 浏览器专用 API、服务、UI 或权限实现。
+- 未安装或不可用时直接失败，不存在浏览器 fallback。
 - npm `.tgz`、SBOM、hash、Release signature、Catalog signature 完整。
 - Marketplace 全新安装成功。
 - Task Runner 到 Chrome 的完整调用链通过自动化测试。

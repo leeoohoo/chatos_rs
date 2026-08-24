@@ -9,6 +9,7 @@ mod installer;
 mod journal;
 mod lifecycle;
 mod oauth_sync;
+mod platform_trust;
 mod recovery;
 mod runtime;
 mod state;
@@ -36,14 +37,14 @@ pub use journal::{
 pub(crate) use oauth_sync::oauth_status_message;
 pub use runtime::{
     LocalPluginOAuthConnection, PluginCommandLoader, PluginCommandSnapshot,
-    PluginDisabledHookReport, PluginHookDispatchResult, PluginHookExecutionRecord,
-    PluginHookLoader, PluginHookSetSnapshot, PluginMcpAdapter, PluginMcpHealthSnapshot,
-    PluginMcpSnapshot, PluginOAuthAppManifest, PluginOAuthAuthorizationStart, PluginOAuthBroker,
-    PluginRuntimeHost, PluginRuntimeSessionStatus, PluginRuntimeSessionTelemetry,
-    PluginRuntimeTelemetryEvent, PluginRuntimeTelemetryEventStatus, PluginRuntimeTelemetryPhase,
-    PluginRuntimeTelemetrySnapshot, PluginSkillLoader, PluginSkillLoaderLimits,
-    PluginSkillMetadata, PluginSkillResourceDescriptor, PluginSkillResourceKind,
-    PluginSkillSnapshot,
+    PluginDisabledHookReport, PluginFileGrantSummary, PluginHookDispatchResult,
+    PluginHookExecutionRecord, PluginHookLoader, PluginHookSetSnapshot, PluginMcpAdapter,
+    PluginMcpHealthSnapshot, PluginMcpSnapshot, PluginOAuthAppManifest,
+    PluginOAuthAuthorizationStart, PluginOAuthBroker, PluginRuntimeHost,
+    PluginRuntimeSessionStatus, PluginRuntimeSessionTelemetry, PluginRuntimeTelemetryEvent,
+    PluginRuntimeTelemetryEventStatus, PluginRuntimeTelemetryPhase, PluginRuntimeTelemetrySnapshot,
+    PluginSkillLoader, PluginSkillLoaderLimits, PluginSkillMetadata, PluginSkillResourceDescriptor,
+    PluginSkillResourceKind, PluginSkillSnapshot,
 };
 pub use state::{InstalledPluginVersion, LocalInstalledPlugin, LocalPluginRegistry};
 pub(crate) use status_sync::installation_status_message;

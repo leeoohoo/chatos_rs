@@ -339,10 +339,6 @@ const zhValueMap: Record<string, string> = {
 };
 
 const toolFamilyLabels: Record<ToolFamily, Record<UiLocale, string>> = {
-  browser: {
-    'zh-CN': '浏览器自动化',
-    'en-US': 'Browser',
-  },
   web: {
     'zh-CN': '网页研究',
     'en-US': 'Web research',
@@ -382,10 +378,6 @@ const toolFamilyLabels: Record<ToolFamily, Record<UiLocale, string>> = {
 };
 
 const toolFamilyDescriptions: Record<ToolFamily, Record<UiLocale, string>> = {
-  browser: {
-    'zh-CN': '浏览器自动化执行、页面观察与结果整理',
-    'en-US': 'Browser automation, page inspection, and result summaries',
-  },
   web: {
     'zh-CN': '网页搜索、提取与研究结果整理',
     'en-US': 'Web search, extraction, and research summaries',

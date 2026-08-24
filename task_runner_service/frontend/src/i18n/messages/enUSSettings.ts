@@ -335,7 +335,6 @@ export const enUSSettings: MessageDictionary = {
   'runs.events.title': 'Event trace',
   'runs.event.modelReply': 'Model reply',
   'runs.event.thinking': 'Thinking process',
-  'runs.event.browserSession': 'Browser session status',
   'runs.event.pluginRuntime': 'Plugin runtime status',
   'runs.event.fragmentSummary': '{count} fragments / {chars} chars',
   'runs.viewPayload': 'View payload',

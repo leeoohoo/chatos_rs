@@ -22,6 +22,10 @@ type ScrollSnapshot = {
   sessionId: string;
 };
 
+type HistoryPrependSnapshot = ScrollSnapshot & {
+  messageCount: number;
+};
+
 interface UseMessageListWindowingParams {
   sessionId?: string | null;
   visibleMessages: Message[];
@@ -51,6 +55,7 @@ export const useMessageListWindowing = ({
   const streamEndSettleRafRef = useRef<number | null>(null);
   const autoScrollRafRef = useRef<number | null>(null);
   const sessionBottomLockRafRef = useRef<number | null>(null);
+  const historyPrependSettleRafRef = useRef<number | null>(null);
   const prevIsStreamingRef = useRef<boolean>(isStreaming);
   const pendingSessionInitialScrollRef = useRef<boolean>(true);
   const pendingSessionBottomLockFramesRef = useRef<number>(0);
@@ -58,6 +63,7 @@ export const useMessageListWindowing = ({
   const prevVisibleCountRef = useRef(0);
   const latestAutoScrollKeyRef = useRef('');
   const scrollSnapshotRef = useRef<ScrollSnapshot | null>(null);
+  const historyPrependSnapshotRef = useRef<HistoryPrependSnapshot | null>(null);
   const lastAnchorSuspendKeyRef = useRef('');
   const lastWindowedAnchorKeyRef = useRef('');
 
@@ -108,6 +114,7 @@ export const useMessageListWindowing = ({
     prevVisibleCountRef.current = 0;
     latestAutoScrollKeyRef.current = '';
     scrollSnapshotRef.current = null;
+    historyPrependSnapshotRef.current = null;
     if (initialScrollRafRef.current !== null) {
       cancelAnimationFrame(initialScrollRafRef.current);
       initialScrollRafRef.current = null;
@@ -296,8 +303,33 @@ export const useMessageListWindowing = ({
     const firstMessageId = visibleMessages[0]?.id || '';
     const lastMessageId = visibleMessages[visibleMessages.length - 1]?.id || '';
     const previous = scrollSnapshotRef.current;
+    const historyPrepend = historyPrependSnapshotRef.current;
+    const historyChanged = Boolean(
+      historyPrepend
+      && historyPrepend.sessionId === (sessionId || '')
+      && (
+        historyPrepend.messageCount !== visibleMessages.length
+        || historyPrepend.firstMessageId !== firstMessageId
+        || historyPrepend.lastMessageId !== lastMessageId
+      )
+    );
 
     if (
+      historyPrepend
+      && historyChanged
+      && firstMessageId
+      && historyPrepend.firstMessageId
+    ) {
+      const previousFirstIndex = visibleMessages.findIndex(
+        (message) => message.id === historyPrepend.firstMessageId,
+      );
+      const sameTail = !historyPrepend.lastMessageId || historyPrepend.lastMessageId === lastMessageId;
+      if (previousFirstIndex > 0 && sameTail) {
+        const heightDelta = element.scrollHeight - historyPrepend.scrollHeight;
+        element.scrollTop = historyPrepend.scrollTop + Math.max(0, heightDelta);
+      }
+      historyPrependSnapshotRef.current = null;
+    } else if (
       previous
       && previous.sessionId === (sessionId || '')
       && !pendingSessionInitialScrollRef.current
@@ -443,6 +475,50 @@ export const useMessageListWindowing = ({
       lockBottom(frames);
     });
   }, [cancelPendingStreamEndScroll, scrollToBottom, autoScrollToLatest]);
+
+  const prepareForHistoryPrepend = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+    pendingSessionInitialScrollRef.current = false;
+    pendingSessionBottomLockFramesRef.current = 0;
+    historyPrependSnapshotRef.current = {
+      firstMessageId: visibleMessages[0]?.id || '',
+      lastMessageId: visibleMessages[visibleMessages.length - 1]?.id || '',
+      messageCount: visibleMessages.length,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+      sessionId: sessionId || '',
+    };
+    if (initialScrollRafRef.current !== null) {
+      cancelAnimationFrame(initialScrollRafRef.current);
+      initialScrollRafRef.current = null;
+    }
+    if (autoScrollRafRef.current !== null) {
+      cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = null;
+    }
+    if (sessionBottomLockRafRef.current !== null) {
+      cancelAnimationFrame(sessionBottomLockRafRef.current);
+      sessionBottomLockRafRef.current = null;
+    }
+    cancelPendingStreamEndScroll();
+    setAutoScroll(false);
+    setIsAtBottom(false);
+  }, [cancelPendingStreamEndScroll, sessionId, visibleMessages]);
+
+  const settleHistoryPrepend = useCallback(() => {
+    if (historyPrependSettleRafRef.current !== null) {
+      cancelAnimationFrame(historyPrependSettleRafRef.current);
+    }
+    historyPrependSettleRafRef.current = requestAnimationFrame(() => {
+      historyPrependSettleRafRef.current = requestAnimationFrame(() => {
+        historyPrependSettleRafRef.current = null;
+        historyPrependSnapshotRef.current = null;
+      });
+    });
+  }, []);
 
   useEffect(() => {
     const root = scrollRef.current;
@@ -607,6 +683,11 @@ export const useMessageListWindowing = ({
         cancelAnimationFrame(sessionBottomLockRafRef.current);
         sessionBottomLockRafRef.current = null;
       }
+      if (historyPrependSettleRafRef.current !== null) {
+        cancelAnimationFrame(historyPrependSettleRafRef.current);
+        historyPrependSettleRafRef.current = null;
+      }
+      historyPrependSnapshotRef.current = null;
       expandingWindowRef.current = false;
     };
   }, []);
@@ -620,6 +701,8 @@ export const useMessageListWindowing = ({
     lastVisibleIndex,
     isAtBottom,
     expandRenderedWindow,
+    prepareForHistoryPrepend,
+    settleHistoryPrepend,
     handleScroll,
     handleJumpToBottom,
   };

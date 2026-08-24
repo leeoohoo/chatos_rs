@@ -19,7 +19,7 @@ pub use command_loader::{PluginCommandLoader, PluginCommandSnapshot};
 pub use hook_loader::{
     PluginHookDispatchResult, PluginHookExecutionRecord, PluginHookLoader, PluginHookSetSnapshot,
 };
-pub use host::{PluginDisabledHookReport, PluginRuntimeHost};
+pub use host::{PluginDisabledHookReport, PluginFileGrantSummary, PluginRuntimeHost};
 pub use mcp_runtime::{PluginMcpAdapter, PluginMcpHealthSnapshot, PluginMcpSnapshot};
 pub use oauth_broker::{
     LocalPluginOAuthConnection, PluginOAuthAppManifest, PluginOAuthAuthorizationStart,

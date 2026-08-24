@@ -60,8 +60,6 @@ pub enum SystemMcpKey {
     AgentBuilder,
     AskUser,
     RemoteConnectionController,
-    WebTools,
-    BrowserTools,
     MemorySkillReader,
     MemoryCommandReader,
     MemoryPluginReader,
@@ -71,7 +69,7 @@ pub enum SystemMcpKey {
 }
 
 impl SystemMcpKey {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 14] = [
         Self::CodeMaintainerRead,
         Self::CodeMaintainerWrite,
         Self::TerminalController,
@@ -80,8 +78,6 @@ impl SystemMcpKey {
         Self::AgentBuilder,
         Self::AskUser,
         Self::RemoteConnectionController,
-        Self::WebTools,
-        Self::BrowserTools,
         Self::MemorySkillReader,
         Self::MemoryCommandReader,
         Self::MemoryPluginReader,
@@ -101,8 +97,6 @@ impl SystemMcpKey {
             Self::AgentBuilder => "agent_builder",
             Self::AskUser => "ask_user",
             Self::RemoteConnectionController => "remote_connection_controller",
-            Self::WebTools => "web_tools",
-            Self::BrowserTools => "browser_tools",
             Self::MemorySkillReader => "memory_skill_reader",
             Self::MemoryCommandReader => "memory_command_reader",
             Self::MemoryPluginReader => "memory_plugin_reader",

@@ -253,6 +253,14 @@ impl RunService {
             task.updated_at = now_rfc3339();
             self.store.save_task(task.clone()).await?;
         }
+        if !automatic {
+            if let Some(policy) = self.resolve_task_runner_policy_for_task(&task).await? {
+                if policy.refresh_task_plugin_selection_for_manual_retry(&mut task)? {
+                    task.updated_at = now_rfc3339();
+                    self.store.save_task(task.clone()).await?;
+                }
+            }
+        }
         self.ensure_project_execution_retry_configuration_changed(&run, &task)
             .await?;
 

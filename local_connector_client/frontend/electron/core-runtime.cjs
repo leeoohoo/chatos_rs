@@ -16,6 +16,7 @@ const USER_SHELL_PATH_PREFIX = '__CHATOS_PATH_BEGIN__';
 const USER_SHELL_PATH_SUFFIX = '__CHATOS_PATH_END__';
 const USER_SHELL_PATH_CACHE_VERSION = 1;
 const USER_SHELL_PATH_CACHE_FILE = 'user-shell-path-cache.json';
+const ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV = 'CHATOS_ALLOW_ADHOC_MACOS_PLUGIN_APPS';
 
 function existingPathDirectories(value, directoryExists = defaultDirectoryExists) {
   return String(value || '')
@@ -149,11 +150,49 @@ function coreRestartDelayMs(attempt) {
   );
 }
 
+function allowAdhocMacosPluginApps({
+  platform = process.platform,
+  env = process.env,
+  executablePath = process.execPath,
+  spawnSyncImpl = spawnSync,
+} = {}) {
+  const configured = String(env[ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV] || '').trim();
+  if (configured) {
+    return configured === '1';
+  }
+  if (platform !== 'darwin' || !path.isAbsolute(executablePath)) {
+    return false;
+  }
+  try {
+    const result = spawnSyncImpl(
+      '/usr/bin/codesign',
+      ['--display', '--verbose=4', executablePath],
+      {
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024,
+        timeout: 5_000,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    if (result.error || result.status !== 0) {
+      return false;
+    }
+    const diagnostic = `${String(result.stdout || '')}\n${String(result.stderr || '')}`;
+    return diagnostic
+      .split(/\r?\n/)
+      .some((line) => line.trim().toLowerCase() === 'signature=adhoc');
+  } catch (_error) {
+    return false;
+  }
+}
+
 function createCoreRuntime({
   app,
   desktopAuthToken,
   spawnImpl = spawn,
   discoverUserShellPathImpl = discoverUserShellPath,
+  allowAdhocMacosPluginAppsImpl = allowAdhocMacosPluginApps,
 }) {
   let coreProcess = null;
   let ipcEndpoint = null;
@@ -172,83 +211,6 @@ function createCoreRuntime({
       return packagedPath;
     }
     return path.join(__dirname, 'resources', ...segments);
-  }
-
-  function bundledToolsPlatformName() {
-    const os = process.platform === 'darwin'
-      ? 'macos'
-      : process.platform === 'win32'
-        ? 'windows'
-        : 'linux';
-    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-    return `${os}-${arch}`;
-  }
-
-  function chromeExtensionPath() {
-    const packaged = resourcePath('chrome-extension');
-    if (fs.existsSync(path.join(packaged, 'manifest.json'))) {
-      return packaged;
-    }
-    return path.join(__dirname, '..', '..', 'chrome_extension');
-  }
-
-  function chromeExtensionInstallPath() {
-    return path.join(app.getPath('home'), 'ChatOS Chrome Extension');
-  }
-
-  function prepareChromeExtensionInstallDirectory() {
-    const source = chromeExtensionPath();
-    if (!fs.existsSync(path.join(source, 'manifest.json'))) {
-      throw new Error(`Chrome extension source is missing manifest.json: ${source}`);
-    }
-
-    const destination = chromeExtensionInstallPath();
-    const homeDir = app.getPath('home');
-    const relativeDestination = path.relative(homeDir, destination);
-    if (
-      !relativeDestination
-      || relativeDestination.startsWith('..')
-      || path.isAbsolute(relativeDestination)
-    ) {
-      throw new Error(`Refusing to prepare Chrome extension outside the user home directory: ${destination}`);
-    }
-
-    const temporaryDestination = `${destination}.partial-${process.pid}`;
-    fs.rmSync(temporaryDestination, { recursive: true, force: true });
-    fs.rmSync(destination, { recursive: true, force: true });
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.cpSync(source, temporaryDestination, { recursive: true, dereference: true });
-    if (!fs.existsSync(path.join(temporaryDestination, 'manifest.json'))) {
-      fs.rmSync(temporaryDestination, { recursive: true, force: true });
-      throw new Error(`Prepared Chrome extension directory is missing manifest.json: ${temporaryDestination}`);
-    }
-    fs.renameSync(temporaryDestination, destination);
-    return destination;
-  }
-
-  function bundledBrowserRuntime() {
-    const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
-    const agentBrowser = path.join(
-      toolsDir,
-      process.platform === 'win32' ? 'agent-browser.exe' : 'agent-browser',
-    );
-    const browserExecutable = process.platform === 'darwin'
-      ? path.join(
-          toolsDir,
-          'browser',
-          'Google Chrome for Testing.app',
-          'Contents',
-          'MacOS',
-          'Google Chrome for Testing',
-        )
-      : process.platform === 'win32'
-        ? path.join(toolsDir, 'browser', 'chrome-win64', 'chrome.exe')
-        : path.join(toolsDir, 'browser', 'chrome-linux64', 'chrome');
-    return {
-      toolsDir,
-      agentBrowser,
-      browserExecutable,
-    };
   }
 
   function coreExecutablePath() {
@@ -270,7 +232,7 @@ function createCoreRuntime({
       userShellPath = readCachedUserShellPath(shellPathCache);
       coreExecutablePathSource = userShellPath.length > 0 ? 'cache' : 'fallback';
     }
-    const candidates = [bundledBrowserRuntime().toolsDir];
+    const candidates = [resourcePath('bundled-tools')];
     if (process.platform === 'darwin') {
       candidates.push(
         '/opt/homebrew/bin',
@@ -296,30 +258,24 @@ function createCoreRuntime({
     const coreName = process.platform === 'win32'
       ? 'local_connector_client_core.exe'
       : 'local_connector_client_core';
-    const chromeNativeHostName = process.platform === 'win32'
-      ? 'chatos_chrome_native_host.exe'
-      : 'chatos_chrome_native_host';
     const corePath = resourcePath(coreName);
-    const browserRuntime = bundledBrowserRuntime();
-    const browserStateDir = process.platform === 'win32'
-      ? path.join(app.getPath('userData'), 'browser-runtime')
-      : path.join('/tmp', `chatos-agent-browser-${process.getuid?.() ?? process.pid}`);
-    fs.mkdirSync(browserStateDir, { recursive: true, mode: 0o700 });
     const env = {
       ...process.env,
       PATH: coreExecutablePath(),
       CHATOS_BUNDLED_TOOLS_DIR: resourcePath('bundled-tools'),
-      CHATOS_CHROME_NATIVE_HOST_PATH: resourcePath(chromeNativeHostName),
-      CHATOS_CHROME_EXTENSION_DIR: chromeExtensionPath(),
       LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
+      LOCAL_CONNECTOR_PARENT_PID: String(process.pid),
       LOCAL_CONNECTOR_IPC_ENDPOINT: ipcEndpoint,
       LOCAL_CONNECTOR_ENABLE_TCP_API: '1',
       LOCAL_CONNECTOR_OPEN_UI: '0',
       LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
     };
-    env.AGENT_BROWSER_BIN = browserRuntime.agentBrowser;
-    env.AGENT_BROWSER_EXECUTABLE_PATH = browserRuntime.browserExecutable;
-    env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;
+    const adhocMacosPluginAppsAllowed = allowAdhocMacosPluginAppsImpl();
+    if (adhocMacosPluginAppsAllowed) {
+      env[ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV] = '1';
+    } else {
+      delete env[ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV];
+    }
 
     const coreLog = openCoreLog();
     appendCoreLog(
@@ -335,6 +291,7 @@ function createCoreRuntime({
         Number.isInteger(coreExecutablePathDiagnostic.exitCode)
           ? `shell_exit_code=${coreExecutablePathDiagnostic.exitCode}`
           : null,
+        `adhoc_plugin_apps=${adhocMacosPluginAppsAllowed ? 'enabled' : 'disabled'}`,
       ].filter(Boolean).join(' '),
     );
     try {
@@ -533,11 +490,8 @@ function createCoreRuntime({
 
   return {
     cleanupIpcEndpoint,
-    chromeExtensionPath,
-    chromeExtensionInstallPath,
     getIpcEndpoint,
     isRunning,
-    prepareChromeExtensionInstallDirectory,
     resourcePath,
     startCore,
     stopCoreProcessTree,
@@ -545,6 +499,7 @@ function createCoreRuntime({
 }
 
 module.exports = {
+  allowAdhocMacosPluginApps,
   coreRestartDelayMs,
   createCoreRuntime,
   discoverUserShellPath,

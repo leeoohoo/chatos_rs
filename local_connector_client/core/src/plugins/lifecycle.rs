@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
@@ -186,7 +186,7 @@ impl PluginInstaller {
         plugin_id: &str,
         marketplace_id: &str,
         plugin_name: &str,
-        installed_version: InstalledPluginVersion,
+        mut installed_version: InstalledPluginVersion,
         final_path: &Path,
     ) -> Result<PluginInstallOutcome> {
         let mut registry = self.registry()?;
@@ -211,6 +211,24 @@ impl PluginInstaller {
             bail!("local Plugin registry conflicts with the verified Release identity");
         }
         let previous = plugin.active_version.clone();
+        if let Some(previous_version) = previous
+            .as_deref()
+            .and_then(|version| plugin.versions.get(version))
+        {
+            let declared = installed_version
+                .inventory
+                .permissions
+                .iter()
+                .map(|requirement| requirement.permission.as_str())
+                .collect::<BTreeSet<_>>();
+            installed_version.granted_permissions.extend(
+                previous_version
+                    .granted_permissions
+                    .iter()
+                    .filter(|permission| declared.contains(permission.as_str()))
+                    .cloned(),
+            );
+        }
         plugin
             .versions
             .insert(installed_version.version.clone(), installed_version.clone());
@@ -225,6 +243,59 @@ impl PluginInstaller {
             plugin: plugin_snapshot,
             installed_version,
             installation_path: final_path.to_path_buf(),
+        })
+    }
+
+    pub fn update_permission_grants(
+        &self,
+        plugin_id: &str,
+        granted_permissions: BTreeSet<String>,
+    ) -> Result<ActivePluginInstallation> {
+        let _guard = self.operation_guard()?;
+        let mut registry = self.registry()?;
+        let plugin = registry
+            .plugins
+            .get_mut(plugin_id)
+            .context("Plugin is not installed")?;
+        let active_version = plugin
+            .active_version
+            .clone()
+            .context("Plugin has no active version")?;
+        let version = plugin
+            .versions
+            .get_mut(active_version.as_str())
+            .context("active Plugin version is missing from the registry")?;
+        let declared = version
+            .inventory
+            .permissions
+            .iter()
+            .map(|requirement| requirement.permission.as_str())
+            .collect::<BTreeSet<_>>();
+        if granted_permissions
+            .iter()
+            .any(|permission| !declared.contains(permission.as_str()))
+        {
+            bail!("Plugin permission grant contains an undeclared permission");
+        }
+        if version
+            .inventory
+            .permissions
+            .iter()
+            .filter(|requirement| requirement.required)
+            .any(|requirement| !granted_permissions.contains(requirement.permission.as_str()))
+        {
+            bail!("Plugin required permissions cannot be revoked while the Plugin is active");
+        }
+        version.granted_permissions = granted_permissions;
+        let snapshot = version.clone();
+        save_registry(self.plugin_root.as_path(), &registry)?;
+        let installation_path = self
+            .plugin_root
+            .join(snapshot.relative_installation_path.as_str());
+        Ok(ActivePluginInstallation {
+            plugin_id: plugin_id.to_string(),
+            version: snapshot,
+            installation_path,
         })
     }
 

@@ -35,7 +35,9 @@ pub(super) fn validate_prepare_response(
     }
     if prepared.adapter_session_id.trim().is_empty()
         || !is_lower_sha256(prepared.session_sha256.as_str())
+        || !is_lower_sha256(prepared.mcp.snapshot_sha256.as_str())
         || !is_lower_sha256(prepared.mcp.tool_snapshot_sha256.as_str())
+        || !is_lower_sha256(prepared.mcp.server_instructions_sha256.as_str())
         || prepared.expires_at <= chrono::Utc::now().timestamp()
         || prepared.expires_at < runtime_expires_at_unix
     {
@@ -47,6 +49,10 @@ pub(super) fn validate_prepare_response(
         prepared.mcp.tools.as_slice(),
         prepared.mcp.tool_snapshot_sha256.as_str(),
     )?;
+    validate_server_instructions(
+        prepared.mcp.server_instructions.as_deref(),
+        prepared.mcp.server_instructions_sha256.as_str(),
+    )?;
     if prepared.mcp.oauth_connection_id.as_ref().is_some_and(|id| {
         !immutable
             .auth_connection_ids
@@ -55,6 +61,34 @@ pub(super) fn validate_prepare_response(
     }) {
         return Err(ProviderCallError::invalid_response(
             "Plugin Local prepare selected an OAuth connection outside the immutable snapshot",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_server_instructions(
+    instructions: Option<&str>,
+    expected_sha256: &str,
+) -> Result<(), ProviderCallError> {
+    if instructions.is_some_and(|value| {
+        value.is_empty()
+            || value.trim() != value
+            || value.len() > super::MAX_PLUGIN_SERVER_INSTRUCTIONS_BYTES
+            || value.contains('\0')
+            || value.contains('\r')
+    }) {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin MCP server instructions are not normalized or exceed the byte limit",
+        ));
+    }
+    let encoded = serde_json::to_vec(&instructions).map_err(|error| {
+        ProviderCallError::invalid_response(format!(
+            "serialize Plugin MCP server instructions failed: {error}"
+        ))
+    })?;
+    if hex::encode(Sha256::digest(encoded)) != expected_sha256 {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin MCP server instructions hash is invalid",
         ));
     }
     Ok(())

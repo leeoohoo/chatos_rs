@@ -97,10 +97,10 @@ export function assertNoObsoleteCriticalAliases(resources, platform) {
     }
   }
   const unexpectedBinaries = platform.startsWith('macos-')
-    ? ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe']
+    ? ['local_connector_client_core.exe']
     : platform.startsWith('windows-')
-      ? ['local_connector_client_core', 'chatos_chrome_native_host']
-      : ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe'];
+      ? ['local_connector_client_core']
+      : ['local_connector_client_core.exe'];
   for (const fileName of unexpectedBinaries) {
     if (fs.existsSync(path.join(resources, fileName))) {
       throw new Error(`Installed package contains an unexpected critical executable: ${fileName}`);

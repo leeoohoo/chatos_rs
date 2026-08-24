@@ -59,7 +59,15 @@ fn to_text_and_structured_result_inner(
         .map(structured_result_payload)
         .cloned();
     if include_transient {
-        if let Some(items) = validated_model_input_images(result.get(MODEL_INPUT_FIELD)) {
+        let model_input = validated_model_input_images(result.get(MODEL_INPUT_FIELD))
+            .or_else(|| validated_mcp_content_images(result.get("content")))
+            .or_else(|| {
+                let payload = structured_result_payload(result);
+                (!std::ptr::eq(payload, result))
+                    .then(|| validated_mcp_content_images(payload.get("content")))
+                    .flatten()
+            });
+        if let Some(items) = model_input {
             let structured =
                 structured_result.get_or_insert_with(|| Value::Object(Default::default()));
             if let Some(map) = structured.as_object_mut() {
@@ -129,6 +137,40 @@ fn validated_model_input_images(value: Option<&Value>) -> Option<Vec<Value>> {
         }));
     }
     Some(images)
+}
+
+fn validated_mcp_content_images(value: Option<&Value>) -> Option<Vec<Value>> {
+    let values = value?.as_array()?;
+    let mut decoded_bytes = 0usize;
+    let mut images = Vec::new();
+    for value in values {
+        if value.get("type").and_then(Value::as_str) != Some("image") {
+            continue;
+        }
+        if images.len() >= MODEL_INPUT_MAX_IMAGES {
+            return None;
+        }
+        let mime_type = value
+            .get("mimeType")
+            .or_else(|| value.get("mime_type"))
+            .or_else(|| value.get("mime"))
+            .and_then(Value::as_str)?;
+        if !matches!(mime_type, "image/png" | "image/jpeg" | "image/webp") {
+            return None;
+        }
+        let encoded = value.get("data").and_then(Value::as_str)?;
+        let bytes = STANDARD.decode(encoded).ok()?;
+        decoded_bytes = decoded_bytes.checked_add(bytes.len())?;
+        if decoded_bytes > MODEL_INPUT_MAX_DECODED_BYTES {
+            return None;
+        }
+        images.push(serde_json::json!({
+            "type": "input_image",
+            "image_url": format!("data:{mime_type};base64,{encoded}"),
+            "detail": "high",
+        }));
+    }
+    (!images.is_empty()).then_some(images)
 }
 
 pub fn inject_agent_builder_args(args: Value, caller_model: Option<&str>) -> Value {
@@ -212,6 +254,33 @@ mod tests {
             .expect("structured result")
             .to_string()
             .contains("base64"));
+    }
+
+    #[test]
+    fn standard_mcp_image_content_becomes_transient_model_input() {
+        let payload = json!({
+            "content": [
+                {"type": "text", "text": "App=md.obsidian"},
+                {
+                    "type": "image",
+                    "data": "iVBORw0KGgo=",
+                    "mimeType": "image/png"
+                }
+            ],
+            "isError": false
+        });
+
+        let (text, mut structured) = to_text_and_structured_result_with_transient(&payload);
+        assert_eq!(text, "App=md.obsidian");
+        let transient = take_transient_model_input(&mut structured).expect("transient image");
+        assert_eq!(
+            transient.items()[0]["image_url"],
+            "data:image/png;base64,iVBORw0KGgo="
+        );
+        assert!(!structured
+            .unwrap_or(Value::Null)
+            .to_string()
+            .contains("iVBORw0KGgo="));
     }
 
     #[test]

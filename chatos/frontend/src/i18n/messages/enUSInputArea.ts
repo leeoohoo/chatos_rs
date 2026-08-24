@@ -118,7 +118,7 @@ export const enUSInputAreaMessages: MessageDictionary = {
   'inputArea.mcpPreset.coding.label': 'Coding',
   'inputArea.mcpPreset.coding.description': 'Code read/write + terminal + tasks, good for implementation and debugging',
   'inputArea.mcpPreset.web_research.label': 'Web research',
-  'inputArea.mcpPreset.web_research.description': 'Web search/extraction + browser automation + read-only code',
+  'inputArea.mcpPreset.web_research.description': 'Web search/extraction + read-only code',
   'inputArea.mcpPreset.remote_ops.label': 'Remote ops',
   'inputArea.mcpPreset.remote_ops.description': 'Remote connection + terminal + tasks, good for server troubleshooting',
   'inputArea.mcpPreset.minimal.label': 'Minimal',

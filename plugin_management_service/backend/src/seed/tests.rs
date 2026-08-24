@@ -16,8 +16,6 @@ fn task_runner_run_phase_defaults_cover_execution_capabilities() {
     assert!(kinds.contains(&BuiltinMcpKind::ProjectManagement));
     assert!(kinds.contains(&BuiltinMcpKind::Notepad));
     assert!(!kinds.contains(&BuiltinMcpKind::RemoteConnectionController));
-    assert!(kinds.contains(&BuiltinMcpKind::WebTools));
-    assert!(kinds.contains(&BuiltinMcpKind::BrowserTools));
     assert!(!kinds.contains(&BuiltinMcpKind::AgentBuilder));
     assert!(!kinds.contains(&BuiltinMcpKind::MemorySkillReader));
 }

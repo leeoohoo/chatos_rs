@@ -461,8 +461,6 @@ export const enUSMessages: Record<string, string> = {
   'builtin.AgentBuilder': 'Agent Builder',
   'builtin.AskUser': 'Ask User',
   'builtin.RemoteConnectionController': 'Remote Connection Controller',
-  'builtin.WebTools': 'Web Tools',
-  'builtin.BrowserTools': 'Browser Tools',
   'builtin.MemorySkillReader': 'Memory Skill Reader',
   'builtin.MemoryCommandReader': 'Memory Command Reader',
   'builtin.MemoryPluginReader': 'Memory Plugin Reader',

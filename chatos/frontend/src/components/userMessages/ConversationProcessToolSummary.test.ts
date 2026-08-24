@@ -43,42 +43,4 @@ describe('ConversationProcessToolSummary', () => {
     ), 'completed')).toBe('已读取远端文件 /srv/app/config.toml');
   });
 
-  it('covers known remote, browser, notepad and agent actions', () => {
-    expect(toolActionText(buildToolActionSummary(
-      'remote_connection_controller_test_connection',
-      { connection_name: '生产机' },
-    ), 'completed')).toBe('已测试远端连接 生产机');
-    expect(toolActionText(buildToolActionSummary(
-      'browser_tools_browser_press',
-      { key: 'Enter' },
-    ), 'completed')).toBe('已按下 Enter');
-    expect(toolActionText(buildToolActionSummary(
-      'browser_tools_browser_tab_switch',
-      { tab_id: 't2' },
-    ), 'completed')).toBe('已切换到 t2');
-    expect(toolActionText(buildToolActionSummary(
-      'chrome_tab_type_text',
-      { tab_id: 'ct8', target_id: 'cr0123456789abcdef-2', text: 'private text' },
-    ), 'completed')).toBe('已在 cr0123456789abcdef-2 输入内容');
-    expect(toolActionText(buildToolActionSummary(
-      'chrome_tab_upload',
-      { tab_id: 'ct8', target_id: 'cr0123456789abcdef-3', path: 'artifacts/report.pdf' },
-    ), 'completed')).toBe('已上传 artifacts/report.pdf');
-    expect(toolActionText(buildToolActionSummary(
-      'chrome_tab_download',
-      { tab_id: 'ct8', target_id: 'cr0123456789abcdef-5', path: 'downloads/report.pdf' },
-    ), 'completed')).toBe('已下载到 downloads/report.pdf');
-    expect(toolActionText(buildToolActionSummary(
-      'chrome_tab_select',
-      { tab_id: 'ct8', target_id: 'cr0123456789abcdef-4', option_label: '上海' },
-    ), 'completed')).toBe('已选择 上海');
-    expect(toolActionText(buildToolActionSummary(
-      'chrome_tab_history',
-      { tab_id: 'ct8', direction: 'back' },
-    ), 'completed')).toBe('已后退');
-    expect(toolActionText(buildToolActionSummary(
-      'notepad_create_folder',
-      { name: '调研' },
-    ), 'completed')).toBe('已创建笔记文件夹「调研」');
-  });
 });

@@ -6,7 +6,6 @@ import { normalizeSession } from '../../helpers/sessions';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
 import type { ChatStoreDraft } from '../../types';
 import {
-  deleteSessionMessagesCacheEntry,
   resetCurrentSessionViewState,
   syncCurrentProjectFromSession,
 } from '../sessionsUtils';
@@ -182,7 +181,6 @@ export function createSessionMutationActions({
           if (state.activePanel === 'chat' && state.currentSessionId === null) {
             state.activePanel = state.currentProjectId ? 'project' : 'chat';
           }
-          deleteSessionMessagesCacheEntry(state, sessionId);
         });
       } catch (error) {
         console.error('Failed to delete session:', error);
@@ -200,7 +198,6 @@ export function createSessionMutationActions({
       removeSessionCaches(client, trimmed);
       set((state: ChatStoreDraft) => {
         removeSessionStateLocally(state, trimmed);
-        deleteSessionMessagesCacheEntry(state, trimmed);
       });
     },
   };

@@ -96,6 +96,7 @@ pub(super) async fn sync_plugin_installation_internal(
         availability_status: payload.availability_status,
         dependency_status: payload.dependency_status,
         permission_status: payload.permission_status,
+        granted_permissions: payload.granted_permissions,
         auth_status: payload.auth_status,
         component_statuses: payload.component_statuses,
         active: payload.active,
@@ -173,6 +174,8 @@ fn normalize_installation_payload(
     payload.artifact_sha256 =
         normalize_sha256(payload.artifact_sha256.as_str(), "artifact_sha256")?;
     payload.platform = required_text(Some(payload.platform.as_str()), "platform")?;
+    payload.granted_permissions =
+        normalize_permission_grants(std::mem::take(&mut payload.granted_permissions))?;
     payload.previous_release_id = payload
         .previous_release_id
         .as_deref()
@@ -204,6 +207,40 @@ fn validate_installation_release(
             "Plugin installation version or artifact hash does not match release",
         ));
     }
+    let declared = release
+        .permissions
+        .iter()
+        .map(|requirement| requirement.permission.as_str())
+        .collect::<HashSet<_>>();
+    if payload
+        .granted_permissions
+        .iter()
+        .any(|permission| !declared.contains(permission.as_str()))
+    {
+        return Err(ApiError::bad_request(
+            "Plugin installation reported an undeclared permission grant",
+        ));
+    }
+    let required_satisfied = release
+        .permissions
+        .iter()
+        .filter(|requirement| requirement.required)
+        .all(|requirement| {
+            payload
+                .granted_permissions
+                .iter()
+                .any(|permission| permission == &requirement.permission)
+        });
+    let expected_permission_status = if required_satisfied {
+        PluginRequirementStatus::Satisfied
+    } else {
+        PluginRequirementStatus::Missing
+    };
+    if payload.permission_status != expected_permission_status {
+        return Err(ApiError::bad_request(
+            "Plugin installation permission status does not match its actual grants",
+        ));
+    }
     if !release.supported_platforms.is_empty()
         && !release
             .supported_platforms
@@ -220,6 +257,32 @@ fn validate_installation_release(
         ));
     }
     Ok(())
+}
+
+fn normalize_permission_grants(values: Vec<String>) -> Result<Vec<String>, ApiError> {
+    if values.len() > 256 {
+        return Err(ApiError::bad_request(
+            "granted_permissions contains too many items",
+        ));
+    }
+    let mut normalized_values = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .collect::<Vec<_>>();
+    if normalized_values.iter().any(|value| {
+        value.is_empty()
+            || value.len() > 256
+            || value
+                .bytes()
+                .any(|byte| !(byte.is_ascii_alphanumeric() || b"._:-".contains(&byte)))
+    }) {
+        return Err(ApiError::bad_request(
+            "granted_permissions contains an invalid permission",
+        ));
+    }
+    normalized_values.sort();
+    normalized_values.dedup();
+    Ok(normalized_values)
 }
 
 pub(super) fn platform_constraint_matches(constraint: &str, installed_platform: &str) -> bool {
@@ -303,6 +366,7 @@ mod tests {
             availability_status: PluginAvailabilityStatus::Ready,
             dependency_status: PluginRequirementStatus::Satisfied,
             permission_status: PluginRequirementStatus::Satisfied,
+            granted_permissions: Vec::new(),
             auth_status: PluginRequirementStatus::Satisfied,
             component_statuses: Vec::new(),
             active: false,

@@ -28,7 +28,10 @@ use uuid::Uuid;
 
 use super::artifact_store::{PluginArtifactStore, PluginUiArtifactGrant};
 use super::hook_loader::PluginHookWorkspaceWriteDecision;
-use super::mcp_runtime::{PluginMcpAdapter, PluginMcpInvocationCancelOutcome, PreparedPluginMcp};
+use super::mcp_runtime::{
+    plugin_mcp_workspace_root_sha256, PluginMcpAdapter, PluginMcpInvocationCancelOutcome,
+    PreparedPluginMcp,
+};
 use super::protocol::*;
 use super::telemetry::{
     sanitize_error, PluginRuntimeTelemetryIdentity, PluginRuntimeTelemetryPhase,
@@ -54,10 +57,13 @@ const AGENT_APPLY_OPERATION: &str = "agent_apply";
 
 mod artifact_ui;
 mod execution;
+mod file_grants;
+mod mcp_artifacts;
 mod plugin_lifecycle;
 mod prepare;
 mod support;
 
+pub use file_grants::PluginFileGrantSummary;
 use support::*;
 
 #[derive(Debug, Clone)]
@@ -72,6 +78,7 @@ pub struct PluginRuntimeHost {
     approval_state_path: Option<PathBuf>,
     sessions: Arc<Mutex<HashMap<String, PreparedPluginSession>>>,
     artifact_store: PluginArtifactStore,
+    mcp_artifacts: Arc<Mutex<HashMap<String, mcp_artifacts::RegisteredMcpArtifact>>>,
     disabled_plugins: Arc<Mutex<BTreeSet<String>>>,
     telemetry: Arc<Mutex<PluginRuntimeTelemetryState>>,
 }
@@ -134,6 +141,7 @@ impl PluginRuntimeHost {
             approval_state_path: None,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             artifact_store: PluginArtifactStore::default(),
+            mcp_artifacts: Arc::new(Mutex::new(HashMap::new())),
             disabled_plugins: Arc::new(Mutex::new(BTreeSet::new())),
             telemetry: Arc::new(Mutex::new(PluginRuntimeTelemetryState::default())),
         }
@@ -403,6 +411,7 @@ impl PluginRuntimeHost {
             if let Some(mcp) = &session.mcp {
                 mcp.cancel();
             }
+            self.remove_mcp_artifacts_for_session(adapter_session_id.as_str());
             let cancelled_approvals = cancel_pending_approvals_for_session(
                 adapter_session_id.as_str(),
                 "Plugin session was cancelled by the user or Task Runner",
@@ -486,6 +495,7 @@ impl PluginRuntimeHost {
             if let Some(mcp) = &session.mcp {
                 mcp.cancel();
             }
+            self.remove_mcp_artifacts_for_session(adapter_session_id.as_str());
             self.telemetry()
                 .record_expired(&session.telemetry_identity(), adapter_session_id.as_str());
         }
@@ -647,6 +657,42 @@ impl PluginRuntimeHost {
             )
         })?;
         Ok(state.read().await.clone())
+    }
+
+    async fn validate_mcp_workspace_binding(
+        &self,
+        session: &PreparedPluginSession,
+        mcp: &PreparedPluginMcp,
+    ) -> Result<(), (u16, String)> {
+        let expected = mcp.snapshot().workspace_snapshot_sha256.as_deref();
+        if expected.is_none() {
+            if session.permission_snapshot.contains("workspace.read") {
+                return Err((
+                    409,
+                    "Plugin MCP workspace permission is not bound to a prepared workspace"
+                        .to_string(),
+                ));
+            }
+            return Ok(());
+        }
+        let state = self.state_snapshot().await?;
+        let workspace = state
+            .workspace_by_id(session.workspace_id.as_str())
+            .ok_or_else(|| {
+                (
+                    409,
+                    "Plugin MCP workspace is not registered locally".to_string(),
+                )
+            })?;
+        let current_root = approved_workspace_root(workspace.absolute_root.as_path())?;
+        if plugin_mcp_workspace_root_sha256(current_root.as_path()) != expected.unwrap_or_default()
+        {
+            return Err((
+                409,
+                "Plugin MCP workspace registration changed after prepare".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn approval_service(&self) -> Result<CommandApprovalService, (u16, String)> {

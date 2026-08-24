@@ -31,7 +31,9 @@ use crate::error::ApiError;
 use crate::runtime::{RuntimeGrantClaims, RuntimeSessionSnapshot};
 use crate::state::AppState;
 
-use super::runtime_session_metadata::resolve_runtime_session_prompt_metadata;
+use super::runtime_session_metadata::{
+    append_plugin_mcp_server_instructions, resolve_runtime_session_prompt_metadata,
+};
 
 mod routing;
 use routing::*;
@@ -319,11 +321,15 @@ pub(super) async fn resolve_runtime_session(
             .map_err(ApiError::internal)?;
         let configured_mcp_count = route_response.routes.len();
         let exposed_tool_count = tool_result.tools.len();
-        let prompt_metadata = resolve_runtime_session_prompt_metadata(
+        let mut prompt_metadata = resolve_runtime_session_prompt_metadata(
             &capabilities,
             tool_result.tools.as_slice(),
             request.locale.as_deref(),
             request.task_profile.as_deref(),
+        );
+        prompt_metadata.provider_skills_prompt = append_plugin_mcp_server_instructions(
+            prompt_metadata.provider_skills_prompt,
+            &plugin_local_bindings,
         );
         let plugin_instruction_items =
             plugin_instruction_items(&plugin_local_tool_component_bindings);

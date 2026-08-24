@@ -13,6 +13,7 @@ const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
 const MCP_TOOL_CALL_OPERATION: &str = "mcp_tools_call";
 const MAX_PLUGIN_TOOLS: usize = 200;
 const MAX_PLUGIN_TOOL_SNAPSHOT_BYTES: usize = 512 * 1024;
+const MAX_PLUGIN_SERVER_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 
 mod init;
 #[path = "plugin_local/local_runtime.rs"]
@@ -56,8 +57,11 @@ struct PreparedPluginMcpSnapshot {
     artifact_sha256: String,
     component_key: String,
     oauth_connection_id: Option<String>,
+    server_instructions: Option<String>,
+    server_instructions_sha256: String,
     tools: Vec<Value>,
     tool_snapshot_sha256: String,
+    snapshot_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]

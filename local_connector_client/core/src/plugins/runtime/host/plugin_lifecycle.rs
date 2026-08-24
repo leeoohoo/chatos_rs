@@ -4,6 +4,10 @@
 use super::*;
 
 impl PluginRuntimeHost {
+    pub async fn invalidate_plugin_sessions(&self, plugin_id: &str) -> usize {
+        self.cancel_plugin_sessions(plugin_id).await
+    }
+
     pub async fn dispatch_plugin_disabled(&self, plugin_id: &str) -> PluginDisabledHookReport {
         let started = Instant::now();
         let event_id = format!("plugin-disabled-{}", Uuid::new_v4());
@@ -178,6 +182,7 @@ impl PluginRuntimeHost {
             if let Some(mcp) = &session.mcp {
                 mcp.cancel();
             }
+            self.remove_mcp_artifacts_for_session(adapter_session_id.as_str());
             cancel_pending_approvals_for_session(
                 adapter_session_id.as_str(),
                 "Plugin was disabled by the user",

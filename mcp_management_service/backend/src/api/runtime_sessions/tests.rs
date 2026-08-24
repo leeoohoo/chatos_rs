@@ -121,8 +121,7 @@ fn capabilities_for_scope_test() -> ResolvedAgentCapabilities {
         agent_enabled: true,
         mcps: vec![
             resolved_mcp("required-core", true),
-            resolved_mcp("builtin_browser_tools", false),
-            resolved_mcp("builtin_web_tools", false),
+            resolved_mcp("optional-tools", false),
         ],
         skills: Vec::new(),
         plugins: Vec::new(),
@@ -134,11 +133,8 @@ fn capabilities_for_scope_test() -> ResolvedAgentCapabilities {
 fn requested_mcp_scope_keeps_required_resources_and_only_selected_optionals() {
     let mut capabilities = capabilities_for_scope_test();
 
-    apply_requested_mcp_scope(
-        &mut capabilities,
-        Some(&["builtin_browser_tools".to_string()]),
-    )
-    .expect("selected browser scope");
+    apply_requested_mcp_scope(&mut capabilities, Some(&["optional-tools".to_string()]))
+        .expect("selected browser scope");
 
     assert_eq!(
         capabilities
@@ -146,7 +142,7 @@ fn requested_mcp_scope_keeps_required_resources_and_only_selected_optionals() {
             .iter()
             .map(|resolved| resolved.resource.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["required-core", "builtin_browser_tools"]
+        vec!["required-core", "optional-tools"]
     );
     assert!(capabilities
         .mcps

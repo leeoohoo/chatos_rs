@@ -35,6 +35,41 @@ export type RunTaskFormValues = {
   prompt_override?: string;
 };
 
+export type TaskPluginDisplay = {
+  displayName: string;
+  pluginKey?: string;
+  version?: string;
+  reason?: string;
+  hasSnapshot: boolean;
+};
+
+function humanizePluginKey(value: string): string {
+  const packageName = value.split('@')[0]?.trim() || value.trim();
+  const words = packageName.split(/[-_./]+/).filter(Boolean);
+  if (!words.length) {
+    return value;
+  }
+  return words
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+export function taskPluginDisplay(task: TaskRecord, pluginId: string): TaskPluginDisplay {
+  const snapshot = task.plugin_selection_audit?.plugins.find(
+    (candidate) => candidate.plugin_id === pluginId,
+  );
+  const displayName = snapshot?.display_name?.trim()
+    || (snapshot?.plugin_key ? humanizePluginKey(snapshot.plugin_key) : pluginId);
+
+  return {
+    displayName,
+    pluginKey: snapshot?.plugin_key,
+    version: snapshot?.version,
+    reason: snapshot?.reason?.trim() || undefined,
+    hasSnapshot: Boolean(snapshot),
+  };
+}
+
 export function buildEditTaskFormValues(task: TaskRecord): TaskFormValues {
   return {
     title: task.title,

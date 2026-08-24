@@ -386,6 +386,36 @@ pub(crate) fn tool_result_success(
     }
 }
 
+pub fn external_tool_result_from_value(
+    tool_call_id: String,
+    name: String,
+    conversation_turn_id: Option<String>,
+    value: &Value,
+    max_chars: Option<usize>,
+) -> ToolResult {
+    let (content, structured_result) = max_chars
+        .map(|limit| crate::text::to_text_and_structured_result_with_transient_limit(value, limit))
+        .unwrap_or_else(|| crate::text::to_text_and_structured_result_with_transient(value));
+    let mut result = tool_result_success(
+        tool_call_id,
+        name,
+        conversation_turn_id,
+        content,
+        structured_result,
+    );
+    let is_error = value
+        .get("isError")
+        .or_else(|| value.get("is_error"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if is_error {
+        result.success = false;
+        result.is_error = true;
+        result.transient_model_input = None;
+    }
+    result
+}
+
 pub(crate) fn tool_result_error(
     tool_call_id: String,
     name: String,

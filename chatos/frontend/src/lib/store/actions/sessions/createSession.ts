@@ -17,7 +17,6 @@ import type {
   SessionCreatePayload,
 } from '../../types';
 import {
-  deleteSessionMessagesCacheEntry,
   matchSessionContactProjectScope,
   normalizeProjectScopeId,
   syncCurrentProjectFromSession,
@@ -210,9 +209,6 @@ export function createSessionCreateActions({
           state.error = null;
         });
 
-        set((state: ChatStoreDraft) => {
-          deleteSessionMessagesCacheEntry(state, formattedSession.id);
-        });
         if (shouldActivateSession) {
           localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId}`, formattedSession.id);
           debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);

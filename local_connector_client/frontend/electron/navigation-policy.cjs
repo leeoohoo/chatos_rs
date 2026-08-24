@@ -3,7 +3,12 @@
 
 const { pathToFileURL } = require('node:url');
 
-const LOCAL_FRONTEND_VIEWS = new Set(['shell', 'settings', 'approval-overlay']);
+const LOCAL_FRONTEND_VIEWS = new Set([
+  'shell',
+  'settings',
+  'approval-overlay',
+  'visual-preview',
+]);
 
 function isAllowedLocalFrontendUrl(candidateUrl, indexPath) {
   try {

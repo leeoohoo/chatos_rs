@@ -23,6 +23,7 @@ use super::journal::{
     update_download_progress, LocalPluginStatusSnapshot, PluginRecoveryReport,
     PluginTransactionOperation, PluginTransactionRecord,
 };
+use super::platform_trust::verify_platform_package_trust;
 use super::recovery::recover_incomplete_transactions;
 use super::state::{
     load_registry, InstalledPluginVersion, LocalInstalledPlugin, LocalPluginRegistry,
@@ -436,6 +437,7 @@ impl PluginInstaller {
             self.limits,
         );
         let verified = verification?;
+        verify_platform_package_trust(verified.root.as_path(), &verified.package_file_sha256)?;
         let next_status = match operation {
             PluginTransactionOperation::Install => PluginInstallStatus::Installing,
             PluginTransactionOperation::Update => PluginInstallStatus::Updating,
@@ -456,6 +458,13 @@ impl PluginInstaller {
                 request.release.version
             );
         }
+        let granted_permissions = verified
+            .inventory
+            .permissions
+            .iter()
+            .filter(|requirement| requirement.required)
+            .map(|requirement| requirement.permission.clone())
+            .collect();
         let installed_version = InstalledPluginVersion {
             release_id: request.release.id.clone(),
             version: request.release.version.clone(),
@@ -468,6 +477,7 @@ impl PluginInstaller {
             installed_at: Utc::now().to_rfc3339(),
             package_file_sha256: verified.package_file_sha256,
             inventory: verified.inventory,
+            granted_permissions,
         };
         write_installation_metadata(verified.root.as_path(), &installed_version)?;
         if let Some(parent) = final_path.parent() {

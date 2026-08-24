@@ -99,8 +99,6 @@ describe('optimistic user turn state', () => {
       sessionMessagePaginationState: {
         session_1: { nextBefore: 'turn_old', loaded: true },
       },
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
       isLoading: false,
       isStreaming: false,
       streamingMessageId: null,
@@ -131,10 +129,7 @@ describe('optimistic user turn state', () => {
     setTaskRunnerAsyncUserMessageStatus(state, 'session_1', 'user_1', 'processing');
 
     expect(state.messages.map((message) => message.id)).toEqual(['user_1']);
-    expect(state.sessionMessagesCache.session_1?.messages.map((message) => message.id)).toEqual([
-      'user_1',
-    ]);
-    expect(state.sessionMessagesCache.session_1?.messages[0]?.metadata?.task_runner_async)
+    expect(state.messages[0]?.metadata?.task_runner_async)
       .toMatchObject({ overall_status: 'processing', source_user_message_id: 'user_1' });
     expect(state.sessions[0]?.messageCount).toBe(3);
     expect(state.currentSession?.messageCount).toBe(3);
@@ -155,8 +150,6 @@ describe('optimistic user turn state', () => {
       }],
       sessionChatState: {},
       sessionMessagePaginationState: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
       isLoading: false,
       isStreaming: false,
       streamingMessageId: null,
@@ -178,8 +171,5 @@ describe('optimistic user turn state', () => {
     });
 
     expect(state.messages.map((message) => message.id)).toEqual(['session_2_message']);
-    expect(state.sessionMessagesCache.session_1?.messages.map((message) => message.id)).toEqual([
-      'temp_user_1',
-    ]);
   });
 });

@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 
 use chatos_plugin_management_sdk::{
     normalize_plugin_relative_path, verify_plugin_release_signature, PluginInstallSource,
@@ -276,7 +277,7 @@ fn validate_install_source(
             ));
         }
     }
-    validate_https_url(release.artifact_ref.as_str(), "Plugin artifact_ref")?;
+    validate_artifact_url(release.artifact_ref.as_str(), "Plugin artifact_ref")?;
     let key = marketplace
         .trusted_signing_keys
         .iter()
@@ -318,16 +319,36 @@ fn is_direct_admin_registry_marketplace(marketplace: &PluginMarketplaceRecord) -
 }
 
 fn validate_https_url(value: &str, field: &str) -> Result<(), ApiError> {
+    validate_network_url(value, field, false)
+}
+
+fn validate_artifact_url(value: &str, field: &str) -> Result<(), ApiError> {
+    validate_network_url(value, field, true)
+}
+
+fn validate_network_url(
+    value: &str,
+    field: &str,
+    allow_loopback_http: bool,
+) -> Result<(), ApiError> {
     let url = reqwest::Url::parse(value)
         .map_err(|_| ApiError::conflict(format!("{field} is not a valid URL")))?;
-    if url.scheme() != "https"
+    let loopback_host = url.host_str().is_some_and(|host| {
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    });
+    let loopback_development_url = allow_loopback_http && url.scheme() == "http" && loopback_host;
+    if (url.scheme() != "https" && !loopback_development_url)
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
         || url.fragment().is_some()
     {
         return Err(ApiError::conflict(format!(
-            "{field} must be an HTTPS URL without credentials or fragments"
+            "{field} must be an HTTPS URL without credentials or fragments, except for an HTTP loopback development URL"
         )));
     }
     Ok(())
@@ -338,26 +359,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artifact_urls_must_be_plain_https_urls() {
-        assert!(validate_https_url(
+    fn artifact_urls_allow_http_only_for_loopback_development() {
+        assert!(validate_artifact_url(
             "https://registry.npmjs.org/demo/-/demo-1.0.0.tgz",
             "artifact"
         )
         .is_ok());
-        assert!(validate_https_url(
+        assert!(validate_artifact_url(
+            "http://127.0.0.1:39260/api/plugin-artifacts/demo",
+            "artifact"
+        )
+        .is_ok());
+        assert!(validate_artifact_url(
+            "http://localhost:39260/api/plugin-artifacts/demo",
+            "artifact"
+        )
+        .is_ok());
+        assert!(validate_artifact_url(
             "http://registry.npmjs.org/demo/-/demo-1.0.0.tgz",
             "artifact"
         )
         .is_err());
-        assert!(validate_https_url(
+        assert!(validate_artifact_url(
             "https://user@registry.npmjs.org/demo/-/demo-1.0.0.tgz",
             "artifact"
         )
         .is_err());
         assert!(
-            validate_https_url("https://plugins.example.com/demo.zip#fragment", "artifact")
+            validate_artifact_url("https://plugins.example.com/demo.zip#fragment", "artifact")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn marketplace_catalog_urls_remain_https_only() {
+        assert!(validate_https_url("https://plugins.example.com/catalog.json", "catalog").is_ok());
+        assert!(validate_https_url("http://127.0.0.1:39260/catalog.json", "catalog").is_err());
     }
 
     #[test]

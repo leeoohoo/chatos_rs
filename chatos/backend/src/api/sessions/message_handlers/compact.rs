@@ -35,11 +35,7 @@ use super::super::support::list_all_session_messages;
 #[path = "compact_merge.rs"]
 mod compact_merge;
 
-use compact_merge::{
-    compact_history_before_turn_id_from_message,
-    merge_missing_project_requirement_execution_messages,
-    merge_missing_project_requirement_execution_turn_items,
-};
+use compact_merge::compact_history_before_turn_id_from_message;
 
 fn merge_missing_runtime_guidance_messages(
     mut messages: Vec<Message>,
@@ -271,18 +267,16 @@ pub(in crate::api::sessions) async fn get_session_compact_history(
     if before_turn_id.is_none() {
         match list_all_session_messages(&conversation_id).await {
             Ok(all_messages) => {
-                messages = merge_missing_project_requirement_execution_messages(
-                    messages,
-                    &all_messages,
-                    before_turn_id,
-                );
+                // The compact page is authoritative for conversation turns. Never append raw
+                // project execution user records here: records outside this page would be shown
+                // without their assistant reply and would also bypass the pagination cursor.
                 messages = merge_missing_runtime_guidance_messages(messages, &all_messages);
             }
             Err(err) => {
                 warn!(
                     conversation_id = conversation_id.as_str(),
                     error = err.as_str(),
-                    "failed to merge project requirement execution messages into compact history"
+                    "failed to merge runtime guidance messages into compact history"
                 );
             }
         }
@@ -505,29 +499,13 @@ pub(in crate::api::sessions) async fn get_session_user_message_turns(
         }
     }
 
-    let mut items: Vec<Value> = page
+    // Keep this response limited to the compact page as well. A turn item must always carry the
+    // assistant selected by the memory engine instead of a synthetic null assistant.
+    let items: Vec<Value> = page
         .items
         .into_iter()
         .map(turn_slice_to_user_message_item)
         .collect();
-    if before_turn_id.is_none() {
-        match list_all_session_messages(&conversation_id).await {
-            Ok(all_messages) => {
-                items = merge_missing_project_requirement_execution_turn_items(
-                    items,
-                    &all_messages,
-                    before_turn_id,
-                );
-            }
-            Err(err) => {
-                warn!(
-                    conversation_id = conversation_id.as_str(),
-                    error = err.as_str(),
-                    "failed to merge project requirement execution messages into user message turns"
-                );
-            }
-        }
-    }
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -542,7 +520,7 @@ pub(in crate::api::sessions) async fn get_session_user_message_turns(
 mod tests {
     use serde_json::json;
 
-    use super::parse_compact_history_offset;
+    use super::{merge_missing_runtime_guidance_messages, parse_compact_history_offset};
     use crate::models::message::Message;
 
     fn build_message(id: &str, role: &str, content: &str) -> Message {
@@ -588,5 +566,25 @@ mod tests {
             ),
             1
         );
+    }
+
+    #[test]
+    fn first_compact_page_does_not_inject_project_execution_users() {
+        let compact_user = build_message("user-current", "user", "current page");
+        let mut older_execution = build_message("user-execution", "user", "execute requirement");
+        older_execution.message_mode = Some("project_requirement_execution".to_string());
+        older_execution.metadata = Some(json!({
+            "conversation_turn_id": "turn-execution",
+            "project_requirement_execution": {
+                "project_id": "project-1",
+                "requirement_id": "requirement-1"
+            }
+        }));
+
+        let merged =
+            merge_missing_runtime_guidance_messages(vec![compact_user], &[older_execution]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, "user-current");
     }
 }

@@ -36,7 +36,11 @@ pub struct PluginLocalProviderBinding {
     pub adapter_session_id: String,
     pub operation: String,
     pub session_sha256: String,
+    pub snapshot_sha256: String,
     pub tool_snapshot_sha256: String,
+    pub server_instructions_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_instructions: Option<String>,
     pub tools: Vec<Value>,
     pub oauth_connection_id: Option<String>,
     pub expires_at_unix: i64,

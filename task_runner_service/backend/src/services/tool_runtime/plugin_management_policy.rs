@@ -6,10 +6,9 @@ use std::collections::{BTreeMap, HashSet};
 use super::status_display::TaskScheduleModeExt;
 use super::{RunService, TaskService};
 use crate::auth::{get_current_access_token, CurrentUser};
-use crate::models::{TaskMcpConfig, TaskRecord};
+use crate::models::{is_reserved_internal_mcp_resource_id, TaskMcpConfig, TaskRecord};
 use chatos_agent::{
-    is_task_runner_execution_agent as is_task_runner_execution_key,
-    is_task_runner_planning_agent as is_task_runner_planning_key, parse_system_agent_key,
+    is_task_runner_execution_agent as is_task_runner_execution_key, parse_system_agent_key,
 };
 use chatos_mcp::{system_mcp_descriptor_for_record, SystemMcpBackend, SystemMcpDescriptor};
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
@@ -104,6 +103,7 @@ impl TaskRunnerCapabilityPolicy {
             .selectable_mcps()
             .filter(|item| plugin_builtin_kind(item).is_none())
             .filter(|item| !plugin_task_process_log_mcp(item))
+            .filter(|item| !is_reserved_internal_mcp_resource_id(item.resource.id.as_str()))
             .collect()
     }
 
@@ -267,6 +267,7 @@ impl TaskRunnerCapabilityPolicy {
                     .filter(|item| {
                         plugin_builtin_kind(item).is_none() && !plugin_task_process_log_mcp(item)
                     })
+                    .filter(|item| !is_reserved_internal_mcp_resource_id(item.resource.id.as_str()))
                     .map(|item| item.resource.id.clone()),
             )
             .collect::<HashSet<_>>();
@@ -279,10 +280,6 @@ impl TaskRunnerCapabilityPolicy {
             }
         }
         Ok(())
-    }
-
-    fn is_planning_agent(&self) -> bool {
-        is_task_runner_planning_agent(self.capabilities.agent_key.as_str())
     }
 }
 
@@ -352,10 +349,6 @@ fn validate_task_process_log_mcp_runtime(item: &ResolvedMcp) -> Result<(), Strin
         ));
     }
     Ok(())
-}
-
-fn is_task_runner_planning_agent(agent_key: &str) -> bool {
-    parse_system_agent_key(agent_key).is_some_and(is_task_runner_planning_key)
 }
 
 fn is_task_runner_execution_agent(agent_key: &str) -> bool {

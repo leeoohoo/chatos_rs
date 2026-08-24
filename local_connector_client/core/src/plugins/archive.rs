@@ -311,6 +311,9 @@ fn collect_installed_files(
         if *total_bytes > limits.max_unpacked_bytes {
             bail!("installed npm MCP exceeds total size limit");
         }
+        if entry.file_name() == ".DS_Store" {
+            continue;
+        }
         let relative = path
             .strip_prefix(root)
             .context("derive installed npm MCP relative path")?
@@ -322,4 +325,49 @@ fn collect_installed_files(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_checksum_verification_ignores_macos_finder_metadata_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let package = temp.path().join("package.json");
+        fs::write(&package, br#"{"name":"desktop-plugin"}"#).unwrap();
+        let mut expected = BTreeMap::from([(
+            "package.json".to_string(),
+            sha256_file(&package, PluginPackageLimits::default().max_file_bytes).unwrap(),
+        )]);
+
+        let nested = temp.path().join("dist");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join(".DS_Store"), b"finder metadata").unwrap();
+        verify_installed_file_checksums(temp.path(), &expected, PluginPackageLimits::default())
+            .unwrap();
+
+        fs::write(
+            nested.join("unexpected.js"),
+            b"not part of the verified package",
+        )
+        .unwrap();
+        let error =
+            verify_installed_file_checksums(temp.path(), &expected, PluginPackageLimits::default())
+                .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("installed npm MCP files do not match"));
+
+        expected.insert(
+            "dist/unexpected.js".to_string(),
+            sha256_file(
+                nested.join("unexpected.js").as_path(),
+                PluginPackageLimits::default().max_file_bytes,
+            )
+            .unwrap(),
+        );
+        verify_installed_file_checksums(temp.path(), &expected, PluginPackageLimits::default())
+            .unwrap();
+    }
 }

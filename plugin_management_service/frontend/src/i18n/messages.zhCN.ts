@@ -461,8 +461,6 @@ export const zhCNMessages: Record<string, string> = {
   'builtin.AgentBuilder': '智能体构建器',
   'builtin.AskUser': '询问用户',
   'builtin.RemoteConnectionController': '远程连接控制器',
-  'builtin.WebTools': '网页工具',
-  'builtin.BrowserTools': '浏览器工具',
   'builtin.MemorySkillReader': '记忆技能读取器',
   'builtin.MemoryCommandReader': '记忆命令读取器',
   'builtin.MemoryPluginReader': '记忆插件读取器',

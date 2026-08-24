@@ -220,7 +220,15 @@ impl AppConfig {
 fn validate_artifact_public_base_url(value: &str) -> Result<(), String> {
     let url = reqwest::Url::parse(value)
         .map_err(|err| format!("PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL is invalid: {err}"))?;
-    if url.scheme() != "https"
+    let loopback_host = url.host_str().is_some_and(|host| {
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    });
+    let loopback_development_url = url.scheme() == "http" && loopback_host;
+    if (url.scheme() != "https" && !loopback_development_url)
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
@@ -228,11 +236,28 @@ fn validate_artifact_public_base_url(value: &str) -> Result<(), String> {
         || url.fragment().is_some()
     {
         return Err(
-            "PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL must be a plain HTTPS origin or base path"
-                .to_string(),
+            "PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL must be a plain HTTPS origin or base path, except for an HTTP loopback development address".to_string(),
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_artifact_public_base_url;
+
+    #[test]
+    fn artifact_public_base_allows_http_only_for_loopback_development() {
+        assert!(validate_artifact_public_base_url("https://plugins.example.com").is_ok());
+        assert!(validate_artifact_public_base_url("http://127.0.0.1:39260").is_ok());
+        assert!(validate_artifact_public_base_url("http://localhost:39260/plugins").is_ok());
+        assert!(validate_artifact_public_base_url("http://[::1]:39260").is_ok());
+        assert!(validate_artifact_public_base_url("http://plugins.example.com").is_err());
+        assert!(validate_artifact_public_base_url("http://10.0.0.2:39260").is_err());
+        assert!(
+            validate_artifact_public_base_url("https://plugins.example.com?token=secret").is_err()
+        );
+    }
 }
 
 fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {

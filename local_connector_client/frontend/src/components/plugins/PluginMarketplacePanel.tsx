@@ -322,6 +322,7 @@ export function PluginMarketplacePanel({
           onRollback={(plugin) => void rollback(plugin)}
           onUninstall={(plugin) => void uninstall(plugin)}
           onAutoUpdateChange={(plugin, enabled) => void updateAutoUpdate(plugin, enabled)}
+          onPermissionsSaved={() => void load(false)}
           onOpenPermissions={onOpenPermissions}
         />
       ) : null}

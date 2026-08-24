@@ -8,9 +8,9 @@ use chatos_mcp_management_sdk::{
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
 use crate::models::{
-    now_rfc3339, EffectiveTaskToolSnapshot, TaskMcpConfig, TaskRecord, TaskRunBranchTarget,
-    TaskRunRecord, TaskRunWorkspaceExecution, WorkspaceIntegrationStatus,
-    WorkspacePreparationStatus,
+    is_reserved_internal_mcp_resource_id, now_rfc3339, EffectiveTaskToolSnapshot, TaskMcpConfig,
+    TaskRecord, TaskRunBranchTarget, TaskRunRecord, TaskRunWorkspaceExecution,
+    WorkspaceIntegrationStatus, WorkspacePreparationStatus,
 };
 
 use super::project_management_api_client::{
@@ -83,7 +83,8 @@ pub(crate) fn effective_task_tool_snapshot(config: &TaskMcpConfig) -> EffectiveT
                 .iter()
                 .filter_map(|resource_id| {
                     let resource_id = resource_id.trim();
-                    (!resource_id.is_empty()).then(|| resource_id.to_string())
+                    (!resource_id.is_empty() && !is_reserved_internal_mcp_resource_id(resource_id))
+                        .then(|| resource_id.to_string())
                 }),
         )
         .collect::<Vec<_>>();

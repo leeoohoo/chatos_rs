@@ -12,9 +12,8 @@ mod dispatcher_prepare_system;
 mod dispatcher_runtime;
 mod dispatcher_runtime_lifecycle;
 mod dispatcher_support;
-mod embedded;
 mod local_connector;
-mod plugin_components;
+pub(crate) mod plugin_components;
 mod plugin_local;
 mod plugin_routes;
 #[path = "plugin_routes/prepare.rs"]
@@ -31,7 +30,6 @@ use serde_json::{json, Value};
 pub(super) use cancel_response::decode_cancel_notification_response;
 pub(crate) use chatos::memory_provider_ref as chatos_memory_provider_ref;
 use chatos::ChatosProvider;
-use embedded::EmbeddedProvider;
 use local_connector::LocalConnectorProvider;
 use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
@@ -77,7 +75,6 @@ pub struct ProviderDispatcher {
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
-    embedded: EmbeddedProvider,
 }
 
 const TOOL_RESULT_MAX_CHARS_META_KEY: &str = "chatos/toolResultMaxChars";

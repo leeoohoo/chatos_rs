@@ -51,6 +51,25 @@ export interface TaskPluginConfig {
   command_invocations: TaskPluginCommandInvocation[];
 }
 
+export interface TaskSelectedPluginSnapshot {
+  plugin_id: string;
+  plugin_key: string;
+  display_name?: string;
+  release_id: string;
+  version: string;
+  artifact_sha256: string;
+  device_id: string;
+  reason?: string | null;
+}
+
+export interface TaskPluginSelectionAudit {
+  selection_source: string;
+  policy_revision: string;
+  selected_at: string;
+  project_context_revision: string;
+  plugins: TaskSelectedPluginSnapshot[];
+}
+
 export interface SelectableTaskPluginCommand {
   command_id: string;
   display_name: string;
@@ -185,6 +204,7 @@ export interface TaskRecord {
   prerequisite_task_ids: string[];
   task_tool_state: TaskToolState;
   plugin_config: TaskPluginConfig;
+  plugin_selection_audit?: TaskPluginSelectionAudit | null;
   mcp_config: TaskMcpConfig;
   created_at: string;
   updated_at: string;

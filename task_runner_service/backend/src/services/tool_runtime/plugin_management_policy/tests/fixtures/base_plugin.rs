@@ -109,6 +109,11 @@ pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
         availability_status: PluginAvailabilityStatus::Ready,
         dependency_status: PluginRequirementStatus::Satisfied,
         permission_status: PluginRequirementStatus::Satisfied,
+        granted_permissions: release
+            .permissions
+            .iter()
+            .map(|permission| permission.permission.clone())
+            .collect(),
         auth_status: PluginRequirementStatus::Satisfied,
         component_statuses: components
             .iter()

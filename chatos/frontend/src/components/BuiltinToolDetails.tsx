@@ -6,7 +6,6 @@ import React from 'react';
 import { resolveToolFamily } from '../lib/tools/catalog';
 import { getToolDisplayName } from '../lib/tools/displayName';
 import AgentBuilderToolDetails from './toolCards/agentBuilder/AgentBuilderToolDetails';
-import BrowserToolDetails from './toolCards/browser/BrowserToolDetails';
 import CodeMaintainerToolDetails from './toolCards/codeMaintainer/CodeMaintainerToolDetails';
 import MemoryToolDetails from './toolCards/memory/MemoryToolDetails';
 import NotepadToolDetails from './toolCards/notepad/NotepadToolDetails';
@@ -29,9 +28,6 @@ const CODE_MAINTAINER_TOOLS = new Set([
   'abort_edit_session',
 ]);
 
-const isBrowserToolName = (name: string): boolean => (
-  name.startsWith('browser_') || name.startsWith('chrome_')
-);
 const isWebToolName = (name: string): boolean => name.startsWith('web_');
 const isCodeMaintainerToolName = (name: string): boolean => CODE_MAINTAINER_TOOLS.has(name);
 
@@ -62,10 +58,6 @@ export const BuiltinToolDetails: React.FC<BuiltinToolDetailsProps> = ({
 
   if (family === 'code' && isCodeMaintainerToolName(displayName)) {
     return <CodeMaintainerToolDetails displayName={displayName} result={result} />;
-  }
-
-  if (family === 'browser' && isBrowserToolName(displayName)) {
-    return <BrowserToolDetails displayName={displayName} result={result} />;
   }
 
   if (family === 'web' && isWebToolName(displayName)) {

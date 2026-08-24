@@ -12,12 +12,8 @@ asarUnpack:
 extraResources:
   - from: ../.package/macos/local_connector_client_core
     to: local_connector_client_core
-  - from: ../.package/macos/chatos_chrome_native_host
-    to: chatos_chrome_native_host
   - from: ../.package/macos/bundled-tools
     to: bundled-tools
-  - from: ../.package/macos/chrome-extension
-    to: chrome-extension
   - from: ../.package/macos/sqlite-migrations
     to: sqlite-migrations
 mac:

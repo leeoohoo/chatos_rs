@@ -77,6 +77,8 @@ const MessageListComponent: React.FC<MessageListProps> = ({
     lastVisibleIndex,
     isAtBottom,
     expandRenderedWindow,
+    prepareForHistoryPrepend,
+    settleHistoryPrepend,
     handleScroll,
     handleJumpToBottom,
   } = useMessageListWindowing({
@@ -106,6 +108,13 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   const handleManualJumpToBottom = () => {
     onAnchorClear?.();
     handleJumpToBottom();
+  };
+  const handleLoadMore = () => {
+    if (!onLoadMore) {
+      return;
+    }
+    prepareForHistoryPrepend();
+    void Promise.resolve(onLoadMore()).finally(settleHistoryPrepend);
   };
 
   useEffect(() => {
@@ -221,7 +230,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             <div className="flex justify-center mb-2">
               <button
                 type="button"
-                onClick={onLoadMore}
+                onClick={handleLoadMore}
                 className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
               >
                 {t('messageList.loadMore')}

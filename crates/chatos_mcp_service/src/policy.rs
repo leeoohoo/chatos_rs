@@ -4,7 +4,6 @@
 pub const BUILTIN_KIND_CODE_MAINTAINER_READ: &str = "CodeMaintainerRead";
 pub const BUILTIN_KIND_CODE_MAINTAINER_WRITE: &str = "CodeMaintainerWrite";
 pub const BUILTIN_KIND_TERMINAL_CONTROLLER: &str = "TerminalController";
-pub const BUILTIN_KIND_BROWSER_TOOLS: &str = "BrowserTools";
 pub const BUILTIN_KIND_LOCAL_COMMAND_APPROVAL: &str = "LocalCommandApproval";
 
 pub const LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER: &str =
@@ -26,7 +25,6 @@ impl BuiltinHostBackend {
                     BUILTIN_KIND_CODE_MAINTAINER_READ
                         | BUILTIN_KIND_CODE_MAINTAINER_WRITE
                         | BUILTIN_KIND_TERMINAL_CONTROLLER
-                        | BUILTIN_KIND_BROWSER_TOOLS
                         | BUILTIN_KIND_LOCAL_COMMAND_APPROVAL
                 )
             ),
@@ -47,7 +45,6 @@ pub enum BuiltinToolAccess {
     CodeRead,
     CodeWrite,
     Terminal,
-    Browser,
     LocalCommandApproval,
 }
 
@@ -57,7 +54,6 @@ impl BuiltinToolAccess {
             Self::CodeRead => BUILTIN_KIND_CODE_MAINTAINER_READ,
             Self::CodeWrite => BUILTIN_KIND_CODE_MAINTAINER_WRITE,
             Self::Terminal => BUILTIN_KIND_TERMINAL_CONTROLLER,
-            Self::Browser => BUILTIN_KIND_BROWSER_TOOLS,
             Self::LocalCommandApproval => BUILTIN_KIND_LOCAL_COMMAND_APPROVAL,
         }
     }
@@ -68,7 +64,6 @@ pub struct HostCapabilityPolicy {
     pub code_read: bool,
     pub code_write: bool,
     pub terminal: bool,
-    pub browser: bool,
     pub local_command_approval: bool,
 }
 
@@ -97,7 +92,6 @@ impl HostCapabilityPolicy {
                 self.code_write = true;
             }
             Some(BUILTIN_KIND_TERMINAL_CONTROLLER) => self.terminal = true,
-            Some(BUILTIN_KIND_BROWSER_TOOLS) => self.browser = true,
             Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL) => self.local_command_approval = true,
             _ => {}
         }
@@ -108,7 +102,6 @@ impl HostCapabilityPolicy {
             Some(BUILTIN_KIND_CODE_MAINTAINER_READ) => self.code_read,
             Some(BUILTIN_KIND_CODE_MAINTAINER_WRITE) => self.code_write,
             Some(BUILTIN_KIND_TERMINAL_CONTROLLER) => self.terminal,
-            Some(BUILTIN_KIND_BROWSER_TOOLS) => self.browser,
             Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL) => self.local_command_approval,
             _ => false,
         }
@@ -119,7 +112,6 @@ impl HostCapabilityPolicy {
             Some(BuiltinToolAccess::CodeRead) => self.code_read,
             Some(BuiltinToolAccess::CodeWrite) => self.code_write,
             Some(BuiltinToolAccess::Terminal) => self.terminal,
-            Some(BuiltinToolAccess::Browser) => self.browser,
             Some(BuiltinToolAccess::LocalCommandApproval) => self.local_command_approval,
             None => false,
         }
@@ -135,9 +127,6 @@ impl HostCapabilityPolicy {
         }
         if self.terminal {
             out.push(BUILTIN_KIND_TERMINAL_CONTROLLER);
-        }
-        if self.browser {
-            out.push(BUILTIN_KIND_BROWSER_TOOLS);
         }
         if self.local_command_approval {
             out.push(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL);
@@ -193,7 +182,6 @@ pub fn normalize_builtin_kind_name(value: &str) -> Option<&'static str> {
         "codemaintainerread" => Some(BUILTIN_KIND_CODE_MAINTAINER_READ),
         "codemaintainerwrite" => Some(BUILTIN_KIND_CODE_MAINTAINER_WRITE),
         "terminalcontroller" => Some(BUILTIN_KIND_TERMINAL_CONTROLLER),
-        "browsertools" => Some(BUILTIN_KIND_BROWSER_TOOLS),
         "localcommandapproval" => Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL),
         _ => None,
     }
@@ -210,36 +198,6 @@ pub fn classify_builtin_tool(name: &str) -> Option<BuiltinToolAccess> {
         | "process_wait" | "process_write" | "process_kill" | "process" => {
             Some(BuiltinToolAccess::Terminal)
         }
-        "browser_tabs"
-        | "browser_tab_new"
-        | "browser_tab_switch"
-        | "browser_tab_close"
-        | "browser_navigate"
-        | "browser_snapshot"
-        | "browser_click"
-        | "browser_type"
-        | "browser_scroll"
-        | "browser_back"
-        | "browser_press"
-        | "browser_upload"
-        | "browser_download"
-        | "browser_console"
-        | "browser_network"
-        | "browser_get_images"
-        | "browser_network_request"
-        | "browser_har_start"
-        | "browser_har_stop"
-        | "browser_websocket_start"
-        | "browser_websocket_frames"
-        | "browser_websocket_stop"
-        | "browser_route_add"
-        | "browser_route_list"
-        | "browser_route_remove"
-        | "browser_route_clear"
-        | "browser_cdp_command"
-        | "browser_inspect"
-        | "browser_research"
-        | "browser_vision" => Some(BuiltinToolAccess::Browser),
         "approval_decision" => Some(BuiltinToolAccess::LocalCommandApproval),
         _ => None,
     }
@@ -276,7 +234,6 @@ mod tests {
                 [
                     "TerminalController",
                     "CodeMaintainerWrite",
-                    "BrowserTools",
                     "CodeMaintainerRead",
                 ],
             ),
@@ -286,7 +243,6 @@ mod tests {
                 BUILTIN_KIND_TERMINAL_CONTROLLER,
             ]
         );
-        assert!(BuiltinHostBackend::LocalConnector.replaces_builtin_kind_name("browser_tools"));
         assert!(
             BuiltinHostBackend::LocalConnector.replaces_builtin_kind_name("local_command_approval")
         );
@@ -306,42 +262,7 @@ mod tests {
             classify_builtin_tool("process_wait"),
             Some(BuiltinToolAccess::Terminal)
         );
-        assert_eq!(
-            classify_builtin_tool("browser_inspect"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_tab_switch"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_upload"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_download"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_network_request"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_har_stop"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_websocket_frames"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_route_add"),
-            Some(BuiltinToolAccess::Browser)
-        );
-        assert_eq!(
-            classify_builtin_tool("browser_cdp_command"),
-            Some(BuiltinToolAccess::Browser)
-        );
+        assert_eq!(classify_builtin_tool("browser_inspect"), None);
         assert_eq!(
             classify_builtin_tool("approval_decision"),
             Some(BuiltinToolAccess::LocalCommandApproval)

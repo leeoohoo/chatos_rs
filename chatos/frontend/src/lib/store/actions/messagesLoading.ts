@@ -8,15 +8,7 @@ import type {
   ChatStoreSet,
   SessionMessagePaginationState,
 } from '../types';
-import {
-  extractCompactHistoryMessages,
-  mergeLatestCompactHistorySnapshot,
-  readSessionMessagesCache,
-  readVisibleSessionMessagesSnapshot,
-  SESSION_MESSAGES_INITIAL_PAGE_SIZE,
-  cloneStreamingMessageDraft,
-  writeSessionMessagesCache,
-} from './sessionsUtils';
+import { SESSION_MESSAGES_INITIAL_PAGE_SIZE } from './sessionsUtils';
 
 interface LoadingDeps {
   set: ChatStoreSet;
@@ -25,63 +17,39 @@ interface LoadingDeps {
 }
 
 export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
-  const backgroundSyncInflight = new Map<string, Promise<void>>();
   const writePaginationState = (
     target: Record<string, SessionMessagePaginationState>,
     sessionId: string,
-    result: Awaited<ReturnType<typeof fetchSessionMessages>>,
-    loaded: boolean,
+    nextBefore: string | null,
   ) => {
     target[sessionId] = {
-      nextBefore: result.nextBefore,
-      loaded,
+      nextBefore,
+      loaded: true,
     };
   };
 
-  const applySessionMessagesSnapshot = (
+  const replaceCurrentSessionMessages = (
     sessionId: string,
     result: Awaited<ReturnType<typeof fetchSessionMessages>>,
-    options: {
-      updateVisibleMessages: boolean;
-      settleGlobalLoading: boolean;
-    },
-    ) => {
-    const { messages } = result;
-    const visibleSnapshot = readVisibleSessionMessagesSnapshot(get(), sessionId);
-    const preservedSnapshot = visibleSnapshot ?? readSessionMessagesCache(get(), sessionId);
-    const mergedSnapshot = mergeLatestCompactHistorySnapshot(
-      messages,
-      result.nextBefore,
-      preservedSnapshot,
-    );
+    settleGlobalLoading: boolean,
+  ) => {
     set((state) => {
-      if (options.updateVisibleMessages || state.currentSessionId === sessionId) {
-        state.messages = mergedSnapshot.messages;
-        state.hasMoreMessages = Boolean(mergedSnapshot.nextBefore);
+      if (state.currentSessionId !== sessionId) {
+        return;
       }
+      state.messages = result.messages;
+      state.hasMoreMessages = Boolean(result.nextBefore);
       if (!state.sessionMessagePaginationState) {
         state.sessionMessagePaginationState = {};
       }
       writePaginationState(
         state.sessionMessagePaginationState,
         sessionId,
-        {
-          ...result,
-          nextBefore: mergedSnapshot.nextBefore,
-        },
-        true,
+        result.nextBefore,
       );
-
-      if (options.settleGlobalLoading) {
+      if (settleGlobalLoading) {
         state.isLoading = false;
       }
-    });
-    set((state) => {
-      writeSessionMessagesCache(state, sessionId, {
-        messages: mergedSnapshot.messages,
-        nextBefore: state.sessionMessagePaginationState?.[sessionId]?.nextBefore ?? mergedSnapshot.nextBefore,
-        loaded: true,
-      });
     });
   };
 
@@ -97,60 +65,49 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
           before: null,
         });
-        applySessionMessagesSnapshot(sessionId, result, {
-          updateVisibleMessages: true,
-          settleGlobalLoading: true,
-        });
+        replaceCurrentSessionMessages(sessionId, result, true);
       } catch (error) {
         console.error('Failed to load messages:', error);
         set((state) => {
+          if (state.currentSessionId !== sessionId) {
+            return;
+          }
           state.error = error instanceof Error ? error.message : 'Failed to load messages';
           state.isLoading = false;
         });
       }
     },
 
+    // Public action name retained for existing callers. This performs a direct
+    // server refresh and never reads, writes, or merges a message cache.
     syncSessionMessagesInBackground: async (sessionId: string) => {
       const normalizedSessionId = String(sessionId || '').trim();
-      if (!normalizedSessionId) {
+      if (!normalizedSessionId || get().currentSessionId !== normalizedSessionId) {
         return;
       }
-      const existingInflight = backgroundSyncInflight.get(normalizedSessionId);
-      if (existingInflight) {
-        await existingInflight;
-        return;
-      }
-      const request = (async () => {
-        try {
-          const result = await fetchSessionMessages(client, normalizedSessionId, {
-            limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
-            before: null,
-          });
-          applySessionMessagesSnapshot(normalizedSessionId, result, {
-            updateVisibleMessages: false,
-            settleGlobalLoading: false,
-          });
-        } catch (error) {
-          console.error('Failed to sync session messages in background:', error);
-        } finally {
-          backgroundSyncInflight.delete(normalizedSessionId);
-        }
-      })();
-      backgroundSyncInflight.set(normalizedSessionId, request);
       try {
-        await request;
-      } catch {
-        // request already handled its own errors
+        const result = await fetchSessionMessages(client, normalizedSessionId, {
+          limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
+          before: null,
+        });
+        replaceCurrentSessionMessages(normalizedSessionId, result, false);
+      } catch (error) {
+        console.error('Failed to refresh session messages:', error);
       }
     },
 
     loadMoreMessages: async (sessionId: string) => {
       try {
         const current = get();
+        if (current.currentSessionId !== sessionId) {
+          return;
+        }
         const before = current.sessionMessagePaginationState?.[sessionId]?.nextBefore ?? null;
         if (!before) {
           set((state) => {
-            state.hasMoreMessages = false;
+            if (state.currentSessionId === sessionId) {
+              state.hasMoreMessages = false;
+            }
           });
           return;
         }
@@ -158,33 +115,29 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
           limit: SESSION_MESSAGES_INITIAL_PAGE_SIZE,
           before,
         });
-        const page = result.messages;
-        let mergedSnapshotMessages = extractCompactHistoryMessages(current.messages);
         set((state) => {
+          if (state.currentSessionId !== sessionId) {
+            return;
+          }
           if (!state.sessionMessagePaginationState) {
             state.sessionMessagePaginationState = {};
           }
-
           const existingIds = new Set(state.messages.map((message) => message.id));
-          const older = page.filter((message) => !existingIds.has(message.id));
-          const merged = [...older, ...state.messages];
-          mergedSnapshotMessages = cloneStreamingMessageDraft(extractCompactHistoryMessages(merged));
-
-          state.messages = merged;
-          writePaginationState(state.sessionMessagePaginationState, sessionId, result, true);
-          state.hasMoreMessages = Boolean(state.sessionMessagePaginationState[sessionId]?.nextBefore);
-        });
-        set((state) => {
-          writeSessionMessagesCache(state, sessionId, {
-            messages: mergedSnapshotMessages,
-            nextBefore: state.sessionMessagePaginationState?.[sessionId]?.nextBefore ?? result.nextBefore,
-            loaded: true,
-          });
+          const older = result.messages.filter((message) => !existingIds.has(message.id));
+          state.messages = [...older, ...state.messages];
+          writePaginationState(
+            state.sessionMessagePaginationState,
+            sessionId,
+            result.nextBefore,
+          );
+          state.hasMoreMessages = Boolean(result.nextBefore);
         });
       } catch (error) {
         console.error('Failed to load more messages:', error);
         set((state) => {
-          state.error = error instanceof Error ? error.message : 'Failed to load more messages';
+          if (state.currentSessionId === sessionId) {
+            state.error = error instanceof Error ? error.message : 'Failed to load more messages';
+          }
         });
       }
     },

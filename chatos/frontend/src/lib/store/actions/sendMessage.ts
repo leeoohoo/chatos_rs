@@ -38,11 +38,6 @@ import {
   setTaskRunnerAsyncUserMessageStatus,
 } from './sendMessage/sessionState';
 import { normalizePersistedMessage } from './sendMessage/persistedTurnMessages';
-import {
-  cloneStreamingMessageDraft,
-  extractCompactHistoryMessages,
-  writeSessionMessagesCache,
-} from './sessionsUtils';
 import type {
   ChatStoreGet,
   ChatStoreSet,
@@ -333,17 +328,6 @@ export function createSendMessageHandler({
             if (state.currentSessionId === currentSessionId) {
               state.messages = mergeMessageByIdAndTime(state.messages || [], displayGuidanceMessage);
             }
-
-            const cached = state.sessionMessagesCache?.[currentSessionId];
-            const cachedMessages = cached?.messages || [];
-            const mergedCachedMessages = mergeMessageByIdAndTime(cachedMessages, displayGuidanceMessage);
-            writeSessionMessagesCache(state, currentSessionId, {
-              messages: cloneStreamingMessageDraft(extractCompactHistoryMessages(mergedCachedMessages)),
-              nextBefore: state.sessionMessagePaginationState?.[currentSessionId]?.nextBefore
-                ?? cached?.nextBefore
-                ?? null,
-              loaded: cached?.loaded ?? state.sessionMessagePaginationState?.[currentSessionId]?.loaded ?? true,
-            });
           });
         }
 

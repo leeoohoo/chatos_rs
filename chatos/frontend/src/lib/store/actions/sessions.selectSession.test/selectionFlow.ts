@@ -9,7 +9,6 @@ import {
   createSession,
   fetchSession,
   fetchSessionMessages,
-  installBackgroundSyncSpy,
   type ChatStoreDraft,
   type ChatStoreShape,
   type FetchSessionMessagesResult,
@@ -33,10 +32,7 @@ describe('selectSession', () => {
       sessionAiSelectionBySession: {},
       sessionChatState: {},
       sessionMessagePaginationState: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
-    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -122,10 +118,7 @@ describe('selectSession', () => {
       sessionAiSelectionBySession: {},
       sessionChatState: {},
       sessionMessagePaginationState: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
-    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -178,7 +171,7 @@ describe('selectSession', () => {
     });
   });
 
-  it('clears previous session messages immediately when switching to an uncached session', async () => {
+  it('clears previous session messages immediately while fetching the selected session', async () => {
     const state = {
       sessions: [createSession('session_1'), createSession('session_2')],
       currentSessionId: 'session_1',
@@ -211,10 +204,7 @@ describe('selectSession', () => {
           loaded: true,
         },
       },
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
-    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);

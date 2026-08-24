@@ -31,6 +31,16 @@ pub(crate) fn installation_status_message(snapshot: &LocalPluginStatusSnapshot) 
                     last_checked_at: checked_at.clone(),
                 })
                 .collect();
+            let required_permissions_satisfied = version
+                .inventory
+                .permissions
+                .iter()
+                .filter(|requirement| requirement.required)
+                .all(|requirement| {
+                    version
+                        .granted_permissions
+                        .contains(requirement.permission.as_str())
+                });
             Some(PluginInstallationSyncPayload {
                 owner_user_id: String::new(),
                 device_id: String::new(),
@@ -42,7 +52,12 @@ pub(crate) fn installation_status_message(snapshot: &LocalPluginStatusSnapshot) 
                 install_status: PluginInstallStatus::Installed,
                 availability_status: PluginAvailabilityStatus::Ready,
                 dependency_status: PluginRequirementStatus::Satisfied,
-                permission_status: PluginRequirementStatus::Satisfied,
+                permission_status: if required_permissions_satisfied {
+                    PluginRequirementStatus::Satisfied
+                } else {
+                    PluginRequirementStatus::Missing
+                },
+                granted_permissions: version.granted_permissions.iter().cloned().collect(),
                 auth_status: PluginRequirementStatus::Satisfied,
                 component_statuses,
                 active: true,
@@ -70,6 +85,8 @@ fn local_platform() -> &'static str {
         "macos-x86_64"
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         "windows-x86_64"
+    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        "windows-arm64"
     } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         "linux-x86_64"
     } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {

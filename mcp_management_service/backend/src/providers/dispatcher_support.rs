@@ -14,7 +14,7 @@ impl ProviderDispatcher {
                     || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
-            McpProviderKind::Embedded => self.embedded.supports(route),
+            McpProviderKind::Embedded => false,
             McpProviderKind::PluginLocal => self.plugins.supports(route),
             _ => false,
         }

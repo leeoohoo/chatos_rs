@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,6 +28,7 @@ pub(in crate::plugins::runtime) use validation::load_verified_manifest;
 
 const MAX_MCP_TOOLS: usize = 200;
 const MAX_MCP_TOOL_SNAPSHOT_BYTES: usize = 512 * 1024;
+const MAX_MCP_SERVER_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 const MCP_TOOL_CALL_OPERATION: &str = "mcp_tools_call";
 const MCP_HEALTH_CHECK_OPERATION: &str = "mcp_health_check";
 const MCP_HEALTH_PROBE_INTERVAL: Duration = Duration::from_secs(60);
@@ -34,6 +36,41 @@ const MAX_ACTIVE_MCP_INVOCATIONS: usize = 64;
 const MAX_INVOCATION_ID_BYTES: usize = 256;
 const MCP_HEALTHY_STATUS: &str = "healthy";
 const MCP_DEGRADED_STATUS: &str = "degraded";
+const DEFAULT_PLUGIN_MCP_TOOL_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1_000;
+const MAX_PLUGIN_MCP_TOOL_TIMEOUT_MS: u64 = DEFAULT_PLUGIN_MCP_TOOL_TIMEOUT_MS;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::plugins::runtime) struct PluginMcpToolPolicy {
+    pub required_permissions: BTreeSet<String>,
+    pub permission_rules: Vec<PluginMcpPermissionRule>,
+    pub risk_level: String,
+    pub approval_mode: String,
+    pub parallel_safe: bool,
+    pub timeout_ms: u64,
+    pub result_max_chars: Option<usize>,
+}
+
+impl Default for PluginMcpToolPolicy {
+    fn default() -> Self {
+        Self {
+            required_permissions: BTreeSet::new(),
+            permission_rules: Vec::new(),
+            risk_level: "low".to_string(),
+            approval_mode: "none".to_string(),
+            parallel_safe: false,
+            timeout_ms: DEFAULT_PLUGIN_MCP_TOOL_TIMEOUT_MS,
+            result_max_chars: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::plugins::runtime) struct PluginMcpPermissionRule {
+    pub argument_pointer: String,
+    pub equals: serde_json::Value,
+    pub match_when_missing: bool,
+    pub required_permissions: BTreeSet<String>,
+}
 
 #[derive(Clone)]
 pub struct PluginMcpAdapter {
@@ -103,6 +140,7 @@ impl PluginMcpAdapter {
         adapter_session_id: &str,
         owner_user_id: &str,
         device_id: &str,
+        workspace_root: Option<&Path>,
         permission_snapshot: &BTreeSet<String>,
         tool_allowlist: &BTreeSet<String>,
         tool_blocklist: &BTreeSet<String>,
@@ -143,17 +181,34 @@ impl PluginMcpAdapter {
             adapter_session_id,
             owner_user_id,
             device_id,
+            workspace_root,
             component_key,
             permission_snapshot,
             self.credential_vault.clone(),
             self.oauth_broker.clone(),
         )?;
+        let initialize_response = self
+            .invoker
+            .initialize(&transport)
+            .await
+            .context("initialize Plugin MCP server")?;
+        let server_instructions = preparation::sanitize_server_instructions(
+            &initialize_response,
+            MAX_MCP_SERVER_INSTRUCTIONS_BYTES,
+        )?;
+        let server_instructions_sha256 = preparation::sha256_json(&server_instructions)?;
         let response = self
             .invoker
-            .call(&transport, "tools/list", json!({}), None)
+            .call(&transport, "tools/list", json!({}), None, None)
             .await
             .context("discover Plugin MCP tools")?;
         let tools = preparation::sanitize_tools(response, tool_allowlist, tool_blocklist)?;
+        preparation::validate_tool_policies(
+            &installation,
+            component_key,
+            permission_snapshot,
+            tools.as_slice(),
+        )?;
         let published_tools = tools
             .iter()
             .filter_map(parse_tool_definition)
@@ -165,12 +220,17 @@ impl PluginMcpAdapter {
             PreparedPluginMcpTransport::Http { .. } => "http",
         }
         .to_string();
+        let workspace_snapshot_sha256 = workspace_root.map(preparation::workspace_root_sha256);
+        let permission_snapshot_sha256 = preparation::sha256_json(permission_snapshot)?;
         let snapshot_sha256 = preparation::mcp_snapshot_sha256(
             &installation,
             component_key,
             server_key.as_str(),
             transport_name.as_str(),
+            server_instructions_sha256.as_str(),
             tool_snapshot_sha256.as_str(),
+            permission_snapshot_sha256.as_str(),
+            workspace_snapshot_sha256.as_deref(),
             transport.credential_snapshot_sha256(),
             transport.oauth_snapshot_sha256(),
         );
@@ -186,17 +246,26 @@ impl PluginMcpAdapter {
                 component_key: component_key.to_string(),
                 server_key,
                 transport: transport_name,
+                workspace_snapshot_sha256,
                 credential_snapshot_sha256,
                 oauth_connection_id,
                 oauth_snapshot_sha256,
+                server_instructions,
+                server_instructions_sha256,
                 tools,
                 tool_snapshot_sha256,
+                permission_snapshot_sha256,
                 snapshot_sha256,
             },
             transport,
             published_tools,
+            permission_snapshot.clone(),
             self.invoker.clone(),
             self.installer.clone(),
         ))
     }
+}
+
+pub(in crate::plugins::runtime) fn plugin_mcp_workspace_root_sha256(path: &Path) -> String {
+    preparation::workspace_root_sha256(path)
 }

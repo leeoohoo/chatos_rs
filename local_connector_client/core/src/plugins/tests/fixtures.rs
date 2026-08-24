@@ -102,7 +102,7 @@ impl TestSigner {
                     "argumentHint": "[path]",
                     "requiresConfirmation": requires_confirmation,
                     "targetAgent": RUN_AGENT_KEY,
-                    "allowedTools": ["browser_tools_browser_snapshot"]
+                    "allowedTools": ["plugin_snapshot"]
                 }],
                 "interface": {
                     "displayName": "Demo Plugin",
@@ -141,7 +141,7 @@ impl TestSigner {
                     "source": "./agents/reviewer.md",
                     "description": "Review the current change",
                     "baseAgent": RUN_AGENT_KEY,
-                    "allowedTools": ["browser_tools_browser_snapshot"],
+                    "allowedTools": ["plugin_snapshot"],
                     "maxIterations": 12
                 }],
                 "interface": {
@@ -605,6 +605,73 @@ impl TestSigner {
         )
     }
 
+    #[cfg(unix)]
+    pub(in crate::plugins) fn package_with_workspace_stdio_mcp(
+        &self,
+        root: &Path,
+        version: &str,
+    ) -> TestPackage {
+        let script = br##"#!/bin/sh
+while IFS= read -r request; do
+  id=$(printf '%s\n' "$request" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  case "$request" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"workspace-fixture","version":"1.0.0"}}}\n' "$id"
+      ;;
+    *'"method":"tools/list"'*)
+      if [ -z "$CHATOS_WORKSPACE" ] || [ ! -d "$CHATOS_WORKSPACE" ]; then
+        printf '{"jsonrpc":"2.0","id":"%s","error":{"code":-32000,"message":"missing workspace"}}\n' "$id"
+      else
+        printf '{"jsonrpc":"2.0","id":"%s","result":{"tools":[{"name":"inspect","description":"Inspect workspace","inputSchema":{"type":"object"},"_meta":{"chatos/policyVersion":1,"chatos/requiredPermissions":["workspace.read"],"chatos/riskLevel":"low","chatos/approvalMode":"none","chatos/parallelSafe":true,"chatos/timeoutMs":30000}}]}}\n' "$id"
+      fi
+      ;;
+    *'"method":"tools/call"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"content":[{"type":"text","text":"workspace-ok"}]}}\n' "$id"
+      ;;
+  esac
+done
+"##;
+        self.package_from_manifest(
+            root,
+            version,
+            ArchiveMutation::None,
+            json!({
+                "name": "demo-plugin",
+                "version": version,
+                "description": "A signed workspace MCP test Plugin",
+                "author": {"name": "Demo Publisher"},
+                "skills": "./skills",
+                "mcpServers": {
+                    "demo-stdio": {
+                        "type": "stdio",
+                        "bin": "demo-mcp"
+                    }
+                },
+                "interface": {
+                    "displayName": "Demo Plugin",
+                    "shortDescription": "Signed test Plugin",
+                    "longDescription": "A signed workspace MCP test Plugin",
+                    "developerName": "Demo Publisher",
+                    "category": "Developer Tools"
+                },
+                "permissions": [
+                    {
+                        "permission": "process.spawn",
+                        "required": true,
+                        "components": ["demo-stdio"]
+                    },
+                    {
+                        "permission": "workspace.read",
+                        "required": true,
+                        "components": ["skills", "demo-stdio"]
+                    }
+                ]
+            })
+            .to_string(),
+            BTreeMap::from([("mcp/server.sh".to_string(), script.to_vec())]),
+        )
+    }
+
     pub(in crate::plugins) fn package_with_stdio_mcp_credential(
         &self,
         root: &Path,
@@ -652,6 +719,9 @@ impl TestSigner {
 while IFS= read -r request; do
   id=$(printf '%s\n' "$request" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
   case "$request" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"hanging-fixture","version":"1.0.0"}}}\n' "$id"
+      ;;
     *'"method":"tools/list"'*)
       if [ "$DEMO_TOKEN" != "stdio-top-secret" ]; then
         printf '{"jsonrpc":"2.0","id":"%s","error":{"code":-32000,"message":"missing credential"}}\n' "$id"

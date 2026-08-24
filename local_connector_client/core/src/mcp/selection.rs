@@ -10,7 +10,6 @@ pub(crate) struct LocalMcpToolSelection {
     pub(crate) code_read: bool,
     pub(crate) code_write: bool,
     pub(crate) terminal: bool,
-    pub(crate) browser: bool,
     pub(crate) local_command_approval: bool,
 }
 
@@ -32,7 +31,6 @@ pub(crate) fn local_mcp_tool_selection(request: &RelayRequest) -> LocalMcpToolSe
         code_read: policy.code_read,
         code_write: policy.code_write,
         terminal: policy.terminal,
-        browser: policy.browser,
         local_command_approval: policy.local_command_approval,
     }
 }
@@ -48,13 +46,6 @@ pub(crate) fn is_terminal_controller_tool(name: &str) -> bool {
     matches!(
         classify_builtin_tool(name),
         Some(BuiltinToolAccess::Terminal)
-    )
-}
-
-pub(crate) fn is_browser_tool(name: &str) -> bool {
-    matches!(
-        classify_builtin_tool(name),
-        Some(BuiltinToolAccess::Browser)
     )
 }
 

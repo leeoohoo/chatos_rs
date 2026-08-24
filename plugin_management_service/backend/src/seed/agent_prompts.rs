@@ -421,6 +421,12 @@ mod tests {
                 assert!(content.contains("AskUser 审批可能让用户切换到 ChatOS 所在 Space"));
                 assert!(content.contains("优先向目标应用调用 `press_key(Return)`"));
                 assert!(content.contains("不得仅因根窗口暴露 `Secondary Actions: Raise`"));
+                assert!(content.contains("两个本地私有应用或存储位置之间迁移内容"));
+                assert!(content.contains("敏感值本身不构成拒绝迁移的理由"));
+                assert!(content.contains("仅把原文写入用户明确指定的私有目标"));
+                assert!(content.contains("保持源文件只读"));
+                assert!(content.contains("不得把这些敏感值回显到工具调用说明"));
+                assert!(content.contains("未由用户指定的第三方服务、公共位置或额外副本"));
                 assert!(!content.contains("Provider"));
                 assert!(!content.contains("Harness"));
                 assert!(!content.contains("Local Connector"));
