@@ -94,7 +94,11 @@ export_local_env() {
 
   export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
   export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
-  export CHATOS_OBJECT_STORAGE_ENDPOINT="${CHATOS_OBJECT_STORAGE_ENDPOINT:-https://oss.jgoool.com}"
+  export MINIO_API_PORT="${MINIO_API_PORT:-39000}"
+  export MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-39001}"
+  export MINIO_ROOT_USER="${MINIO_ROOT_USER:-chatos_local}"
+  export MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-chatos_local_secret_change_me}"
+  export CHATOS_OBJECT_STORAGE_ENDPOINT="${CHATOS_OBJECT_STORAGE_ENDPOINT:-http://127.0.0.1:${MINIO_API_PORT}}"
   export CHATOS_OBJECT_STORAGE_REGION="${CHATOS_OBJECT_STORAGE_REGION:-us-east-1}"
   export CHATOS_OBJECT_STORAGE_BUCKET="${CHATOS_OBJECT_STORAGE_BUCKET:-chatos-attachments}"
   export CHATOS_OBJECT_STORAGE_ACCESS_KEY="${CHATOS_OBJECT_STORAGE_ACCESS_KEY:-${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-}}}"
@@ -393,6 +397,9 @@ infra_service_host_port() {
       ;;
     mongodb)
       printf '%s\n' "${MONGODB_HOST_PORT:-27018}"
+      ;;
+    minio)
+      printf '%s\n' "${MINIO_API_PORT:-39000}"
       ;;
     rabbitmq)
       printf '%s\n' "${RABBITMQ_PORT:-5672}"
