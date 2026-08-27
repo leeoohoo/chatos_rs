@@ -222,7 +222,23 @@ pub(super) async fn publish_uploaded_plugin(
         verified: true,
     };
     let catalog = match existing_catalog {
-        Some(catalog) => catalog,
+        Some(mut catalog) => {
+            // A new package release is also the source of truth for marketplace
+            // presentation metadata. Without this refresh, renamed plugins keep
+            // showing the title and description from their first published build.
+            catalog.display_name = stored.normalized_manifest.interface.display_name.clone();
+            catalog.description = stored.normalized_manifest.description.clone();
+            catalog.publisher = plugin_publisher.clone();
+            catalog.interface = stored.normalized_manifest.interface.clone();
+            catalog.keywords = stored.normalized_manifest.keywords.clone();
+            catalog.updated_at = now_rfc3339();
+            state
+                .store
+                .replace_plugin_catalog_entry(&catalog)
+                .await
+                .map_err(ApiError::internal)?;
+            catalog
+        }
         None => {
             publish_plugin_catalog_entry(
                 &state,
