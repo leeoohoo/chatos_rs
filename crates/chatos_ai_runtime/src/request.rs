@@ -26,7 +26,10 @@ use http::{
 use streaming::parse_stream_response;
 
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 15;
-const DEFAULT_READ_TIMEOUT_SECS: u64 = 7_200;
+// This is an inactivity timeout: reqwest resets it whenever another response
+// chunk arrives. Long-running streamed generations remain valid, while a
+// provider that returns no headers or no further bytes is released promptly.
+const DEFAULT_READ_TIMEOUT_SECS: u64 = 180;
 const MAX_CONFIGURED_TIMEOUT_SECS: u64 = 7_200;
 const AI_CONNECT_TIMEOUT_SECS_ENV: &str = "CHATOS_AI_CONNECT_TIMEOUT_SECS";
 const AI_READ_TIMEOUT_SECS_ENV: &str = "CHATOS_AI_READ_TIMEOUT_SECS";
@@ -83,6 +86,13 @@ impl AiRequestHandler {
 
     pub fn read_timeout_seconds(&self) -> Option<u64> {
         self.read_timeout.map(|value| value.as_secs())
+    }
+
+    #[cfg(feature = "local-agent-loop")]
+    pub(crate) fn isolated_retry_handler(&self) -> Self {
+        self.read_timeout
+            .map(Self::new_with_read_timeout)
+            .unwrap_or_else(Self::new)
     }
 
     pub async fn count_responses_input_tokens(
@@ -396,6 +406,7 @@ impl AiRequestHandler {
             provider.as_deref(),
             thinking_level.as_deref(),
             abort_token,
+            self.read_timeout,
         )
         .await;
         match &parsed {

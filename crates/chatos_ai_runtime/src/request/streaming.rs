@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -10,7 +11,7 @@ use tracing::warn;
 
 use super::{AiResponse, AiTransport, StreamCallbacks};
 use crate::model_config::{reasoning_effort_for_provider, thinking_mode_for_provider};
-use crate::stream::consume_sse_stream;
+use crate::stream::consume_sse_stream_with_progress_timeout;
 use crate::stream_parse::{
     apply_chat_completions_stream_event, apply_responses_stream_event,
     finalize_chat_completions_stream_state, finalize_responses_stream_state, FinalizedStreamState,
@@ -28,6 +29,7 @@ pub(super) async fn parse_stream_response(
     provider: Option<&str>,
     thinking_level: Option<&str>,
     abort_token: Option<CancellationToken>,
+    progress_timeout: Option<Duration>,
 ) -> Result<AiResponse, String> {
     let response_stream = response
         .bytes_stream()
@@ -39,6 +41,7 @@ pub(super) async fn parse_stream_response(
         provider,
         thinking_level,
         abort_token,
+        progress_timeout,
     )
     .await
 }
@@ -50,6 +53,7 @@ async fn parse_stream_chunks<S, E>(
     provider: Option<&str>,
     thinking_level: Option<&str>,
     abort_token: Option<CancellationToken>,
+    progress_timeout: Option<Duration>,
 ) -> Result<AiResponse, String>
 where
     S: Stream<Item = Result<bytes::Bytes, E>> + Unpin,
@@ -60,25 +64,30 @@ where
     let reasoning_enabled = reasoning_effort_for_provider(provider, thinking_level).is_some()
         || thinking_mode_for_provider(provider, thinking_level) == Some("enabled");
 
-    let stream_result = consume_sse_stream(response_stream, abort_token, |event| {
-        let payload = match transport {
-            AiTransport::Responses => apply_responses_stream_event(&mut state, &event),
-            AiTransport::ChatCompletions => {
-                apply_chat_completions_stream_event(&mut state, &event, reasoning_enabled)
+    let stream_result = consume_sse_stream_with_progress_timeout(
+        response_stream,
+        abort_token,
+        progress_timeout,
+        |event| {
+            let payload = match transport {
+                AiTransport::Responses => apply_responses_stream_event(&mut state, &event),
+                AiTransport::ChatCompletions => {
+                    apply_chat_completions_stream_event(&mut state, &event, reasoning_enabled)
+                }
+            };
+            if let Some(chunk) = payload.chunk {
+                if let Some(cb) = &callbacks.on_chunk {
+                    cb(chunk);
+                }
             }
-        };
-        if let Some(chunk) = payload.chunk {
-            if let Some(cb) = &callbacks.on_chunk {
-                cb(chunk);
+            if let Some(thinking) = payload.thinking {
+                sent_any_thinking = true;
+                if let Some(cb) = &callbacks.on_thinking {
+                    cb(thinking);
+                }
             }
-        }
-        if let Some(thinking) = payload.thinking {
-            sent_any_thinking = true;
-            if let Some(cb) = &callbacks.on_thinking {
-                cb(thinking);
-            }
-        }
-    })
+        },
+    )
     .await;
 
     let stream_stats = match stream_result {
@@ -319,6 +328,7 @@ mod tests {
             Some("openai"),
             None,
             None,
+            None,
         )
         .await
         .expect("completed response should be recovered");
@@ -355,6 +365,7 @@ mod tests {
             Some("openai"),
             None,
             None,
+            None,
         )
         .await
         .expect_err("incomplete tool arguments must remain a failure");
@@ -374,6 +385,7 @@ mod tests {
             AiTransport::Responses,
             StreamCallbacks::default(),
             Some("openai"),
+            None,
             None,
             None,
         )
@@ -401,6 +413,7 @@ mod tests {
             AiTransport::Responses,
             StreamCallbacks::default(),
             Some("openai"),
+            None,
             None,
             None,
         )
