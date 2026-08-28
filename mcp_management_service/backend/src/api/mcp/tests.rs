@@ -37,6 +37,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         execution_scope_generation: Some(1),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
+        task_title: Some("Task one".to_string()),
         source_session_id: Some("source-session-1".to_string()),
         source_user_message_id: Some("source-message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),

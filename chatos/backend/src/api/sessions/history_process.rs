@@ -141,6 +141,38 @@ mod tests {
     }
 
     #[test]
+    fn compact_history_hides_cancelled_task_runner_callbacks() {
+        let mut user = build_message("user", "run tasks");
+        user.id = "user-1".to_string();
+        user.metadata = Some(json!({"conversation_turn_id": "turn-1"}));
+
+        let mut plan = build_message("assistant", "The task plan is ready.");
+        plan.id = "assistant-plan".to_string();
+        plan.metadata = Some(json!({"conversation_turn_id": "turn-1"}));
+
+        let mut cancelled = build_message("assistant", "Task README was cancelled.");
+        cancelled.id = "assistant-cancelled".to_string();
+        cancelled.message_mode = Some("task_runner_callback".to_string());
+        cancelled.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_terminal_update",
+                "event": "task.cancelled",
+                "status": "cancelled"
+            }
+        }));
+
+        let compact = build_compact_history_messages(vec![user, plan, cancelled]);
+        assert_eq!(
+            compact
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["user-1", "assistant-plan"]
+        );
+    }
+
+    #[test]
     fn turn_display_recovers_process_records_missing_from_visible_history() {
         let mut user = build_message("user", "help");
         user.id = "user-1".to_string();
@@ -659,6 +691,90 @@ mod tests {
                 "assistant-plan",
                 "task_runner_callback::user-1::task-1::task.failed::run-1",
             ]
+        );
+    }
+
+    #[test]
+    fn compact_history_from_turn_slices_keeps_started_callback_while_task_is_running() {
+        let mut user = build_engine_record("user-1", "user", "help", "turn-1");
+        user.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "overall_status": "processing",
+                "last_event": "task.run.started",
+                "created_task_ids": ["task-1"],
+                "running_task_ids": ["task-1"],
+                "terminal_task_ids": [],
+                "pending_task_count": 1
+            }
+        }));
+        let mut plan = build_engine_record(
+            "assistant-plan",
+            "assistant",
+            "I created the async task.",
+            "turn-1",
+        );
+        plan.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "mode": "contact_async",
+                "message_kind": "plan_summary"
+            }
+        }));
+        let mut started = build_message("assistant", "Task started.");
+        started.id = "task_runner_callback::user-1::task-1::run-1".to_string();
+        started.message_mode = Some("task_runner_callback".to_string());
+        started.metadata = Some(json!({
+            "conversation_turn_id": "turn-1",
+            "task_runner_async": {
+                "message_kind": "task_lifecycle_update",
+                "event": "task.run.started",
+                "task_id": "task-1",
+                "run_id": "run-1",
+                "source_turn_id": "turn-1",
+                "source_user_message_id": "user-1"
+            }
+        }));
+        let slice = memory_engine_sdk::TurnRecordSlice {
+            turn_id: "turn-1".to_string(),
+            user_record: user,
+            final_assistant_record: Some(plan),
+            has_process: true,
+            tool_call_count: 0,
+            thinking_count: 0,
+            process_message_count: 1,
+        };
+        assert!(turn_slice_needs_task_runner_callback_process_messages(
+            &slice
+        ));
+
+        let mut process_messages_by_turn = HashMap::new();
+        process_messages_by_turn.insert("turn-1".to_string(), vec![started]);
+        let compact = build_compact_history_messages_from_turn_slices_with_process(
+            vec![slice],
+            &process_messages_by_turn,
+        );
+
+        assert_eq!(
+            compact
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "user-1",
+                "assistant-plan",
+                "task_runner_callback::user-1::task-1::run-1",
+            ]
+        );
+        assert_eq!(
+            compact[0]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("task_runner_async"))
+                .and_then(|value| value.get("overall_status"))
+                .and_then(Value::as_str),
+            Some("processing")
         );
     }
 

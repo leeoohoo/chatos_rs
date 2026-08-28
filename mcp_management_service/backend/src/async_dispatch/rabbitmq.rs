@@ -294,6 +294,7 @@ pub(super) async fn run_rabbitmq_invocation_consumer_loop(
     state: AppState,
     topology: AsyncToolDispatchTopology,
 ) {
+    let semaphore = Arc::new(Semaphore::new(topology.worker_concurrency));
     loop {
         match open_named_consumer(
             &topology,
@@ -304,70 +305,116 @@ pub(super) async fn run_rabbitmq_invocation_consumer_loop(
         {
             Ok((_connection, channel, mut consumer)) => {
                 while let Some(delivery) = consumer.next().await {
-                    let Ok(delivery) = delivery else { break };
-                    let outcome = match serde_json::from_slice::<InvocationReadyEvent>(
-                        &delivery.data,
-                    ) {
-                        Ok(event) => {
-                            let outcome = crate::api::mcp::execute_tool_batch_invocation(
-                                &state,
-                                event.batch_id.as_str(),
-                                event.call_index,
-                            )
-                            .await;
-                            let _ = state
-                                    .runtime_tool_batches
-                                    .acknowledge_pending_event(
-                                        event.batch_id.as_str(),
-                                        &crate::runtime::RuntimeToolBatchPendingEvent::InvocationReady {
-                                            call_index: event.call_index,
-                                        },
-                                    )
-                                    .await;
-                            outcome
-                        }
-                        Err(error) => Err(format!("invalid invocation-ready event: {error}")),
+                    let Ok(delivery) = delivery else {
+                        break;
                     };
-                    match outcome {
-                        Ok(batch) => {
-                            if let Err(error) =
-                                publish_batch_pending_event(&state, &topology, &channel, &batch)
-                                    .await
-                            {
-                                warn!(
-                                    error = error.as_str(),
-                                    "publish invocation continuation failed"
-                                );
-                                let _ = delivery
-                                    .nack(BasicNackOptions {
-                                        multiple: false,
-                                        requeue: true,
-                                    })
-                                    .await;
-                                continue;
-                            }
-                            let _ = delivery.ack(BasicAckOptions::default()).await;
-                        }
+
+                    let event = match serde_json::from_slice::<InvocationReadyEvent>(&delivery.data)
+                    {
+                        Ok(event) => event,
                         Err(error) => {
                             warn!(
-                                error = error.as_str(),
-                                "execute invocation-ready event failed"
+                                error = error.to_string().as_str(),
+                                "invalid invocation-ready event"
                             );
-                            if invocation_ready_error_is_stale(error.as_str()) {
-                                // The durable batch already expired or was removed. Requeueing
-                                // cannot recreate it and only creates a hot loop that starves
-                                // current runs, so consume the stale notification.
-                                let _ = delivery.ack(BasicAckOptions::default()).await;
-                            } else {
-                                let _ = delivery
-                                    .nack(BasicNackOptions {
-                                        multiple: false,
-                                        requeue: true,
-                                    })
-                                    .await;
+                            if delivery.ack(BasicAckOptions::default()).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Invocation execution can include a local plugin call and therefore may
+                    // legitimately take much longer than RabbitMQ's delivery-ack timeout. The
+                    // durable Runtime Tool Batch remains the source of truth, so consume the
+                    // broker notification before starting the slow work. A process crash is
+                    // recovered by the batch watchdog, which restores InvocationReady for a
+                    // still-queued invocation.
+                    if let Err(error) = delivery.ack(BasicAckOptions::default()).await {
+                        warn!(
+                            error = error.to_string().as_str(),
+                            "acknowledge invocation-ready event before execution failed"
+                        );
+                        break;
+                    }
+
+                    if let Err(error) = state
+                        .runtime_tool_batches
+                        .acknowledge_pending_event(
+                            event.batch_id.as_str(),
+                            &crate::runtime::RuntimeToolBatchPendingEvent::InvocationReady {
+                                call_index: event.call_index,
+                            },
+                        )
+                        .await
+                    {
+                        warn!(
+                            batch_id = event.batch_id.as_str(),
+                            error = error.as_str(),
+                            "acknowledge durable invocation-ready event failed"
+                        );
+                    }
+
+                    let permit = match semaphore.clone().acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(_) => break,
+                    };
+                    let state = state.clone();
+                    let topology = topology.clone();
+                    let channel = channel.clone();
+                    tokio::spawn(async move {
+                        let outcome = crate::api::mcp::execute_tool_batch_invocation(
+                            &state,
+                            event.batch_id.as_str(),
+                            event.call_index,
+                        )
+                        .await;
+                        drop(permit);
+
+                        match outcome {
+                            Ok(batch) => {
+                                if let Err(error) = publish_batch_pending_event(
+                                    &state,
+                                    &topology,
+                                    &channel,
+                                    &batch,
+                                )
+                                .await
+                                {
+                                    // The resulting pending event is still durable. The terminal
+                                    // consumer watchdog republishes it on a healthy channel.
+                                    warn!(
+                                        error = error.as_str(),
+                                        "publish invocation continuation failed; durable watchdog will retry"
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                warn!(
+                                    error = error.as_str(),
+                                    "execute invocation-ready event failed"
+                                );
+                                if !invocation_ready_error_is_stale(error.as_str()) {
+                                    // Execution failed before producing a new durable state.
+                                    // Restore the ready marker so the watchdog can retry without
+                                    // depending on a long-lived unacked RabbitMQ delivery.
+                                    if let Err(requeue_error) = state
+                                        .runtime_tool_batches
+                                        .ensure_invocation_ready_for_event(
+                                            event.batch_id.as_str(),
+                                            event.call_index,
+                                        )
+                                        .await
+                                    {
+                                        warn!(
+                                            error = requeue_error.as_str(),
+                                            "restore invocation-ready event after execution failure failed"
+                                        );
+                                    }
+                                }
                             }
                         }
-                    }
+                    });
                 }
             }
             Err(error) => warn!(error = error.as_str(), "MCP invocation consumer failed"),

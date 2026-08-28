@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{FinishEngineJobRunRequest, RunPendingSummariesResponse};
-use crate::repositories::{control_plane, threads};
+use crate::repositories::threads;
 use crate::services::summary;
 
 use super::common::{create_scheduler_job_run, finish_job_run};
@@ -27,27 +27,6 @@ enum SummaryExecutionOutcome {
         thread_id: String,
         error: String,
     },
-}
-
-#[allow(dead_code)]
-pub async fn run_pending_thread_summaries(
-    config: &AppConfig,
-    db: &Db,
-) -> Result<RunPendingSummariesResponse, String> {
-    let policy = control_plane::get_effective_job_policy(db, "summary").await?;
-    let limit = policy
-        .max_threads_per_tick
-        .unwrap_or(config.worker_max_threads_per_tick)
-        .max(1);
-    run_pending_thread_summaries_with_limit(
-        db,
-        config,
-        None,
-        None,
-        crate::services::summary::required_thread_summary_token_limit(policy.token_limit)?,
-        limit,
-    )
-    .await
 }
 
 pub async fn run_pending_thread_summaries_with_limit(

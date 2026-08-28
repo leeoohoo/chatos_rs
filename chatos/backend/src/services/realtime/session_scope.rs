@@ -13,6 +13,7 @@ use super::types::RealtimeEventEnvelope;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RealtimeTopicScope {
+    User,
     Contacts,
     Notepad,
     Projects,
@@ -163,7 +164,10 @@ fn normalize_topic(topic: RealtimeTopic) -> Result<RealtimeTopic, String> {
 }
 
 fn topics_for_envelope(envelope: &RealtimeEventEnvelope) -> Vec<RealtimeTopic> {
-    let mut topics = Vec::new();
+    let mut topics = vec![RealtimeTopic {
+        scope: RealtimeTopicScope::User,
+        id: None,
+    }];
     let event = envelope.event;
 
     if event == "contacts.updated" {
@@ -234,6 +238,58 @@ fn topics_for_envelope(envelope: &RealtimeEventEnvelope) -> Vec<RealtimeTopic> {
     }
 
     topics
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{RealtimeSubscriptionSet, RealtimeTopic, RealtimeTopicScope};
+    use crate::services::realtime::types::{
+        ChatStreamRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
+    };
+
+    #[test]
+    fn user_topic_allows_any_event_already_scoped_to_authenticated_user() {
+        let mut subscriptions = RealtimeSubscriptionSet::default();
+        subscriptions
+            .subscribe(vec![RealtimeTopic {
+                scope: RealtimeTopicScope::User,
+                id: None,
+            }])
+            .expect("subscribe user topic");
+
+        let envelope = RealtimeEventEnvelope {
+            message_type: "event",
+            event: "chat.turn.started",
+            user_id: "user-1".to_string(),
+            conversation_id: Some("conversation-1".to_string()),
+            project_id: Some("project-1".to_string()),
+            payload: RealtimeEventPayload::ChatStream(ChatStreamRealtimePayload {
+                conversation_id: "conversation-1".to_string(),
+                conversation_turn_id: Some("turn-1".to_string()),
+                project_id: Some("project-1".to_string()),
+                user_message_id: None,
+                stream_type: "start".to_string(),
+                raw: json!({"type": "start"}),
+            }),
+            ts: "2026-08-28T00:00:00Z".to_string(),
+        };
+
+        assert!(subscriptions.allows(&envelope));
+    }
+
+    #[test]
+    fn user_topic_does_not_require_an_id() {
+        let mut subscriptions = RealtimeSubscriptionSet::default();
+        let topics = subscriptions
+            .subscribe(vec![RealtimeTopic {
+                scope: RealtimeTopicScope::User,
+                id: None,
+            }])
+            .expect("user topic should be valid without id");
+        assert_eq!(topics.len(), 1);
+    }
 }
 
 fn extract_string_path(envelope: &RealtimeEventEnvelope, path: &[&str]) -> Option<String> {

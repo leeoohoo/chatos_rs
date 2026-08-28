@@ -106,6 +106,7 @@ pub(super) fn prepare_transport(
             bin,
             args,
             env,
+            ..
         } => {
             if !permission_snapshot.contains("process.spawn") {
                 bail!("Plugin stdio MCP requires process.spawn in the permission snapshot");

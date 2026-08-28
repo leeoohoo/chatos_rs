@@ -285,12 +285,18 @@ pub(in crate::api::sessions) async fn get_session_compact_history(
         .into_iter()
         .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
         .collect();
+    let snapshot_revision = items
+        .iter()
+        .filter_map(|item| item.get("revision").and_then(Value::as_i64))
+        .max()
+        .unwrap_or(0);
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "items": items,
             "has_more": page.has_more,
             "next_before": page.next_before,
+            "snapshot_revision": snapshot_revision,
         })),
     )
 }

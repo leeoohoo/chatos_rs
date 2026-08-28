@@ -55,7 +55,7 @@ use self::task_support::{
 const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
 const ACTIVE_EXECUTION_LANE_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_execution_lane_unique";
 const TASK_RUNS_TASK_CREATED_INDEX_NAME: &str = "idx_task_runs_task_created_at";
-pub(crate) const EXECUTION_LANE_BUSY_ERROR: &str = "当前项目执行通道已有正在执行的运行";
+pub(crate) const EXECUTION_LANE_BUSY_ERROR: &str = "当前执行通道已有正在执行的运行";
 
 fn task_run_status_is_terminal(status: TaskRunStatus) -> bool {
     matches!(

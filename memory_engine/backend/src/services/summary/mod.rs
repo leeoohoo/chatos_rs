@@ -85,8 +85,6 @@ mod thread_repair;
 mod thread_summary;
 
 pub use active_summary::{get_thread_active_summary_status, run_thread_active_summary};
-#[allow(unused_imports)]
-pub use rollup::default_rollup_settings;
 pub(crate) use rollup::{
     prepare_thread_rollup, run_prepared_thread_rollup, run_thread_rollups_until_drained,
     SCHEDULER_TRIGGER,

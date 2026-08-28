@@ -121,6 +121,8 @@ struct RawMcpServer {
     oauth_resource: Option<String>,
     #[serde(default)]
     connect_timeout_ms: Option<u64>,
+    #[serde(default)]
+    requires_exclusive_execution: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -425,6 +427,7 @@ fn normalize_inline_mcp(
                 bin,
                 args: raw.args,
                 env: raw.env,
+                requires_exclusive_execution: raw.requires_exclusive_execution,
             })
         }
         "http" => {
@@ -441,6 +444,7 @@ fn normalize_inline_mcp(
                 headers: raw.headers,
                 oauth_resource: normalize_optional(raw.oauth_resource),
                 connect_timeout_ms: raw.connect_timeout_ms,
+                requires_exclusive_execution: raw.requires_exclusive_execution,
             })
         }
         _ => invalid_field(

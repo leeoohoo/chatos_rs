@@ -105,6 +105,7 @@ impl PluginComponentProvider {
                 owner_user_id,
                 device_id,
                 workspace_id,
+                workspace.relative_root.as_deref(),
                 "prepare",
                 Value::Object(body),
             )
@@ -173,6 +174,7 @@ impl PluginComponentProvider {
                         owner_user_id,
                         device_id,
                         workspace_id,
+                        workspace.relative_root.as_deref(),
                         prepared.adapter_session_id.as_str(),
                         operation.as_str(),
                     )
@@ -226,6 +228,7 @@ impl PluginComponentProvider {
         owner_user_id: &str,
         device_id: &str,
         workspace_id: &str,
+        project_root: Option<&str>,
         adapter_session_id: &str,
         operation: &str,
     ) -> Result<Value, ProviderCallError> {
@@ -252,6 +255,7 @@ impl PluginComponentProvider {
                 owner_user_id,
                 device_id,
                 workspace_id,
+                project_root,
                 "execute",
                 Value::Object(body),
             )

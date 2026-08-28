@@ -74,6 +74,7 @@ stdio MCP 只声明 package 内的 bin，不接受任意 shell command：
     "computer-use": {
       "type": "stdio",
       "bin": "open-computer-use",
+      "requiresExclusiveExecution": true,
       "args": ["mcp"]
     }
   },
@@ -100,6 +101,8 @@ stdio MCP 只声明 package 内的 bin，不接受任意 shell command：
   ]
 }
 ```
+
+`requiresExclusiveExecution` 默认为 `false`。当 MCP 会占用真实桌面、摄像设备或其他不能由多个 Task Run 并发操作的本机资源时，将它设为 `true`。Plugin Management 会把该属性写入不可变组件快照；Task Runner 在模型执行前按 Local Connector 设备进入 FIFO 队列，客户端仍保留运行时独占锁作为安全兜底。不要通过组件名称推断是否需要排队。
 
 HTTP MCP 使用 `type: "http"` 和 `url`。它仍由 Local Connector Client 发起网络请求，不会在 Plugin Management、MCP Management、Task Runner 或 Local Connector Service 中执行。生产 URL 必须使用 HTTPS；HTTP 只允许 loopback 开发地址。当前 HTTP runtime 只开放 MCP `tools/list` 和 `tools/call`，并拒绝不安全或由运行时管理的 header。
 

@@ -39,7 +39,8 @@ fn parses_schema_v3_npm_stdio_mcp() {
     let raw = manifest_with_mcp(json!({
         "type": "stdio",
         "bin": "open-computer-use",
-        "args": ["mcp"]
+        "args": ["mcp"],
+        "requiresExclusiveExecution": true
     }));
     let manifest = parse_plugin_manifest(raw.as_str()).expect("schema-v3 manifest");
 
@@ -56,6 +57,7 @@ fn parses_schema_v3_npm_stdio_mcp() {
             if component.kind == PluginComponentKind::McpServer
                 && component.runtime_kind == "npm_stdio"
                 && component.component_key == "computer-use"
+                && component.metadata.get("requires_exclusive_execution") == Some(&json!(true))
     ));
     assert_eq!(
         normalized_plugin_manifest_sha256(&manifest).unwrap().len(),
@@ -71,6 +73,8 @@ fn infers_stdio_transport_from_bin() {
         manifest.mcp_servers[0],
         PluginMcpServer::Stdio { .. }
     ));
+    let normalized = serde_json::to_value(&manifest.mcp_servers[0]).expect("normalized MCP");
+    assert!(normalized.get("requires_exclusive_execution").is_none());
 }
 
 #[test]

@@ -115,6 +115,7 @@ struct McpRelayQuery {
 #[derive(Debug, Deserialize)]
 struct PluginRelayQuery {
     workspace_id: Option<String>,
+    cwd: Option<String>,
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -265,6 +266,18 @@ fn is_allowed_model_config_proxy_request(method: &Method, path: &str) -> bool {
     }
     if path
         .strip_prefix("/api/model-configs/")
+        .is_some_and(|suffix| !suffix.trim_matches('/').is_empty())
+    {
+        return matches!(
+            method,
+            &Method::GET | &Method::PATCH | &Method::DELETE | &Method::POST
+        );
+    }
+    if path == "/api/model-providers" {
+        return matches!(method, &Method::GET | &Method::POST);
+    }
+    if path
+        .strip_prefix("/api/model-providers/")
         .is_some_and(|suffix| !suffix.trim_matches('/').is_empty())
     {
         return matches!(
@@ -533,6 +546,10 @@ async fn plugin_relay(
         action,
         &body,
     );
+    let mut relay_headers = BTreeMap::new();
+    if let Some(cwd) = normalize_optional_text(query.cwd) {
+        relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
+    }
     let request = RelayRequest {
         message_type: format!("plugin_{action}_request"),
         request_id: Uuid::new_v4().to_string(),
@@ -541,7 +558,7 @@ async fn plugin_relay(
         workspace_id,
         method: "POST".to_string(),
         path: format!("/plugins/{action}"),
-        headers: BTreeMap::new(),
+        headers: relay_headers,
         body,
         platform_signature: None,
         platform_signature_key_id: None,
@@ -856,9 +873,10 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout,
-        plugin_relay_timeout, STANDARD_MCP_RELAY_TIMEOUT,
+        is_allowed_model_config_proxy_request, is_local_sandbox_mcp_path, is_plugin_hook_dispatch,
+        mcp_relay_timeout, plugin_relay_timeout, STANDARD_MCP_RELAY_TIMEOUT,
     };
+    use axum::http::Method;
     use serde_json::json;
 
     #[test]
@@ -913,6 +931,34 @@ mod tests {
         assert!(is_local_sandbox_mcp_path("/api/sandboxes/sandbox-1/mcp"));
         assert!(!is_local_sandbox_mcp_path("/api/sandboxes/leases"));
         assert!(!is_local_sandbox_mcp_path("/api/local/sandbox/images/mcp"));
+    }
+
+    #[test]
+    fn model_provider_crud_and_refresh_are_available_to_native_clients() {
+        assert!(is_allowed_model_config_proxy_request(
+            &Method::GET,
+            "/api/model-providers"
+        ));
+        assert!(is_allowed_model_config_proxy_request(
+            &Method::POST,
+            "/api/model-providers"
+        ));
+        assert!(is_allowed_model_config_proxy_request(
+            &Method::PATCH,
+            "/api/model-providers/provider-1"
+        ));
+        assert!(is_allowed_model_config_proxy_request(
+            &Method::POST,
+            "/api/model-providers/provider-1/refresh"
+        ));
+        assert!(is_allowed_model_config_proxy_request(
+            &Method::DELETE,
+            "/api/model-providers/provider-1"
+        ));
+        assert!(!is_allowed_model_config_proxy_request(
+            &Method::PUT,
+            "/api/model-providers/provider-1"
+        ));
     }
 
     #[test]

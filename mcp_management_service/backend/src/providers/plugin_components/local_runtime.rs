@@ -127,6 +127,11 @@ impl PluginComponentProvider {
                 snapshot.owner_user_id.as_str(),
                 binding.device_id.as_str(),
                 binding.workspace_id.as_str(),
+                snapshot
+                    .project_context
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.relative_root.as_deref()),
                 "execute",
                 Value::Object(body),
             )
@@ -182,6 +187,7 @@ impl PluginComponentProvider {
                     owner_user_id,
                     binding.device_id.as_str(),
                     binding.workspace_id.as_str(),
+                    None,
                     "cancel",
                     body,
                 )

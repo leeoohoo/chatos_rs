@@ -49,7 +49,16 @@ impl PluginComponentProvider {
                     tool_snapshots.insert(route.resource_id.clone(), binding.tools.clone());
                     local_bindings.insert(route.resource_id.clone(), binding);
                 }
-                Err(error) => super::result::make_route_unavailable(route, error.message.as_str()),
+                Err(error) => {
+                    tracing::warn!(
+                        resource_id = route.resource_id.as_str(),
+                        plugin_id = immutable.plugin_id.as_str(),
+                        component_key = immutable.component.component_key.as_str(),
+                        error = error.message.as_str(),
+                        "prepare Plugin tool component route failed"
+                    );
+                    super::result::make_route_unavailable(route, error.message.as_str());
+                }
             }
         }
         (local_bindings, tool_snapshots)

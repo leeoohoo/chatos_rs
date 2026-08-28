@@ -110,6 +110,15 @@ pub fn is_transient_network_error(err: &str) -> bool {
         || is_retryable_provider_backpressure_error(err)
 }
 
+/// Returns true only for client-side request/read inactivity timeouts. Gateway
+/// status codes such as 504 keep the normal provider retry policy because they
+/// are explicit upstream responses rather than a request that made no local
+/// progress.
+pub fn is_ai_request_timeout_error(err: &str) -> bool {
+    err.to_lowercase()
+        .contains("ai transport error (kind=timeout)")
+}
+
 /// Detects failures where the HTTP connection ended before the provider
 /// completed a response. Gateways commonly record these attempts with zero
 /// input/output tokens because model processing never started.
@@ -210,7 +219,9 @@ pub fn is_transient_transport_or_parse_error(err: &str) -> bool {
 }
 
 pub fn transient_retry_kind_label(err: &str) -> &'static str {
-    if is_upstream_auth_unavailable_error(err) {
+    if is_ai_request_timeout_error(err) {
+        "模型响应连续无数据超时"
+    } else if is_upstream_auth_unavailable_error(err) {
         "上游认证资源暂不可用"
     } else if is_upstream_connection_interrupted_error(err) {
         "上游连接在开始处理前中断"
@@ -297,6 +308,12 @@ pub fn exhausted_transient_retry_message(
     max_transient_retries: usize,
     err: &str,
 ) -> String {
+    if is_ai_request_timeout_error(err) {
+        return format!(
+            "AI 请求失败：{}，已自动重试 {} 次；请检查模型服务状态后重试。",
+            retry_kind, max_transient_retries
+        );
+    }
     if is_response_parse_error(err) {
         let detail = sanitized_response_parse_failure_detail(err);
         return format!(
@@ -333,6 +350,7 @@ pub fn classify_transient_retry(
     }
 
     let retry_kind = transient_retry_kind_label(err);
+    let max_transient_retries = effective_transient_retry_limit(err, max_transient_retries);
     if transient_retry_count < max_transient_retries {
         let next_retry_count = transient_retry_count + 1;
         return Some(TransientRetryAction::Retry {
@@ -345,6 +363,14 @@ pub fn classify_transient_retry(
     Some(TransientRetryAction::Exhausted {
         error_message: exhausted_transient_retry_message(retry_kind, max_transient_retries, err),
     })
+}
+
+pub fn effective_transient_retry_limit(err: &str, configured_limit: usize) -> usize {
+    if is_ai_request_timeout_error(err) {
+        configured_limit.min(1)
+    } else {
+        configured_limit
+    }
 }
 
 pub async fn handle_transient_retry(
@@ -370,6 +396,7 @@ pub async fn handle_transient_retry_with_abort(
     max_transient_retries: usize,
     abort_token: Option<&CancellationToken>,
 ) -> Result<bool, String> {
+    let max_transient_retries = effective_transient_retry_limit(err, max_transient_retries);
     let Some(action) = classify_transient_retry(err, *transient_retry_count, max_transient_retries)
     else {
         return Ok(false);
@@ -417,8 +444,9 @@ fn is_non_retryable_quota_error(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_transient_retry, classify_user_facing_ai_error, exhausted_transient_retry_message,
-        handle_transient_retry, handle_transient_retry_with_abort,
+        classify_transient_retry, classify_user_facing_ai_error, effective_transient_retry_limit,
+        exhausted_transient_retry_message, handle_transient_retry,
+        handle_transient_retry_with_abort, is_ai_request_timeout_error,
         is_context_length_exceeded_error, is_provider_authentication_error,
         is_rate_limited_provider_error, is_request_body_too_large_error, is_response_parse_error,
         is_retryable_failed_provider_response, is_retryable_provider_backpressure_error,
@@ -733,6 +761,42 @@ mod tests {
         }
 
         assert!(classify_transient_retry("status 400: invalid_request_error", 0, 5).is_none());
+    }
+
+    #[test]
+    fn request_inactivity_timeout_is_limited_to_one_retry() {
+        let error = "AI transport error (kind=timeout): operation timed out";
+        assert!(is_ai_request_timeout_error(error));
+        assert_eq!(effective_transient_retry_limit(error, 5), 1);
+
+        assert!(matches!(
+            classify_transient_retry(error, 0, 5),
+            Some(TransientRetryAction::Retry {
+                next_retry_count: 1,
+                ..
+            })
+        ));
+        match classify_transient_retry(error, 1, 5) {
+            Some(TransientRetryAction::Exhausted { error_message }) => {
+                assert!(error_message.contains("模型响应连续无数据超时"));
+                assert!(error_message.contains("已自动重试 1 次"));
+            }
+            _ => panic!("second inactivity timeout should exhaust retries"),
+        }
+    }
+
+    #[test]
+    fn explicit_gateway_timeout_keeps_configured_retry_limit() {
+        let error = "status 504: gateway timeout";
+        assert!(!is_ai_request_timeout_error(error));
+        assert_eq!(effective_transient_retry_limit(error, 5), 5);
+        assert!(matches!(
+            classify_transient_retry(error, 1, 5),
+            Some(TransientRetryAction::Retry {
+                next_retry_count: 2,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]

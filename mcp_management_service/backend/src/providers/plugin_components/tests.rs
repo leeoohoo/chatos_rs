@@ -162,7 +162,7 @@ fn local_context() -> ProjectExecutionContext {
         workspace: Some(WorkspaceExecutionTarget {
             device_id: Some("device-1".to_string()),
             workspace_id: "workspace-1".to_string(),
-            relative_root: None,
+            relative_root: Some("projects/space-station".to_string()),
         }),
         revision: "project-revision".to_string(),
     }
@@ -190,6 +190,7 @@ fn snapshot(
         execution_scope_generation: Some(1),
         turn_id: None,
         task_id: Some("task-1".to_string()),
+        task_title: Some("Task one".to_string()),
         source_session_id: None,
         source_user_message_id: None,
         contact_agent_id: None,
@@ -244,6 +245,12 @@ async fn start_local_connector(
             query.get("workspace_id").map(String::as_str),
             Some("workspace-1")
         );
+        if action != "cancel" {
+            assert_eq!(
+                query.get("cwd").map(String::as_str),
+                Some("projects/space-station")
+            );
+        }
         assert_eq!(
             headers
                 .get("x-local-connector-owner-user-id")

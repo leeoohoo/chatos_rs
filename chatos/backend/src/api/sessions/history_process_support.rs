@@ -63,6 +63,29 @@ pub(super) fn is_task_runner_callback_message(message: &Message) -> bool {
         })
 }
 
+pub(super) fn is_cancelled_task_runner_callback_message(message: &Message) -> bool {
+    if !is_task_runner_callback_message(message) {
+        return false;
+    }
+
+    let task_runner = message
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("task_runner_async"));
+    let event = task_runner
+        .and_then(|value| value.get("event"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let status = task_runner
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    matches!(event, "task.cancelled" | "task.canceled")
+        || matches!(status, "cancelled" | "canceled")
+}
+
 pub(super) fn is_task_runner_async_plan_summary_message(message: &Message) -> bool {
     let is_task_runner_async_plan_mode = message
         .message_mode
@@ -116,6 +139,27 @@ pub(super) fn normalize_task_runner_async_user_status_for_display(
         .and_then(Value::as_str)
         .map(str::trim)
         .unwrap_or_default();
+    let has_active_tracking = ["queued_task_ids", "running_task_ids", "pending_task_ids"]
+        .iter()
+        .any(|key| {
+            task_runner_async
+                .get(*key)
+                .and_then(Value::as_array)
+                .is_some_and(|items| !items.is_empty())
+        })
+        || task_runner_async
+            .get("pending_task_count")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0);
+    if has_active_tracking {
+        if current_status == "completed" {
+            task_runner_async.insert(
+                "overall_status".to_string(),
+                Value::String("processing".to_string()),
+            );
+        }
+        return;
+    }
     if current_status == "completed" {
         return;
     }
@@ -222,7 +266,7 @@ pub(crate) fn reconcile_contact_async_user_status_for_display(
     );
 }
 
-pub(super) fn task_runner_async_user_has_terminal_tracking(message: &Message) -> bool {
+pub(super) fn task_runner_async_user_has_callback_tracking(message: &Message) -> bool {
     if message.role != "user" {
         return false;
     }
@@ -233,8 +277,41 @@ pub(super) fn task_runner_async_user_has_terminal_tracking(message: &Message) ->
     else {
         return false;
     };
+    if task_runner_async.get("mode").and_then(Value::as_str) != Some("contact_async") {
+        return false;
+    }
 
-    task_runner_async_has_terminal_tracking(task_runner_async)
+    [
+        "created_task_ids",
+        "queued_task_ids",
+        "running_task_ids",
+        "pending_task_ids",
+        "terminal_task_ids",
+        "succeeded_task_ids",
+        "failed_task_ids",
+        "blocked_task_ids",
+        "cancelled_task_ids",
+    ]
+    .iter()
+    .any(|key| {
+        task_runner_async
+            .get(*key)
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    }) || task_runner_async
+        .get("last_event")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|event| {
+            matches!(
+                event,
+                "task.run.started"
+                    | "task.completed"
+                    | "task.failed"
+                    | "task.blocked"
+                    | "task.cancelled"
+            )
+        })
 }
 
 fn task_runner_async_has_terminal_tracking(

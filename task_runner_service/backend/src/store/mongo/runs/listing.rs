@@ -208,20 +208,31 @@ impl MongoStore {
         self.find_by_id(&self.runs, id).await
     }
 
-    pub(in crate::store) async fn get_running_run_for_execution_lane(
+    pub(in crate::store) async fn get_prior_active_run_for_execution_lane(
         &self,
         execution_lane_key: &str,
-        exclude_run_id: &str,
+        created_at: &str,
+        run_id: &str,
     ) -> Result<Option<TaskRunRecord>, String> {
         self.runs
             .find_one(
                 doc! {
                     "execution_lane_key": execution_lane_key,
-                    "status": "running",
-                    "id": { "$ne": exclude_run_id },
+                    "status": { "$in": ["queued", "running"] },
+                    "id": { "$ne": run_id },
+                    "$or": [
+                        { "status": "running" },
+                        {
+                            "dispatch_paused": { "$ne": true },
+                            "$or": [
+                                { "created_at": { "$lt": created_at } },
+                                { "created_at": created_at, "id": { "$lt": run_id } },
+                            ],
+                        },
+                    ],
                 },
                 FindOneOptions::builder()
-                    .sort(doc! { "started_at": 1, "id": 1 })
+                    .sort(doc! { "created_at": 1, "id": 1 })
                     .build(),
             )
             .await

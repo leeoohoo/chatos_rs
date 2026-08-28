@@ -109,7 +109,7 @@ fn task_plugin_hints_schema(choices: &[TaskMcpSchemaChoice]) -> Value {
         "type": "array",
         "maxItems": 16,
         "uniqueItems": true,
-        "description": "Suggest Plugins required by this specific Task. Use only plugin_key values from the request-scoped Task Plugin catalog. These hints are non-authoritative; Task Runner resolves and validates the trusted Plugin ids, device installation and policy before saving the Task.",
+        "description": "Suggest Plugins required by this specific Task. Use only plugin_key values from the request-scoped Task Plugin catalog. Route by the actual interaction surface: use Computer Use for native desktop applications and operating-system UI; use Browser CDP only for websites in managed Chromium or an explicitly connected Chrome session. An app name such as Feishu/Lark, WeChat or DingTalk means the native desktop app unless the objective explicitly says web page, website, browser or Chrome. Do not select both merely as a fallback. These hints are non-authoritative; Task Runner resolves and validates the trusted Plugin ids, device installation and policy before saving the Task.",
         "items": {
             "type": "object",
             "properties": {

@@ -11,7 +11,7 @@ use super::{
     build_chat_completions_request_payload, build_responses_request_payload,
     effective_provider_for_request, emit_finalized_stream_callbacks, parse_timeout_seconds,
     response_items_to_chat_messages, validate_request_payload_size, AiRequestHandler,
-    AiRequestOptions, StreamCallbacks,
+    AiRequestOptions, AiTransport, StreamCallbacks,
 };
 use crate::stream_parse::FinalizedStreamState;
 
@@ -30,6 +30,16 @@ async fn token_count_unsupported(
     (StatusCode::NOT_FOUND, Json(json!({"error": "unsupported"})))
 }
 
+async fn delayed_provider_response() -> Json<Value> {
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    Json(json!({
+        "id": "response-delayed",
+        "status": "completed",
+        "output_text": "late",
+        "output": []
+    }))
+}
+
 async fn start_request_test_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -45,6 +55,73 @@ async fn start_request_test_server(app: Router) -> (String, tokio::task::JoinHan
 fn explicit_read_timeout_overrides_the_environment_default() {
     let handler = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_secs(123));
     assert_eq!(handler.read_timeout_seconds(), Some(123));
+}
+
+#[tokio::test]
+async fn read_timeout_interrupts_a_provider_that_makes_no_progress() {
+    let (base_url, server) = start_request_test_server(
+        Router::new().route("/responses", post(delayed_provider_response)),
+    )
+    .await;
+    let started_at = std::time::Instant::now();
+    let error = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_millis(50))
+        .handle_request(
+            base_url.as_str(),
+            "test-key",
+            json!([{"role": "user", "content": "hello"}]),
+            true,
+            "gpt-test".to_string(),
+            None,
+            None,
+            None,
+            None,
+            StreamCallbacks::default(),
+            Some("openai".to_string()),
+            None,
+            None,
+        )
+        .await
+        .expect_err("provider inactivity should time out");
+    server.abort();
+
+    assert!(error.contains("AI transport error (kind=timeout)"));
+    assert!(started_at.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_a_pending_provider_request_immediately() {
+    let (base_url, server) = start_request_test_server(
+        Router::new().route("/responses", post(delayed_provider_response)),
+    )
+    .await;
+    let abort_token = tokio_util::sync::CancellationToken::new();
+    let cancellation = abort_token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        cancellation.cancel();
+    });
+    let started_at = std::time::Instant::now();
+    let error = AiRequestHandler::new_with_read_timeout(std::time::Duration::from_secs(30))
+        .send_prebuilt_payload_with_options(
+            base_url.as_str(),
+            "test-key",
+            AiTransport::Responses,
+            json!({"model": "gpt-test", "input": "hello", "stream": true}),
+            StreamCallbacks::default(),
+            Some("openai".to_string()),
+            None,
+            None,
+            AiRequestOptions {
+                abort_token: Some(abort_token),
+                ..AiRequestOptions::default()
+            },
+        )
+        .await
+        .expect_err("cancelled provider request should abort");
+    server.abort();
+
+    assert_eq!(error, "aborted");
+    assert!(started_at.elapsed() < std::time::Duration::from_secs(1));
 }
 
 #[tokio::test]
@@ -331,13 +408,13 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
 }
 
 #[test]
-fn ai_read_timeout_defaults_to_two_hours_and_accepts_valid_override() {
-    assert_eq!(parse_timeout_seconds(None, 7_200), 7_200);
-    assert_eq!(parse_timeout_seconds(Some("450"), 7_200), 450);
-    assert_eq!(parse_timeout_seconds(Some("7200"), 7_200), 7_200);
-    assert_eq!(parse_timeout_seconds(Some("7201"), 7_200), 7_200);
-    assert_eq!(parse_timeout_seconds(Some("0"), 7_200), 7_200);
-    assert_eq!(parse_timeout_seconds(Some("invalid"), 7_200), 7_200);
+fn ai_read_timeout_defaults_to_three_minutes_and_accepts_valid_override() {
+    assert_eq!(parse_timeout_seconds(None, 180), 180);
+    assert_eq!(parse_timeout_seconds(Some("450"), 180), 450);
+    assert_eq!(parse_timeout_seconds(Some("7200"), 180), 7_200);
+    assert_eq!(parse_timeout_seconds(Some("7201"), 180), 180);
+    assert_eq!(parse_timeout_seconds(Some("0"), 180), 180);
+    assert_eq!(parse_timeout_seconds(Some("invalid"), 180), 180);
 }
 
 #[test]

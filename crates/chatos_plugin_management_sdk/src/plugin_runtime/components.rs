@@ -46,14 +46,21 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
             PluginMcpServer::Stdio { .. } => "npm_stdio",
             PluginMcpServer::Http { .. } => "http",
         };
-        descriptors.push(component_descriptor(
+        let mut descriptor = component_descriptor(
             manifest,
             server.component_key().to_string(),
             PluginComponentKind::McpServer,
             runtime_kind,
             None,
             true,
-        ));
+        );
+        if server.requires_exclusive_execution() {
+            descriptor.metadata.insert(
+                "requires_exclusive_execution".to_string(),
+                Value::Bool(true),
+            );
+        }
+        descriptors.push(descriptor);
     }
     for app in &manifest.apps {
         descriptors.push(component_descriptor(

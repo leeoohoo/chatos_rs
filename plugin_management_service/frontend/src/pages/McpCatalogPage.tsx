@@ -382,7 +382,6 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
         descriptorData={descriptorQuery.data}
         descriptorLoading={descriptorQuery.isLoading}
         descriptorError={descriptorQuery.error}
-        activeProviderSkillId={activeProviderSkillId}
         setActiveProviderSkillId={setActiveProviderSkillId}
         onCloseDescriptor={closeDescriptorModal}
         onStartOptimize={startOptimizeForActiveSkill}

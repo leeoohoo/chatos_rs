@@ -47,6 +47,7 @@ impl LocalConnectorProvider {
                         SystemMcpKey::CodeMaintainerRead
                             | SystemMcpKey::CodeMaintainerWrite
                             | SystemMcpKey::TerminalController
+                            | SystemMcpKey::RemoteConnectionController
                     )
             }
             None => route

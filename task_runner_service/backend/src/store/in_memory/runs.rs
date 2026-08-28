@@ -173,23 +173,27 @@ impl InMemoryStore {
         self.inner.read().runs.get(id).cloned()
     }
 
-    pub(in crate::store) fn get_running_run_for_execution_lane(
+    pub(in crate::store) fn get_prior_active_run_for_execution_lane(
         &self,
         execution_lane_key: &str,
-        exclude_run_id: &str,
+        created_at: &str,
+        run_id: &str,
     ) -> Option<TaskRunRecord> {
         self.inner
             .read()
             .runs
             .values()
             .filter(|run| {
-                run.id != exclude_run_id
-                    && run.status == TaskRunStatus::Running
+                run.id != run_id
+                    && matches!(run.status, TaskRunStatus::Queued | TaskRunStatus::Running)
+                    && (run.status == TaskRunStatus::Running || !run.dispatch_paused)
                     && run.execution_lane_key.as_deref() == Some(execution_lane_key)
+                    && (run.status == TaskRunStatus::Running
+                        || (run.created_at.as_str(), run.id.as_str()) < (created_at, run_id))
             })
             .min_by(|left, right| {
-                left.started_at
-                    .cmp(&right.started_at)
+                left.created_at
+                    .cmp(&right.created_at)
                     .then_with(|| left.id.cmp(&right.id))
             })
             .cloned()

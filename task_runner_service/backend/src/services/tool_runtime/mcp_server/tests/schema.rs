@@ -30,6 +30,14 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(properties.contains_key("enabled_builtin_kinds"));
     assert!(properties.contains_key("external_mcp_config_ids"));
     assert!(properties.contains_key("plugin_hints"));
+    let plugin_hint_description = properties
+        .get("plugin_hints")
+        .and_then(|value| value.get("description"))
+        .and_then(serde_json::Value::as_str)
+        .expect("plugin_hints description");
+    assert!(plugin_hint_description.contains("native desktop applications"));
+    assert!(plugin_hint_description.contains("Browser CDP only for websites"));
+    assert!(plugin_hint_description.contains("Feishu/Lark"));
     assert!(!properties.contains_key("selected_skill_ids"));
     assert!(!properties.contains_key("plugin_device_id"));
     assert!(!properties.contains_key("plugin_workspace_id"));

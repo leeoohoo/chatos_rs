@@ -467,7 +467,8 @@ impl AiRuntime {
                                 // A retry must not inherit a potentially unhealthy pooled
                                 // connection. Build a new client for every retry attempt and
                                 // ask the provider to close that isolated connection afterward.
-                                recovery_request_handler = Some(AiRequestHandler::new());
+                                recovery_request_handler =
+                                    Some(self.request_handler.isolated_retry_handler());
                                 continue;
                             }
                             ModelRequestErrorAction::Fail(err) => return Err(err),

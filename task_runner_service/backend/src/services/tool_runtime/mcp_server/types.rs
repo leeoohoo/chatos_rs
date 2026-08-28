@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::models::{
-    AskUserPromptRecord, AskUserPromptStatus, CancelTaskRequest, CreateTaskRequest, TaskMcpConfig,
-    TaskMcpRequestConfig, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskScheduleConfig, TaskStatus, UpdateModelConfigRequest, UpdateTaskRequest,
+    AskUserPromptStatus, CancelTaskRequest, CreateTaskRequest, TaskMcpConfig, TaskMcpRequestConfig,
+    TaskRunStatus, TaskScheduleConfig, TaskStatus, UpdateModelConfigRequest, UpdateTaskRequest,
 };
 
 #[path = "types/common.rs"]
@@ -37,12 +36,3 @@ pub(super) use self::task::{
     CreateTaskArgs, CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs,
     ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
 };
-
-#[allow(dead_code)]
-pub(super) fn _assert_types(
-    _task: TaskRecord,
-    _run: TaskRunRecord,
-    _event: TaskRunEventRecord,
-    _prompt: AskUserPromptRecord,
-) {
-}

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use crate::core::time::now_rfc3339;
 use crate::core::user_visible_path::display_path;
@@ -26,14 +29,14 @@ use super::types::{
     ProjectRunCatalogRealtimePayload, ProjectRunInstanceRealtimePayload,
     ProjectRunStateRealtimePayload, ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope,
     RealtimeEventPayload, RemoteConnectionsUpdatedRealtimePayload, ReviewRepairRealtimePayload,
-    SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
+    SequencedRealtimeEventEnvelope, SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
     TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
 };
 
 const REALTIME_CHANNEL_CAPACITY: usize = 512;
 
 pub struct RealtimeHub {
-    tx: broadcast::Sender<Arc<RealtimeEventEnvelope>>,
+    tx: broadcast::Sender<Arc<SequencedRealtimeEventEnvelope>>,
 }
 
 impl RealtimeHub {
@@ -43,18 +46,45 @@ impl RealtimeHub {
     }
 
     fn send(&self, envelope: RealtimeEventEnvelope) {
-        let _ = self.tx.send(Arc::new(envelope));
+        let _ = self.tx.send(Arc::new(SequencedRealtimeEventEnvelope {
+            event_id: Uuid::new_v4().to_string(),
+            event_sequence: next_realtime_event_sequence(),
+            envelope,
+        }));
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
+    fn subscribe(&self) -> broadcast::Receiver<Arc<SequencedRealtimeEventEnvelope>> {
         self.tx.subscribe()
     }
 }
 
 static REALTIME_HUB: Lazy<RealtimeHub> = Lazy::new(RealtimeHub::new);
+static REALTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub fn subscribe_user_events() -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
+pub fn subscribe_user_events() -> broadcast::Receiver<Arc<SequencedRealtimeEventEnvelope>> {
     REALTIME_HUB.subscribe()
+}
+
+fn next_realtime_event_sequence() -> u64 {
+    let wall_clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64;
+    let mut previous = REALTIME_EVENT_SEQUENCE.load(Ordering::Relaxed);
+
+    loop {
+        let next = wall_clock.max(previous.saturating_add(1));
+        match REALTIME_EVENT_SEQUENCE.compare_exchange_weak(
+            previous,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(observed) => previous = observed,
+        }
+    }
 }
 
 fn project_for_realtime(mut project: Project) -> Project {
@@ -589,4 +619,16 @@ fn publish_review_repair_event(
         payload: RealtimeEventPayload::ReviewRepair(payload),
         ts: now_rfc3339(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_realtime_event_sequence;
+
+    #[test]
+    fn realtime_event_sequence_is_strictly_monotonic() {
+        let first = next_realtime_event_sequence();
+        let second = next_realtime_event_sequence();
+        assert!(second > first);
+    }
 }

@@ -180,6 +180,48 @@ impl TaskRunnerCapabilityPolicy {
         &self.runtime_context
     }
 
+    pub(crate) fn exclusive_execution_lane_key(
+        &self,
+        config: &TaskPluginConfig,
+    ) -> Result<Option<String>, String> {
+        let selected_plugin_ids = config
+            .selected_plugins
+            .iter()
+            .map(|selected| selected.plugin_id.trim())
+            .filter(|plugin_id| !plugin_id.is_empty())
+            .collect::<HashSet<_>>();
+        let requires_exclusive_execution = self.capabilities.plugins.iter().any(|plugin| {
+            selected_plugin_ids.contains(plugin.catalog.id.as_str())
+                && plugin.components.iter().any(|component| {
+                    component.available
+                        && component.component.kind
+                            == chatos_plugin_management_sdk::PluginComponentKind::McpServer
+                        && component
+                            .component
+                            .metadata
+                            .get("requires_exclusive_execution")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false)
+                })
+        });
+        if !requires_exclusive_execution {
+            return Ok(None);
+        }
+        let device_id = self
+            .runtime_context
+            .device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "exclusive Plugin execution requires a Local Connector device".to_string()
+            })?;
+        Ok(Some(format!(
+            "plugin-exclusive-device:{}:{}",
+            self.runtime_context.owner_user_id, device_id
+        )))
+    }
+
     pub(crate) fn validate_plugin_config(&self, config: &TaskPluginConfig) -> Result<(), String> {
         let mut seen_plugins = HashSet::new();
         for selected in &config.selected_plugins {

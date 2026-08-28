@@ -242,6 +242,9 @@ fn media_type_for_path(path: &Path) -> Option<&'static str> {
         "txt" => Some("text/plain"),
         "csv" => Some("text/csv"),
         "zip" => Some("application/zip"),
+        "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        "pptx" => Some("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
         _ => None,
     }
 }
@@ -264,6 +267,22 @@ mod tests {
         assert_eq!(sha256, hex::encode(Sha256::digest(b"png-fixture")));
         assert!(resolve_artifact_candidate(root.as_path(), "../outside.png").is_err());
         assert!(resolve_artifact_candidate(root.as_path(), "/tmp/outside.png").is_err());
+    }
+
+    #[test]
+    fn artifact_candidate_media_types_include_office_documents() {
+        assert_eq!(
+            media_type_for_path(Path::new("report.docx")),
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        );
+        assert_eq!(
+            media_type_for_path(Path::new("book.xlsx")),
+            Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        );
+        assert_eq!(
+            media_type_for_path(Path::new("slides.pptx")),
+            Some("application/vnd.openxmlformats-officedocument.presentationml.presentation")
+        );
     }
 
     #[cfg(unix)]

@@ -13,8 +13,9 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use tracing::warn;
 
+use crate::config::Config;
 use crate::core::auth::AuthUser;
-use crate::services::task_runner_api_client;
+use crate::services::{access_token_scope, task_runner_api_client};
 
 mod context;
 mod graph;
@@ -48,6 +49,10 @@ pub fn router() -> Router {
         .route(
             "/api/messages/{message_id}/task-runner/tasks/{task_id}",
             get(get_message_task_runner_task),
+        )
+        .route(
+            "/api/messages/{message_id}/task-runner/tasks/{task_id}/cancel",
+            post(cancel_message_task_runner_task),
         )
         .route(
             "/api/messages/{message_id}/task-runner/runs/{run_id}",
@@ -93,6 +98,11 @@ struct ConversationTaskRunnerActiveMessageTasksRequest {
 struct RetryMessageTaskRunnerRunRequest {
     retry_instruction: Option<String>,
     execution_service_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct CancelMessageTaskRunnerTaskRequest {
+    reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -363,6 +373,113 @@ async fn get_message_task_runner_task(
         );
     }
     (StatusCode::OK, Json(payload))
+}
+
+async fn cancel_message_task_runner_task(
+    auth: AuthUser,
+    Path((message_id, task_id)): Path<(String, String)>,
+    Query(query): Query<MessageTaskRunnerLookupQuery>,
+    body: Option<Json<CancelMessageTaskRunnerTaskRequest>>,
+) -> (StatusCode, Json<Value>) {
+    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "当前消息没有关联的任务来源"})),
+            );
+        }
+        Err(err) => return err,
+    };
+    let task = match task_runner_api_client::get_message_task(
+        context.base_url.as_str(),
+        task_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+    )
+    .await
+    {
+        Ok(task) => task,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "取消前读取任务详情失败", "detail": err})),
+            );
+        }
+    };
+    if !task_matches_message_source(
+        &task,
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+    ) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "任务不属于当前消息"})),
+        );
+    }
+
+    let Some(user_access_token) = access_token_scope::get_current_access_token() else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "当前请求缺少用户访问凭据"})),
+        );
+    };
+    let Some(user_service_base_url) = Config::get()
+        .user_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "用户服务地址未配置"})),
+        );
+    };
+    let agent_token = match task_runner_api_client::exchange_task_runner_token_via_user_service(
+        &task_runner_api_client::UserServiceTaskRunnerExchange {
+            base_url: user_service_base_url.to_string(),
+            access_token: user_access_token.clone(),
+            task_runner_agent_account_id: context.agent_account_id.clone(),
+            contact_id: context.contact_id.clone(),
+        },
+    )
+    .await
+    {
+        Ok(token) => token,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "兑换任务取消凭据失败", "detail": err})),
+            );
+        }
+    };
+    let reason = body
+        .as_ref()
+        .and_then(|payload| normalize_text(payload.reason.as_deref()))
+        .unwrap_or_else(|| "用户取消正在执行的任务".to_string());
+    match task_runner_api_client::cancel_task_runner_task(
+        context.base_url.as_str(),
+        agent_token.as_str(),
+        Some(user_access_token.as_str()),
+        task_id.as_str(),
+        &task_runner_api_client::CancelTaskRunnerTaskRequest {
+            reason,
+            replacement_task_ids: Vec::new(),
+        },
+    )
+    .await
+    {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(json!({"success": true, "task_id": task_id, "result": result})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "取消任务失败", "detail": err})),
+        ),
+    }
 }
 
 async fn get_message_task_runner_graph_run(

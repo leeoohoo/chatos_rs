@@ -52,6 +52,7 @@ fn project_files_and_commands_use_local_connector() {
         "code_maintainer_read",
         "code_maintainer_write",
         "terminal_controller",
+        "remote_connection_controller",
     ] {
         let route = resolve_one(
             context(WorkspaceProviderKind::LocalConnector),

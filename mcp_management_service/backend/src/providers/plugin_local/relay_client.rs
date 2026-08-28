@@ -13,6 +13,7 @@ impl PluginLocalProvider {
         owner_user_id: &str,
         device_id: &str,
         workspace_id: &str,
+        project_root: Option<&str>,
         action: &str,
         body: Value,
     ) -> Result<Vec<u8>, ProviderCallError> {
@@ -45,6 +46,12 @@ impl PluginLocalProvider {
         })?;
         url.query_pairs_mut()
             .append_pair("workspace_id", workspace_id);
+        if let Some(project_root) = project_root
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            url.query_pairs_mut().append_pair("cwd", project_root);
+        }
         let response = self
             .http
             .post(url)

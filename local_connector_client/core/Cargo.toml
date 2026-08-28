@@ -15,7 +15,6 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_agent = { path = "../../agent", features = ["local-agent-loop"] }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime", features = ["local-agent-loop"] }
 chatos_mcp = { path = "../../mcp" }
-chatos_mcp_management_sdk = { path = "../../crates/chatos_mcp_management_sdk" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }

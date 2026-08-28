@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::core::tool_call::extract_message_tool_calls;
 use crate::models::message::Message;
@@ -24,6 +25,8 @@ pub struct NewMessageFields {
 #[derive(Debug, Serialize)]
 pub struct MessageOut {
     pub id: String,
+    pub revision: i64,
+    pub sequence_no: i64,
     pub conversation_id: String,
     #[serde(rename = "conversationId")]
     pub conversation_id_camel: String,
@@ -46,8 +49,12 @@ pub struct MessageOut {
 impl From<Message> for MessageOut {
     fn from(msg: Message) -> Self {
         let content = message_content_for_display(&msg);
+        let revision = msg.revision();
+        let sequence_no = message_sequence_no(&msg);
         MessageOut {
             id: msg.id,
+            revision,
+            sequence_no,
             conversation_id: msg.session_id.clone(),
             conversation_id_camel: msg.session_id,
             role: msg.role,
@@ -65,6 +72,18 @@ impl From<Message> for MessageOut {
             created_at: msg.created_at,
         }
     }
+}
+
+fn message_sequence_no(message: &Message) -> i64 {
+    let timestamp_micros = chrono::DateTime::parse_from_rfc3339(message.created_at.as_str())
+        .map(|value| value.timestamp_micros())
+        .unwrap_or_default()
+        .max(0);
+    let digest = Sha256::digest(message.id.as_bytes());
+    let tie_breaker = i64::from(u16::from_be_bytes([digest[0], digest[1]]) & 0x03ff);
+    timestamp_micros
+        .saturating_mul(1_024)
+        .saturating_add(tie_breaker)
 }
 
 fn message_content_for_display(message: &Message) -> String {
@@ -456,6 +475,24 @@ mod tests {
         MessageOut,
     };
     use crate::models::message::Message;
+
+    #[test]
+    fn message_output_exposes_revision_and_stable_sequence() {
+        let mut message = Message::new(
+            "session-1".to_string(),
+            "user".to_string(),
+            "hello".to_string(),
+        );
+        message.id = "message-1".to_string();
+        message.created_at = "2026-08-24T03:00:00Z".to_string();
+        message.set_revision(8);
+
+        let first = MessageOut::from(message.clone());
+        let second = MessageOut::from(message);
+        assert_eq!(first.revision, 8);
+        assert_eq!(first.sequence_no, second.sequence_no);
+        assert!(first.sequence_no > 0);
+    }
 
     #[test]
     fn requirement_execution_message_uses_persisted_user_visible_content() {

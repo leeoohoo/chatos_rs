@@ -127,7 +127,12 @@ impl TaskService {
             let Some(task) = tasks_by_id.get(task_id.as_str()).cloned() else {
                 continue;
             };
-            let mut detail = self.build_chatos_message_task_detail(task).await?;
+            // The graph only needs lightweight node data. Full task details, process logs,
+            // model configuration and run events are loaded on demand when a node is opened.
+            // Avoiding the per-node detail fan-out keeps large task graphs responsive.
+            let mut detail = super::super::ChatosMessageTaskDetail::from(task);
+            detail.process_log = None;
+            detail.result_summary = None;
             detail
                 .prerequisite_task_ids
                 .retain(|prerequisite_task_id| graph_task_ids.contains(prerequisite_task_id));

@@ -95,6 +95,7 @@ impl PluginLocalProvider {
                 owner_user_id,
                 device_id,
                 workspace_id,
+                workspace.relative_root.as_deref(),
                 "prepare",
                 Value::Object(body),
             )
@@ -167,12 +168,23 @@ impl PluginLocalProvider {
             "tool_name": original_tool_name,
             "arguments": arguments,
             "tool_result_max_chars": snapshot.tool_result_max_chars,
+            "conversation_id": snapshot.source_session_id,
+            "conversation_turn_id": snapshot.turn_id,
+            "source_user_message_id": snapshot.source_user_message_id,
+            "task_id": snapshot.task_id,
+            "task_run_id": snapshot.run_id,
+            "task_title": snapshot.task_title,
         });
         let bytes = self
             .request(
                 snapshot.owner_user_id.as_str(),
                 binding.device_id.as_str(),
                 binding.workspace_id.as_str(),
+                snapshot
+                    .project_context
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.relative_root.as_deref()),
                 "execute",
                 body,
             )
@@ -230,6 +242,11 @@ impl PluginLocalProvider {
                 snapshot.owner_user_id.as_str(),
                 binding.device_id.as_str(),
                 binding.workspace_id.as_str(),
+                snapshot
+                    .project_context
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.relative_root.as_deref()),
                 "cancel",
                 body,
             )
@@ -288,6 +305,7 @@ impl PluginLocalProvider {
                     owner_user_id,
                     binding.device_id.as_str(),
                     binding.workspace_id.as_str(),
+                    None,
                     "cancel",
                     body,
                 )

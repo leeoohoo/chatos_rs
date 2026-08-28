@@ -55,7 +55,6 @@ interface McpCatalogDialogsProps {
   descriptorData?: DescriptorData;
   descriptorLoading: boolean;
   descriptorError: unknown;
-  activeProviderSkillId: string | null;
   setActiveProviderSkillId: Dispatch<SetStateAction<string | null>>;
   onCloseDescriptor: () => void;
   onStartOptimize: () => void;
@@ -88,7 +87,6 @@ export function McpCatalogDialogs({
   descriptorData,
   descriptorLoading,
   descriptorError,
-  activeProviderSkillId,
   setActiveProviderSkillId,
   onCloseDescriptor,
   onStartOptimize,

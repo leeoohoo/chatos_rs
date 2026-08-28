@@ -361,6 +361,28 @@ impl RuntimeToolBatchStore {
         .await
     }
 
+    pub async fn ensure_invocation_ready_for_event(
+        &self,
+        batch_id: &str,
+        call_index: usize,
+    ) -> Result<RuntimeToolBatchRecord, String> {
+        self.mutate(batch_id, move |record| {
+            if record.status == RuntimeToolBatchStatus::Completed
+                || record.next_call_index != call_index
+            {
+                return Ok(false);
+            }
+
+            let expected = RuntimeToolBatchPendingEvent::InvocationReady { call_index };
+            if record.pending_event.as_ref() == Some(&expected) {
+                return Ok(false);
+            }
+            record.pending_event = Some(expected);
+            Ok(true)
+        })
+        .await
+    }
+
     pub async fn acknowledge_pending_event(
         &self,
         batch_id: &str,
@@ -708,5 +730,39 @@ mod tests {
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].next_call_index, 0);
         assert_eq!(active[0].pending_event, None);
+    }
+
+    #[tokio::test]
+    async fn failed_execution_can_restore_the_exact_ready_event_after_early_broker_ack() {
+        let store = RuntimeToolBatchStore::memory();
+        store
+            .insert_or_get(record(2, vec![None, None]))
+            .await
+            .expect("insert batch");
+        store
+            .acknowledge_pending_event(
+                "batch-1",
+                &RuntimeToolBatchPendingEvent::InvocationReady { call_index: 0 },
+            )
+            .await
+            .expect("ack ready event");
+
+        let restored = store
+            .ensure_invocation_ready_for_event("batch-1", 0)
+            .await
+            .expect("restore current ready event");
+        assert_eq!(
+            restored.pending_event,
+            Some(RuntimeToolBatchPendingEvent::InvocationReady { call_index: 0 })
+        );
+
+        let unchanged = store
+            .ensure_invocation_ready_for_event("batch-1", 1)
+            .await
+            .expect("ignore non-current ready event");
+        assert_eq!(
+            unchanged.pending_event,
+            Some(RuntimeToolBatchPendingEvent::InvocationReady { call_index: 0 })
+        );
     }
 }

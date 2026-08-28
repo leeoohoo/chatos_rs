@@ -201,6 +201,8 @@ pub struct CreateRuntimeSessionRequest {
     pub execution_group_id: Option<String>,
     pub turn_id: Option<String>,
     pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_title: Option<String>,
     pub task_profile: Option<String>,
     pub source_session_id: Option<String>,
     pub source_user_message_id: Option<String>,

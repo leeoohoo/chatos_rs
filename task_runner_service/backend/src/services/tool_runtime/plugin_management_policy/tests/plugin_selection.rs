@@ -91,6 +91,57 @@ fn plugin_hints_require_a_local_connector_device() {
 }
 
 #[test]
+fn selected_plugin_can_require_a_device_exclusive_execution_lane() {
+    let mut plugin = resolved_plugin(false);
+    plugin.components[0]
+        .component
+        .metadata
+        .insert("requires_exclusive_execution".to_string(), json!(true));
+    let mut capabilities = local_runtime_capabilities();
+    capabilities.plugins = vec![plugin];
+    let policy = local_runtime_policy(capabilities).expect("Plugin policy");
+    let config = TaskPluginConfig {
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
+        command_invocations: Vec::new(),
+    };
+
+    assert_eq!(
+        policy
+            .exclusive_execution_lane_key(&config)
+            .expect("exclusive lane"),
+        Some("plugin-exclusive-device:owner-1:device-1".to_string())
+    );
+}
+
+#[test]
+fn ordinary_selected_plugin_does_not_require_an_exclusive_execution_lane() {
+    let mut capabilities = local_runtime_capabilities();
+    capabilities.plugins = vec![resolved_plugin(false)];
+    let policy = local_runtime_policy(capabilities).expect("Plugin policy");
+    let config = TaskPluginConfig {
+        selected_plugins: vec![SelectedPluginRef {
+            plugin_id: "plugin-browser".to_string(),
+            selected_skill_ids: Vec::new(),
+            selected_command_ids: Vec::new(),
+            selected_agent_ids: Vec::new(),
+        }],
+        command_invocations: Vec::new(),
+    };
+
+    assert_eq!(
+        policy
+            .exclusive_execution_lane_key(&config)
+            .expect("ordinary lane"),
+        None
+    );
+}
+
+#[test]
 fn run_validation_rejects_plugin_release_drift() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];

@@ -41,6 +41,7 @@ pub(super) async fn resolve_mcp_management_gateway(
             .and_then(|execution| execution.execution_group_id.clone()),
         turn_id: None,
         task_id: Some(task.id.clone()),
+        task_title: Some(task.title.clone()),
         task_profile: Some(task.task_profile.clone()),
         source_session_id: task.source_session_id.clone(),
         source_user_message_id: task.source_user_message_id.clone(),

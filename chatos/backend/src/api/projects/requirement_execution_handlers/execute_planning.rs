@@ -329,7 +329,7 @@ pub(super) async fn execute_requirement_inner(
     };
     let persisted_user_message_metadata = message.metadata.clone();
     prepare_requirement_planner_turn(session.id.as_str(), execution_group_id.as_str());
-    run_chat_usecase(RunChatUsecaseInput {
+    let planner_input = RunChatUsecaseInput {
         sender: None,
         req: chat_req,
         persisted_user_message_content: Some(user_visible_content),
@@ -346,8 +346,10 @@ pub(super) async fn execute_requirement_inner(
             "replacement_identity": replacement_identity,
             "replacement_work_items": replacement_work_items,
         })),
-    })
-    .await;
+    };
+    tokio::spawn(async move {
+        run_chat_usecase(planner_input).await;
+    });
 
     Ok(json!({
         "success": true,

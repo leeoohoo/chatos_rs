@@ -43,6 +43,11 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             "/api/model-configs/{*path}",
             any(user_service_protected_proxy),
         )
+        .route("/api/model-providers", any(user_service_protected_proxy))
+        .route(
+            "/api/model-providers/{*path}",
+            any(user_service_protected_proxy),
+        )
         .route(
             "/api/local-connectors/devices",
             get(list_devices).post(create_device),

@@ -277,9 +277,29 @@ pub(super) async fn resolve_runtime_session(
         unavailable_required_mcps.sort();
         unavailable_required_mcps.dedup();
         if !unavailable_required_mcps.is_empty() {
+            let unavailable_set = unavailable_required_mcps
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>();
+            let reasons = route_response
+                .routes
+                .iter()
+                .filter(|route| unavailable_set.contains(route.resource_id.as_str()))
+                .map(|route| format!("{}: {}", route.resource_id, route.reason))
+                .collect::<Vec<_>>();
+            tracing::warn!(
+                unavailable_required_mcps = ?unavailable_required_mcps,
+                reasons = ?reasons,
+                "required MCP routes could not be materialized"
+            );
             return Err(ApiError::conflict(format!(
-                "required MCPs cannot be materialized: {}",
-                unavailable_required_mcps.join(", ")
+                "required MCPs cannot be materialized: {}{}",
+                unavailable_required_mcps.join(", "),
+                if reasons.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", reasons.join("; "))
+                }
             )));
         }
         let mut allowed_resource_ids = route_response
@@ -349,6 +369,7 @@ pub(super) async fn resolve_runtime_session(
             execution_scope_generation: None,
             turn_id: normalized(request.turn_id),
             task_id: normalized(request.task_id),
+            task_title: normalized(request.task_title),
             source_session_id: normalized(request.source_session_id),
             source_user_message_id: normalized(request.source_user_message_id),
             contact_agent_id,
@@ -858,6 +879,10 @@ fn apply_selected_plugin_scope(
             return false;
         }
         if let Some(selected) = selected {
+            // A Plugin explicitly selected for this runtime is part of the requested
+            // capability contract. Preparation failures must not be silently reduced
+            // to a runtime that only exposes unrelated builtin tools.
+            plugin.binding.required = true;
             let selected_skills = normalized_plugin_component_ids(
                 selected.selected_skill_ids.as_slice(),
                 "selected_skill_ids",
@@ -1036,6 +1061,15 @@ fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(),
     {
         return Err(ApiError::bad_request(
             "tool_result_max_chars must be between 1 and 10000000",
+        ));
+    }
+    if request
+        .task_title
+        .as_deref()
+        .is_some_and(|value| value.trim().chars().count() > 256)
+    {
+        return Err(ApiError::bad_request(
+            "task_title must not exceed 256 characters",
         ));
     }
     Ok(())

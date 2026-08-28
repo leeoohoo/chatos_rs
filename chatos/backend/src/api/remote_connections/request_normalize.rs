@@ -6,6 +6,13 @@ use crate::models::remote_connection::{NewRemoteConnection, RemoteConnection};
 
 use super::{CreateRemoteConnectionRequest, UpdateRemoteConnectionRequest};
 
+pub(super) const NATIVE_CLIENT_DEVICE_ID: &str = "chatos-swift-native-client";
+pub(super) const NATIVE_CLIENT_WORKSPACE_ID: &str = "local-machine";
+
+pub(super) fn is_native_client_execution_target(device_id: &str, workspace_id: &str) -> bool {
+    device_id == NATIVE_CLIENT_DEVICE_ID && workspace_id == NATIVE_CLIENT_WORKSPACE_ID
+}
+
 pub(super) fn normalize_create_request(
     req: CreateRemoteConnectionRequest,
     user_id: Option<String>,
@@ -36,12 +43,17 @@ pub(super) fn normalize_create_request(
         _ => return Err("不支持的 auth_type".to_string()),
     };
 
-    validate_auth_fields(
-        auth_type.as_str(),
-        password.as_deref(),
-        private_key_path.as_deref(),
-        certificate_path.as_deref(),
-    )?;
+    if !is_native_client_execution_target(
+        local_connector_device_id.as_str(),
+        local_connector_workspace_id.as_str(),
+    ) {
+        validate_auth_fields(
+            auth_type.as_str(),
+            password.as_deref(),
+            private_key_path.as_deref(),
+            certificate_path.as_deref(),
+        )?;
+    }
     let jump_host = normalize_non_empty(req.jump_host);
     let jump_username = normalize_non_empty(req.jump_username);
     let jump_port = req.jump_port.map(normalize_port).transpose()?.or(Some(22));
@@ -190,12 +202,17 @@ pub(super) fn normalize_update_request(
         None
     };
 
-    validate_auth_fields(
-        auth_type.as_str(),
-        password.as_deref(),
-        private_key_path.as_deref(),
-        certificate_path.as_deref(),
-    )?;
+    if !is_native_client_execution_target(
+        local_connector_device_id.as_str(),
+        local_connector_workspace_id.as_str(),
+    ) {
+        validate_auth_fields(
+            auth_type.as_str(),
+            password.as_deref(),
+            private_key_path.as_deref(),
+            certificate_path.as_deref(),
+        )?;
+    }
     if jump_enabled && (jump_host.is_none() || jump_username.is_none()) {
         return Err("启用跳板机时 jump_host 和 jump_username 为必填".to_string());
     }

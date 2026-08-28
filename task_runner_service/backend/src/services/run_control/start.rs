@@ -185,12 +185,18 @@ impl RunService {
             crate::services::workspace_execution::task_runtime_capability_fingerprint(
                 &runtime_task,
             );
-        let execution_lane_key = crate::services::workspace_execution::model_execution_lane_key(
-            self,
-            &runtime_task,
-            &effective_tools,
-        )
-        .await?;
+        let workspace_execution_lane_key =
+            crate::services::workspace_execution::model_execution_lane_key(
+                self,
+                &runtime_task,
+                &effective_tools,
+            )
+            .await?;
+        let plugin_execution_lane_key = match capability_policy.as_ref() {
+            Some(policy) => policy.exclusive_execution_lane_key(&runtime_task.plugin_config)?,
+            None => None,
+        };
+        let execution_lane_key = plugin_execution_lane_key.or(workspace_execution_lane_key);
         let run_id = Uuid::new_v4().to_string();
         let (execution_timeout_ms, ai_read_timeout_ms) = self.effective_run_timeouts_ms().await?;
         let execution_timeout =

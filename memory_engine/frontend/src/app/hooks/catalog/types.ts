@@ -11,7 +11,6 @@ import type {
   RotateSourceSecretResponse,
 } from '../../../types';
 import type {
-  JobTypeKey,
   ModelFormValues,
   PolicyFormValues,
   PolicyMap,

@@ -25,10 +25,7 @@ impl PluginLocalProvider {
     ) {
         let mut bindings = HashMap::new();
         let mut tool_snapshots = HashMap::new();
-        for route in routes
-            .iter_mut()
-            .filter(|route| route.provider_kind == McpProviderKind::PluginLocal)
-        {
+        for route in routes.iter_mut().filter(|route| self.supports(route)) {
             route.cancel_supported = false;
             let Some(immutable) = immutable_bindings.get(route.resource_id.as_str()) else {
                 make_route_unavailable(route, "immutable Plugin MCP binding is missing");

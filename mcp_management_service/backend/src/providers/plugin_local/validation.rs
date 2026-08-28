@@ -5,10 +5,9 @@ use std::collections::HashSet;
 
 use chatos_mcp_management_sdk::{ResolvedMcpRoute, WorkspaceProviderKind};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::{PluginLocalProviderBinding, PluginPrepareResponse};
-use crate::providers::ProviderCallError;
+use crate::providers::{canonical_json, ProviderCallError};
 use crate::runtime::{PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
 
 pub(super) fn validate_prepare_response(
@@ -81,12 +80,13 @@ fn validate_server_instructions(
             "Plugin MCP server instructions are not normalized or exceed the byte limit",
         ));
     }
-    let encoded = serde_json::to_vec(&instructions).map_err(|error| {
+    let value = instructions.map_or(Value::Null, |value| Value::String(value.to_string()));
+    let actual_sha256 = canonical_json::canonical_json_sha256(&value).map_err(|error| {
         ProviderCallError::invalid_response(format!(
             "serialize Plugin MCP server instructions failed: {error}"
         ))
     })?;
-    if hex::encode(Sha256::digest(encoded)) != expected_sha256 {
+    if actual_sha256 != expected_sha256 {
         return Err(ProviderCallError::invalid_response(
             "Plugin MCP server instructions hash is invalid",
         ));
@@ -136,13 +136,18 @@ fn validate_tool_snapshot(tools: &[Value], expected_sha256: &str) -> Result<(), 
             "Plugin MCP tool snapshot must contain between 1 and 200 tools",
         ));
     }
-    let encoded = serde_json::to_vec(tools).map_err(|error| {
+    let value = Value::Array(tools.to_vec());
+    let encoded = canonical_json::canonical_json_bytes(&value).map_err(|error| {
         ProviderCallError::invalid_response(format!(
             "serialize Plugin MCP tool snapshot failed: {error}"
         ))
     })?;
     if encoded.len() > super::MAX_PLUGIN_TOOL_SNAPSHOT_BYTES
-        || hex::encode(Sha256::digest(encoded)) != expected_sha256
+        || canonical_json::canonical_json_sha256(&value).map_err(|error| {
+            ProviderCallError::invalid_response(format!(
+                "hash Plugin MCP tool snapshot failed: {error}"
+            ))
+        })? != expected_sha256
     {
         return Err(ProviderCallError::invalid_response(
             "Plugin MCP tool snapshot hash or size is invalid",

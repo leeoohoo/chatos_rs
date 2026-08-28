@@ -180,6 +180,7 @@ mod tests {
                 headers: Default::default(),
                 oauth_resource: None,
                 connect_timeout_ms: None,
+                requires_exclusive_execution: false,
             },
             server_key: None,
             tool_allowlist: Vec::new(),

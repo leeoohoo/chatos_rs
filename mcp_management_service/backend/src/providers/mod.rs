@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod cancel_response;
+mod canonical_json;
 mod chatos;
 mod dispatcher_init;
 mod dispatcher_prepare;

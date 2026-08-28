@@ -22,6 +22,7 @@ fn request() -> CreateRuntimeSessionRequest {
         execution_group_id: None,
         turn_id: None,
         task_id: Some("task-1".to_string()),
+        task_title: Some("Task one".to_string()),
         task_profile: Some("implementation".to_string()),
         source_session_id: None,
         source_user_message_id: None,

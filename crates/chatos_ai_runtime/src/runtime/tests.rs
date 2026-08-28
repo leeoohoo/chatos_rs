@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -267,6 +268,57 @@ async fn start_lifecycle_mock_provider(
         connection_headers,
         server,
     )
+}
+
+async fn stalled_model_provider(State(request_count): State<Arc<AtomicUsize>>) -> Json<Value> {
+    request_count.fetch_add(1, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    Json(json!({
+        "id": "response-too-late",
+        "status": "completed",
+        "output_text": "late"
+    }))
+}
+
+#[tokio::test]
+async fn stalled_model_request_retries_once_with_the_same_read_timeout_then_fails() {
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route("/responses", post(stalled_model_provider))
+        .with_state(Arc::clone(&request_count));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind stalled model provider");
+    let address = listener.local_addr().expect("stalled provider address");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let request = ModelRequest::openai_compatible(
+        format!("http://{address}"),
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "complete the task"}]),
+    )
+    .with_responses_support(true)
+    .with_max_transient_retries(Some(5));
+    let started_at = std::time::Instant::now();
+
+    let error = AiRuntime::new(None)
+        .with_request_read_timeout(std::time::Duration::from_millis(50))
+        .with_max_iterations(2)
+        .run_turn(
+            request,
+            AiRuntimeOptions::for_conversation("session-stalled"),
+        )
+        .await
+        .expect_err("stalled provider should reach a terminal failure");
+    server.abort();
+
+    assert_eq!(request_count.load(Ordering::SeqCst), 2);
+    assert!(error.contains("模型响应连续无数据超时"));
+    assert!(error.contains("已自动重试 1 次"));
+    assert!(started_at.elapsed() < std::time::Duration::from_secs(2));
 }
 
 #[tokio::test]

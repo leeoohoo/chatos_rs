@@ -65,18 +65,21 @@ impl AppStore {
         }
     }
 
-    pub(crate) async fn get_running_run_for_execution_lane(
+    pub(crate) async fn get_prior_active_run_for_execution_lane(
         &self,
         execution_lane_key: &str,
-        exclude_run_id: &str,
+        created_at: &str,
+        run_id: &str,
     ) -> Result<Option<TaskRunRecord>, String> {
         match self {
-            Self::InMemory(store) => {
-                Ok(store.get_running_run_for_execution_lane(execution_lane_key, exclude_run_id))
-            }
+            Self::InMemory(store) => Ok(store.get_prior_active_run_for_execution_lane(
+                execution_lane_key,
+                created_at,
+                run_id,
+            )),
             Self::Mongo(store) => {
                 store
-                    .get_running_run_for_execution_lane(execution_lane_key, exclude_run_id)
+                    .get_prior_active_run_for_execution_lane(execution_lane_key, created_at, run_id)
                     .await
             }
         }

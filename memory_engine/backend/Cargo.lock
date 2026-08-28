@@ -709,30 +709,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_mcp_management_sdk"
-version = "0.1.0"
-dependencies = [
- "chatos_plugin_management_sdk",
- "chatos_service_runtime",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "urlencoding",
-]
-
-[[package]]
 name = "chatos_mcp_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
- "chatos_mcp_management_sdk",
- "chatos_mcp_service",
  "chatos_service_runtime",
- "futures-util",
  "hex",
- "lapin",
  "libc",
  "reqwest",
  "serde",
@@ -769,7 +752,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "urlencoding",
- "zeroize",
 ]
 
 [[package]]
@@ -2576,7 +2558,6 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
- "jsonwebtoken",
  "lapin",
  "memory_engine_sdk",
  "mongodb 3.8.0",

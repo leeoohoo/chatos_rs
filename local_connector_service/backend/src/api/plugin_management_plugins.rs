@@ -14,7 +14,8 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::{Extension, Json};
 use chatos_plugin_management_sdk::{
-    PluginInstallSource, PluginInstallSourceList, UpdateUserPluginPreferenceRequest,
+    verify_plugin_release_signature, PluginInstallSource, PluginInstallSourceList,
+    PluginReleaseVerificationContext, UpdateUserPluginPreferenceRequest,
     UpdateUserPluginPreferenceResponse,
 };
 use futures::StreamExt;
@@ -105,6 +106,7 @@ pub(super) async fn proxy_plugin_release_artifact(
         .map_err(plugin_management_error)?;
     ensure_source_identity(&source, plugin_id.as_str(), release_id.as_str())?;
     ensure_source_preference_identity(&source, user.effective_owner_user_id())?;
+    verify_install_source_signature(&source)?;
     let url = validate_artifact_url(source.release.artifact_ref.as_str())?;
     let client = build_artifact_client(&url).await?;
     let upstream = client
@@ -202,6 +204,36 @@ fn ensure_source_identity(
         ));
     }
     Ok(())
+}
+
+fn verify_install_source_signature(source: &PluginInstallSource) -> Result<(), ApiError> {
+    let key = source
+        .marketplace
+        .trusted_signing_keys
+        .iter()
+        .find(|key| key.key_id == source.release.signature.key_id)
+        .ok_or_else(|| {
+            ApiError::service_unavailable(
+                "Plugin Release signing key is not trusted by its Marketplace",
+            )
+        })?;
+    verify_plugin_release_signature(
+        PluginReleaseVerificationContext {
+            plugin_id: source.catalog.id.as_str(),
+            version: source.release.version.as_str(),
+            marketplace_id: source.marketplace.id.as_str(),
+            publisher_id: source.catalog.publisher.id.as_str(),
+            artifact_sha256: source.release.artifact_sha256.as_str(),
+        },
+        &source.release.normalized_manifest,
+        &source.release.signature,
+        key,
+    )
+    .map_err(|error| {
+        ApiError::service_unavailable(format!(
+            "Plugin install source signature verification failed: {error}"
+        ))
+    })
 }
 
 fn require_human_user(user: &CurrentUser) -> Result<(), ApiError> {
