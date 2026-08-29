@@ -57,6 +57,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "mcp_change_logs",
         "task_manager_tasks",
         "ask_user_prompt_requests",
+        "pet_activity_inbox",
         "system_contexts",
         "applications",
         "project_run_catalogs",
@@ -378,6 +379,42 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "conversation_id": 1, "status": 1, "updated_at": -1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("pet_activity_inbox")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {
+                    "user_id": 1,
+                    "activity_key": 1,
+                    "activity_version": 1,
+                })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("pet_activity_inbox")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "user_id": 1, "inbox_status": 1, "occurred_at": -1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("pet_activity_inbox")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "user_id": 1, "updated_at": -1 })
                 .build(),
             None,
         )

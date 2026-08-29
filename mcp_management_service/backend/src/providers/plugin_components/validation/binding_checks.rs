@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_management_sdk::WorkspaceProviderKind;
 use serde_json::Value;
 
 use super::value_helpers::is_lower_sha256;
 use crate::providers::plugin_components::PluginPrepareResponse;
 use crate::providers::ProviderCallError;
 use crate::runtime::{
-    PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
+    resolve_plugin_local_execution_target, PluginLocalToolComponentBinding,
+    PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
 };
 use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
 
@@ -109,16 +109,18 @@ pub(in crate::providers::plugin_components) fn validate_local_bound_route(
                 "immutable Plugin tool component binding is missing",
             )
         })?;
-    let workspace = snapshot.project_context.workspace.as_ref();
-    if snapshot.project_context.workspace_provider != WorkspaceProviderKind::LocalConnector
-        || snapshot.expires_at_unix.min(binding.expires_at_unix) <= chrono::Utc::now().timestamp()
+    let target = resolve_plugin_local_execution_target(
+        &snapshot.project_context,
+        immutable.installation_device_id.as_deref(),
+        immutable.permission_snapshot.as_slice(),
+    )
+    .map_err(ProviderCallError::provider_unavailable)?;
+    if snapshot.expires_at_unix.min(binding.expires_at_unix) <= chrono::Utc::now().timestamp()
         || immutable != &binding.runtime
         || route.provider_ref.as_deref() != Some(binding.runtime.provider_ref.as_str())
         || route.allow_writes != binding.runtime.allow_writes
-        || workspace.and_then(|workspace| workspace.device_id.as_deref())
-            != Some(binding.device_id.as_str())
-        || workspace.map(|workspace| workspace.workspace_id.as_str())
-            != Some(binding.workspace_id.as_str())
+        || target.device_id != binding.device_id
+        || target.workspace_id != binding.workspace_id
     {
         return Err(ProviderCallError::provider_unavailable(
             "Plugin Local tool component route does not match its prepared session",

@@ -103,6 +103,38 @@ pub(crate) fn effective_task_tool_snapshot(config: &TaskMcpConfig) -> EffectiveT
     }
 }
 
+pub(crate) fn effective_task_tool_snapshot_for_scope(
+    config: &TaskMcpConfig,
+    scope: &crate::models::TaskExecutionScope,
+) -> EffectiveTaskToolSnapshot {
+    let mut snapshot = effective_task_tool_snapshot(config);
+    remove_non_project_workspace_tools(scope, &mut snapshot);
+    snapshot
+}
+
+fn remove_non_project_workspace_tools(
+    scope: &crate::models::TaskExecutionScope,
+    snapshot: &mut EffectiveTaskToolSnapshot,
+) {
+    if scope.workspace_project_id().is_some() {
+        return;
+    }
+
+    snapshot.requested_mcp_resource_ids.retain(|resource_id| {
+        chatos_mcp::system_mcp_descriptor_by_resource_id(resource_id).is_none_or(|descriptor| {
+            !matches!(
+                descriptor.key,
+                chatos_plugin_management_sdk::SystemMcpKey::CodeMaintainerRead
+                    | chatos_plugin_management_sdk::SystemMcpKey::CodeMaintainerWrite
+                    | chatos_plugin_management_sdk::SystemMcpKey::TerminalController
+            )
+        })
+    });
+    snapshot.workspace_read = false;
+    snapshot.workspace_write = false;
+    snapshot.terminal = false;
+}
+
 pub(crate) fn validate_project_execution_task_runtime_contract(
     task: &TaskRecord,
     tools: &EffectiveTaskToolSnapshot,
@@ -343,16 +375,16 @@ pub(crate) async fn model_execution_lane_key(
     if !tools.mutates_workspace() {
         return Ok(None);
     }
-    let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
-    if project_id == crate::models::PUBLIC_PROJECT_ID {
+    let scope = task.execution_scope();
+    let Some(project_id) = scope.workspace_project_id() else {
         return Ok(None);
-    }
-    let _project = super::project_management_api_client::sync_get_project(
-        &service.config,
-        project_id.as_str(),
-    )
-    .await?
-    .ok_or_else(|| format!("project not found while resolving execution lane: {project_id}"))?;
+    };
+    let _project =
+        super::project_management_api_client::sync_get_project(&service.config, project_id)
+            .await?
+            .ok_or_else(|| {
+                format!("project not found while resolving execution lane: {project_id}")
+            })?;
     Ok(None)
 }
 
@@ -361,6 +393,17 @@ pub(crate) async fn prepare_task_run_workspace(
     task: &TaskRecord,
     run: &mut TaskRunRecord,
 ) -> Result<Option<RuntimeWorkspaceRouteTarget>, String> {
+    let scope = task.execution_scope();
+    if scope.workspace_project_id().is_none() {
+        remove_non_project_workspace_tools(&scope, &mut run.effective_tools);
+        if run.workspace_execution.is_some() {
+            run.workspace_execution = None;
+            run.updated_at = now_rfc3339();
+            persist_workspace_execution(service, run).await?;
+        }
+        return Ok(None);
+    }
+
     if let Some(execution) = run.workspace_execution.as_ref() {
         match execution.status {
             WorkspacePreparationStatus::Ready => return Ok(execution.route.clone()),
@@ -444,13 +487,16 @@ async fn prepare_workspace_inner(
     task: &TaskRecord,
     run: &TaskRunRecord,
 ) -> Result<PreparedWorkspaceExecution, String> {
-    let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
-    let project = super::project_management_api_client::sync_get_project(
-        &service.config,
-        project_id.as_str(),
-    )
-    .await?
-    .ok_or_else(|| format!("project not found while preparing Task Run workspace: {project_id}"))?;
+    let scope = task.execution_scope();
+    let project_id = scope
+        .workspace_project_id()
+        .ok_or_else(|| "user conversation tasks do not have a project workspace".to_string())?;
+    let project =
+        super::project_management_api_client::sync_get_project(&service.config, project_id)
+            .await?
+            .ok_or_else(|| {
+                format!("project not found while preparing Task Run workspace: {project_id}")
+            })?;
     let decision = decide_workspace_route(&run.effective_tools)?;
     match decision {
         WorkspaceRouteDecision::None => {
@@ -508,21 +554,6 @@ async fn persist_workspace_execution(
     let saved = service.store.save_run(run.clone()).await?;
     *run = saved;
     Ok(())
-}
-
-fn task_owner_user_id(task: &TaskRecord) -> Result<String, String> {
-    let owner_user_id = task
-        .owner_user_id
-        .as_deref()
-        .or(task.creator_user_id.as_deref())
-        .unwrap_or(task.subject_id.as_str())
-        .trim()
-        .to_string();
-    if owner_user_id.is_empty() {
-        Err("task owner user id is required for workspace preparation".to_string())
-    } else {
-        Ok(owner_user_id)
-    }
 }
 
 pub(crate) async fn load_task_run_workspace_changes(
@@ -584,10 +615,17 @@ pub(crate) async fn load_task_run_workspace_changes(
         } else {
             base_commit
         };
-    let owner_user_id = task_owner_user_id(task)?;
+    let scope = task.execution_scope();
+    let project_id = scope.workspace_project_id().ok_or_else(|| {
+        "user conversation tasks cannot load project workspace changes".to_string()
+    })?;
+    let owner_user_id = scope.owner_user_id().trim().to_string();
+    if owner_user_id.is_empty() {
+        return Err("task owner user id is required for workspace changes".to_string());
+    }
     let changes = super::project_management_api_client::get_run_workspace_changes(
         &service.config,
-        task.project_id.as_str(),
+        project_id,
         run.id.as_str(),
         &super::project_management_api_client::GetRunWorkspaceChangesRequest {
             owner_user_id,
@@ -600,7 +638,7 @@ pub(crate) async fn load_task_run_workspace_changes(
         },
     )
     .await?;
-    if changes.project_id != task.project_id || changes.run_id != run.id {
+    if changes.project_id != project_id || changes.run_id != run.id {
         return Err("Project Service returned changes for a different Task Run".to_string());
     }
     Ok(changes)
@@ -641,12 +679,18 @@ pub(crate) async fn finalize_task_run_workspace(
         mark_workspace_finalized(service, run, None, false).await?;
         return Ok(());
     }
-    let project_id = crate::models::normalize_project_id(Some(task.project_id.clone()));
-    let owner_user_id = task_owner_user_id(task)?;
+    let scope = task.execution_scope();
+    let project_id = scope
+        .workspace_project_id()
+        .ok_or_else(|| "user conversation tasks cannot finalize a project workspace".to_string())?;
+    let owner_user_id = scope.owner_user_id().trim().to_string();
+    if owner_user_id.is_empty() {
+        return Err("task owner user id is required for workspace finalization".to_string());
+    }
     if execution.finalized_at.is_none() {
         let response = super::project_management_api_client::finalize_run_workspace(
             &service.config,
-            project_id.as_str(),
+            project_id,
             run.id.as_str(),
             &FinalizeRunWorkspaceRequest {
                 owner_user_id: owner_user_id.clone(),
@@ -752,7 +796,7 @@ pub(crate) async fn finalize_task_run_workspace(
         .await?;
     let response = super::project_management_api_client::integrate_run_workspace(
         &service.config,
-        project_id.as_str(),
+        project_id,
         run.id.as_str(),
         &IntegrateRunWorkspaceRequest {
             owner_user_id,
@@ -991,6 +1035,53 @@ mod tests {
             decide_workspace_route(&tools(false, false, false)).unwrap(),
             WorkspaceRouteDecision::None
         );
+    }
+
+    #[test]
+    fn public_chat_tasks_drop_workspace_tools_but_keep_remote_capabilities() {
+        let config = TaskMcpConfig {
+            enabled: true,
+            enabled_builtin_kinds: vec![
+                "CodeMaintainerWrite".to_string(),
+                "TerminalController".to_string(),
+            ],
+            external_mcp_config_ids: vec!["browser-mcp".to_string()],
+            ..TaskMcpConfig::default()
+        };
+
+        let scope = crate::models::resolve_task_execution_scope(
+            crate::models::PUBLIC_PROJECT_ID,
+            "tenant-1",
+            "user-1",
+        );
+        let snapshot = effective_task_tool_snapshot_for_scope(&config, &scope);
+
+        assert!(!snapshot.workspace_read);
+        assert!(!snapshot.workspace_write);
+        assert!(!snapshot.terminal);
+        assert_eq!(
+            snapshot.requested_mcp_resource_ids,
+            vec![
+                "browser-mcp".to_string(),
+                "system_mcp_task_process_log".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn concrete_projects_keep_workspace_tools() {
+        let config = TaskMcpConfig {
+            enabled_builtin_kinds: vec!["CodeMaintainerRead".to_string()],
+            ..TaskMcpConfig::default()
+        };
+
+        let scope = crate::models::resolve_task_execution_scope("project-1", "tenant-1", "user-1");
+        let snapshot = effective_task_tool_snapshot_for_scope(&config, &scope);
+
+        assert!(snapshot.workspace_read);
+        assert!(snapshot
+            .requested_mcp_resource_ids
+            .contains(&"builtin_code_maintainer_read".to_string()));
     }
 
     #[test]

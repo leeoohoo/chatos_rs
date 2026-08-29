@@ -13,7 +13,7 @@ impl PluginComponentProvider {
         &self,
         owner_user_id: &str,
         device_id: &str,
-        workspace_id: &str,
+        workspace_id: Option<&str>,
         project_root: Option<&str>,
         action: &str,
         body: Value,
@@ -45,8 +45,13 @@ impl PluginComponentProvider {
                 "build Plugin Component Provider URL failed: {error}"
             ))
         })?;
-        url.query_pairs_mut()
-            .append_pair("workspace_id", workspace_id);
+        if let Some(workspace_id) = workspace_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            url.query_pairs_mut()
+                .append_pair("workspace_id", workspace_id);
+        }
         if let Some(project_root) = project_root
             .map(str::trim)
             .filter(|value| !value.is_empty())

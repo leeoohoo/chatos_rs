@@ -52,6 +52,7 @@ pub mod message_task_runner;
 pub mod messages;
 pub(crate) mod metrics;
 pub mod notepad;
+pub mod pet_activities;
 pub mod projects;
 pub mod realtime;
 pub mod remote_connections;

@@ -15,6 +15,7 @@ use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::models::memory_runtime_types::{
     ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
 };
+use crate::models::pet_activity_inbox::PetActivityInboxRecord;
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
@@ -25,10 +26,11 @@ use crate::services::task_manager::{TaskDraft, TaskRecord};
 use super::types::{
     AskUserPromptRealtimePayload, ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
     ConversationSummariesUpdatedRealtimePayload, NotepadUpdatedRealtimePayload,
-    ProjectChangeSummaryRealtimePayload, ProjectMembersUpdatedRealtimePayload,
-    ProjectRunCatalogRealtimePayload, ProjectRunInstanceRealtimePayload,
-    ProjectRunStateRealtimePayload, ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope,
-    RealtimeEventPayload, RemoteConnectionsUpdatedRealtimePayload, ReviewRepairRealtimePayload,
+    PetActivityInboxRealtimePayload, ProjectChangeSummaryRealtimePayload,
+    ProjectMembersUpdatedRealtimePayload, ProjectRunCatalogRealtimePayload,
+    ProjectRunInstanceRealtimePayload, ProjectRunStateRealtimePayload,
+    ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
+    RemoteConnectionsUpdatedRealtimePayload, ReviewRepairRealtimePayload,
     SequencedRealtimeEventEnvelope, SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
     TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
 };
@@ -542,6 +544,15 @@ pub fn publish_task_board_updated(
     draft_tasks: Option<Vec<TaskDraft>>,
     timeout_ms: Option<u64>,
 ) {
+    crate::services::pet_activity_inbox::project_task_board_event(
+        user_id,
+        conversation_id,
+        conversation_turn_id,
+        review_id,
+        task_id,
+        action,
+        task.clone(),
+    );
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
         event: "conversation.task_board.updated",
@@ -563,6 +574,7 @@ pub fn publish_task_board_updated(
 }
 
 pub fn publish_ask_user_prompt_updated(user_id: &str, update: AskUserPromptRealtimePayload) {
+    crate::services::pet_activity_inbox::project_ask_user_prompt_event(user_id, &update);
     let conversation_id = update.conversation_id.clone();
     let project_id = update.project_id.clone();
     REALTIME_HUB.send(RealtimeEventEnvelope {
@@ -572,6 +584,29 @@ pub fn publish_ask_user_prompt_updated(user_id: &str, update: AskUserPromptRealt
         conversation_id: Some(conversation_id),
         project_id,
         payload: RealtimeEventPayload::AskUserPrompt(update),
+        ts: now_rfc3339(),
+    });
+}
+
+pub fn publish_pet_activity_inbox_updated(
+    user_id: &str,
+    action: &str,
+    activity: &PetActivityInboxRecord,
+) {
+    REALTIME_HUB.send(RealtimeEventEnvelope {
+        message_type: "event",
+        event: "pet_activity_inbox.updated",
+        user_id: user_id.to_string(),
+        conversation_id: activity.route.conversation_id.clone(),
+        project_id: activity.route.project_id.clone(),
+        payload: RealtimeEventPayload::PetActivityInboxUpdated(PetActivityInboxRealtimePayload {
+            action: action.to_string(),
+            activity_id: activity.id.clone(),
+            activity_key: activity.activity_key.clone(),
+            activity_version: activity.activity_version.clone(),
+            inbox_status: activity.inbox_status.as_str().to_string(),
+            activity: activity.clone(),
+        }),
         ts: now_rfc3339(),
     });
 }
@@ -586,6 +621,16 @@ pub fn publish_chat_stream_event(
     stream_type: &str,
     raw: serde_json::Value,
 ) {
+    crate::services::pet_activity_inbox::project_chat_stream_event(
+        user_id,
+        conversation_id,
+        conversation_turn_id,
+        project_id,
+        user_message_id,
+        event,
+        stream_type,
+        &raw,
+    );
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
         event,

@@ -10,6 +10,7 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::models::session::Session;
 use crate::models::session_runtime_settings::SessionRuntimeSettings;
 use crate::repositories::session_runtime_settings;
+use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 
 use super::contracts::UpdateSessionRuntimeSettingsRequest;
 
@@ -105,11 +106,49 @@ pub(super) async fn update_session_runtime_settings(
     next.session_id = conversation_id;
     next.user_id = auth.user_id.clone();
 
+    let model_id_was_updated = req.selected_model_id.is_some();
     if let Some(value) = req.selected_model_id {
-        next.selected_model_id = normalize_optional_text(value);
+        if let Some(model_id) = normalize_optional_text(value) {
+            let model_runtime = match resolve_model_runtime_for_request(
+                Some(model_id.as_str()),
+                None,
+                Some(next.session_id.as_str()),
+                Some(auth.user_id.as_str()),
+                "gpt-4o",
+                None,
+                true,
+            )
+            .await
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "所选模型配置不可用",
+                            "detail": error,
+                        })),
+                    );
+                }
+            };
+            next.selected_model_id = model_runtime.model_config_id;
+            next.selected_model_name = Some(model_runtime.model);
+            if req.selected_thinking_level.is_none() {
+                next.selected_thinking_level = model_runtime.thinking_level;
+            }
+        } else {
+            next.selected_model_id = None;
+            next.selected_model_name = None;
+            next.selected_thinking_level = None;
+        }
     }
-    if let Some(value) = req.selected_model_name {
-        next.selected_model_name = normalize_optional_text(value);
+    if !model_id_was_updated && req.selected_model_name.is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "selected_model_name 不能脱离 selected_model_id 单独更新",
+            })),
+        );
     }
     if let Some(value) = req.selected_thinking_level {
         next.selected_thinking_level = normalize_optional_text(value);
@@ -133,6 +172,10 @@ pub(super) async fn update_session_runtime_settings(
         next.auto_create_task = value;
     }
 
+    save_runtime_settings(next).await
+}
+
+async fn save_runtime_settings(next: SessionRuntimeSettings) -> (StatusCode, Json<Value>) {
     match session_runtime_settings::upsert_session_runtime_settings(&next).await {
         Ok(saved) => (
             StatusCode::OK,

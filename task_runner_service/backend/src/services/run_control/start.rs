@@ -174,9 +174,11 @@ impl RunService {
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
-        let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
-            &runtime_task.mcp_config,
-        );
+        let effective_tools =
+            crate::services::workspace_execution::effective_task_tool_snapshot_for_scope(
+                &runtime_task.mcp_config,
+                &runtime_task.execution_scope(),
+            );
         crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
             &runtime_task,
             &effective_tools,

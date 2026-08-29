@@ -80,6 +80,16 @@ fn context() -> ProjectExecutionContext {
     }
 }
 
+fn device_only_context() -> ProjectExecutionContext {
+    ProjectExecutionContext {
+        project_id: "public".to_string(),
+        owner_user_id: "user-1".to_string(),
+        workspace_provider: WorkspaceProviderKind::None,
+        workspace: None,
+        revision: "public-revision".to_string(),
+    }
+}
+
 fn route(binding: &PluginMcpRuntimeBinding) -> ResolvedMcpRoute {
     ResolvedMcpRoute {
         resource_id: binding.resource_id.clone(),
@@ -138,11 +148,17 @@ async fn mcp_prepare_ignores_plugin_tool_component_routes() {
 
 async fn start_local_connector(
     secret: &'static str,
+    expected_workspace_id: Option<&'static str>,
+    expected_cwd: Option<&'static str>,
+    expected_permission: &'static str,
 ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     #[derive(Clone)]
     struct TestState {
         secret: &'static str,
         actions: Arc<Mutex<Vec<String>>>,
+        expected_workspace_id: Option<&'static str>,
+        expected_cwd: Option<&'static str>,
+        expected_permission: &'static str,
     }
 
     async fn handler(
@@ -154,13 +170,10 @@ async fn start_local_connector(
     ) -> Json<Value> {
         assert_eq!(
             query.get("workspace_id").map(String::as_str),
-            Some("workspace-1")
+            state.expected_workspace_id
         );
         if action != "cancel" {
-            assert_eq!(
-                query.get("cwd").map(String::as_str),
-                Some("projects/space-station")
-            );
+            assert_eq!(query.get("cwd").map(String::as_str), state.expected_cwd);
         }
         assert_eq!(
             headers
@@ -197,7 +210,7 @@ async fn start_local_connector(
                 assert_eq!(
                     body.pointer("/permission_snapshot/0")
                         .and_then(Value::as_str),
-                    Some("workspace.read")
+                    Some(state.expected_permission)
                 );
                 let tools = vec![json!({
                     "name": "read_file",
@@ -308,6 +321,9 @@ async fn start_local_connector(
         .with_state(TestState {
             secret,
             actions: actions.clone(),
+            expected_workspace_id,
+            expected_cwd,
+            expected_permission,
         });
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -318,7 +334,13 @@ async fn start_local_connector(
 #[tokio::test]
 async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
     const SECRET: &str = "a-long-plugin-local-test-secret";
-    let (base_url, actions, server) = start_local_connector(SECRET).await;
+    let (base_url, actions, server) = start_local_connector(
+        SECRET,
+        Some("workspace-1"),
+        Some("projects/space-station"),
+        "workspace.read",
+    )
+    .await;
     let provider = PluginLocalProvider::new(
         reqwest::Client::new(),
         base_url,
@@ -418,5 +440,48 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         actions.lock().unwrap().as_slice(),
         ["prepare", "execute", "cancel", "cancel"]
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn device_only_plugin_prepare_uses_the_installation_device_without_workspace_query() {
+    const SECRET: &str = "device-only-plugin-local-test-secret";
+    let (base_url, actions, server) =
+        start_local_connector(SECRET, None, None, "network.domain:github.com").await;
+    let provider = PluginLocalProvider::new(
+        reqwest::Client::new(),
+        base_url,
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let mut immutable = immutable_binding();
+    immutable.permission_snapshot = vec!["network.domain:github.com".to_string()];
+    let mut routes = vec![route(&immutable)];
+    let expires_at_unix = chrono::Utc::now().timestamp() + 600;
+
+    let (local_bindings, tool_snapshots) = provider
+        .prepare_routes(
+            &HashMap::from([(immutable.resource_id.clone(), immutable.clone())]),
+            routes.as_mut_slice(),
+            &device_only_context(),
+            "session-1",
+            "user-1",
+            expires_at_unix,
+        )
+        .await;
+
+    assert_eq!(
+        tool_snapshots[&immutable.resource_id][0]["name"],
+        "read_file"
+    );
+    let binding = &local_bindings[&immutable.resource_id];
+    assert_eq!(binding.device_id, "device-1");
+    assert_eq!(binding.workspace_id, None);
+    provider
+        .close_bindings("user-1", "session-1", &local_bindings)
+        .await;
+    assert_eq!(actions.lock().unwrap().as_slice(), ["prepare", "cancel"]);
     server.abort();
 }

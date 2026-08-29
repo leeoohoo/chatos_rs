@@ -361,6 +361,48 @@ mod tests {
     }
 
     #[test]
+    fn managed_prompts_assign_network_plugins_per_task() {
+        let prompts = baseline_prompts();
+        for (agent_key, profile) in [
+            (
+                SystemAgentKey::ChatosConversationAgent.as_str(),
+                DEFAULT_AGENT_PROMPT_PROFILE,
+            ),
+            (
+                SystemAgentKey::ChatosConversationAgent.as_str(),
+                chatos_agent::CHATOS_PLAN_TASK_PROFILE,
+            ),
+            (
+                SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
+                DEFAULT_AGENT_PROMPT_PROFILE,
+            ),
+        ] {
+            let content = prompts
+                .iter()
+                .find(|(key, candidate_profile, _)| {
+                    *key == agent_key && *candidate_profile == profile
+                })
+                .map(|(_, _, content)| *content)
+                .unwrap_or_else(|| panic!("missing prompt: {agent_key}/{profile}"));
+            assert!(content.contains("plugin_hints"));
+            assert!(content.contains("Browser CDP"));
+            assert!(content.contains("公开互联网"));
+        }
+
+        let run_prompt = prompts
+            .iter()
+            .find(|(key, profile, _)| {
+                *key == SystemAgentKey::TaskRunnerRunPhase.as_str()
+                    && *profile == DEFAULT_AGENT_PROMPT_PROFILE
+            })
+            .map(|(_, _, content)| *content)
+            .expect("Task Runner run Prompt");
+        assert!(run_prompt.contains("`requires_execution=false`"));
+        assert!(run_prompt.contains("不能据此推断任务是“仅文件处理任务”"));
+        assert!(run_prompt.contains("本轮实际注册并暴露的工具"));
+    }
+
+    #[test]
     fn language_sensitive_agents_follow_the_user_language() {
         let prompts = baseline_prompts();
         for agent_key in [
@@ -417,7 +459,9 @@ mod tests {
                 assert!(content.contains("工具 `isError=false`"));
                 assert!(content.contains("默认不得抢占用户正在使用的前台应用"));
                 assert!(content.contains("`sky_click`"));
-                assert!(content.contains("background window outside the current Space was captured"));
+                assert!(
+                    content.contains("background window outside the current Space was captured")
+                );
                 assert!(content.contains("AskUser 审批可能让用户切换到 ChatOS 所在 Space"));
                 assert!(content.contains("优先向目标应用调用 `press_key(Return)`"));
                 assert!(content.contains("不得仅因根窗口暴露 `Secondary Actions: Raise`"));

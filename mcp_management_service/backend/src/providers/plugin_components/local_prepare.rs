@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_management_sdk::{
-    McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute, WorkspaceProviderKind,
-};
+use chatos_mcp_management_sdk::{McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute};
 use chatos_plugin_management_sdk::PluginComponentKind;
 use serde_json::{json, Value};
 
@@ -14,7 +12,10 @@ use super::{
     COMMAND_INVOKE_OPERATION, LOCAL_SKILL_APPLY_OPERATION,
 };
 use crate::providers::ProviderCallError;
-use crate::runtime::{PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding};
+use crate::runtime::{
+    resolve_plugin_local_execution_target, PluginLocalToolComponentBinding,
+    PluginToolComponentRuntimeBinding,
+};
 
 impl PluginComponentProvider {
     pub(super) async fn prepare_local(
@@ -27,37 +28,12 @@ impl PluginComponentProvider {
         expires_at_unix: i64,
     ) -> Result<PluginLocalToolComponentBinding, ProviderCallError> {
         validate_immutable_route(immutable, route, McpProviderKind::PluginLocal)?;
-        if context.workspace_provider != WorkspaceProviderKind::LocalConnector {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Local tool component requires a Local Connector project workspace",
-            ));
-        }
-        let workspace = context.workspace.as_ref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Plugin Local tool component is missing its project workspace snapshot",
-            )
-        })?;
-        let device_id = workspace
-            .device_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "Plugin Local tool component is missing its device id",
-                )
-            })?;
-        if immutable.installation_device_id.as_deref() != Some(device_id) {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin tool component installation is not pinned to the Project Context device",
-            ));
-        }
-        let workspace_id = workspace.workspace_id.trim();
-        if workspace_id.is_empty() {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Local tool component is missing its workspace id",
-            ));
-        }
+        let target = resolve_plugin_local_execution_target(
+            context,
+            immutable.installation_device_id.as_deref(),
+            immutable.permission_snapshot.as_slice(),
+        )
+        .map_err(ProviderCallError::provider_unavailable)?;
         let mut body = serde_json::Map::from_iter([
             ("run_id".to_string(), json!(runtime_session_id)),
             ("plugin_id".to_string(), json!(immutable.plugin_id)),
@@ -103,9 +79,9 @@ impl PluginComponentProvider {
         let bytes = self
             .request_local(
                 owner_user_id,
-                device_id,
-                workspace_id,
-                workspace.relative_root.as_deref(),
+                target.device_id.as_str(),
+                target.workspace_id.as_deref(),
+                target.project_root.as_deref(),
                 "prepare",
                 Value::Object(body),
             )
@@ -172,9 +148,9 @@ impl PluginComponentProvider {
                         immutable,
                         runtime_session_id,
                         owner_user_id,
-                        device_id,
-                        workspace_id,
-                        workspace.relative_root.as_deref(),
+                        target.device_id.as_str(),
+                        target.workspace_id.as_deref(),
+                        target.project_root.as_deref(),
                         prepared.adapter_session_id.as_str(),
                         operation.as_str(),
                     )
@@ -206,8 +182,8 @@ impl PluginComponentProvider {
         Ok(PluginLocalToolComponentBinding {
             runtime: immutable.clone(),
             run_id: runtime_session_id.to_string(),
-            device_id: device_id.to_string(),
-            workspace_id: workspace_id.to_string(),
+            device_id: target.device_id,
+            workspace_id: target.workspace_id,
             adapter_session_id: prepared.adapter_session_id,
             operation,
             session_sha256: prepared.session_sha256,
@@ -227,7 +203,7 @@ impl PluginComponentProvider {
         runtime_session_id: &str,
         owner_user_id: &str,
         device_id: &str,
-        workspace_id: &str,
+        workspace_id: Option<&str>,
         project_root: Option<&str>,
         adapter_session_id: &str,
         operation: &str,

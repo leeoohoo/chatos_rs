@@ -300,9 +300,11 @@ impl RunService {
             policy.validate_task_plugin_selection_for_run(&runtime_task)?;
             policy.apply_to_task(&mut runtime_task)?;
         }
-        let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
-            &runtime_task.mcp_config,
-        );
+        let effective_tools =
+            crate::services::workspace_execution::effective_task_tool_snapshot_for_scope(
+                &runtime_task.mcp_config,
+                &runtime_task.execution_scope(),
+            );
         let Err(contract_error) =
             crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
                 &runtime_task,

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute, WorkspaceProviderKind};
+use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute};
 use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
 use serde_json::{json, Value};
 
@@ -13,7 +13,10 @@ use super::{
     MCP_TOOL_CALL_OPERATION,
 };
 use crate::providers::{ProviderCallError, ProviderCallOutcome, ProviderCancelOutcome};
-use crate::runtime::{PluginLocalProviderBinding, PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
+use crate::runtime::{
+    resolve_plugin_local_execution_target, PluginLocalProviderBinding, PluginMcpRuntimeBinding,
+    RuntimeSessionSnapshot,
+};
 
 impl PluginLocalProvider {
     pub(super) async fn prepare_route(
@@ -34,37 +37,12 @@ impl PluginLocalProvider {
                 "Plugin Local route does not match its immutable binding",
             ));
         }
-        if context.workspace_provider != WorkspaceProviderKind::LocalConnector {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Local route requires a Local Connector project workspace",
-            ));
-        }
-        let workspace = context.workspace.as_ref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Plugin Local route is missing its project workspace snapshot",
-            )
-        })?;
-        let device_id = workspace
-            .device_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "Plugin Local route is missing its device id",
-                )
-            })?;
-        let workspace_id = workspace.workspace_id.trim();
-        if workspace_id.is_empty() {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Local route is missing its workspace id",
-            ));
-        }
-        if immutable.installation_device_id.as_deref() != Some(device_id) {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin installation is not pinned to the Project Context device",
-            ));
-        }
+        let target = resolve_plugin_local_execution_target(
+            context,
+            immutable.installation_device_id.as_deref(),
+            immutable.permission_snapshot.as_slice(),
+        )
+        .map_err(ProviderCallError::provider_unavailable)?;
         let mut body = serde_json::Map::from_iter([
             ("run_id".to_string(), json!(runtime_session_id)),
             ("plugin_id".to_string(), json!(immutable.plugin_id)),
@@ -93,9 +71,9 @@ impl PluginLocalProvider {
         let response = self
             .request(
                 owner_user_id,
-                device_id,
-                workspace_id,
-                workspace.relative_root.as_deref(),
+                target.device_id.as_str(),
+                target.workspace_id.as_deref(),
+                target.project_root.as_deref(),
                 "prepare",
                 Value::Object(body),
             )
@@ -120,8 +98,8 @@ impl PluginLocalProvider {
         Ok(PluginLocalProviderBinding {
             runtime: immutable.clone(),
             run_id: runtime_session_id.to_string(),
-            device_id: device_id.to_string(),
-            workspace_id: workspace_id.to_string(),
+            device_id: target.device_id,
+            workspace_id: target.workspace_id,
             adapter_session_id: prepared.adapter_session_id,
             operation: operation.to_string(),
             session_sha256: prepared.session_sha256,
@@ -179,7 +157,7 @@ impl PluginLocalProvider {
             .request(
                 snapshot.owner_user_id.as_str(),
                 binding.device_id.as_str(),
-                binding.workspace_id.as_str(),
+                binding.workspace_id.as_deref(),
                 snapshot
                     .project_context
                     .workspace
@@ -241,7 +219,7 @@ impl PluginLocalProvider {
             .request(
                 snapshot.owner_user_id.as_str(),
                 binding.device_id.as_str(),
-                binding.workspace_id.as_str(),
+                binding.workspace_id.as_deref(),
                 snapshot
                     .project_context
                     .workspace
@@ -304,7 +282,7 @@ impl PluginLocalProvider {
                 .request(
                     owner_user_id,
                     binding.device_id.as_str(),
-                    binding.workspace_id.as_str(),
+                    binding.workspace_id.as_deref(),
                     None,
                     "cancel",
                     body,

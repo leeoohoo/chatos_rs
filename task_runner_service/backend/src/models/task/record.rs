@@ -63,6 +63,21 @@ pub struct TaskRecord {
     pub deleted_at: Option<String>,
 }
 
+impl TaskRecord {
+    pub fn execution_scope(&self) -> crate::models::TaskExecutionScope {
+        let owner_user_id = self
+            .owner_user_id
+            .as_deref()
+            .or(self.creator_user_id.as_deref())
+            .unwrap_or(self.subject_id.as_str());
+        crate::models::resolve_task_execution_scope(
+            self.project_id.as_str(),
+            self.tenant_id.as_str(),
+            owner_user_id,
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskPluginSelectionAudit {
     pub selection_source: String,

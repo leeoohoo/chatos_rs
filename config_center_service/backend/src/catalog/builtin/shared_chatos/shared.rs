@@ -223,5 +223,22 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             104,
             now,
         ),
+        definition(
+            SHARED_MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "MCP Management Runtime Session Request Timeout",
+            "内部服务等待 MCP Management 完成插件准备、进程启动和 MCP 初始化时使用的请求超时毫秒数",
+            "Shared / Downstream",
+            "shared",
+            None,
+            "duration_ms",
+            json!(5 * 60 * 1_000 + 15_000),
+            Some(30_000),
+            Some(10 * 60 * 1_000),
+            &[],
+            "restart_required",
+            &["MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS"],
+            105,
+            now,
+        ),
     ]
 }

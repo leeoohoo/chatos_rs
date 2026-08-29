@@ -68,7 +68,7 @@ fn trusted_plugin_hints_reject_unknown_plugin_key() {
 }
 
 #[test]
-fn plugin_hints_require_a_local_connector_device() {
+fn plugin_hints_use_the_users_plugin_installation_without_a_project_device() {
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![resolved_plugin(false)];
     let policy = TaskRunnerCapabilityPolicy::new(
@@ -79,15 +79,20 @@ fn plugin_hints_require_a_local_connector_device() {
     )
     .expect("server capability policy");
 
-    assert!(policy.selectable_plugins().is_empty());
-    let error = policy
+    assert_eq!(policy.selectable_plugins().len(), 1);
+    let selection = policy
         .plugin_selection_from_hints(&[CreateTaskPluginHint {
             plugin_key: "browser@official".to_string(),
             reason: None,
         }])
-        .expect_err("Plugin selection without a local device must fail closed");
+        .expect("user-device Plugin selection");
+    let audit = selection.audit.expect("Plugin selection audit");
 
-    assert!(error.contains("Local Connector project device"));
+    assert_eq!(
+        audit.project_context_revision,
+        "user-device-policy:revision-1"
+    );
+    assert_eq!(audit.plugins[0].device_id, "device-1");
 }
 
 #[test]

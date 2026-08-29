@@ -36,6 +36,32 @@ fn catalog_exposes_shared_and_task_runner_iteration_limits() {
 }
 
 #[test]
+fn catalog_exposes_separate_mcp_management_timeout_profiles() {
+    let definitions = builtin_definitions();
+    let control = definitions
+        .iter()
+        .find(|definition| definition.key == SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY)
+        .expect("MCP Management control request timeout definition");
+    let runtime_session = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == SHARED_MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS_CONFIG_KEY
+        })
+        .expect("MCP Management runtime session request timeout definition");
+
+    assert_eq!(control.default_value, json!(5_000));
+    assert_eq!(
+        control.env_aliases,
+        vec!["MCP_MANAGEMENT_REQUEST_TIMEOUT_MS"]
+    );
+    assert_eq!(runtime_session.default_value, json!(315_000));
+    assert_eq!(
+        runtime_session.env_aliases,
+        vec!["MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS"]
+    );
+}
+
+#[test]
 fn catalog_exposes_authoritative_pressure_controls() {
     let definitions = builtin_definitions();
     let platform = definitions

@@ -9,6 +9,7 @@ pub mod change_logs;
 pub mod chatos_memory_mappings;
 pub mod db;
 pub mod memory_skills;
+pub mod pet_activity_inbox;
 pub mod project_run_catalogs;
 pub mod project_run_environment_settings;
 pub mod remote_connections;

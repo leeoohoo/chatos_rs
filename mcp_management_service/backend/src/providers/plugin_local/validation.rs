@@ -3,12 +3,14 @@
 
 use std::collections::HashSet;
 
-use chatos_mcp_management_sdk::{ResolvedMcpRoute, WorkspaceProviderKind};
+use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use serde_json::Value;
 
 use super::{PluginLocalProviderBinding, PluginPrepareResponse};
 use crate::providers::{canonical_json, ProviderCallError};
-use crate::runtime::{PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
+use crate::runtime::{
+    resolve_plugin_local_execution_target, PluginMcpRuntimeBinding, RuntimeSessionSnapshot,
+};
 
 pub(super) fn validate_prepare_response(
     immutable: &PluginMcpRuntimeBinding,
@@ -107,21 +109,21 @@ pub(super) fn validate_bound_route(
                 "immutable Plugin MCP runtime binding is missing",
             )
         })?;
-    let workspace = snapshot.project_context.workspace.as_ref();
-    if !matches!(
-        snapshot.project_context.workspace_provider,
-        WorkspaceProviderKind::LocalConnector
-    ) || !snapshot
+    let target = resolve_plugin_local_execution_target(
+        &snapshot.project_context,
+        immutable.installation_device_id.as_deref(),
+        immutable.permission_snapshot.as_slice(),
+    )
+    .map_err(ProviderCallError::provider_unavailable)?;
+    if !snapshot
         .expires_at_unix
         .min(binding.expires_at_unix)
         .gt(&chrono::Utc::now().timestamp())
         || immutable != &binding.runtime
         || route.provider_ref.as_deref() != Some(binding.runtime.provider_ref.as_str())
         || route.allow_writes != binding.runtime.allow_writes
-        || workspace.and_then(|workspace| workspace.device_id.as_deref())
-            != Some(binding.device_id.as_str())
-        || workspace.map(|workspace| workspace.workspace_id.as_str())
-            != Some(binding.workspace_id.as_str())
+        || target.device_id != binding.device_id
+        || target.workspace_id != binding.workspace_id
     {
         return Err(ProviderCallError::provider_unavailable(
             "Plugin Local route does not match its prepared runtime session",

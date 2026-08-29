@@ -19,6 +19,7 @@ pub use invocation_store::{
     RuntimeInvocationRecord, RuntimeInvocationRegisterError, RuntimeInvocationStatus,
     RuntimeInvocationStore, RuntimeInvocationStoreStats,
 };
+pub(crate) use plugin_mcp::resolve_plugin_local_execution_target;
 pub use plugin_mcp::{
     PluginLocalProviderBinding, PluginLocalToolComponentBinding, PluginMcpRuntimeBinding,
     PluginToolComponentRuntimeBinding,

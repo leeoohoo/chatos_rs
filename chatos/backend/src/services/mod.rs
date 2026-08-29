@@ -24,6 +24,7 @@ pub mod model_runtime_resolver;
 pub mod new_user_bootstrap;
 pub mod notepad;
 pub mod object_storage;
+pub mod pet_activity_inbox;
 pub(crate) mod plugin_management_prompts;
 pub mod project_fs_cache;
 pub mod project_local_cache;

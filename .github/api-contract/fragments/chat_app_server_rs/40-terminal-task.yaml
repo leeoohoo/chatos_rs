@@ -193,3 +193,100 @@ paths:
               schema:
                 $ref: '#/components/schemas/StandardResponse'
       operationId: postApiTaskManagerReviewsByReviewIdDecision
+  /api/pet-activities:
+    get:
+      summary: List persisted pet activities
+      parameters:
+      - in: query
+        name: include_closed
+        required: false
+        schema:
+          type: boolean
+      - in: query
+        name: mark_displayed
+        required: false
+        schema:
+          type: boolean
+      - in: query
+        name: limit
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiPetActivities
+  /api/pet-activities/{activity_id}/displayed:
+    post:
+      summary: Mark pet activity displayed
+      parameters:
+      - in: path
+        name: activity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiPetActivitiesByActivityIdDisplayed
+  /api/pet-activities/{activity_id}/acknowledge:
+    post:
+      summary: Acknowledge pet activity
+      parameters:
+      - in: path
+        name: activity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiPetActivitiesByActivityIdAcknowledge
+  /api/pet-activities/{activity_id}/ignore:
+    post:
+      summary: Ignore pet activity version
+      parameters:
+      - in: path
+        name: activity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiPetActivitiesByActivityIdIgnore
+  /api/pet-activities/{activity_id}/handled:
+    post:
+      summary: Mark pet activity handled
+      parameters:
+      - in: path
+        name: activity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiPetActivitiesByActivityIdHandled

@@ -72,18 +72,6 @@ impl TaskRunnerCapabilityPolicy {
         &self,
         hints: &[CreateTaskPluginHint],
     ) -> Result<TrustedTaskPluginSelection, String> {
-        if self.runtime_context().runtime_provider != "local_connector"
-            || self.runtime_context().device_id.is_none()
-        {
-            if hints.is_empty() && self.capabilities.required_plugins().next().is_none() {
-                return Ok(TrustedTaskPluginSelection::default());
-            }
-            return Err(
-                "task_plugin_unavailable: Plugin selection requires a Local Connector project device"
-                    .to_string(),
-            );
-        }
-
         let mut selected_plugins = Vec::new();
         let mut selected_ids = HashSet::new();
         let mut reasons_by_plugin_id = HashMap::new();
@@ -134,16 +122,12 @@ impl TaskRunnerCapabilityPolicy {
             });
         }
 
-        let device_id = self.runtime_context().device_id.as_deref().ok_or_else(|| {
-            "task_plugin_unavailable: Local Connector device is missing".to_string()
-        })?;
-        let project_context_revision = self
+        let expected_device_id = self.runtime_context().device_id.as_deref();
+        let selection_context_revision = self
             .runtime_context()
             .project_context_revision
-            .as_deref()
-            .ok_or_else(|| {
-            "task_plugin_unavailable: project execution context revision is missing".to_string()
-        })?;
+            .clone()
+            .unwrap_or_else(|| format!("user-device-policy:{}", self.policy_revision()));
         let plugins = config
             .selected_plugins
             .iter()
@@ -161,7 +145,7 @@ impl TaskRunnerCapabilityPolicy {
                     })?;
                 selected_plugin_snapshot(
                     plugin,
-                    device_id,
+                    expected_device_id,
                     reasons_by_plugin_id
                         .get(selected.plugin_id.as_str())
                         .cloned()
@@ -180,7 +164,7 @@ impl TaskRunnerCapabilityPolicy {
                 },
                 policy_revision: self.policy_revision().to_string(),
                 selected_at: now_rfc3339(),
-                project_context_revision: project_context_revision.to_string(),
+                project_context_revision: selection_context_revision,
                 plugins,
             }),
         })
@@ -207,9 +191,7 @@ impl TaskRunnerCapabilityPolicy {
         let audit = task.plugin_selection_audit.as_ref().ok_or_else(|| {
             "task_plugin_unavailable: selected Plugin audit snapshot is missing".to_string()
         })?;
-        let device_id = self.runtime_context().device_id.as_deref().ok_or_else(|| {
-            "task_plugin_unavailable: Local Connector device is missing".to_string()
-        })?;
+        let expected_device_id = self.runtime_context().device_id.as_deref();
         let audit_ids = audit
             .plugins
             .iter()
@@ -222,7 +204,7 @@ impl TaskRunnerCapabilityPolicy {
             );
         }
         for snapshot in &audit.plugins {
-            if snapshot.device_id != device_id {
+            if expected_device_id.is_some_and(|device_id| snapshot.device_id != device_id) {
                 return Err(format!(
                     "task_plugin_unavailable: Local Connector device changed for Plugin {}",
                     snapshot.plugin_key
@@ -239,11 +221,13 @@ impl TaskRunnerCapabilityPolicy {
                         snapshot.plugin_key
                     )
                 })?;
-            let current = selected_plugin_snapshot(plugin, device_id, snapshot.reason.clone())?;
+            let current =
+                selected_plugin_snapshot(plugin, expected_device_id, snapshot.reason.clone())?;
             if current.plugin_key != snapshot.plugin_key
                 || current.release_id != snapshot.release_id
                 || current.version != snapshot.version
                 || current.artifact_sha256 != snapshot.artifact_sha256
+                || current.device_id != snapshot.device_id
             {
                 return Err(format!(
                     "task_plugin_unavailable: Plugin release changed after Task creation: {}",
@@ -259,22 +243,12 @@ impl TaskRunnerCapabilityPolicy {
         &self,
         task: &mut crate::models::TaskRecord,
     ) -> Result<bool, String> {
-        if self.runtime_context().runtime_provider != "local_connector" {
-            return Err(
-                "task_plugin_unavailable: Plugin retry refresh requires a Local Connector project device"
-                    .to_string(),
-            );
-        }
-        let device_id = self.runtime_context().device_id.as_deref().ok_or_else(|| {
-            "task_plugin_unavailable: Local Connector device is missing".to_string()
-        })?;
-        let project_context_revision = self
+        let expected_device_id = self.runtime_context().device_id.as_deref();
+        let selection_context_revision = self
             .runtime_context()
             .project_context_revision
-            .as_deref()
-            .ok_or_else(|| {
-            "task_plugin_unavailable: project execution context revision is missing".to_string()
-        })?;
+            .clone()
+            .unwrap_or_else(|| format!("user-device-policy:{}", self.policy_revision()));
         let reasons_by_plugin_id = task
             .plugin_selection_audit
             .as_ref()
@@ -321,7 +295,7 @@ impl TaskRunnerCapabilityPolicy {
                     })?;
                 selected_plugin_snapshot(
                     plugin,
-                    device_id,
+                    expected_device_id,
                     reasons_by_plugin_id
                         .get(plugin_id.as_str())
                         .cloned()
@@ -333,7 +307,7 @@ impl TaskRunnerCapabilityPolicy {
             selection_source: "manual_retry_refresh".to_string(),
             policy_revision: self.policy_revision().to_string(),
             selected_at: now_rfc3339(),
-            project_context_revision: project_context_revision.to_string(),
+            project_context_revision: selection_context_revision,
             plugins,
         };
         let changed = task.plugin_selection_audit.as_ref().is_none_or(|current| {
@@ -350,7 +324,7 @@ impl TaskRunnerCapabilityPolicy {
 
 fn selected_plugin_snapshot(
     plugin: &ResolvedPlugin,
-    device_id: &str,
+    expected_device_id: Option<&str>,
     reason: Option<String>,
 ) -> Result<TaskSelectedPluginSnapshot, String> {
     let release = plugin.release.as_ref().ok_or_else(|| {
@@ -381,7 +355,7 @@ fn selected_plugin_snapshot(
             plugin.catalog.plugin_key
         ));
     }
-    if installation.device_id != device_id
+    if expected_device_id.is_some_and(|device_id| installation.device_id != device_id)
         || installation.plugin_id != plugin.catalog.id
         || installation.release_id != release.id
         || installation.version != release.version
@@ -399,7 +373,7 @@ fn selected_plugin_snapshot(
         release_id: release.id.clone(),
         version: release.version.clone(),
         artifact_sha256: release.artifact_sha256.clone(),
-        device_id: device_id.to_string(),
+        device_id: installation.device_id.clone(),
         reason,
     })
 }

@@ -171,6 +171,11 @@ impl AppStore {
         .await?;
         create_index(
             &self.plugin_installations,
+            doc! { "owner_user_id": 1, "plugin_id": 1, "active": 1, "last_checked_at": -1 },
+        )
+        .await?;
+        create_index(
+            &self.plugin_installations,
             doc! { "owner_user_id": 1, "device_id": 1, "active": 1 },
         )
         .await?;

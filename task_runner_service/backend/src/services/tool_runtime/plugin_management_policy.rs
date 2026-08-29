@@ -161,11 +161,6 @@ impl TaskRunnerCapabilityPolicy {
     }
 
     pub(crate) fn selectable_plugins(&self) -> Vec<&ResolvedPlugin> {
-        if self.runtime_context.runtime_provider != "local_connector"
-            || self.runtime_context.device_id.is_none()
-        {
-            return Vec::new();
-        }
         self.capabilities
             .selectable_plugins()
             .filter(|plugin| {
@@ -207,15 +202,22 @@ impl TaskRunnerCapabilityPolicy {
         if !requires_exclusive_execution {
             return Ok(None);
         }
-        let device_id = self
-            .runtime_context
-            .device_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                "exclusive Plugin execution requires a Local Connector device".to_string()
-            })?;
+        let mut device_ids = self
+            .capabilities
+            .plugins
+            .iter()
+            .filter(|plugin| selected_plugin_ids.contains(plugin.catalog.id.as_str()))
+            .filter_map(|plugin| plugin.installation.as_ref())
+            .map(|installation| installation.device_id.trim())
+            .filter(|device_id| !device_id.is_empty())
+            .collect::<HashSet<_>>();
+        if device_ids.len() != 1 {
+            return Err(
+                "exclusive Plugin execution must resolve to exactly one Local Connector device"
+                    .to_string(),
+            );
+        }
+        let device_id = device_ids.drain().next().unwrap_or_default();
         Ok(Some(format!(
             "plugin-exclusive-device:{}:{}",
             self.runtime_context.owner_user_id, device_id

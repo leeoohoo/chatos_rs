@@ -30,7 +30,7 @@ use crate::core::internal_context_locale::InternalContextLocale;
 use crate::models::memory_runtime_types::TurnRuntimeSnapshotPluginCommandInvocationDto;
 use crate::services::agent_runtime::message_manager::MessageManager;
 use crate::services::ai_client_common::AiClientCallbacks;
-use crate::services::ai_common::{build_user_content_parts, build_user_message_metadata};
+use crate::services::ai_common::build_user_content_parts;
 use crate::services::chatos_memory_engine::resolve_chatos_memory_scope;
 use crate::services::shared_ai_runtime::{
     build_shared_contextual_turn_runner_with_max_iterations,
@@ -40,10 +40,10 @@ use crate::utils::abort_registry;
 use crate::utils::attachments::Attachment;
 
 use super::chat_execution::{
-    build_chatos_record_options, build_chatos_user_record, cloud_task_turn_review_metadata,
+    build_chatos_record_options, cloud_task_turn_review_metadata,
     cloud_track_project_execution_planner_completion, cloud_track_project_planning_integrity,
-    compose_agent_instructions, merge_user_record_metadata, CloudChatosRuntimeLifecycleHook,
-    CloudTaskTurnLifecycleState, PreparedMcpExecution,
+    compose_agent_instructions, CloudChatosRuntimeLifecycleHook, CloudTaskTurnLifecycleState,
+    PreparedMcpExecution,
 };
 use super::chat_runner::{build_chat_event_sink, finalize_chat_result};
 use super::runtime_context::{resume_mcp_management_gateway, ResolvedConversationRuntimeContext};
@@ -358,34 +358,6 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
         })];
         let current_input_items = cloud_agent_trigger_input_items(run, trigger, initial_items)?;
         let retry_input_items = current_input_items.clone();
-        let user_record = matches!(trigger, CloudAgentModelTrigger::RunStarted { .. }).then(|| {
-            let hidden = input
-                .persisted_user_message_metadata
-                .as_ref()
-                .and_then(|metadata| metadata.get("hidden"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let metadata = merge_user_record_metadata(
-                input.persisted_user_message_metadata.clone(),
-                build_user_message_metadata(
-                    input.attachments.as_slice(),
-                    Some(input.turn_id.as_str()),
-                ),
-            );
-            let _ = hidden;
-            build_chatos_user_record(
-                input.session_id.as_str(),
-                Some(input.turn_id.clone()),
-                input.user_message_id.clone(),
-                input
-                    .persisted_user_message_content
-                    .as_deref()
-                    .unwrap_or(input.content.as_str()),
-                metadata,
-                crate::services::ai_common::TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE,
-                input.model_name.as_str(),
-            )
-        });
         let hidden_turn = input
             .persisted_user_message_metadata
             .as_ref()
@@ -428,8 +400,7 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
             current_input_items,
         )
         .with_memory_scope(resolve_chatos_memory_scope(input.session_id.as_str()).await?)
-        .with_prefixed_input_items(input.prefixed_input_items.clone())
-        .with_user_record(user_record);
+        .with_prefixed_input_items(input.prefixed_input_items.clone());
         let runner = build_shared_contextual_turn_runner_with_max_iterations(
             runtime_context.use_tools.then_some(prepared.executor),
             MessageManager::new(),

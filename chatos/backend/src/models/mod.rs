@@ -11,6 +11,7 @@ pub mod memory_mapping_types;
 pub mod memory_runtime_types;
 pub mod memory_skill;
 pub mod message;
+pub mod pet_activity_inbox;
 pub mod project;
 pub mod project_run;
 pub mod project_run_environment;

@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::ops::Deref;
 
 use crate::models::memory_mapping_types::MemoryContactDto;
+use crate::models::pet_activity_inbox::PetActivityInboxRecord;
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnectionView;
 use crate::models::session::Session;
@@ -181,6 +182,16 @@ pub struct AskUserPromptRealtimePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PetActivityInboxRealtimePayload {
+    pub action: String,
+    pub activity_id: String,
+    pub activity_key: String,
+    pub activity_version: String,
+    pub inbox_status: String,
+    pub activity: PetActivityInboxRecord,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatStreamRealtimePayload {
     pub conversation_id: String,
     pub conversation_turn_id: Option<String>,
@@ -209,6 +220,7 @@ pub enum RealtimeEventPayload {
     ProjectMembersUpdated(ProjectMembersUpdatedRealtimePayload),
     TaskBoard(TaskBoardRealtimePayload),
     AskUserPrompt(AskUserPromptRealtimePayload),
+    PetActivityInboxUpdated(PetActivityInboxRealtimePayload),
     ChatStream(ChatStreamRealtimePayload),
 }
 

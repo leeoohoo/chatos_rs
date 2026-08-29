@@ -84,8 +84,16 @@ pub(super) async fn resolve_plugin_binding(
             .get_plugin_installation(owner_user_id, device_id, catalog.id.as_str())
             .await
             .map_err(ApiError::internal)?,
-        None => None,
+        None => state
+            .store
+            .get_preferred_plugin_installation(owner_user_id, catalog.id.as_str())
+            .await
+            .map_err(ApiError::internal)?,
     };
+    let resolved_device_id = installation
+        .as_ref()
+        .map(|installation| installation.device_id.clone())
+        .or_else(|| device_id.map(str::to_string));
     let release = match installation.as_ref() {
         Some(installation) => state
             .store
@@ -135,7 +143,7 @@ pub(super) async fn resolve_plugin_binding(
         preference,
         component_snapshots,
         auth_connection_ids,
-        device_id,
+        resolved_device_id.as_deref(),
     )))
 }
 

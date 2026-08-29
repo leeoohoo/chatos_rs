@@ -145,7 +145,7 @@ impl McpManagementClient {
             self.config.base_url
         );
         let response = self
-            .internal_request(Method::POST, url, RUNTIME_SESSIONS_RESOLVE_SCOPE)?
+            .runtime_session_request(Method::POST, url, RUNTIME_SESSIONS_RESOLVE_SCOPE)?
             .json(request)
             .send()
             .await?;
@@ -260,6 +260,17 @@ impl McpManagementClient {
             .header(INTERNAL_TOKEN_HEADER, token)
             .header(CALLER_SERVICE_HEADER, self.config.caller_service.as_str()))
     }
+
+    fn runtime_session_request(
+        &self,
+        method: Method,
+        url: String,
+        scope: &str,
+    ) -> Result<reqwest::RequestBuilder, McpManagementClientError> {
+        Ok(self
+            .internal_request(method, url, scope)?
+            .timeout(self.config.runtime_session_request_timeout))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,6 +335,7 @@ mod tests {
         let client = McpManagementClient::new(McpManagementClientConfig {
             base_url: "https://mcp-management.test".to_string(),
             request_timeout: Duration::from_secs(1),
+            runtime_session_request_timeout: Duration::from_secs(5),
             internal_api_secret: Some(secret.to_string()),
             caller_service: caller_service.to_string(),
             mtls_ca_cert_path: material_dir.join("ca.crt"),
@@ -367,6 +379,21 @@ mod tests {
         .expect("valid signed token");
         assert_eq!(claims.caller, caller_service);
         assert!(!claims.trace_id.is_empty());
+
+        let runtime_session_request = client
+            .runtime_session_request(
+                Method::POST,
+                "https://mcp-management.test/api/internal/runtime/sessions/resolve".to_string(),
+                RUNTIME_SESSIONS_RESOLVE_SCOPE,
+            )
+            .expect("runtime session request")
+            .build()
+            .expect("build runtime session request");
+        assert_eq!(client.config().request_timeout, Duration::from_secs(1));
+        assert_eq!(
+            runtime_session_request.timeout(),
+            Some(&Duration::from_secs(5))
+        );
         let _ = std::fs::remove_dir_all(material_dir);
     }
 
@@ -375,6 +402,7 @@ mod tests {
         let plaintext = McpManagementClientConfig {
             base_url: "http://127.0.0.1:39282".to_string(),
             request_timeout: Duration::from_secs(1),
+            runtime_session_request_timeout: Duration::from_secs(5),
             internal_api_secret: Some("test-secret".to_string()),
             caller_service: "task-runner".to_string(),
             mtls_ca_cert_path: PathBuf::new(),
@@ -388,6 +416,7 @@ mod tests {
         let tls_without_material = McpManagementClientConfig {
             base_url: "https://127.0.0.1:39282".to_string(),
             request_timeout: Duration::from_secs(1),
+            runtime_session_request_timeout: Duration::from_secs(5),
             internal_api_secret: Some("test-secret".to_string()),
             caller_service: "task-runner".to_string(),
             mtls_ca_cert_path: PathBuf::new(),
