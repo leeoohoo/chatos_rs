@@ -135,6 +135,21 @@ fn legacy_chatos_planning_agents_are_retired_in_favor_of_task_runner_plan_phase(
 }
 
 #[test]
+fn retired_system_agents_are_unique_and_disjoint_from_the_runtime_catalog() {
+    let current = system_agent_specs()
+        .into_iter()
+        .map(|(agent_key, _, _, _, _, _)| agent_key)
+        .collect::<std::collections::HashSet<_>>();
+    let retired = RETIRED_SYSTEM_AGENT_KEYS
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+
+    assert_eq!(retired.len(), RETIRED_SYSTEM_AGENT_KEYS.len());
+    assert!(retired.is_disjoint(&current));
+}
+
+#[test]
 fn all_chatos_runtime_agents_receive_the_notepad_binding() {
     assert_eq!(
         CHATOS_NOTEPAD_AGENT_KEYS,

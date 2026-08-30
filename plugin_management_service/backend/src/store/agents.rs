@@ -44,6 +44,26 @@ impl AppStore {
         Ok(())
     }
 
+    pub async fn delete_retired_agent_state(&self, agent_key: &str) -> Result<(), String> {
+        self.bindings
+            .delete_many(doc! { "agent_key": agent_key }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.agent_prompts
+            .delete_many(doc! { "agent_key": agent_key }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.agent_prompt_releases
+            .delete_many(doc! { "agent_key": agent_key }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.agents
+            .delete_one(doc! { "agent_key": agent_key }, None)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
     pub async fn list_agent_prompts(
         &self,
         agent_key: &str,

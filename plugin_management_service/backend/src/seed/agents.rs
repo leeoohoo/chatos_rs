@@ -5,8 +5,7 @@ use super::*;
 
 pub(super) async fn remove_retired_system_agents(store: &AppStore) -> Result<(), String> {
     for agent_key in RETIRED_SYSTEM_AGENT_KEYS {
-        store.delete_bindings_for_agent(agent_key).await?;
-        store.delete_agent(agent_key).await?;
+        store.delete_retired_agent_state(agent_key).await?;
     }
     Ok(())
 }
