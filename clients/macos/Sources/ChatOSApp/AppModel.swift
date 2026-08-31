@@ -318,6 +318,37 @@ final class AppModel: ObservableObject {
         mainWindow?.makeKeyAndOrderFront(nil)
     }
 
+    func openGlobalSearchProject(_ projectID: String) {
+        guard projects.contains(where: { $0.id == projectID }) else { return }
+        selection = .project(projectID)
+        projectTab = .messages
+        showMainWindow()
+    }
+
+    func openGlobalSearchContact(_ contactID: String) {
+        guard contacts.contains(where: { $0.id == contactID }) else { return }
+        selection = .contact(contactID)
+        showMainWindow()
+    }
+
+    func openGlobalSearchSettings(tab: LocalConnectorControlTab? = nil) {
+        if let tab {
+            requestConnectorSettings(tab)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+            _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
+    }
+
+    private func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        let mainWindow = NSApp.windows.first {
+            !($0 is NSPanel) && $0.title == "ChatOS"
+        }
+        mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
     func retryPetActivity(_ activity: PetActivity, instruction: String) async throws {
         guard let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !messageID.isEmpty,

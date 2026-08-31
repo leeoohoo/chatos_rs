@@ -25,6 +25,9 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreVideo"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("Security"),
@@ -36,6 +39,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
+                .linkedLibrary("sqlite3"),
             ]
         ),
         .testTarget(
@@ -49,6 +53,10 @@ let package = Package(
         .testTarget(
             name: "ChatOSConnectorTests",
             dependencies: ["ChatOSConnector", "ChatOSCore"]
+        ),
+        .testTarget(
+            name: "ChatOSAppTests",
+            dependencies: ["ChatOSApp", "ChatOSCore"]
         ),
     ]
 )

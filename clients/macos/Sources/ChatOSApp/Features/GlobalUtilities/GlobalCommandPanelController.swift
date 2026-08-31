@@ -3,6 +3,7 @@ import SwiftUI
 
 @MainActor
 class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
+    var onPanelDismiss: (() -> Void)?
     private var previousApplication: NSRunningApplication?
     private let panel: GlobalCommandPanel
 
@@ -69,10 +70,16 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
         previousApplication = nil
     }
 
+    func closeWithoutRestoringPreviousApplication() {
+        panel.orderOut(nil)
+        previousApplication = nil
+    }
+
     func windowDidResignKey(_ notification: Notification) {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
         previousApplication = nil
+        onPanelDismiss?()
     }
 
     private func positionOnMouseScreen() {
