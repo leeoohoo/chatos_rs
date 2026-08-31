@@ -2,100 +2,207 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 routes:
-  # Public aliases must never become a tunnel into service-only endpoints.
-  - id: block-public-internal-api-aliases
-    priority: 1000
-    uris:
-      - /api/chatos/internal/*
-      - /api/user/internal/*
-      - /api/project/internal/*
-      - /api/plugin/internal/*
-      - /api/mcp/internal/*
-      - /api/mcp/api/internal/*
+  # The unified admin console is the only browser frontend for internal
+  # management. Service APIs retain independent upstreams and explicit path
+  # prefixes so backend boundaries remain unchanged. The blocker is attached
+  # to every matching service route because APISIX selects the most-specific
+  # URI before considering a generic route's priority.
+  - id: admin-user-service-api
+    priority: 800
+    hosts: &admin_hosts
+      - admin.jgoool.com
+    uri: /api/admin/user-service/*
     plugins:
       request-id: &request_id
         header_name: X-Request-Id
         include_in_response: true
         algorithm: uuid
-      fault-injection:
-        abort:
-          http_status: 404
-          body: '{"error":"route not found"}'
+      uri-blocker: &block_internal_api
+        block_rules:
+          - "^/api/(?:admin/(?:user-service|project-service|task-runner|plugin-management|memory-engine|config-center)/|(?:chatos|user|project|plugin|plugins|task|memory|local)/)(?:api/)?internal(?:/|\\?|$)"
+        rejected_code: 404
+      client-control: &admin_api_body_limit
+        max_body_size: 268435456
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/user-service/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: &admin_api_timeout
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "user-service-backend:39190": 1
 
-  # Browser frontends are selected by their public hostname. Keeping these
-  # routes above the generic /api aliases lets each frontend retain its own
-  # same-origin API proxy while removing every frontend host-port mapping.
-  - id: configuration-center-frontend
+  - id: admin-project-service-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/project-service/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/project-service/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "project-management-backend:39210": 1
+
+  - id: admin-task-runner-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/task-runner/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/task-runner/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "task-runner-backend:39090": 1
+
+  - id: admin-plugin-management-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/plugin-management/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/plugin-management/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "plugin-management-backend:39260": 1
+
+  - id: admin-memory-engine-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/memory-engine/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/memory-engine/?(.*)"
+          - "/api/memory-engine/v1/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "memory-engine-backend:7081": 1
+
+  - id: admin-config-center-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/config-center/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/config-center/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "configuration-center-backend:39270": 1
+
+  - id: admin-console-frontend
+    priority: 700
+    hosts:
+      - admin.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "admin-console-frontend:80": 1
+
+  - id: legacy-config-admin-redirect
     priority: 700
     hosts:
       - config.jgoool.com
     uri: /*
     plugins:
       request-id: *request_id
-    upstream:
-      type: roundrobin
-      nodes:
-        "configuration-center-frontend:80": 1
+      redirect:
+        uri: https://admin.jgoool.com/config
+        ret_code: 302
 
-  - id: user-service-frontend
+  - id: legacy-user-admin-redirect
     priority: 700
     hosts:
       - user.jgoool.com
     uri: /*
     plugins:
       request-id: *request_id
-    upstream:
-      type: roundrobin
-      nodes:
-        "user-service-frontend:80": 1
+      redirect:
+        uri: https://admin.jgoool.com/users
+        ret_code: 302
 
-  - id: memory-engine-frontend
+  - id: legacy-memory-admin-redirect
     priority: 700
     hosts:
       - memory.jgoool.com
     uri: /*
     plugins:
       request-id: *request_id
-    upstream:
-      type: roundrobin
-      nodes:
-        "memory-engine-frontend:80": 1
+      redirect:
+        uri: https://admin.jgoool.com/memory
+        ret_code: 302
 
-  - id: project-management-frontend
+  - id: legacy-project-admin-redirect
     priority: 700
     hosts:
       - project.jgoool.com
     uri: /*
     plugins:
       request-id: *request_id
-    upstream:
-      type: roundrobin
-      nodes:
-        "project-management-frontend:80": 1
+      redirect:
+        uri: https://admin.jgoool.com/projects
+        ret_code: 302
 
-  - id: plugin-management-frontend
+  - id: legacy-plugin-admin-redirect
     priority: 700
     hosts:
       - plugin.jgoool.com
     uri: /*
     plugins:
       request-id: *request_id
-    upstream:
-      type: roundrobin
-      nodes:
-        "plugin-management-frontend:80": 1
+      redirect:
+        uri: https://admin.jgoool.com/plugins
+        ret_code: 302
 
-  - id: task-runner-frontend
+  - id: legacy-task-admin-redirect
     priority: 700
     hosts:
       - task.jgoool.com
     uri: /*
     plugins:
       request-id: *request_id
-    upstream:
-      type: roundrobin
-      nodes:
-        "task-runner-frontend:80": 1
+      redirect:
+        uri: https://admin.jgoool.com/task-runner
+        ret_code: 302
 
   - id: official-website-frontend
     priority: 700
@@ -159,6 +266,7 @@ routes:
     uri: /api/chatos/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: &api_cors
         allow_origins: "*"
         allow_methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -212,6 +320,7 @@ routes:
     uri: /api/user/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -233,6 +342,7 @@ routes:
     uri: /api/project/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -255,6 +365,7 @@ routes:
     uri: /api/plugins/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -273,6 +384,7 @@ routes:
     uri: /api/plugin/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -313,6 +425,7 @@ routes:
     uri: /api/local/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -335,6 +448,7 @@ routes:
     uri: /api/task/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -356,6 +470,7 @@ routes:
     uri: /api/memory/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit

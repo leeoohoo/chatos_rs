@@ -391,6 +391,7 @@ prepare_local_dev_apisix_config() {
     -e "s/\"local-connector-service-backend:39230\"/\"${host_address}:39230\"/g" \
     -e "s/\"task-runner-backend:39090\"/\"${host_address}:39090\"/g" \
     -e "s/\"memory-engine-backend:7081\"/\"${host_address}:7081\"/g" \
+    -e "s/\"admin-console-frontend:80\"/\"${host_address}:39200\"/g" \
     -e "s/\"official-website-frontend:80\"/\"${host_address}:39251\"/g" \
     "$source_config" >"$target_config"
 }

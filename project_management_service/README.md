@@ -1,6 +1,6 @@
 # Project Management Service
 
-独立项目管理微服务，后端使用 Rust + Axum + MongoDB，前端使用 React + Ant Design。
+独立项目管理微服务，后端使用 Rust + Axum + MongoDB，管理页面位于统一管理端。
 
 ## 本地启动
 
@@ -16,10 +16,10 @@ cargo run -p project_management_service_backend
 
 项目管理服务仅支持 MongoDB。测试数据库可通过 `PROJECT_SERVICE_TEST_MONGODB_BASE_URL` 指向独立 MongoDB 实例。
 
-前端：
+统一管理端：
 
 ```bash
-cd project_management_service/frontend
+cd admin_console
 npm install
 npm run dev
 ```
@@ -27,7 +27,7 @@ npm run dev
 默认地址：
 
 - 后端：http://127.0.0.1:39210
-- 前端：http://127.0.0.1:39211
+- 统一管理端：http://127.0.0.1:39200/projects
 
 ## 领域边界
 

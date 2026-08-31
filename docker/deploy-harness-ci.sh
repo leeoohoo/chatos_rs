@@ -88,23 +88,8 @@ image_for_service() {
     official-website-backend)
       printf '%s/chatos-rs-official-website-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
-    configuration-center-frontend)
-      printf '%s/chatos-rs-configuration-center-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
-    user-service-frontend)
-      printf '%s/chatos-rs-user-service-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
-    memory-engine-frontend)
-      printf '%s/chatos-rs-memory-engine-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
-    project-management-frontend)
-      printf '%s/chatos-rs-project-management-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
-    plugin-management-frontend)
-      printf '%s/chatos-rs-plugin-management-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
-    task-runner-frontend)
-      printf '%s/chatos-rs-task-runner-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
+    admin-console-frontend)
+      printf '%s/chatos-rs-admin-console-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
     official-website-frontend)
       printf '%s/chatos-rs-official-website-frontend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
@@ -140,12 +125,7 @@ require_harness_ci_images() {
     "$IMAGE_NAMESPACE/chatos-rs-task-runner-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-chatos-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-official-website-backend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-configuration-center-frontend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-user-service-frontend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-memory-engine-frontend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-project-management-frontend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-plugin-management-frontend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-task-runner-frontend:$IMAGE_TAG"
+    "$IMAGE_NAMESPACE/chatos-rs-admin-console-frontend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-official-website-frontend:$IMAGE_TAG"
     "harness/harness:latest"
   )

@@ -13,6 +13,7 @@ target-*/
 /docs/
 **/node_modules/
 **/dist/
+**/.build/
 **/.vite
 **/.turbo
 **/.cache

@@ -677,7 +677,6 @@ stop_all() {
   load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
   export_local_env
   ensure_dirs
-  stop_service_pid "sandbox-runtime-proxy"
   deregister_local_dev_services
   local item name unused port
   for item in "${FRONTEND_SERVICES[@]}"; do
@@ -777,18 +776,13 @@ print_urls() {
 [OK] Local dev stack startup requested.
 
 Official website:         http://localhost:39251
+Unified admin console:    http://localhost:39200
 Unified gateway:          http://localhost:${APISIX_GATEWAY_PORT:-9080}
 Prometheus:               http://127.0.0.1:${PROMETHEUS_PORT:-9090}
 Alertmanager:             http://127.0.0.1:${ALERTMANAGER_PORT:-9093}
 Grafana:                  http://127.0.0.1:${GRAFANA_PORT:-3001}
 Main backend:             http://localhost:3997
-Configuration Center:     http://localhost:39271
 Harness:                  http://localhost:3000
-User Service:             http://localhost:39191
-Memory Engine:            http://localhost:4178
-Task Runner:              http://localhost:39091
-Project Management:       http://localhost:39211
-Plugin Management:        http://localhost:39261
 Local Connector Service:  http://localhost:39230
 MCP Management Service:   http://localhost:39280
 

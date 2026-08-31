@@ -69,6 +69,61 @@ nginx_target="/etc/nginx/sites-available/chatos.conf"
 nginx_backup=""
 switched=0
 
+ensure_admin_certificate() {
+  local certificate=/etc/letsencrypt/live/jgoool.com/fullchain.pem
+  local expected_domains=(
+    jgoool.com
+    www.jgoool.com
+    app.jgoool.com
+    gateway.jgoool.com
+    plugin-ui.jgoool.com
+    admin.jgoool.com
+    config.jgoool.com
+    user.jgoool.com
+    memory.jgoool.com
+    project.jgoool.com
+    plugin.jgoool.com
+    task.jgoool.com
+    official.jgoool.com
+    connector.jgoool.com
+    local-connector.jgoool.com
+    harness.jgoool.com
+    ci.jgoool.com
+  )
+  local expected_sans current_sans
+  expected_sans="$(printf 'DNS:%s\n' "${expected_domains[@]}" | sort)"
+  current_sans="$(
+    openssl x509 -in "$certificate" -noout -ext subjectAltName \
+      | grep -oE 'DNS:[^,[:space:]]+' \
+      | sort
+  )"
+  if [[ "$current_sans" == "$expected_sans" ]]; then
+    return 0
+  fi
+
+  echo "[INFO] refreshing the public certificate domain set"
+  local certbot_domains=()
+  local domain
+  for domain in "${expected_domains[@]}"; do
+    certbot_domains+=( -d "$domain" )
+  done
+  certbot certonly \
+    --non-interactive \
+    --agree-tos \
+    --webroot \
+    --webroot-path /var/www/letsencrypt \
+    --cert-name jgoool.com \
+    --force-renewal \
+    "${certbot_domains[@]}"
+
+  current_sans="$(
+    openssl x509 -in "$certificate" -noout -ext subjectAltName \
+      | grep -oE 'DNS:[^,[:space:]]+' \
+      | sort
+  )"
+  [[ "$current_sans" == "$expected_sans" ]]
+}
+
 rollback() {
   local exit_code=$?
   trap - EXIT
@@ -93,7 +148,7 @@ rollback() {
 }
 trap rollback EXIT
 
-for command_name in git docker curl nginx systemctl python3; do
+for command_name in git docker curl nginx systemctl python3 certbot openssl; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "[ERROR] server is missing command: $command_name" >&2
     exit 1
@@ -136,6 +191,8 @@ git -C "$source_repo" archive "$release_commit" | tar -x -C "$release_dir"
 printf '%s\n' "$release_commit" > "$release_dir/RELEASE_COMMIT"
 cp -p "$previous_release/docker/bootstrap.conf" "$release_dir/docker/bootstrap.conf"
 cp -a "$previous_release/docker/secrets" "$release_dir/docker/secrets"
+
+ensure_admin_certificate
 
 python3 - "$release_dir/docker/bootstrap.conf" "$release_tag" <<'PY'
 from pathlib import Path
@@ -221,7 +278,12 @@ done
 curl --fail --silent --show-error --max-time 20 \
   http://127.0.0.1:9080/api/chatos/health >/dev/null
 
+curl --fail --silent --show-error --max-time 20 \
+  --header "Host: admin.jgoool.com" \
+  http://127.0.0.1:9080/api/admin/user-service/health >/dev/null
+
 frontend_hosts=(
+  admin.jgoool.com
   config.jgoool.com
   user.jgoool.com
   memory.jgoool.com
@@ -251,6 +313,7 @@ esac
 for url in \
   https://gateway.jgoool.com/api/chatos/health \
   https://jgoool.com \
+  https://admin.jgoool.com \
   https://user.jgoool.com \
   https://memory.jgoool.com \
   https://project.jgoool.com \

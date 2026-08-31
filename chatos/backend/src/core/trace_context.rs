@@ -10,10 +10,12 @@ struct HeaderInjector<'a>(&'a mut HeaderMap);
 
 impl Injector for HeaderInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
-        let name = HeaderName::from_bytes(key.as_bytes())
-            .expect("OpenTelemetry propagator produced an invalid header name");
-        let value = HeaderValue::from_str(value.as_str())
-            .expect("OpenTelemetry propagator produced an invalid header value");
+        let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
+            return;
+        };
+        let Ok(value) = HeaderValue::from_str(value.as_str()) else {
+            return;
+        };
         self.0.insert(name, value);
     }
 }

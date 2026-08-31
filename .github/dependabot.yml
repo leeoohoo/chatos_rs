@@ -5,12 +5,8 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directories:
-      - "/memory_engine/frontend"
+      - "/admin_console"
       - "/official_website_service/frontend"
-      - "/plugin_management_service/frontend"
-      - "/project_management_service/frontend"
-      - "/task_runner_service/frontend"
-      - "/user_service/frontend"
       - "/plugins/document"
     schedule:
       interval: "weekly"

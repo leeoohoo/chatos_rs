@@ -1283,61 +1283,20 @@ services:
       timeout: 5s
       retries: 30
 
-  configuration-center-frontend:
+  admin-console-frontend:
     <<: *frontend-service
-    image: ${CONFIG_CENTER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-configuration-center-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://configuration-center-backend:39270
+    image: ${ADMIN_CONSOLE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-admin-console-frontend:${CHATOS_IMAGE_TAG:-latest}}
     depends_on:
       configuration-center-backend:
         condition: service_healthy
-
-  user-service-frontend:
-    <<: *frontend-service
-    image: ${USER_SERVICE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-user-service-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://user-service-backend:39190
-    depends_on:
       user-service-backend:
         condition: service_healthy
-
-  memory-engine-frontend:
-    <<: *frontend-service
-    image: ${MEMORY_ENGINE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-memory-engine-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://user-service-backend:39190
-      MEMORY_ENGINE_PROXY_PASS: http://memory-engine-backend:7081
-      USER_SERVICE_PROXY_PASS: http://user-service-backend:39190
-    depends_on:
       memory-engine-backend:
         condition: service_healthy
-      user-service-backend:
-        condition: service_healthy
-
-  project-management-frontend:
-    <<: *frontend-service
-    image: ${PROJECT_MANAGEMENT_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-project-management-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://project-management-backend:39210
-    depends_on:
       project-management-backend:
         condition: service_healthy
-
-  plugin-management-frontend:
-    <<: *frontend-service
-    image: ${PLUGIN_MANAGEMENT_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-plugin-management-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://plugin-management-backend:39260
-    depends_on:
       plugin-management-backend:
         condition: service_healthy
-
-  task-runner-frontend:
-    <<: *frontend-service
-    image: ${TASK_RUNNER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://task-runner-backend:39090
-    depends_on:
       task-runner-backend:
         condition: service_healthy
 

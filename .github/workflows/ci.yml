@@ -76,13 +76,8 @@ jobs:
         run: |
           set -euo pipefail
           for dir in \
-            config_center_service/frontend \
-            memory_engine/frontend \
+            admin_console \
             official_website_service/frontend \
-            plugin_management_service/frontend \
-            project_management_service/frontend \
-            task_runner_service/frontend \
-            user_service/frontend \
             plugins/document
           do
             echo "Auditing $dir"
@@ -337,13 +332,8 @@ jobs:
       fail-fast: false
       matrix:
         directory:
-          - config_center_service/frontend
-          - memory_engine/frontend
+          - admin_console
           - official_website_service/frontend
-          - plugin_management_service/frontend
-          - project_management_service/frontend
-          - task_runner_service/frontend
-          - user_service/frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4

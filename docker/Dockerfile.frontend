@@ -7,7 +7,6 @@ ARG NGINX_IMAGE=nginx:1.30-alpine
 FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /src
-COPY . .
 
 ARG APP_DIR
 ARG VITE_API_BASE_URL=
@@ -23,10 +22,15 @@ ENV VITE_USER_SERVICE_API_BASE=${VITE_USER_SERVICE_API_BASE}
 ENV VITE_CONFIG_CENTER_URL=${VITE_CONFIG_CENTER_URL}
 ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 
+COPY frontend_runtime /src/frontend_runtime
+COPY ${APP_DIR}/package.json ${APP_DIR}/package-lock.json /src/${APP_DIR}/
 WORKDIR /src/${APP_DIR}
 RUN npm config set registry "$NPM_REGISTRY" \
     && npm config set replace-registry-host always \
     && if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
+WORKDIR /src
+COPY . .
+WORKDIR /src/${APP_DIR}
 RUN npm run build
 
 FROM ${NGINX_IMAGE}

@@ -25,12 +25,7 @@ LOCAL_BUILD_SERVICES=(
   task-runner-backend
   chatos-backend
   official-website-backend
-  configuration-center-frontend
-  user-service-frontend
-  memory-engine-frontend
-  project-management-frontend
-  plugin-management-frontend
-  task-runner-frontend
+  admin-console-frontend
   official-website-frontend
 )
 
@@ -838,12 +833,7 @@ print_urls() {
 
 Gateway:                  http://localhost:${gateway_port}
 Official website:         https://jgoool.com
-User Service:             https://user.jgoool.com
-Memory Engine:            https://memory.jgoool.com
-Task Runner:              https://task.jgoool.com
-Project Management:       https://project.jgoool.com
-Plugin Management:        https://plugin.jgoool.com
-Configuration Center:     https://config.jgoool.com
+Unified admin console:    https://admin.jgoool.com
 Main backend:             http://localhost:${main_backend_port}
 Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}

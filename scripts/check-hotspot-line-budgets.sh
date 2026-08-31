@@ -60,9 +60,9 @@ PLANNED_BUDGETS=(
   "chatos/backend/src/api/projects/requirement_execution_handlers.rs:700"
   "user_service/backend/src/api/models.rs:700"
   "chatos/backend/src/api/configs/ai_model.rs:700"
-  "project_management_service/frontend/src/pages/ProjectDetailPage.tsx:500"
-  "task_runner_service/frontend/src/i18n/messages/enUS.ts:1200"
-  "task_runner_service/frontend/src/i18n/messages/zhCN.ts:1200"
+  "admin_console/src/modules/project-management/pages/ProjectDetailPage.tsx:500"
+  "admin_console/src/modules/task-runner/i18n/messages/enUS.ts:1200"
+  "admin_console/src/modules/task-runner/i18n/messages/zhCN.ts:1200"
 )
 
 failures=0

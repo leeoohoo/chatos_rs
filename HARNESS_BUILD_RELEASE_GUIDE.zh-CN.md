@@ -35,11 +35,7 @@ local-connector-service-backend
 task-runner-backend
 chatos-backend
 official-website-backend
-user-service-frontend
-memory-engine-frontend
-project-management-frontend
-plugin-management-frontend
-task-runner-frontend
+admin-console-frontend
 official-website-frontend
 ```
 
@@ -76,7 +72,7 @@ export HARNESS_CI_BRANCH='3.0.0'
 export HARNESS_CI_PIPELINE='chatos-rs-images'
 export HARNESS_CI_CONFIG_PATH='.drone.images.yml'
 export HARNESS_CI_SNAPSHOT_SCOPE='ci-files'
-export HARNESS_CI_IMAGE_SERVICES='user-service-backend user-service-frontend local-connector-service-backend chatos-backend'
+export HARNESS_CI_IMAGE_SERVICES='user-service-backend admin-console-frontend local-connector-service-backend chatos-backend'
 export HARNESS_CI_RUN='true'
 
 bash ./scripts/build-images-on-harness.sh
@@ -85,7 +81,7 @@ bash ./scripts/build-images-on-harness.sh
 在 Windows PowerShell 调用 WSL `bash -lc` 时，空格需要转义，示例：
 
 ```powershell
-bash -lc 'HARNESS_ADMIN_PASSWORD=<HarnessAdminPassword> HARNESS_CI_SNAPSHOT_SCOPE=ci-files HARNESS_CI_BRANCH=3.0.0 HARNESS_CI_PIPELINE=chatos-rs-images HARNESS_CI_CONFIG_PATH=.drone.images.yml HARNESS_CI_IMAGE_SERVICES=user-service-backend\ user-service-frontend\ local-connector-service-backend\ chatos-backend HARNESS_CI_RUN=true ./scripts/build-images-on-harness.sh'
+bash -lc 'HARNESS_ADMIN_PASSWORD=<HarnessAdminPassword> HARNESS_CI_SNAPSHOT_SCOPE=ci-files HARNESS_CI_BRANCH=3.0.0 HARNESS_CI_PIPELINE=chatos-rs-images HARNESS_CI_CONFIG_PATH=.drone.images.yml HARNESS_CI_IMAGE_SERVICES=user-service-backend\ admin-console-frontend\ local-connector-service-backend\ chatos-backend HARNESS_CI_RUN=true ./scripts/build-images-on-harness.sh'
 ```
 
 构建完成后，Harness 输出会包含 execution URL，例如：
@@ -115,7 +111,7 @@ export CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
 cd /opt/chatos/docker-deploy/chatos_rs
 export CHATOS_IMAGE_TAG=harness-ci
 export CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
-./docker/deploy-harness-ci.sh user-service-backend user-service-frontend local-connector-service-backend chatos-backend
+./docker/deploy-harness-ci.sh user-service-backend admin-console-frontend local-connector-service-backend chatos-backend
 ```
 
 脚本会先检查这些服务对应的本地镜像是否存在，再只重建并启动指定容器。未指定的服务不会重新构建。
@@ -125,14 +121,14 @@ export CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
 注册、用户、local connector 登录相关：
 
 ```bash
-export HARNESS_CI_IMAGE_SERVICES='user-service-backend user-service-frontend local-connector-service-backend chatos-backend'
+export HARNESS_CI_IMAGE_SERVICES='user-service-backend admin-console-frontend local-connector-service-backend chatos-backend'
 bash ./scripts/build-images-on-harness.sh
 
 ssh root@8.155.171.124
 cd /opt/chatos/docker-deploy/chatos_rs
 export CHATOS_IMAGE_TAG=harness-ci
 export CHATOS_IMAGE_NAMESPACE=ghcr.io/leeoohoo
-./docker/deploy-harness-ci.sh user-service-backend user-service-frontend local-connector-service-backend chatos-backend
+./docker/deploy-harness-ci.sh user-service-backend admin-console-frontend local-connector-service-backend chatos-backend
 ```
 
 只改 ChatOS 云端后端：

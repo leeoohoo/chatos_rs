@@ -113,15 +113,15 @@ cd user_service/backend
 cargo run
 ```
 
-## Frontend-Only Development
+## Unified Admin Console Development
 
 ```bash
-cd user_service/frontend
+cd admin_console
 npm install
 npm run dev
 ```
 
-The frontend uses `/api` proxying to the backend during local development.
+The user and model pages live in the unified admin console. Its `/api/admin/user-service` prefix is proxied through APISIX to this backend.
 
 ## Default Admin
 
@@ -162,5 +162,5 @@ Change the default password and JWT secret before production use.
 Recommended checks:
 
 - `cd user_service/backend && cargo test`
-- `cd user_service/frontend && npm run type-check`
-- `cd user_service/frontend && npm run build`
+- `cd admin_console && npm run type-check`
+- `cd admin_console && npm run build`

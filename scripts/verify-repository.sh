@@ -9,13 +9,8 @@ RUST_TOOLCHAIN_VERSION="${CHATOS_RUST_TOOLCHAIN:-1.94.0}"
 CARGO=(cargo "+${RUST_TOOLCHAIN_VERSION}")
 
 FRONTEND_DIRS=(
-  "config_center_service/frontend"
-  "memory_engine/frontend"
+  "admin_console"
   "official_website_service/frontend"
-  "plugin_management_service/frontend"
-  "project_management_service/frontend"
-  "task_runner_service/frontend"
-  "user_service/frontend"
 )
 
 usage() {

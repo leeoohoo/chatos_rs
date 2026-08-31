@@ -105,56 +105,13 @@ services:
         BIN_NAME: official_website_service_backend
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
-  configuration-center-frontend:
+  admin-console-frontend:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
         <<: *frontend-build-args
-        APP_DIR: config_center_service/frontend
-
-  user-service-frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-      args:
-        <<: *frontend-build-args
-        APP_DIR: user_service/frontend
-
-  memory-engine-frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-      args:
-        <<: *frontend-build-args
-        APP_DIR: memory_engine/frontend
-        VITE_MEMORY_ENGINE_API_BASE: /api/memory-engine/v1
-        VITE_USER_SERVICE_API_BASE: /user-service
-
-  project-management-frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-      args:
-        <<: *frontend-build-args
-        APP_DIR: project_management_service/frontend
-
-  plugin-management-frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-      args:
-        <<: *frontend-build-args
-        APP_DIR: plugin_management_service/frontend
-
-  task-runner-frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-      args:
-        <<: *frontend-build-args
-        APP_DIR: task_runner_service/frontend
-        VITE_CONFIG_CENTER_URL: ${CONFIG_CENTER_PUBLIC_URL:-http://localhost:39271}
+        APP_DIR: admin_console
 
   official-website-frontend:
     build:
