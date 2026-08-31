@@ -3,7 +3,7 @@
 
 import axios, { AxiosHeaders } from 'axios';
 
-import { getAuthToken } from './userService';
+import { clearAuthToken, getAuthToken } from './userService';
 
 import { ADMIN_SERVICE_BASES } from '../../../shared/api/servicePaths';
 
@@ -27,3 +27,13 @@ client.interceptors.request.use((config) => {
   config.headers = headers;
   return config;
 });
+
+client.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      clearAuthToken();
+    }
+    return Promise.reject(error);
+  },
+);

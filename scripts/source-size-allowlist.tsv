@@ -19,7 +19,7 @@ mcp_management_service/backend/src/runtime/execution_scope_store.rs	1177	2026-10
 crates/chatos_project_execution/src/lib.rs	1148	2026-09-30	Phase 1E: split project execution graph, status, planning, identity, and feedback modules
 task_runner_service/backend/src/services/tool_runtime/mcp_server/prerequisite_creation.rs	1122	2026-10-31	3.0 hardening: split MCP prerequisite resolution and creation
 task_runner_service/backend/src/services/workspace_execution.rs	1122	2026-10-31	3.0 hardening: split workspace execution routing and lifecycle operations
-docker/deploy.sh	1105	2026-10-31	3.0 hardening: split deployment validation, lifecycle, and reporting helpers
+docker/deploy.sh	1110	2026-10-31	3.0 hardening: split deployment validation, lifecycle, runtime mTLS preflight, and reporting helpers
 crates/chatos_ai_runtime/src/turn.rs	1076	2026-10-31	3.0 hardening: split turn assembly, streaming, and completion behavior
 plugins/browser/crates/browser-cdp-bridge/src/server.rs	1052	2026-10-31	3.0 plugin import: split Browser Bridge server protocol and connection lifecycle
 local_connector_service/backend/src/api/mod.rs	1013	2026-10-31	3.0 hardening: split Local Connector API router, middleware, and shared responses

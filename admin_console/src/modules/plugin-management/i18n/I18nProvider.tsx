@@ -3,20 +3,14 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from 'react';
-import { ConfigProvider } from 'antd';
-import enUS from 'antd/locale/en_US';
-import zhCN from 'antd/locale/zh_CN';
 
 import { createTranslator } from '@chatos/frontend-runtime';
-import { createStoredUiLocaleHook } from '@chatos/frontend-runtime/react';
 
+import { useAdminI18n } from '../../../app/i18n/AdminI18nProvider';
 import { enUSMessages, zhCNMessages } from './messages';
 
 export type AppLocale = 'zh-CN' | 'en-US';
@@ -27,23 +21,15 @@ interface I18nContextValue {
   t: (key: string, values?: Record<string, string | number>) => string;
 }
 
-const STORAGE_KEY = 'plugin_management_service_locale';
-const SUPPORTED_LOCALES: readonly AppLocale[] = ['zh-CN', 'en-US'];
 const MESSAGE_CATALOG = {
   'zh-CN': zhCNMessages,
   'en-US': enUSMessages,
 };
 
 const I18nContext = createContext<I18nContextValue | null>(null);
-const useStoredUiLocale = createStoredUiLocaleHook({ useCallback, useEffect, useState });
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocale] = useStoredUiLocale({
-    storageKey: STORAGE_KEY,
-    supportedLocales: SUPPORTED_LOCALES,
-    fallbackLocale: 'zh-CN',
-    persist: 'effect',
-  });
+  const { locale, setLocale } = useAdminI18n();
 
   const value = useMemo<I18nContextValue>(() => {
     return {
@@ -57,11 +43,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     };
   }, [locale]);
 
-  return (
-    <I18nContext.Provider value={value}>
-      <ConfigProvider locale={locale === 'zh-CN' ? zhCN : enUS}>{children}</ConfigProvider>
-    </I18nContext.Provider>
-  );
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
 export function useI18n(): I18nContextValue {

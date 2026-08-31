@@ -211,6 +211,11 @@ git -C "$source_repo" archive "$release_commit" | tar -x -C "$release_dir"
 printf '%s\n' "$release_commit" > "$release_dir/RELEASE_COMMIT"
 cp -p "$previous_release/docker/bootstrap.conf" "$release_dir/docker/bootstrap.conf"
 cp -a "$previous_release/docker/secrets" "$release_dir/docker/secrets"
+retired_sandbox_mtls="$release_dir/docker/secrets/sandbox-manager-mtls"
+if [[ -e "$retired_sandbox_mtls" ]]; then
+  echo "[INFO] removing retired Sandbox Manager mTLS material from the release"
+  rm -rf -- "$retired_sandbox_mtls"
+fi
 
 ensure_admin_certificate
 

@@ -1,13 +1,24 @@
 import { App as AntdApp, ConfigProvider, theme } from 'antd';
+import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';
 
 import { AdminAuthProvider } from './app/auth/AuthProvider';
+import { AdminI18nProvider, useAdminI18n } from './app/i18n/AdminI18nProvider';
 import { AppRoutes } from './app/routing/AppRoutes';
 
 export default function App() {
   return (
+    <AdminI18nProvider>
+      <LocalizedApp />
+    </AdminI18nProvider>
+  );
+}
+
+function LocalizedApp() {
+  const { locale } = useAdminI18n();
+  return (
     <ConfigProvider
-      locale={zhCN}
+      locale={locale === 'zh-CN' ? zhCN : enUS}
       theme={{
         algorithm: theme.defaultAlgorithm,
         token: {

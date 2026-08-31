@@ -68,6 +68,10 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
             self.assertNotIn("sandbox.jgoool.com", content)
             self.assertNotIn("sandbox-runtime-proxy", content)
 
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        self.assertIn('retired_sandbox_mtls="$release_dir/docker/secrets/sandbox-manager-mtls"', deploy)
+        self.assertIn('rm -rf -- "$retired_sandbox_mtls"', deploy)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,11 +6,9 @@ import React from 'react';
 import {
   createTranslator,
 } from '@chatos/frontend-runtime';
-import { createStoredUiLocaleHook } from '@chatos/frontend-runtime/react';
 
+import { useAdminI18n } from '../../../app/i18n/AdminI18nProvider';
 import { UI_MESSAGES, type UiLocale } from './messages';
-
-const UI_LOCALE_STORAGE_KEY = 'chat_ui_locale';
 
 type I18nContextValue = {
   locale: UiLocale;
@@ -19,8 +17,6 @@ type I18nContextValue = {
 };
 
 export type TranslateFn = I18nContextValue['t'];
-
-const SUPPORTED_LOCALES: readonly UiLocale[] = ['zh-CN', 'en-US'];
 
 const buildTranslator = (locale: UiLocale) =>
   createTranslator({
@@ -36,16 +32,9 @@ const defaultI18nContext: I18nContextValue = {
 };
 
 const I18nContext = React.createContext<I18nContextValue>(defaultI18nContext);
-const useStoredUiLocale = createStoredUiLocaleHook(React);
 
 export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [locale, setLocale] = useStoredUiLocale({
-    storageKey: UI_LOCALE_STORAGE_KEY,
-    supportedLocales: SUPPORTED_LOCALES,
-    fallbackLocale: 'zh-CN',
-    persist: 'setter',
-    ignoreStorageErrors: true,
-  });
+  const { locale, setLocale } = useAdminI18n();
 
   const value = React.useMemo<I18nContextValue>(() => ({
     locale,

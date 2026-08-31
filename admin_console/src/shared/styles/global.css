@@ -13,7 +13,7 @@ body { min-height: 100vh; }
 .admin-fullscreen,
 .admin-login-shell { min-height: 100vh; }
 .admin-login-shell { padding: 24px; background: radial-gradient(circle at top, #e8f2ff 0, #f4f6f8 48%, #eef1f5 100%); }
-.admin-login-card { width: min(420px, 100%); border: 1px solid rgba(22, 119, 255, 0.12); box-shadow: 0 24px 72px rgba(15, 23, 42, 0.12); }
+.admin-login-card { width: min(460px, 100%); border: 1px solid rgba(22, 119, 255, 0.12); box-shadow: 0 24px 72px rgba(15, 23, 42, 0.12); }
 .admin-shell { min-height: 100vh; }
 .admin-sider { position: sticky !important; top: 0; height: 100vh; border-right: 1px solid #e9edf2; overflow: auto; }
 .admin-brand { height: 72px; padding: 16px 20px; display: flex; align-items: center; gap: 12px; color: #1677ff; font-size: 22px; }

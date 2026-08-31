@@ -23,21 +23,23 @@ export default function PluginManagementModuleRoutes() {
     return <Flex align="center" justify="center" style={{ minHeight: 320 }}><Spin size="large" /></Flex>;
   }
   const user = currentUserQuery.data;
+  const requireSuperAdmin = (element: React.ReactElement) =>
+    user.role === 'super_admin' ? element : <Navigate to="mcp" replace />;
   return (
     <I18nProvider>
       <Suspense fallback={<Flex align="center" justify="center" style={{ minHeight: 320 }}><Spin size="large" /></Flex>}>
         <Routes>
           <Route index element={<Navigate to="mcp" replace />} />
           <Route path="mcp" element={<McpCatalogPage user={user} />} />
-          <Route path="catalog" element={<PluginCatalogRoute user={user} />} />
-          <Route path="releases" element={<PluginReleasesRoute user={user} />} />
+          <Route path="catalog" element={requireSuperAdmin(<PluginCatalogRoute user={user} />)} />
+          <Route path="releases" element={requireSuperAdmin(<PluginReleasesRoute user={user} />)} />
           <Route path="marketplaces" element={<PluginMarketplacesPage user={user} />} />
           <Route path="publishers" element={<PluginPublishersPage user={user} />} />
-          <Route path="agents" element={<SystemAgentsRoute user={user} />} />
-          <Route path="agents/:agentKey/prompts" element={<AgentPromptRoute user={user} />} />
-          <Route path="runtime" element={<RuntimePreviewPage user={user} />} />
+          <Route path="agents" element={requireSuperAdmin(<SystemAgentsRoute user={user} />)} />
+          <Route path="agents/:agentKey/prompts" element={requireSuperAdmin(<AgentPromptRoute user={user} />)} />
+          <Route path="runtime" element={requireSuperAdmin(<RuntimePreviewPage user={user} />)} />
           <Route path="diagnostics" element={<PluginDiagnosticsPage />} />
-          <Route path="audit" element={<PluginAuditPage user={user} />} />
+          <Route path="audit" element={requireSuperAdmin(<PluginAuditPage user={user} />)} />
           <Route path="*" element={<Navigate to="mcp" replace />} />
         </Routes>
       </Suspense>
