@@ -97,8 +97,10 @@ export function TaskEditorDrawer({
     [t],
   );
   const projectLabel = editingTask
-    ? projectOptions.find((option) => option.value === editingTask.project_id)?.label
-      || editingTask.project_id
+    ? editingTask.project_id
+      ? projectOptions.find((option) => option.value === editingTask.project_id)?.label
+        || editingTask.project_id
+      : t('projects.userConversation')
     : '-';
 
   return (

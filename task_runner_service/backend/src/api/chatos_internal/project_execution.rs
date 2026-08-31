@@ -59,7 +59,7 @@ pub(super) async fn confirm_chatos_project_execution(
             .and_then(|value| value.get("root_requirement_id"))
             .or_else(|| payload.and_then(|value| value.get("requirement_id")))
             .and_then(Value::as_str);
-        if task.project_id.trim() != project_id
+        if task.project_id.as_deref() != Some(project_id)
             || payload_source != Some("chatos_project_requirement_execution")
             || payload_requirement_id != Some(requirement_id)
         {
@@ -429,7 +429,7 @@ fn validate_project_execution_task(
         .and_then(|value| value.get("root_requirement_id"))
         .or_else(|| payload.and_then(|value| value.get("requirement_id")))
         .and_then(Value::as_str);
-    if task.project_id.trim() != project_id
+    if task.project_id.as_deref() != Some(project_id)
         || payload_source != Some("chatos_project_requirement_execution")
         || payload_requirement_id != Some(requirement_id)
     {

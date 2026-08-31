@@ -134,10 +134,10 @@ export function buildTaskTableColumns({
       dataIndex: 'project_id',
       width: 180,
       render: (value?: string | null) => {
-        const projectId = (value || '-1').trim() || '-1';
-        const label = projectId === '-1'
-          ? t('projects.public')
-          : projectNameMap.get(projectId) || projectId;
+        const projectId = value?.trim() || null;
+        if (!projectId) {
+          return <Typography.Text type="secondary">{t('projects.userConversation')}</Typography.Text>;
+        }
         return (
           <Button
             type="link"
@@ -145,7 +145,7 @@ export function buildTaskTableColumns({
             className="task-cell-link"
             onClick={() => navigate(`/tasks?project_id=${encodeURIComponent(projectId)}`)}
           >
-            {label}
+            {projectNameMap.get(projectId) || projectId}
           </Button>
         );
       },

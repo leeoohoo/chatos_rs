@@ -12,6 +12,8 @@ pub const USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY: &str =
     "user_service.security.previous_secret_keys";
 pub const USER_SERVICE_PROJECT_SERVICE_INTERNAL_SECRET_CONFIG_KEY: &str =
     "user_service.security.project_service_internal_secret";
+pub const USER_SERVICE_CHATOS_INTERNAL_SECRET_CONFIG_KEY: &str =
+    "user_service.security.chatos_internal_secret";
 pub const USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "user_service.downstream.memory_engine_internal_api_secret";
 pub const USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY: &str =

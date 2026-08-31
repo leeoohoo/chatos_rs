@@ -26,6 +26,7 @@ pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) source_user_message_id: Option<&'a str>,
     pub(super) contact_agent_id: Option<&'a str>,
     pub(super) default_model_config_id: Option<&'a str>,
+    pub(super) default_remote_connection_id: Option<&'a str>,
     pub(super) expected_project_task_ids: &'a [String],
     pub(super) selected_plugins: Vec<SelectedPluginRef>,
     pub(super) plugin_command_invocations: Vec<PluginCommandInvocation>,
@@ -68,7 +69,6 @@ pub(super) async fn resolve_mcp_management_gateway(
 ) -> Result<McpManagementGateway, String> {
     let tenant_id = required_text(request.tenant_id, "tenant_id")?;
     let owner_user_id = required_text(request.owner_user_id, "owner_user_id")?;
-    let project_id = required_text(request.project_id, "project_id")?;
     let source_session_id = required_text(request.source_session_id, "source_session_id")?;
     let turn_id = required_text(request.turn_id, "turn_id")?;
     let source_user_message_id =
@@ -79,7 +79,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         owner_user_id: owner_user_id.to_string(),
         owner_role: normalized(request.owner_role),
         agent_key: agent_key.clone(),
-        project_id: project_id.to_string(),
+        project_id: normalized(request.project_id),
         run_id: None,
         execution_group_id: None,
         turn_id: Some(turn_id.to_string()),
@@ -93,6 +93,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         source_user_message_id: Some(source_user_message_id.to_string()),
         contact_agent_id: normalized(request.contact_agent_id),
         default_model_config_id: normalized(request.default_model_config_id),
+        default_remote_connection_id: normalized(request.default_remote_connection_id),
         tool_result_max_chars: None,
         expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
         requested_mcp_ids: None,
@@ -127,7 +128,7 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         owner_user_id: String::new(),
         owner_role: None,
         agent_key: String::new(),
-        project_id: String::new(),
+        project_id: None,
         run_id: None,
         execution_group_id: None,
         turn_id: None,
@@ -138,6 +139,7 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        default_remote_connection_id: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,

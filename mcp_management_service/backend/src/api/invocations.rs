@@ -102,7 +102,7 @@ fn record_invocation_audit(
         trace_id,
         represented_user_id: Some(record.owner_user_id.clone()),
         tenant_id: Some(record.tenant_id.clone()),
-        project_id: Some(record.project_id.clone()),
+        project_id: record.project_id.clone(),
         resource_type: "mcp_runtime_invocation".to_string(),
         resource_id: record.invocation_id.clone(),
         resource_name: Some(record.exposed_tool_name.clone()),

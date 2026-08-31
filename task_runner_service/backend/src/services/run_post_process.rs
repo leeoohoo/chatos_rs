@@ -482,11 +482,15 @@ impl RunService {
         task: &crate::models::TaskRecord,
         run: &mut TaskRunRecord,
     ) -> Result<(), String> {
+        let project_id = task.project_id.as_deref().ok_or_else(|| {
+            "execution-group promotion requires a concrete project scope".to_string()
+        })?;
         let execution_group_id = super::workspace_execution::execution_group_id_for_task(task);
         let mut group_tasks = self
             .store
             .list_tasks_filtered(&TaskListFilters {
-                project_id: Some(task.project_id.clone()),
+                project_scope: Some(crate::models::TaskProjectScopeFilter::Project),
+                project_id: Some(project_id.to_string()),
                 include_subtasks: Some(false),
                 ..TaskListFilters::default()
             })
@@ -559,7 +563,7 @@ impl RunService {
         }
         let response = super::project_management_api_client::promote_execution_workspace(
             &self.config,
-            task.project_id.as_str(),
+            project_id,
             execution_group_id.as_str(),
             &super::project_management_api_client::PromoteExecutionWorkspaceRequest {
                 owner_user_id,
@@ -568,9 +572,7 @@ impl RunService {
             },
         )
         .await?;
-        if response.project_id != task.project_id
-            || response.execution_group_id != execution_group_id
-        {
+        if response.project_id != project_id || response.execution_group_id != execution_group_id {
             return Err("Project Service promoted a different execution group".to_string());
         }
         match response.status {

@@ -7,7 +7,7 @@ use tracing::warn;
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{is_owned_session, SessionAccessError};
 use crate::models::memory_mapping_types::SyncMemoryProjectRequestDto;
-use crate::models::project::{ProjectService, PUBLIC_PROJECT_ID};
+use crate::models::project::ProjectService;
 use crate::models::session::Session;
 use crate::services::chatos_memory_engine;
 use crate::services::chatos_memory_mappings;
@@ -93,7 +93,7 @@ pub async fn create_session(input: CreateConversationSessionInput) -> Result<Ses
         input.actor_user_id.as_str(),
         "session_created",
         Some(saved.id.as_str()),
-        Some(project_scope.as_str()),
+        project_scope.as_deref(),
         Some(saved.clone()),
     );
 
@@ -129,7 +129,7 @@ pub async fn update_session(
             actor_user_id,
             "session_updated",
             Some(session.id.as_str()),
-            Some(project_scope.as_str()),
+            project_scope.as_deref(),
             Some(session.clone()),
         );
     }
@@ -261,8 +261,8 @@ pub fn normalize_compat_session_title(title: Option<String>) -> Option<String> {
 async fn sync_session_memory_projections(session: &Session, user_id: &str) {
     let project_scope = normalize_project_scope(session.project_id.as_deref());
 
-    if project_scope != PUBLIC_PROJECT_ID {
-        if let Ok(Some(project)) = ProjectService::get_by_id(project_scope.as_str()).await {
+    if let Some(project_scope) = project_scope.as_deref() {
+        if let Ok(Some(project)) = ProjectService::get_by_id(project_scope).await {
             let same_owner = project
                 .user_id
                 .as_deref()
@@ -289,21 +289,5 @@ async fn sync_session_memory_projections(session: &Session, user_id: &str) {
                 }
             }
         }
-    } else if let Err(err) =
-        chatos_memory_mappings::sync_memory_project(&SyncMemoryProjectRequestDto {
-            user_id: Some(user_id.to_string()),
-            project_id: Some(PUBLIC_PROJECT_ID.to_string()),
-            name: Some("未指定项目".to_string()),
-            root_path: None,
-            description: None,
-            status: Some("active".to_string()),
-            is_virtual: Some(true),
-        })
-        .await
-    {
-        warn!(
-            error = err.as_str(),
-            "sync virtual memory project failed while creating session"
-        );
     }
 }

@@ -162,7 +162,7 @@ pub async fn create_chatos_session(
         resolve_session_project_scope(project_id.as_deref(), metadata.as_ref());
     if let Some(existing) = find_existing_active_chatos_session(
         user_id.as_str(),
-        effective_project_id.as_str(),
+        effective_project_id.as_deref(),
         metadata.as_ref(),
     )
     .await?
@@ -170,8 +170,7 @@ pub async fn create_chatos_session(
         return Ok(existing);
     }
 
-    let normalized_project_id = Some(effective_project_id);
-    let session = Session::new(title, None, metadata, Some(user_id), normalized_project_id);
+    let session = Session::new(title, None, metadata, Some(user_id), effective_project_id);
     sync_chatos_session(&session).await?;
     Ok(session)
 }
@@ -581,7 +580,7 @@ pub async fn delete_chatos_summary(
 
 async fn find_existing_active_chatos_session(
     user_id: &str,
-    project_scope: &str,
+    project_scope: Option<&str>,
     metadata: Option<&Value>,
 ) -> Result<Option<Session>, String> {
     let contact_id = contact_id_from_metadata(metadata);
@@ -599,7 +598,7 @@ async fn find_existing_active_chatos_session(
                 external_thread_id: None,
                 session_id: None,
                 contact_id: Some(contact_id.to_string()),
-                project_id: Some(project_scope.to_string()),
+                project_id: project_scope.map(ToOwned::to_owned),
                 agent_id: None,
                 mapping_source: Some("chatos_sdk".to_string()),
                 mapping_version: None,
@@ -622,7 +621,7 @@ async fn find_existing_active_chatos_session(
                 external_thread_id: None,
                 session_id: None,
                 contact_id: None,
-                project_id: Some(project_scope.to_string()),
+                project_id: project_scope.map(ToOwned::to_owned),
                 agent_id: Some(agent_id.to_string()),
                 mapping_source: Some("chatos_sdk".to_string()),
                 mapping_version: None,

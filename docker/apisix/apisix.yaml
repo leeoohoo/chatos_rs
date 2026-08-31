@@ -22,6 +22,138 @@ routes:
           http_status: 404
           body: '{"error":"route not found"}'
 
+  # Browser frontends are selected by their public hostname. Keeping these
+  # routes above the generic /api aliases lets each frontend retain its own
+  # same-origin API proxy while removing every frontend host-port mapping.
+  - id: configuration-center-frontend
+    priority: 700
+    hosts:
+      - config.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "configuration-center-frontend:80": 1
+
+  - id: user-service-frontend
+    priority: 700
+    hosts:
+      - user.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "user-service-frontend:80": 1
+
+  - id: memory-engine-frontend
+    priority: 700
+    hosts:
+      - memory.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "memory-engine-frontend:80": 1
+
+  - id: project-management-frontend
+    priority: 700
+    hosts:
+      - project.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "project-management-frontend:80": 1
+
+  - id: plugin-management-frontend
+    priority: 700
+    hosts:
+      - plugin.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "plugin-management-frontend:80": 1
+
+  - id: task-runner-frontend
+    priority: 700
+    hosts:
+      - task.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "task-runner-frontend:80": 1
+
+  - id: official-website-frontend
+    priority: 700
+    hosts:
+      - jgoool.com
+      - www.jgoool.com
+      - official.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-frontend:80": 1
+
+  # The native connector uses its historical public paths. Route the whole
+  # dedicated hostname to the connector instead of exposing port 39230.
+  - id: local-connector-public-host
+    priority: 700
+    hosts:
+      - connector.jgoool.com
+      - local-connector.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      client-control:
+        max_body_size: 134217728
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "local-connector-service-backend:39230": 1
+
+  # Keep the Plugin UI resource origin isolated while making APISIX the only
+  # application listener used by the host Nginx reverse proxy.
+  - id: plugin-ui-resource-host
+    priority: 900
+    hosts:
+      - plugin-ui.jgoool.com
+    uri: /api/plugin-ui/workbench/*
+    methods:
+      - GET
+      - HEAD
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 30
+        read: 30
+      nodes:
+        "chatos-backend:3997": 1
+
   - id: chatos-api-alias
     priority: 520
     uri: /api/chatos/*

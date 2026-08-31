@@ -23,10 +23,10 @@ use crate::models::{
     AskUserPromptTaskCountRecord, ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus,
     ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
     RunEventPruneResult, RunExecutionStats, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord, TaskRecord,
-    TaskRunAttemptRecord, TaskRunAttemptStatus, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
-    UserRecord,
+    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord,
+    TaskProjectScopeFilter, TaskRecord, TaskRunAttemptRecord, TaskRunAttemptStatus,
+    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, UserRecord,
 };
 
 mod app_models;

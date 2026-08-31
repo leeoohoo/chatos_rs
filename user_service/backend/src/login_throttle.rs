@@ -134,6 +134,7 @@ mod tests {
             harness_request_timeout_ms: 5000,
             harness_project_pat_prefix: "chatos-project".to_string(),
             user_service_internal_api_secret: None,
+            chatos_internal_api_secret: None,
             smtp_host: None,
             smtp_port: 587,
             smtp_username: None,

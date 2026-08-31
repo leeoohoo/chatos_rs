@@ -24,12 +24,17 @@ impl ProviderDispatcher {
                 snapshot.run_id.as_deref(),
                 snapshot.execution_scope_generation,
             ) {
+                let project_id = snapshot.project_id.as_deref().ok_or_else(|| {
+                    ProviderCallError::invalid_request(
+                        "Local Connector workspace finalization requires a concrete project scope",
+                    )
+                })?;
                 provider_finalization = self
                     .local_connector
                     .finalize_run(
                         &snapshot.project_context,
                         snapshot.owner_user_id.as_str(),
-                        snapshot.project_id.as_str(),
+                        project_id,
                         run_id,
                         snapshot.execution_group_id.as_deref(),
                         generation,

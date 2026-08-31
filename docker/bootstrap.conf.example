@@ -21,6 +21,10 @@ RABBITMQ_DEFAULT_VHOST=/
 RABBITMQ_AMQP_VHOST=%2f
 VALKEY_PASSWORD=change_me_valkey_password
 
+# Cross-service model runtime lookup. ChatOS Cloud Agent workers use this
+# caller-specific secret together with mTLS; never reuse a user access token.
+CHATOS_USER_SERVICE_INTERNAL_API_SECRET=change_me_chatos_user_service_secret
+
 # Configuration Center caller bootstrap secrets. Use distinct random values in
 # production. These authenticate initial snapshot and heartbeat requests only.
 CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET=change_me_config_center_chatos_backend_signing_secret

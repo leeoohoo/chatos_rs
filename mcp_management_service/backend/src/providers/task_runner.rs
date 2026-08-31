@@ -26,7 +26,7 @@ pub(super) struct TaskRunnerRequestBinding<'a> {
     agent_key: &'a str,
     session_id: &'a str,
     expires_at_unix: i64,
-    project_id: &'a str,
+    project_id: Option<&'a str>,
     run_id: Option<&'a str>,
     turn_id: Option<&'a str>,
     task_id: Option<&'a str>,
@@ -34,6 +34,7 @@ pub(super) struct TaskRunnerRequestBinding<'a> {
     source_user_message_id: Option<&'a str>,
     contact_agent_id: Option<&'a str>,
     default_model_config_id: Option<&'a str>,
+    default_remote_connection_id: Option<&'a str>,
     task_profile: Option<&'a str>,
     expected_project_task_ids: &'a [String],
 }
@@ -46,7 +47,7 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for TaskRunnerRequestBinding<'a> {
             agent_key: snapshot.agent_key.as_str(),
             session_id: snapshot.session_id.as_str(),
             expires_at_unix: snapshot.expires_at_unix,
-            project_id: snapshot.project_id.as_str(),
+            project_id: snapshot.project_id.as_deref(),
             run_id: snapshot.run_id.as_deref(),
             turn_id: snapshot.turn_id.as_deref(),
             task_id: snapshot.task_id.as_deref(),
@@ -54,6 +55,7 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for TaskRunnerRequestBinding<'a> {
             source_user_message_id: snapshot.source_user_message_id.as_deref(),
             contact_agent_id: snapshot.contact_agent_id.as_deref(),
             default_model_config_id: snapshot.default_model_config_id.as_deref(),
+            default_remote_connection_id: snapshot.default_remote_connection_id.as_deref(),
             task_profile: snapshot.task_profile.as_deref(),
             expected_project_task_ids: snapshot.expected_project_task_ids.as_slice(),
         }

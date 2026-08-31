@@ -3,8 +3,6 @@
 
 use super::*;
 
-use crate::models::PUBLIC_PROJECT_ID;
-
 impl InMemoryStore {
     pub(in crate::store) fn list_tasks(&self) -> Vec<TaskRecord> {
         let data = self.inner.read();
@@ -40,12 +38,16 @@ impl InMemoryStore {
                     .as_deref()
                     .is_none_or(|value| task.default_model_config_id.as_deref() == Some(value))
             })
-            .filter(|task| {
-                filters.project_id.as_deref().is_none_or(|value| {
-                    task.project_id == value
-                        || (value == PUBLIC_PROJECT_ID
-                            && matches!(task.project_id.trim(), "" | "0"))
-                })
+            .filter(|task| match filters.project_scope {
+                Some(TaskProjectScopeFilter::UserConversation) => task.project_id.is_none(),
+                Some(TaskProjectScopeFilter::Project) => filters.project_id.as_deref().map_or_else(
+                    || task.project_id.is_some(),
+                    |value| task.project_id.as_deref() == Some(value),
+                ),
+                None => filters
+                    .project_id
+                    .as_deref()
+                    .is_none_or(|value| task.project_id.as_deref() == Some(value)),
             })
             .filter(|task| {
                 filters
@@ -206,7 +208,7 @@ mod tests {
             memory_thread_id: format!("task-{id}"),
             tenant_id: "tenant".to_string(),
             subject_id: "subject".to_string(),
-            project_id: PUBLIC_PROJECT_ID.to_string(),
+            project_id: None,
             task_profile: TASK_PROFILE_DEFAULT.to_string(),
             creator_user_id: None,
             creator_username: None,
@@ -223,6 +225,7 @@ mod tests {
             source_session_id: None,
             source_turn_id: None,
             source_user_message_id: None,
+            remote_connection_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: TaskToolState::default(),
             plugin_config: Default::default(),

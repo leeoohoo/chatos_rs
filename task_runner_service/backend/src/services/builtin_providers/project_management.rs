@@ -8,7 +8,7 @@ use chatos_mcp::project_management_contract::schemas;
 use chatos_mcp::project_management_contract::{mcp, tools};
 use serde_json::{json, Value};
 
-use crate::models::{normalize_project_id, PUBLIC_PROJECT_ID};
+use crate::models::normalize_project_id;
 
 #[derive(Clone)]
 pub(in crate::services) struct ProjectManagementBuiltinService {
@@ -57,12 +57,12 @@ impl ProjectManagementBuiltinService {
             )
         })?;
         let project_id = normalize_project_id(self.project_id.clone());
-        if project_id == PUBLIC_PROJECT_ID {
-            return Err(format!(
+        let project_id = project_id.ok_or_else(|| {
+            format!(
                 "{} builtin requires concrete project_id",
                 self.server_name.as_str()
-            ));
-        }
+            )
+        })?;
 
         let mut headers = HashMap::new();
         super::super::project_management_api_client::insert_project_service_mcp_signing_headers(
@@ -101,7 +101,7 @@ impl ProjectManagementBuiltinService {
             Some("project service sync secret is not configured")
         } else if self.owner_user_id.is_none() {
             Some("project management builtin missing owner user id")
-        } else if project_id == PUBLIC_PROJECT_ID {
+        } else if project_id.is_none() {
             Some("project management builtin requires concrete project_id")
         } else {
             None

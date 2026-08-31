@@ -7,7 +7,6 @@ use crate::core::chat_runtime::{
     contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
 };
 use crate::models::message::Message;
-use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 use crate::services::text_normalization::normalize_optional_text_ref;
 
@@ -25,7 +24,7 @@ pub struct ChatosThreadMapping {
 
 #[derive(Debug, Clone)]
 pub struct ChatosReviewRepairScope {
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
 }
@@ -37,17 +36,8 @@ pub(crate) fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 pub(crate) fn resolve_session_project_scope(
     project_id: Option<&str>,
     metadata: Option<&Value>,
-) -> String {
-    normalize_optional_text(project_id)
-        .or_else(|| project_id_from_metadata(metadata))
-        .map(|value| {
-            if value == "0" {
-                PUBLIC_PROJECT_ID.to_string()
-            } else {
-                value
-            }
-        })
-        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string())
+) -> Option<String> {
+    normalize_optional_text(project_id).or_else(|| project_id_from_metadata(metadata))
 }
 
 pub(crate) fn build_thread_mapping(session: &Session) -> Result<ChatosThreadMapping, String> {
@@ -76,7 +66,7 @@ pub(crate) fn build_thread_mapping(session: &Session) -> Result<ChatosThreadMapp
     if let Some(agent_id) = agent_id.clone() {
         related_subject_ids.push(format!("agent:{agent_id}"));
     }
-    if !project_id.is_empty() {
+    if let Some(project_id) = project_id.as_deref() {
         related_subject_ids.push(format!("project:{project_id}"));
         if let Some(contact_id) = contact_id.clone() {
             related_subject_ids.push(format!("contact_project:{contact_id}:{project_id}"));

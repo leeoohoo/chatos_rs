@@ -332,7 +332,7 @@ pub(crate) async fn register_tool_call_command(
             .runtime_execution_scopes
             .enqueue_invocation_batch(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 snapshot.execution_scope_provider(),
                 command.batch_id.as_str(),
@@ -519,7 +519,7 @@ pub(crate) async fn execute_tool_batch_invocation(
                     .runtime_execution_scopes
                     .release_invocation_turn(
                         snapshot.owner_user_id.as_str(),
-                        snapshot.project_id.as_str(),
+                        snapshot.project_id.as_deref(),
                         run_id,
                         snapshot.execution_scope_provider(),
                         call.invocation_id.as_str(),
@@ -613,7 +613,7 @@ pub(crate) async fn execute_tool_batch_invocation(
             .runtime_execution_scopes
             .try_acquire_invocation_turn(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 snapshot
                     .run_id
                     .as_deref()
@@ -661,7 +661,7 @@ pub(crate) async fn execute_tool_batch_invocation(
                                 .runtime_execution_scopes
                                 .release_invocation_turn(
                                     snapshot.owner_user_id.as_str(),
-                                    snapshot.project_id.as_str(),
+                                    snapshot.project_id.as_deref(),
                                     run_id,
                                     snapshot.execution_scope_provider(),
                                     call.invocation_id.as_str(),
@@ -821,7 +821,7 @@ pub(crate) async fn resume_terminal_tool_batch_invocation(
             .runtime_execution_scopes
             .release_invocation_turn_and_next(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 snapshot.execution_scope_provider(),
                 invocation_id,
@@ -957,7 +957,7 @@ async fn register_runtime_invocation(
             .runtime_execution_scopes
             .ensure_accepting_invocations(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 snapshot.execution_scope_provider(),
             )
@@ -986,7 +986,7 @@ async fn register_runtime_invocation(
             .runtime_execution_scopes
             .enqueue_invocation(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 snapshot.execution_scope_provider(),
                 invocation_id.as_str(),
@@ -1052,7 +1052,7 @@ fn record_tool_access_audit(
         trace_id: snapshot.trace_id.clone(),
         represented_user_id: Some(snapshot.owner_user_id.clone()),
         tenant_id: Some(snapshot.tenant_id.clone()),
-        project_id: Some(snapshot.project_id.clone()),
+        project_id: snapshot.project_id.clone(),
         resource_type: "mcp_tool".to_string(),
         resource_id: route.resource_id.clone(),
         resource_name: Some(tool_name.to_string()),
@@ -1088,7 +1088,7 @@ async fn dispatch_provider_call(
             .runtime_execution_scopes
             .try_acquire_invocation_turn(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 snapshot.execution_scope_provider(),
                 invocation_id,
@@ -1123,7 +1123,7 @@ async fn dispatch_provider_call(
                 .runtime_execution_scopes
                 .release_invocation_turn(
                     snapshot.owner_user_id.as_str(),
-                    snapshot.project_id.as_str(),
+                    snapshot.project_id.as_deref(),
                     run_id,
                     snapshot.execution_scope_provider(),
                     invocation_id,
@@ -1171,7 +1171,7 @@ async fn dispatch_provider_call(
                         .runtime_execution_scopes
                         .release_invocation_turn(
                             snapshot.owner_user_id.as_str(),
-                            snapshot.project_id.as_str(),
+                            snapshot.project_id.as_deref(),
                             run_id,
                             snapshot.execution_scope_provider(),
                             invocation_id,
@@ -1202,7 +1202,7 @@ async fn dispatch_provider_call(
                         .runtime_execution_scopes
                         .release_invocation_turn(
                             snapshot.owner_user_id.as_str(),
-                            snapshot.project_id.as_str(),
+                            snapshot.project_id.as_deref(),
                             run_id,
                             snapshot.execution_scope_provider(),
                             invocation_id,
@@ -1230,7 +1230,7 @@ async fn dispatch_provider_call(
                         .runtime_execution_scopes
                         .release_invocation_turn(
                             snapshot.owner_user_id.as_str(),
-                            snapshot.project_id.as_str(),
+                            snapshot.project_id.as_deref(),
                             run_id,
                             snapshot.execution_scope_provider(),
                             invocation_id,
@@ -1293,7 +1293,7 @@ async fn dispatch_provider_call(
             .runtime_execution_scopes
             .release_invocation_turn(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 snapshot.execution_scope_provider(),
                 invocation_id,
@@ -1339,7 +1339,7 @@ pub(crate) async fn execute_async_tool_call(
                     .runtime_execution_scopes
                     .release_invocation_turn(
                         snapshot.owner_user_id.as_str(),
-                        snapshot.project_id.as_str(),
+                        snapshot.project_id.as_deref(),
                         run_id,
                         snapshot.execution_scope_provider(),
                         invocation_id.as_str(),
@@ -1364,7 +1364,7 @@ pub(crate) async fn execute_async_tool_call(
                     .runtime_execution_scopes
                     .release_invocation_turn(
                         snapshot.owner_user_id.as_str(),
-                        snapshot.project_id.as_str(),
+                        snapshot.project_id.as_deref(),
                         run_id,
                         snapshot.execution_scope_provider(),
                         invocation_id.as_str(),

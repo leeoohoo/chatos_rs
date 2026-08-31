@@ -19,8 +19,6 @@ import { api } from '../api/client';
 import { useI18n } from '../i18n/I18nProvider';
 import type { TaskProjectRecord } from '../types';
 
-const PUBLIC_PROJECT_ID = '-1';
-
 export function ProjectsPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -39,9 +37,8 @@ export function ProjectsPage() {
           <Space direction="vertical" size={2}>
             <Space size={[6, 6]} wrap>
               <Typography.Text strong>
-                {project.id === PUBLIC_PROJECT_ID ? t('projects.public') : project.name}
+                {project.name}
               </Typography.Text>
-              {project.id === PUBLIC_PROJECT_ID ? <Tag>{PUBLIC_PROJECT_ID}</Tag> : null}
             </Space>
             <Typography.Text type="secondary" copyable>
               {project.id}

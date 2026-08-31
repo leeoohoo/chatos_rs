@@ -19,7 +19,7 @@ use self::task_runner_callback::task_runner_callback;
 use self::tools_panel::{agent_status, agent_tools};
 use crate::api::chat_stream_common::{validate_chat_stream_request, ChatStreamRequest};
 use crate::api::conversation_semantics::extract_conversation_scope_id;
-use crate::core::auth::AuthUser;
+use crate::core::auth::{access_token_from_headers, AuthUser};
 use crate::core::messages::{build_message, MessageOut, NewMessageFields};
 use crate::core::project_execution::ensure_cloud_session_execution;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
@@ -69,6 +69,11 @@ async fn agent_chat_send(
     headers: HeaderMap,
     Json(mut req): Json<ChatStreamRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    // The chat continues after the HTTP response is returned. Capture the
+    // already-authenticated request token explicitly instead of relying on an
+    // ambient task-local surviving Axum's detached execution boundary.
+    let request_access_token =
+        access_token_from_headers(&headers).map_err(|err| err.into_response())?;
     ensure_and_set_user_id(&mut req.user_id, &auth)?;
     req.user_role = Some(auth.role.clone());
     validate_chat_stream_request(&req, false).await?;
@@ -85,7 +90,7 @@ async fn agent_chat_send(
     if let Some(turn_id) = accepted_turn_id.as_deref() {
         guidance::register_active_turn(&conversation_id, turn_id);
     }
-    access_token_scope::spawn_with_current_access_token(stream_chat(None, req));
+    access_token_scope::spawn_with_access_token(Some(request_access_token), stream_chat(None, req));
 
     Ok((
         StatusCode::ACCEPTED,

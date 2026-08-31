@@ -58,6 +58,53 @@ impl MongoStore {
                 "removed legacy Task Runner model configuration copies"
             );
         }
+        let raw_tasks = database.collection::<mongodb::bson::Document>("tasks");
+        let migrated_user_conversation_tasks = raw_tasks
+            .update_many(
+                doc! { "project_id": { "$in": ["-1", "0", ""] } },
+                doc! {
+                    "$unset": {
+                        "project_id": "",
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|err| format!("migrate Task user-conversation scope failed: {err}"))?
+            .modified_count;
+        raw_tasks
+            .update_many(
+                doc! {
+                    "$or": [
+                        { "remote_connection_device_id": { "$exists": true } },
+                        { "remote_connection_workspace_id": { "$exists": true } }
+                    ]
+                },
+                doc! {
+                    "$unset": {
+                        "remote_connection_device_id": "",
+                        "remote_connection_workspace_id": "",
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|err| {
+                format!("remove duplicated Remote Connection route fields failed: {err}")
+            })?;
+        let removed_virtual_projects = database
+            .collection::<mongodb::bson::Document>("task_projects")
+            .delete_many(doc! { "id": { "$in": ["-1", "0", ""] } }, None)
+            .await
+            .map_err(|err| format!("remove legacy virtual Task projects failed: {err}"))?
+            .deleted_count;
+        if migrated_user_conversation_tasks > 0 || removed_virtual_projects > 0 {
+            tracing::info!(
+                migrated_user_conversation_tasks,
+                removed_virtual_projects,
+                "migrated legacy public-project sentinels to explicit user-conversation scope"
+            );
+        }
         let store = Self {
             tasks: database.collection::<TaskRecord>("tasks"),
             task_projects: database.collection::<TaskProjectRecord>("task_projects"),

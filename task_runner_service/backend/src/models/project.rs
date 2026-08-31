@@ -3,8 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PUBLIC_PROJECT_ID: &str = "-1";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskExecutionScope {
     UserConversation {
@@ -36,24 +34,23 @@ impl TaskExecutionScope {
 }
 
 pub fn resolve_task_execution_scope(
-    project_id: &str,
+    project_id: Option<&str>,
     tenant_id: &str,
     owner_user_id: &str,
 ) -> TaskExecutionScope {
-    let project_id = normalize_project_id(Some(project_id.to_string()));
+    let project_id = normalize_project_id(project_id.map(ToOwned::to_owned));
     let tenant_id = tenant_id.trim().to_string();
     let owner_user_id = owner_user_id.trim().to_string();
-    if project_id == PUBLIC_PROJECT_ID {
-        TaskExecutionScope::UserConversation {
-            tenant_id,
-            owner_user_id,
-        }
-    } else {
-        TaskExecutionScope::Project {
+    match project_id {
+        Some(project_id) => TaskExecutionScope::Project {
             tenant_id,
             owner_user_id,
             project_id,
-        }
+        },
+        None => TaskExecutionScope::UserConversation {
+            tenant_id,
+            owner_user_id,
+        },
     }
 }
 
@@ -146,13 +143,10 @@ pub struct ChatosProjectImportRequest {
     pub archived_at: Option<String>,
 }
 
-pub fn normalize_project_id(value: Option<String>) -> String {
+pub fn normalize_project_id(value: Option<String>) -> Option<String> {
     value
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "0")
-        .unwrap_or(PUBLIC_PROJECT_ID)
-        .to_string()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub fn task_project_status_to_str(status: TaskProjectStatus) -> &'static str {
@@ -174,9 +168,9 @@ mod execution_scope_tests {
     use super::*;
 
     #[test]
-    fn public_conversation_scope_is_owner_scoped_instead_of_globally_shared() {
-        let first = resolve_task_execution_scope(PUBLIC_PROJECT_ID, "tenant-1", "user-1");
-        let second = resolve_task_execution_scope(PUBLIC_PROJECT_ID, "tenant-1", "user-2");
+    fn user_conversation_scope_is_owner_scoped_instead_of_globally_shared() {
+        let first = resolve_task_execution_scope(None, "tenant-1", "user-1");
+        let second = resolve_task_execution_scope(None, "tenant-1", "user-2");
 
         assert_ne!(first, second);
         assert_eq!(first.workspace_project_id(), None);
@@ -185,7 +179,7 @@ mod execution_scope_tests {
 
     #[test]
     fn concrete_project_scope_exposes_workspace_identity() {
-        let scope = resolve_task_execution_scope(" project-1 ", "tenant-1", "user-1");
+        let scope = resolve_task_execution_scope(Some(" project-1 "), "tenant-1", "user-1");
 
         assert_eq!(scope.workspace_project_id(), Some("project-1"));
         assert_eq!(scope.owner_user_id(), "user-1");

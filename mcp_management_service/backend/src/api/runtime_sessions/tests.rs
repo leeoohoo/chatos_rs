@@ -17,7 +17,7 @@ fn request() -> CreateRuntimeSessionRequest {
         owner_user_id: "user-1".to_string(),
         owner_role: None,
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         run_id: Some("run-1".to_string()),
         execution_group_id: None,
         turn_id: None,
@@ -28,6 +28,7 @@ fn request() -> CreateRuntimeSessionRequest {
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        default_remote_connection_id: None,
         tool_result_max_chars: Some(40_000),
         expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
@@ -43,7 +44,7 @@ fn request() -> CreateRuntimeSessionRequest {
 
 fn context() -> ProjectExecutionContext {
     ProjectExecutionContext {
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         owner_user_id: "user-1".to_string(),
         workspace_provider: WorkspaceProviderKind::LocalConnector,
         workspace: Some(WorkspaceExecutionTarget {
@@ -56,14 +57,14 @@ fn context() -> ProjectExecutionContext {
 }
 
 #[test]
-fn public_chat_context_has_no_project_workspace() {
-    let context = public_chat_execution_context(" user-1 ");
+fn user_conversation_context_has_no_project_workspace() {
+    let context = user_conversation_execution_context(" user-1 ");
 
-    assert_eq!(context.project_id, PUBLIC_PROJECT_ID);
+    assert_eq!(context.project_id, None);
     assert_eq!(context.owner_user_id, "user-1");
     assert_eq!(context.workspace_provider, WorkspaceProviderKind::None);
     assert!(context.workspace.is_none());
-    assert_eq!(context.revision, PUBLIC_PROJECT_CONTEXT_REVISION);
+    assert_eq!(context.revision, USER_CONVERSATION_CONTEXT_REVISION);
 }
 
 fn resolved_mcp(resource_id: &str, required: bool) -> ResolvedMcp {

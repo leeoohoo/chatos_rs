@@ -8,7 +8,6 @@ use serde_json::json;
 
 use crate::core::chat_runtime::{contact_agent_id_from_metadata, contact_id_from_metadata};
 use crate::models::memory_mapping_types::{MemoryAgentRecallDto, MemoryProjectMemoryDto};
-use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 
 use super::client::build_client;
@@ -26,14 +25,7 @@ pub async fn list_contact_project_memories(
     offset: i64,
 ) -> Result<Vec<MemoryProjectMemoryDto>, String> {
     let normalized_project_id = normalize_non_empty(Some(project_id))
-        .map(|value| {
-            if value == "0" {
-                PUBLIC_PROJECT_ID.to_string()
-            } else {
-                value
-            }
-        })
-        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
+        .ok_or_else(|| "project_id is required".to_string())?;
     let subject_id = format!("contact_project:{contact_id}:{normalized_project_id}");
     let items = query_project_memories(
         user_id,
@@ -47,7 +39,7 @@ pub async fn list_contact_project_memories(
     .await?;
     Ok(items
         .into_iter()
-        .map(engine_subject_memory_to_project_memory)
+        .filter_map(engine_subject_memory_to_project_memory)
         .collect())
 }
 
@@ -186,6 +178,9 @@ pub(super) async fn register_subject_memory_scopes(
 fn build_project_memory_scope_targets(session: &Session) -> Vec<(String, String)> {
     let metadata_ref = session.metadata.as_ref();
     let project_id = resolve_session_project_scope(session.project_id.as_deref(), metadata_ref);
+    let Some(project_id) = project_id else {
+        return Vec::new();
+    };
     let contact_id = contact_id_from_metadata(metadata_ref);
     let agent_id = contact_agent_id_from_metadata(metadata_ref)
         .or_else(|| normalize_non_empty(session.selected_agent_id.as_deref()));

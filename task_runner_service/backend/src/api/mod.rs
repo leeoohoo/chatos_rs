@@ -31,11 +31,12 @@ use crate::models::{
     StartTaskRunRequest, SubmitAskUserPromptRequest, SystemConfigResponse, TaskDependencyGraph,
     TaskIndexResponse, TaskListFilters, TaskMcpResolutionResponse, TaskMemoryContextOptions,
     TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
-    TaskMemorySummaryResponse, TaskProjectRecord, TaskProjectStatus, TaskRecord,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
-    TaskScheduleMode, TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
-    TestModelConfigRequest, UpdateRuntimeSettingsRequest, UpdateTaskProjectRequest,
-    UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord, PUBLIC_PROJECT_ID,
+    TaskMemorySummaryResponse, TaskProjectRecord, TaskProjectScopeFilter, TaskProjectStatus,
+    TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
+    UpdateRuntimeSettingsRequest, UpdateTaskProjectRequest, UpdateTaskRequest, UpdateUserRequest,
+    UserRole, UserSummaryRecord,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;

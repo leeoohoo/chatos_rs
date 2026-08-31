@@ -11,6 +11,7 @@ use crate::services::model_runtime_resolver::resolve_model_runtime_for_request;
 use crate::utils::sse::SseSender;
 use serde_json::Value;
 use tracing::warn;
+use uuid::Uuid;
 
 use super::bootstrap::{load_common_chat_bootstrap, CommonChatBootstrapInput};
 use super::chat_runner::{build_chat_event_sink, run_bootstrapped_chat, BootstrappedChatInput};
@@ -27,26 +28,29 @@ pub struct RunChatUsecaseInput {
 pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
     let RunChatUsecaseInput {
         sender,
-        req,
+        mut req,
         persisted_user_message_content,
         persisted_user_message_metadata,
         cloud_agent_owner_context,
     } = input;
+    let (initial_turn_id, initial_user_message_id) =
+        resolve_initial_turn_identity(req.turn_id.as_deref(), req.user_message_id.as_deref());
+    req.turn_id = Some(initial_turn_id.clone());
+    req.user_message_id = Some(initial_user_message_id.clone());
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
-    let initial_turn_id = normalize_turn_id(req.turn_id.as_deref());
     let initial_sink = build_chat_event_sink(
         sender.clone(),
         req.user_id.clone(),
         &session_id,
-        initial_turn_id.clone(),
+        Some(initial_turn_id.clone()),
         req.project_id.clone(),
-        None,
+        Some(initial_user_message_id),
     );
     if let Err(err) = Config::try_get() {
         warn!(
             session_id = session_id.as_str(),
-            turn_id = initial_turn_id.as_deref().unwrap_or_default(),
+            turn_id = initial_turn_id.as_str(),
             error = err.as_str(),
             "run_chat_usecase aborted before execution because runtime config is not initialized"
         );
@@ -56,7 +60,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
             None,
         );
         initial_sink.send_done();
-        close_initial_turn(&session_id, initial_turn_id.as_deref());
+        close_initial_turn(&session_id, Some(initial_turn_id.as_str()));
         return;
     }
 
@@ -75,7 +79,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         Err(err) => {
             warn!(
                 session_id = session_id.as_str(),
-                turn_id = initial_turn_id.as_deref().unwrap_or_default(),
+                turn_id = initial_turn_id.as_str(),
                 error = err.as_str(),
                 "run_chat_usecase aborted before execution because model runtime resolution failed"
             );
@@ -85,7 +89,7 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
                 None,
             );
             initial_sink.send_done();
-            close_initial_turn(&session_id, initial_turn_id.as_deref());
+            close_initial_turn(&session_id, Some(initial_turn_id.as_str()));
             return;
         }
     };
@@ -109,6 +113,19 @@ pub async fn run_chat_usecase(input: RunChatUsecaseInput) {
         bootstrap,
     })
     .await;
+}
+
+fn resolve_initial_turn_identity(
+    requested_turn_id: Option<&str>,
+    requested_user_message_id: Option<&str>,
+) -> (String, String) {
+    let user_message_id = requested_user_message_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let turn_id = normalize_turn_id(requested_turn_id).unwrap_or_else(|| user_message_id.clone());
+    (turn_id, user_message_id)
 }
 
 fn close_initial_turn(session_id: &str, turn_id: Option<&str>) {
@@ -163,4 +180,26 @@ async fn resolve_chat_model_runtime(
         respect_model_flags,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_initial_turn_identity;
+
+    #[test]
+    fn missing_turn_id_uses_user_message_id_for_the_whole_chat_lifecycle() {
+        let (turn_id, user_message_id) = resolve_initial_turn_identity(None, Some("message-1"));
+
+        assert_eq!(turn_id, "message-1");
+        assert_eq!(user_message_id, "message-1");
+    }
+
+    #[test]
+    fn explicit_turn_id_remains_the_activity_correlation_identity() {
+        let (turn_id, user_message_id) =
+            resolve_initial_turn_identity(Some("turn-1"), Some("message-1"));
+
+        assert_eq!(turn_id, "turn-1");
+        assert_eq!(user_message_id, "message-1");
+    }
 }

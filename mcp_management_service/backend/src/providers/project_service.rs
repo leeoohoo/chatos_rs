@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_service::MCP_ERROR_INTERNAL;
+use chatos_mcp_service::{MCP_ERROR_INTERNAL, MCP_ERROR_INVALID_PARAMS};
 use serde_json::Value;
 
 use super::ProviderCancelOutcome;
@@ -36,6 +36,13 @@ pub struct ProviderCallError {
 }
 
 impl ProviderCallError {
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        Self {
+            code: MCP_ERROR_INVALID_PARAMS,
+            message: message.into(),
+        }
+    }
+
     pub fn provider_unavailable(message: impl Into<String>) -> Self {
         Self {
             code: MCP_ERROR_INTERNAL,

@@ -53,7 +53,7 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
             .as_str()
             .to_string(),
         task_profile: Some("default".to_string()),
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         device_id: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: Some("group-1".to_string()),
@@ -65,6 +65,8 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
+        default_remote_connection_id: None,
+        remote_connection_route: None,
         tool_result_max_chars: Some(40_000),
         expected_project_task_ids: vec!["task-1".to_string()],
         workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
@@ -72,7 +74,7 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
             owned_paths: Vec::new(),
         }),
         project_context: ProjectExecutionContext {
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             owner_user_id: "owner-1".to_string(),
             workspace_provider: WorkspaceProviderKind::LocalConnector,
             workspace: Some(WorkspaceExecutionTarget {

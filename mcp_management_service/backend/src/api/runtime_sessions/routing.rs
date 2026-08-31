@@ -99,6 +99,35 @@ pub(super) fn normalize_runtime_workspace_route(
     Ok(Some(route))
 }
 
+pub(super) fn bind_remote_connection_route(
+    routes: &mut [ResolvedMcpRoute],
+    target: Option<&chatos_mcp_management_sdk::RuntimeRemoteConnectionRouteTarget>,
+) {
+    let resource_id =
+        chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController).resource_id;
+    for route in routes
+        .iter_mut()
+        .filter(|route| route.resource_id == resource_id)
+    {
+        let Some(target) = target else {
+            route.provider_kind = McpProviderKind::Unavailable;
+            route.provider_ref = None;
+            route.allow_writes = false;
+            route.cancel_supported = false;
+            route.reason = "Remote Connection Controller requires a selected remote connection bound to a Local Connector device"
+                .to_string();
+            continue;
+        };
+        route.provider_kind = McpProviderKind::LocalConnector;
+        route.provider_ref = Some(format!(
+            "device:{}/workspace:{}",
+            target.device_id, target.workspace_id
+        ));
+        route.reason =
+            "remote connection is pinned to its owning Local Connector device".to_string();
+    }
+}
+
 pub(super) fn bind_runtime_workspace_routes(
     routes: &mut [ResolvedMcpRoute],
     workspace_route: Option<&chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget>,
@@ -214,7 +243,7 @@ pub(super) fn validate_context_overrides(
     request: &CreateRuntimeSessionRequest,
     context: &chatos_mcp_management_sdk::ProjectExecutionContext,
 ) -> Result<(), ApiError> {
-    if context.project_id != request.project_id.trim()
+    if context.project_id.as_deref() != request.project_id.as_deref()
         || context.owner_user_id != request.owner_user_id.trim()
     {
         return Err(ApiError::forbidden(

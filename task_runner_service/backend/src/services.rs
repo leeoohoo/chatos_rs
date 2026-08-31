@@ -27,7 +27,7 @@ use crate::models::{
     TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
     TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest,
-    UpdateTaskProjectRequest, UpdateTaskRequest, PUBLIC_PROJECT_ID,
+    UpdateTaskProjectRequest, UpdateTaskRequest,
 };
 use crate::platform_queue::TaskQueueTopology;
 use crate::store::AppStore;

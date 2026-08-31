@@ -3,6 +3,7 @@
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::ResolvedMcpRoute;
+use chatos_mcp_management_sdk::RuntimeRemoteConnectionRouteTarget;
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
 use chatos_service_runtime::http_body::read_response_bytes_limited;
 use serde_json::{json, Value};
@@ -19,6 +20,70 @@ use super::{
 use crate::providers::managed_tool_call_params;
 
 impl ChatosProvider {
+    pub(in crate::providers) async fn resolve_remote_connection_route(
+        &self,
+        owner_user_id: &str,
+        remote_connection_id: &str,
+    ) -> Result<RuntimeRemoteConnectionRouteTarget, ProviderCallError> {
+        let secret = self.internal_secret.as_deref().ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "ChatOS Provider internal secret is not configured",
+            )
+        })?;
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            super::CALLER_SERVICE,
+            super::TOKEN_AUDIENCE,
+            super::CHATOS_MCP_SCOPE,
+            60,
+        )
+        .map_err(ProviderCallError::provider_unavailable)?;
+        let endpoint = format!(
+            "{}/internal/mcp-management/remote-connections/{}/route",
+            self.base_url,
+            urlencoding::encode(remote_connection_id.trim())
+        );
+        let response = self
+            .http
+            .post(endpoint)
+            .header("x-chatos-caller", super::CALLER_SERVICE)
+            .header("x-chatos-internal-token", token)
+            .header("x-mcp-management-owner-user-id", owner_user_id.trim())
+            .timeout(self.request_timeout)
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "resolve remote connection Local Connector target failed: {error}"
+                ))
+            })?;
+        let status = response.status();
+        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
+            .await
+            .map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "remote connection route response could not be read: {error}"
+                ))
+            })?;
+        if !status.is_success() {
+            let message = serde_json::from_slice::<Value>(bytes.as_slice())
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+            return Err(ProviderCallError::provider_unavailable(message));
+        }
+        serde_json::from_slice(bytes.as_slice()).map_err(|error| {
+            ProviderCallError::invalid_response(format!(
+                "decode remote connection route failed: {error}"
+            ))
+        })
+    }
+
     pub(in crate::providers) async fn call_tool(
         &self,
         snapshot: &RuntimeSessionSnapshot,

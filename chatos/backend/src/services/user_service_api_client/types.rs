@@ -103,6 +103,28 @@ pub struct UserServiceModelConfigRecord {
     pub sync_warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserServiceInternalModelRuntimeRecord {
+    pub id: String,
+    pub owner_user_id: String,
+    pub name: String,
+    pub provider: String,
+    #[serde(default)]
+    pub prompt_vendor: Option<String>,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
+    #[serde(default)]
+    pub supports_images: bool,
+    #[serde(default)]
+    pub supports_reasoning: bool,
+    #[serde(default)]
+    pub supports_responses: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserServiceModelProviderRecord {
     pub id: String,

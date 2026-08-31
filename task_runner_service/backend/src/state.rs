@@ -377,7 +377,6 @@ impl AppState {
         let model_config_service = ModelConfigService::new(store.clone());
         let task_project_service =
             TaskProjectService::new_with_config(store.clone(), config.clone());
-        task_project_service.ensure_public_project().await?;
         let ask_user_prompt_service = AskUserPromptService::new_with_config(
             store.clone(),
             config.clone(),

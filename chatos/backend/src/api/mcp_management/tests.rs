@@ -98,9 +98,9 @@ fn session_and_user_message_must_match_bound_owner_project_and_turn() {
 }
 
 #[test]
-fn public_project_session_uses_public_project_binding() {
+fn user_conversation_session_uses_no_project_binding() {
     let mut binding = binding();
-    binding.project_id = crate::models::project::PUBLIC_PROJECT_ID.to_string();
+    binding.project_id = None;
     let session = Session {
         id: "conversation-1".to_string(),
         title: "Conversation".to_string(),
@@ -167,10 +167,11 @@ fn binding() -> McpManagementBinding {
         agent_key: SystemAgentKey::ChatosConversationAgent,
         session_id: "mcp-session-1".to_string(),
         session_expires_at_unix: i64::MAX,
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         turn_id: Some("turn-1".to_string()),
         source_session_id: Some("conversation-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),
+        default_remote_connection_id: None,
     }
 }

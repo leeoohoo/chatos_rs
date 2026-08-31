@@ -120,11 +120,11 @@ impl RunService {
         verification_run: &TaskRunRecord,
         plan: &VerificationRepairPlan,
     ) -> Result<PersistedVerificationRepairChain, String> {
+        let project_id = verification.project_id.as_deref().ok_or_else(|| {
+            "verification repair chains require a concrete project scope".to_string()
+        })?;
         let mut existing = self
-            .find_existing_repair_chain(
-                verification.project_id.as_str(),
-                verification_run.id.as_str(),
-            )
+            .find_existing_repair_chain(project_id, verification_run.id.as_str())
             .await?;
         let now = now_rfc3339();
 
@@ -711,7 +711,7 @@ mod tests {
             memory_thread_id: format!("task-{id}"),
             tenant_id: "tenant-1".to_string(),
             subject_id: "subject-1".to_string(),
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             task_profile: "execution".to_string(),
             creator_user_id: Some("user-1".to_string()),
             creator_username: Some("user".to_string()),
@@ -728,6 +728,7 @@ mod tests {
             source_session_id: Some("session-1".to_string()),
             source_turn_id: Some("turn-1".to_string()),
             source_user_message_id: Some("group-1".to_string()),
+            remote_connection_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: TaskToolState::default(),
             plugin_config: TaskPluginConfig::default(),
@@ -864,7 +865,8 @@ mod tests {
         assert_eq!(second.reverify.id, first.reverify.id);
         let tasks = store
             .list_tasks_filtered(&TaskListFilters {
-                project_id: Some(verification.project_id.clone()),
+                project_scope: Some(crate::models::TaskProjectScopeFilter::Project),
+                project_id: verification.project_id.clone(),
                 include_subtasks: Some(false),
                 ..TaskListFilters::default()
             })

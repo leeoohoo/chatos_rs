@@ -74,7 +74,7 @@ fn plugin_hints_use_the_users_plugin_installation_without_a_project_device() {
     let policy = TaskRunnerCapabilityPolicy::new(
         capabilities,
         crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext::server(
-            "owner-1", "public",
+            "owner-1", None,
         ),
     )
     .expect("server capability policy");

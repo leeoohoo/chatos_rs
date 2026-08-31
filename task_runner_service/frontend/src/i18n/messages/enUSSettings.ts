@@ -381,7 +381,7 @@ export const enUSSettings: MessageDictionary = {
   'tooling.terminal.logsNotFound': 'Terminal logs not found',
   'projects.title': 'Projects',
   'projects.subtitle': 'Review the unified Task Runner project spaces used to group and filter tasks.',
-  'projects.public': 'Public',
+  'projects.userConversation': 'User conversation',
   'projects.empty': 'No projects yet',
   'projects.viewTasks': 'View tasks',
   'projects.column.project': 'Project',

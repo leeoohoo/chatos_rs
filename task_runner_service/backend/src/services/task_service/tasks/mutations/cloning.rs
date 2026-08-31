@@ -38,7 +38,7 @@ impl TaskService {
                 .and_then(|value| value.get("root_requirement_id"))
                 .or_else(|| payload.and_then(|value| value.get("requirement_id")))
                 .and_then(Value::as_str);
-            if task.project_id.trim() != project_id
+            if task.project_id.as_deref() != Some(project_id)
                 || payload_source != Some("chatos_project_requirement_execution")
                 || payload_requirement_id != Some(requirement_id)
             {
@@ -138,6 +138,7 @@ impl TaskService {
                 source_session_id: Some(new_source_session_id.to_string()),
                 source_turn_id: Some(new_source_user_message_id.to_string()),
                 source_user_message_id: Some(new_source_user_message_id.to_string()),
+                remote_connection_id: original.remote_connection_id,
                 prerequisite_task_ids: prerequisite_task_ids.clone(),
                 task_tool_state: TaskToolState::default(),
                 mcp_config: original.mcp_config,

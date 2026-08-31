@@ -13,7 +13,7 @@ fn record() -> RuntimeInvocationRecord {
         caller_service: "task-runner".to_string(),
         tenant_id: "tenant-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         device_id: None,
         resource_id: "mcp-1".to_string(),
         exposed_tool_name: "demo_read".to_string(),

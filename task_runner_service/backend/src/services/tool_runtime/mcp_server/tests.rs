@@ -14,7 +14,7 @@ use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     ChatosSyncedModelConfigRequest, CreateTaskProjectRequest, CreateTaskRequest, ModelConfigRecord,
     TaskMcpConfig, TaskMcpRequestConfig, TaskScheduleMode, TaskSourceContext, TaskStatus,
-    UpdateTaskRequest, UserRole, PUBLIC_PROJECT_ID, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    UpdateTaskRequest, UserRole, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
 use crate::services::{ModelConfigService, RunService, TaskProjectService, TaskService};
 use crate::store::AppStore;

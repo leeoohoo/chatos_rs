@@ -47,7 +47,7 @@ type UseTasksPageDataParams = {
 
 function normalizeProjectId(value?: string | null) {
   const trimmed = value?.trim();
-  return trimmed && trimmed !== '0' ? trimmed : '-1';
+  return trimmed || null;
 }
 
 const ACTIVE_TASK_REFRESH_INTERVAL_MS = 2500;
@@ -285,10 +285,10 @@ export function useTasksPageData({
   const projectOptions = useMemo(
     () =>
       (projectsQuery.data || []).map((project: TaskProjectRecord) => ({
-        label: project.id === '-1' ? t('projects.public') : project.name,
+        label: project.name,
         value: project.id,
       })),
-    [projectsQuery.data, t],
+    [projectsQuery.data],
   );
 
   const taskSummaryMap = useMemo(() => {
@@ -303,7 +303,7 @@ export function useTasksPageData({
     const editingTask = (taskIndexQuery.data?.tasks || []).find(
       (task) => task.id === editingTaskId,
     );
-    return normalizeProjectId(editingTask?.project_id || routeProjectId);
+    return normalizeProjectId(editingTask?.project_id ?? routeProjectId);
   }, [editingTaskId, routeProjectId, taskIndexQuery.data?.tasks]);
 
   const prerequisiteTaskOptions = useMemo(

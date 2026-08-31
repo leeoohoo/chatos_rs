@@ -28,6 +28,11 @@ impl ProjectServiceProvider {
             60,
         )
         .map_err(ProviderCallError::provider_unavailable)?;
+        let project_id = snapshot.project_id.as_deref().ok_or_else(|| {
+            ProviderCallError::invalid_request(
+                "Project Service MCP requires a concrete project scope",
+            )
+        })?;
         let mut request = self
             .http
             .post(url)
@@ -40,9 +45,9 @@ impl ProjectServiceProvider {
             )
             .header("x-mcp-management-agent-key", snapshot.agent_key.as_str())
             .header("x-mcp-management-session-id", snapshot.session_id.as_str())
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header("x-chatos-project-id", snapshot.project_id.as_str())
-            .header("x-task-runner-project-id", snapshot.project_id.as_str());
+            .header("x-mcp-management-project-id", project_id)
+            .header("x-chatos-project-id", project_id)
+            .header("x-task-runner-project-id", project_id);
         for (header, value) in [
             ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
             ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),

@@ -58,7 +58,8 @@ pub struct RuntimeInvocationRecord {
     pub caller_service: String,
     pub tenant_id: String,
     pub owner_user_id: String,
-    pub project_id: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub device_id: Option<String>,
     pub resource_id: String,
     pub exposed_tool_name: String,

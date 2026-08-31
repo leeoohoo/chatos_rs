@@ -21,7 +21,7 @@ impl TaskService {
         let mut capability_boundary_changed = false;
         if let Some(project_id) = patch.project_id {
             let project_id = normalize_project_id(Some(project_id));
-            let current_project_id = normalize_project_id(Some(task.project_id.clone()));
+            let current_project_id = normalize_project_id(task.project_id.clone());
             if project_id != current_project_id {
                 if self.store.has_active_run_for_task(id).await? {
                     return Err(
@@ -29,8 +29,8 @@ impl TaskService {
                             .to_string(),
                     );
                 }
-                if project_id != PUBLIC_PROJECT_ID {
-                    self.ensure_project_available_for_task(&project_id, current_user)
+                if let Some(project_id) = project_id.as_deref() {
+                    self.ensure_project_available_for_task(project_id, current_user)
                         .await?;
                 }
                 task.project_id = project_id;
@@ -158,7 +158,7 @@ impl TaskService {
                 .validate_task_mcp_config_for_agent(
                     &task.mcp_config,
                     &task.plugin_config,
-                    task.project_id.as_str(),
+                    task.project_id.as_deref(),
                     current_user,
                     task_owner_user_id,
                     agent_key,
@@ -171,7 +171,7 @@ impl TaskService {
                     current_user,
                     task_owner_user_id,
                     agent_key,
-                    task.project_id.as_str(),
+                    task.project_id.as_deref(),
                     Some(task.task_profile.as_str()),
                     Some(task.schedule.mode.mode_key()),
                 )
@@ -188,7 +188,7 @@ impl TaskService {
                 id,
                 prerequisite_task_ids,
                 current_user,
-                Some(task.project_id.as_str()),
+                task.project_id.as_deref(),
             )
             .await?;
             task.prerequisite_task_ids = prerequisite_task_ids.clone();
@@ -197,7 +197,7 @@ impl TaskService {
                 id,
                 &task.prerequisite_task_ids,
                 current_user,
-                Some(task.project_id.as_str()),
+                task.project_id.as_deref(),
             )
             .await?;
         }
@@ -398,7 +398,7 @@ mod tests {
             .expect("update task")
             .expect("task");
 
-        assert_eq!(updated.project_id, project.id);
+        assert_eq!(updated.project_id.as_deref(), Some(project.id.as_str()));
     }
 
     #[tokio::test]
@@ -427,7 +427,7 @@ mod tests {
             .await
             .expect("get task")
             .expect("task");
-        assert_eq!(unchanged.project_id, PUBLIC_PROJECT_ID);
+        assert_eq!(unchanged.project_id, None);
     }
 
     #[tokio::test]
@@ -466,7 +466,7 @@ mod tests {
             .await
             .expect("get task")
             .expect("task");
-        assert_eq!(unchanged.project_id, PUBLIC_PROJECT_ID);
+        assert_eq!(unchanged.project_id, None);
     }
 
     #[tokio::test]

@@ -168,9 +168,9 @@ export function TaskDetailDrawer({
               {taskCreatorLabel(task)}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.column.project')}>
-              {task.project_id === '-1'
-                ? t('projects.public')
-                : projectNameMap.get(task.project_id) || task.project_id}
+              {task.project_id
+                ? projectNameMap.get(task.project_id) || task.project_id
+                : t('projects.userConversation')}
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.defaultModel')}>
               {task.default_model_config_id ? (

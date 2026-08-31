@@ -7,7 +7,6 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::services::{access_token_scope, project_management_api_client};
 
-pub const PUBLIC_PROJECT_ID: &str = "-1";
 pub const HARNESS_PROJECT_ROOT_PREFIX: &str = "harness://project/";
 
 pub fn harness_project_root_path(project_id: &str) -> String {
@@ -103,7 +102,7 @@ impl ProjectService {
     }
 
     pub async fn get_by_id(id: &str) -> Result<Option<Project>, String> {
-        let id = normalize_project_id(id);
+        let id = normalize_project_id(id)?;
         let cfg = Config::try_get()?;
         let record = if let Some(access_token) = access_token_scope::get_current_access_token() {
             project_management_api_client::get_project_service_project(
@@ -147,7 +146,6 @@ impl ProjectService {
         let user_id = user_id.and_then(|value| normalize_optional_text(Some(value)));
         Ok(records
             .into_iter()
-            .filter(|record| record.id != PUBLIC_PROJECT_ID)
             .filter(|record| {
                 user_id
                     .as_deref()
@@ -166,7 +164,7 @@ impl ProjectService {
     ) -> Result<(), String> {
         let cfg = Config::try_get()?;
         let access_token = current_access_token_required()?;
-        let id = normalize_project_id(id);
+        let id = normalize_project_id(id)?;
         project_management_api_client::update_project_service_project(
             cfg.project_service_base_url.as_str(),
             access_token.as_str(),
@@ -185,7 +183,7 @@ impl ProjectService {
     pub async fn delete(id: &str) -> Result<(), String> {
         let cfg = Config::try_get()?;
         let access_token = current_access_token_required()?;
-        let id = normalize_project_id(id);
+        let id = normalize_project_id(id)?;
         project_management_api_client::archive_project_service_project(
             cfg.project_service_base_url.as_str(),
             access_token.as_str(),
@@ -246,12 +244,12 @@ fn sync_secret(cfg: &Config) -> Result<Option<String>, String> {
         .map(ToOwned::to_owned))
 }
 
-pub fn normalize_project_id(id: &str) -> String {
-    let trimmed = id.trim();
-    if trimmed.is_empty() || trimmed == "0" {
-        PUBLIC_PROJECT_ID.to_string()
+fn normalize_project_id(id: &str) -> Result<String, String> {
+    let id = id.trim();
+    if id.is_empty() {
+        Err("project_id is required".to_string())
     } else {
-        trimmed.to_string()
+        Ok(id.to_string())
     }
 }
 

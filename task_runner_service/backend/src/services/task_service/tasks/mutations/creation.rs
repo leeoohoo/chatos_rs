@@ -64,8 +64,8 @@ impl TaskService {
             source_context.project_id = input.project_id.clone();
         }
         let project_id = normalize_project_id(source_context.project_id.clone());
-        if project_id != PUBLIC_PROJECT_ID {
-            self.ensure_project_available_for_task(&project_id, creator)
+        if let Some(project_id) = project_id.as_deref() {
+            self.ensure_project_available_for_task(project_id, creator)
                 .await?;
         }
         let task_profile = normalize_task_profile(input.task_profile.as_deref())?;
@@ -73,7 +73,7 @@ impl TaskService {
             &id,
             &prerequisite_task_ids,
             creator,
-            Some(project_id.as_str()),
+            project_id.as_deref(),
         )
         .await?;
         let schedule = sanitize_task_schedule_config(input.schedule.unwrap_or_default(), None)?;
@@ -112,7 +112,7 @@ impl TaskService {
             .validate_task_mcp_config_for_agent(
                 &mcp_config,
                 &plugin_config,
-                project_id.as_str(),
+                project_id.as_deref(),
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
@@ -146,13 +146,23 @@ impl TaskService {
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
-                project_id.as_str(),
+                project_id.as_deref(),
                 Some(task_profile.as_str()),
                 Some(schedule.mode.mode_key()),
             )
             .await?
         {
             mcp_config.skill_policy_revision = Some(policy.policy_revision().to_string());
+        }
+        let remote_connection_id = normalized_optional(source_context.remote_connection_id);
+        if mcp_config.enabled_builtin_kinds.iter().any(|kind| {
+            kind == chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController.kind_name()
+        }) && remote_connection_id.is_none()
+        {
+            return Err(
+                "RemoteConnectionController requires a selected remote connection bound to the Local Connector client"
+                    .to_string(),
+            );
         }
         let tenant_id = resolve_task_tenant_id(
             input.tenant_id,
@@ -192,6 +202,7 @@ impl TaskService {
             source_session_id: normalized_optional(source_context.source_session_id),
             source_turn_id: normalized_optional(source_context.source_turn_id),
             source_user_message_id: normalized_optional(source_context.source_user_message_id),
+            remote_connection_id,
             prerequisite_task_ids: prerequisite_task_ids.clone(),
             task_tool_state: TaskToolState::default(),
             plugin_config,
@@ -375,34 +386,33 @@ mod tests {
             .await
             .expect("create task");
 
-        assert_eq!(task.project_id, project.id);
+        assert_eq!(task.project_id.as_deref(), Some(project.id.as_str()));
         let stored = service
             .get_task(task.id.as_str())
             .await
             .expect("get task")
             .expect("task");
-        assert_eq!(stored.project_id, project.id);
+        assert_eq!(stored.project_id.as_deref(), Some(project.id.as_str()));
     }
 
     #[tokio::test]
-    async fn create_task_defaults_legacy_zero_and_empty_project_to_public() {
+    async fn create_task_uses_none_for_user_conversation_scope() {
         let service = test_service().await;
 
         let task_without_context = service
-            .create_task(create_task_request("public task"), None, None)
+            .create_task(create_task_request("user conversation task"), None, None)
             .await
             .expect("create task without context");
-        assert_eq!(task_without_context.project_id, PUBLIC_PROJECT_ID);
+        assert_eq!(task_without_context.project_id, None);
 
-        let task_with_zero = create_task_with_project(&service, Some("0"), None)
+        assert!(create_task_with_project(&service, Some("0"), None)
             .await
-            .expect("create task with legacy zero");
-        assert_eq!(task_with_zero.project_id, PUBLIC_PROJECT_ID);
+            .is_err());
 
         let task_with_empty = create_task_with_project(&service, Some("   "), None)
             .await
             .expect("create task with empty project");
-        assert_eq!(task_with_empty.project_id, PUBLIC_PROJECT_ID);
+        assert_eq!(task_with_empty.project_id, None);
     }
 
     #[tokio::test]
@@ -499,7 +509,7 @@ mod tests {
             .await
             .expect("create dependent task");
 
-        assert_eq!(task.project_id, "project-a");
+        assert_eq!(task.project_id.as_deref(), Some("project-a"));
         assert_eq!(task.prerequisite_task_ids, vec![prerequisite.id]);
     }
 

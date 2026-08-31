@@ -12,10 +12,15 @@ pub use types::{
     CreateUserServiceAgentAccountRequest, CreateUserServiceModelConfigRequest,
     CreateUserServiceModelProviderRequest, UpdateUserServiceModelConfigRequest,
     UpdateUserServiceModelProviderRequest, UpdateUserServiceModelSettingsRequest,
-    UserServiceAgentAccountSummary, UserServiceAuthUser, UserServiceLocalConnectorTicketResponse,
-    UserServiceLoginResponse, UserServiceMeResponse, UserServiceModelConfigRecord,
-    UserServiceModelProviderRecord, UserServiceModelSettingsRecord, UserServiceVerifyResponse,
+    UserServiceAgentAccountSummary, UserServiceAuthUser, UserServiceInternalModelRuntimeRecord,
+    UserServiceLocalConnectorTicketResponse, UserServiceLoginResponse, UserServiceMeResponse,
+    UserServiceModelConfigRecord, UserServiceModelProviderRecord, UserServiceModelSettingsRecord,
+    UserServiceVerifyResponse,
 };
+
+const CHATOS_INTERNAL_CALLER: &str = "chatos-backend";
+const USER_SERVICE_INTERNAL_AUDIENCE: &str = "user-service";
+const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 
 pub fn response_status_from_error(error: &str) -> Option<u16> {
     error
@@ -262,6 +267,63 @@ pub async fn get_model_config(
     .await
 }
 
+pub async fn get_internal_model_runtime_config(
+    client: &reqwest::Client,
+    base_url: &str,
+    internal_secret: &str,
+    user_id: &str,
+    model_config_id: &str,
+) -> Result<UserServiceInternalModelRuntimeRecord, String> {
+    let internal_secret = internal_secret.trim();
+    if internal_secret.is_empty() {
+        return Err("chatos user service internal secret is required".to_string());
+    }
+    let token = chatos_service_runtime::issue_internal_service_token(
+        internal_secret,
+        CHATOS_INTERNAL_CALLER,
+        USER_SERVICE_INTERNAL_AUDIENCE,
+        MODEL_RUNTIME_READ_SCOPE,
+        60,
+    )?;
+    let url = format!(
+        "{}/api/internal/users/{}/model-configs/{}/runtime",
+        base_url.trim_end_matches('/'),
+        urlencoding::encode(user_id.trim()),
+        urlencoding::encode(model_config_id.trim()),
+    );
+    let response = client
+        .get(url)
+        .header("X-User-Service-Caller", CHATOS_INTERNAL_CALLER)
+        .header("X-User-Service-Internal-Token", token)
+        .send()
+        .await
+        .map_err(|error| format!("user service internal request failed: {error}"))?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("read user service internal response failed: {error}"))?;
+    if !status.is_success() {
+        let detail = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .or_else(|| value.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| String::from_utf8_lossy(&body).into_owned());
+        return Err(format!(
+            "user service internal request failed: {} {}",
+            status.as_u16(),
+            detail.trim()
+        ));
+    }
+    serde_json::from_slice(&body)
+        .map_err(|error| format!("decode user service internal model runtime failed: {error}"))
+}
+
 pub async fn get_model_provider(
     base_url: &str,
     access_token: &str,
@@ -484,10 +546,12 @@ pub async fn delete_model_provider(
 #[cfg(test)]
 mod tests {
     use super::{
-        create_agent_account, get_me, list_agent_accounts, login, response_status_from_error,
-        CreateUserServiceAgentAccountRequest,
+        create_agent_account, get_internal_model_runtime_config, get_me, list_agent_accounts,
+        login, response_status_from_error, CreateUserServiceAgentAccountRequest,
     };
     use axum::{
+        extract::Path,
+        http::HeaderMap,
         routing::{get, post},
         Json, Router,
     };
@@ -689,6 +753,69 @@ mod tests {
         assert_eq!(created.owner_username, "alice");
         assert!(created.enabled);
 
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn internal_model_runtime_request_uses_chatos_signed_service_identity() {
+        let secret = "a-long-chatos-user-service-secret";
+        let app = Router::new().route(
+            "/api/internal/users/{user_id}/model-configs/{model_id}/runtime",
+            get(
+                move |Path((user_id, model_id)): Path<(String, String)>, headers: HeaderMap| async move {
+                    assert_eq!(user_id, "user-1");
+                    assert_eq!(model_id, "model-1");
+                    assert_eq!(
+                        headers
+                            .get("x-user-service-caller")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("chatos-backend")
+                    );
+                    let token = headers
+                        .get("x-user-service-internal-token")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("signed internal token");
+                    chatos_service_runtime::verify_internal_service_token(
+                        token,
+                        secret,
+                        "chatos-backend",
+                        "user-service",
+                        "model-runtime.read",
+                    )
+                    .expect("valid ChatOS service identity");
+                    Json(json!({
+                        "id": "model-1",
+                        "owner_user_id": "user-1",
+                        "name": "Primary",
+                        "provider": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "secret-key",
+                        "model": "gpt-5.6-sol",
+                        "thinking_level": "high",
+                        "temperature": 0.2,
+                        "max_output_tokens": 4096,
+                        "supports_images": true,
+                        "supports_reasoning": true,
+                        "supports_responses": true
+                    }))
+                },
+            ),
+        );
+        let (base_url, handle) = start_test_server(app).await;
+
+        let record = get_internal_model_runtime_config(
+            &reqwest::Client::new(),
+            base_url.as_str(),
+            secret,
+            "user-1",
+            "model-1",
+        )
+        .await
+        .expect("internal model runtime response");
+
+        assert_eq!(record.id, "model-1");
+        assert_eq!(record.owner_user_id, "user-1");
+        assert_eq!(record.model, "gpt-5.6-sol");
         handle.abort();
     }
 }

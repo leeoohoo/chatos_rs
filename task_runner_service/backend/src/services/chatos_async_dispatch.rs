@@ -127,7 +127,12 @@ impl RunService {
             let tasks = self
                 .store
                 .list_tasks_filtered(&TaskListFilters {
-                    project_id: Some(task.project_id.clone()),
+                    project_scope: Some(if task.project_id.is_some() {
+                        crate::models::TaskProjectScopeFilter::Project
+                    } else {
+                        crate::models::TaskProjectScopeFilter::UserConversation
+                    }),
+                    project_id: task.project_id.clone(),
                     source_session_id: Some(source_session_id),
                     source_user_message_ids: source_user_message_id.into_iter().collect(),
                     source_turn_ids: source_turn_id.into_iter().collect(),
@@ -260,7 +265,7 @@ mod tests {
     use super::*;
     use crate::ask_user_prompt_service::AskUserPromptService;
     use crate::config::{AppConfig, StoreMode, TaskRunnerRole};
-    use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskToolState, PUBLIC_PROJECT_ID};
+    use crate::models::{ModelConfigRecord, TaskMcpConfig, TaskToolState};
     use crate::store::AppStore;
     use chatos_plugin_management_sdk::TaskPluginConfig;
     use std::net::{IpAddr, Ipv4Addr};
@@ -359,7 +364,7 @@ mod tests {
             memory_thread_id: format!("memory-{id}"),
             tenant_id: "tenant".to_string(),
             subject_id: "subject".to_string(),
-            project_id: PUBLIC_PROJECT_ID.to_string(),
+            project_id: None,
             task_profile: crate::models::TASK_PROFILE_DEFAULT.to_string(),
             creator_user_id: None,
             creator_username: None,
@@ -379,6 +384,7 @@ mod tests {
             source_session_id: Some("session-1".to_string()),
             source_turn_id: Some("turn-1".to_string()),
             source_user_message_id: Some("message-1".to_string()),
+            remote_connection_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: TaskToolState::default(),
             plugin_config: TaskPluginConfig::default(),

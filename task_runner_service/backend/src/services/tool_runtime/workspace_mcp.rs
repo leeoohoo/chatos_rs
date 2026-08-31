@@ -62,9 +62,6 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
     config.builtin_prompt_locale = normalized_optional(Some(config.builtin_prompt_locale))
         .unwrap_or_else(|| chatos_mcp_runtime::BuiltinMcpPromptLocale::DEFAULT_KEY.to_string());
     config.enabled_builtin_kinds = normalize_builtin_kind_names(config.enabled_builtin_kinds);
-    config
-        .enabled_builtin_kinds
-        .retain(|kind| kind != BuiltinMcpKind::RemoteConnectionController.kind_name());
     config.workspace_dir = normalized_optional(config.workspace_dir);
     config.execution_service_id = normalized_optional(config.execution_service_id);
     config.external_mcp_config_ids =

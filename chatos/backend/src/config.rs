@@ -39,6 +39,9 @@ pub struct Config {
     pub auth_compat_secret: Option<String>,
     pub auth_access_token_ttl_seconds: i64,
     pub user_service_base_url: Option<String>,
+    pub user_service_internal_base_url: String,
+    pub user_service_internal_http_client: reqwest::Client,
+    pub user_service_internal_api_secret: Option<String>,
     pub user_service_request_timeout_ms: i64,
     pub project_service_base_url: String,
     pub project_service_internal_base_url: String,
@@ -139,8 +142,24 @@ impl Config {
             require_config_center_i64("AUTH_ACCESS_TOKEN_TTL_SECONDS")?.max(60);
         let user_service_base_url =
             Some(require_config_center_value("CHATOS_USER_SERVICE_BASE_URL")?);
+        let user_service_internal_base_url =
+            require_config_center_value("CHATOS_USER_SERVICE_INTERNAL_BASE_URL")?;
+        require_https_base_url(
+            "CHATOS_USER_SERVICE_INTERNAL_BASE_URL",
+            user_service_internal_base_url.as_str(),
+        )?;
         let user_service_request_timeout_ms =
             require_config_center_i64("CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
+        let user_service_internal_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                user_service_request_timeout_ms as u64,
+            )),
+            require_bootstrap_path("USER_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
+            require_bootstrap_path("USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
+        let user_service_internal_api_secret = Some(require_config_center_value(
+            "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
+        )?);
         let project_service_base_url =
             require_config_center_value("CHATOS_PROJECT_SERVICE_BASE_URL")?;
         let project_service_internal_base_url =
@@ -267,6 +286,11 @@ impl Config {
             ],
         )?;
         validate_production_secret(
+            "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
+            user_service_internal_api_secret.as_deref(),
+            &["change_me_chatos_user_service_secret"],
+        )?;
+        validate_production_secret(
             "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
             task_runner_internal_api_secret.as_deref(),
             &["change_me_chatos_task_runner_internal_secret"],
@@ -314,6 +338,9 @@ impl Config {
             auth_compat_secret,
             auth_access_token_ttl_seconds,
             user_service_base_url,
+            user_service_internal_base_url,
+            user_service_internal_http_client,
+            user_service_internal_api_secret,
             user_service_request_timeout_ms,
             project_service_base_url,
             project_service_internal_base_url,

@@ -73,7 +73,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
     assert_eq!(binding.agent_key, SystemAgentKey::TaskRunnerRunPhase);
     assert_eq!(binding.session_id, "session-1");
     assert_eq!(binding.session_expires_at_unix, 4_102_444_800);
-    assert_eq!(binding.project_id, "project-1");
+    assert_eq!(binding.project_id.as_deref(), Some("project-1"));
     assert_eq!(binding.run_id.as_deref(), Some("run-1"));
     assert_eq!(binding.task_id.as_deref(), Some("task-1"));
     assert_eq!(
@@ -111,7 +111,7 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
         session_id: "session-1".to_string(),
         session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         run_id: Some("run-1".to_string()),
         turn_id: None,
         task_id: Some("task-1".to_string()),
@@ -119,6 +119,7 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        default_remote_connection_id: None,
         task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
         expected_project_task_ids: std::collections::BTreeSet::new(),
     };
@@ -140,7 +141,7 @@ fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
         agent_key: chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent,
         session_id: "session-1".to_string(),
         session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         run_id: None,
         turn_id: Some("turn-1".to_string()),
         task_id: None,
@@ -148,6 +149,7 @@ fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("chatos-agent-1".to_string()),
         default_model_config_id: None,
+        default_remote_connection_id: None,
         task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
         expected_project_task_ids: std::collections::BTreeSet::new(),
     };

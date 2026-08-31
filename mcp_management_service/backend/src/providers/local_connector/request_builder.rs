@@ -76,10 +76,6 @@ impl LocalConnectorProvider {
                 snapshot.owner_user_id.as_str(),
             )
             .header(
-                LOCAL_CONNECTOR_PROJECT_ID_HEADER,
-                snapshot.project_id.as_str(),
-            )
-            .header(
                 MCP_MANAGEMENT_SESSION_ID_HEADER,
                 snapshot.session_id.as_str(),
             )
@@ -88,6 +84,9 @@ impl LocalConnectorProvider {
                 snapshot.expires_at_unix.to_string(),
             )
             .with_internal_trace_context();
+        if let Some(project_id) = snapshot.project_id.as_deref() {
+            request = request.header(LOCAL_CONNECTOR_PROJECT_ID_HEADER, project_id);
+        }
         if let Some(enabled_builtin_kinds) = binding.enabled_builtin_kinds {
             request = request.header(
                 LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,

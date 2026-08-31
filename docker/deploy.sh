@@ -652,7 +652,12 @@ ensure_user_service_mtls_material() {
     resolved_dir="$SCRIPT_DIR/$configured_dir"
   fi
 
-  for required_file in ca.crt server.crt server.key project-service.identity.pem; do
+  for required_file in \
+    ca.crt server.crt server.key \
+    chatos-backend.identity.pem \
+    project-service.identity.pem \
+    task-runner.identity.pem
+  do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
       failures=1
       break
@@ -677,15 +682,21 @@ ensure_user_service_mtls_material() {
     echo "[ERROR] User Service server key is unreadable" >&2
     return 1
   fi
-  if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/project-service.identity.pem" >/dev/null; then
-    echo "[ERROR] User Service Project Service client certificate is invalid" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/project-service.identity.pem" -noout >/dev/null 2>&1; then
-    echo "[ERROR] User Service Project Service identity has no readable private key" >&2
-    return 1
-  fi
+  for required_file in \
+    chatos-backend.identity.pem \
+    project-service.identity.pem \
+    task-runner.identity.pem
+  do
+    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
+      "$resolved_dir/$required_file" >/dev/null; then
+      echo "[ERROR] User Service client certificate is invalid: $required_file" >&2
+      return 1
+    fi
+    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
+      echo "[ERROR] User Service client identity has no readable private key: $required_file" >&2
+      return 1
+    fi
+  done
 }
 
 ensure_plugin_management_mtls_material() {
@@ -811,40 +822,32 @@ ensure_memory_engine_mtls_material() {
 }
 
 print_urls() {
-  local main_backend_port user_service_frontend_port
-  local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
-  local plugin_management_frontend_port local_connector_service_port
-  local official_website_frontend_port config_center_frontend_port mcp_management_port
+  local main_backend_port local_connector_service_port mcp_management_port gateway_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
   harness_port="$(env_value HARNESS_PORT 3000)"
   harness_ssh_host="$(env_value HARNESS_SSH_PUBLIC_HOST "$(env_value HARNESS_SSH_HOST localhost)")"
   harness_ssh_port="$(env_value HARNESS_SSH_PORT 3022)"
-  user_service_frontend_port="$(env_value USER_SERVICE_FRONTEND_PORT 39191)"
-  memory_engine_frontend_port="$(env_value MEMORY_ENGINE_FRONTEND_PORT 4178)"
-  task_runner_frontend_port="$(env_value TASK_RUNNER_FRONTEND_PORT 39091)"
-  project_service_frontend_port="$(env_value PROJECT_SERVICE_FRONTEND_PORT 39211)"
-  plugin_management_frontend_port="$(env_value PLUGIN_MANAGEMENT_FRONTEND_PORT 39261)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
   mcp_management_port="$(env_value MCP_MANAGEMENT_PORT 39280)"
-  official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
-  config_center_frontend_port="$(env_value CONFIG_CENTER_FRONTEND_PORT 39271)"
+  gateway_port="$(env_value APISIX_GATEWAY_PORT 9080)"
   cat <<EOF
 
 [OK] Chat OS Docker stack is running.
 
-Official website:         http://localhost:${official_website_frontend_port}
+Gateway:                  http://localhost:${gateway_port}
+Official website:         https://jgoool.com
+User Service:             https://user.jgoool.com
+Memory Engine:            https://memory.jgoool.com
+Task Runner:              https://task.jgoool.com
+Project Management:       https://project.jgoool.com
+Plugin Management:        https://plugin.jgoool.com
+Configuration Center:     https://config.jgoool.com
 Main backend:             http://localhost:${main_backend_port}
 Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}
 Harness SSH:              ssh://git@${harness_ssh_host}:${harness_ssh_port}
-User Service:             http://localhost:${user_service_frontend_port}
-Memory Engine:            http://localhost:${memory_engine_frontend_port}
-Task Runner:              http://localhost:${task_runner_frontend_port}
-Project Management:       http://localhost:${project_service_frontend_port}
-Plugin Management:        http://localhost:${plugin_management_frontend_port}
-Configuration Center:     http://localhost:${config_center_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
 MCP Management Service:   http://localhost:${mcp_management_port}
 

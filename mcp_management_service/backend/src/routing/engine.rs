@@ -126,9 +126,10 @@ impl RoutingEngine {
                 "Notepad is owned by the cloud ChatOS user store",
                 allow_writes,
             ),
-            SystemMcpKey::RemoteConnectionController => {
-                self.resolve_command_workspace(context, resource, allow_writes)
-            }
+            SystemMcpKey::RemoteConnectionController => unavailable_route(
+                resource,
+                "remote connection MCP requires an explicit Local Connector connection target",
+            ),
             SystemMcpKey::TaskManager => {
                 unavailable_route(resource, "legacy task manager is not a routable system MCP")
             }

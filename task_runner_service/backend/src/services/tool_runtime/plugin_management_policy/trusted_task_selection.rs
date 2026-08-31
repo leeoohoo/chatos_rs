@@ -50,7 +50,7 @@ impl TaskService {
                 Some(current_user),
                 Some(owner_user_id),
                 agent_key,
-                project_id.as_str(),
+                project_id.as_deref(),
                 Some(task_profile.as_str()),
                 Some(schedule.mode.mode_key()),
             )

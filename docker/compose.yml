@@ -54,6 +54,10 @@ x-config-center-mtls-chatos-secrets: &config-center-mtls-chatos-secrets
     target: project_service_mtls_ca
   - source: project_service_mtls_chatos_identity
     target: project_service_mtls_client_identity
+  - source: user_service_mtls_ca
+    target: user_service_mtls_ca
+  - source: user_service_mtls_chatos_identity
+    target: user_service_mtls_client_identity
   - source: memory_engine_mtls_ca
     target: memory_engine_mtls_ca
   - source: memory_engine_mtls_chatos_identity
@@ -547,6 +551,7 @@ services:
       USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
       USER_SERVICE_TASK_RUNNER_AUDIENCE: ${USER_SERVICE_TASK_RUNNER_AUDIENCE:-task_runner}
       PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
+      CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
       USER_SERVICE_SMTP_HOST: ${USER_SERVICE_SMTP_HOST:-}
       USER_SERVICE_SMTP_PORT: ${USER_SERVICE_SMTP_PORT:-587}
       USER_SERVICE_SMTP_USERNAME: ${USER_SERVICE_SMTP_USERNAME:-}
@@ -1156,6 +1161,10 @@ services:
       AUTH_ACCESS_TOKEN_TTL_SECONDS: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:-43200}
       CHATOS_WORKSPACE_DIR: /data/chatos/workspace
       CHATOS_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      CHATOS_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
+      CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
+      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
+      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
       CHATOS_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
       CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
       CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS: ${CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS:-30000}
@@ -1279,8 +1288,6 @@ services:
     image: ${CONFIG_CENTER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-configuration-center-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://configuration-center-backend:39270
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${CONFIG_CENTER_FRONTEND_PORT:-39271}:80"
     depends_on:
       configuration-center-backend:
         condition: service_healthy
@@ -1290,8 +1297,6 @@ services:
     image: ${USER_SERVICE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-user-service-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://user-service-backend:39190
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${USER_SERVICE_FRONTEND_PORT:-39191}:80"
     depends_on:
       user-service-backend:
         condition: service_healthy
@@ -1303,8 +1308,6 @@ services:
       API_PROXY_PASS: http://user-service-backend:39190
       MEMORY_ENGINE_PROXY_PASS: http://memory-engine-backend:7081
       USER_SERVICE_PROXY_PASS: http://user-service-backend:39190
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MEMORY_ENGINE_FRONTEND_PORT:-4178}:80"
     depends_on:
       memory-engine-backend:
         condition: service_healthy
@@ -1316,8 +1319,6 @@ services:
     image: ${PROJECT_MANAGEMENT_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-project-management-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://project-management-backend:39210
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PROJECT_SERVICE_FRONTEND_PORT:-39211}:80"
     depends_on:
       project-management-backend:
         condition: service_healthy
@@ -1327,8 +1328,6 @@ services:
     image: ${PLUGIN_MANAGEMENT_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-plugin-management-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://plugin-management-backend:39260
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PLUGIN_MANAGEMENT_FRONTEND_PORT:-39261}:80"
     depends_on:
       plugin-management-backend:
         condition: service_healthy
@@ -1338,8 +1337,6 @@ services:
     image: ${TASK_RUNNER_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://task-runner-backend:39090
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${TASK_RUNNER_FRONTEND_PORT:-39091}:80"
     depends_on:
       task-runner-backend:
         condition: service_healthy
@@ -1349,8 +1346,6 @@ services:
     image: ${OFFICIAL_WEBSITE_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-official-website-frontend:${CHATOS_IMAGE_TAG:-latest}}
     environment:
       API_PROXY_PASS: http://official-website-backend:39250
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${OFFICIAL_WEBSITE_FRONTEND_PORT:-39251}:80"
     depends_on:
       official-website-backend:
         condition: service_healthy
@@ -1473,6 +1468,8 @@ secrets:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/server.key
   user_service_mtls_project_service_identity:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/project-service.identity.pem
+  user_service_mtls_chatos_identity:
+    file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/chatos-backend.identity.pem
   plugin_management_mtls_ca:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/ca.crt
   plugin_management_mtls_server_cert:

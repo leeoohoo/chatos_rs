@@ -56,8 +56,16 @@ pub struct TaskSourceContext {
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub workspace_dir: Option<String>,
     pub builtin_prompt_locale: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskProjectScopeFilter {
+    UserConversation,
+    Project,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -148,6 +156,7 @@ pub struct TaskListFilters {
     pub keyword: Option<String>,
     pub tag: Option<String>,
     pub model_config_id: Option<String>,
+    pub project_scope: Option<TaskProjectScopeFilter>,
     pub project_id: Option<String>,
     pub creator_user_id: Option<String>,
     pub scheduled_only: Option<bool>,

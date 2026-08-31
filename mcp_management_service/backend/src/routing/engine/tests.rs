@@ -6,7 +6,7 @@ use chatos_mcp_management_sdk::{McpRouteResourceKind, WorkspaceExecutionTarget};
 
 fn context(workspace_provider: WorkspaceProviderKind) -> ProjectExecutionContext {
     ProjectExecutionContext {
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         owner_user_id: "user-1".to_string(),
         workspace_provider,
         workspace: (workspace_provider == WorkspaceProviderKind::LocalConnector).then(|| {
@@ -52,7 +52,6 @@ fn project_files_and_commands_use_local_connector() {
         "code_maintainer_read",
         "code_maintainer_write",
         "terminal_controller",
-        "remote_connection_controller",
     ] {
         let route = resolve_one(
             context(WorkspaceProviderKind::LocalConnector),
@@ -64,6 +63,22 @@ fn project_files_and_commands_use_local_connector() {
             Some("device:device-1/workspace:workspace-1")
         );
     }
+}
+
+#[test]
+fn remote_connections_are_owned_by_chatos_without_a_project_workspace() {
+    let route = resolve_one(
+        context(WorkspaceProviderKind::None),
+        resource(
+            McpRouteResourceKind::System,
+            Some("remote_connection_controller"),
+            true,
+        ),
+    );
+    assert_eq!(route.provider_kind, McpProviderKind::Unavailable);
+    assert!(route
+        .reason
+        .contains("explicit Local Connector connection target"));
 }
 
 #[test]

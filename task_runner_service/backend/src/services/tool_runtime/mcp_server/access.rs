@@ -27,6 +27,7 @@ impl TaskRunnerMcpService {
         let tasks = self
             .task_service
             .list_tasks_filtered(TaskListFilters {
+                project_scope: Some(request_context.project_scope_filter()),
                 project_id,
                 task_profile: Some(request_context.requested_task_profile().to_string()),
                 creator_user_id: if current_user.is_admin() {
@@ -172,6 +173,8 @@ impl TaskRunnerMcpService {
         let owner_user_id = effective_owner_user_id(current_user)?;
         self.task_service
             .list_tasks_filtered(TaskListFilters {
+                project_scope: Some(request_context.project_scope_filter()),
+                project_id: request_context.project_scope_id(),
                 source_session_id: Some(source_session_id.to_string()),
                 source_user_message_ids: vec![source_user_message_id.to_string()],
                 include_subtasks: Some(false),
@@ -322,10 +325,8 @@ fn ensure_task_project_scope(
     task: &TaskRecord,
     request_context: &McpRequestContext,
 ) -> Result<(), String> {
-    let Some(expected_project_id) = request_context.project_scope_id() else {
-        return Ok(());
-    };
-    let actual_project_id = normalize_project_id(Some(task.project_id.clone()));
+    let expected_project_id = request_context.project_scope_id();
+    let actual_project_id = normalize_project_id(task.project_id.clone());
     if actual_project_id == expected_project_id {
         Ok(())
     } else {

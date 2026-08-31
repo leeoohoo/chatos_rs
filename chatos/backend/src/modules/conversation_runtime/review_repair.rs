@@ -24,7 +24,7 @@ const REVIEW_REPAIR_POLL_MAX_ATTEMPTS: usize = 210;
 
 #[derive(Debug, Clone)]
 pub struct ReviewRepairScopeState {
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
     pub pending_message_count: i64,
@@ -110,10 +110,7 @@ fn build_compat_review_req(session: &Session) -> RunReviewRepairSummaryRequestDt
     let metadata = session.metadata.as_ref();
     RunReviewRepairSummaryRequestDto {
         user_id: session.user_id.clone(),
-        project_id: Some(resolve_session_project_scope(
-            session.project_id.as_deref(),
-            metadata,
-        )),
+        project_id: resolve_session_project_scope(session.project_id.as_deref(), metadata),
         contact_id: contact_id_from_metadata(metadata),
         agent_id: contact_agent_id_from_metadata(metadata),
     }
@@ -280,7 +277,7 @@ async fn finish_review_repair_success(
         publish_conversation_summaries_updated(
             user_id,
             conversation_id,
-            final_status.project_id.as_str(),
+            final_status.project_id.as_deref(),
             final_status.contact_id.as_deref(),
             final_status.agent_id.as_deref(),
             items,

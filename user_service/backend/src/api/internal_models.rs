@@ -13,8 +13,8 @@ use crate::store::now_rfc3339;
 use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
 
 use super::internal_auth::{
-    record_user_service_internal_resource_access, require_project_service_internal_request,
-    require_task_runner_internal_request, UserServiceInternalResourceAudit,
+    record_user_service_internal_resource_access, require_task_runner_internal_request,
+    require_user_model_internal_request, UserServiceInternalResourceAudit,
     MODEL_RUNTIME_READ_SCOPE, MODEL_SETTINGS_READ_SCOPE, TASK_MODEL_CATALOG_READ_SCOPE,
 };
 use super::models::{is_supported_provider, model_config_has_backing_provider};
@@ -97,7 +97,11 @@ pub async fn list_task_model_configs(
             resource_id: "all",
             resource_name: None,
             action: "read",
-            outcome: if result.is_ok() { "succeeded" } else { "failed" },
+            outcome: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
         },
     );
     result
@@ -139,7 +143,11 @@ pub async fn get_task_model_config(
             },
             resource_name: None,
             action: "read",
-            outcome: if result.is_ok() { "succeeded" } else { "failed" },
+            outcome: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
         },
     );
     result
@@ -206,9 +214,8 @@ async fn load_task_model_configs(
                 .map_err(internal_error)?
                 .map(|settings| settings.model_request_max_retries)
                 .unwrap_or(DEFAULT_MODEL_REQUEST_MAX_RETRIES);
-            let retries = usize::try_from(retries).unwrap_or(
-                usize::try_from(DEFAULT_MODEL_REQUEST_MAX_RETRIES).unwrap_or(5),
-            );
+            let retries = usize::try_from(retries)
+                .unwrap_or(usize::try_from(DEFAULT_MODEL_REQUEST_MAX_RETRIES).unwrap_or(5));
             retries_by_user.insert(config.owner_user_id.clone(), retries);
             retries
         };
@@ -249,11 +256,8 @@ pub async fn get_user_model_settings(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> ApiResult<InternalUserModelSettingsResponse> {
-    let identity = require_project_service_internal_request(
-        &state.config,
-        &headers,
-        MODEL_SETTINGS_READ_SCOPE,
-    )?;
+    let identity =
+        require_user_model_internal_request(&state.config, &headers, MODEL_SETTINGS_READ_SCOPE)?;
     let user_id = user_id.trim().to_string();
     let audit_resource_id = if user_id.is_empty() {
         "unknown"
@@ -327,11 +331,8 @@ pub async fn get_user_model_runtime_config(
     headers: HeaderMap,
     Path((user_id, model_config_id)): Path<(String, String)>,
 ) -> ApiResult<InternalModelRuntimeConfigResponse> {
-    let identity = require_project_service_internal_request(
-        &state.config,
-        &headers,
-        MODEL_RUNTIME_READ_SCOPE,
-    )?;
+    let identity =
+        require_user_model_internal_request(&state.config, &headers, MODEL_RUNTIME_READ_SCOPE)?;
     let user_id = user_id.trim().to_string();
     let model_config_id = model_config_id.trim().to_string();
     let audit_resource_id = if model_config_id.is_empty() {

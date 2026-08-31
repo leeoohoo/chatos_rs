@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use crate::models::{
-    normalize_project_id, CreateTaskRequest, TaskSourceContext, PUBLIC_PROJECT_ID,
+    normalize_project_id, CreateTaskRequest, TaskProjectScopeFilter, TaskSourceContext,
     TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
 };
 use chatos_agent::{
@@ -26,6 +26,7 @@ pub struct McpRequestContext {
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub default_model_config_id: Option<String>,
     pub workspace_dir: Option<String>,
     pub tool_profile: Option<String>,
@@ -41,6 +42,7 @@ impl McpRequestContext {
             && self.project_id.is_none()
             && self.source_turn_id.is_none()
             && self.source_user_message_id.is_none()
+            && self.remote_connection_id.is_none()
             && self.workspace_dir.is_none()
         {
             return Ok(None);
@@ -52,21 +54,26 @@ impl McpRequestContext {
             source_session_id: self.source_session_id.clone(),
             source_turn_id: self.source_turn_id.clone(),
             source_user_message_id: self.source_user_message_id.clone(),
+            remote_connection_id: self.remote_connection_id.clone(),
             workspace_dir: self.workspace_dir.clone(),
             builtin_prompt_locale: Some(self.requested_builtin_prompt_locale()),
         }))
     }
 
     pub(super) fn project_scope_id(&self) -> Option<String> {
-        self.project_id
-            .as_ref()
-            .map(|value| normalize_project_id(Some(value.clone())))
+        normalize_project_id(self.project_id.clone())
+    }
+
+    pub(super) fn project_scope_filter(&self) -> TaskProjectScopeFilter {
+        if self.has_concrete_project_scope() {
+            TaskProjectScopeFilter::Project
+        } else {
+            TaskProjectScopeFilter::UserConversation
+        }
     }
 
     pub(super) fn has_concrete_project_scope(&self) -> bool {
-        self.project_scope_id()
-            .as_deref()
-            .is_some_and(|value| value != PUBLIC_PROJECT_ID)
+        self.project_scope_id().is_some()
     }
 
     pub(super) fn tool_profile(&self) -> McpToolProfile {

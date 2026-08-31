@@ -381,7 +381,7 @@ export const zhCNSettings: MessageDictionary = {
   'tooling.terminal.logsNotFound': '未找到终端日志',
   'projects.title': '项目',
   'projects.subtitle': '查看 Task Runner 统一项目空间，任务会按这里的项目 ID 归属和过滤。',
-  'projects.public': 'Public',
+  'projects.userConversation': '用户会话',
   'projects.empty': '暂无项目',
   'projects.viewTasks': '查看任务',
   'projects.column.project': '项目',

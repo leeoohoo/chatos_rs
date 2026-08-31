@@ -244,8 +244,8 @@ fn validate_existing_session_identity(
         ),
         (
             "project_id",
-            normalized_text(request.project_id.as_str()),
-            normalized_text(session.project_id.as_str()),
+            normalized_option(request.project_id.as_deref()),
+            normalized_option(session.project_id.as_deref()),
         ),
     ];
     for (field, expected, actual) in expected {
@@ -355,6 +355,7 @@ mod tests {
             source_user_message_id: None,
             contact_agent_id: None,
             default_model_config_id: None,
+            default_remote_connection_id: None,
             tool_result_max_chars: None,
             expected_project_task_ids: Vec::new(),
             requested_mcp_ids: None,

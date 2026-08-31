@@ -815,16 +815,9 @@ fn mcp_request_context_infers_async_planner_from_chatos_message_context() {
 }
 
 #[test]
-fn mcp_request_context_normalizes_legacy_public_project_scope() {
-    let context = McpRequestContext {
-        project_id: Some("0".to_string()),
-        ..McpRequestContext::default()
-    };
-
-    assert_eq!(
-        context.project_scope_id().as_deref(),
-        Some(PUBLIC_PROJECT_ID)
-    );
+fn mcp_request_context_keeps_user_conversation_scope_projectless() {
+    let context = McpRequestContext::default();
+    assert_eq!(context.project_scope_id(), None);
 }
 
 #[test]

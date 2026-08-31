@@ -8,8 +8,9 @@ use std::time::Duration;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use chatos_mcp_management_sdk::{
-    ProjectExecutionContext, ResolvedMcpRoute, RuntimeSessionRoutesResponse, RuntimeToolDescriptor,
-    RuntimeWorkspaceRouteTarget, WorkspaceProviderKind,
+    ProjectExecutionContext, ResolvedMcpRoute, RuntimeRemoteConnectionRouteTarget,
+    RuntimeSessionRoutesResponse, RuntimeToolDescriptor, RuntimeWorkspaceRouteTarget,
+    WorkspaceProviderKind,
 };
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
@@ -33,7 +34,7 @@ use self::cache::{
     cache_snapshot, cache_snapshot_arc, estimate_snapshot_cache_bytes, saturating_u64_to_usize,
     summarize_snapshot_sizes, RuntimeSessionCache,
 };
-const SNAPSHOT_SCHEMA_VERSION: i32 = 11;
+const SNAPSHOT_SCHEMA_VERSION: i32 = 12;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
 const MAX_PERSISTED_SNAPSHOT_BYTES: usize = 12 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,7 +79,7 @@ pub struct RuntimeSessionSnapshot {
     pub owner_role: Option<String>,
     pub agent_key: String,
     pub task_profile: Option<String>,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub device_id: Option<String>,
     pub run_id: Option<String>,
     pub execution_group_id: Option<String>,
@@ -90,6 +91,8 @@ pub struct RuntimeSessionSnapshot {
     pub source_user_message_id: Option<String>,
     pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
+    pub default_remote_connection_id: Option<String>,
+    pub remote_connection_route: Option<RuntimeRemoteConnectionRouteTarget>,
     pub tool_result_max_chars: Option<usize>,
     pub expected_project_task_ids: Vec<String>,
     pub workspace_route: Option<RuntimeWorkspaceRouteTarget>,
@@ -205,7 +208,8 @@ struct PersistedRuntimeSessionSnapshot {
     agent_key: String,
     #[serde(default)]
     task_profile: Option<String>,
-    project_id: String,
+    #[serde(default)]
+    project_id: Option<String>,
     device_id: Option<String>,
     run_id: Option<String>,
     #[serde(default)]
@@ -219,6 +223,10 @@ struct PersistedRuntimeSessionSnapshot {
     source_user_message_id: Option<String>,
     contact_agent_id: Option<String>,
     default_model_config_id: Option<String>,
+    #[serde(default)]
+    default_remote_connection_id: Option<String>,
+    #[serde(default)]
+    remote_connection_route: Option<RuntimeRemoteConnectionRouteTarget>,
     #[serde(default)]
     tool_result_max_chars: Option<usize>,
     expected_project_task_ids: Vec<String>,
@@ -421,7 +429,7 @@ impl RuntimeSessionStore {
     pub async fn remove_run_sessions(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
     ) -> Result<Vec<Arc<RuntimeSessionSnapshot>>, String> {
         let candidates = match self.backend.as_ref() {
@@ -431,7 +439,7 @@ impl RuntimeSessionStore {
                 .values()
                 .filter(|snapshot| {
                     snapshot.owner_user_id == owner_user_id
-                        && snapshot.project_id == project_id
+                        && snapshot.project_id.as_deref() == project_id
                         && snapshot.run_id.as_deref() == Some(run_id)
                 })
                 .map(|snapshot| snapshot.session_id.clone())
@@ -588,7 +596,7 @@ impl SnapshotCipher {
             execution_scope_hash: snapshot.run_id.as_deref().map(|run_id| {
                 execution_scope_hash(
                     snapshot.owner_user_id.as_str(),
-                    snapshot.project_id.as_str(),
+                    snapshot.project_id.as_deref(),
                     run_id,
                 )
             }),
@@ -645,11 +653,15 @@ impl SnapshotCipher {
     }
 }
 
-fn execution_scope_hash(owner_user_id: &str, project_id: &str, run_id: &str) -> String {
+fn execution_scope_hash(owner_user_id: &str, project_id: Option<&str>, run_id: &str) -> String {
+    let scope_identity = match project_id {
+        Some(project_id) => format!("project:{}", project_id.trim()),
+        None => "user_conversation".to_string(),
+    };
     let identity = format!(
         "{}\u{1f}{}\u{1f}{}",
         owner_user_id.trim(),
-        project_id.trim(),
+        scope_identity,
         run_id.trim()
     );
     hex::encode(Sha256::digest(identity.as_bytes()))
@@ -680,6 +692,8 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             source_user_message_id: snapshot.source_user_message_id.clone(),
             contact_agent_id: snapshot.contact_agent_id.clone(),
             default_model_config_id: snapshot.default_model_config_id.clone(),
+            default_remote_connection_id: snapshot.default_remote_connection_id.clone(),
+            remote_connection_route: snapshot.remote_connection_route.clone(),
             tool_result_max_chars: snapshot.tool_result_max_chars,
             expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
             workspace_route: snapshot.workspace_route.clone(),
@@ -727,6 +741,8 @@ impl PersistedRuntimeSessionSnapshot {
             source_user_message_id: self.source_user_message_id,
             contact_agent_id: self.contact_agent_id,
             default_model_config_id: self.default_model_config_id,
+            default_remote_connection_id: self.default_remote_connection_id,
+            remote_connection_route: self.remote_connection_route,
             tool_result_max_chars: self.tool_result_max_chars,
             expected_project_task_ids: self.expected_project_task_ids,
             workspace_route: self.workspace_route,

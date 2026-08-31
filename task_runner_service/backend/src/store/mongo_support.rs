@@ -6,7 +6,7 @@ use mongodb::{
     options::FindOptions,
 };
 
-use crate::models::{AskUserPromptStatus, RunListFilters, TaskListFilters, PUBLIC_PROJECT_ID};
+use crate::models::{AskUserPromptStatus, RunListFilters, TaskListFilters, TaskProjectScopeFilter};
 
 use super::codec::{ask_user_prompt_status_to_str, task_run_status_to_str, task_status_to_str};
 
@@ -58,19 +58,28 @@ pub(super) fn build_mongo_task_filter(filters: &TaskListFilters) -> Document {
     if let Some(model_config_id) = filters.model_config_id.as_deref() {
         filter.insert("default_model_config_id", model_config_id);
     }
-    if let Some(project_id) = filters.project_id.as_deref() {
-        if project_id == PUBLIC_PROJECT_ID {
+    match filters.project_scope {
+        Some(TaskProjectScopeFilter::UserConversation) => {
             and_clauses.push(doc! {
                 "$or": [
-                    { "project_id": PUBLIC_PROJECT_ID },
-                    { "project_id": "0" },
-                    { "project_id": "" },
                     { "project_id": null },
                     { "project_id": { "$exists": false } }
                 ]
             });
-        } else {
-            filter.insert("project_id", project_id);
+        }
+        Some(TaskProjectScopeFilter::Project) => {
+            if let Some(project_id) = filters.project_id.as_deref() {
+                filter.insert("project_id", project_id);
+            } else {
+                and_clauses.push(doc! {
+                    "project_id": { "$type": "string", "$ne": "" }
+                });
+            }
+        }
+        None => {
+            if let Some(project_id) = filters.project_id.as_deref() {
+                filter.insert("project_id", project_id);
+            }
         }
     }
     if let Some(task_profile) = filters.task_profile.as_deref() {

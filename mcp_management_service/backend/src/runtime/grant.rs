@@ -22,7 +22,8 @@ pub struct RuntimeGrantClaims {
     pub agent_key: String,
     #[serde(default)]
     pub task_profile: Option<String>,
-    pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub device_id: Option<String>,
     pub run_id: Option<String>,
     pub turn_id: Option<String>,
@@ -32,6 +33,8 @@ pub struct RuntimeGrantClaims {
     #[serde(default)]
     pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
+    #[serde(default)]
+    pub default_remote_connection_id: Option<String>,
     pub expected_project_task_ids: Vec<String>,
     pub policy_revision: String,
     pub route_revision: String,
@@ -158,7 +161,7 @@ mod tests {
                 .as_str()
                 .to_string(),
             task_profile: Some("default".to_string()),
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             device_id: Some("device-1".to_string()),
             run_id: Some("run-1".to_string()),
             turn_id: None,
@@ -167,6 +170,7 @@ mod tests {
             source_user_message_id: None,
             contact_agent_id: None,
             default_model_config_id: None,
+            default_remote_connection_id: None,
             expected_project_task_ids: Vec::new(),
             policy_revision: "policy-1".to_string(),
             route_revision: "route-1".to_string(),

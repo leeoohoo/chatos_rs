@@ -25,49 +25,11 @@ impl TaskProjectService {
             .filter(|config| super::project_management_api_client::project_service_enabled(config))
     }
 
-    pub async fn ensure_public_project(&self) -> Result<TaskProjectRecord, String> {
-        let now = now_rfc3339();
-        let existing = self.store.get_task_project(PUBLIC_PROJECT_ID).await?;
-        if let Some(project) = existing {
-            return Ok(project);
-        }
-        self.store
-            .save_task_project(TaskProjectRecord {
-                id: PUBLIC_PROJECT_ID.to_string(),
-                owner_user_id: None,
-                owner_username: None,
-                owner_display_name: None,
-                name: "Public".to_string(),
-                root_path: None,
-                git_url: None,
-                cloud_import_source: None,
-                import_status: None,
-                source_git_url: None,
-                harness_repo_identifier: None,
-                harness_git_url: None,
-                harness_default_branch: None,
-                description: Some("Default public project space".to_string()),
-                status: TaskProjectStatus::Active,
-                created_at: now.clone(),
-                updated_at: now,
-                archived_at: None,
-            })
-            .await
-    }
-
     pub async fn list_projects(&self) -> Result<Vec<TaskProjectRecord>, String> {
         if let Some(config) = self.project_service_config() {
             return super::project_management_api_client::sync_list_projects(config, None).await;
         }
-        let mut projects = self.store.list_task_projects().await?;
-        if !projects
-            .iter()
-            .any(|project| project.id == PUBLIC_PROJECT_ID)
-        {
-            projects.push(self.ensure_public_project().await?);
-            projects.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        }
-        Ok(projects)
+        self.store.list_task_projects().await
     }
 
     pub async fn list_projects_for_user(
@@ -75,27 +37,19 @@ impl TaskProjectService {
         user: &CurrentUser,
     ) -> Result<Vec<TaskProjectRecord>, String> {
         if let Some(config) = self.project_service_config() {
-            let mut projects =
-                super::project_management_api_client::list_projects_for_user(config, None).await?;
-            projects.retain(|project| project.id != PUBLIC_PROJECT_ID);
-            projects.insert(0, self.public_project_for_user(user).await?);
-            return Ok(projects);
+            return super::project_management_api_client::list_projects_for_user(config, None)
+                .await;
         }
-        let mut projects = self
+        Ok(self
             .list_projects()
             .await?
             .into_iter()
-            .filter(|project| project.id != PUBLIC_PROJECT_ID)
-            .collect::<Vec<_>>();
-        projects.insert(0, self.public_project_for_user(user).await?);
-        Ok(projects)
+            .filter(|project| project_visible_to_user(project, user))
+            .collect())
     }
 
     pub async fn get_project(&self, id: &str) -> Result<Option<TaskProjectRecord>, String> {
         let id = normalize_project_lookup_id(id);
-        if id == PUBLIC_PROJECT_ID {
-            return self.ensure_public_project().await.map(Some);
-        }
         if let Some(config) = self.project_service_config() {
             return super::project_management_api_client::sync_get_project(config, id.as_str())
                 .await;
@@ -109,28 +63,15 @@ impl TaskProjectService {
         user: &CurrentUser,
     ) -> Result<Option<TaskProjectRecord>, String> {
         let id = normalize_project_lookup_id(id);
-        if id == PUBLIC_PROJECT_ID {
-            return self.public_project_for_user(user).await.map(Some);
-        }
         if let Some(config) = self.project_service_config() {
             return super::project_management_api_client::get_project_for_user(config, id.as_str())
                 .await;
         }
-        self.store.get_task_project(id.as_str()).await
-    }
-
-    pub async fn public_project_for_user(
-        &self,
-        user: &CurrentUser,
-    ) -> Result<TaskProjectRecord, String> {
-        let template = self.ensure_public_project().await?;
-        Ok(TaskProjectRecord {
-            owner_user_id: Some(public_owner_user_id(user)),
-            owner_username: public_owner_username(user),
-            owner_display_name: public_owner_display_name(user),
-            description: Some("Default public project space for this user".to_string()),
-            ..template
-        })
+        Ok(self
+            .store
+            .get_task_project(id.as_str())
+            .await?
+            .filter(|project| project_visible_to_user(project, user)))
     }
 
     pub async fn create_project(
@@ -183,9 +124,6 @@ impl TaskProjectService {
         }
         let id = input.id.trim();
         validate_required("id", id)?;
-        if id == PUBLIC_PROJECT_ID {
-            return Err("public project cannot be imported or overwritten".to_string());
-        }
         validate_required("name", &input.name)?;
         let now = now_rfc3339();
         let status = input.status.unwrap_or(TaskProjectStatus::Active);
@@ -223,9 +161,6 @@ impl TaskProjectService {
         patch: UpdateTaskProjectRequest,
     ) -> Result<Option<TaskProjectRecord>, String> {
         let id = normalize_project_lookup_id(id);
-        if id == PUBLIC_PROJECT_ID {
-            return Err("public project cannot be updated".to_string());
-        }
         if let Some(config) = self.project_service_config() {
             return super::project_management_api_client::update_project(
                 config,
@@ -256,9 +191,6 @@ impl TaskProjectService {
 
     pub async fn archive_project(&self, id: &str) -> Result<Option<TaskProjectRecord>, String> {
         let id = normalize_project_lookup_id(id);
-        if id == PUBLIC_PROJECT_ID {
-            return Err("public project cannot be archived".to_string());
-        }
         if let Some(config) = self.project_service_config() {
             return super::project_management_api_client::archive_project(config, id.as_str())
                 .await;
@@ -305,16 +237,11 @@ impl TaskService {
 }
 
 pub(crate) fn normalize_project_lookup_id(id: &str) -> String {
-    let trimmed = id.trim();
-    if trimmed.is_empty() || trimmed == "0" {
-        PUBLIC_PROJECT_ID.to_string()
-    } else {
-        trimmed.to_string()
-    }
+    id.trim().to_string()
 }
 
 pub(crate) fn project_visible_to_user(project: &TaskProjectRecord, user: &CurrentUser) -> bool {
-    if project.id == PUBLIC_PROJECT_ID || user.is_admin() {
+    if user.is_admin() {
         return true;
     }
     let Some(owner_user_id) = project.owner_user_id.as_deref().map(str::trim) else {
@@ -359,36 +286,6 @@ fn normalize_git_url(value: Option<String>) -> Result<Option<String>, String> {
         );
     }
     Ok(Some(value))
-}
-
-fn public_owner_user_id(user: &CurrentUser) -> String {
-    user.effective_owner_user_id()
-        .or_else(|| non_empty_text(user.id.as_str()))
-        .unwrap_or("unknown")
-        .to_string()
-}
-
-fn public_owner_username(user: &CurrentUser) -> Option<String> {
-    user.effective_owner_username()
-        .or_else(|| non_empty_text(user.username.as_str()))
-        .map(ToOwned::to_owned)
-}
-
-fn public_owner_display_name(user: &CurrentUser) -> Option<String> {
-    user.effective_owner_display_name()
-        .or_else(|| user.effective_owner_username())
-        .or_else(|| non_empty_text(user.display_name.as_str()))
-        .or_else(|| non_empty_text(user.username.as_str()))
-        .map(ToOwned::to_owned)
-}
-
-fn non_empty_text(value: &str) -> Option<&str> {
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
 }
 
 #[cfg(test)]
@@ -462,59 +359,6 @@ mod tests {
             owner_username: Some("owner".to_string()),
             owner_display_name: Some("Owner".to_string()),
         }
-    }
-
-    #[tokio::test]
-    async fn get_project_normalizes_legacy_zero_to_public() {
-        let service = test_service().await;
-
-        let project = service
-            .get_project("0")
-            .await
-            .expect("get project")
-            .expect("public project");
-
-        assert_eq!(project.id, PUBLIC_PROJECT_ID);
-        assert_eq!(project.git_url, None);
-    }
-
-    #[tokio::test]
-    async fn get_project_for_user_returns_owner_scoped_public_project() {
-        let service = test_service().await;
-        let user = creator();
-
-        let project = service
-            .get_project_for_user("0", &user)
-            .await
-            .expect("get project")
-            .expect("public project");
-
-        assert_eq!(project.id, PUBLIC_PROJECT_ID);
-        assert_eq!(project.owner_user_id.as_deref(), Some("owner-1"));
-        assert_eq!(project.owner_username.as_deref(), Some("owner"));
-        assert_eq!(project.owner_display_name.as_deref(), Some("Owner"));
-    }
-
-    #[tokio::test]
-    async fn list_projects_for_user_replaces_global_public_template() {
-        let service = test_service().await;
-        let user = creator();
-        service
-            .ensure_public_project()
-            .await
-            .expect("ensure public template");
-
-        let projects = service
-            .list_projects_for_user(&user)
-            .await
-            .expect("list projects");
-        let public_projects = projects
-            .iter()
-            .filter(|project| project.id == PUBLIC_PROJECT_ID)
-            .collect::<Vec<_>>();
-
-        assert_eq!(public_projects.len(), 1);
-        assert_eq!(public_projects[0].owner_user_id.as_deref(), Some("owner-1"));
     }
 
     #[tokio::test]

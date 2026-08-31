@@ -27,7 +27,7 @@ pub(super) fn mcp_management_binding_from_headers(
             .map_err(|_| {
                 "x-mcp-management-session-expires-at-unix must be an integer".to_string()
             })?,
-        project_id: required("x-mcp-management-project-id")?,
+        project_id: header_text(headers, "x-mcp-management-project-id"),
         run_id: header_text(headers, "x-mcp-management-run-id"),
         turn_id: header_text(headers, "x-mcp-management-turn-id"),
         task_id: header_text(headers, "x-mcp-management-task-id"),
@@ -35,6 +35,10 @@ pub(super) fn mcp_management_binding_from_headers(
         source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
         contact_agent_id: header_text(headers, "x-mcp-management-contact-agent-id"),
         default_model_config_id: header_text(headers, "x-mcp-management-default-model-config-id"),
+        default_remote_connection_id: header_text(
+            headers,
+            "x-mcp-management-default-remote-connection-id",
+        ),
         task_profile: header_text(headers, "x-mcp-management-task-profile")
             .map(|value| crate::models::normalize_task_profile(Some(value.as_str())))
             .transpose()?,
@@ -61,7 +65,7 @@ pub(super) fn task_matches_mcp_management_binding(
                 .filter(|value| !value.is_empty())
         });
     owner_user_id == Some(binding.owner_user_id.as_str())
-        && task.project_id.trim() == binding.project_id
+        && task.project_id.as_deref() == binding.project_id.as_deref()
         && binding.run_id.as_deref().is_some_and(|run_id| {
             task.last_run_id
                 .as_deref()
@@ -194,6 +198,8 @@ pub(super) fn mcp_request_context_from_headers(
         source_turn_id: header_text(headers, "x-chatos-turn-id"),
         source_user_message_id: header_text(headers, "x-chatos-user-message-id"),
         default_model_config_id: header_text(headers, "x-task-runner-default-model-config-id"),
+        remote_connection_id: header_text(headers, "x-chatos-remote-connection-id")
+            .or_else(|| header_text(headers, "x-chatos-default-remote-connection-id")),
         workspace_dir: header_text(headers, "x-task-runner-workspace-dir")
             .or_else(|| header_text(headers, "x-chatos-workspace-dir"))
             .or_else(|| header_text(headers, "x-chatos-workspace-root")),

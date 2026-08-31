@@ -1610,6 +1610,12 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             json!("change_me_mcp_management_task_runner_secret"),
         ),
         (
+            CHATOS_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
+            json!("change_me_chatos_user_service_secret"),
+        ),
+        (
             CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
             "chatos-backend",
             "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
@@ -1692,6 +1698,12 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "user-service",
             "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
             json!("change_me_project_service_user_service_secret"),
+        ),
+        (
+            USER_SERVICE_CHATOS_INTERNAL_SECRET_CONFIG_KEY,
+            "user-service",
+            "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
+            json!("change_me_chatos_user_service_secret"),
         ),
         (
             USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,

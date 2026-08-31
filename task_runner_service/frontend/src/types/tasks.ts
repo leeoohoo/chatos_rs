@@ -184,7 +184,7 @@ export interface TaskRecord {
   memory_thread_id: string;
   tenant_id: string;
   subject_id: string;
-  project_id: string;
+  project_id: string | null;
   task_profile: TaskProfile;
   creator_user_id?: string | null;
   creator_username?: string | null;
@@ -222,7 +222,7 @@ export interface TaskSummaryRecord {
   owner_user_id?: string | null;
   owner_username?: string | null;
   owner_display_name?: string | null;
-  project_id: string;
+  project_id: string | null;
   last_run_id?: string | null;
   updated_at: string;
 }

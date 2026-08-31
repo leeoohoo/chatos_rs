@@ -39,7 +39,6 @@ use crate::core::mcp_tools::ToolInfo;
 use crate::models::memory_runtime_types::{
     TurnRuntimeSnapshotPluginCommandInvocationDto, TurnRuntimeSnapshotSelectedCommandDto,
 };
-use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::services::{
     chatos_agents, chatos_memory_engine, chatos_memory_mappings, chatos_sessions,
     plugin_management_prompts,
@@ -259,15 +258,15 @@ pub async fn resolve_runtime_context(
             .as_deref()
             .filter(|project_id| is_concrete_project_id(project_id))
     } else {
-        resolved_project_id.as_deref().or(Some(PUBLIC_PROJECT_ID))
+        resolved_project_id.as_deref()
     };
     if requires_concrete_project && task_runner_project_id.is_none() {
         runtime_error = Some("当前智能体运行需要先选择一个有效项目。".to_string());
     }
-    let task_plugin_catalog_prompt = match task_runner_project_id {
-        Some(project_id) => {
+    let task_plugin_catalog_prompt =
+        if !requires_concrete_project || task_runner_project_id.is_some() {
             match resolve_task_plugin_catalog_prompt(
-                project_id,
+                task_runner_project_id,
                 req.plan_mode,
                 req.task_plugin_preferences.as_slice(),
                 user_output_locale,
@@ -277,16 +276,16 @@ pub async fn resolve_runtime_context(
                 Ok(prompt) => prompt,
                 Err(error) => {
                     warn!(
-                        project_id,
+                        project_id = task_runner_project_id,
                         detail = error.as_str(),
                         "Task Plugin catalog is unavailable for ChatOS prompt"
                     );
                     None
                 }
             }
-        }
-        None => None,
-    };
+        } else {
+            None
+        };
 
     let mcp_management_gateway = if runtime_error.is_none() {
         match resolve_mcp_management_gateway(McpManagementGatewayRequest {
@@ -300,6 +299,7 @@ pub async fn resolve_runtime_context(
             source_user_message_id: req.source_user_message_id.as_deref(),
             contact_agent_id: contact_agent_id.as_deref(),
             default_model_config_id: req.model_config_id.as_deref(),
+            default_remote_connection_id: default_remote_connection_id.as_deref(),
             expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
             selected_plugins: Vec::new(),
             plugin_command_invocations: Vec::new(),
