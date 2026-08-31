@@ -945,6 +945,8 @@ services:
       TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
+      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
       TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
       PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
@@ -1023,6 +1025,8 @@ services:
       TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
+      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
       TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
       PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
@@ -1085,6 +1089,8 @@ services:
       TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
+      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
       TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
       TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
       PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
