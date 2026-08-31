@@ -11,10 +11,12 @@ use super::{error, forbidden};
 
 pub(super) const USER_SERVICE_TOKEN_AUDIENCE: &str = "user-service";
 pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
+pub(super) const TASK_RUNNER_CALLER: &str = "task-runner";
 pub(super) const HARNESS_REPO_WRITE_SCOPE: &str = "harness.repo.write";
 pub(super) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
 pub(super) const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
 pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
+pub(super) const TASK_MODEL_CATALOG_READ_SCOPE: &str = "task-model-catalog.read";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct UserServiceInternalRequestIdentity {
@@ -47,9 +49,42 @@ pub(super) fn require_project_service_internal_request(
     verify_project_service_internal_request(headers, expected, required_scope)
 }
 
+pub(super) fn require_task_runner_internal_request(
+    config: &AppConfig,
+    headers: &HeaderMap,
+    required_scope: &str,
+) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
+    let expected = config
+        .task_runner_internal_api_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| forbidden("task runner user API secret is not configured"))?;
+    verify_internal_request(
+        headers,
+        expected,
+        TASK_RUNNER_CALLER,
+        required_scope,
+    )
+}
+
 fn verify_project_service_internal_request(
     headers: &HeaderMap,
     expected: &str,
+    required_scope: &str,
+) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
+    verify_internal_request(
+        headers,
+        expected,
+        PROJECT_SERVICE_CALLER,
+        required_scope,
+    )
+}
+
+fn verify_internal_request(
+    headers: &HeaderMap,
+    expected: &str,
+    expected_caller: &str,
     required_scope: &str,
 ) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
     let token = header_text(headers, "x-user-service-internal-token");
@@ -67,7 +102,7 @@ fn verify_project_service_internal_request(
             ));
         }
     };
-    if caller != PROJECT_SERVICE_CALLER {
+    if caller != expected_caller {
         return Err(forbidden("user service internal caller is not allowed"));
     }
     let token =
@@ -75,7 +110,7 @@ fn verify_project_service_internal_request(
     let claims = chatos_service_runtime::verify_internal_service_token(
         token,
         expected,
-        PROJECT_SERVICE_CALLER,
+        expected_caller,
         USER_SERVICE_TOKEN_AUDIENCE,
         required_scope,
     )

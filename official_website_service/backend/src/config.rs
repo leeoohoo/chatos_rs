@@ -28,8 +28,8 @@ impl AppConfig {
             .unwrap_or_else(default_static_dir);
         let public_base_url = normalized_env("OFFICIAL_WEBSITE_PUBLIC_BASE_URL")
             .unwrap_or_else(|| format!("http://localhost:{port}"));
-        let app_url = normalized_env("OFFICIAL_WEBSITE_APP_URL")
-            .unwrap_or_else(|| "http://localhost:8088".to_string());
+        let app_url =
+            normalized_env("OFFICIAL_WEBSITE_APP_URL").unwrap_or_else(|| "#download".to_string());
         let user_service_base_url = normalized_env("OFFICIAL_WEBSITE_USER_SERVICE_BASE_URL")
             .unwrap_or_else(|| "http://127.0.0.1:39190".to_string());
         let release_storage = ReleaseStorageConfig::from_env()?;

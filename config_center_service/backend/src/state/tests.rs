@@ -9,6 +9,9 @@ use crate::catalog::{
     CHATOS_BACKEND_PORT_CONFIG_KEY, CHATOS_CORS_ORIGINS_CONFIG_KEY, CHATOS_HOST_CONFIG_KEY,
     CHATOS_LOG_MAX_FILES_CONFIG_KEY, CHATOS_NODE_ENV_CONFIG_KEY, DEFAULT_LOCAL_RABBITMQ_URL,
     LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
+    LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
+    LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
+    LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
     LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
     LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY, LOCAL_CONNECTOR_HOST_CONFIG_KEY,
@@ -128,6 +131,7 @@ use crate::catalog::{
     TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
     TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY, TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
     TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY,
+    TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
     TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY,
     USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
     USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY, USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
@@ -693,6 +697,10 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
             json!("http://127.0.0.1:39190"),
         ),
         (
+            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://127.0.0.1:39192"),
+        ),
+        (
             TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(5_000),
         ),
@@ -784,6 +792,12 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_USER_SERVICE_BASE_URL"),
         Some(&"http://127.0.0.1:39190".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL"),
+        Some(&"https://127.0.0.1:39192".to_string())
     );
     assert_eq!(
         snapshot
@@ -954,6 +968,12 @@ fn local_connector_runtime_backfill_adds_all_service_defaults() {
         .contains(&LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys
@@ -1057,6 +1077,18 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
         (
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY.to_string(),
             json!("managed-req-key-1"),
+        ),
+        (
+            LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY.to_string(),
+            json!(300),
+        ),
+        (
+            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY.to_string(),
+            json!("/etc/chatos/controlled-network-signing-key.pk8"),
+        ),
+        (
+            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY.to_string(),
+            json!("controlled-network-key-1"),
         ),
     ]);
 
@@ -1179,6 +1211,24 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             .env
             .get("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID"),
         Some(&"managed-req-key-1".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS"),
+        Some(&"300".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH"),
+        Some(&"/etc/chatos/controlled-network-signing-key.pk8".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID"),
+        Some(&"controlled-network-key-1".to_string())
     );
 }
 

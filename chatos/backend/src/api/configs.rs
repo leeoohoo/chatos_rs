@@ -32,6 +32,7 @@ struct AiModelConfigRequest {
     clear_api_key: Option<bool>,
     base_url: Option<String>,
     enabled: Option<bool>,
+    task_enabled: Option<bool>,
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,
     supports_responses: Option<bool>,

@@ -36,6 +36,9 @@ pub struct AppConfig {
     pub managed_requirements_signing_key_path: Option<PathBuf>,
     pub managed_requirements_signing_key_id: Option<String>,
     pub managed_requirements_bundle_ttl: Duration,
+    pub controlled_network_signing_key_path: Option<PathBuf>,
+    pub controlled_network_signing_key_id: Option<String>,
+    pub controlled_network_policy_ttl: Duration,
 }
 
 impl AppConfig {
@@ -77,6 +80,19 @@ impl AppConfig {
         let managed_requirements_bundle_ttl_seconds =
             required_u64("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS")?
                 .clamp(300, 7 * 24 * 60 * 60);
+        let controlled_network_policy_ttl_seconds = optional_text(
+            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS",
+        )
+        .map(|value| {
+            value.parse::<u64>().map_err(|err| {
+                format!(
+                    "LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS must be a valid integer: {err}"
+                )
+            })
+        })
+        .transpose()?
+        .unwrap_or(300)
+        .clamp(30, 24 * 60 * 60);
         let require_signed_internal_requests =
             required_managed_bool("LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS")?;
         ensure_signed_internal_requests_required(require_signed_internal_requests)?;
@@ -120,6 +136,16 @@ impl AppConfig {
             ),
             managed_requirements_bundle_ttl: Duration::from_secs(
                 managed_requirements_bundle_ttl_seconds,
+            ),
+            controlled_network_signing_key_path: optional_text(
+                "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH",
+            )
+            .map(PathBuf::from),
+            controlled_network_signing_key_id: optional_text(
+                "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID",
+            ),
+            controlled_network_policy_ttl: Duration::from_secs(
+                controlled_network_policy_ttl_seconds,
             ),
         };
 
@@ -208,6 +234,9 @@ impl AppConfig {
             managed_requirements_signing_key_path: None,
             managed_requirements_signing_key_id: None,
             managed_requirements_bundle_ttl: Duration::from_secs(3600),
+            controlled_network_signing_key_path: None,
+            controlled_network_signing_key_id: None,
+            controlled_network_policy_ttl: Duration::from_secs(300),
         }
     }
 }

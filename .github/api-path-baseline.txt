@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=261
-total_endpoint_count=261
+main_backend_endpoint_count=266
+total_endpoint_count=266
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -107,6 +107,7 @@ GET /api/notepad/notes
 GET /api/notepad/notes/{note_id}
 GET /api/notepad/search
 GET /api/notepad/tags
+GET /api/pet-activities
 GET /api/plugin-artifacts/workbench/{session_id}/{artifact_id}/download
 GET /api/plugin-ui/workbench/{session_id}/{*asset_path}
 GET /api/projects
@@ -214,8 +215,13 @@ POST /api/messages/{message_id}/task-runner/runs/{run_id}/integration/waive
 POST /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions
 POST /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts
 POST /api/messages/{message_id}/task-runner/runs/{run_id}/retry
+POST /api/messages/{message_id}/task-runner/tasks/{task_id}/cancel
 POST /api/notepad/folders
 POST /api/notepad/notes
+POST /api/pet-activities/{activity_id}/acknowledge
+POST /api/pet-activities/{activity_id}/displayed
+POST /api/pet-activities/{activity_id}/handled
+POST /api/pet-activities/{activity_id}/ignore
 POST /api/projects/{id}/contacts
 POST /api/projects/{id}/requirements/{requirement_id}/confirm-execution
 POST /api/projects/{id}/requirements/{requirement_id}/execute
@@ -246,7 +252,6 @@ POST /api/task-manager/tasks/{task_id}/complete
 POST /api/terminals
 POST /api/terminals/dispatch-command
 POST /api/terminals/{id}/interrupt
-POST /internal/mcp-management/mcp/browser_tools/sessions/{session_id}/close
 POST /internal/mcp-management/mcp/{system_key}
 POST /internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}
 POST /internal/mcp-management/mcp/{system_key}/start

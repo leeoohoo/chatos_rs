@@ -142,7 +142,7 @@ fn required_text(value: Option<&str>, label: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-fn canonical_json_string(value: &Value) -> Result<String, String> {
+pub(crate) fn canonical_json_string(value: &Value) -> Result<String, String> {
     let mut output = String::new();
     write_canonical_json(value, &mut output)?;
     Ok(output)

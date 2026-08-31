@@ -47,6 +47,21 @@ impl ConnectorStore {
         }
     }
 
+    pub async fn register_device_windows_user_sid(
+        &self,
+        owner_user_id: &str,
+        id: &str,
+        windows_user_sid: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Mongo(store) => {
+                store
+                    .register_device_windows_user_sid(owner_user_id, id, windows_user_sid)
+                    .await
+            }
+        }
+    }
+
     pub async fn list_devices(
         &self,
         owner_user_id: &str,

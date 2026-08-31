@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 3,
+  "name": "chatos-document-mcp",
+  "version": "0.1.1",
+  "description": "Inspect, validate, render, and safely operate Word, Excel, PowerPoint, and PDF files inside a bound ChatOS workspace.",
+  "author": {
+    "name": "Chatos"
+  },
+  "license": "Apache-2.0",
+  "mcpServers": {
+    "document-mcp": {
+      "type": "stdio",
+      "bin": "chatos-document-mcp",
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+  "interface": {
+    "displayName": "Document Tools",
+    "shortDescription": "Local Word, Excel, PowerPoint, and PDF tools",
+    "longDescription": "Inspects, validates, renders, creates, edits, and converts documents on the Local Connector Client while restricting input to the bound workspace and output to managed artifacts.",
+    "developerName": "Chatos",
+    "category": "Productivity",
+    "capabilities": [
+      "Document inspection",
+      "Document validation and page rendering",
+      "Offline Office to image-based PDF conversion",
+      "Workspace-bounded file access",
+      "Office and PDF processing"
+    ],
+    "defaultPrompt": [
+      "Inspect a document before editing it.",
+      "Use only relative workspace paths or relativePath values returned by this plugin.",
+      "Created and edited files are downloadable managed artifacts, not files written into the project workspace. Do not claim that they were saved into the project tree."
+    ],
+    "brandColor": "#2563EB"
+  },
+  "dependencies": {
+    "minimumHostVersion": ">=2.1.0",
+    "supportedPlatforms": ["macos", "windows", "linux"]
+  },
+  "permissions": [
+    {
+      "permission": "process.spawn",
+      "required": true,
+      "reason": "Launch the installed document MCP executable.",
+      "components": ["document-mcp"]
+    },
+    {
+      "permission": "workspace.read",
+      "required": true,
+      "reason": "Read explicitly referenced documents inside the bound project workspace.",
+      "components": ["document-mcp"]
+    },
+    {
+      "permission": "artifact.create",
+      "required": true,
+      "reason": "Create new and edited documents, converted PDFs, rendered page images, and render manifests in the managed plugin artifact directory.",
+      "components": ["document-mcp"]
+    }
+  ]
+}

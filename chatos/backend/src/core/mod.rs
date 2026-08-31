@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod ai_model_config;
-pub mod ai_model_config_access;
 pub mod ai_settings;
 pub mod application_access;
 pub mod auth;

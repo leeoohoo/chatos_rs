@@ -4,6 +4,7 @@
 pub mod api;
 pub mod auth;
 pub mod config;
+mod controlled_network;
 pub mod internal_tls;
 mod managed_config;
 mod managed_requirements;

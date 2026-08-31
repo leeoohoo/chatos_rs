@@ -76,15 +76,14 @@ jobs:
         run: |
           set -euo pipefail
           for dir in \
-            chatos/frontend \
             config_center_service/frontend \
-            local_connector_client/frontend \
             memory_engine/frontend \
             official_website_service/frontend \
             plugin_management_service/frontend \
             project_management_service/frontend \
             task_runner_service/frontend \
-            user_service/frontend
+            user_service/frontend \
+            plugins/document
           do
             echo "Auditing $dir"
             npm --prefix "$dir" audit --omit=dev --audit-level=high
@@ -270,7 +269,6 @@ jobs:
 
   native-platform-contracts:
     name: Native platform (${{ matrix.platform }})
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -284,33 +282,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.94.0
+      - name: Setup .NET
+        if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@v4
         with:
-          components: clippy
-
-      - name: Cache native Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target-shared
-          shared-key: native-${{ matrix.platform }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: local_connector_client/frontend/package-lock.json
-
-      - name: Install Local Connector frontend dependencies
-        run: npm --prefix local_connector_client/frontend ci
+          dotnet-version: "8.0.x"
 
       - name: Verify native platform contracts
         shell: bash
         run: bash scripts/verify-repository.sh native-platform
 
-  chat-app-frontend:
-    name: chatos/frontend (TypeScript)
+  browser-plugin:
+    name: Browser plugin (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: clippy
+
+      - name: Verify Browser plugin
+        run: cargo +1.94.0 test --manifest-path plugins/browser/Cargo.toml --workspace --no-fail-fast
+
+  document-plugin:
+    name: Document plugin (Node)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -321,13 +319,16 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: chatos/frontend/package-lock.json
+          cache-dependency-path: plugins/document/package-lock.json
 
-      - name: npm ci
-        run: npm --prefix chatos/frontend ci
+      - name: Install dependencies
+        run: npm --prefix plugins/document ci
 
-      - name: Verify frontend
-        run: bash scripts/verify-repository.sh frontend chatos/frontend
+      - name: Fetch verified platform vendor tools
+        run: npm --prefix plugins/document run vendor:fetch:current
+
+      - name: Verify Document plugin
+        run: npm --prefix plugins/document test
 
   service-frontends:
     name: ${{ matrix.directory }} (TypeScript)
@@ -337,7 +338,6 @@ jobs:
       matrix:
         directory:
           - config_center_service/frontend
-          - local_connector_client/frontend
           - memory_engine/frontend
           - official_website_service/frontend
           - plugin_management_service/frontend

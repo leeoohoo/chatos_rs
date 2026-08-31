@@ -170,26 +170,6 @@ steps:
 ---
 kind: pipeline
 type: docker
-name: frontend-chatos
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: npm-check
-    image: node:24-bookworm
-    commands:
-      - cd chatos/frontend
-      - npm ci --legacy-peer-deps
-      - npm run type-check
-      - npm run build
-      - bash ../../scripts/check-hotspot-line-budgets.sh
-
----
-kind: pipeline
-type: docker
 name: frontend-user-service
 
 clone:

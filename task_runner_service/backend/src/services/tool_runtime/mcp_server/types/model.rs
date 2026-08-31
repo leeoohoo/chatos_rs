@@ -9,13 +9,6 @@ pub(in crate::mcp_server) struct ModelConfigIdArgs {
 }
 
 #[derive(Debug, Deserialize)]
-pub(in crate::mcp_server) struct UpdateModelConfigArgs {
-    pub(in crate::mcp_server) model_config_id: String,
-    #[serde(default)]
-    pub(in crate::mcp_server) patch: UpdateModelConfigRequest,
-}
-
-#[derive(Debug, Deserialize)]
 pub(in crate::mcp_server) struct TestModelConfigArgs {
     pub(in crate::mcp_server) model_config_id: String,
     #[serde(default)]

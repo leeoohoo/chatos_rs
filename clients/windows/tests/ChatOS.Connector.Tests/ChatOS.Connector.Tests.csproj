@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ChatOS.Connector\ChatOS.Connector.csproj" />
+    <ProjectReference Include="..\..\src\ChatOS.Presentation\ChatOS.Presentation.csproj" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\PluginSettingsViewModel.cs"
+             Link="Desktop\PluginSettingsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\ApprovalSettingsViewModel.cs"
+             Link="Desktop\ApprovalSettingsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\ModelSettingsViewModel.cs"
+             Link="Desktop\ModelSettingsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\SandboxSettingsViewModel.cs"
+             Link="Desktop\SandboxSettingsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\AppShell\ShellResourceViewModel.cs"
+             Link="Desktop\ShellResourceViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\AppShell\MainWindowViewModel.cs"
+             Link="Desktop\MainWindowViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Pet\PetQuickChatViewModel.cs"
+             Link="Desktop\PetQuickChatViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Plugins\PluginVisualSessionsViewModel.cs"
+             Link="Desktop\PluginVisualSessionsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Plugins\PluginArtifactsViewModel.cs"
+             Link="Desktop\PluginArtifactsViewModel.cs" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

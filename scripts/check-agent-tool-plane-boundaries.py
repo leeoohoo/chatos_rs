@@ -179,23 +179,31 @@ require(
     "single-server MCP Management executor assembly",
 )
 
-local_approval = "local_connector_client/core/src/approval/ai_agent.rs"
-require(local_approval, '"tool_plane": "local_only"', "local-only tool-plane metadata")
+macos_local_approval = "clients/macos/Sources/ChatOSConnector/NativeApprovalAgent.swift"
 require(
-    local_approval,
-    ".with_tool_executor_arc(tool_executor)",
-    "the device-local approval executor",
+    "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+TerminalRelay.swift",
+    "case .requestApproval:",
+    "the fail-closed user approval path",
 )
 forbid(
-    local_approval,
+    macos_local_approval,
     [
         "McpManagementClient",
-        "resolve_runtime_session",
-        "mcp_server_url",
-        "runtime_token",
+        "resolveRuntimeSession",
+        "mcpManagement",
         "MCP_MANAGEMENT",
     ],
-    "Local Command Approval Agent must never enter the cloud MCP Tool Plane",
+    "macOS Command Approval Agent must never enter the cloud MCP Tool Plane",
+)
+require(
+    "clients/windows/src/ChatOS.Connector/Approval/CommandApprovalCoordinator.cs",
+    "The automatic approval reviewer is unavailable; user approval is required.",
+    "the Windows fail-closed approval fallback",
+)
+require(
+    "clients/windows/src/ChatOS.Connector/Approval/CommandApprovalCoordinator.cs",
+    "mode is ConnectorApprovalMode.FullControl && !fullControlRiskConfirmed",
+    "explicit Windows full-control risk confirmation",
 )
 
 catalog = "agent/src/catalog.rs"
@@ -228,9 +236,9 @@ for path in memory_agent_files:
 
 production_roots = cloud_agent_roots + [
     "agent/src",
-    "local_connector_client/core/src",
     "local_connector_service/backend/src",
     "mcp_management_service/backend/src",
+    "plugins/browser/crates",
     "crates",
 ]
 production_files = rust_files(production_roots)

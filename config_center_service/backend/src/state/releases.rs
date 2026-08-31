@@ -373,15 +373,19 @@ impl AppState {
                 ));
             }
         }
-        let user_service_internal_is_https = values
-            .get(PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.trim().starts_with("https://"));
-        if !user_service_internal_is_https {
-            errors.push(format!(
-                "{} must use https:// because User Service internal APIs require mTLS",
-                PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY
-            ));
+        for key in [
+            PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+        ] {
+            let is_https = values
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim().starts_with("https://"));
+            if !is_https {
+                errors.push(format!(
+                    "{key} must use https:// because User Service internal APIs require mTLS"
+                ));
+            }
         }
         for key in [
             MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,

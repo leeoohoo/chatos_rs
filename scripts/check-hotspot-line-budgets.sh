@@ -45,16 +45,6 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 BUDGETS=(
-  "chatos/frontend/src/components/ToolCallRenderer.tsx:340"
-  "chatos/frontend/src/components/ChatInterface.tsx:180"
-  "chatos/frontend/src/components/ProjectExplorer.tsx:180"
-  "chatos/frontend/src/components/projectExplorer/TreePane.tsx:260"
-  "chatos/frontend/src/components/projectExplorer/useProjectExplorerWorkspaceView.ts:236"
-  "chatos/frontend/src/lib/api/client/types.ts:40"
-  "chatos/frontend/src/components/projectExplorer/runState/useProjectRunnerCatalogState.ts:560"
-  "chatos/frontend/src/lib/store/actions/remoteConnections.ts:580"
-  "chatos/frontend/src/components/chatInterface/useChatStreamRealtimeBridge.ts:412"
-  "chatos/frontend/src/components/terminal/useTerminalInstanceLifecycle.ts:420"
   "chatos/backend/src/services/git/mod.rs:40"
   "chatos/backend/src/services/chatos_memory_engine/mod.rs:120"
   "chatos/backend/src/services/code_nav/languages/java/mod.rs:650"
@@ -71,10 +61,6 @@ PLANNED_BUDGETS=(
   "user_service/backend/src/api/models.rs:700"
   "chatos/backend/src/api/configs/ai_model.rs:700"
   "project_management_service/frontend/src/pages/ProjectDetailPage.tsx:500"
-  "chatos/frontend/src/components/projectExplorer/ProjectPlanPane.tsx:500"
-  "chatos/frontend/src/components/projectExplorer/ProjectRunSettingsPanel.tsx:500"
-  "chatos/frontend/src/i18n/messages/enUS.ts:1200"
-  "chatos/frontend/src/i18n/messages/zhCN.ts:1200"
   "task_runner_service/frontend/src/i18n/messages/enUS.ts:1200"
   "task_runner_service/frontend/src/i18n/messages/zhCN.ts:1200"
 )

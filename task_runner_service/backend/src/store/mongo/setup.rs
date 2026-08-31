@@ -5,19 +5,67 @@ use super::*;
 
 impl MongoStore {
     pub(in crate::store) async fn connect(
-        database_url: &str,
+        config: &AppConfig,
         run_event_sender: broadcast::Sender<TaskRunEventRecord>,
     ) -> Result<Self, String> {
-        let client = Client::with_uri_str(database_url)
+        let client = Client::with_uri_str(config.database_url.as_str())
             .await
             .map_err(|err| err.to_string())?;
         let database = client
             .default_database()
             .ok_or_else(|| "mongodb connection string must include a database name".to_string())?;
+        let user_service_internal_base_url = chatos_service_runtime::env_text(
+            "TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL",
+        )
+        .ok_or_else(|| {
+            "TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL is required from configuration center"
+                .to_string()
+        })?;
+        if !user_service_internal_base_url.starts_with("https://") {
+            return Err("TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL must use https://".to_string());
+        }
+        let signing_secret = config
+            .user_service_internal_api_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET is required".to_string())?
+            .to_string();
+        let user_service_http_client = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(config.user_service_request_timeout),
+            std::path::Path::new(
+                chatos_service_runtime::env_text("USER_SERVICE_MTLS_CA_CERT_PATH")
+                    .ok_or_else(|| "USER_SERVICE_MTLS_CA_CERT_PATH is required".to_string())?
+                    .as_str(),
+            ),
+            std::path::Path::new(
+                chatos_service_runtime::env_text("USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH")
+                    .ok_or_else(|| {
+                        "USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH is required".to_string()
+                    })?
+                    .as_str(),
+            ),
+        )?;
+        let legacy_model_configs = database.collection::<ModelConfigRecord>("model_configs");
+        let deleted_legacy_models = legacy_model_configs
+            .delete_many(doc! {}, None)
+            .await
+            .map_err(|err| format!("clear legacy Task Runner model configs failed: {err}"))?
+            .deleted_count;
+        if deleted_legacy_models > 0 {
+            tracing::info!(
+                deleted_legacy_models,
+                "removed legacy Task Runner model configuration copies"
+            );
+        }
         let store = Self {
             tasks: database.collection::<TaskRecord>("tasks"),
             task_projects: database.collection::<TaskProjectRecord>("task_projects"),
-            model_configs: database.collection::<ModelConfigRecord>("model_configs"),
+            user_service_model_source: UserServiceModelSource {
+                base_url: user_service_internal_base_url,
+                http_client: user_service_http_client,
+                signing_secret,
+            },
             runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
             run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
@@ -96,18 +144,6 @@ impl MongoStore {
         )
         .await?;
 
-        self.ensure_index(&self.model_configs, doc! { "id": 1 }, true)
-            .await?;
-        self.ensure_index(&self.model_configs, doc! { "owner_user_id": 1 }, false)
-            .await?;
-        self.ensure_index(
-            &self.model_configs,
-            doc! { "owner_user_id": 1, "updated_at": -1 },
-            false,
-        )
-        .await?;
-        self.ensure_index(&self.model_configs, doc! { "updated_at": -1 }, false)
-            .await?;
         self.ensure_index(&self.runtime_settings, doc! { "id": 1 }, true)
             .await?;
 

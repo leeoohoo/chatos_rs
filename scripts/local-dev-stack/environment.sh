@@ -239,6 +239,7 @@ export_local_env() {
   # Task Runner loads the authoritative value from Configuration Center at
   # startup unless the operator explicitly exports an environment override.
   export TASK_RUNNER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
+  export TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${PROJECT_SERVICE_INTERNAL_MTLS_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET="$TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET"
@@ -330,7 +331,7 @@ chatos_client_identity_path() {
   esac
 }
 
-local_connector_client_identity_path() {
+local_connector_identity_path() {
   local caller="$1"
   case "$caller" in
     chatos-backend|task-runner|project-service|mcp-management-service)
@@ -343,7 +344,9 @@ local_connector_client_identity_path() {
 user_service_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    project-service) printf '%s/project-service.identity.pem' "$USER_SERVICE_MTLS_DIR" ;;
+    project-service|task-runner)
+      printf '%s/%s.identity.pem' "$USER_SERVICE_MTLS_DIR" "$caller"
+      ;;
     *) return 1 ;;
   esac
 }
@@ -385,8 +388,7 @@ prepare_local_dev_apisix_config() {
     -e "s/\"local-connector-service-backend:39230\"/\"${host_address}:39230\"/g" \
     -e "s/\"task-runner-backend:39090\"/\"${host_address}:39090\"/g" \
     -e "s/\"memory-engine-backend:7081\"/\"${host_address}:7081\"/g" \
-    -e "s/\"chatos-frontend:80\"/\"${host_address}:8088\"/g" \
-    -e "s/\"official-website-frontend:80\"/\"${host_address}:8088\"/g" \
+    -e "s/\"official-website-frontend:80\"/\"${host_address}:39251\"/g" \
     "$source_config" >"$target_config"
 }
 

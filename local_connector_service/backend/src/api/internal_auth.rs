@@ -768,6 +768,9 @@ mod tests {
             managed_requirements_signing_key_path: None,
             managed_requirements_signing_key_id: None,
             managed_requirements_bundle_ttl: Duration::from_secs(3600),
+            controlled_network_signing_key_path: None,
+            controlled_network_signing_key_id: None,
+            controlled_network_policy_ttl: Duration::from_secs(300),
         }
     }
 }

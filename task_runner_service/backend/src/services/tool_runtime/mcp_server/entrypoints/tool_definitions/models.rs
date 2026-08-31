@@ -21,34 +21,8 @@ pub(super) fn model_tool_definitions() -> Vec<Value> {
             ),
         ),
         tool_definition(
-            "create_model_config",
-            "Create a new Task Runner model config.",
-            create_model_config_schema(),
-        ),
-        tool_definition(
-            "update_model_config",
-            "Update an existing Task Runner model config.",
-            required_object_schema(
-                json!({
-                    "model_config_id": { "type": "string", "minLength": 1 },
-                    "patch": update_model_config_schema()
-                }),
-                &["model_config_id", "patch"],
-            ),
-        ),
-        tool_definition(
-            "delete_model_config",
-            "Delete a Task Runner model config by id.",
-            required_object_schema(
-                json!({
-                    "model_config_id": { "type": "string", "minLength": 1 }
-                }),
-                &["model_config_id"],
-            ),
-        ),
-        tool_definition(
             "test_model_config",
-            "Test whether one Task Runner model config can call its upstream model service.",
+            "Test whether one User Service model config can call its upstream model service.",
             required_object_schema(
                 json!({
                     "model_config_id": { "type": "string", "minLength": 1 },
@@ -58,4 +32,28 @@ pub(super) fn model_tool_definitions() -> Vec<Value> {
             ),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_tools_are_read_only_from_task_runner() {
+        let names = model_tool_definitions()
+            .into_iter()
+            .filter_map(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(names.iter().any(|name| name == "list_model_configs"));
+        assert!(names.iter().any(|name| name == "get_model_config"));
+        assert!(names.iter().any(|name| name == "test_model_config"));
+        assert!(!names.iter().any(|name| name == "create_model_config"));
+        assert!(!names.iter().any(|name| name == "update_model_config"));
+        assert!(!names.iter().any(|name| name == "delete_model_config"));
+    }
 }

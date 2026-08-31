@@ -1239,7 +1239,7 @@ services:
       OFFICIAL_WEBSITE_HOST: 0.0.0.0
       OFFICIAL_WEBSITE_PORT: 39250
       OFFICIAL_WEBSITE_PUBLIC_BASE_URL: ${OFFICIAL_WEBSITE_PUBLIC_BASE_URL:-http://localhost:39251}
-      OFFICIAL_WEBSITE_APP_URL: ${OFFICIAL_WEBSITE_APP_URL:-http://localhost:8088}
+      OFFICIAL_WEBSITE_APP_URL: ${OFFICIAL_WEBSITE_APP_URL:-#download}
       OFFICIAL_WEBSITE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       OFFICIAL_WEBSITE_RELEASES_ENDPOINT: ${OFFICIAL_WEBSITE_RELEASES_ENDPOINT:-${CHATOS_OBJECT_STORAGE_ENDPOINT:-}}
       OFFICIAL_WEBSITE_RELEASES_REGION: ${OFFICIAL_WEBSITE_RELEASES_REGION:-${CHATOS_OBJECT_STORAGE_REGION:-us-east-1}}
@@ -1273,17 +1273,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
-
-  chatos-frontend:
-    <<: *frontend-service
-    image: ${CHATOS_FRONTEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-chatos-frontend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      API_PROXY_PASS: http://chatos-backend:3997
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-8088}:80"
-    depends_on:
-      chatos-backend:
-        condition: service_healthy
 
   configuration-center-frontend:
     <<: *frontend-service

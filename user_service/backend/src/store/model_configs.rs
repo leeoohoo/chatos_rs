@@ -11,6 +11,10 @@ use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
 use super::{to_set_document, AppStore};
 
 impl AppStore {
+    fn has_usable_api_key(value: Option<&str>) -> bool {
+        value.map(str::trim).is_some_and(|value| !value.is_empty())
+    }
+
     fn decrypt_model_secret(
         value: Option<String>,
         record_type: &str,
@@ -23,71 +27,39 @@ impl AppStore {
     fn decrypt_user_model_config(
         mut config: UserModelConfigRecord,
     ) -> Result<UserModelConfigRecord, String> {
-        let has_stored_api_key = config.has_api_key
-            || config
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty());
         config.api_key =
             Self::decrypt_model_secret(config.api_key, "user_model_config", config.id.as_str())?;
-        config.has_api_key = has_stored_api_key
-            || config
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty());
+        config.has_api_key = Self::has_usable_api_key(config.api_key.as_deref());
         Ok(config)
     }
 
     fn encrypt_user_model_config(
         mut config: UserModelConfigRecord,
     ) -> Result<UserModelConfigRecord, String> {
-        let has_declared_api_key = config.has_api_key
-            || config
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty());
+        let has_usable_api_key = Self::has_usable_api_key(config.api_key.as_deref());
         config.api_key = encrypt_optional_secret(config.api_key)?;
-        config.has_api_key = has_declared_api_key;
+        config.has_api_key = has_usable_api_key;
         Ok(config)
     }
 
     fn decrypt_user_model_provider(
         mut provider: UserModelProviderRecord,
     ) -> Result<UserModelProviderRecord, String> {
-        let has_stored_api_key = provider.has_api_key
-            || provider
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty());
         provider.api_key = Self::decrypt_model_secret(
             provider.api_key,
             "user_model_provider",
             provider.id.as_str(),
         )?;
-        provider.has_api_key = has_stored_api_key
-            || provider
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty());
+        provider.has_api_key = Self::has_usable_api_key(provider.api_key.as_deref());
         Ok(provider)
     }
 
     fn encrypt_user_model_provider(
         mut provider: UserModelProviderRecord,
     ) -> Result<UserModelProviderRecord, String> {
-        let has_declared_api_key = provider.has_api_key
-            || provider
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty());
+        let has_usable_api_key = Self::has_usable_api_key(provider.api_key.as_deref());
         provider.api_key = encrypt_optional_secret(provider.api_key)?;
-        provider.has_api_key = has_declared_api_key;
+        provider.has_api_key = has_usable_api_key;
         Ok(provider)
     }
 
@@ -110,6 +82,33 @@ impl AppStore {
         rows.into_iter()
             .map(Self::decrypt_user_model_config)
             .collect()
+    }
+
+    pub async fn migrate_legacy_model_task_enabled(&self) -> Result<usize, String> {
+        let providers = self.list_user_model_providers(None).await?;
+        let configs = self.list_user_model_configs(None).await?;
+        let mut migrated = 0usize;
+        for mut config in configs {
+            if config.task_enabled.is_some() {
+                continue;
+            }
+            let legacy_enabled = config.enabled;
+            config.task_enabled = Some(legacy_enabled);
+            if let Some(provider) = providers.iter().find(|provider| {
+                provider.owner_user_id == config.owner_user_id
+                    && (config.source_provider_id.as_deref() == Some(provider.id.as_str())
+                        || (config.source_provider_id.is_none()
+                            && config.provider == provider.provider
+                            && normalized_base_url(config.base_url.as_deref())
+                                == normalized_base_url(provider.base_url.as_deref())))
+            }) {
+                config.source_provider_id = Some(provider.id.clone());
+                config.enabled = provider.enabled;
+            }
+            self.save_user_model_config(&config).await?;
+            migrated += 1;
+        }
+        Ok(migrated)
     }
 
     pub async fn find_user_model_config_by_id(
@@ -252,5 +251,27 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(settings.clone())
+    }
+}
+
+fn normalized_base_url(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppStore;
+
+    #[test]
+    fn api_key_availability_requires_a_real_secret() {
+        assert!(!AppStore::has_usable_api_key(None));
+        assert!(!AppStore::has_usable_api_key(Some("")));
+        assert!(!AppStore::has_usable_api_key(Some("   ")));
+        assert!(AppStore::has_usable_api_key(Some("provider-token")));
     }
 }

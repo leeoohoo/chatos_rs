@@ -1,0 +1,34 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Color x:Key="ChatOSAccentColor">#0A7AFF</Color>
+    <Color x:Key="ChatOSPurpleColor">#7057D8</Color>
+    <Color x:Key="ChatOSSuccessColor">#2EA44F</Color>
+    <Color x:Key="ChatOSWarningColor">#D97720</Color>
+    <Color x:Key="ChatOSFailureColor">#D64545</Color>
+    <Color x:Key="ChatOSWorkspaceBackgroundColor">#EDEDF1</Color>
+    <Color x:Key="ChatOSSidebarBackgroundColor">#F4F4F6</Color>
+    <Color x:Key="ChatOSTitleBarBackgroundColor">#F7F7F8</Color>
+    <Color x:Key="ChatOSContentBackgroundColor">#FBFBFC</Color>
+    <Color x:Key="ChatOSPrimaryTextColor">#202124</Color>
+    <Color x:Key="ChatOSSecondaryTextColor">#6E6E73</Color>
+    <Color x:Key="ChatOSTertiaryTextColor">#9A9AA1</Color>
+    <Color x:Key="ChatOSBorderColor">#D9D9DE</Color>
+
+    <SolidColorBrush x:Key="ChatOSAccentBrush" Color="{StaticResource ChatOSAccentColor}" />
+    <SolidColorBrush x:Key="ChatOSWorkspaceBackgroundBrush" Color="{StaticResource ChatOSWorkspaceBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSSidebarBackgroundBrush" Color="{StaticResource ChatOSSidebarBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSTitleBarBackgroundBrush" Color="{StaticResource ChatOSTitleBarBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSContentBackgroundBrush" Color="{StaticResource ChatOSContentBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSPrimaryTextBrush" Color="{StaticResource ChatOSPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ChatOSSecondaryTextBrush" Color="{StaticResource ChatOSSecondaryTextColor}" />
+    <SolidColorBrush x:Key="ChatOSTertiaryTextBrush" Color="{StaticResource ChatOSTertiaryTextColor}" />
+    <SolidColorBrush x:Key="ChatOSBorderBrush" Color="{StaticResource ChatOSBorderColor}" />
+    <SolidColorBrush x:Key="ChatOSFailureBrush" Color="{StaticResource ChatOSFailureColor}" />
+    <SolidColorBrush x:Key="ChatOSSuccessBrush" Color="{StaticResource ChatOSSuccessColor}" />
+    <SolidColorBrush x:Key="ChatOSWarningBrush" Color="{StaticResource ChatOSWarningColor}" />
+    <SolidColorBrush x:Key="ChatOSPurpleBrush" Color="{StaticResource ChatOSPurpleColor}" />
+    <SolidColorBrush x:Key="ChatOSUserBubbleBrush" Color="#E7F2FF" />
+    <SolidColorBrush x:Key="ChatOSProcessBackgroundBrush" Color="#F2EEFF" />
+</ResourceDictionary>

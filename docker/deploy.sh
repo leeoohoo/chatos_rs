@@ -26,7 +26,6 @@ LOCAL_BUILD_SERVICES=(
   chatos-backend
   official-website-backend
   configuration-center-frontend
-  chatos-frontend
   user-service-frontend
   memory-engine-frontend
   project-management-frontend
@@ -812,12 +811,11 @@ ensure_memory_engine_mtls_material() {
 }
 
 print_urls() {
-  local frontend_port main_backend_port user_service_frontend_port
+  local main_backend_port user_service_frontend_port
   local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
   local plugin_management_frontend_port local_connector_service_port
   local official_website_frontend_port config_center_frontend_port mcp_management_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
-  frontend_port="$(env_value FRONTEND_PORT 8088)"
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
   harness_port="$(env_value HARNESS_PORT 3000)"
@@ -836,7 +834,7 @@ print_urls() {
 
 [OK] Chat OS Docker stack is running.
 
-Main app:                 http://localhost:${frontend_port}
+Official website:         http://localhost:${official_website_frontend_port}
 Main backend:             http://localhost:${main_backend_port}
 Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}
@@ -849,7 +847,6 @@ Plugin Management:        http://localhost:${plugin_management_frontend_port}
 Configuration Center:     http://localhost:${config_center_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
 MCP Management Service:   http://localhost:${mcp_management_port}
-Official Website:         http://localhost:${official_website_frontend_port}
 
 Logs:    $0 logs
 Status:  $0 ps

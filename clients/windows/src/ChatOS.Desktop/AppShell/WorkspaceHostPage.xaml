@@ -1,0 +1,25 @@
+<UserControl
+    x:Class="ChatOS.Desktop.AppShell.WorkspaceHostPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <NavigationView
+        x:Name="WorkspaceNavigation"
+        AutomationProperties.AutomationId="ChatOS.Workspace.Navigation"
+        IsBackButtonVisible="Collapsed"
+        IsSettingsVisible="False"
+        PaneDisplayMode="Top"
+        SelectionChanged="OnSelectionChanged">
+        <NavigationView.MenuItems>
+            <NavigationViewItem x:Name="ChatItem" AutomationProperties.AutomationId="ChatOS.Workspace.Chat" Content="{x:Bind Localization.Chat, Mode=OneWay}" Icon="Message" Tag="chat" />
+            <NavigationViewItem x:Name="FilesItem" AutomationProperties.AutomationId="ChatOS.Workspace.Files" Content="{x:Bind Localization.Files, Mode=OneWay}" Icon="Folder" Tag="files" />
+            <NavigationViewItem x:Name="GitItem" AutomationProperties.AutomationId="ChatOS.Workspace.Git" Content="{x:Bind Localization.Git, Mode=OneWay}" Icon="Code" Tag="git" />
+            <NavigationViewItem x:Name="PlanItem" AutomationProperties.AutomationId="ChatOS.Workspace.Plan" Content="{x:Bind Localization.Plan, Mode=OneWay}" Icon="List" Tag="plan" />
+            <NavigationViewItem x:Name="RunItem" AutomationProperties.AutomationId="ChatOS.Workspace.Run" Content="{x:Bind Localization.Run, Mode=OneWay}" Icon="Play" Tag="run" />
+        </NavigationView.MenuItems>
+        <ContentControl x:Name="WorkspacePageContent" AutomationProperties.AutomationId="ChatOS.Workspace.Content" />
+    </NavigationView>
+</UserControl>

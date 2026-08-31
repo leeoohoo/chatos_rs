@@ -11,6 +11,7 @@ use futures::StreamExt;
 use uuid::Uuid;
 
 use crate::config::AppConfig;
+use crate::controlled_network::ControlledNetworkPolicySigner;
 use crate::managed_config::{
     resolve_platform_relay_signing_config, resolve_relay_runtime_limits,
     resolve_remote_control_trust_bundle,
@@ -34,6 +35,7 @@ pub struct AppState {
     local_connector_config_center_client: ConfigClient,
     user_service_http: reqwest::Client,
     pub(crate) managed_requirements_signer: Option<Arc<ManagedRequirementsSigner>>,
+    pub(crate) controlled_network_signer: Option<Arc<ControlledNetworkPolicySigner>>,
     pub(crate) pressure: LocalConnectorPressureState,
     instance_id: String,
     valkey: ValkeyCoordinator,
@@ -45,6 +47,7 @@ impl AppState {
         pressure: LocalConnectorPressureState,
     ) -> Result<Self, String> {
         let managed_requirements_signer = ManagedRequirementsSigner::load(&config)?;
+        let controlled_network_signer = ControlledNetworkPolicySigner::load(&config)?;
         let local_connector_config_center_client =
             ConfigClient::from_env("local-connector-service").map_err(|error| {
                 format!("initialize Local Connector control-plane config client failed: {error}")
@@ -85,6 +88,13 @@ impl AppState {
                 key_id = signer.key_id(),
                 public_key = signer.public_key(),
                 "managed requirements bundle signing is enabled"
+            );
+        }
+        if let Some(signer) = controlled_network_signer.as_ref() {
+            tracing::info!(
+                key_id = signer.key_id(),
+                public_key = signer.public_key(),
+                "controlled-network policy signing is enabled"
             );
         }
         tracing::info!(
@@ -139,6 +149,7 @@ impl AppState {
             local_connector_config_center_client,
             user_service_http,
             managed_requirements_signer,
+            controlled_network_signer,
             pressure,
             instance_id,
             valkey,

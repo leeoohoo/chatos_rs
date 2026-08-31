@@ -1,2 +1,0 @@
-ALTER TABLE execution_scope_tombstones
-ADD COLUMN finalization_result_json TEXT;

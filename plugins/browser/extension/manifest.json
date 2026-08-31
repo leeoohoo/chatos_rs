@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Chatos Browser Bridge",
+  "description": "Connect explicitly shared Chrome tabs to the local Chatos Browser CDP service.",
+  "version": "0.1.2",
+  "minimum_chrome_version": "116",
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Chatos Browser Bridge",
+    "default_popup": "popup/popup.html"
+  },
+  "permissions": [
+    "debugger",
+    "nativeMessaging",
+    "storage",
+    "tabGroups",
+    "tabs"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:*"
+  }
+}

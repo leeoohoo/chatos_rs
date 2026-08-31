@@ -4,28 +4,14 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
-    directory: "/chatos/frontend"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 2
-    groups:
-      chat-app-npm:
-        patterns:
-          - "*"
-        # Keep behavior-changing minor and major upgrades isolated so each
-        # frontend migration can be reviewed and tested independently.
-        update-types:
-          - "patch"
-
-  - package-ecosystem: "npm"
     directories:
-      - "/local_connector_client/frontend"
       - "/memory_engine/frontend"
       - "/official_website_service/frontend"
       - "/plugin_management_service/frontend"
       - "/project_management_service/frontend"
       - "/task_runner_service/frontend"
       - "/user_service/frontend"
+      - "/plugins/document"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 4
@@ -55,6 +41,7 @@ updates:
   - package-ecosystem: "cargo"
     directories:
       - "/memory_engine/backend"
+      - "/plugins/browser"
       - "/user_service/backend"
     schedule:
       interval: "weekly"
@@ -67,3 +54,19 @@ updates:
         # evaluated separately instead of being hidden in one grouped PR.
         update-types:
           - "patch"
+
+  - package-ecosystem: "swift"
+    directories:
+      - "/clients/macos"
+      - "/plugins/computer-use"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: "nuget"
+    directories:
+      - "/clients/windows"
+      - "/plugins/computer-use/windows/VisualComputerUse.Windows"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2

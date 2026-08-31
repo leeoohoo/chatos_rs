@@ -119,37 +119,6 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         }
     }
 
-    match crate::repositories::ai_model_configs::backfill_ai_model_config_secret_storage().await {
-        Ok(report) => {
-            info!(
-                "AI model config secret backfill finished: total_count={} migrated_count={} skipped_encrypted_count={} empty_count={}",
-                report.total_count,
-                report.migrated_count,
-                report.skipped_encrypted_count,
-                report.empty_count
-            );
-            core::runtime_health::mark_runtime_check_ok(
-                "ai_model_config_secret_backfill",
-                false,
-                format!(
-                    "total_count={} migrated_count={} skipped_encrypted_count={} empty_count={}",
-                    report.total_count,
-                    report.migrated_count,
-                    report.skipped_encrypted_count,
-                    report.empty_count
-                ),
-            );
-        }
-        Err(err) => {
-            warn!("AI model config secret backfill failed: {err}");
-            core::runtime_health::mark_runtime_check_warn(
-                "ai_model_config_secret_backfill",
-                false,
-                format!("backfill failed: {err}"),
-            );
-        }
-    }
-
     services::workspace_realtime_watcher::start_workspace_realtime_watcher();
     core::runtime_health::mark_runtime_check_ok(
         "workspace_realtime_watcher",

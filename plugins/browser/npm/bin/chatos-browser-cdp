@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+
+const packageRoot = path.resolve(__dirname, '..');
+const platformKey = `${process.platform}-${process.arch}`;
+const binaryPaths = {
+  'darwin-arm64': ['dist', 'macos', 'arm64', 'chatos-browser-cdp'],
+  'darwin-x64': ['dist', 'macos', 'x64', 'chatos-browser-cdp'],
+  'linux-arm64': ['dist', 'linux', 'arm64', 'chatos-browser-cdp'],
+  'linux-x64': ['dist', 'linux', 'x64', 'chatos-browser-cdp'],
+  'win32-arm64': ['dist', 'windows', 'arm64', 'chatos-browser-cdp.exe'],
+  'win32-x64': ['dist', 'windows', 'x64', 'chatos-browser-cdp.exe']
+};
+
+const relativeParts = binaryPaths[platformKey];
+if (!relativeParts) {
+  process.stderr.write(`Unsupported platform: ${platformKey}\n`);
+  process.exit(1);
+}
+
+const binary = path.join(packageRoot, ...relativeParts);
+if (!binary.startsWith(`${packageRoot}${path.sep}`) || !fs.existsSync(binary)) {
+  process.stderr.write(`Browser CDP native binary is missing for ${platformKey}\n`);
+  process.exit(1);
+}
+
+const child = spawn(binary, process.argv.slice(2), {
+  cwd: process.cwd(),
+  env: process.env,
+  shell: false,
+  stdio: 'inherit',
+  windowsHide: true
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    if (!child.killed) child.kill(signal);
+  });
+}
+
+child.on('error', (error) => {
+  process.stderr.write(`Failed to start Browser CDP: ${error.message}\n`);
+  process.exit(1);
+});
+
+child.on('exit', (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+  process.exit(code === null ? 1 : code);
+});

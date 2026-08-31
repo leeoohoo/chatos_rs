@@ -11,8 +11,8 @@ use crate::core::validation::normalize_non_empty;
 
 use super::connector_client::connector_post_json;
 use super::types::{
-    LocalTerminalExecRequest, RelayTerminalCloseRequest, RelayTerminalExecRequest,
-    RelayTerminalInputRequest, RelayTerminalSessionCreateRequest,
+    LocalTerminalExecRequest, RelayControlledNetworkPolicyRequest, RelayTerminalCloseRequest,
+    RelayTerminalExecRequest, RelayTerminalInputRequest, RelayTerminalSessionCreateRequest,
 };
 use super::{load_owned_online_workspace, required_text};
 
@@ -51,6 +51,7 @@ pub(super) async fn exec_terminal_command(
             cwd: normalize_non_empty(req.cwd),
             timeout_ms: req.timeout_ms,
             source: normalize_non_empty(req.source),
+            controlled_network: RelayControlledNetworkPolicyRequest::default(),
         },
     )
     .await
@@ -80,6 +81,7 @@ pub(crate) async fn create_local_terminal_session(
             cwd,
             cols: cols.max(1),
             rows: rows.max(1),
+            controlled_network: RelayControlledNetworkPolicyRequest::default(),
         },
     )
     .await

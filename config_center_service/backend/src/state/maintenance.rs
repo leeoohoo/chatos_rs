@@ -255,6 +255,14 @@ impl AppState {
                     .ok_or_else(|| {
                         "Task Runner Project Service HTTPS default is missing".to_string()
                     })?,
+            ) | migrate_https_url_draft(
+                &mut draft.changes,
+                TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+                task_runner_defaults
+                    .get(TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "Task Runner User Service HTTPS default is missing".to_string()
+                    })?,
             );
             if changed {
                 draft.validation_status = "pending".to_string();

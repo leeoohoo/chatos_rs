@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=208
-total_route_count=208
+main_backend_route_count=213
+total_route_count=213
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -94,7 +94,6 @@ chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/worksp
 chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/mcp_management.rs: .route(
-chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/memory_compat.rs: .route(
 chatos/backend/src/api/memory_compat.rs: .route(
 chatos/backend/src/api/memory_compat.rs: .route(
@@ -112,6 +111,7 @@ chatos/backend/src/api/memory_mappings.rs: .route(
 chatos/backend/src/api/memory_mappings.rs: .route(
 chatos/backend/src/api/memory_mappings.rs: .route("/api/memory/projects", get(list_memory_projects))
 chatos/backend/src/api/memory_mappings.rs: .route("/api/memory/projects/sync", post(sync_memory_project))
+chatos/backend/src/api/message_task_runner.rs: .route(
 chatos/backend/src/api/message_task_runner.rs: .route(
 chatos/backend/src/api/message_task_runner.rs: .route(
 chatos/backend/src/api/message_task_runner.rs: .route(
@@ -144,6 +144,11 @@ chatos/backend/src/api/notepad.rs: .route("/api/notepad/init", get(init_notepad)
 chatos/backend/src/api/notepad.rs: .route("/api/notepad/notes", get(list_notes).post(create_note))
 chatos/backend/src/api/notepad.rs: .route("/api/notepad/search", get(search_notes))
 chatos/backend/src/api/notepad.rs: .route("/api/notepad/tags", get(list_tags))
+chatos/backend/src/api/pet_activities.rs: .route(
+chatos/backend/src/api/pet_activities.rs: .route(
+chatos/backend/src/api/pet_activities.rs: .route(
+chatos/backend/src/api/pet_activities.rs: .route("/api/pet-activities", get(list_activities))
+chatos/backend/src/api/pet_activities.rs: .route("/api/pet-activities/{activity_id}/ignore", post(ignore))
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(
 chatos/backend/src/api/projects.rs: .route(

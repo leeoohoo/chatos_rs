@@ -4,7 +4,7 @@ This directory stores website showcase screenshots captured from local Chat OS s
 
 Recommended filenames:
 
-- `chatos-main.png`
+- `chatos-main.png`：原生桌面客户端视觉稿。
 - `memory-engine.png`
 - `task-runner.png`
 - `project-management.png`

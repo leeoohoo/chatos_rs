@@ -30,6 +30,8 @@ while IFS= read -r line; do
 done < <(
   du -sh \
     "$ROOT_DIR/chatos" \
+    "$ROOT_DIR/clients" \
+    "$ROOT_DIR/plugins" \
     "$ROOT_DIR/target-shared" \
     "$ROOT_DIR/docs" 2>/dev/null | sort -hr
 )
@@ -39,8 +41,11 @@ while IFS= read -r -d '' path; do
   du -sh "$path" 2>/dev/null || true
 done < <(
   list_existing_paths \
-    "chatos/frontend/node_modules" \
-    "chatos/frontend/dist" \
+    "clients/macos/.build" \
+    "plugins/browser/target" \
+    "plugins/computer-use/.build" \
+    "plugins/document/node_modules" \
+    "plugins/document/dist" \
     "chatos/backend/target" \
     "chatos/backend/data" \
     "chatos/backend/logs" \
@@ -56,7 +61,7 @@ git -C "$ROOT_DIR" ls-files | rg '(^|/)(__pycache__/|.*\.pyc$|.*\.pyo$|.*\.sqlit
 
 print_header "Local Runtime And Cache Artifacts"
 find "$ROOT_DIR" \
-  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/frontend/node_modules" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
+  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
   -o \( -name '.DS_Store' -o -name '__pycache__' -o -name '*.pyc' -o -name '*.pyo' -o -name '*.sqlite3' -o -name '*.sqlite3-shm' -o -name '*.sqlite3-wal' -o -name '*.db' -o -name '*.db-shm' -o -name '*.db-wal' \) -print \
   | sed "s#^$ROOT_DIR/##" | sort | head -n "$TOP_N"
 

@@ -1,0 +1,85 @@
+<Window
+    x:Class="ChatOS.Desktop.Features.Plugins.PluginVisualSessionWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:connector="using:ChatOS.Connector.Plugins"
+    mc:Ignorable="d"
+    Title="ChatOS Visual Session">
+
+    <Window.Resources>
+        <DataTemplate x:Key="VisualSessionTemplate" x:DataType="connector:PluginVisualSession">
+            <StackPanel Padding="4,2" Spacing="1">
+                <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{x:Bind PluginDisplayName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="46" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="TitleBar" Background="{StaticResource ChatOSTitleBarBackgroundBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Margin="14,0,0,0" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                <FontIcon Glyph="&#xE714;" Foreground="{StaticResource ChatOSAccentBrush}" />
+                <TextBlock Text="{x:Bind Localization.AiExecutionView, Mode=OneWay}" Style="{StaticResource ChatOSTitleTextStyle}" />
+            </StackPanel>
+            <Button Grid.Column="1" Margin="0,0,4,0" Click="OnDismissClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.CloseCurrentView, Mode=OneWay}">
+                <FontIcon Glyph="&#xE711;" />
+            </Button>
+        </Grid>
+
+        <Grid Grid.Row="1" Margin="12,10,12,10" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ComboBox
+                x:Name="SessionPicker"
+                HorizontalAlignment="Stretch"
+                ItemsSource="{x:Bind ViewModel.Sessions}"
+                ItemTemplate="{StaticResource VisualSessionTemplate}"
+                SelectionChanged="OnSessionChanged" />
+            <Button Grid.Column="1" Click="OnArtifactsClicked" Content="{x:Bind Localization.Artifact, Mode=OneWay}" />
+        </Grid>
+
+        <Border
+            Grid.Row="2"
+            Margin="12,0"
+            Background="#15171A"
+            BorderBrush="{StaticResource ChatOSBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="10">
+            <Grid>
+                <Image x:Name="FrameImage" Stretch="Uniform" />
+                <StackPanel x:Name="FramePlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                    <ProgressRing Width="24" Height="24" IsActive="{x:Bind ViewModel.IsRefreshing, Mode=OneWay}" />
+                    <TextBlock Text="{x:Bind Localization.WaitingForPluginFrame, Mode=OneWay}" Foreground="#D7DBE0" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="14,10,14,12" ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock x:Name="SessionTitleText" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="SessionDetailText" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="ErrorText" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+            </StackPanel>
+            <TextBlock x:Name="CapturedAtText" Grid.Column="1" VerticalAlignment="Bottom" Style="{StaticResource ChatOSCaptionTextStyle}" />
+        </Grid>
+    </Grid>
+</Window>

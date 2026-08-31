@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>ChatOS.Connector</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <ProjectReference Include="..\ChatOS.Core\ChatOS.Core.csproj" />
+    <ProjectReference Include="..\ChatOS.Api\ChatOS.Api.csproj" />
+    <ProjectReference Include="..\ChatOS.NetworkGuard.Contracts\ChatOS.NetworkGuard.Contracts.csproj" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="SSH.NET" />
+  </ItemGroup>
+</Project>

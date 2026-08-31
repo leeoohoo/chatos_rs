@@ -138,8 +138,6 @@ matched = set()
 for pid, _ppid, command in rows:
     if root not in command:
         continue
-    if "/local_connector_client/" in command:
-        continue
     if any(f"/{name}" in command or command.endswith(name) for name in service_bins):
         matched.add(pid)
         continue
@@ -175,7 +173,6 @@ service_bins = {
     "chat_app_server_rs",
 }
 frontend_markers = (
-    "/chatos/frontend/",
     "/config_center_service/frontend/",
     "/user_service/frontend/",
     "/memory_engine/frontend/",

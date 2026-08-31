@@ -173,13 +173,13 @@ Okra 只有一种项目模型。每个项目都绑定一个已授权的 Local Co
 ### 创建项目
 
 1. 从 Okra 官网下载并安装 Okra 桌面连接器。
-2. 使用与 Web 端相同的账号登录。
+2. 使用你的 Okra 云端账号登录。
 3. 添加并授权一个本机工作区。
 4. 配置需要使用的本地工具、Skill、Plugin、MCP、权限控制和审批权限。
 5. 在桌面端从该工作区创建项目。
 6. 添加项目联系人，然后开始对话或规划。
 
-直接在普通浏览器中打开 Okra，不会获得访问本机目录的能力。工作区操作要求桌面客户端和 Local Connector 在线。
+ChatOS 主应用采用原生桌面客户端。浏览器中的管理页面不会获得访问本机目录的能力；工作区操作要求桌面客户端及其 Local Connector 在线。
 
 ## 常见问题
 
@@ -213,7 +213,7 @@ Okra 仍在快速迭代。当前需要留意：
 
 - 项目工作区访问要求桌面客户端和 Local Connector 在线。
 - 项目暂不支持对话附件，也暂不支持在任务运行过程中附带图片或文件进行补充引导。
-- 业务历史由服务端保存；2.0.10 不迁移旧客户端 SQLite 中的历史会话、任务和记忆。
+- 业务历史由服务端保存；3.0.0 不导入已退役 Electron 客户端 SQLite 中的历史会话、任务和记忆。
 - 可公开下载的桌面平台、版本和注册规则以对应部署的 Okra 官网为准。
 
 ## 技术与自部署参考
@@ -232,17 +232,6 @@ Okra 使用一套云端业务编排平面，并按需调用设备侧能力执行
 - MCP Management 只把项目文件、Git、搜索和命令路由到已绑定的 Local Connector；Harness 只保留仓库与集成控制面职责。
 - Local Connector 不可用时明确失败，不会把设备侧操作静默切换到其他执行位置。
 
-### 本地数据位置
-
-Local Connector 默认状态路径：
-
-```text
-~/.chatos/local_connector/state.json
-~/.chatos/local_connector/connector-state.sqlite3
-```
-
-可通过 `LOCAL_CONNECTOR_STATE_PATH` 更改状态文件位置；SQLite 只保存 Connector 控制状态并位于同一目录。2.0.10 不迁移、也不再使用旧 `runtime.sqlite3`。
-
 ### 启动自托管云端栈
 
 要求 Docker Engine 与 Docker Compose v2：
@@ -252,7 +241,7 @@ cp docker/bootstrap.conf.example docker/bootstrap.conf
 make docker-up
 ```
 
-默认主应用地址为 <http://localhost:8088>。业务配置统一通过配置中心发布；`docker/bootstrap.conf` 只保存配置中心可用前必须提供的基础设施参数和凭据，且不得提交。
+官网默认地址为 <http://localhost:39251>，统一 API 网关为 <http://localhost:9080>；ChatOS 主应用运行在原生客户端中。业务配置统一通过配置中心发布；`docker/bootstrap.conf` 只保存配置中心可用前必须提供的基础设施参数和凭据，且不得提交。
 
 从当前源码构建镜像：
 
@@ -269,40 +258,33 @@ make local-dev-logs SERVICE=chatos-backend
 make local-dev-stop
 ```
 
-### Local Connector 开发
+### 原生桌面客户端
 
-启动 Core 和设置页：
-
-```bash
-make local-connector-client
-make local-connector-client-status
-make local-connector-client-stop
-```
-
-完整项目工作区体验依赖 Electron 提供的可信 Runtime Bridge。Core/设置页开发模式本身不等于完整桌面客户端。
-
-macOS 打包：
+在 macOS 14 或更高版本构建和测试 macOS 客户端：
 
 ```bash
-./local_connector_client/package-electron-macos-client.sh
+make build-macos-client
+make test-macos-client
+clients/macos/scripts/package-debug-app.sh
 ```
 
-Windows 打包：
+在安装 .NET 8 与 WinUI 工作负载的 Windows 11 上构建和测试 Windows 客户端：
 
 ```powershell
-powershell -ExecutionPolicy Bypass `
-  -File .\local_connector_client\package-electron-windows-client.ps1
+dotnet build clients/windows/ChatOS.Win.sln --configuration Release
+dotnet test clients/windows/ChatOS.Win.sln --configuration Release
+clients\windows\build\package.ps1 -Platform x64
 ```
 
-Linux Core 档打包（必须在 Linux 上运行）：
+### 第一方插件
 
-```bash
-./local_connector_client/package-electron-linux-client.sh
-```
+三个第一方插件与客户端、服务端一起维护：
 
-Linux 包包含桌面客户端、Local Connector Core 和经过校验的 Plugin/Skill 清单。浏览器自动化、
-Chrome Native Messaging、Computer Use 和内置文档运行时需等待
-Linux 原生运行资源补齐后再纳入完整发布档。
+- `plugins/browser`：Browser CDP 与 Chrome Bridge 扩展。
+- `plugins/computer-use`：macOS 与 Windows 原生 Computer Use。
+- `plugins/document`：受工作区边界约束的 Office 与 PDF 工具。
+
+在受支持的原生开发环境使用 `make build-plugins` 和 `make test-plugins`。生成的安装包、下载依赖和 vendor 可执行文件不会提交到仓库。
 
 ### 构建与测试
 
@@ -317,7 +299,6 @@ make test
 ```bash
 cargo test -p chat_app_server_rs
 cargo test -p task_runner_service_backend
-cargo test -p local_connector_client_core
 cd memory_engine/backend && cargo test
 ```
 
@@ -325,13 +306,12 @@ cd memory_engine/backend && cargo test
 
 - 部署边界与端口：`docker/compose.yml`
 - Rust workspace：`Cargo.toml`
-- 云端业务 API 与本地能力桥：`chatos/frontend/src/lib/api/client/facades/`
+- macOS 原生客户端与 Local Connector：`clients/macos/Sources/`
+- Windows 原生客户端与 Local Connector：`clients/windows/src/`
+- 第一方插件：`plugins/browser/`、`plugins/computer-use/`、`plugins/document/`
 - 项目编排边界：`chatos/backend/src/core/project_execution.rs`
-- Local Connector 能力执行器：`local_connector_client/core/src/local_runtime/`
-- Local Connector 控制状态 Schema：`local_connector_client/core/migrations/`
 - 云端 Task Runner：`task_runner_service/backend/src/services/`
 - 开发与部署命令：`Makefile`、`docker/deploy.sh`、`scripts/local-dev-stack.sh`
-- `chatos_3d_anime_prototype/` 是实验性界面，不是当前正式产品入口。
 
 </details>
 

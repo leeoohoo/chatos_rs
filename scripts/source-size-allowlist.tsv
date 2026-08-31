@@ -1,16 +1,43 @@
 # path	max_lines	expires_on	reason
 # Only production source files above 800 lines belong here.
 # expires_on is inclusive; expired, stale, missing, and over-budget entries fail CI.
-local_connector_client/core/src/skills/native/computer_use/windows.rs	2553	2026-09-15	Phase 1C: split Windows UIA, input, capture, window, process, and security modules
+crates/chatos_cloud_agent_runtime/src/lib.rs	2357	2026-10-31	3.0 hardening: split cloud Agent runtime assembly and transport contracts
+project_management_service/backend/src/api/run_workspace.rs	2108	2026-10-31	3.0 hardening: split workspace run routing, validation, and response mapping
+task_runner_service/backend/src/services/run_model_phase/supply_chain.rs	1938	2026-10-31	3.0 hardening: split model supply-chain selection, policy, and diagnostics
 task_runner_service/backend/src/api/chatos_internal.rs	1901	2026-09-30	Phase 1E: split internal message task, retry, plugin projection, and response handlers
-local_connector_client/core/src/skills/native/chrome.rs	1836	2026-09-15	Phase 1C: split Chrome read, write, download, upload, approval, and session helpers
+plugins/browser/crates/browser-cdp-core/src/runtime.rs	1887	2026-10-31	3.0 plugin import: split browser runtime lifecycle and session state
+plugins/browser/crates/browser-cdp-mcp/src/lib.rs	1842	2026-10-31	3.0 plugin import: split MCP tools, schemas, and execution handlers
+mcp_management_service/backend/src/api/mcp.rs	1521	2026-10-31	3.0 hardening: split MCP API validation, routing, and projection
+plugins/browser/crates/browser-cdp-extension/src/lib.rs	1520	2026-10-31	3.0 plugin import: split extension pairing, transport, and protocol handlers
+crates/chatos_ai_runtime/src/task/progress_review.rs	1513	2026-10-31	3.0 hardening: split task progress review policy and persistence mapping
+mcp/src/implementations/builtin/code_maintainer/registration_write.rs	1412	2026-10-31	3.0 hardening: split registration mutation validation and write operations
+mcp_management_service/backend/src/async_dispatch/rabbitmq.rs	1408	2026-10-31	3.0 hardening: split RabbitMQ dispatch topology, consumers, and recovery
+config_center_service/backend/src/state/support.rs	1311	2026-10-31	3.0 hardening: split configuration support loading, merge, and validation
+config_center_service/backend/src/state/maintenance.rs	1234	2026-10-31	3.0 hardening: split maintenance state transitions and reconciliation
+mcp_management_service/backend/src/api/runtime_sessions.rs	1217	2026-10-31	3.0 hardening: split Runtime Session creation, resolution, and authorization
+mcp_management_service/backend/src/runtime/execution_scope_store.rs	1158	2026-10-31	3.0 hardening: split execution-scope persistence and lifecycle rules
 crates/chatos_project_execution/src/lib.rs	1148	2026-09-30	Phase 1E: split project execution graph, status, planning, identity, and feedback modules
-local_connector_client/frontend/src/apiTypes.ts	996	2026-10-31	Phase 2: split Local Connector frontend API types by domain
+task_runner_service/backend/src/services/tool_runtime/mcp_server/prerequisite_creation.rs	1122	2026-10-31	3.0 hardening: split MCP prerequisite resolution and creation
+task_runner_service/backend/src/services/workspace_execution.rs	1122	2026-10-31	3.0 hardening: split workspace execution routing and lifecycle operations
+docker/deploy.sh	1105	2026-10-31	3.0 hardening: split deployment validation, lifecycle, and reporting helpers
+crates/chatos_ai_runtime/src/turn.rs	1076	2026-10-31	3.0 hardening: split turn assembly, streaming, and completion behavior
+plugins/browser/crates/browser-cdp-bridge/src/server.rs	1052	2026-10-31	3.0 plugin import: split Browser Bridge server protocol and connection lifecycle
+local_connector_service/backend/src/api/mod.rs	1013	2026-10-31	3.0 hardening: split Local Connector API router, middleware, and shared responses
+crates/chatos_ai_runtime/src/runtime.rs	1009	2026-10-31	3.0 hardening: split AI runtime setup, execution, and teardown
+chatos/backend/src/api/sessions/history_process.rs	1002	2026-10-31	3.0 hardening: split history compaction, callbacks, repair, and display projection
+chatos/backend/src/api/local_connectors.rs	1000	2026-10-31	3.0 hardening: split Local Connector API aggregation into domain modules
+crates/chatos_cloud_agent_runtime/src/rabbitmq_driver.rs	995	2026-10-31	3.0 hardening: split cloud Agent RabbitMQ driver lifecycle and delivery handling
+plugins/browser/crates/browser-cdp-direct/src/lib.rs	994	2026-10-31	3.0 plugin import: split direct CDP transport and command families
+plugin_management_service/backend/src/api/plugin_package_publish.rs	977	2026-10-31	3.0 hardening: split plugin package publication and trust validation
+task_runner_service/backend/src/services/run_post_process.rs	975	2026-10-31	3.0 hardening: split post-process callbacks, persistence, and notifications
 plugin_management_service/backend/src/api/plugin_catalog_sync.rs	939	2026-09-30	Phase 1D: split catalog fetch, signature validation, key rotation, and persistence
-task_runner_service/backend/src/services/run_model_phase/completion.rs	921	2026-09-30	Phase 2: split completion decision, blocker summary, persistence, and callbacks
-local_connector_service/backend/src/api/mod.rs	892	2026-10-31	Phase 2: split Local Connector service API router, middleware, and shared responses
-chatos/backend/src/api/sessions/history_process.rs	868	2026-10-31	Phase 2: split history compaction, task callbacks, repair, and display projection
-local_connector_client/verify-installed-package.mjs	857	2026-10-31	Phase 2: split installed package verification by platform and artifact type
-chatos/backend/src/modules/conversation_runtime/chat_execution.rs	848	2026-09-30	Phase 1E: split chat execution lifecycle, continuation, recovery, and finalization
-crates/chatos_ai_runtime/src/error_policy.rs	836	2026-10-31	Phase 2: split AI error classification, retry decisions, user messages, and tests
-project_management_service/backend/src/store/mongo.rs	803	2026-10-31	Phase 2: finish splitting Mongo store entrypoint and shared transaction helpers
+memory_engine/backend/src/subject_memory_queue.rs	922	2026-10-31	3.0 hardening: split subject-memory queue scheduling and recovery
+task_runner_service/backend/src/services/verification_repair.rs	909	2026-10-31	3.0 hardening: split verification repair policy and execution
+local_connector_service/backend/src/api/terminal_relay.rs	906	2026-10-31	3.0 hardening: split terminal relay authorization, dispatch, and response mapping
+crates/chatos_ai_runtime/src/error_policy.rs	890	2026-10-31	3.0 hardening: split AI error classification, retry decisions, and user messages
+plugins/document/src/tools.ts	855	2026-10-31	3.0 plugin import: split document tool schemas and dispatch handlers
+chatos/backend/src/api/projects/requirement_execution/sync.rs	849	2026-10-31	3.0 hardening: split requirement execution synchronization stages
+memory_engine/backend/src/services/summary/thread_summary/execution.rs	842	2026-10-31	3.0 hardening: split thread summary execution and persistence stages
+local_connector_service/backend/src/relay.rs	827	2026-10-31	3.0 hardening: split relay connection, request, and recovery paths
+chatos/backend/src/api/agent_chat/task_runner_callback.rs	824	2026-10-31	3.0 hardening: split task callback validation and conversation projection
+project_management_service/backend/src/store/mongo.rs	818	2026-10-31	3.0 hardening: finish splitting Mongo store entrypoint and shared transaction helpers

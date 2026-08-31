@@ -1,0 +1,55 @@
+{
+  "name": "@chatos/document-mcp",
+  "version": "0.1.1",
+  "description": "Local, workspace-bounded MCP tools for Word, Excel, PowerPoint, and PDF files.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "chatos-document-mcp": "bin/chatos-document-mcp"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "vendor/",
+    "chatos.plugin.json",
+    "LICENSE",
+    "NOTICE",
+    "PDFIUM_THIRD_PARTY_NOTICES.txt",
+    "README.md",
+    "SBOM.cdx.json",
+    "THIRD_PARTY_LICENSES.txt",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "clean": "node scripts/clean.mjs",
+    "vendor:fetch:current": "node scripts/fetch-vendor.mjs --current",
+    "vendor:fetch:all": "node scripts/fetch-vendor.mjs --all",
+    "vendor:verify:all": "node scripts/verify-vendor.mjs --all",
+    "sbom:generate": "npm run build && node scripts/generate-sbom.mjs",
+    "sbom:check": "node scripts/generate-sbom.mjs --check",
+    "security:audit": "npm audit --omit=dev --audit-level=low",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && npm run sbom:check && node --test test/*.test.mjs",
+    "pack:verify": "npm run test && node scripts/pack-and-verify.mjs"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@hyzyla/pdfium": "2.1.13",
+    "fflate": "0.8.2",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "4.8.69"
+  },
+  "devDependencies": {
+    "@types/node": "24.5.2",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.2"
+  }
+}

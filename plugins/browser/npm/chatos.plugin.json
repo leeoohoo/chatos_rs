@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 3,
+  "name": "chatos-browser-cdp",
+  "version": "0.1.6",
+  "description": "Operate managed Chromium sessions or an explicitly connected Chrome browser through the Chrome DevTools Protocol.",
+  "author": {
+    "name": "Chatos",
+    "url": "https://github.com/chatos-ai"
+  },
+  "homepage": "https://github.com/chatos-ai/chatos-browser-cdp",
+  "repository": "https://github.com/chatos-ai/chatos-browser-cdp",
+  "license": "Apache-2.0",
+  "keywords": ["browser", "chrome", "cdp", "automation", "mcp"],
+  "mcpServers": {
+    "browser-cdp": {
+      "type": "stdio",
+      "bin": "chatos-browser-cdp",
+      "requiresExclusiveExecution": true,
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+  "skills": [
+    "./skills/browser-cdp-workflow"
+  ],
+  "interface": {
+    "displayName": "Browser CDP",
+    "shortDescription": "Full browser control through Chrome DevTools Protocol",
+    "longDescription": "Launch an isolated managed Chrome browser or connect to an explicitly paired existing Chrome session. Existing-Chrome mode also requires the Chatos Browser Bridge Chrome extension and one explicit first connection; later restarts reconnect automatically. Supports high-level browser automation and raw CDP commands with local permission enforcement.",
+    "developerName": "Chatos",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Managed browser sessions",
+      "Existing Chrome connection",
+      "Task-owned native Chrome tab groups",
+      "Page interaction",
+      "Network inspection",
+      "Full CDP commands"
+    ],
+    "websiteURL": "https://github.com/chatos-ai/chatos-browser-cdp",
+    "defaultPrompt": [
+      "Users describe browsing goals, not tool sequences; automatically open or reuse a Browser CDP session. The MCP process binds it internally, so never provide, request, copy, guess, or reconstruct browser_session_id in later tool arguments.",
+      "After navigation or page changes, inspect a fresh snapshot before interacting and use only current element refs.",
+      "Verify meaningful actions with a fresh snapshot or session-status read, and recover once from a timed-out navigation before reporting failure."
+    ],
+    "brandColor": "#4285F4"
+  },
+  "dependencies": {
+    "minimumHostVersion": ">=2.0.13",
+    "supportedPlatforms": ["macos-arm64"]
+  },
+  "permissions": [
+    {
+      "permission": "process.spawn",
+      "required": true,
+      "reason": "Launch the installed Browser CDP stdio MCP executable.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.managed.launch",
+      "required": true,
+      "reason": "Launch an isolated local Chrome or Chromium process.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.page.read",
+      "required": true,
+      "reason": "Read page structure, accessibility snapshots and visible content.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.page.control",
+      "required": true,
+      "reason": "Navigate, click, type, scroll and control browser tabs.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.chrome.attach",
+      "required": false,
+      "reason": "Connect to an explicitly paired existing Chrome browser through the Chatos Browser Bridge extension.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.network.observe",
+      "required": false,
+      "reason": "Inspect console, network, WebSocket and HAR activity.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.network.intercept",
+      "required": false,
+      "reason": "Abort or mock explicitly selected network requests.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.file.transfer",
+      "required": false,
+      "reason": "Upload user-selected files and expose downloaded files as managed artifacts.",
+      "components": ["browser-cdp"]
+    },
+    {
+      "permission": "browser.cdp.raw",
+      "required": false,
+      "reason": "Execute explicitly approved raw Chrome DevTools Protocol commands.",
+      "components": ["browser-cdp"]
+    }
+  ]
+}

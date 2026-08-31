@@ -1,0 +1,369 @@
+{
+  "schemaVersion": 1,
+  "subject": {
+    "name": "PDFium WebAssembly",
+    "pdfiumBranch": "chromium/7243",
+    "pdfiumCommit": "591ce25a21001d8c26888e8b3af5426e90585dbe",
+    "builderRelease": "7243",
+    "wasmSha256": "71aec412a303a0405baee21c3d6d3f30ad2033dc02444130fe476be3976e2d09"
+  },
+  "audit": {
+    "date": "2026-08-21",
+    "method": "The fixed builder configuration and PDFium DEPS were reconciled with the member table and undefined symbols of the release libpdfium.a, then checked against the packaged WebAssembly exports, imports, data strings, and Emscripten link command.",
+    "sourceArchive": {
+      "name": "release/lib/libpdfium.a",
+      "size": 11731576,
+      "sha256": "c1299625226d0004dae2ff98e0096281624a781e5e980002e53aba4fa38d4b17"
+    },
+    "build": {
+      "emscriptenVersion": "4.0.10",
+      "gnArgs": [
+        "is_debug=false",
+        "pdf_use_partition_alloc=false",
+        "target_cpu=\"wasm\"",
+        "target_os=\"emscripten\"",
+        "pdf_enable_v8=false",
+        "pdf_enable_xfa=false",
+        "treat_warnings_as_errors=false",
+        "is_component_build=false",
+        "symbol_level=0",
+        "pdf_is_complete_lib=true",
+        "is_clang=false",
+        "use_custom_libcxx=false"
+      ],
+      "linkFlags": [
+        "-O2",
+        "-s USE_ZLIB=1",
+        "-s USE_LIBJPEG=1",
+        "-s ASSERTIONS=1",
+        "-s ALLOW_MEMORY_GROWTH=1",
+        "-s MODULARIZE",
+        "-s EXPORT_ES6=1",
+        "--no-entry"
+      ]
+    },
+    "excluded": [
+      {
+        "name": "Skia",
+        "reason": "The builder removes the Skia checkout from the minimal dependency set; no Skia archive members or symbols were found."
+      },
+      {
+        "name": "V8",
+        "reason": "pdf_enable_v8=false."
+      },
+      {
+        "name": "XFA",
+        "reason": "pdf_enable_xfa=false."
+      },
+      {
+        "name": "PartitionAlloc",
+        "reason": "pdf_use_partition_alloc=false."
+      },
+      {
+        "name": "libpng",
+        "reason": "Present in DEPS for other configurations, but no libpng archive members or PNG symbols were found in this release build."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "abseil",
+      "name": "Abseil C++",
+      "version": "0c63301c7ef3012c448edf67dba246465c9b2443",
+      "revision": "0c63301c7ef3012c448edf67dba246465c9b2443",
+      "upstreamRevision": "94be0866ac6e38b5ed34df55599f66a9cde4e06c",
+      "source": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/0c63301c7ef3012c448edf67dba246465c9b2443",
+      "license": "Apache-2.0",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/Abseil-Apache-2.0.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        }
+      ],
+      "evidence": [
+        "DEPS revision abseil_revision",
+        "libpdfium.a members include Abseil base, strings, cord, CRC, synchronization, time, hash, logging, random, status, and container objects"
+      ]
+    },
+    {
+      "id": "agg",
+      "name": "Anti-Grain Geometry",
+      "version": "2.3",
+      "revision": "pdfium@591ce25a21001d8c26888e8b3af5426e90585dbe:third_party/agg23",
+      "source": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/third_party/agg23",
+      "license": "LicenseRef-AGG-2.3",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/AGG-2.3.txt",
+          "sha256": "7c9a090bc2f7a49601bfb39e5504850feb7edc5ac2eba980610f6148a5538b43"
+        }
+      ],
+      "evidence": [
+        "libpdfium.a members include agg_curves.o",
+        "PDFium third_party/agg23/README.pdfium marks the library as shipped"
+      ]
+    },
+    {
+      "id": "fast-float",
+      "name": "fast_float",
+      "version": "cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+      "revision": "cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+      "source": "https://chromium.googlesource.com/external/github.com/fastfloat/fast_float/+/cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+      "license": "Apache-2.0 OR MIT",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/fast_float-Apache-2.0.txt",
+          "sha256": "097a889aa954d04e088b790b10a4014d6189561d0a6013935a73ce3d4ddaaf06"
+        },
+        {
+          "target": "licenses/pdfium-third-party/fast_float-MIT.txt",
+          "sha256": "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
+        },
+        {
+          "target": "licenses/pdfium-third-party/fast_float-BSL-1.0.txt",
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+        }
+      ],
+      "evidence": [
+        "DEPS revision fast_float_revision",
+        "fast_float::from_chars and parsing symbols are present in libpdfium.a"
+      ]
+    },
+    {
+      "id": "freetype",
+      "name": "FreeType",
+      "version": "2.13.3",
+      "revision": "320b72a2955a312f2a392bede8d6af900aec924d",
+      "source": "https://chromium.googlesource.com/chromium/src/third_party/freetype2/+/320b72a2955a312f2a392bede8d6af900aec924d",
+      "license": "FTL",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/FreeType-FTL.txt",
+          "sha256": "5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f"
+        }
+      ],
+      "notice": "Portions of this software are copyright © 1996-2002, 2006 The FreeType Project (https://freetype.org). All rights reserved.",
+      "evidence": [
+        "DEPS revision freetype_revision",
+        "libpdfium.a contains FreeType base, CFF, Type1, CID, PS, SFNT, raster, smooth, and TrueType objects and FT_* symbols"
+      ]
+    },
+    {
+      "id": "icu",
+      "name": "ICU",
+      "version": "74.2",
+      "revision": "a67fc91f78253e8bc055275d785b634faf27c608",
+      "source": "https://chromium.googlesource.com/chromium/deps/icu/+/a67fc91f78253e8bc055275d785b634faf27c608",
+      "license": "Unicode-3.0",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/ICU-LICENSE.txt",
+          "sha256": "17510cf7a58b4879b887ec05a45d72cf1b73544dd9ec7e72f20110ed104229ee"
+        }
+      ],
+      "evidence": [
+        "DEPS revision icu_revision",
+        "libpdfium.a includes ICU 74 common, bidi, converter, Unicode property, normalization, script, and stub-data objects"
+      ]
+    },
+    {
+      "id": "little-cms",
+      "name": "Little CMS",
+      "version": "2.15",
+      "revision": "d0752309ff93f62be246ee9bf18338107f30d485",
+      "source": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/third_party/lcms",
+      "license": "MIT",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/Little-CMS-MIT.txt",
+          "sha256": "6dbd60437f8ef91d8de1f08ad75882547fd4931bfcc3566a0735f28db1484d31"
+        }
+      ],
+      "evidence": [
+        "PDFium third_party/lcms/README.pdfium revision",
+        "libpdfium.a contains cms*.o objects and cms* color-management symbols"
+      ]
+    },
+    {
+      "id": "openjpeg",
+      "name": "OpenJPEG",
+      "version": "2.5.3",
+      "revision": "210a8a5690d0da66f02d49420d7176a21ef409dc",
+      "source": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/third_party/libopenjpeg",
+      "license": "BSD-2-Clause",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/OpenJPEG-BSD-2-Clause.txt",
+          "sha256": "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6"
+        }
+      ],
+      "evidence": [
+        "PDFium third_party/libopenjpeg/README.pdfium revision",
+        "libpdfium.a contains OpenJPEG codec objects and opj_* symbols"
+      ]
+    },
+    {
+      "id": "zlib",
+      "name": "zlib",
+      "version": "1.3.1",
+      "revision": "a1f2fe223f55b6ec6dd3c20796727604ed5ec74a",
+      "upstreamRevision": "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf",
+      "source": "https://chromium.googlesource.com/chromium/src/third_party/zlib/+/a1f2fe223f55b6ec6dd3c20796727604ed5ec74a",
+      "license": "Zlib",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/zlib-Zlib.txt",
+          "sha256": "e1cfcc55c325b3f78cf55df9664abaa066e2271dffe8213347d9fccdfbac8f2c"
+        }
+      ],
+      "evidence": [
+        "DEPS revision zlib_revision and Emscripten link flag USE_ZLIB=1",
+        "libpdfium.a contains adler32, crc32, deflate, inflate, gzip, and zutil objects"
+      ]
+    },
+    {
+      "id": "libjpeg-turbo",
+      "name": "libjpeg-turbo",
+      "version": "3.1.0",
+      "revision": "e14cbfaa85529d47f9f55b0f104a579c1061f9ad",
+      "source": "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo/+/e14cbfaa85529d47f9f55b0f104a579c1061f9ad",
+      "license": "BSD-3-Clause AND IJG AND Zlib",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/libjpeg-turbo-LICENSE.md",
+          "sha256": "96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430"
+        },
+        {
+          "target": "licenses/pdfium-third-party/libjpeg-turbo-README.ijg.txt",
+          "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6"
+        }
+      ],
+      "notice": "This software is based in part on the work of the Independent JPEG Group.",
+      "evidence": [
+        "DEPS revision jpeg_turbo_revision and Emscripten link flag USE_LIBJPEG=1",
+        "libpdfium.a contains libjpeg compression, decompression, DCT, Huffman, marker, memory, and utility objects"
+      ]
+    },
+    {
+      "id": "foxit-font-data",
+      "name": "Foxit base font data",
+      "version": "pdfium-chromium-7243",
+      "revision": "591ce25a21001d8c26888e8b3af5426e90585dbe",
+      "source": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/core/fxge/fontdata/chromefontdata",
+      "license": "BSD-3-Clause",
+      "licenseAssets": [
+        {
+          "target": "licenses/PDFium-BSD-3-Clause.txt",
+          "sha256": "e4ba234e87ee9df5ed7c99854a4bab83df8bcfc5c301e7575bfe0470697d4801"
+        }
+      ],
+      "notice": "Original font-data code copyright 2014 Foxit Software Inc.",
+      "evidence": [
+        "libpdfium.a contains FoxitDingbats, FoxitFixed, FoxitSans, FoxitSerif, FoxitSymbol, and multiple-style font data objects"
+      ]
+    },
+    {
+      "id": "emscripten",
+      "name": "Emscripten runtime and generated glue",
+      "version": "4.0.10",
+      "revision": "b7dc6e5747465580df5984e723b9d1f10d8e804b",
+      "source": "https://github.com/emscripten-core/emscripten/tree/4.0.10",
+      "license": "MIT OR NCSA",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/Emscripten-MIT.txt",
+          "sha256": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86"
+        }
+      ],
+      "evidence": [
+        "pdfium-lib WASM Dockerfile installs and activates emsdk 4.0.10",
+        "The packaged wrapper contains Emscripten-generated JavaScript and the WASM contains emscripten_* runtime functions"
+      ]
+    },
+    {
+      "id": "musl",
+      "name": "musl libc (Emscripten system library)",
+      "version": "emscripten-4.0.10",
+      "revision": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libc/musl",
+      "source": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libc/musl",
+      "license": "MIT",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/musl-MIT.txt",
+          "sha256": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af"
+        }
+      ],
+      "evidence": [
+        "The WASM imports POSIX/WASI file functions and contains Emscripten libc runtime code"
+      ]
+    },
+    {
+      "id": "llvm-libcxx",
+      "name": "LLVM libc++",
+      "version": "emscripten-4.0.10",
+      "revision": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libcxx",
+      "source": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libcxx",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/LLVM-libcxx-Apache-2.0-WITH-LLVM-exception.txt",
+          "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b"
+        }
+      ],
+      "evidence": [
+        "GN uses use_custom_libcxx=false for the Emscripten target and the archive contains std::__2 C++ library symbols"
+      ]
+    },
+    {
+      "id": "llvm-libcxxabi",
+      "name": "LLVM libc++abi",
+      "version": "emscripten-4.0.10",
+      "revision": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libcxxabi",
+      "source": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libcxxabi",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/LLVM-libcxxabi-Apache-2.0-WITH-LLVM-exception.txt",
+          "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
+        }
+      ],
+      "evidence": [
+        "The WASM data names Emscripten system/lib/libcxxabi and contains C++ ABI/exception support"
+      ]
+    },
+    {
+      "id": "llvm-libunwind",
+      "name": "LLVM libunwind",
+      "version": "emscripten-4.0.10",
+      "revision": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libunwind",
+      "source": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libunwind",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/LLVM-libunwind-Apache-2.0-WITH-LLVM-exception.txt",
+          "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d"
+        }
+      ],
+      "evidence": [
+        "Conservatively included with the Emscripten C++ exception runtime used by the generated module"
+      ]
+    },
+    {
+      "id": "llvm-compiler-rt",
+      "name": "LLVM compiler-rt",
+      "version": "emscripten-4.0.10",
+      "revision": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/compiler-rt",
+      "source": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/compiler-rt",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "licenseAssets": [
+        {
+          "target": "licenses/pdfium-third-party/LLVM-compiler-rt-Apache-2.0-WITH-LLVM-exception.txt",
+          "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
+        }
+      ],
+      "evidence": [
+        "Conservatively included for compiler builtins linked by Emscripten into the standalone WASM"
+      ]
+    }
+  ]
+}

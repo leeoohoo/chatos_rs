@@ -7,18 +7,14 @@ use crate::config::AppConfig;
 
 pub(super) const TASK_RUNNER_TOKEN_AUDIENCE: &str = "task-runner";
 pub(super) const CHATOS_MESSAGES_READ_SCOPE: &str = "chatos.messages.read";
-pub(super) const CHATOS_MODELS_READ_SCOPE: &str = "chatos.models.read";
-pub(super) const CHATOS_MODELS_RUNTIME_SCOPE: &str = "chatos.models.runtime";
 pub(super) const CHATOS_EXECUTION_START_SCOPE: &str = "chatos.execution.start";
 pub(super) const EXECUTION_OPTIONS_READ_SCOPE: &str = "execution-options.read";
 pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
 pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
 pub(super) const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
-pub(super) const USER_SERVICE_CALLER: &str = "user-service";
 pub(super) const MCP_TOOLS_LIST_SCOPE: &str = "mcp.tools.list";
 pub(super) const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
-pub(super) const MODEL_CONFIGS_SYNC_SCOPE: &str = "model-configs.sync";
 pub(super) const PROJECTS_SYNC_SCOPE: &str = "projects.sync";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,7 +154,6 @@ fn caller_secret<'a>(config: &'a AppConfig, caller: &str) -> Option<&'a str> {
         CHATOS_CALLER => config.chatos_internal_api_secret.as_deref(),
         PROJECT_SERVICE_CALLER => config.internal_api_secret.as_deref(),
         MCP_MANAGEMENT_CALLER => config.mcp_management_internal_api_secret.as_deref(),
-        USER_SERVICE_CALLER => config.user_service_internal_api_secret.as_deref(),
         _ => None,
     };
     value.map(str::trim).filter(|value| !value.is_empty())

@@ -7,6 +7,10 @@ fn default_model_request_max_retries() -> i64 {
     5
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UserServiceAuthUser {
     pub id: String,
@@ -85,6 +89,8 @@ pub struct UserServiceModelConfigRecord {
     pub has_api_key: bool,
     pub base_url: Option<String>,
     pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub task_enabled: bool,
     #[serde(default)]
     pub supports_images: bool,
     #[serde(default)]
@@ -143,6 +149,7 @@ pub struct CreateUserServiceModelConfigRequest {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
+    pub task_enabled: Option<bool>,
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
@@ -180,6 +187,7 @@ pub struct UpdateUserServiceModelConfigRequest {
     pub clear_api_key: Option<bool>,
     pub base_url: Option<String>,
     pub enabled: Option<bool>,
+    pub task_enabled: Option<bool>,
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
