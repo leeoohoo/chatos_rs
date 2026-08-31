@@ -262,6 +262,27 @@ jobs:
       - name: Backend tests
         run: cargo +1.94.0 test --all-targets --no-fail-fast
 
+  production-rust-services:
+    name: Production Rust services
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Cache production service builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target-shared
+            memory_engine/backend -> target
+            user_service/backend -> target
+
+      - name: Check every production Rust service
+        run: bash scripts/verify-repository.sh rust-build
+
   native-platform-contracts:
     name: Native platform (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}

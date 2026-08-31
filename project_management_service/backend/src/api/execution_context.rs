@@ -71,7 +71,7 @@ fn build_execution_context(
         .flatten();
     let revision = execution_context_revision(project, workspace_provider, workspace.as_ref());
     ProjectExecutionContext {
-        project_id: project.id.clone(),
+        project_id: Some(project.id.clone()),
         owner_user_id: owner_user_id.to_string(),
         workspace_provider,
         workspace,
@@ -194,6 +194,7 @@ mod tests {
             context.workspace_provider,
             WorkspaceProviderKind::LocalConnector
         );
+        assert_eq!(context.project_id.as_deref(), Some("project-1"));
         assert_eq!(
             context
                 .workspace

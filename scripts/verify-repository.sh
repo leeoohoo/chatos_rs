@@ -19,6 +19,7 @@ Usage: scripts/verify-repository.sh <mode> [frontend-directory]
 
 Modes:
   quality       Run repository code-quality policies.
+  rust-build    Check every Rust binary shipped by the production Compose stack.
   rust-lint     Run Rust formatting and Clippy for all workspaces.
   rust-test     Run tests for the root, Memory Engine, and User Service workspaces.
   native-platform Build and test the native client and Computer Use plugin for this OS.
@@ -61,6 +62,25 @@ run_quality() {
   bash scripts/check-request-path-panics.sh
   bash scripts/check-hotspot-line-budgets.sh
   python3 scripts/check-rust-dependency-drift.py
+}
+
+run_rust_build() {
+  cd "$ROOT_DIR"
+  "${CARGO[@]}" check \
+    -p config_center_service_backend \
+    -p project_management_service_backend \
+    -p plugin_management_service_backend \
+    -p local_connector_service_backend \
+    -p mcp_management_service_backend \
+    -p task_runner_service_backend \
+    -p chat_app_server_rs \
+    -p official_website_service_backend
+  "${CARGO[@]}" check \
+    --manifest-path memory_engine/backend/Cargo.toml \
+    --bin memory_engine
+  "${CARGO[@]}" check \
+    --manifest-path user_service/backend/Cargo.toml \
+    --bin user_service_backend
 }
 
 run_rust_lint() {
@@ -154,6 +174,9 @@ case "$mode" in
   quality)
     run_quality
     ;;
+  rust-build)
+    run_rust_build
+    ;;
   rust-lint)
     run_rust_lint
     ;;
@@ -178,10 +201,12 @@ case "$mode" in
     ;;
   fast)
     run_quality
+    run_rust_build
     run_rust_lint
     ;;
   full)
     run_quality
+    run_rust_build
     run_rust_lint
     run_rust_tests
     run_frontends

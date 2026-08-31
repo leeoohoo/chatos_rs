@@ -20,6 +20,8 @@ need_cmd() {
 
 need_cmd git
 need_cmd ssh
+need_cmd bash
+need_cmd cargo
 
 cd "$ROOT_DIR"
 
@@ -45,6 +47,9 @@ if [[ "$release_commit" != "$origin_commit" ]]; then
   echo "        origin: $origin_commit" >&2
   exit 1
 fi
+
+echo "[INFO] checking every production Rust service before remote deployment"
+bash scripts/verify-repository.sh rust-build
 
 release_tag="$(date +%Y%m%d-%H%M%S)-${release_commit:0:8}"
 echo "[INFO] deploying $release_commit as $release_tag to $DEPLOY_SERVER"
