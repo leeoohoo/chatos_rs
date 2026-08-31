@@ -279,45 +279,6 @@ fn task_runner_internal_auth_rejects_legacy_static_secret() {
     );
 }
 
-#[test]
-fn model_config_sync_accepts_only_user_service_scoped_token() {
-    let config = test_config();
-    let token = chatos_service_runtime::issue_internal_service_token(
-        "user-service-internal-secret",
-        super::super::internal_auth::USER_SERVICE_CALLER,
-        super::super::internal_auth::TASK_RUNNER_TOKEN_AUDIENCE,
-        super::super::internal_auth::MODEL_CONFIGS_SYNC_SCOPE,
-        60,
-    )
-    .expect("issue token");
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-task-runner-caller",
-        HeaderValue::from_static(super::super::internal_auth::USER_SERVICE_CALLER),
-    );
-    headers.insert(
-        "x-task-runner-internal-token",
-        HeaderValue::from_str(token.as_str()).expect("token header"),
-    );
-
-    super::super::internal_auth::require_task_runner_internal_request(
-        &config,
-        &headers,
-        &[super::super::internal_auth::USER_SERVICE_CALLER],
-        super::super::internal_auth::MODEL_CONFIGS_SYNC_SCOPE,
-    )
-    .expect("user service model sync token");
-
-    let err = super::super::internal_auth::require_task_runner_internal_request(
-        &config,
-        &headers,
-        &[super::super::internal_auth::USER_SERVICE_CALLER],
-        super::super::internal_auth::PROJECTS_SYNC_SCOPE,
-    )
-    .expect_err("wrong scope must fail");
-    assert_eq!(err.status, StatusCode::UNAUTHORIZED);
-}
-
 async fn test_state() -> AppState {
     let config = test_config();
     let store = AppStore::new(&config).await.expect("store");

@@ -407,12 +407,14 @@ struct GatewayModelConfigDTO: Decodable, Sendable {
     var temperature: Double?
     var maxOutputTokens: Int?
     var enabled: Bool?
+    var taskEnabled: Bool?
     var hasAPIKey: Bool?
     var supportsImages: Bool?
     var supportsReasoning: Bool?
     var supportsResponses: Bool?
     enum CodingKeys: String, CodingKey {
         case id, name, provider, model, enabled
+        case taskEnabled = "task_enabled"
         case sourceProviderID = "source_provider_id"
         case promptVendor = "prompt_vendor"
         case apiKey = "api_key"
@@ -520,7 +522,7 @@ private struct GatewayModelConfigUpdateRequest: Encodable {
     var clearTemperature: Bool
     var maxOutputTokens: Int?
     var clearMaxOutputTokens: Bool
-    var enabled: Bool
+    var taskEnabled: Bool
 
     init(update: LocalConnectorModelConfigUpdate) {
         taskUsageScenario = update.taskUsageScenario
@@ -529,11 +531,12 @@ private struct GatewayModelConfigUpdateRequest: Encodable {
         clearTemperature = update.temperature == nil
         maxOutputTokens = update.maxOutputTokens
         clearMaxOutputTokens = update.maxOutputTokens == nil
-        enabled = update.enabled
+        taskEnabled = update.taskEnabled
     }
 
     enum CodingKeys: String, CodingKey {
-        case enabled, temperature
+        case taskEnabled = "task_enabled"
+        case temperature
         case taskUsageScenario = "task_usage_scenario"
         case taskThinkingLevel = "task_thinking_level"
         case clearTemperature = "clear_temperature"

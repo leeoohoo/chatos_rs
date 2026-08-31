@@ -6,14 +6,14 @@ struct LocalConnectorTaskModelDraft: Equatable {
     var thinking: String
     var temperature: String
     var maxOutputTokens: String
-    var enabled: Bool
+    var taskEnabled: Bool
 
     init(model: LocalConnectorModelConfig) {
         usage = model.taskUsageScenario ?? ""
         thinking = model.taskThinkingLevel ?? ""
         temperature = model.temperature.map { String($0) } ?? ""
         maxOutputTokens = model.maxOutputTokens.map { String($0) } ?? ""
-        enabled = model.enabled
+        taskEnabled = model.taskEnabled
     }
 
     func validatedUpdate(modelName: String) throws -> LocalConnectorModelConfigUpdate {
@@ -40,7 +40,7 @@ struct LocalConnectorTaskModelDraft: Equatable {
             taskThinkingLevel: thinking.trimmed.nilIfEmpty,
             temperature: temperatureValue,
             maxOutputTokens: tokenValue,
-            enabled: enabled
+            taskEnabled: taskEnabled
         )
     }
 }

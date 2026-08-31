@@ -90,8 +90,10 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
             var readinessTask = CheckReadinessAsync(token);
             await Task.WhenAll(settingsTask, modelsTask, readinessTask).ConfigureAwait(false);
             var settings = settingsTask.Result.Normalize();
-            var items = modelsTask.Result.Select(value =>
-                new ConnectorModelOptionViewModel(value, _localization)).ToArray();
+            var items = modelsTask.Result
+                .Where(static value => value.TaskEnabled)
+                .Select(value => new ConnectorModelOptionViewModel(value, _localization))
+                .ToArray();
             await _dispatcher.InvokeAsync(() =>
             {
                 AvailableModels.Clear();

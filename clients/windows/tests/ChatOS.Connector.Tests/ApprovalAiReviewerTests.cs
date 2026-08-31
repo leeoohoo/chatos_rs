@@ -185,7 +185,7 @@ public sealed class ApprovalAiReviewerTests
             {
                 Model = new ConnectorGatewayModelConfig(
                     "model-1", "Approval GPT", "openai", "gpt", "gpt-5-mini",
-                    "https://provider.example/v1", "secret-key", true, false, null, 0, 900),
+                    "https://provider.example/v1", "secret-key", true, true, false, null, 0, 900),
                 Bundle = new ConnectorAgentPromptBundle(
                     2,
                     DateTimeOffset.UtcNow,

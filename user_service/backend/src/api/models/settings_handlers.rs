@@ -217,6 +217,11 @@ async fn validate_settings_model_config(
             "{field_name} requires a concrete model name"
         )));
     }
+    if !model_config.enabled_for_tasks() {
+        return Err(bad_request(format!(
+            "{field_name} is disabled for Task Runner usage"
+        )));
+    }
     Ok(Some(model_config))
 }
 

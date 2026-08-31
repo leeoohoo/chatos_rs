@@ -322,6 +322,12 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "string",
         ),
         (
+            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "task-runner",
+            "TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL",
+            "string",
+        ),
+        (
             TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS",

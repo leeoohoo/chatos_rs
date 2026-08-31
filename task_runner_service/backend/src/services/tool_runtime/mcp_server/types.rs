@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::models::{
     AskUserPromptStatus, CancelTaskRequest, CreateTaskRequest, TaskMcpConfig, TaskMcpRequestConfig,
-    TaskRunStatus, TaskScheduleConfig, TaskStatus, UpdateModelConfigRequest, UpdateTaskRequest,
+    TaskRunStatus, TaskScheduleConfig, TaskStatus, UpdateTaskRequest,
 };
 
 #[path = "types/common.rs"]
@@ -25,7 +25,7 @@ mod task;
 
 pub(super) use self::common::{decode_args, text_result};
 pub use self::jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-pub(super) use self::model::{ModelConfigIdArgs, TestModelConfigArgs, UpdateModelConfigArgs};
+pub(super) use self::model::{ModelConfigIdArgs, TestModelConfigArgs};
 pub(super) use self::prompt::{CancelPromptArgs, ListPromptsArgs, PromptIdArgs, SubmitPromptArgs};
 pub(super) use self::run::{
     GetTaskMemoryContextArgs, ListRunsArgs, ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs,

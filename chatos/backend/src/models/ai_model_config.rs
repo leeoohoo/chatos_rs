@@ -3,6 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiModelConfig {
     pub id: String,
@@ -22,6 +26,8 @@ pub struct AiModelConfig {
     pub has_api_key: bool,
     pub base_url: Option<String>,
     pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub task_enabled: bool,
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,

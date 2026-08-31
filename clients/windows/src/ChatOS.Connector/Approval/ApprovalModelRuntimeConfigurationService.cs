@@ -59,6 +59,7 @@ internal sealed class ApprovalModelRuntimeConfigurationService(
 
         var model = modelTask.Result;
         if (!string.Equals(model.Id, modelConfigId, StringComparison.Ordinal) || !model.Enabled ||
+            !model.TaskEnabled ||
             string.IsNullOrWhiteSpace(model.Model) || string.IsNullOrWhiteSpace(model.ApiKey))
         {
             throw new InvalidOperationException("The selected approval model is disabled or has no local API key.");

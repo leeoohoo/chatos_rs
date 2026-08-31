@@ -32,6 +32,7 @@ pub(super) fn model_config_public_value(
                 .is_some_and(|value| !value.is_empty()),
         "base_url": record.base_url,
         "enabled": record.enabled,
+        "task_enabled": record.task_enabled.unwrap_or(record.enabled),
         "supports_images": record.supports_images,
         "supports_reasoning": record.supports_reasoning,
         "supports_responses": record.supports_responses,

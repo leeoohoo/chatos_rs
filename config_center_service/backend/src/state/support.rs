@@ -366,6 +366,7 @@ pub(super) fn ensure_task_runner_runtime_values(
         } else if [
             TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
         ]
         .contains(&key.as_str())
         {

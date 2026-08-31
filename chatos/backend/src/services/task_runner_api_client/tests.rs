@@ -3,8 +3,7 @@
 
 use super::{
     ensure_task_runner_body_within_limit, exchange_task_runner_token_via_user_service,
-    signed_chatos_internal_request_with_secret,
-    signed_chatos_internal_request_with_secret_and_scope, TaskRunnerTaskRecord,
+    signed_chatos_internal_request_with_secret, TaskRunnerTaskRecord,
     UserServiceTaskRunnerExchange,
 };
 use axum::extract::State;
@@ -46,59 +45,6 @@ fn chatos_internal_request_uses_scoped_short_lived_token() {
     assert!(!request
         .headers()
         .contains_key("x-task-runner-internal-secret"));
-}
-
-#[test]
-fn chatos_model_catalog_request_uses_dedicated_read_scope() {
-    let request = signed_chatos_internal_request_with_secret_and_scope(
-        reqwest::Client::new()
-            .get("http://127.0.0.1:39090/internal/chatos/users/user-1/model-configs"),
-        "a-long-chatos-task-runner-secret",
-        "chatos.models.read",
-    )
-    .expect("signed request")
-    .build()
-    .expect("build request");
-    let token = request
-        .headers()
-        .get("x-task-runner-internal-token")
-        .and_then(|value| value.to_str().ok())
-        .expect("internal token");
-    chatos_service_runtime::verify_internal_service_token(
-        token,
-        "a-long-chatos-task-runner-secret",
-        "chatos-backend",
-        "task-runner",
-        "chatos.models.read",
-    )
-    .expect("valid internal token");
-}
-
-#[test]
-fn chatos_model_runtime_request_uses_dedicated_secret_scope() {
-    let request = signed_chatos_internal_request_with_secret_and_scope(
-        reqwest::Client::new().get(
-            "http://127.0.0.1:39090/internal/chatos/users/user-1/model-configs/model-1/runtime",
-        ),
-        "a-long-chatos-task-runner-secret",
-        "chatos.models.runtime",
-    )
-    .expect("signed request")
-    .build()
-    .expect("build request");
-    let token = request
-        .headers()
-        .get("x-task-runner-internal-token")
-        .and_then(|value| value.to_str().ok())
-        .expect("internal token");
-    chatos_service_runtime::verify_internal_service_token(
-        token,
-        "a-long-chatos-task-runner-secret",
-        "chatos-backend",
-        "task-runner",
-        "chatos.models.runtime",
-    )
-    .expect("valid internal token");
 }
 
 #[derive(Debug, Default)]

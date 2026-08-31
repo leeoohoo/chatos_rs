@@ -73,6 +73,7 @@ public sealed class ModelSettingsViewModelTests
             [
                 new("model-one", "Model One", "provider/model-one", null),
                 new("model-two", "Model Two", "provider/model-two", "high"),
+                new("chat-only", "Chat Only", "provider/chat-only", null, false),
             ]);
 
         public Task<ConversationRuntimeSettings> UpdateModelAsync(

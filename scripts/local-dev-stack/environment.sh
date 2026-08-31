@@ -239,6 +239,7 @@ export_local_env() {
   # Task Runner loads the authoritative value from Configuration Center at
   # startup unless the operator explicitly exports an environment override.
   export TASK_RUNNER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
+  export TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${PROJECT_SERVICE_INTERNAL_MTLS_PORT}"
   export TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET="$TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET"
@@ -343,7 +344,9 @@ local_connector_identity_path() {
 user_service_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    project-service) printf '%s/project-service.identity.pem' "$USER_SERVICE_MTLS_DIR" ;;
+    project-service|task-runner)
+      printf '%s/%s.identity.pem' "$USER_SERVICE_MTLS_DIR" "$caller"
+      ;;
     *) return 1 ;;
   esac
 }

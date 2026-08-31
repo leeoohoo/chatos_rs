@@ -21,6 +21,7 @@ extension NativeLocalConnectorService {
                     temperature: $0.temperature,
                     maxOutputTokens: $0.maxOutputTokens,
                     enabled: $0.enabled ?? true,
+                    taskEnabled: $0.taskEnabled ?? ($0.enabled ?? true),
                     hasAPIKey: $0.hasAPIKey ?? true,
                     supportsImages: $0.supportsImages ?? false,
                     supportsReasoning: $0.supportsReasoning ?? false,
@@ -75,7 +76,7 @@ extension NativeLocalConnectorService {
     public func updateModelConfig(id: String, update: LocalConnectorModelConfigUpdate) async throws {
         let token = try requireAccessToken()
         _ = try await gateway.updateModelConfig(token: token, id: id, update: update)
-        if !update.enabled, state.commandApprovalModelConfigID == id {
+        if !update.taskEnabled, state.commandApprovalModelConfigID == id {
             state.commandApprovalModelConfigID = nil
             state.commandApprovalThinkingLevel = nil
             try stateStore.save(state)
@@ -86,7 +87,9 @@ extension NativeLocalConnectorService {
         let token = try requireAccessToken()
         if let approvalID = settings.commandApprovalModelConfigID?.trimmedNonEmpty {
             let model = try await gateway.modelConfig(token: token, id: approvalID, includeSecret: false)
-            guard model.enabled ?? true, model.hasAPIKey ?? false else {
+            guard model.enabled ?? true,
+                  model.taskEnabled ?? (model.enabled ?? true),
+                  model.hasAPIKey ?? false else {
                 throw NativeConnectorError.server(
                     status: 409,
                     message: "本机审批 Agent 必须使用已启用且配置了密钥的模型。"

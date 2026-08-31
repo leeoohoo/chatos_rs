@@ -143,7 +143,7 @@ struct LocalConnectorModelsView: View {
                 return (model.id, try draft.validatedUpdate(modelName: model.name))
             })
             var nextSettings = settingsDraft
-            let enabledIDs = Set(updates.compactMap { $0.value.enabled ? $0.key : nil })
+            let enabledIDs = Set(updates.compactMap { $0.value.taskEnabled ? $0.key : nil })
             clearDisabledSelection(\.memorySummaryModelConfigID, thinking: \.memorySummaryThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)
             clearDisabledSelection(\.projectManagementAgentModelConfigID, thinking: \.projectManagementAgentThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)
             clearDisabledSelection(\.commandApprovalModelConfigID, thinking: \.commandApprovalThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)

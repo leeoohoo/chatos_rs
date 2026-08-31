@@ -50,6 +50,21 @@ pub(super) fn model_config_id_for(
     format!("model_{}", hex_prefix(&digest, 32))
 }
 
+pub(super) fn provider_model_config_id_for(
+    owner_user_id: &str,
+    source_provider_id: &str,
+    model: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(owner_user_id.trim().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(source_provider_id.trim().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(model.trim().as_bytes());
+    let digest = hasher.finalize();
+    format!("provider_model_{}", hex_prefix(&digest, 32))
+}
+
 fn hex_prefix(bytes: &[u8], max_chars: usize) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -92,7 +107,7 @@ pub(super) fn model_config_belongs_to_provider(
         && normalized_base_url(model_base_url) == normalized_base_url(provider_base_url)
 }
 
-pub(super) fn model_config_has_backing_provider(
+pub(in crate::api) fn model_config_has_backing_provider(
     model: &UserModelConfigRecord,
     providers: &[UserModelProviderRecord],
 ) -> bool {
@@ -238,6 +253,7 @@ mod tests {
             has_api_key: false,
             base_url: Some("https://gateway.example/v1".to_string()),
             enabled: true,
+            task_enabled: Some(true),
             supports_images: false,
             supports_reasoning: false,
             supports_responses: false,
@@ -303,6 +319,18 @@ mod tests {
             "glm",
             Some("https://same.example/v1"),
         ));
+    }
+
+    #[test]
+    fn provider_model_id_is_stable_when_editable_connection_fields_change() {
+        let before = provider_model_config_id_for("user-1", "provider-1", "gpt-test");
+        let after = provider_model_config_id_for("user-1", "provider-1", "gpt-test");
+
+        assert_eq!(before, after);
+        assert_ne!(
+            before,
+            provider_model_config_id_for("user-1", "provider-2", "gpt-test")
+        );
     }
 
     #[test]

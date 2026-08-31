@@ -496,6 +496,7 @@ public sealed class ConnectorGatewayHttpClient : IConnectorGatewayClient
         value.BaseUrl,
         value.ApiKey,
         value.Enabled,
+        value.TaskEnabled,
         value.SupportsResponses,
         value.ThinkingLevel,
         value.Temperature,
@@ -699,6 +700,8 @@ public sealed class ConnectorGatewayHttpClient : IConnectorGatewayClient
         public string? ApiKey { get; init; }
         [JsonPropertyName("enabled")]
         public bool Enabled { get; init; } = true;
+        [JsonPropertyName("task_enabled")]
+        public bool TaskEnabled { get; init; } = true;
         [JsonPropertyName("supports_responses")]
         public bool SupportsResponses { get; init; }
         [JsonPropertyName("thinking_level")]

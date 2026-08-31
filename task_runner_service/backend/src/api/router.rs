@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::middleware;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
@@ -18,8 +18,7 @@ use super::internal::{
     get_system_stats, get_user_execution_options, prometheus_metrics, replay_run_post_process,
 };
 use super::internal_auth::{
-    require_task_runner_internal_request, CHATOS_CALLER, MODEL_CONFIGS_SYNC_SCOPE,
-    PROJECTS_SYNC_SCOPE, USER_SERVICE_CALLER,
+    require_task_runner_internal_request, CHATOS_CALLER, PROJECTS_SYNC_SCOPE,
 };
 use super::mcp::{
     get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog,
@@ -27,9 +26,8 @@ use super::mcp::{
     mcp_management_ask_user_start, mcp_management_entrypoint, preview_mcp_prompt,
 };
 use super::models::{
-    create_model_config, delete_model_config, get_model_config, list_model_catalog,
-    list_model_config_usage, list_model_configs, preview_model_catalog, test_model_config,
-    update_model_config,
+    get_model_config, list_model_catalog, list_model_config_usage, list_model_configs,
+    preview_model_catalog, test_model_config,
 };
 use super::projects::{
     create_project, delete_project, get_project, import_chatos_project, list_project_tasks,
@@ -57,7 +55,6 @@ use super::tooling::{
     list_notepad_tags, list_terminal_processes, read_notepad_note, write_terminal_process,
 };
 use super::*;
-use crate::models::{ChatosSyncedModelConfigRequest, ModelConfigRecord};
 
 pub fn build_public_router(state: AppState) -> Router {
     let protected_api = Router::new()
@@ -125,20 +122,12 @@ pub fn build_public_router(state: AppState) -> Router {
             "/api/tasks/{id}/memory/summarize",
             post(summarize_task_memory),
         )
-        .route(
-            "/api/model-configs",
-            get(list_model_configs).post(create_model_config),
-        )
+        .route("/api/model-configs", get(list_model_configs))
         .route(
             "/api/model-configs/catalog/preview",
             post(preview_model_catalog),
         )
-        .route(
-            "/api/model-configs/{id}",
-            get(get_model_config)
-                .patch(update_model_config)
-                .delete(delete_model_config),
-        )
+        .route("/api/model-configs/{id}", get(get_model_config))
         .route("/api/model-configs/{id}/models", get(list_model_catalog))
         .route("/api/model-configs/{id}/test", post(test_model_config))
         .route("/api/model-configs/usage", get(list_model_config_usage))
@@ -242,18 +231,10 @@ pub fn build_public_router(state: AppState) -> Router {
 pub fn build_internal_router(state: AppState) -> Router {
     Router::new()
         .route(
-            "/api/chatos-sync/model-configs",
-            post(chatos_sync_upsert_model_config),
-        )
-        .route(
             "/api/chatos-sync/projects",
             get(sync_list_projects).post(import_chatos_project),
         )
         .route("/api/chatos-sync/projects/{id}", get(sync_get_project))
-        .route(
-            "/api/chatos-sync/model-configs/{id}",
-            delete(chatos_sync_delete_model_config),
-        )
         .route(
             "/internal/users/{owner_user_id}/execution-options",
             get(get_user_execution_options),
@@ -323,54 +304,4 @@ pub(super) fn require_chatos_project_sync(
         status: error.status,
         message: error.message,
     })
-}
-
-async fn chatos_sync_upsert_model_config(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<ChatosSyncedModelConfigRequest>,
-) -> Result<Json<ModelConfigRecord>, ApiError> {
-    require_task_runner_internal_request(
-        &state.config,
-        &headers,
-        &[USER_SERVICE_CALLER],
-        MODEL_CONFIGS_SYNC_SCOPE,
-    )
-    .map_err(|error| ApiError {
-        status: error.status,
-        message: error.message,
-    })?;
-    let record = state
-        .model_config_service
-        .upsert_chatos_model_config(request)
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(record))
-}
-
-async fn chatos_sync_delete_model_config(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<StatusCode, ApiError> {
-    require_task_runner_internal_request(
-        &state.config,
-        &headers,
-        &[USER_SERVICE_CALLER],
-        MODEL_CONFIGS_SYNC_SCOPE,
-    )
-    .map_err(|error| ApiError {
-        status: error.status,
-        message: error.message,
-    })?;
-    let deleted = state
-        .model_config_service
-        .delete_model_config(id.trim())
-        .await
-        .map_err(ApiError::internal)?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::not_found("model config not found"))
-    }
 }

@@ -60,6 +60,9 @@ internal sealed record ModelConfigDto
     [JsonPropertyName("enabled")]
     public bool? Enabled { get; init; }
 
+    [JsonPropertyName("task_enabled")]
+    public bool? TaskEnabled { get; init; }
+
     public string ModelName =>
         ModelNameValue.TrimmedOrNull() ?? Model.TrimmedOrNull() ?? Name;
 
@@ -67,7 +70,8 @@ internal sealed record ModelConfigDto
         Id,
         Name.TrimmedOrNull() ?? ModelName,
         ModelName,
-        ThinkingLevel.TrimmedOrNull());
+        ThinkingLevel.TrimmedOrNull(),
+        TaskEnabled != false);
 }
 
 internal static class ConversationStringExtensions

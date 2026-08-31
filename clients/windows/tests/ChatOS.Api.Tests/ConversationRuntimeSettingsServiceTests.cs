@@ -6,6 +6,30 @@ namespace ChatOS.Api.Tests;
 public sealed class ConversationRuntimeSettingsServiceTests
 {
     [Fact]
+    public async Task AvailableChatModelsPreserveTaskAvailabilityWithoutFilteringChatOnlyModels()
+    {
+        var store = new MemoryTokenStore();
+        store.Seed("valid");
+        var client = ApiTestClient.Create(store, request =>
+        {
+            Assert.Equal("/api/chatos/ai-model-configs", request.RequestUri?.AbsolutePath);
+            return StubHttpMessageHandler.Json("""
+                [
+                  {"id":"task-model","name":"Task","model_name":"gpt-task","enabled":true,"task_enabled":true},
+                  {"id":"chat-model","name":"Chat","model_name":"gpt-chat","enabled":true,"task_enabled":false}
+                ]
+                """);
+        });
+        var service = new ConversationRuntimeSettingsService(client);
+
+        var models = await service.FetchAvailableModelsAsync();
+
+        Assert.Equal(2, models.Count);
+        Assert.True(models.Single(model => model.Id == "task-model").TaskEnabled);
+        Assert.False(models.Single(model => model.Id == "chat-model").TaskEnabled);
+    }
+
+    [Fact]
     public async Task UpdatePlanModeUsesPutAndMapsResponse()
     {
         var store = new MemoryTokenStore();

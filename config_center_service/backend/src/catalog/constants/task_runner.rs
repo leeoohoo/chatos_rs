@@ -83,6 +83,8 @@ pub const TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY: &str =
     "task_runner.memory.auto_summary_enabled";
 pub const TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "task_runner.downstream.user_service_base_url";
+pub const TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
+    "task_runner.downstream.user_service_internal_base_url";
 pub const TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.user_service_request_timeout_ms";
 pub const TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY: &str =

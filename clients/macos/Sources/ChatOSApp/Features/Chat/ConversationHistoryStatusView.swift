@@ -34,6 +34,22 @@ struct ConversationHistoryStatusView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 7)
             .background(Color.orange.opacity(0.08))
+        } else if let error = conversation.runtimeSettingsError {
+            HStack(spacing: 8) {
+                Label(
+                    model.localized("会话设置更新失败", english: "Conversation settings update failed"),
+                    systemImage: "exclamationmark.triangle"
+                )
+                    .appFont(.caption.weight(.medium))
+                Text(error)
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 7)
+            .background(Color.orange.opacity(0.08))
         } else if let error = conversation.historyError {
             HStack(spacing: 8) {
                 Label(

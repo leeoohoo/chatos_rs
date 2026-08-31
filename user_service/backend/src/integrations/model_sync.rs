@@ -31,16 +31,6 @@ pub async fn sync_model_config_upsert(
         warnings.push(format!("memory_engine model update failed: {err}"));
     }
 
-    if let Err(err) = sync_task_runner_model_config(state, config).await {
-        warn!(
-            model_config_id = config.id.as_str(),
-            owner_user_id = config.owner_user_id.as_str(),
-            error = err.as_str(),
-            "sync model config to task_runner failed"
-        );
-        warnings.push(format!("task_runner model update failed: {err}"));
-    }
-
     warnings
 }
 
@@ -56,15 +46,6 @@ pub async fn sync_model_config_delete(state: &AppState, model_config_id: &str) -
         warnings.push(format!("memory_engine delete failed: {err}"));
     }
 
-    if let Err(err) = delete_task_runner_model_config(state, model_config_id).await {
-        warn!(
-            model_config_id,
-            error = err.as_str(),
-            "delete task_runner model config failed"
-        );
-        warnings.push(format!("task_runner delete failed: {err}"));
-    }
-
     warnings
 }
 
@@ -72,7 +53,7 @@ pub async fn sync_model_settings(
     state: &AppState,
     settings: &UserModelSettingsRecord,
 ) -> Vec<String> {
-    let mut warnings = sync_task_runner_model_settings(state, settings).await;
+    let mut warnings = Vec::new();
     let Some(memory_engine_base_url) =
         normalized_url(state.config.memory_engine_base_url.as_deref())
     else {
@@ -183,30 +164,6 @@ pub async fn sync_model_settings(
     warnings
 }
 
-async fn sync_task_runner_model_settings(
-    state: &AppState,
-    settings: &UserModelSettingsRecord,
-) -> Vec<String> {
-    let configs = match state
-        .store
-        .list_user_model_configs(Some(settings.user_id.as_str()))
-        .await
-    {
-        Ok(configs) => configs,
-        Err(err) => return vec![format!("task_runner settings update failed: {err}")],
-    };
-    let mut warnings = Vec::new();
-    for config in configs {
-        if let Err(err) = sync_task_runner_model_config(state, &config).await {
-            warnings.push(format!(
-                "task_runner retry setting update failed for {}: {err}",
-                config.id
-            ));
-        }
-    }
-    warnings
-}
-
 async fn sync_memory_engine_model_profile(
     state: &AppState,
     config: &UserModelConfigRecord,
@@ -258,7 +215,7 @@ async fn sync_memory_engine_model_profile(
         "thinking_level": thinking_level,
         "model_request_max_retries": model_request_max_retries,
         "is_default": is_default,
-        "enabled": config.enabled,
+        "enabled": config.enabled_for_tasks(),
     });
 
     let get_url = format!(
@@ -360,84 +317,6 @@ async fn list_memory_engine_model_profiles(
         .unwrap_or_default())
 }
 
-async fn sync_task_runner_model_config(
-    state: &AppState,
-    config: &UserModelConfigRecord,
-) -> Result<(), String> {
-    ensure_concrete_model(config)?;
-    ensure_supported_provider(config)?;
-    let Some(task_runner_base_url) = normalized_url(state.config.task_runner_base_url.as_deref())
-    else {
-        return Ok(());
-    };
-
-    let model_request_max_retries = state
-        .store
-        .get_user_model_settings(config.owner_user_id.as_str())
-        .await?
-        .map(|settings| settings.model_request_max_retries)
-        .unwrap_or(crate::models::DEFAULT_MODEL_REQUEST_MAX_RETRIES);
-    let payload = serde_json::json!({
-        "id": config.id,
-        "owner_user_id": config.owner_user_id,
-        "name": config.name,
-        "provider": task_runner_provider(config.provider.as_str()),
-        "prompt_vendor": config.prompt_vendor,
-        "base_url": config.base_url,
-        "api_key": config.api_key,
-        "model": config.model,
-        "usage_scenario": config.task_usage_scenario,
-        "thinking_level": config.task_thinking_level,
-        "temperature": config.temperature,
-        "max_output_tokens": config.max_output_tokens,
-        "model_request_max_retries": model_request_max_retries,
-        "supports_images": config.supports_images,
-        "supports_reasoning": config.supports_reasoning,
-        "supports_responses": config.supports_responses,
-        "enabled": config.enabled,
-    });
-
-    let _: Value = task_runner_request_json(
-        state,
-        Method::POST,
-        &format!("{task_runner_base_url}/api/chatos-sync/model-configs"),
-        Some(&payload),
-    )
-    .await?;
-    Ok(())
-}
-
-async fn delete_task_runner_model_config(
-    state: &AppState,
-    model_config_id: &str,
-) -> Result<(), String> {
-    let Some(task_runner_base_url) = normalized_url(state.config.task_runner_base_url.as_deref())
-    else {
-        return Ok(());
-    };
-    let endpoint = format!(
-        "{task_runner_base_url}/api/chatos-sync/model-configs/{}",
-        urlencoding::encode(model_config_id)
-    );
-    let response = task_runner_request(state, Method::DELETE, endpoint.as_str())?
-        .with_internal_trace_context()
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    if response.status().is_success() || response.status().as_u16() == 404 {
-        return Ok(());
-    }
-    let status = response.status().as_u16();
-    let body =
-        read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
-            .await;
-    Err(format!(
-        "task_runner delete request failed: {} {}",
-        status,
-        extract_error_message(body.as_str())
-    ))
-}
-
 async fn memory_engine_request_json<TResp, TBody>(
     state: &AppState,
     method: Method,
@@ -497,78 +376,6 @@ fn signed_memory_engine_request(
         .header("x-memory-internal-token", token))
 }
 
-fn task_runner_request(
-    state: &AppState,
-    method: Method,
-    endpoint: &str,
-) -> Result<reqwest::RequestBuilder, String> {
-    let client = state
-        .task_runner_http_client
-        .as_ref()
-        .ok_or_else(|| "Task Runner mTLS client is not configured".to_string())?;
-    let secret = normalized_text(state.config.task_runner_internal_api_secret.as_deref())
-        .ok_or_else(|| "User Service Task Runner internal secret is not configured".to_string())?;
-    signed_task_runner_request(client.request(method, endpoint), secret.as_str())
-}
-
-fn signed_task_runner_request(
-    request: reqwest::RequestBuilder,
-    secret: &str,
-) -> Result<reqwest::RequestBuilder, String> {
-    let token = chatos_service_runtime::issue_internal_service_token(
-        secret.trim(),
-        "user-service",
-        "task-runner",
-        "model-configs.sync",
-        60,
-    )?;
-    Ok(request
-        .header("x-task-runner-caller", "user-service")
-        .header("x-task-runner-internal-token", token))
-}
-
-async fn task_runner_request_json<TResp, TBody>(
-    state: &AppState,
-    method: Method,
-    endpoint: &str,
-    body: Option<&TBody>,
-) -> Result<TResp, String>
-where
-    TResp: serde::de::DeserializeOwned,
-    TBody: Serialize + ?Sized,
-{
-    let mut request = task_runner_request(state, method, endpoint)?;
-    if let Some(body) = body {
-        request = request.json(body);
-    }
-    let response = request
-        .with_internal_trace_context()
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    let status = response.status();
-    if !status.is_success() {
-        let body =
-            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
-                .await;
-        return Err(format!(
-            "task_runner request failed: {} {}",
-            status.as_u16(),
-            extract_error_message(body.as_str())
-        ));
-    }
-    read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES).await
-}
-
-fn task_runner_provider(provider: &str) -> &'static str {
-    match provider.trim() {
-        "deepseek" => "deepseek",
-        "kimi" => "kimik2",
-        "glm" => "glm",
-        _ => "openai",
-    }
-}
-
 fn memory_engine_provider(provider: &str) -> &'static str {
     match provider.trim() {
         "deepseek" => "deepseek",
@@ -594,7 +401,7 @@ fn ensure_supported_provider(config: &UserModelConfigRecord) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{signed_memory_engine_request, signed_task_runner_request};
+    use super::signed_memory_engine_request;
 
     #[test]
     fn memory_engine_request_uses_scoped_token_without_operator_header() {
@@ -628,46 +435,4 @@ mod tests {
         .expect("valid token");
     }
 
-    #[test]
-    fn task_runner_model_sync_uses_scoped_token_without_raw_secret() {
-        let request = signed_task_runner_request(
-            reqwest::Client::new().post("https://task-runner.test/model-configs"),
-            "a-long-user-service-task-runner-secret",
-        )
-        .expect("signed request")
-        .build()
-        .expect("request");
-
-        assert!(!request
-            .headers()
-            .contains_key("x-task-runner-internal-secret"));
-        assert_eq!(
-            request
-                .headers()
-                .get("x-task-runner-caller")
-                .and_then(|value| value.to_str().ok()),
-            Some("user-service")
-        );
-        let token = request
-            .headers()
-            .get("x-task-runner-internal-token")
-            .and_then(|value| value.to_str().ok())
-            .expect("token");
-        chatos_service_runtime::verify_internal_service_token(
-            token,
-            "a-long-user-service-task-runner-secret",
-            "user-service",
-            "task-runner",
-            "model-configs.sync",
-        )
-        .expect("valid token");
-        assert!(chatos_service_runtime::verify_internal_service_token(
-            token,
-            "a-long-user-service-task-runner-secret",
-            "user-service",
-            "task-runner",
-            "projects.sync",
-        )
-        .is_err());
-    }
 }

@@ -55,9 +55,9 @@ private struct LocalConnectorTaskModelRow: View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: model.supportsReasoning ? "sparkles" : "text.bubble")
-                    .foregroundStyle(draft.enabled ? Color.accentColor : .secondary)
+                    .foregroundStyle(draft.taskEnabled ? Color.accentColor : .secondary)
                     .frame(width: 34, height: 34)
-                    .background(.tint.opacity(draft.enabled ? 0.1 : 0.04), in: RoundedRectangle(cornerRadius: 9))
+                    .background(.tint.opacity(draft.taskEnabled ? 0.1 : 0.04), in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.name).appFont(.headline)
                     Text("\(model.provider) · \(model.modelName)")
@@ -71,7 +71,10 @@ private struct LocalConnectorTaskModelRow: View {
                         .appFont(.caption)
                         .foregroundStyle(.orange)
                 }
-                Toggle(appModel.localized("启用", english: "Enabled"), isOn: $draft.enabled)
+                Toggle(
+                    appModel.localized("用于任务", english: "Use for Tasks"),
+                    isOn: $draft.taskEnabled
+                )
                     .toggleStyle(.switch)
                     .controlSize(.small)
             }
@@ -106,7 +109,7 @@ private struct LocalConnectorTaskModelRow: View {
                 }
             }
             .textFieldStyle(.roundedBorder)
-            .disabled(!draft.enabled)
+            .disabled(!draft.taskEnabled)
         }
         .padding(14)
         .background(.background, in: RoundedRectangle(cornerRadius: 12))
@@ -114,7 +117,7 @@ private struct LocalConnectorTaskModelRow: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(.separator.opacity(0.65))
         }
-        .opacity(draft.enabled ? 1 : 0.62)
+        .opacity(draft.taskEnabled ? 1 : 0.62)
     }
 
     private func fieldTitle(_ title: String) -> some View {

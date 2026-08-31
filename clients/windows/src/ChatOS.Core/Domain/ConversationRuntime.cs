@@ -11,7 +11,8 @@ public sealed record ConversationModelOption(
     string Id,
     string DisplayName,
     string ModelName,
-    string? ThinkingLevel);
+    string? ThinkingLevel,
+    bool TaskEnabled = true);
 
 public sealed record ConversationSendCommand(
     string ConversationId,

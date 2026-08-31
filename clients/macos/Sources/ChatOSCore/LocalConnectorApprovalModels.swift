@@ -97,6 +97,7 @@ public struct LocalConnectorModelConfig: Codable, Identifiable, Sendable, Equata
     public var temperature: Double?
     public var maxOutputTokens: Int?
     public var enabled: Bool
+    public var taskEnabled: Bool
     public var hasAPIKey: Bool
     public var supportsImages: Bool
     public var supportsReasoning: Bool
@@ -115,6 +116,7 @@ public struct LocalConnectorModelConfig: Codable, Identifiable, Sendable, Equata
         temperature: Double? = nil,
         maxOutputTokens: Int? = nil,
         enabled: Bool,
+        taskEnabled: Bool = true,
         hasAPIKey: Bool,
         supportsImages: Bool,
         supportsReasoning: Bool,
@@ -132,6 +134,7 @@ public struct LocalConnectorModelConfig: Codable, Identifiable, Sendable, Equata
         self.temperature = temperature
         self.maxOutputTokens = maxOutputTokens
         self.enabled = enabled
+        self.taskEnabled = taskEnabled
         self.hasAPIKey = hasAPIKey
         self.supportsImages = supportsImages
         self.supportsReasoning = supportsReasoning

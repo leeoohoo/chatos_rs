@@ -42,23 +42,6 @@ pub(super) async fn list_model_configs(
     Ok(Json(redact_workspace_paths(&state, models)?))
 }
 
-pub(super) async fn create_model_config(
-    State(state): State<AppState>,
-    Extension(current_user): Extension<CurrentUser>,
-    Json(input): Json<CreateModelConfigRequest>,
-) -> Result<(StatusCode, Json<ModelConfigRecord>), ApiError> {
-    require_admin_user(&current_user)?;
-    let model = state
-        .model_config_service
-        .create_model_config(input)
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(redact_workspace_paths(&state, model)?),
-    ))
-}
-
 pub(super) async fn get_model_config(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -77,57 +60,6 @@ pub(super) async fn get_model_config(
         .next()
         .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
     Ok(Json(redact_workspace_paths(&state, model)?))
-}
-
-pub(super) async fn update_model_config(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-    Extension(current_user): Extension<CurrentUser>,
-    Json(input): Json<UpdateModelConfigRequest>,
-) -> Result<Json<ModelConfigRecord>, ApiError> {
-    let existing = state
-        .model_config_service
-        .get_model_config(&id)
-        .await
-        .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    ensure_owned_resource_access(existing.owner_user_id.as_deref(), &current_user)?;
-    let model = state
-        .model_config_service
-        .update_model_config(&id, input)
-        .await
-        .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    let model = attach_model_owner_labels(&state, &current_user, vec![model])
-        .await
-        .into_iter()
-        .next()
-        .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    Ok(Json(redact_workspace_paths(&state, model)?))
-}
-
-pub(super) async fn delete_model_config(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-    Extension(current_user): Extension<CurrentUser>,
-) -> Result<StatusCode, ApiError> {
-    let existing = state
-        .model_config_service
-        .get_model_config(&id)
-        .await
-        .map_err(ApiError::bad_request)?
-        .ok_or_else(|| ApiError::not_found(format!("模型配置不存在: {id}")))?;
-    ensure_owned_resource_access(existing.owner_user_id.as_deref(), &current_user)?;
-    if state
-        .model_config_service
-        .delete_model_config(&id)
-        .await
-        .map_err(ApiError::bad_request)?
-    {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::not_found(format!("模型配置不存在: {id}")))
-    }
 }
 
 pub(super) async fn test_model_config(

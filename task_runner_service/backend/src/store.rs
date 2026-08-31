@@ -302,7 +302,7 @@ pub(crate) struct InMemoryStore {
 pub(crate) struct MongoStore {
     tasks: Collection<TaskRecord>,
     task_projects: Collection<TaskProjectRecord>,
-    model_configs: Collection<ModelConfigRecord>,
+    user_service_model_source: UserServiceModelSource,
     runtime_settings: Collection<RuntimeSettingsRecord>,
     runs: Collection<TaskRunRecord>,
     run_events: Collection<TaskRunEventRecord>,
@@ -315,6 +315,13 @@ pub(crate) struct MongoStore {
 }
 
 #[derive(Clone)]
+pub(crate) struct UserServiceModelSource {
+    base_url: String,
+    http_client: reqwest::Client,
+    signing_secret: String,
+}
+
+#[derive(Clone)]
 pub(crate) enum AppStore {
     InMemory(InMemoryStore),
     Mongo(MongoStore),
@@ -324,9 +331,22 @@ impl AppStore {
     pub async fn new(config: &AppConfig) -> Result<Self, String> {
         let (run_event_sender, _) = broadcast::channel(512);
         match config.store_mode {
-            StoreMode::Memory => Ok(Self::InMemory(InMemoryStore::new(run_event_sender))),
+            StoreMode::Memory => {
+                #[cfg(test)]
+                {
+                    Ok(Self::InMemory(InMemoryStore::new(run_event_sender)))
+                }
+                #[cfg(not(test))]
+                {
+                    let _ = run_event_sender;
+                    Err(
+                        "TASK_RUNNER_STORE_MODE=memory is test-only; production model configuration is read from User Service"
+                            .to_string(),
+                    )
+                }
+            }
             StoreMode::Mongo => Ok(Self::Mongo(
-                MongoStore::connect(&config.database_url, run_event_sender).await?,
+                MongoStore::connect(config, run_event_sender).await?,
             )),
         }
     }

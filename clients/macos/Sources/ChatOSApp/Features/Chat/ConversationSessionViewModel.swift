@@ -21,6 +21,7 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published private(set) var reasoningEnabled = false
     @Published private(set) var taskGraphAvailability: [String: Bool] = [:]
     @Published var historyError: String?
+    @Published var runtimeSettingsError: String?
     @Published var sendError: String?
     @Published var selectedTurnID: String?
     @Published var draft = ""
@@ -293,6 +294,7 @@ final class ConversationSessionViewModel: ObservableObject {
         guard allowsPlanMode, let runtimeSettingsService else { return }
         let previous = planModeEnabled
         planModeEnabled = enabled
+        runtimeSettingsError = nil
         isUpdatingRuntimeSettings = true
         Task {
             do {
@@ -303,7 +305,7 @@ final class ConversationSessionViewModel: ObservableObject {
                 applyRuntimeSettings(settings)
             } catch {
                 planModeEnabled = previous
-                historyError = error.localizedDescription
+                runtimeSettingsError = error.localizedDescription
             }
             isUpdatingRuntimeSettings = false
         }
@@ -323,6 +325,7 @@ final class ConversationSessionViewModel: ObservableObject {
               selectedModelID != modelID else { return }
         let previous = selectedModelID
         selectedModelID = modelID
+        runtimeSettingsError = nil
         isUpdatingRuntimeSettings = true
         Task {
             do {
@@ -333,7 +336,7 @@ final class ConversationSessionViewModel: ObservableObject {
                 applyRuntimeSettings(settings)
             } catch {
                 selectedModelID = previous
-                historyError = error.localizedDescription
+                runtimeSettingsError = error.localizedDescription
             }
             isUpdatingRuntimeSettings = false
         }
@@ -343,6 +346,7 @@ final class ConversationSessionViewModel: ObservableObject {
         guard let runtimeSettingsService else { return }
         let previous = reasoningEnabled
         reasoningEnabled = enabled
+        runtimeSettingsError = nil
         isUpdatingRuntimeSettings = true
         Task {
             do {
@@ -353,7 +357,7 @@ final class ConversationSessionViewModel: ObservableObject {
                 applyRuntimeSettings(settings)
             } catch {
                 reasoningEnabled = previous
-                historyError = error.localizedDescription
+                runtimeSettingsError = error.localizedDescription
             }
             isUpdatingRuntimeSettings = false
         }
@@ -368,7 +372,7 @@ final class ConversationSessionViewModel: ObservableObject {
             availableModels = resolvedModels
             applyRuntimeSettings(resolvedSettings)
         } catch {
-            historyError = error.localizedDescription
+            runtimeSettingsError = error.localizedDescription
         }
     }
 

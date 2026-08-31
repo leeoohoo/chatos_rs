@@ -88,19 +88,19 @@ public struct LocalConnectorModelConfigUpdate: Codable, Sendable, Equatable {
     public var taskThinkingLevel: String?
     public var temperature: Double?
     public var maxOutputTokens: Int?
-    public var enabled: Bool
+    public var taskEnabled: Bool
 
     public init(
         taskUsageScenario: String?,
         taskThinkingLevel: String?,
         temperature: Double?,
         maxOutputTokens: Int?,
-        enabled: Bool
+        taskEnabled: Bool
     ) {
         self.taskUsageScenario = taskUsageScenario
         self.taskThinkingLevel = taskThinkingLevel
         self.temperature = temperature
         self.maxOutputTokens = maxOutputTokens
-        self.enabled = enabled
+        self.taskEnabled = taskEnabled
     }
 }

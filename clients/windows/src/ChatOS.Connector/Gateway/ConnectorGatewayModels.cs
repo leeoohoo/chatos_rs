@@ -69,6 +69,7 @@ public sealed record ConnectorGatewayModelConfig(
     string? BaseUrl,
     string? ApiKey,
     bool Enabled,
+    bool TaskEnabled,
     bool SupportsResponses,
     string? ThinkingLevel,
     double? Temperature,

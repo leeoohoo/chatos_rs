@@ -165,6 +165,14 @@ pub fn build_internal_router(state: AppState) -> Router {
                 "/api/internal/users/{user_id}/model-settings",
                 get(internal_models::get_user_model_settings),
             )
+            .route(
+                "/api/internal/task-runner/model-configs",
+                get(internal_models::list_task_model_configs),
+            )
+            .route(
+                "/api/internal/task-runner/model-configs/{model_config_id}",
+                get(internal_models::get_task_model_config),
+            )
             .merge(internal_harness_repo_write)
             .merge(protected_internal)
             .with_state(state),
@@ -371,10 +379,7 @@ mod tests {
             memory_engine_operator_token: None,
             memory_engine_mtls_ca_cert_path: None,
             memory_engine_mtls_client_identity_path: None,
-            task_runner_base_url: None,
             task_runner_internal_api_secret: None,
-            task_runner_mtls_ca_cert_path: None,
-            task_runner_mtls_client_identity_path: None,
             downstream_request_timeout_ms: 5000,
             harness_provisioning_enabled: false,
             harness_base_url: None,

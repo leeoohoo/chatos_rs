@@ -75,6 +75,23 @@ struct NativeConnectorGatewayDTOTests {
         #expect(provider.supportsResponses == true)
         #expect(provider.importedModelCount == 8)
 
+        let modelData = Data(
+            """
+            {
+              "id": "chat-only-model",
+              "name": "Chat Only",
+              "provider": "gpt",
+              "model": "gpt-chat",
+              "enabled": true,
+              "task_enabled": false,
+              "has_api_key": true
+            }
+            """.utf8
+        )
+        let model = try JSONDecoder().decode(GatewayModelConfigDTO.self, from: modelData)
+        #expect(model.enabled == true)
+        #expect(model.taskEnabled == false)
+
         let settingsData = Data(
             """
             {

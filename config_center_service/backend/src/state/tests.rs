@@ -131,6 +131,7 @@ use crate::catalog::{
     TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
     TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY, TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
     TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY,
+    TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
     TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY,
     USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
     USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY, USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
@@ -696,6 +697,10 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
             json!("http://127.0.0.1:39190"),
         ),
         (
+            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://127.0.0.1:39192"),
+        ),
+        (
             TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(5_000),
         ),
@@ -787,6 +792,12 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_USER_SERVICE_BASE_URL"),
         Some(&"http://127.0.0.1:39190".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL"),
+        Some(&"https://127.0.0.1:39192".to_string())
     );
     assert_eq!(
         snapshot

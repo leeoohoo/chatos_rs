@@ -135,6 +135,10 @@ pub(in crate::api) async fn create_model_config(
         }),
         base_url: base_url.or_else(|| existing.as_ref().and_then(|item| item.base_url.clone())),
         enabled: input.enabled.unwrap_or(true),
+        task_enabled: input
+            .task_enabled
+            .or_else(|| existing.as_ref().and_then(|item| item.task_enabled))
+            .or(Some(true)),
         supports_images: input.supports_images.unwrap_or(false),
         supports_reasoning: input.supports_reasoning.unwrap_or(false),
         supports_responses: input.supports_responses.unwrap_or(false),
@@ -252,6 +256,9 @@ pub(in crate::api) async fn update_model_config(
     }
     if let Some(enabled) = input.enabled {
         record.enabled = enabled;
+    }
+    if let Some(task_enabled) = input.task_enabled {
+        record.task_enabled = Some(task_enabled);
     }
     if let Some(supports_images) = input.supports_images {
         record.supports_images = supports_images;
