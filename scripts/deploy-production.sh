@@ -199,6 +199,12 @@ cp -a "$previous_release/docker/secrets" "$release_dir/docker/secrets"
 
 ensure_admin_certificate
 
+echo "[INFO] validating copied production secrets and mTLS material"
+(
+  cd "$release_dir"
+  ./docker/deploy.sh validate-runtime-material
+)
+
 python3 - "$release_dir/docker/bootstrap.conf" "$release_tag" <<'PY'
 from pathlib import Path
 import secrets
