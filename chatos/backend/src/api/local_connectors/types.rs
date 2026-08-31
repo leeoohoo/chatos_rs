@@ -125,6 +125,7 @@ pub(super) struct RelayTerminalExecRequest<'a> {
     pub(super) cwd: Option<String>,
     pub(super) timeout_ms: Option<u64>,
     pub(super) source: Option<String>,
+    pub(super) controlled_network: RelayControlledNetworkPolicyRequest,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,7 +135,11 @@ pub(super) struct RelayTerminalSessionCreateRequest<'a> {
     pub(super) cwd: Option<&'a str>,
     pub(super) cols: u16,
     pub(super) rows: u16,
+    pub(super) controlled_network: RelayControlledNetworkPolicyRequest,
 }
+
+#[derive(Debug, Default, Serialize)]
+pub(super) struct RelayControlledNetworkPolicyRequest {}
 
 #[derive(Debug, Serialize)]
 pub(super) struct RelayTerminalInputRequest<'a> {
@@ -166,4 +171,37 @@ pub(super) struct McpToolCallRequest<'a> {
 pub(super) struct McpToolCallParams<'a> {
     pub(super) name: &'a str,
     pub(super) arguments: Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_relay_requests_ask_service_for_authoritative_network_policy() {
+        let exec = serde_json::to_value(RelayTerminalExecRequest {
+            workspace_id: "workspace-1",
+            command: "curl",
+            args: vec!["https://api.example.com".to_string()],
+            cwd: None,
+            timeout_ms: None,
+            source: None,
+            controlled_network: RelayControlledNetworkPolicyRequest::default(),
+        })
+        .expect("serialize terminal exec relay request");
+        let session = serde_json::to_value(RelayTerminalSessionCreateRequest {
+            workspace_id: "workspace-1",
+            terminal_session_id: "terminal-1",
+            cwd: None,
+            cols: 120,
+            rows: 32,
+            controlled_network: RelayControlledNetworkPolicyRequest::default(),
+        })
+        .expect("serialize terminal session relay request");
+
+        assert_eq!(exec["controlled_network"], serde_json::json!({}));
+        assert_eq!(session["controlled_network"], serde_json::json!({}));
+        assert!(exec["controlled_network"].get("windows_user_sid").is_none());
+        assert!(exec["controlled_network"].get("allowed_hosts").is_none());
+    }
 }

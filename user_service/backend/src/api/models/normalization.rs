@@ -6,6 +6,7 @@ use chatos_plugin_management_sdk::{normalize_agent_prompt_vendor, AgentPromptVen
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
 
+use crate::models::{UserModelConfigRecord, UserModelProviderRecord};
 use crate::secrets::is_secret_encrypted;
 
 use super::super::bad_request;
@@ -89,6 +90,23 @@ pub(super) fn model_config_belongs_to_provider(
 
     model_provider == provider
         && normalized_base_url(model_base_url) == normalized_base_url(provider_base_url)
+}
+
+pub(super) fn model_config_has_backing_provider(
+    model: &UserModelConfigRecord,
+    providers: &[UserModelProviderRecord],
+) -> bool {
+    providers.iter().any(|provider| {
+        provider.owner_user_id == model.owner_user_id
+            && model_config_belongs_to_provider(
+                model.source_provider_id.as_deref(),
+                model.provider.as_str(),
+                model.base_url.as_deref(),
+                provider.id.as_str(),
+                provider.provider.as_str(),
+                provider.base_url.as_deref(),
+            )
+    })
 }
 
 pub(super) fn normalize_provider_input(
@@ -202,6 +220,55 @@ pub(super) fn normalize_thinking_level_input(
 mod tests {
     use super::*;
 
+    fn model(source_provider_id: Option<&str>) -> UserModelConfigRecord {
+        UserModelConfigRecord {
+            id: "model-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            source_provider_id: source_provider_id.map(ToOwned::to_owned),
+            name: "Model".to_string(),
+            provider: "gpt".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
+            model: "gpt-test".to_string(),
+            thinking_level: None,
+            task_usage_scenario: None,
+            task_thinking_level: None,
+            temperature: None,
+            max_output_tokens: None,
+            api_key: None,
+            has_api_key: false,
+            base_url: Some("https://gateway.example/v1".to_string()),
+            enabled: true,
+            supports_images: false,
+            supports_reasoning: false,
+            supports_responses: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    fn provider(owner_user_id: &str) -> UserModelProviderRecord {
+        UserModelProviderRecord {
+            id: "provider-1".to_string(),
+            owner_user_id: owner_user_id.to_string(),
+            name: "Provider".to_string(),
+            provider: "gpt".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
+            api_key: None,
+            has_api_key: false,
+            base_url: Some("https://gateway.example/v1".to_string()),
+            enabled: true,
+            supports_images: false,
+            supports_reasoning: false,
+            supports_responses: false,
+            last_sync_status: None,
+            last_sync_error: None,
+            last_synced_at: None,
+            imported_model_count: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
     #[test]
     fn normalizes_glm_provider_aliases_and_prompt_vendor() {
         let provider = normalize_provider_input(Some("zhipu".to_string())).expect("provider");
@@ -247,6 +314,23 @@ mod tests {
             "provider-1",
             "glm",
             Some("https://same.example/v1"),
+        ));
+    }
+
+    #[test]
+    fn orphan_models_are_not_backed_by_an_unrelated_or_missing_provider() {
+        assert!(!model_config_has_backing_provider(&model(None), &[]));
+        assert!(!model_config_has_backing_provider(
+            &model(None),
+            &[provider("user-2")]
+        ));
+        assert!(model_config_has_backing_provider(
+            &model(None),
+            &[provider("user-1")]
+        ));
+        assert!(model_config_has_backing_provider(
+            &model(Some("provider-1")),
+            &[provider("user-1")]
         ));
     }
 }

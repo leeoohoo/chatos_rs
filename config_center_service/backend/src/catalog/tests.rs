@@ -1287,6 +1287,21 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
             "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID",
             "string",
         ),
+        (
+            LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
+            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS",
+            "integer",
+        ),
+        (
+            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
+            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH",
+            "string",
+        ),
+        (
+            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
+            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID",
+            "string",
+        ),
     ] {
         let definition = definitions
             .iter()

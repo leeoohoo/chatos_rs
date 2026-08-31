@@ -3,7 +3,6 @@
 
 use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
-use std::collections::HashSet;
 
 use crate::auth::CurrentPrincipal;
 use crate::integrations::{sync_model_config_delete, sync_model_config_upsert};
@@ -18,8 +17,9 @@ use super::access::{ensure_model_access, ensure_owner_user_exists, resolve_targe
 use super::contracts::{ModelConfigGetQuery, UserScopeQuery};
 use super::model_values::model_config_public_value;
 use super::normalization::{
-    is_supported_provider, model_config_id_for, normalize_api_key_input, normalize_optional_string,
-    normalize_prompt_vendor_input, normalize_provider_input, normalize_thinking_level_input,
+    is_supported_provider, model_config_has_backing_provider, model_config_id_for,
+    normalize_api_key_input, normalize_optional_string, normalize_prompt_vendor_input,
+    normalize_provider_input, normalize_thinking_level_input,
 };
 
 pub(in crate::api) async fn list_model_configs(
@@ -37,7 +37,7 @@ pub(in crate::api) async fn list_model_configs(
             .await
     }
     .map_err(internal_error)?;
-    let provider_ids = if principal.is_super_admin() && owner_user_id.is_none() {
+    let providers = if principal.is_super_admin() && owner_user_id.is_none() {
         state.store.list_user_model_providers(None).await
     } else {
         state
@@ -45,10 +45,7 @@ pub(in crate::api) async fn list_model_configs(
             .list_user_model_providers(owner_user_id.as_deref())
             .await
     }
-    .map_err(internal_error)?
-    .into_iter()
-    .map(|provider| provider.id)
-    .collect::<HashSet<_>>();
+    .map_err(internal_error)?;
 
     Ok(Json(
         items
@@ -56,11 +53,7 @@ pub(in crate::api) async fn list_model_configs(
             .filter(|item| {
                 !item.model.trim().is_empty() && is_supported_provider(item.provider.as_str())
             })
-            .filter(|item| {
-                item.source_provider_id
-                    .as_deref()
-                    .is_none_or(|provider_id| provider_ids.contains(provider_id))
-            })
+            .filter(|item| model_config_has_backing_provider(item, providers.as_slice()))
             .map(|item| model_config_public_value(item, false, None))
             .collect::<Vec<_>>(),
     ))
@@ -180,6 +173,14 @@ pub(in crate::api) async fn get_model_config(
         return Err(not_found("model config not found"));
     }
     ensure_model_access(&principal, &record)?;
+    let providers = state
+        .store
+        .list_user_model_providers(Some(record.owner_user_id.as_str()))
+        .await
+        .map_err(internal_error)?;
+    if !model_config_has_backing_provider(&record, providers.as_slice()) {
+        return Err(not_found("model config not found"));
+    }
     let include_secret = query.include_secret.unwrap_or(false);
     Ok(Json(model_config_public_value(
         record,
@@ -206,6 +207,14 @@ pub(in crate::api) async fn update_model_config(
         return Err(not_found("model config not found"));
     }
     ensure_model_access(&principal, &record)?;
+    let providers = state
+        .store
+        .list_user_model_providers(Some(record.owner_user_id.as_str()))
+        .await
+        .map_err(internal_error)?;
+    if !model_config_has_backing_provider(&record, providers.as_slice()) {
+        return Err(not_found("model config not found"));
+    }
 
     if let Some(name) = input.name {
         let Some(name) = normalize_optional_string(Some(name)) else {

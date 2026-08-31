@@ -51,6 +51,12 @@ pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY: &str
     "local_connector.managed_requirements.signing_key_path";
 pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY: &str =
     "local_connector.managed_requirements.signing_key_id";
+pub const LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY: &str =
+    "local_connector.controlled_network.policy_ttl_seconds";
+pub const LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY: &str =
+    "local_connector.controlled_network.signing_key_path";
+pub const LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY: &str =
+    "local_connector.controlled_network.signing_key_id";
 pub const LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY: &str =
     "local_connector.security.relay_signing.key_path";
 pub const LOCAL_CONNECTOR_RELAY_SIGNING_KEY_ID_CONFIG_KEY: &str =

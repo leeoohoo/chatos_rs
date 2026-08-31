@@ -39,6 +39,44 @@ pub(in crate::api::configs) async fn list_ai_model_configs(
         );
     }
 
+    if let Some(base_url) = configured_user_service_base_url() {
+        let access_token = match user_service_access_token_for_auth(&auth) {
+            Ok(token) => token,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "build user_service access token failed", "detail": err})),
+                );
+            }
+        };
+        return match user_service_api_client::list_model_configs(
+            base_url.as_str(),
+            access_token.as_str(),
+            None,
+            user_service_timeout_ms(),
+        )
+        .await
+        {
+            Ok(items) => (
+                StatusCode::OK,
+                Json(Value::Array(
+                    items
+                        .into_iter()
+                        .map(from_user_service_model_config)
+                        .map(|item| to_response_value(&item))
+                        .collect(),
+                )),
+            ),
+            Err(err) => (
+                proxy_status_from_user_service_error(err.as_str()),
+                Json(json!({
+                    "error": "load ai model configs via user_service failed",
+                    "detail": err
+                })),
+            ),
+        };
+    }
+
     let include_all = matches!(auth.role.trim(), "admin" | "super_admin");
     match task_runner_api_client::list_chatos_model_configs(auth.user_id.as_str(), include_all)
         .await

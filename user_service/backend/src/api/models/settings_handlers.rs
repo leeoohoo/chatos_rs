@@ -17,7 +17,9 @@ use super::super::{bad_request, forbidden, internal_error, ApiResult};
 use super::access::{ensure_owner_user_exists, resolve_target_user_id};
 use super::contracts::UserScopeQuery;
 use super::model_values::model_settings_public_value;
-use super::normalization::{normalize_optional_string, normalize_thinking_level_input};
+use super::normalization::{
+    model_config_has_backing_provider, normalize_optional_string, normalize_thinking_level_input,
+};
 
 pub(in crate::api) async fn get_model_settings(
     State(state): State<AppState>,
@@ -198,6 +200,16 @@ async fn validate_settings_model_config(
     if model_config.owner_user_id != user_id {
         return Err(forbidden(format!(
             "{field_name} does not belong to the target user"
+        )));
+    }
+    let providers = state
+        .store
+        .list_user_model_providers(Some(user_id))
+        .await
+        .map_err(internal_error)?;
+    if !model_config_has_backing_provider(&model_config, providers.as_slice()) {
+        return Err(bad_request(format!(
+            "{field_name} is not backed by an active model provider"
         )));
     }
     if model_config.model.trim().is_empty() {

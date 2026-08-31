@@ -19,6 +19,39 @@ impl MongoConnectorStore {
             .map_err(|err| err.to_string())
     }
 
+    pub async fn register_device_windows_user_sid(
+        &self,
+        owner_user_id: &str,
+        id: &str,
+        windows_user_sid: &str,
+    ) -> Result<bool, String> {
+        let now = now_rfc3339();
+        let result = self
+            .devices
+            .update_one(
+                doc! {
+                    "id": id,
+                    "owner_user_id": owner_user_id,
+                    "status": { "$ne": DEVICE_STATUS_REVOKED },
+                    "$or": [
+                        { "windows_user_sid": { "$exists": false } },
+                        { "windows_user_sid": null },
+                        { "windows_user_sid": windows_user_sid },
+                    ],
+                },
+                doc! {
+                    "$set": {
+                        "windows_user_sid": windows_user_sid,
+                        "updated_at": &now,
+                    }
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(result.matched_count == 1)
+    }
+
     pub async fn list_devices(
         &self,
         owner_user_id: &str,

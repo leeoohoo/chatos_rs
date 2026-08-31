@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
+use crate::controlled_network::normalize_windows_sid;
 use crate::models::{
     normalize_optional_text, CurrentUser, LocalConnectorDevice, LocalConnectorSession,
     DEVICE_STATUS_REVOKED,
@@ -192,7 +193,24 @@ pub(super) async fn connect_device(
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     let device = load_owned_device(&state, &user, id.as_str(), true).await?;
-    verify_device_connect_signature(&state, &headers, &device).await?;
+    if let Some(windows_user_sid) =
+        verify_device_connect_signature(&state, &headers, &device).await?
+    {
+        let registered = state
+            .store
+            .register_device_windows_user_sid(
+                user.effective_owner_user_id(),
+                device.id.as_str(),
+                windows_user_sid.as_str(),
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        if !registered {
+            return Err(ApiError::unauthorized(
+                "Local Connector Windows user changed; re-pair this device before reconnecting",
+            ));
+        }
+    }
     let owner_user_id = user.effective_owner_user_id().to_string();
     let session = LocalConnectorSession::new(
         owner_user_id.clone(),
@@ -633,9 +651,9 @@ async fn verify_device_connect_signature(
     state: &AppState,
     headers: &HeaderMap,
     device: &LocalConnectorDevice,
-) -> Result<(), ApiError> {
+) -> Result<Option<String>, ApiError> {
     if !state.config.require_device_connect_signature {
-        return Ok(());
+        return Ok(None);
     }
     let public_key = device_public_key_bytes(device.public_key.as_str())?;
     let algorithm = required_header(headers, "x-local-connector-device-signature-alg")?;
@@ -676,8 +694,38 @@ async fn verify_device_connect_signature(
         ApiError::unauthorized("Local Connector device signature encoding is invalid")
     })?;
     let path = format!("/api/local-connectors/devices/{}/connect", device.id);
-    let payload =
-        device_signature_payload(device.id.as_str(), timestamp, nonce.as_str(), path.as_str());
+    let signature_version = headers
+        .get("x-local-connector-device-signature-version")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("v1");
+    let windows_user_sid = match signature_version {
+        "v1" => None,
+        "v2" => Some(
+            normalize_windows_sid(
+                required_header(headers, "x-local-connector-windows-user-sid")?.as_str(),
+            )
+            .map_err(ApiError::unauthorized)?,
+        ),
+        _ => {
+            return Err(ApiError::unauthorized(
+                "Local Connector device signature version is not supported",
+            ))
+        }
+    };
+    let payload = match windows_user_sid.as_deref() {
+        Some(sid) => device_signature_payload_v2(
+            device.id.as_str(),
+            timestamp,
+            nonce.as_str(),
+            path.as_str(),
+            sid,
+        ),
+        None => {
+            device_signature_payload(device.id.as_str(), timestamp, nonce.as_str(), path.as_str())
+        }
+    };
     UnparsedPublicKey::new(&ED25519, public_key.as_slice())
         .verify(payload.as_bytes(), signature.as_slice())
         .map_err(|_| ApiError::unauthorized("Local Connector device signature is invalid"))?;
@@ -690,7 +738,7 @@ async fn verify_device_connect_signature(
             "Local Connector device signature nonce was already used",
         ));
     }
-    Ok(())
+    Ok(windows_user_sid)
 }
 
 fn device_public_key_bytes(value: &str) -> Result<Vec<u8>, ApiError> {
@@ -722,4 +770,14 @@ fn required_header(headers: &HeaderMap, name: &'static str) -> Result<String, Ap
 
 fn device_signature_payload(device_id: &str, timestamp: i64, nonce: &str, path: &str) -> String {
     format!("v1\n{device_id}\n{timestamp}\n{nonce}\n{path}")
+}
+
+fn device_signature_payload_v2(
+    device_id: &str,
+    timestamp: i64,
+    nonce: &str,
+    path: &str,
+    windows_user_sid: &str,
+) -> String {
+    format!("v2\n{device_id}\n{timestamp}\n{nonce}\n{path}\n{windows_user_sid}")
 }

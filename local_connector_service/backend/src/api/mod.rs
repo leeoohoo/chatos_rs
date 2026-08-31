@@ -88,8 +88,9 @@ use self::sandbox_pairings::{
     load_owned_sandbox_pairing, update_sandbox_pairing,
 };
 use self::terminal_relay::{
-    drop_terminal_subscription, terminal_close_relay, terminal_event_to_ws_payload,
-    terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
+    controlled_network_readiness, drop_terminal_subscription, terminal_close_relay,
+    terminal_event_to_ws_payload, terminal_exec_relay, terminal_input_relay,
+    terminal_session_create_relay, terminal_ws_relay,
 };
 use self::workspace_directory_relay::{
     workspace_directory_create_relay, workspace_directory_list_relay, workspace_filesystem_relay,

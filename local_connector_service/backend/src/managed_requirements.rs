@@ -131,6 +131,10 @@ impl ManagedRequirementsSigner {
         self.key_id.as_str()
     }
 
+    pub(crate) fn fallback_requirements_toml(&self) -> Option<&str> {
+        self.fallback_requirements_toml.as_deref()
+    }
+
     pub(crate) fn bundle_for_device(
         &self,
         owner_user_id: &str,

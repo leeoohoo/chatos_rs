@@ -121,6 +121,8 @@ pub struct LocalConnectorDevice {
     pub public_key: String,
     pub client_version: Option<String>,
     pub os: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub windows_user_sid: Option<String>,
     pub status: String,
     pub last_seen_at: Option<String>,
     pub revoked_at: Option<String>,
@@ -179,6 +181,7 @@ impl LocalConnectorDevice {
             public_key,
             client_version,
             os,
+            windows_user_sid: None,
             status: DEVICE_STATUS_REGISTERED.to_string(),
             last_seen_at: None,
             revoked_at: None,
@@ -533,5 +536,21 @@ mod tests {
             normalize_sandbox_readiness(Some("legacy_unknown".to_string())),
             SANDBOX_READINESS_READY
         );
+    }
+
+    #[test]
+    fn device_api_serialization_never_exposes_registered_windows_sid() {
+        let mut device = LocalConnectorDevice::new(
+            "owner-1".to_string(),
+            "Windows PC".to_string(),
+            "ed25519:key".to_string(),
+            Some("1.0.0-windows".to_string()),
+            Some("Windows".to_string()),
+        );
+        device.windows_user_sid = Some("S-1-5-21-100-200-300-400".to_string());
+
+        let serialized = serde_json::to_value(device).expect("serialize device");
+
+        assert!(serialized.get("windows_user_sid").is_none());
     }
 }

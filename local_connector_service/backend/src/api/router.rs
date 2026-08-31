@@ -12,12 +12,13 @@ use crate::state::AppState;
 
 use super::managed_runtime_config::get_managed_runtime_config;
 use super::{
-    connect_device, create_device, create_managed_requirements_assignment,
-    create_managed_requirements_policy, create_project_binding, create_sandbox_pairing,
-    create_workspace, current_user_handler, delete_managed_requirements_assignment,
-    delete_managed_requirements_policy, delete_project_binding, delete_sandbox_pairing,
-    delete_workspace, disconnect_device, get_agent_prompt_bundle, get_agent_prompt_bundle_manifest,
-    get_device, get_managed_requirements, health_handler, heartbeat_device, list_devices,
+    connect_device, controlled_network_readiness, create_device,
+    create_managed_requirements_assignment, create_managed_requirements_policy,
+    create_project_binding, create_sandbox_pairing, create_workspace, current_user_handler,
+    delete_managed_requirements_assignment, delete_managed_requirements_policy,
+    delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
+    get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
+    get_managed_requirements, health_handler, heartbeat_device, list_devices,
     list_managed_requirements_assignments, list_managed_requirements_policies,
     list_plugin_install_sources, list_project_bindings, list_sandbox_pairings, list_workspaces,
     mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
@@ -53,6 +54,10 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             get(list_devices).post(create_device),
         )
         .route("/api/local-connectors/devices/{id}", get(get_device))
+        .route(
+            "/api/local-connectors/devices/{id}/controlled-network/readiness",
+            get(controlled_network_readiness),
+        )
         .route(
             "/api/local-connectors/devices/{id}/managed-requirements",
             get(get_managed_requirements),
