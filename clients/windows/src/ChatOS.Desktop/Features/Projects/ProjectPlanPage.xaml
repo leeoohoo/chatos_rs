@@ -1,0 +1,165 @@
+<UserControl
+    x:Class="ChatOS.Desktop.Features.Projects.ProjectPlanPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:core="using:ChatOS.Core.Domain"
+    xmlns:projects="using:ChatOS.Presentation.Projects"
+    mc:Ignorable="d">
+
+    <Grid Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="52" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Padding="16,0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.ProjectPlan, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{x:Bind Localization.Total, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{x:Bind ViewModel.Counts.Total, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+            <TextBlock Grid.Column="3" VerticalAlignment="Center" Text="{x:Bind ViewModel.Counts.Done, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+            <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="{x:Bind ViewModel.Counts.Blocked, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+            <Button Grid.Column="5" Command="{x:Bind ViewModel.RefreshCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.RefreshPlan, Mode=OneWay}">
+                <FontIcon Glyph="&#xE72C;" />
+            </Button>
+        </Grid>
+
+        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ListView
+                Grid.Column="0"
+                Padding="10"
+                IsItemClickEnabled="True"
+                ItemClick="OnRequirementItemClick"
+                ItemsSource="{x:Bind ViewModel.Requirements}"
+                SelectedItem="{x:Bind ViewModel.SelectedRequirement, Mode=OneWay}"
+                SelectionMode="Single">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="projects:ProjectRequirementItemViewModel">
+                        <StackPanel Padding="5" Spacing="2">
+                            <TextBlock Text="{x:Bind DisplayTitle}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{x:Bind Status}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                <TextBlock Text="{x:Bind Summary}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <Border Grid.Column="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+            <ScrollViewer Grid.Column="2" Padding="20" VerticalScrollBarVisibility="Auto">
+                <StackPanel MaxWidth="920" HorizontalAlignment="Left" Spacing="14">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="{x:Bind ViewModel.SelectedRequirement.Title, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedRequirement.Summary, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedRequirement.Detail, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                    </StackPanel>
+
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="{x:Bind Localization.AcceptanceCriteria, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.SelectedRequirement.AcceptanceCriteria, Mode=OneWay}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="{x:Bind Localization.ExecutionPlan, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                            <Grid ColumnSpacing="10" Visibility="{x:Bind ViewModel.HasExecution, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind Localization.Status, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                <StackPanel Grid.Column="1" Spacing="3">
+                                    <TextBlock Text="{x:Bind ViewModel.ExecutionStatusLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                    <TextBlock Text="{x:Bind ViewModel.Execution.FailureReason, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <Button Grid.Column="2" Command="{x:Bind ViewModel.ConfirmExecutionCommand}" Content="{x:Bind Localization.ConfirmExecution, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanConfirmExecution, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                <Button Grid.Column="3" Click="OnStopExecutionClick" Content="{x:Bind ViewModel.ExecutionStopLabel, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanStopExecution, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" />
+                                <ProgressRing Grid.Column="4" Width="18" Height="18" IsActive="{x:Bind ViewModel.IsMutatingExecution, Mode=OneWay}" />
+                            </Grid>
+                            <TextBlock Text="{x:Bind ViewModel.ExecutionActionMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.ExecutionActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                            <StackPanel Spacing="10" Visibility="{x:Bind ViewModel.HasExecution, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                <TextBox
+                                    AcceptsReturn="True"
+                                    MinHeight="64"
+                                    PlaceholderText="{x:Bind Localization.PlanningFeedbackPlaceholder, Mode=OneWay}"
+                                    Text="{x:Bind ViewModel.PlanningFeedback, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    TextWrapping="Wrap" />
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <CheckBox Content="{x:Bind Localization.IncludePrerequisiteDependents, Mode=OneWay}" IsChecked="{x:Bind ViewModel.IncludePrerequisiteDependents, Mode=TwoWay}" />
+                                    <Button Command="{x:Bind ViewModel.CreateExecutionCommand}" Content="{x:Bind Localization.CreateExecutionPlan, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                    <ProgressRing Width="18" Height="18" IsActive="{x:Bind ViewModel.IsCreatingExecution, Mode=OneWay}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Spacing="8" Visibility="{x:Bind ViewModel.HasWorkItems, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="{x:Bind Localization.Tasks, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.WorkItems}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="core:ProjectWorkItem">
+                                    <Border Margin="0,3" Padding="12" Style="{StaticResource ChatOSCardStyle}">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="2">
+                                                <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Status}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <StackPanel Spacing="8" Visibility="{x:Bind ViewModel.HasDocuments, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="{x:Bind Localization.Documents, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.Documents}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="core:ProjectRequirementDocument">
+                                    <Border Margin="0,3" Padding="12" Style="{StaticResource ChatOSCardStyle}">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock FontFamily="Cascadia Mono, Consolas" Text="{x:Bind Content}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</UserControl>

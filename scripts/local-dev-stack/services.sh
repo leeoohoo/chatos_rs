@@ -70,7 +70,7 @@ start_backend() {
     if chatos_identity="$(chatos_client_identity_path "$service_name")"; then
       export CHATOS_MTLS_CLIENT_IDENTITY_PATH="$chatos_identity"
     fi
-    if local_connector_identity="$(local_connector_client_identity_path "$service_name")"; then
+    if local_connector_identity="$(local_connector_identity_path "$service_name")"; then
       export LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH="$local_connector_identity"
     fi
     if user_service_identity="$(user_service_client_identity_path "$service_name")"; then
@@ -611,20 +611,10 @@ start_frontend() {
   : >"$log_file"
   local spawned_pid
   spawned_pid="$(
-    if [[ "$name" == "chatos-frontend" ]]; then
-      export VITE_API_BASE_URL="http://127.0.0.1:${APISIX_GATEWAY_PORT:-9080}/api/chatos"
-    fi
     spawn_detached "$ROOT_DIR/$app_dir" "$log_file" npm run dev -- --host 0.0.0.0 --port "$port" --strictPort
   )"
   echo "$spawned_pid" >"$pid_file"
   wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
-}
-
-cleanup_legacy_local_connector_client_state() {
-  # Older local-dev versions owned these processes. Stop only PIDs recorded by
-  # that old stack; never kill ports now owned by the standalone client target.
-  stop_service_pid "local-connector-client-frontend"
-  stop_service_pid "local-connector-client-core"
 }
 
 start_all() {
@@ -646,7 +636,6 @@ start_all() {
   ensure_memory_engine_mtls_material
   ensure_plugin_management_mtls_material
   prepare_local_dev_apisix_config
-  cleanup_legacy_local_connector_client_state
   start_infra
   wait_for_consul
   deregister_local_dev_services
@@ -689,7 +678,6 @@ stop_all() {
   export_local_env
   ensure_dirs
   stop_service_pid "sandbox-runtime-proxy"
-  cleanup_legacy_local_connector_client_state
   deregister_local_dev_services
   local item name unused port
   for item in "${FRONTEND_SERVICES[@]}"; do
@@ -788,7 +776,7 @@ print_urls() {
 
 [OK] Local dev stack startup requested.
 
-Main app:                 http://localhost:8088
+Official website:         http://localhost:39251
 Unified gateway:          http://localhost:${APISIX_GATEWAY_PORT:-9080}
 Prometheus:               http://127.0.0.1:${PROMETHEUS_PORT:-9090}
 Alertmanager:             http://127.0.0.1:${ALERTMANAGER_PORT:-9093}
@@ -807,8 +795,5 @@ MCP Management Service:   http://localhost:39280
 Status:  $0 status
 Logs:    $0 logs <service-name>
 Stop:    $0 down
-
-The Local Connector client is managed separately:
-  make local-connector-client
 EOF
 }

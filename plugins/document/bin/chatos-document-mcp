@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+
+import('../dist/server.mjs').catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`Failed to start Document MCP: ${message}\n`);
+  process.exitCode = 1;
+});

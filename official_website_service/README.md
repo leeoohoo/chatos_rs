@@ -84,26 +84,21 @@ https://www.example.com/admin/releases
 
 ## 打包并发布 Windows 客户端
 
-先生成 Electron 客户端压缩包：
+先在 Windows 11 上生成原生客户端 MSIX：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\local_connector_client\package-electron-windows-client.ps1
+powershell -ExecutionPolicy Bypass -File .\clients\windows\build\package.ps1 -Platform x64
 ```
 
-再通过官网后端获取 MinIO 上传 URL并发布：
+然后打开官网发布管理页，选择 Windows MSIX 与 macOS 安装包并发布：
 
 ```powershell
-$env:OFFICIAL_WEBSITE_API_BASE = "https://www.example.com"
-$env:OFFICIAL_WEBSITE_RELEASE_UPLOAD_TOKEN = "replace-with-your-token"
-
-powershell -ExecutionPolicy Bypass `
-  -File .\local_connector_client\publish-release-to-minio.ps1 `
-  -Version "2.0.4"
+https://www.example.com/admin/releases
 ```
 
 发布脚本会：
 
-1. 计算客户端 ZIP 的 SHA-256。
+1. 计算客户端安装包的 SHA-256。
 2. 请求 `POST /api/site/admin/releases/presign`。
 3. 直接把 ZIP 上传到 MinIO。
 4. 最后上传 `latest.json` 发布清单，使官网立即展示新版本。
@@ -112,9 +107,9 @@ powershell -ExecutionPolicy Bypass `
 
 ```text
 chatos-releases/
-└── releases/local-connector/stable/
+└── releases/chatos-client/stable/
     ├── latest.json
-    └── 2.0.4/Chat-OS-Local-Connector-windows-x64.zip
+    └── 3.0.0/ChatOS-windows-x64.msix
 ```
 
 ## 公开接口

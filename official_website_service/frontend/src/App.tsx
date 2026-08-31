@@ -69,7 +69,7 @@ type RegistrationForm = {
 const fallbackManifest: SiteManifest = {
   product_name: 'Okra',
   tagline: '给你的项目一位真正能动手的 AI 搭档。',
-  app_url: 'http://localhost:8088',
+  app_url: '#download',
   registration_enabled: true,
   downloads_enabled: false,
 };
@@ -316,7 +316,7 @@ function App() {
               <span>Okra · 项目协作空间</span>
               <span className="window-secure"><ShieldCheck size={14} /> 已连接</span>
             </div>
-            <img src="/showcase/chatos-main.png" alt="Okra 主界面" />
+            <img src="/showcase/chatos-main.png" alt="Okra 原生桌面客户端" />
           </div>
           <div className="floating-card floating-task">
             <span className="floating-icon"><Zap size={17} /></span>

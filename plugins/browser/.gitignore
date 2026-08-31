@@ -1,0 +1,8 @@
+/target/
+/.idea/
+/.vscode/
+*.log
+.DS_Store
+npm/dist/
+npm/*.tgz
+/.local/

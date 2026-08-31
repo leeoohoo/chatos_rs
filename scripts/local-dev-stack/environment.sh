@@ -330,7 +330,7 @@ chatos_client_identity_path() {
   esac
 }
 
-local_connector_client_identity_path() {
+local_connector_identity_path() {
   local caller="$1"
   case "$caller" in
     chatos-backend|task-runner|project-service|mcp-management-service)
@@ -385,8 +385,7 @@ prepare_local_dev_apisix_config() {
     -e "s/\"local-connector-service-backend:39230\"/\"${host_address}:39230\"/g" \
     -e "s/\"task-runner-backend:39090\"/\"${host_address}:39090\"/g" \
     -e "s/\"memory-engine-backend:7081\"/\"${host_address}:7081\"/g" \
-    -e "s/\"chatos-frontend:80\"/\"${host_address}:8088\"/g" \
-    -e "s/\"official-website-frontend:80\"/\"${host_address}:8088\"/g" \
+    -e "s/\"official-website-frontend:80\"/\"${host_address}:39251\"/g" \
     "$source_config" >"$target_config"
 }
 

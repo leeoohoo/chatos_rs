@@ -7,7 +7,7 @@
     "chat_completions_sender": "chatos/backend/src/services/v2/ai_request_handler.rs"
   },
   "tool_call_input_example": {
-    "task": "检查 /Users/lilei/project/my_project/chatos_rs/chatos/frontend 的构建错误并给出修复建议",
+    "task": "检查 /workspace/chatos_rs/clients/macos 的 Swift 构建错误并给出修复建议",
     "agent_id": "frontend-specialist",
     "skills": [
       "react-debugging",
@@ -80,7 +80,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "检查 /Users/lilei/project/my_project/chatos_rs/chatos/frontend 的构建错误并给出修复建议"
+            "text": "检查 /workspace/chatos_rs/clients/macos 的 Swift 构建错误并给出修复建议"
           }
         ]
       }
@@ -122,7 +122,7 @@
       },
       {
         "role": "user",
-        "content": "检查 /Users/lilei/project/my_project/chatos_rs/chatos/frontend 的构建错误并给出修复建议"
+        "content": "检查 /workspace/chatos_rs/clients/macos 的 Swift 构建错误并给出修复建议"
       }
     ],
     "tools": [

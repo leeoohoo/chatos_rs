@@ -1,0 +1,11 @@
+Use case: ui-mockup
+Asset type: visual direction board for a native macOS SwiftUI developer collaboration app
+Primary request: Create a single polished 16:9 art-direction board showing four coordinated macOS app views for “ChatOS”: command center, AI project conversation, project workspace with file tree and code diff, and Local Connector device settings. The purpose is to establish a premium Apple-native visual language, not to copy the existing React UI.
+Scene/backdrop: clean presentation board on a very light warm-gray background, four floating macOS windows with rounded corners and subtle layered shadows
+Style/medium: high-fidelity native macOS product UI, Apple Human Interface Guidelines, SwiftUI feel, SF Symbols-like iconography, restrained translucent materials, excellent hierarchy, calm and precise, professional developer tool
+Composition/framing: landscape 16:9, one large hero window plus three supporting windows, ample breathing room, clear sidebar/content/inspector structure
+Lighting/mood: soft daylight, refined, trustworthy, focused
+Color palette: graphite text, warm off-white surfaces, soft system blue accent, small mint-green status accents, subtle lavender for AI activity; avoid saturated gradients
+Text: minimal short labels only; use “ChatOS”, “Projects”, “Tasks”, “Local Connector”, “Connected”; avoid paragraphs and tiny fake copy
+Constraints: native desktop application only; consistent 8pt spacing; 12–16px corner radii; visible macOS window chrome; elegant light mode; no phone screens; no browser chrome; no logos from other companies; no watermark
+Avoid: cyberpunk, neon, dark-only UI, heavy glassmorphism, generic dashboard tiles everywhere, excessive gradients, clutter, illegible dense text, ChatGPT clone appearance

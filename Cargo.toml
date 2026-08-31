@@ -28,7 +28,6 @@ members = [
   "project_management_service/backend",
   "local_connector_service/backend",
   "mcp_management_service/backend",
-  "local_connector_client/core",
   "plugin_management_service/backend",
   "official_website_service/backend",
 ]

@@ -1,0 +1,1577 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "tools": [
+      {
+        "vendor": "Chatos",
+        "name": "scripts/generate-sbom.mjs"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:npm/%40chatos/document-mcp@0.1.1",
+      "name": "@chatos/document-mcp",
+      "version": "0.1.1",
+      "description": "Local, workspace-bounded MCP tools for Word, Excel, PowerPoint, and PDF files.",
+      "purl": "pkg:npm/%40chatos/document-mcp@0.1.1",
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "chatos:source:packageLockSha256",
+        "value": "5abdffef66f8f9fe850a259f63a96b9c12401d989189ca107de90c663351a310"
+      },
+      {
+        "name": "chatos:source:esbuildMetafileSha256",
+        "value": "08f74dd990c768ef6720f77c5bd57a561d2d89a4d5b662b882191524112899a5"
+      },
+      {
+        "name": "chatos:scope",
+        "value": "Bundled production runtime and vendored binary assets"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "file",
+      "bom-ref": "file:dist/pdfium.wasm",
+      "name": "PDFium WebAssembly",
+      "version": "7243",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "71aec412a303a0405baee21c3d6d3f30ad2033dc02444130fe476be3976e2d09"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause AND Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/paulocoutinhox/pdfium-lib/releases/download/7243/wasm.tgz"
+        },
+        {
+          "type": "vcs",
+          "url": "https://pdfium.googlesource.com/pdfium/+/refs/heads/chromium/7243"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:packagedPath",
+          "value": "dist/pdfium.wasm"
+        },
+        {
+          "name": "chatos:size",
+          "value": "3988829"
+        },
+        {
+          "name": "chatos:builder",
+          "value": "pdfium-lib 7243"
+        },
+        {
+          "name": "chatos:wrapper",
+          "value": "@hyzyla/pdfium 2.1.13"
+        },
+        {
+          "name": "chatos:licenseReviewStatus",
+          "value": "complete"
+        },
+        {
+          "name": "chatos:licenseReviewManifest",
+          "value": "vendor/pdfium-third-party-v7243.json"
+        },
+        {
+          "name": "chatos:licenseReviewScope",
+          "value": "Engineering inventory and redistribution-notice capture for the fixed chromium/7243 WASM build. This is not legal advice."
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:vendor/officecli/darwin/arm64/officecli",
+      "name": "officecli-mac-arm64",
+      "version": "1.0.144",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "04757163428c5bde8d91e8f838517818e74722157722ca5f3877b6716b77bd45"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-mac-arm64"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:platform",
+          "value": "darwin"
+        },
+        {
+          "name": "chatos:architecture",
+          "value": "arm64"
+        },
+        {
+          "name": "chatos:packagedPath",
+          "value": "vendor/officecli/darwin/arm64/officecli"
+        },
+        {
+          "name": "chatos:size",
+          "value": "33760816"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:vendor/officecli/darwin/x64/officecli",
+      "name": "officecli-mac-x64",
+      "version": "1.0.144",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "366100643d757b0da24829422897ca74768a894b5ecd1a471a1336f8e2a0787d"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-mac-x64"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:platform",
+          "value": "darwin"
+        },
+        {
+          "name": "chatos:architecture",
+          "value": "x64"
+        },
+        {
+          "name": "chatos:packagedPath",
+          "value": "vendor/officecli/darwin/x64/officecli"
+        },
+        {
+          "name": "chatos:size",
+          "value": "34705536"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:vendor/officecli/linux/arm64/officecli",
+      "name": "officecli-linux-arm64",
+      "version": "1.0.144",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "56ec2c3114b66f6490888b6778cbb8413a65911a26cacc7207f29e13424966da"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-linux-arm64"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:platform",
+          "value": "linux"
+        },
+        {
+          "name": "chatos:architecture",
+          "value": "arm64"
+        },
+        {
+          "name": "chatos:packagedPath",
+          "value": "vendor/officecli/linux/arm64/officecli"
+        },
+        {
+          "name": "chatos:size",
+          "value": "34733575"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:vendor/officecli/linux/x64/officecli",
+      "name": "officecli-linux-x64",
+      "version": "1.0.144",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "32ef7a21a54a4ca6c9806bf5e9f3d32bfb1291017329c55044cb2aac71822eb8"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-linux-x64"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:platform",
+          "value": "linux"
+        },
+        {
+          "name": "chatos:architecture",
+          "value": "x64"
+        },
+        {
+          "name": "chatos:packagedPath",
+          "value": "vendor/officecli/linux/x64/officecli"
+        },
+        {
+          "name": "chatos:size",
+          "value": "35316133"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:vendor/officecli/win32/arm64/officecli.exe",
+      "name": "officecli-win-arm64.exe",
+      "version": "1.0.144",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0adb928d118e237b108077dadca9e272c236cd378c699712a41adda697047860"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-win-arm64.exe"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:platform",
+          "value": "win32"
+        },
+        {
+          "name": "chatos:architecture",
+          "value": "arm64"
+        },
+        {
+          "name": "chatos:packagedPath",
+          "value": "vendor/officecli/win32/arm64/officecli.exe"
+        },
+        {
+          "name": "chatos:size",
+          "value": "33820596"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:vendor/officecli/win32/x64/officecli.exe",
+      "name": "officecli-win-x64.exe",
+      "version": "1.0.144",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e780cc6a5385f84b4d54d71b0c179904ed534125ec33fe39b1a8711fa80e387e"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.144/officecli-win-x64.exe"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:platform",
+          "value": "win32"
+        },
+        {
+          "name": "chatos:architecture",
+          "value": "x64"
+        },
+        {
+          "name": "chatos:packagedPath",
+          "value": "vendor/officecli/win32/x64/officecli.exe"
+        },
+        {
+          "name": "chatos:size",
+          "value": "33382312"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/abseil@0c63301c7ef3012c448edf67dba246465c9b2443",
+      "name": "Abseil C++",
+      "version": "0c63301c7ef3012c448edf67dba246465c9b2443",
+      "scope": "required",
+      "purl": "pkg:generic/abseil@0c63301c7ef3012c448edf67dba246465c9b2443",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/0c63301c7ef3012c448edf67dba246465c9b2443"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "abseil"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "0c63301c7ef3012c448edf67dba246465c9b2443"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "DEPS revision abseil_revision | libpdfium.a members include Abseil base, strings, cord, CRC, synchronization, time, hash, logging, random, status, and container objects"
+        },
+        {
+          "name": "chatos:pdfium:upstreamRevision",
+          "value": "94be0866ac6e38b5ed34df55599f66a9cde4e06c"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/agg@2.3",
+      "name": "Anti-Grain Geometry",
+      "version": "2.3",
+      "scope": "required",
+      "purl": "pkg:generic/agg@2.3",
+      "licenses": [
+        {
+          "expression": "LicenseRef-AGG-2.3"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/third_party/agg23"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "agg"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "pdfium@591ce25a21001d8c26888e8b3af5426e90585dbe:third_party/agg23"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "libpdfium.a members include agg_curves.o | PDFium third_party/agg23/README.pdfium marks the library as shipped"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/emscripten@4.0.10",
+      "name": "Emscripten runtime and generated glue",
+      "version": "4.0.10",
+      "scope": "required",
+      "purl": "pkg:generic/emscripten@4.0.10",
+      "licenses": [
+        {
+          "expression": "MIT OR NCSA"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/emscripten-core/emscripten/tree/4.0.10"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "emscripten"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "b7dc6e5747465580df5984e723b9d1f10d8e804b"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "pdfium-lib WASM Dockerfile installs and activates emsdk 4.0.10 | The packaged wrapper contains Emscripten-generated JavaScript and the WASM contains emscripten_* runtime functions"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/fast-float@cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+      "name": "fast_float",
+      "version": "cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+      "scope": "required",
+      "purl": "pkg:generic/fast-float@cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://chromium.googlesource.com/external/github.com/fastfloat/fast_float/+/cb1d42aaa1e14b09e1452cfdef373d051b8c02a4"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "fast-float"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "cb1d42aaa1e14b09e1452cfdef373d051b8c02a4"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "DEPS revision fast_float_revision | fast_float::from_chars and parsing symbols are present in libpdfium.a"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "pkg:generic/foxit-font-data@pdfium-chromium-7243",
+      "name": "Foxit base font data",
+      "version": "pdfium-chromium-7243",
+      "scope": "required",
+      "purl": "pkg:generic/foxit-font-data@pdfium-chromium-7243",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/core/fxge/fontdata/chromefontdata"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "foxit-font-data"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "591ce25a21001d8c26888e8b3af5426e90585dbe"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "libpdfium.a contains FoxitDingbats, FoxitFixed, FoxitSans, FoxitSerif, FoxitSymbol, and multiple-style font data objects"
+        },
+        {
+          "name": "chatos:pdfium:notice",
+          "value": "Original font-data code copyright 2014 Foxit Software Inc."
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/freetype@2.13.3",
+      "name": "FreeType",
+      "version": "2.13.3",
+      "scope": "required",
+      "purl": "pkg:generic/freetype@2.13.3",
+      "licenses": [
+        {
+          "expression": "FTL"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://chromium.googlesource.com/chromium/src/third_party/freetype2/+/320b72a2955a312f2a392bede8d6af900aec924d"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "freetype"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "320b72a2955a312f2a392bede8d6af900aec924d"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "DEPS revision freetype_revision | libpdfium.a contains FreeType base, CFF, Type1, CID, PS, SFNT, raster, smooth, and TrueType objects and FT_* symbols"
+        },
+        {
+          "name": "chatos:pdfium:notice",
+          "value": "Portions of this software are copyright © 1996-2002, 2006 The FreeType Project (https://freetype.org). All rights reserved."
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/icu@74.2",
+      "name": "ICU",
+      "version": "74.2",
+      "scope": "required",
+      "purl": "pkg:generic/icu@74.2",
+      "licenses": [
+        {
+          "expression": "Unicode-3.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://chromium.googlesource.com/chromium/deps/icu/+/a67fc91f78253e8bc055275d785b634faf27c608"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "icu"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "a67fc91f78253e8bc055275d785b634faf27c608"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "DEPS revision icu_revision | libpdfium.a includes ICU 74 common, bidi, converter, Unicode property, normalization, script, and stub-data objects"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/libjpeg-turbo@3.1.0",
+      "name": "libjpeg-turbo",
+      "version": "3.1.0",
+      "scope": "required",
+      "purl": "pkg:generic/libjpeg-turbo@3.1.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause AND IJG AND Zlib"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo/+/e14cbfaa85529d47f9f55b0f104a579c1061f9ad"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "libjpeg-turbo"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "e14cbfaa85529d47f9f55b0f104a579c1061f9ad"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "DEPS revision jpeg_turbo_revision and Emscripten link flag USE_LIBJPEG=1 | libpdfium.a contains libjpeg compression, decompression, DCT, Huffman, marker, memory, and utility objects"
+        },
+        {
+          "name": "chatos:pdfium:notice",
+          "value": "This software is based in part on the work of the Independent JPEG Group."
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/little-cms@2.15",
+      "name": "Little CMS",
+      "version": "2.15",
+      "scope": "required",
+      "purl": "pkg:generic/little-cms@2.15",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/third_party/lcms"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "little-cms"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "d0752309ff93f62be246ee9bf18338107f30d485"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "PDFium third_party/lcms/README.pdfium revision | libpdfium.a contains cms*.o objects and cms* color-management symbols"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/llvm-compiler-rt@emscripten-4.0.10",
+      "name": "LLVM compiler-rt",
+      "version": "emscripten-4.0.10",
+      "scope": "required",
+      "purl": "pkg:generic/llvm-compiler-rt@emscripten-4.0.10",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/compiler-rt"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "llvm-compiler-rt"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/compiler-rt"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "Conservatively included for compiler builtins linked by Emscripten into the standalone WASM"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/llvm-libcxx@emscripten-4.0.10",
+      "name": "LLVM libc++",
+      "version": "emscripten-4.0.10",
+      "scope": "required",
+      "purl": "pkg:generic/llvm-libcxx@emscripten-4.0.10",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libcxx"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "llvm-libcxx"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libcxx"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "GN uses use_custom_libcxx=false for the Emscripten target and the archive contains std::__2 C++ library symbols"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/llvm-libcxxabi@emscripten-4.0.10",
+      "name": "LLVM libc++abi",
+      "version": "emscripten-4.0.10",
+      "scope": "required",
+      "purl": "pkg:generic/llvm-libcxxabi@emscripten-4.0.10",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libcxxabi"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "llvm-libcxxabi"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libcxxabi"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "The WASM data names Emscripten system/lib/libcxxabi and contains C++ ABI/exception support"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/llvm-libunwind@emscripten-4.0.10",
+      "name": "LLVM libunwind",
+      "version": "emscripten-4.0.10",
+      "scope": "required",
+      "purl": "pkg:generic/llvm-libunwind@emscripten-4.0.10",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libunwind"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "llvm-libunwind"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libunwind"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "Conservatively included with the Emscripten C++ exception runtime used by the generated module"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/musl@emscripten-4.0.10",
+      "name": "musl libc (Emscripten system library)",
+      "version": "emscripten-4.0.10",
+      "scope": "required",
+      "purl": "pkg:generic/musl@emscripten-4.0.10",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/emscripten-core/emscripten/tree/4.0.10/system/lib/libc/musl"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "musl"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "b7dc6e5747465580df5984e723b9d1f10d8e804b:system/lib/libc/musl"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "The WASM imports POSIX/WASI file functions and contains Emscripten libc runtime code"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/openjpeg@2.5.3",
+      "name": "OpenJPEG",
+      "version": "2.5.3",
+      "scope": "required",
+      "purl": "pkg:generic/openjpeg@2.5.3",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://pdfium.googlesource.com/pdfium/+/591ce25a21001d8c26888e8b3af5426e90585dbe/third_party/libopenjpeg"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "openjpeg"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "210a8a5690d0da66f02d49420d7176a21ef409dc"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "PDFium third_party/libopenjpeg/README.pdfium revision | libpdfium.a contains OpenJPEG codec objects and opj_* symbols"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/zlib@1.3.1",
+      "name": "zlib",
+      "version": "1.3.1",
+      "scope": "required",
+      "purl": "pkg:generic/zlib@1.3.1",
+      "licenses": [
+        {
+          "expression": "Zlib"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://chromium.googlesource.com/chromium/src/third_party/zlib/+/a1f2fe223f55b6ec6dd3c20796727604ed5ec74a"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:pdfium:componentId",
+          "value": "zlib"
+        },
+        {
+          "name": "chatos:pdfium:revision",
+          "value": "a1f2fe223f55b6ec6dd3c20796727604ed5ec74a"
+        },
+        {
+          "name": "chatos:pdfium:evidence",
+          "value": "DEPS revision zlib_revision and Emscripten link flag USE_ZLIB=1 | libpdfium.a contains adler32, crc32, deflate, inflate, gzip, and zutil objects"
+        },
+        {
+          "name": "chatos:pdfium:upstreamRevision",
+          "value": "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:github/iOfficeAI/OfficeCLI@1.0.144",
+      "name": "OfficeCLI",
+      "version": "1.0.144",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/iOfficeAI/OfficeCLI/tree/v1.0.144"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/iOfficeAI/OfficeCLI"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:vendored",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40hyzyla/pdfium@2.1.13",
+      "name": "@hyzyla/pdfium",
+      "version": "2.1.13",
+      "scope": "required",
+      "purl": "pkg:npm/%40hyzyla/pdfium@2.1.13",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e09fb1305256e95fa392dc68afa2ec93fd9874f0a9798f866baf49f7cbb2350c18112900b140f1cfc05e154d196d924827e7cadc9e9b9bad609b05a7533554d6"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@hyzyla/pdfium/-/pdfium-2.1.13.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/@hyzyla/pdfium"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40modelcontextprotocol/sdk@1.30.0",
+      "name": "@modelcontextprotocol/sdk",
+      "version": "1.30.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40modelcontextprotocol/sdk@1.30.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c4a77c388ce5a8dcdca9c36e98601aea0f8f5b69230f9beba5c28e9df95d0143cfde3ee59ea30fc254d7426f2017e5301fbdb3d25a9a45b8ebf61a86cf47884c"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/@modelcontextprotocol/sdk"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40pdf-lib/standard-fonts@1.0.0",
+      "name": "@pdf-lib/standard-fonts",
+      "version": "1.0.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40pdf-lib/standard-fonts@1.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "854df404af4850dfecbb4327f5576554ab16052e86ca155faa3c25d458d93784f13fa702c348cfdb0ed5dc77f9b97eccd00649d7abdecbdc84d27cbb49ae7d64"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@pdf-lib/standard-fonts/-/standard-fonts-1.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/@pdf-lib/standard-fonts"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40pdf-lib/upng@1.0.1",
+      "name": "@pdf-lib/upng",
+      "version": "1.0.1",
+      "scope": "required",
+      "purl": "pkg:npm/%40pdf-lib/upng@1.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7502b6154310b68c153f4d26b4892cae56617455d064f0beb5a8a1d6ae02bcf679bea77147f2ca05a160d2801fcddd469476575d23dd41fcd09edf95886bc421"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@pdf-lib/upng/-/upng-1.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/@pdf-lib/upng"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/ajv-formats@3.0.1",
+      "name": "ajv-formats",
+      "version": "3.0.1",
+      "scope": "required",
+      "purl": "pkg:npm/ajv-formats@3.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "f2252a979d04511fae51c7514371c3a9ae84572a3776870bf20e5627714d7169aeeb621b90652e7bfa44c8b056f1518a2ae7133e0a9e92ce1f214d43038ca8c1"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ajv-formats/-/ajv-formats-3.0.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/ajv-formats"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/ajv@8.20.0",
+      "name": "ajv",
+      "version": "8.20.0",
+      "scope": "required",
+      "purl": "pkg:npm/ajv@8.20.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4e16e58be3a53a3fa230f60505505f2773a60809da4b2367e0cd6fcfd4fa1a46b926df5b6bf1c8479ea3a32eb9b58ea4c7f142179557341f35f58eff194ac118"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/ajv"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/fast-deep-equal@3.1.3",
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "scope": "required",
+      "purl": "pkg:npm/fast-deep-equal@3.1.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7f7a90f68432f63d808417bf1fd542f75c0b98a042094fe00ce9ca340606e61b303bb04b2a3d3d1dce4760dcfd70623efb19690c22200da8ad56cd3701347ce1"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/fast-deep-equal"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/fast-uri@3.1.5",
+      "name": "fast-uri",
+      "version": "3.1.5",
+      "scope": "required",
+      "purl": "pkg:npm/fast-uri@3.1.5",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "807c00d4ef4b0c870aba730a84e6d2fc78a6c2d7a13b59cf50408a02ee53a4a81a3b5f5f716125e1b96259ed635b1545bc85f3b498e34382fc5d0d4453d7fb27"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/fast-uri"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/fflate@0.8.2",
+      "name": "fflate",
+      "version": "0.8.2",
+      "scope": "required",
+      "purl": "pkg:npm/fflate@0.8.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "70f254e3b39a02809b834a41bf3b20a533e19a1a88e5e26387f248bbcb4f8f9abe4fb88bbd6fc901852a984eca381e11d59c8487305a210a50a5aadd045e73f0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fflate/-/fflate-0.8.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/fflate"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/json-schema-traverse@1.0.0",
+      "name": "json-schema-traverse",
+      "version": "1.0.0",
+      "scope": "required",
+      "purl": "pkg:npm/json-schema-traverse@1.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "34cf3f3fd9f75e35e12199f594b86415a0024ce5114178d6855e0103f4673aff31be0aadaa9017f483b89914314b1d51968e2dab37aa6f4b0e96bb9a3b2dddba"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/json-schema-traverse"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/pako@1.0.11",
+      "name": "pako",
+      "version": "1.0.11",
+      "scope": "required",
+      "purl": "pkg:npm/pako@1.0.11",
+      "licenses": [
+        {
+          "expression": "(MIT AND Zlib)"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e212c1f0fcb8cd971ee6ce3277d5f3a29ab056fff218d855d4197c353982ab5efadc778adbe130553bfe95e19e2f5dc39e1db07dbaa8c153d70883b4cf8b5a63"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/pako/-/pako-1.0.11.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/pako"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/pdf-lib@1.17.1",
+      "name": "pdf-lib",
+      "version": "1.17.1",
+      "scope": "required",
+      "purl": "pkg:npm/pdf-lib@1.17.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "57f9a9c890284ec3787273f7d6f734c1f340d7ea76d1ebeaaa76a9d0a2e8454374624fe9df0379d83384b0be2804570b75befa865a4a3edcc9220a3aee3fd72f"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/pdf-lib/-/pdf-lib-1.17.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/pdf-lib"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/pdfjs-dist@4.8.69",
+      "name": "pdfjs-dist",
+      "version": "4.8.69",
+      "scope": "required",
+      "purl": "pkg:npm/pdfjs-dist@4.8.69",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "20766c0384fb60494228d357b622e0a92730e333ddde91bd768f14af39c2ef9ee031ded43de1d22f6ab034d309a38afbf5f97ca23d57c7ed67876624cdd3292d"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-4.8.69.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/pdfjs-dist"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/tslib@1.14.1",
+      "name": "tslib",
+      "version": "1.14.1",
+      "scope": "required",
+      "purl": "pkg:npm/tslib@1.14.1",
+      "licenses": [
+        {
+          "expression": "0BSD"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5e78b7e4d2b38e032bc1ebf2b074c202bb4b0e93efc9ef3357fd04e04c989f8dcfeffeeabd0c0f87d0469077b06ccba5567b5b8a099c4fbadd5f704da3dc1126"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tslib/-/tslib-1.14.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/tslib"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/zod-to-json-schema@3.25.2",
+      "name": "zod-to-json-schema",
+      "version": "3.25.2",
+      "scope": "required",
+      "purl": "pkg:npm/zod-to-json-schema@3.25.2",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3bf3e07e7a53d712920de4184827d12391b2de13dff7598a543b982d41d924c883169b6f3f8d4c4a75a87e6f1d9c29b4db9e9935f64833b0d2cee48c0059e31c"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/zod-to-json-schema/-/zod-to-json-schema-3.25.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/zod-to-json-schema"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/zod@4.4.3",
+      "name": "zod",
+      "version": "4.4.3",
+      "scope": "required",
+      "purl": "pkg:npm/zod@4.4.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "cad10d163209165d94c1882575eda37215b61f09b818914b0e249759d4eb25004837d15cca9ee7e0387124489634024c575fc1a967d6fe4920ef55037072724d"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "chatos:bundle:packagePath",
+          "value": "node_modules/zod"
+        },
+        {
+          "name": "chatos:bundle:includedByEsbuild",
+          "value": "true"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "file:dist/pdfium.wasm",
+      "dependsOn": [
+        "pkg:generic/abseil@0c63301c7ef3012c448edf67dba246465c9b2443",
+        "pkg:generic/agg@2.3",
+        "pkg:generic/emscripten@4.0.10",
+        "pkg:generic/fast-float@cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+        "pkg:generic/foxit-font-data@pdfium-chromium-7243",
+        "pkg:generic/freetype@2.13.3",
+        "pkg:generic/icu@74.2",
+        "pkg:generic/libjpeg-turbo@3.1.0",
+        "pkg:generic/little-cms@2.15",
+        "pkg:generic/llvm-compiler-rt@emscripten-4.0.10",
+        "pkg:generic/llvm-libcxx@emscripten-4.0.10",
+        "pkg:generic/llvm-libcxxabi@emscripten-4.0.10",
+        "pkg:generic/llvm-libunwind@emscripten-4.0.10",
+        "pkg:generic/musl@emscripten-4.0.10",
+        "pkg:generic/openjpeg@2.5.3",
+        "pkg:generic/zlib@1.3.1"
+      ]
+    },
+    {
+      "ref": "pkg:generic/emscripten@4.0.10",
+      "dependsOn": [
+        "pkg:generic/llvm-compiler-rt@emscripten-4.0.10",
+        "pkg:generic/llvm-libcxx@emscripten-4.0.10",
+        "pkg:generic/llvm-libcxxabi@emscripten-4.0.10",
+        "pkg:generic/llvm-libunwind@emscripten-4.0.10",
+        "pkg:generic/musl@emscripten-4.0.10"
+      ]
+    },
+    {
+      "ref": "pkg:github/iOfficeAI/OfficeCLI@1.0.144",
+      "dependsOn": [
+        "file:vendor/officecli/darwin/arm64/officecli",
+        "file:vendor/officecli/darwin/x64/officecli",
+        "file:vendor/officecli/linux/arm64/officecli",
+        "file:vendor/officecli/linux/x64/officecli",
+        "file:vendor/officecli/win32/arm64/officecli.exe",
+        "file:vendor/officecli/win32/x64/officecli.exe"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40chatos/document-mcp@0.1.1",
+      "dependsOn": [
+        "file:dist/pdfium.wasm",
+        "file:vendor/officecli/darwin/arm64/officecli",
+        "file:vendor/officecli/darwin/x64/officecli",
+        "file:vendor/officecli/linux/arm64/officecli",
+        "file:vendor/officecli/linux/x64/officecli",
+        "file:vendor/officecli/win32/arm64/officecli.exe",
+        "file:vendor/officecli/win32/x64/officecli.exe",
+        "pkg:generic/abseil@0c63301c7ef3012c448edf67dba246465c9b2443",
+        "pkg:generic/agg@2.3",
+        "pkg:generic/emscripten@4.0.10",
+        "pkg:generic/fast-float@cb1d42aaa1e14b09e1452cfdef373d051b8c02a4",
+        "pkg:generic/foxit-font-data@pdfium-chromium-7243",
+        "pkg:generic/freetype@2.13.3",
+        "pkg:generic/icu@74.2",
+        "pkg:generic/libjpeg-turbo@3.1.0",
+        "pkg:generic/little-cms@2.15",
+        "pkg:generic/llvm-compiler-rt@emscripten-4.0.10",
+        "pkg:generic/llvm-libcxx@emscripten-4.0.10",
+        "pkg:generic/llvm-libcxxabi@emscripten-4.0.10",
+        "pkg:generic/llvm-libunwind@emscripten-4.0.10",
+        "pkg:generic/musl@emscripten-4.0.10",
+        "pkg:generic/openjpeg@2.5.3",
+        "pkg:generic/zlib@1.3.1",
+        "pkg:github/iOfficeAI/OfficeCLI@1.0.144",
+        "pkg:npm/%40hyzyla/pdfium@2.1.13",
+        "pkg:npm/%40modelcontextprotocol/sdk@1.30.0",
+        "pkg:npm/%40pdf-lib/standard-fonts@1.0.0",
+        "pkg:npm/%40pdf-lib/upng@1.0.1",
+        "pkg:npm/ajv-formats@3.0.1",
+        "pkg:npm/ajv@8.20.0",
+        "pkg:npm/fast-deep-equal@3.1.3",
+        "pkg:npm/fast-uri@3.1.5",
+        "pkg:npm/fflate@0.8.2",
+        "pkg:npm/json-schema-traverse@1.0.0",
+        "pkg:npm/pako@1.0.11",
+        "pkg:npm/pdf-lib@1.17.1",
+        "pkg:npm/pdfjs-dist@4.8.69",
+        "pkg:npm/tslib@1.14.1",
+        "pkg:npm/zod-to-json-schema@3.25.2",
+        "pkg:npm/zod@4.4.3"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40hyzyla/pdfium@2.1.13",
+      "dependsOn": [
+        "file:dist/pdfium.wasm"
+      ]
+    }
+  ]
+}

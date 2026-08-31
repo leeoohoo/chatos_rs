@@ -18,7 +18,7 @@ for arg in "$@"; do
 Usage: scripts/cleanup-dev-artifacts.sh [--dry-run]
 
 Cleanup common local development artifacts:
-- chatos/frontend/dist
+- native client and first-party plugin build outputs
 - chatos/backend/target
 - target-shared
 - chatos/backend logs
@@ -64,7 +64,11 @@ remove_glob() {
   fi
 }
 
-remove_path "$ROOT_DIR/chatos/frontend/dist"
+remove_path "$ROOT_DIR/clients/macos/.build"
+remove_path "$ROOT_DIR/plugins/browser/target"
+remove_path "$ROOT_DIR/plugins/computer-use/.build"
+remove_path "$ROOT_DIR/plugins/document/dist"
+remove_path "$ROOT_DIR/plugins/document/node_modules"
 remove_path "$ROOT_DIR/chatos/backend/target"
 remove_path "$ROOT_DIR/target-shared"
 remove_glob "$ROOT_DIR/chatos/backend/logs/server.log*"
@@ -74,8 +78,15 @@ while IFS= read -r path; do
   remove_path "$path"
 done < <(
   find "$ROOT_DIR" \
-    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/frontend/node_modules" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
+    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
     -o \( -name .DS_Store -o -name __pycache__ -o -name '*.pyc' -o -name '*.pyo' \) -print
+)
+
+while IFS= read -r path; do
+  remove_path "$path"
+done < <(
+  find "$ROOT_DIR/clients/windows" "$ROOT_DIR/plugins/computer-use/windows" \
+    -type d \( -name bin -o -name obj \) -prune -print 2>/dev/null
 )
 
 if [[ "$removed_count" -eq 0 ]]; then

@@ -1,0 +1,24 @@
+{
+  "global": [
+    {
+      "id": "command_palette",
+      "title": "Command Palette",
+      "keys": ["command", "shift", "p"],
+      "description": "Example override; keep only if the target app uses this shortcut."
+    }
+  ],
+  "apps": {
+    "com.microsoft.VSCode": [
+      {
+        "id": "quick_open",
+        "title": "Quick Open",
+        "keys": ["command", "p"]
+      },
+      {
+        "id": "command_palette",
+        "title": "Command Palette",
+        "keys": ["command", "shift", "p"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.build/
+*.tgz
+.DS_Store
+coverage/
+vendor/**/*.partial-*
+vendor/officecli/

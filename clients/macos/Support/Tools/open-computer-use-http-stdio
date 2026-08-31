@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Expose the user's local Open Computer Use HTTP MCP as stdio for ChatOS."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+
+PROJECT_ROOT = Path(
+    os.environ.get(
+        "CHATOS_OPEN_COMPUTER_USE_PROJECT_ROOT",
+        "/Users/lilei/project/learn/open-computer-use",
+    )
+).expanduser()
+MCP_URL = os.environ.get("CHATOS_OPEN_COMPUTER_USE_MCP_URL", "http://127.0.0.1:8000/mcp")
+HEALTH_URL = os.environ.get("CHATOS_OPEN_COMPUTER_USE_HEALTH_URL", "http://127.0.0.1:8000/health")
+TOOL_TIMEOUT_SECONDS = 2 * 60 * 60
+CONTROL_TIMEOUT_SECONDS = 30
+
+SERVER_INSTRUCTIONS = """Use these local desktop tools continuously until the user's task is complete or genuinely blocked. Inspect a fresh focused window or region before acting. Prefer accessibility element actions when they are reliable; otherwise use the latest screenshot and viewport-relative actions. Never repeat a failed click without observing again and changing strategy. Inspect returned screenshot images directly. For dense app interfaces, narrow from observe_frontmost_window to observe_region before clicking. Use type_into_element for known editable elements and strict viewport actions for the most recent observation. Return an explicit failure as soon as permissions, the local server, or an action reports an error."""
+
+
+def log(message: str) -> None:
+    print(f"[chatos-open-computer-use] {message}", file=sys.stderr, flush=True)
+
+
+def health_is_ready() -> bool:
+    try:
+        with urllib.request.urlopen(HEALTH_URL, timeout=2) as response:
+            return 200 <= response.status < 300
+    except (OSError, urllib.error.URLError):
+        return False
+
+
+def ensure_server() -> None:
+    if health_is_ready():
+        return
+
+    control_script = PROJECT_ROOT / "control.sh"
+    if not control_script.is_file():
+        raise RuntimeError(f"Open Computer Use server is unavailable and {control_script} is missing")
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "CUA_OPEN_BROWSER": "0",
+            "OPEN_COMPUTER_USE_NATIVE_PIP": "1",
+        }
+    )
+    completed = subprocess.run(
+        [str(control_script), "start"],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=CONTROL_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = " ".join(completed.stdout.split())[-800:]
+        raise RuntimeError(f"Open Computer Use server failed to start: {detail}")
+
+    deadline = time.monotonic() + CONTROL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if health_is_ready():
+            return
+        time.sleep(0.25)
+    raise RuntimeError("Open Computer Use server did not become healthy within 30 seconds")
+
+
+def jsonrpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": code, "message": message},
+    }
+
+
+def post_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    method = message.get("method")
+    request_id = message.get("id")
+    if request_id is None:
+        # The local prototype does not implement MCP notifications. ChatOS only
+        # needs initialized as a one-way boundary, so acknowledging locally is
+        # both spec-correct and avoids a noisy JSON-RPC error with a null id.
+        return None
+
+    timeout = TOOL_TIMEOUT_SECONDS if method == "tools/call" else CONTROL_TIMEOUT_SECONDS
+    request = urllib.request.Request(
+        MCP_URL,
+        data=json.dumps(message, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        raw_body = error.read()
+        try:
+            payload = json.loads(raw_body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            detail = raw_body.decode("utf-8", errors="replace").strip()
+            return jsonrpc_error(request_id, -32001, detail or f"HTTP {error.code}")
+    except (OSError, urllib.error.URLError) as error:
+        return jsonrpc_error(request_id, -32002, f"Open Computer Use MCP unavailable: {error}")
+
+    if method == "initialize" and isinstance(payload, dict):
+        result = payload.get("result")
+        if isinstance(result, dict):
+            result["instructions"] = SERVER_INSTRUCTIONS
+    return payload
+
+
+def main() -> int:
+    try:
+        ensure_server()
+    except Exception as error:
+        log(str(error))
+        return 1
+
+    for raw_line in sys.stdin:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            message = json.loads(line)
+            if not isinstance(message, dict):
+                raise ValueError("JSON-RPC request must be an object")
+            response = post_message(message)
+        except Exception as error:
+            request_id = message.get("id") if isinstance(locals().get("message"), dict) else None
+            response = jsonrpc_error(request_id, -32603, str(error))
+
+        if response is not None:
+            print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

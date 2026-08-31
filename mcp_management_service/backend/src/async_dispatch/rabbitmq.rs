@@ -373,13 +373,9 @@ pub(super) async fn run_rabbitmq_invocation_consumer_loop(
 
                         match outcome {
                             Ok(batch) => {
-                                if let Err(error) = publish_batch_pending_event(
-                                    &state,
-                                    &topology,
-                                    &channel,
-                                    &batch,
-                                )
-                                .await
+                                if let Err(error) =
+                                    publish_batch_pending_event(&state, &topology, &channel, &batch)
+                                        .await
                                 {
                                     // The resulting pending event is still durable. The terminal
                                     // consumer watchdog republishes it on a healthy channel.

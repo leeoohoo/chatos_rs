@@ -9,9 +9,7 @@ RUST_TOOLCHAIN_VERSION="${CHATOS_RUST_TOOLCHAIN:-1.94.0}"
 CARGO=(cargo "+${RUST_TOOLCHAIN_VERSION}")
 
 FRONTEND_DIRS=(
-  "chatos/frontend"
   "config_center_service/frontend"
-  "local_connector_client/frontend"
   "memory_engine/frontend"
   "official_website_service/frontend"
   "plugin_management_service/frontend"
@@ -28,8 +26,8 @@ Modes:
   quality       Run repository code-quality policies.
   rust-lint     Run Rust formatting and Clippy for all workspaces.
   rust-test     Run tests for the root, Memory Engine, and User Service workspaces.
-  native-platform
-                  Check, lint, build, and test native desktop platform contracts.
+  native-platform Build and test the native client and Computer Use plugin for this OS.
+  plugins         Test the Browser and Document plugin workspaces.
   frontend DIR  Type-check, test when available, build, and lint when available.
   frontends     Verify all production frontends (dependencies must already be installed).
   fast          Run quality and Rust lint checks.
@@ -82,6 +80,8 @@ run_rust_lint() {
     cd user_service/backend
     "${CARGO[@]}" clippy --all-targets -- -D warnings
   )
+  "${CARGO[@]}" fmt --manifest-path plugins/browser/Cargo.toml --all -- --check
+  "${CARGO[@]}" clippy --manifest-path plugins/browser/Cargo.toml --workspace --all-targets -- -D warnings
 }
 
 run_rust_tests() {
@@ -95,66 +95,34 @@ run_rust_tests() {
     cd user_service/backend
     "${CARGO[@]}" test --no-fail-fast
   )
+  "${CARGO[@]}" test --manifest-path plugins/browser/Cargo.toml --workspace --no-fail-fast
 }
 
 run_native_platform() {
-  local platform
-  local executable_suffix
   case "$(uname -s)" in
     Darwin)
-      platform="macos"
-      executable_suffix=""
+      swift build --package-path "$ROOT_DIR/clients/macos"
+      swift test --package-path "$ROOT_DIR/clients/macos"
+      swift build --package-path "$ROOT_DIR/plugins/computer-use"
+      swift test --package-path "$ROOT_DIR/plugins/computer-use"
       ;;
     MINGW*|MSYS*|CYGWIN*)
-      platform="windows"
-      executable_suffix=".exe"
+      dotnet build "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release
+      dotnet test "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release
+      dotnet build "$ROOT_DIR/plugins/computer-use/windows/VisualComputerUse.Windows/VisualComputerUse.Windows.csproj" --configuration Release
       ;;
     *)
       echo "Native platform verification supports only macOS and Windows" >&2
       return 2
       ;;
   esac
+}
 
+run_plugins() {
   cd "$ROOT_DIR"
-  "${CARGO[@]}" check \
-    -p local_connector_client_core \
-    --all-targets
-  "${CARGO[@]}" clippy \
-    -p local_connector_client_core \
-    --all-targets \
-    -- \
-    -D warnings
-  "${CARGO[@]}" build \
-    -p local_connector_client_core \
-    --bins
-  "${CARGO[@]}" test \
-    -p local_connector_client_core \
-    --lib \
-    skills::native::computer_use:: \
-    -- \
-    --nocapture
-  "${CARGO[@]}" test \
-    -p local_connector_client_core \
-    --lib \
-    -- \
-    --nocapture
-  if [[ "$platform" == "macos" ]]; then
-    "${CARGO[@]}" test \
-      -p local_connector_client_core \
-      --lib \
-      embedded_excel_jxa_bridges_compile_without_launching_excel \
-      -- \
-      --nocapture
-  fi
-  local core_binary="$ROOT_DIR/target-shared/debug/local_connector_client_core${executable_suffix}"
-  if [[ ! -f "$core_binary" ]]; then
-    echo "Native Local Connector Core binary is missing: $core_binary" >&2
-    return 1
-  fi
-  CHATOS_TEST_LOCAL_CONNECTOR_BINARY="$core_binary" node --test \
-    "$ROOT_DIR"/local_connector_client/tests/*.test.mjs \
-    "$ROOT_DIR"/local_connector_client/verify-installed-package.test.mjs
-  npm --prefix "$ROOT_DIR/local_connector_client/frontend" run test:electron
+  "${CARGO[@]}" test --manifest-path plugins/browser/Cargo.toml --workspace --no-fail-fast
+  npm --prefix plugins/document run vendor:fetch:current
+  npm --prefix plugins/document test
 }
 
 run_frontend() {
@@ -164,11 +132,7 @@ run_frontend() {
   npm --prefix "$ROOT_DIR/$directory" run type-check
 
   if has_npm_script "$directory" "test"; then
-    if [[ "$directory" == "chatos/frontend" ]]; then
-      npm --prefix "$ROOT_DIR/$directory" run test -- --run
-    else
-      npm --prefix "$ROOT_DIR/$directory" run test
-    fi
+    npm --prefix "$ROOT_DIR/$directory" run test
   fi
 
   if has_npm_script "$directory" "test:electron"; then
@@ -203,6 +167,9 @@ case "$mode" in
     ;;
   native-platform)
     run_native_platform
+    ;;
+  plugins)
+    run_plugins
     ;;
   frontend)
     [[ "$#" -eq 2 ]] || {

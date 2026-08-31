@@ -1,0 +1,21 @@
+<Application
+    x:Class="ChatOS.Desktop.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:ChatOS.Desktop.Converters">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <ResourceDictionary Source="ms-appx:///DesignSystem/Colors.xaml" />
+                <ResourceDictionary Source="ms-appx:///DesignSystem/Typography.xaml" />
+                <ResourceDictionary Source="ms-appx:///DesignSystem/Controls.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+            <converters:BooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" Invert="True" />
+            <converters:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+            <converters:StringToVisibilityConverter x:Key="InverseStringToVisibilityConverter" Invert="True" />
+            <converters:RemoteFileGlyphConverter x:Key="RemoteFileGlyphConverter" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

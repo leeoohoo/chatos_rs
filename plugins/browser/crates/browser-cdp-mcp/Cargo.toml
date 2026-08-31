@@ -1,0 +1,14 @@
+[package]
+name = "browser-cdp-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+browser-cdp-core = { path = "../browser-cdp-core" }
+browser-cdp-policy = { path = "../browser-cdp-policy" }
+browser-cdp-protocol = { path = "../browser-cdp-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

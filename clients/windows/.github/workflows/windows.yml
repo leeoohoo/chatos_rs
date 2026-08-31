@@ -1,0 +1,276 @@
+name: Windows
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sign_packages:
+        description: Build signed MSIX packages using repository secrets
+        required: false
+        default: false
+        type: boolean
+      authenticated_ui_smoke:
+        description: Sign in and validate the authenticated shell and settings path
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+            **/*.csproj
+      - name: Restore tests
+        shell: pwsh
+        run: ./build/bootstrap.ps1
+      - name: Run tests serially
+        shell: pwsh
+        run: ./build/test.ps1 -Configuration Release
+      - name: Run Windows native acceptance
+        shell: pwsh
+        run: ./build/native-acceptance.ps1 -Configuration Release -Platform x64 -OutputDirectory artifacts/windows-native-acceptance
+      - name: Upload Windows native acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOS-Windows-native-acceptance
+          path: artifacts/windows-native-acceptance/**/*
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop-build:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+            **/*.csproj
+      - name: Restore ${{ matrix.platform }}
+        shell: pwsh
+        run: dotnet restore ./ChatOS.Win.sln -p:Platform=${{ matrix.platform }} --nologo
+      - name: Build ${{ matrix.platform }}
+        shell: pwsh
+        run: ./build/build.ps1 -Configuration Release -Platform ${{ matrix.platform }}
+      - name: Run login UI and accessibility smoke test
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        env:
+          CHATOS_UI_TEST_USERNAME: ${{ secrets.CHATOS_UI_TEST_USERNAME }}
+          CHATOS_UI_TEST_PASSWORD: ${{ secrets.CHATOS_UI_TEST_PASSWORD }}
+        run: |
+          $exe = Get-ChildItem ./src/ChatOS.Desktop/bin/x64/Release -Filter ChatOS.Desktop.exe -File -Recurse |
+            Where-Object { $_.FullName -like '*win-x64*' } |
+            Select-Object -First 1
+          if (-not $exe) { throw 'ChatOS.Desktop.exe was not found for UI automation.' }
+          $parameters = @{ ExecutablePath = $exe.FullName }
+          if ('${{ github.event_name == 'workflow_dispatch' && inputs.authenticated_ui_smoke }}' -eq 'true') {
+            $parameters.RequireAuthenticated = $true
+          }
+          ./build/ui-smoke.ps1 @parameters
+      - name: Upload desktop output
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOS-Windows-${{ matrix.platform }}-unpackaged
+          path: src/ChatOS.Desktop/bin/${{ matrix.platform }}/Release/
+          if-no-files-found: error
+          retention-days: 7
+
+  networkguard-service:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            runtime: win-x64
+          - platform: ARM64
+            runtime: win-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+            **/*.csproj
+      - name: Publish NetworkGuard service ${{ matrix.platform }}
+        shell: pwsh
+        run: |
+          dotnet publish ./src/ChatOS.NetworkGuard.Service/ChatOS.NetworkGuard.Service.csproj `
+            -c Release -r ${{ matrix.runtime }} --self-contained true `
+            -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false `
+            -o ./artifacts/networkguard-service/${{ matrix.platform }} --nologo
+      - name: Upload NetworkGuard service
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOS-NetworkGuard-Service-${{ matrix.platform }}
+          path: artifacts/networkguard-service/${{ matrix.platform }}/**/*
+          if-no-files-found: error
+          retention-days: 7
+
+  networkguard-driver:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+            **/*.csproj
+      - name: Build unsigned NetworkGuard WDK package for ${{ matrix.platform }}
+        shell: pwsh
+        run: ./build/networkguard.ps1 -Configuration Release -Platform ${{ matrix.platform }}
+      - name: Verify NetworkGuard WDK outputs
+        shell: pwsh
+        run: |
+          $root = './artifacts/networkguard/${{ matrix.platform }}'
+          foreach ($path in @(
+            "$root/driver/ChatOS.NetworkGuard.Driver.sys",
+            "$root/driver/ChatOS.NetworkGuard.Driver.cat",
+            "$root/driver/ChatOS.NetworkGuard.Driver.inf",
+            "$root/service/ChatOS.NetworkGuard.Service.exe",
+            "$root/manifest.json",
+            "$root/build-report.json")) {
+            if (-not (Test-Path $path -PathType Leaf)) { throw "Missing WDK output: $path" }
+          }
+          $report = Get-Content "$root/build-report.json" -Raw | ConvertFrom-Json
+          if ($report.passed -ne $true -or
+              $report.schema_version -lt 2 -or
+              $report.platform -ne '${{ matrix.platform }}' -or
+              $report.configuration -ne 'Release' -or
+              $report.signing_mode -ne 'unsigned' -or
+              $report.signed -ne $false -or
+              [string]::IsNullOrWhiteSpace($report.wdk_version)) {
+            throw 'NetworkGuard build evidence does not match the requested matrix entry.'
+          }
+      - name: Upload NetworkGuard WDK package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOS-NetworkGuard-WDK-${{ matrix.platform }}-unsigned
+          path: artifacts/networkguard/${{ matrix.platform }}/**/*
+          if-no-files-found: error
+          retention-days: 14
+
+  msix-package:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+            **/*.csproj
+      - name: Restore ${{ matrix.platform }}
+        shell: pwsh
+        run: dotnet restore ./src/ChatOS.Desktop/ChatOS.Desktop.csproj -p:Platform=${{ matrix.platform }} --nologo
+      - name: Package unsigned MSIX
+        shell: pwsh
+        run: ./build/package.ps1 -Platform ${{ matrix.platform }}
+      - name: Upload MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOS-Windows-${{ matrix.platform }}-MSIX-unsigned
+          path: src/ChatOS.Desktop/AppPackages/**/*
+          if-no-files-found: error
+          retention-days: 7
+
+  msix-signed:
+    if: github.event_name == 'workflow_dispatch' && inputs.sign_packages == true
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            global.json
+            Directory.Packages.props
+            **/*.csproj
+      - name: Restore ${{ matrix.platform }}
+        shell: pwsh
+        run: dotnet restore ./src/ChatOS.Desktop/ChatOS.Desktop.csproj -p:Platform=${{ matrix.platform }} --nologo
+      - name: Import signing certificate
+        id: signing
+        shell: pwsh
+        env:
+          CHATOS_MSIX_PFX_BASE64: ${{ secrets.CHATOS_MSIX_PFX_BASE64 }}
+          CHATOS_MSIX_PFX_PASSWORD: ${{ secrets.CHATOS_MSIX_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CHATOS_MSIX_PFX_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:CHATOS_MSIX_PFX_PASSWORD)) {
+            throw 'Signed packaging requires CHATOS_MSIX_PFX_BASE64 and CHATOS_MSIX_PFX_PASSWORD secrets.'
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'chatos-msix-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CHATOS_MSIX_PFX_BASE64))
+            $password = ConvertTo-SecureString $env:CHATOS_MSIX_PFX_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable:$false
+          }
+          finally {
+            Remove-Item $path -Force -ErrorAction SilentlyContinue
+          }
+          if (-not $certificate) { throw 'The MSIX signing certificate could not be imported.' }
+          "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+      - name: Package signed MSIX
+        shell: pwsh
+        run: ./build/package.ps1 -Platform ${{ matrix.platform }} -CertificateThumbprint '${{ steps.signing.outputs.thumbprint }}'
+      - name: Remove signing certificate
+        if: always() && steps.signing.outputs.thumbprint != ''
+        shell: pwsh
+        run: Remove-Item 'Cert:\CurrentUser\My\${{ steps.signing.outputs.thumbprint }}' -Force -ErrorAction SilentlyContinue
+      - name: Upload signed MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOS-Windows-${{ matrix.platform }}-MSIX-signed
+          path: src/ChatOS.Desktop/AppPackages/**/*
+          if-no-files-found: error
+          retention-days: 7

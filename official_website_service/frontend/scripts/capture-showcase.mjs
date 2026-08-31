@@ -7,7 +7,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const targets = [
-  ['chatos-main', 'http://127.0.0.1:8088'],
   ['memory-engine', 'http://127.0.0.1:4178'],
   ['task-runner', 'http://127.0.0.1:39091'],
   ['project-management', 'http://127.0.0.1:39211'],

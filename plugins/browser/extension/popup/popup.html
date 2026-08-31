@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chatos Browser Bridge</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Chatos Browser Bridge</h1>
+          <p id="status" class="status">正在检查 Browser MCP…</p>
+        </div>
+        <span id="status-dot" class="dot" aria-hidden="true"></span>
+      </header>
+
+      <section class="actions" aria-label="连接操作">
+        <button id="connect" type="button">首次连接</button>
+        <button id="share" type="button" disabled>共享当前标签</button>
+        <button id="disconnect" class="secondary" type="button" disabled>断开连接</button>
+      </section>
+
+      <section class="setup" aria-labelledby="setup-title">
+        <h2 id="setup-title">首次安装引导</h2>
+        <ol>
+          <li><strong>安装插件：</strong>在 ChatOS 插件市场安装并启用 <b>Browser CDP</b>。</li>
+          <li><strong>授权能力：</strong>为插件开启“连接现有 Chrome”权限。</li>
+          <li><strong>启动任务：</strong>在 ChatOS 中运行一个会使用 Browser CDP 的任务。</li>
+          <li><strong>完成配对：</strong>回到这里点击“首次连接”。成功一次后，MCP 或扩展重启会自动恢复连接。</li>
+        </ol>
+        <p class="hint">任务创建的页面会自动进入以任务名称命名的 Chrome 标签组；任务结束后标签保留并折叠。</p>
+      </section>
+
+      <details>
+        <summary>连接不上怎么办？</summary>
+        <ul class="troubleshooting">
+          <li>确认 ChatOS 和 Local Connector 正在运行。</li>
+          <li>先启动一个 Browser CDP 任务，再点击“首次连接”。</li>
+          <li>插件升级后无需重新配对；若主动点过“断开连接”，需要再次点击“首次连接”。</li>
+        </ul>
+      </details>
+
+      <section>
+        <h2>已共享的用户标签</h2>
+        <p class="hint">这里只列出你主动共享的已有标签。任务自己创建的标签由任务分组管理，不需要手动共享。</p>
+        <ul id="targets"></ul>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

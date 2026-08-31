@@ -240,20 +240,6 @@ routes:
       nodes:
         "memory-engine-backend:7081": 1
 
-  - id: chatos-app
-    priority: 200
-    uri: /app/*
-    plugins:
-      request-id: *request_id
-      proxy-rewrite:
-        regex_uri:
-          - "^/app/?(.*)"
-          - "/$1"
-    upstream:
-      type: roundrobin
-      nodes:
-        "chatos-frontend:80": 1
-
   - id: block-unmatched-api-routes
     priority: 90
     uri: /api/*

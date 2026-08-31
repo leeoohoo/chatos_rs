@@ -1,0 +1,23 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+AppPackages/
+BundleArtifacts/
+Generated Files/
+TestResults/
+*.pfx
+*.cer
+*.snk
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.log
+.DS_Store

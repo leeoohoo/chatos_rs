@@ -1,0 +1,13 @@
+export const SERVER_NAME = 'chatos-document-mcp';
+export const SERVER_VERSION = __PACKAGE_VERSION__;
+export const MAX_INPUT_BYTES = 100 * 1024 * 1024;
+export const MAX_OOXML_ENTRIES = 10_000;
+export const MAX_OOXML_UNPACKED_BYTES = 512 * 1024 * 1024;
+export const MAX_INSPECTED_XML_BYTES = 16 * 1024 * 1024;
+export const MAX_EXTRACTED_XML_BYTES = 32 * 1024 * 1024;
+export const MAX_EXTRACT_CHARS = 30_000;
+export const MAX_EXTRACT_SECTIONS = 200;
+export const MAX_PDF_PAGES = 2_000;
+export const MAX_RENDER_PAGES = 50;
+export const MAX_RENDER_TOTAL_PIXELS = 100_000_000;
+export const MAX_RENDER_PAGE_PIXELS = 40_000_000;

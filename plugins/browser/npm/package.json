@@ -1,0 +1,39 @@
+{
+  "name": "chatos-browser-cdp",
+  "version": "0.1.6",
+  "description": "Full Chrome DevTools Protocol browser control MCP for Chatos.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/chatos-ai/chatos-browser-cdp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chatos-ai/chatos-browser-cdp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chatos-ai/chatos-browser-cdp/issues"
+  },
+  "keywords": ["browser", "cdp", "chrome", "chromium", "mcp", "chatos"],
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "chatos-browser-cdp": "bin/chatos-browser-cdp"
+  },
+  "files": [
+    "bin/",
+    "chatos.plugin.json",
+    "dist/",
+    "skills/",
+    "sbom.cdx.json",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "sbom": "node ../scripts/generate-sbom.mjs",
+    "test": "node --test test/*.test.js"
+  }
+}

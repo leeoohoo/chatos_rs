@@ -113,12 +113,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
         ],
         showcase_images: vec![
             ShowcaseImage {
-                id: "chatos-main",
-                title: "联系人驱动的主聊天",
-                path: "/showcase/chatos-main.png",
-                source_url: "http://127.0.0.1:8088",
-            },
-            ShowcaseImage {
                 id: "memory-engine",
                 title: "Memory Engine 控制台",
                 path: "/showcase/memory-engine.png",

@@ -173,13 +173,13 @@ Create agents, choose models, enable the tools and skills they need, and set def
 ### Creating a project
 
 1. Download and install the Okra desktop connector from the Okra website.
-2. Sign in with the same account you use on the web.
+2. Sign in with your Okra cloud account.
 3. Add and authorize a local workspace.
 4. Configure the local tools, Skills, Plugins, MCP servers, permission controls, and approval permissions you need.
 5. Create the project from that workspace in the desktop client.
 6. Add a project contact, then start a conversation or plan.
 
-Opening Okra in a regular browser does not grant access to directories on your computer. Workspace operations require the desktop client and Local Connector to be online.
+The ChatOS application UI is native desktop software. Browser-based administration pages do not grant access to directories on your computer; workspace operations require the desktop client and its Local Connector to be online.
 
 ## Frequently Asked Questions
 
@@ -213,7 +213,7 @@ Okra is evolving quickly. Current limitations include:
 
 - Project workspace access requires the desktop client and an online Local Connector.
 - Projects do not yet support chat attachments or image/file attachments in additional guidance sent while a task is running.
-- Business history is stored by server-side services. Version 2.0.10 does not migrate historical sessions, tasks, or memory from the legacy client SQLite database.
+- Business history is stored by server-side services. Version 3.0.0 does not import historical sessions, tasks, or memory from the retired Electron client's SQLite database.
 - Available desktop platforms, versions, and registration rules depend on the Okra deployment you use.
 
 ## Technical and Self-Hosting Reference
@@ -232,17 +232,6 @@ Okra uses one cloud business orchestration plane plus device-side capability exe
 - MCP Management routes project files, Git, search, and commands only to the bound Local Connector. Harness remains a repository and integration control plane.
 - Local Connector unavailability fails explicitly; it never moves a device-scoped operation to another execution host silently.
 
-### Local data paths
-
-The default Local Connector state paths are:
-
-```text
-~/.chatos/local_connector/state.json
-~/.chatos/local_connector/connector-state.sqlite3
-```
-
-Set `LOCAL_CONNECTOR_STATE_PATH` to change the state file location. The SQLite database stores only connector control state in the same directory. Legacy `runtime.sqlite3` files are not migrated or used by 2.0.10.
-
 ### Start the self-hosted cloud stack
 
 Docker Engine and Docker Compose v2 are required:
@@ -252,7 +241,7 @@ cp docker/bootstrap.conf.example docker/bootstrap.conf
 make docker-up
 ```
 
-The main application is available at <http://localhost:8088> by default. Business configuration is published through Configuration Center. `docker/bootstrap.conf` contains only the infrastructure and credentials required before Configuration Center can be reached and must not be committed.
+The official website is available at <http://localhost:39251>, and the unified API gateway at <http://localhost:9080>. The ChatOS application itself runs in the native clients. Business configuration is published through Configuration Center. `docker/bootstrap.conf` contains only the infrastructure and credentials required before Configuration Center can be reached and must not be committed.
 
 Build images from the current source:
 
@@ -269,40 +258,33 @@ make local-dev-logs SERVICE=chatos-backend
 make local-dev-stop
 ```
 
-### Local Connector development
+### Native desktop clients
 
-Start the Core service and settings page:
-
-```bash
-make local-connector-client
-make local-connector-client-status
-make local-connector-client-stop
-```
-
-The complete project workspace experience depends on the trusted Runtime Bridge provided by Electron. Core/settings development mode alone is not equivalent to the complete desktop client.
-
-Package for macOS:
+Build and test the macOS client on macOS 14 or later:
 
 ```bash
-./local_connector_client/package-electron-macos-client.sh
+make build-macos-client
+make test-macos-client
+clients/macos/scripts/package-debug-app.sh
 ```
 
-Package for Windows:
+Build and test the Windows client on Windows 11 with .NET 8 and the WinUI workload:
 
 ```powershell
-powershell -ExecutionPolicy Bypass `
-  -File .\local_connector_client\package-electron-windows-client.ps1
+dotnet build clients/windows/ChatOS.Win.sln --configuration Release
+dotnet test clients/windows/ChatOS.Win.sln --configuration Release
+clients\windows\build\package.ps1 -Platform x64
 ```
 
-Package the Linux core profile on Linux:
+### First-party plugins
 
-```bash
-./local_connector_client/package-electron-linux-client.sh
-```
+The three first-party plugin source trees live with the clients and server:
 
-The Linux package includes the desktop client and Local Connector Core. Browser, Computer Use,
-document, PDF, and similar capabilities are installed separately from the Marketplace and execute
-through the Local Connector plugin runtime.
+- `plugins/browser`: Browser CDP plugin and Chrome bridge extension.
+- `plugins/computer-use`: native macOS and Windows Computer Use implementations.
+- `plugins/document`: workspace-bounded Office and PDF tools.
+
+Use `make build-plugins` and `make test-plugins` on a supported native development host. Generated packages, downloaded dependencies, and vendor executables are intentionally not committed.
 
 ### Build and test
 
@@ -317,7 +299,6 @@ The main services can also be tested independently:
 ```bash
 cargo test -p chat_app_server_rs
 cargo test -p task_runner_service_backend
-cargo test -p local_connector_client_core
 cd memory_engine/backend && cargo test
 ```
 
@@ -325,13 +306,12 @@ cd memory_engine/backend && cargo test
 
 - Deployment boundaries and ports: `docker/compose.yml`
 - Rust workspace: `Cargo.toml`
-- Cloud business APIs and the local capability bridge: `chatos/frontend/src/lib/api/client/facades/`
+- macOS native client and Local Connector: `clients/macos/Sources/`
+- Windows native client and Local Connector: `clients/windows/src/`
+- First-party plugins: `plugins/browser/`, `plugins/computer-use/`, and `plugins/document/`
 - Cloud execution boundary: `chatos/backend/src/core/project_execution.rs`
-- Local Connector capability executor: `local_connector_client/core/src/local_runtime/`
-- Local Connector control-state schema: `local_connector_client/core/migrations/`
 - Cloud Task Runner: `task_runner_service/backend/src/services/`
 - Development and deployment commands: `Makefile`, `docker/deploy.sh`, and `scripts/local-dev-stack.sh`
-- `chatos_3d_anime_prototype/` is an experimental interface, not the current production entry point.
 
 </details>
 

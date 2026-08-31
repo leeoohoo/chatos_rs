@@ -79,7 +79,7 @@ make docker-fast
 
 ```bash
 docker/deploy.sh rebuild task-runner-backend
-docker/deploy.sh rebuild chatos-backend chatos-frontend
+docker/deploy.sh rebuild chatos-backend
 docker/deploy.sh build-services
 # 或
 make docker-rebuild SERVICES="task-runner-backend"
@@ -121,7 +121,8 @@ make local-dev-stop
 
 ## 5. 默认端口
 
-- 主应用：`8088`
+- 官网：`39251`
+- 统一 API 网关：`9080`
 - 主后端：`3997`
 - Configuration Center 内部 mTLS：`39272`（仅服务调用，不对浏览器开放）
 - Harness Web：`3000`
@@ -200,17 +201,16 @@ Harness 使用 Apache License 2.0。开源说明见 `THIRD_PARTY_NOTICES.md`，�
 
 当前 Compose 默认开启 `HARNESS_PROVISIONING_ENABLED=true`，`user_service` 会把 Harness API 地址指向 `http://harness:3000`。
 
-## 9. Local Connector Client
+## 9. 原生客户端
 
-`local_connector_service` 已经在 Docker 栈里运行。`local_connector_client` 仍然需要在用户本机运行，因为它要访问本机工作区、本机凭据和本机 Docker。
+`local_connector_service` 在 Docker 栈中运行；访问工作区、本机凭据和设备能力的 Local Connector 已内置于 macOS 与 Windows 原生客户端。
 
 ```bash
-make local-connector-client
-make local-connector-client-status
-make local-connector-client-stop
+make build-macos-client
+make test-macos-client
 ```
 
-本机 connector 配置可以从根目录 `.env.example` 复制到 `.env` 后调整。
+Windows 端使用 `clients/windows/scripts/start-client.ps1` 启动，构建与安装说明见 `clients/windows/README.md`。
 
 ## 10. 检查
 

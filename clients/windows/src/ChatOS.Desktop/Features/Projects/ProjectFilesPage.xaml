@@ -1,0 +1,278 @@
+<UserControl
+    x:Class="ChatOS.Desktop.Features.Projects.ProjectFilesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:core="using:ChatOS.Core.Domain"
+    mc:Ignorable="d">
+
+    <Grid Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="52" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Padding="14,0" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Button Command="{x:Bind ViewModel.GoToParentCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.ParentDirectory, Mode=OneWay}">
+                <FontIcon Glyph="&#xE72B;" />
+            </Button>
+            <Button Grid.Column="1" Command="{x:Bind ViewModel.RefreshCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.RefreshDirectory, Mode=OneWay}">
+                <FontIcon Glyph="&#xE72C;" />
+            </Button>
+            <Button Grid.Column="2" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.NewFileOrFolder, Mode=OneWay}">
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuFlyoutItem Text="{x:Bind Localization.NewFile, Mode=OneWay}" Click="OnCreateFileClick">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7C3;" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="{x:Bind Localization.NewFolder, Mode=OneWay}" Click="OnCreateDirectoryClick">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                    </MenuFlyout>
+                </Button.Flyout>
+                <FontIcon Glyph="&#xE710;" />
+            </Button>
+            <TextBlock Grid.Column="3" VerticalAlignment="Center" Text="{x:Bind ViewModel.CurrentPath, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            <TextBox
+                Grid.Column="4"
+                VerticalAlignment="Center"
+                PlaceholderText="{x:Bind Localization.SearchFilesAndContent, Mode=OneWay}"
+                Text="{x:Bind ViewModel.SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                KeyDown="OnSearchKeyDown" />
+            <Button Grid.Column="5" Command="{x:Bind ViewModel.SearchCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.Search, Mode=OneWay}">
+                <FontIcon Glyph="&#xE721;" />
+            </Button>
+            <ProgressRing Grid.Column="6" Width="18" Height="18" IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" />
+        </Grid>
+
+        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0" Background="{StaticResource ChatOSSidebarBackgroundBrush}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <ListView
+                    x:Name="DirectoryList"
+                    Padding="8"
+                    IsItemClickEnabled="True"
+                    ItemClick="OnDirectoryItemClick"
+                    ItemsSource="{x:Bind ViewModel.Entries}"
+                    SelectionMode="Single">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="core:ProjectFileEntry">
+                            <Grid Padding="5" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Glyph="&#xE8B7;" FontSize="13" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                <StackPanel Grid.Column="1" Spacing="1">
+                                    <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind DisplayPath}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{x:Bind Size}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                <Button Grid.Column="3" Click="OnRenameEntryClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding Rename, Source={StaticResource ChatOSLocalization}}" IsEnabled="{x:Bind IsWritable}">
+                                    <FontIcon Glyph="&#xE70F;" FontSize="12" />
+                                </Button>
+                                <Button Grid.Column="4" Click="OnDeleteEntryClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding Delete, Source={StaticResource ChatOSLocalization}}" IsEnabled="{x:Bind IsWritable}">
+                                    <FontIcon Glyph="&#xE74D;" FontSize="12" Foreground="{StaticResource ChatOSFailureBrush}" />
+                                </Button>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <Border
+                    Grid.Row="1"
+                    MaxHeight="260"
+                    Margin="8"
+                    Padding="8"
+                    Style="{StaticResource ChatOSCardStyle}"
+                    Visibility="{x:Bind ViewModel.HasSearchResults, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="8">
+                            <Grid>
+                                <TextBlock Text="{x:Bind Localization.SearchResults, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <Button HorizontalAlignment="Right" Command="{x:Bind ViewModel.ClearSearchCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                                    <FontIcon Glyph="&#xE711;" FontSize="10" />
+                                </Button>
+                            </Grid>
+                            <ListView IsItemClickEnabled="True" ItemClick="OnFileSearchItemClick" ItemsSource="{x:Bind ViewModel.FileSearchResults}" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="core:ProjectFileEntry">
+                                        <TextBlock Text="{x:Bind DisplayPath}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <ListView IsItemClickEnabled="True" ItemClick="OnContentSearchItemClick" ItemsSource="{x:Bind ViewModel.ContentSearchResults}" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="core:ProjectFileContentMatch">
+                                        <StackPanel Spacing="1">
+                                            <TextBlock Text="{x:Bind DisplayPath}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock Text="{x:Bind Text}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+
+            <Border Grid.Column="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+            <Grid Grid.Column="2" Padding="18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="1" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="1">
+                        <TextBlock Text="{x:Bind ViewModel.SelectedFile.Name, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedFile.DisplayPath, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                    <Button
+                        Grid.Column="1"
+                        Command="{x:Bind ViewModel.ToggleEditingCommand}"
+                        Content="{x:Bind Localization.Edit, Mode=OneWay}"
+                        IsEnabled="{x:Bind ViewModel.CanEdit, Mode=OneWay}" />
+                    <Button
+                        Grid.Column="2"
+                        Command="{x:Bind ViewModel.SaveCommand}"
+                        Content="{x:Bind Localization.Save, Mode=OneWay}"
+                        Style="{StaticResource ChatOSPrimaryButtonStyle}"
+                        Visibility="{x:Bind ViewModel.IsEditing, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <NumberBox
+                        Grid.Column="3"
+                        Header="{x:Bind Localization.Line, Mode=OneWay}"
+                        Minimum="1"
+                        SpinButtonPlacementMode="Compact"
+                        Value="{x:Bind ViewModel.NavigationLine, Mode=TwoWay}" />
+                    <NumberBox
+                        Grid.Column="4"
+                        Header="{x:Bind Localization.Column, Mode=OneWay}"
+                        Minimum="1"
+                        SpinButtonPlacementMode="Compact"
+                        Value="{x:Bind ViewModel.NavigationColumn, Mode=TwoWay}" />
+                    <Button Grid.Column="5" Content="{x:Bind Localization.FindDefinition, Mode=OneWay}" Command="{x:Bind ViewModel.FindDefinitionCommand}" IsEnabled="{x:Bind ViewModel.HasTextPreview, Mode=OneWay}" />
+                    <Button Grid.Column="6" Content="{x:Bind Localization.FindReferences, Mode=OneWay}" Command="{x:Bind ViewModel.FindReferencesCommand}" IsEnabled="{x:Bind ViewModel.HasTextPreview, Mode=OneWay}" />
+                </Grid>
+
+                <Border Grid.Row="1" Margin="0,12" Background="{StaticResource ChatOSBorderBrush}" />
+
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Visibility="{x:Bind ViewModel.HasTextPreview, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <TextBlock FontFamily="Cascadia Mono, Consolas" Text="{x:Bind ViewModel.SelectedFile.Content, Mode=OneWay}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                </ScrollViewer>
+
+                <TextBox
+                    Grid.Row="2"
+                    AcceptsReturn="True"
+                    FontFamily="Cascadia Mono, Consolas"
+                    HorizontalScrollBarVisibility="Auto"
+                    Text="{x:Bind ViewModel.EditorContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    TextWrapping="NoWrap"
+                    VerticalScrollBarVisibility="Auto"
+                    Visibility="{x:Bind ViewModel.IsEditing, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind ViewModel.HasBinaryPreview, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <FontIcon Glyph="&#xE7C3;" FontSize="34" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                    <TextBlock Text="{x:Bind Localization.BinaryPreviewOnly, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock Text="{x:Bind Localization.BinaryEditorSafetyNotice, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind ViewModel.HasSelectedFile, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                    <FontIcon Glyph="&#xE8A5;" FontSize="34" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                    <TextBlock Text="{x:Bind Localization.SelectFileToView, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock Text="{x:Bind Localization.ReadOnlyPreviewNotice, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                </StackPanel>
+
+                <Border
+                    Grid.Row="2"
+                    Width="440"
+                    MaxHeight="250"
+                    Margin="0,0,0,30"
+                    Padding="10"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Style="{StaticResource ChatOSCardStyle}"
+                    Visibility="{x:Bind ViewModel.HasNavigationResults, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel Spacing="7">
+                        <TextBlock Style="{StaticResource ChatOSBodyStrongTextStyle}">
+                            <Run Text="{x:Bind ViewModel.NavigationToken, Mode=OneWay}" />
+                            <Run Text=" · " />
+                            <Run Text="{x:Bind ViewModel.NavigationMode, Mode=OneWay}" />
+                        </TextBlock>
+                        <ListView
+                            IsItemClickEnabled="True"
+                            ItemClick="OnNavigationLocationClick"
+                            ItemsSource="{x:Bind ViewModel.NavigationLocations}"
+                            SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="core:ProjectCodeNavigationLocation">
+                                    <StackPanel Padding="3" Spacing="1">
+                                        <TextBlock Style="{StaticResource ChatOSBodyStrongTextStyle}">
+                                            <Run Text="{x:Bind RelativePath}" /><Run Text=":" /><Run Text="{x:Bind Line}" /><Run Text=":" /><Run Text="{x:Bind Column}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{x:Bind Preview}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel
+                    Grid.Row="2"
+                    Margin="0,8"
+                    VerticalAlignment="Bottom"
+                    Spacing="4">
+                    <TextBlock
+                        Text="{x:Bind ViewModel.EntryActionMessage, Mode=OneWay}"
+                        Foreground="{StaticResource ChatOSSuccessBrush}"
+                        Style="{StaticResource ChatOSCaptionTextStyle}"
+                        Visibility="{x:Bind ViewModel.EntryActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                        Foreground="{StaticResource ChatOSFailureBrush}"
+                        Style="{StaticResource ChatOSCaptionTextStyle}"
+                        Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

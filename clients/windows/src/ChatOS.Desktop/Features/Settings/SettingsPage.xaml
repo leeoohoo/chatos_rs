@@ -1,0 +1,729 @@
+<UserControl
+    x:Class="ChatOS.Desktop.Features.Settings.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:core="using:ChatOS.Core.Domain"
+    xmlns:settings="using:ChatOS.Desktop.Features.Settings"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid
+        AutomationProperties.AutomationId="ChatOS.Settings.Root"
+        AutomationProperties.Name="{x:Bind Localization.Settings, Mode=OneWay}"
+        Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="54" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Padding="16,0" ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button
+                AutomationProperties.AutomationId="ChatOS.Settings.Back"
+                AutomationProperties.Name="{x:Bind Localization.Back, Mode=OneWay}"
+                Click="OnBackClicked"
+                Style="{StaticResource ChatOSToolbarButtonStyle}"
+                ToolTipService.ToolTip="{x:Bind Localization.Back, Mode=OneWay}">
+                <FontIcon Glyph="&#xE72B;" />
+            </Button>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                <TextBlock Text="{x:Bind Localization.Settings, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                <TextBlock Text="{x:Bind Localization.SettingsDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+        <ScrollViewer Grid.Row="2" Padding="24" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="860" HorizontalAlignment="Center" Spacing="18">
+                <TextBlock Text="{x:Bind Localization.General, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+
+                <Border Style="{StaticResource ChatOSCardStyle}">
+                    <Grid RowSpacing="18" ColumnSpacing="28">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.LanguageLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ComboBox
+                            x:Name="LanguagePicker"
+                            AutomationProperties.AutomationId="ChatOS.Settings.Language"
+                            AutomationProperties.Name="{x:Bind Localization.LanguageLabel, Mode=OneWay}"
+                            Grid.Column="1"
+                            MinWidth="220"
+                            HorizontalAlignment="Left"
+                            SelectionChanged="OnLanguageChanged">
+                            <ComboBoxItem Tag="SimplifiedChinese" Content="{x:Bind Localization.SimplifiedChinese, Mode=OneWay}" />
+                            <ComboBoxItem Tag="English" Content="{x:Bind Localization.English, Mode=OneWay}" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind Localization.ThemeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ComboBox
+                            x:Name="ThemePicker"
+                            AutomationProperties.AutomationId="ChatOS.Settings.Theme"
+                            AutomationProperties.Name="{x:Bind Localization.ThemeLabel, Mode=OneWay}"
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            MinWidth="220"
+                            HorizontalAlignment="Left"
+                            SelectionChanged="OnThemeChanged">
+                            <ComboBoxItem Tag="System" Content="{x:Bind Localization.SystemTheme, Mode=OneWay}" />
+                            <ComboBoxItem Tag="Light" Content="{x:Bind Localization.LightTheme, Mode=OneWay}" />
+                            <ComboBoxItem Tag="Dark" Content="{x:Bind Localization.DarkTheme, Mode=OneWay}" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="{x:Bind Localization.FontSizeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                            <Slider
+                                x:Name="FontScaleSlider"
+                                AutomationProperties.AutomationId="ChatOS.Settings.FontScale"
+                                AutomationProperties.Name="{x:Bind Localization.FontSizeLabel, Mode=OneWay}"
+                                Width="300"
+                                Minimum="0.85"
+                                Maximum="1.30"
+                                StepFrequency="0.05"
+                                ValueChanged="OnFontScaleChanged" />
+                            <TextBlock x:Name="FontScaleLabel" MinWidth="52" VerticalAlignment="Center" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="{x:Bind Localization.PetEnabledLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ToggleSwitch
+                            x:Name="PetEnabledSwitch"
+                            AutomationProperties.AutomationId="ChatOS.Settings.PetEnabled"
+                            AutomationProperties.Name="{x:Bind Localization.PetEnabledLabel, Mode=OneWay}"
+                            Grid.Row="3"
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            Toggled="OnPetEnabledToggled" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Margin="0,8,0,0" Text="{x:Bind Connector.SectionLabel, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+
+                <Border Style="{StaticResource ChatOSCardStyle}">
+                    <StackPanel Spacing="16">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE968;" FontSize="15" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                    <TextBlock Text="{x:Bind Connector.TitleLabel, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                </StackPanel>
+                                <TextBlock
+                                    Text="{x:Bind Connector.DescriptionLabel, Mode=OneWay}"
+                                    Style="{StaticResource ChatOSSecondaryBodyTextStyle}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ProgressRing
+                                Grid.Column="1"
+                                Width="20"
+                                Height="20"
+                                IsActive="{x:Bind Connector.IsBusy, Mode=OneWay}" />
+                            <Button
+                                AutomationProperties.AutomationId="ChatOS.Settings.ConnectorRefresh"
+                                AutomationProperties.Name="{x:Bind Connector.RefreshStatusLabel, Mode=OneWay}"
+                                Grid.Column="2"
+                                Command="{x:Bind Connector.RefreshCommand}"
+                                Style="{StaticResource ChatOSToolbarButtonStyle}"
+                                ToolTipService.ToolTip="{x:Bind Connector.RefreshStatusLabel, Mode=OneWay}">
+                                <FontIcon Glyph="&#xE72C;" />
+                            </Button>
+                        </Grid>
+
+                        <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+                        <StackPanel
+                            Spacing="14"
+                            Visibility="{x:Bind Connector.IsPaired, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                            <Grid RowSpacing="12" ColumnSpacing="18">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock VerticalAlignment="Center" Text="{x:Bind Connector.GatewayAddressLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBox
+                                    Grid.Column="1"
+                                    Text="{x:Bind Connector.GatewayBaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    PlaceholderText="https://local-connector.jgoool.com" />
+                                <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind Connector.DeviceNameInputLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBox
+                                    Grid.Row="1"
+                                    Grid.Column="1"
+                                    Text="{x:Bind Connector.DeviceName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    PlaceholderText="{x:Bind Connector.DeviceNamePlaceholder, Mode=OneWay}" />
+                            </Grid>
+
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{x:Bind Connector.AllowedWorkspacesLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind Connector.WorkspaceBoundaryNotice, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Click="OnAddConnectorWorkspaceClicked" Content="{x:Bind Connector.AddFolderLabel, Mode=OneWay}" />
+                            </Grid>
+
+                            <ListView
+                                ItemsSource="{x:Bind Connector.Workspaces}"
+                                SelectionMode="None"
+                                MaxHeight="220">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="core:LocalConnectorWorkspaceDraft">
+                                        <Grid Padding="4,6" ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon Glyph="&#xE8B7;" FontSize="13" />
+                                            <StackPanel Grid.Column="1" Spacing="2">
+                                                <TextBlock Text="{x:Bind Alias}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                <TextBlock Text="{x:Bind AbsoluteRoot}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <Button
+                                                Grid.Column="2"
+                                                Click="OnRemoveConnectorWorkspaceClicked"
+                                                Style="{StaticResource ChatOSToolbarButtonStyle}"
+                                                ToolTipService.ToolTip="{Binding Remove, Source={StaticResource ChatOSLocalization}}">
+                                                <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+
+                            <Grid>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Text="{x:Bind Connector.WorkspaceRequiredLabel, Mode=OneWay}"
+                                    Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                <Button
+                                    HorizontalAlignment="Right"
+                                    Command="{x:Bind Connector.PairCommand}"
+                                    Content="{x:Bind Connector.PairDeviceLabel, Mode=OneWay}"
+                                    IsEnabled="{x:Bind Connector.CanPair, Mode=OneWay}"
+                                    Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel
+                            Spacing="14"
+                            Visibility="{x:Bind Connector.IsPaired, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid RowSpacing="10" ColumnSpacing="18">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind Connector.ConnectionStatusLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Grid.Column="1" Text="{x:Bind Connector.StatusLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" />
+                                <TextBlock Grid.Row="1" Text="{x:Bind Connector.UserLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind Connector.UsernameLabel, Mode=OneWay}" IsTextSelectionEnabled="True" />
+                                <TextBlock Grid.Row="2" Text="{x:Bind Connector.DeviceLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind Connector.DeviceNameLabel, Mode=OneWay}" />
+                                <TextBlock Grid.Row="3" Text="Device ID" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind Connector.DeviceIdLabel, Mode=OneWay}" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="4" Text="{x:Bind Connector.LastConnectionLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind Connector.LastSeenLabel, Mode=OneWay}" />
+                            </Grid>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="{x:Bind Connector.PairedWorkspacesLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <ListView ItemsSource="{x:Bind Connector.PairedWorkspaces, Mode=OneWay}" SelectionMode="None" MaxHeight="220">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="core:LocalConnectorWorkspaceStatus">
+                                            <StackPanel Padding="4,6" Spacing="2">
+                                                <TextBlock Text="{x:Bind Alias}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                <TextBlock Text="{x:Bind AbsoluteRoot}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </StackPanel>
+
+                            <TextBlock
+                                Text="{x:Bind Connector.Status.LastError, Mode=OneWay}"
+                                Foreground="{StaticResource ChatOSFailureBrush}"
+                                Style="{StaticResource ChatOSCaptionTextStyle}"
+                                TextWrapping="Wrap"
+                                Visibility="{x:Bind Connector.Status.LastError, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                            <Button
+                                HorizontalAlignment="Right"
+                                Click="OnDisconnectConnectorClicked"
+                                Content="{x:Bind Connector.DisconnectLabel, Mode=OneWay}" />
+                        </StackPanel>
+
+                        <TextBlock
+                            Text="{x:Bind Connector.ActionMessage, Mode=OneWay}"
+                            Foreground="{StaticResource ChatOSSuccessBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind Connector.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        <TextBlock
+                            Text="{x:Bind Connector.ErrorMessage, Mode=OneWay}"
+                            Foreground="{StaticResource ChatOSFailureBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind Connector.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="{x:Bind Localization.Sandbox, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="{x:Bind SandboxSettings.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ProgressRing Grid.Column="1" Width="20" Height="20" VerticalAlignment="Bottom" IsActive="{x:Bind SandboxSettings.IsBusy, Mode=OneWay}" />
+                    <Button AutomationProperties.AutomationId="ChatOS.Settings.SandboxSave" Grid.Column="2" VerticalAlignment="Bottom" Click="OnSaveSandboxClicked" Content="{x:Bind Localization.SaveSettings, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                </Grid>
+
+                <Border Style="{StaticResource ChatOSCardStyle}">
+                    <Grid RowSpacing="15" ColumnSpacing="24">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Text="{x:Bind SandboxSettings.CommandSandboxLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ToggleSwitch
+                            x:Name="SandboxEnabledSwitch"
+                            AutomationProperties.AutomationId="ChatOS.Settings.SandboxEnabled"
+                            AutomationProperties.Name="{x:Bind SandboxSettings.CommandSandboxLabel, Mode=OneWay}"
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            OffContent="{x:Bind SandboxSettings.FullAccessLabel, Mode=OneWay}"
+                            OnContent="{x:Bind SandboxSettings.AppContainerLabel, Mode=OneWay}"
+                            Toggled="OnSandboxEnabledToggled" />
+
+                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind SandboxSettings.FilePermissionLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ComboBox
+                            x:Name="SandboxProfilePicker"
+                            AutomationProperties.AutomationId="ChatOS.Settings.SandboxProfile"
+                            AutomationProperties.Name="{x:Bind SandboxSettings.FilePermissionLabel, Mode=OneWay}"
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            MinWidth="260"
+                            HorizontalAlignment="Left"
+                            SelectionChanged="OnSandboxProfileChanged">
+                            <ComboBoxItem Tag="ReadOnly" Content="{x:Bind SandboxSettings.ReadOnlyLabel, Mode=OneWay}" />
+                            <ComboBoxItem Tag="WorkspaceWrite" Content="{x:Bind SandboxSettings.WorkspaceWriteLabel, Mode=OneWay}" />
+                            <ComboBoxItem Tag="FullAccess" Content="{x:Bind SandboxSettings.FullAccessLabel, Mode=OneWay}" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="{x:Bind SandboxSettings.NetworkPermissionLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <StackPanel Grid.Row="2" Grid.Column="1" Spacing="5">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <ComboBox
+                                    x:Name="SandboxNetworkPicker"
+                                    AutomationProperties.AutomationId="ChatOS.Settings.SandboxNetwork"
+                                    AutomationProperties.Name="{x:Bind SandboxSettings.NetworkPermissionLabel, Mode=OneWay}"
+                                    MinWidth="260"
+                                    HorizontalAlignment="Left"
+                                    SelectionChanged="OnSandboxNetworkChanged">
+                                    <ComboBoxItem Tag="Disabled" Content="{x:Bind SandboxSettings.NetworkDisabledLabel, Mode=OneWay}" />
+                                    <ComboBoxItem Tag="Controlled" Content="{x:Bind SandboxSettings.ControlledNetworkLabel, Mode=OneWay}" Visibility="{x:Bind SandboxSettings.IsControlledNetworkAvailable, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <ComboBoxItem Tag="Host" Content="{x:Bind SandboxSettings.HostNetworkLabel, Mode=OneWay}" />
+                                </ComboBox>
+                                <Button AutomationProperties.AutomationId="ChatOS.Settings.SandboxReadinessRefresh" Click="OnRefreshSandboxReadinessClicked" Content="{x:Bind Localization.Refresh, Mode=OneWay}" />
+                            </StackPanel>
+                            <TextBlock
+                                Text="{x:Bind SandboxSettings.ControlledNetworkStatusMessage, Mode=OneWay}"
+                                Foreground="{StaticResource ChatOSWarningBrush}"
+                                Style="{StaticResource ChatOSCaptionTextStyle}"
+                                TextWrapping="Wrap"
+                                Visibility="{x:Bind SandboxSettings.ControlledNetworkStatusMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{x:Bind SandboxSettings.Description, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
+                        <Grid Grid.Row="4" Grid.ColumnSpan="2">
+                            <TextBlock Text="{x:Bind SandboxSettings.ActionMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <TextBlock Text="{x:Bind SandboxSettings.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="{x:Bind Localization.Models, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="{x:Bind ModelSettings.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button Grid.Column="1" VerticalAlignment="Bottom" Click="OnRefreshModelsClicked" Content="{x:Bind Localization.SyncModels, Mode=OneWay}" />
+                    <Button Grid.Column="2" VerticalAlignment="Bottom" Click="OnSaveModelsClicked" Content="{x:Bind Localization.SaveSettings, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                </Grid>
+
+                <Border Style="{StaticResource ChatOSCardStyle}">
+                    <Grid RowSpacing="16" ColumnSpacing="24">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.LocalApprovalModel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <StackPanel Grid.Column="1" HorizontalAlignment="Left" Orientation="Horizontal" Spacing="8">
+                            <ComboBox
+                                MinWidth="360"
+                                ItemsSource="{x:Bind ModelSettings.AvailableModels}"
+                                SelectedItem="{x:Bind ModelSettings.SelectedApprovalModel, Mode=TwoWay}"
+                                PlaceholderText="{x:Bind Localization.NoModelSelected, Mode=OneWay}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="settings:ConnectorModelOptionViewModel">
+                                        <StackPanel Padding="3" Spacing="2">
+                                            <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock Text="{x:Bind Detail, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <Button Click="OnClearApprovalModelClicked" Content="{x:Bind Localization.ClearSelection, Mode=OneWay}" />
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind Localization.ModelRequestRetries, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <NumberBox
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            Width="130"
+                            HorizontalAlignment="Left"
+                            Minimum="0"
+                            Maximum="10"
+                            SpinButtonPlacementMode="Inline"
+                            Value="{x:Bind ModelSettings.ModelRequestMaxRetries, Mode=OneWay}"
+                            ValueChanged="OnModelRetriesChanged" />
+                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{x:Bind ModelSettings.ReviewerHint, Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        <Grid Grid.Row="3" Grid.ColumnSpan="2">
+                            <ProgressRing Width="20" Height="20" HorizontalAlignment="Left" IsActive="{x:Bind ModelSettings.IsBusy, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind ModelSettings.ActionMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <TextBlock Text="{x:Bind ModelSettings.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="{x:Bind Localization.Approval, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="{x:Bind ApprovalSettings.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ProgressRing Grid.Column="1" Width="20" Height="20" VerticalAlignment="Bottom" IsActive="{x:Bind ApprovalSettings.IsBusy, Mode=OneWay}" />
+                </Grid>
+
+                <Border Style="{StaticResource ChatOSCardStyle}">
+                    <StackPanel Spacing="14">
+                        <Grid ColumnSpacing="18">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.ApprovalMode, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                            <ComboBox
+                                x:Name="ApprovalModePicker"
+                                AutomationProperties.AutomationId="ChatOS.Settings.ApprovalMode"
+                                AutomationProperties.Name="{x:Bind Localization.ApprovalMode, Mode=OneWay}"
+                                Grid.Column="1"
+                                MinWidth="260"
+                                HorizontalAlignment="Left"
+                                SelectionChanged="OnApprovalModeChanged">
+                                <ComboBoxItem Tag="RequestApproval" Content="{x:Bind Localization.AskEveryTime, Mode=OneWay}" />
+                                <ComboBoxItem Tag="AutoApproval" Content="{x:Bind Localization.AutomaticApproval, Mode=OneWay}" />
+                                <ComboBoxItem Tag="FullControl" Content="{x:Bind Localization.FullControl, Mode=OneWay}" />
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock Text="{x:Bind ApprovalSettings.ModeDescription, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
+                        <TextBlock
+                            Text="{x:Bind ApprovalSettings.AutomaticReviewerStatus, Mode=OneWay}"
+                            Foreground="{StaticResource ChatOSWarningBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind ApprovalSettings.AutomaticReviewerStatus, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        <TextBlock
+                            Text="{x:Bind ApprovalSettings.ActionMessage, Mode=OneWay}"
+                            Foreground="{StaticResource ChatOSSuccessBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            Visibility="{x:Bind ApprovalSettings.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        <TextBlock
+                            Text="{x:Bind ApprovalSettings.ErrorMessage, Mode=OneWay}"
+                            Foreground="{StaticResource ChatOSFailureBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind ApprovalSettings.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                    </StackPanel>
+                </Border>
+
+                <Expander Header="{x:Bind Localization.PendingApprovals, Mode=OneWay}" IsExpanded="True">
+                    <ItemsControl ItemsSource="{x:Bind ApprovalSettings.Pending}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="settings:ApprovalPendingItemViewModel">
+                                <Border Margin="0,0,0,8" Style="{StaticResource ChatOSCardStyle}">
+                                    <StackPanel Spacing="9">
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind RiskLabel}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Source}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind CreatedLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </Grid>
+                                        <TextBlock Text="{x:Bind Command}" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                                        <TextBlock Text="{x:Bind WorkingDirectory}" Style="{StaticResource ChatOSCaptionTextStyle}" IsTextSelectionEnabled="True" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{x:Bind Reason}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
+                                        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
+                                            <Button Click="OnDeclinePendingApproval" Content="{x:Bind DeclineLabel}" />
+                                            <Button Click="OnAcceptPendingApproval" Content="{x:Bind AcceptLabel}" />
+                                            <Button Click="OnAcceptSessionPendingApproval" Content="{x:Bind AcceptForSessionLabel}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Expander>
+
+                <Expander Header="{x:Bind Localization.ApprovalHistory, Mode=OneWay}">
+                    <ItemsControl ItemsSource="{x:Bind ApprovalSettings.History}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="settings:ApprovalHistoryItemViewModel">
+                                <Grid Padding="4,8" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{x:Bind DecisionLabel}" Foreground="{StaticResource ChatOSAccentBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <StackPanel Grid.Column="1" Spacing="3">
+                                        <TextBlock Text="{x:Bind Command}" FontFamily="Cascadia Mono, Consolas" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Style="{StaticResource ChatOSCaptionTextStyle}">
+                                            <Run Text="{x:Bind Source}" /><Run Text=" · " /><Run Text="{x:Bind ReviewerLabel}" /><Run Text=" · " /><Run Text="{x:Bind Reason}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{x:Bind CreatedLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Expander>
+
+                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="{x:Bind Localization.Plugins, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="{x:Bind PluginSettings.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button
+                        AutomationProperties.AutomationId="ChatOS.Settings.PluginsRefresh"
+                        Grid.Column="1"
+                        VerticalAlignment="Bottom"
+                        Click="OnRefreshPluginsClicked"
+                        IsEnabled="{x:Bind PluginSettings.CanRefresh, Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <ProgressRing Width="14" Height="14" IsActive="{x:Bind PluginSettings.IsBusy, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind PluginSettings.RefreshLabel, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+
+                <TextBlock
+                    Text="{x:Bind PluginSettings.ActionMessage, Mode=OneWay}"
+                    Foreground="{StaticResource ChatOSSuccessBrush}"
+                    Style="{StaticResource ChatOSCaptionTextStyle}"
+                    TextWrapping="Wrap"
+                    Visibility="{x:Bind PluginSettings.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                <TextBlock
+                    Text="{x:Bind PluginSettings.ErrorMessage, Mode=OneWay}"
+                    Foreground="{StaticResource ChatOSFailureBrush}"
+                    Style="{StaticResource ChatOSCaptionTextStyle}"
+                    TextWrapping="Wrap"
+                    Visibility="{x:Bind PluginSettings.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                <ItemsControl ItemsSource="{x:Bind PluginSettings.Plugins, Mode=OneWay}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="settings:PluginSettingsItem">
+                            <Border Margin="0,0,0,12" Style="{StaticResource ChatOSCardStyle}">
+                                <StackPanel Spacing="14">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                <TextBlock Text="{x:Bind InstallationStatus, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <TextBlock Text="{x:Bind Publisher}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
+                                        <ProgressRing Grid.Column="1" Width="18" Height="18" IsActive="{x:Bind IsBusy, Mode=OneWay}" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Click="OnPluginPrimaryActionClicked"
+                                            Content="{x:Bind PrimaryActionLabel, Mode=OneWay}"
+                                            IsEnabled="{x:Bind IsAvailable, Mode=OneWay}"
+                                            Visibility="{x:Bind UpdateAvailable, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Click="OnPluginPrimaryActionClicked"
+                                            Content="{x:Bind PrimaryActionLabel, Mode=OneWay}"
+                                            IsEnabled="{x:Bind IsAvailable, Mode=OneWay}"
+                                            Visibility="{x:Bind Installed, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                                            <ToggleSwitch
+                                                IsOn="{x:Bind Enabled, Mode=OneWay}"
+                                                IsEnabled="{x:Bind IsAvailable, Mode=OneWay}"
+                                                Toggled="OnPluginEnabledToggled"
+                                                Visibility="{x:Bind Installed, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                            <Button
+                                                Click="OnPluginUninstallClicked"
+                                                Content="{x:Bind UninstallLabel, Mode=OneWay}"
+                                                IsEnabled="{x:Bind IsAvailable, Mode=OneWay}"
+                                                Visibility="{x:Bind Installed, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <TextBlock Text="{x:Bind Description}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
+                                    <TextBlock
+                                        Text="{x:Bind ConfigurationError}"
+                                        Foreground="{StaticResource ChatOSFailureBrush}"
+                                        Style="{StaticResource ChatOSCaptionTextStyle}"
+                                        TextWrapping="Wrap"
+                                        Visibility="{x:Bind ConfigurationError, Converter={StaticResource StringToVisibilityConverter}}" />
+
+                                    <Expander
+                                        Header="{x:Bind PermissionsLabel, Mode=OneWay}"
+                                        Visibility="{x:Bind HasPermissions, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <ItemsControl ItemsSource="{x:Bind Permissions}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="settings:PluginPermissionSettingsItem">
+                                                    <StackPanel Padding="2,5" Spacing="2">
+                                                        <TextBlock Text="{x:Bind DisplayText}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                        <TextBlock Text="{x:Bind Reason}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Expander>
+
+                                    <Expander
+                                        Header="{x:Bind CredentialsLabel, Mode=OneWay}"
+                                        Visibility="{x:Bind HasCredentials, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <ItemsControl ItemsSource="{x:Bind Credentials}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="settings:PluginCredentialSettingsItem">
+                                                    <Grid Padding="2,6" ColumnSpacing="10">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="180" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Spacing="2">
+                                                            <TextBlock Text="{x:Bind SecretName}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                            <TextBlock Text="{x:Bind ComponentKey}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
+                                                        <PasswordBox
+                                                            Grid.Column="1"
+                                                            PasswordChanged="OnPluginCredentialPasswordChanged"
+                                                            PlaceholderText="{x:Bind StatusLabel, Mode=OneWay}" />
+                                                        <Button Grid.Column="2" Click="OnSavePluginCredentialClicked" Content="{x:Bind SaveLabel, Mode=OneWay}" />
+                                                        <Button
+                                                            Grid.Column="3"
+                                                            Click="OnDeletePluginCredentialClicked"
+                                                            Content="{x:Bind DeleteLabel, Mode=OneWay}"
+                                                            Visibility="{x:Bind Configured, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Expander>
+
+                                    <Expander
+                                        Header="{x:Bind OAuthLabel, Mode=OneWay}"
+                                        Visibility="{x:Bind HasOAuthApps, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <ItemsControl ItemsSource="{x:Bind OAuthApps}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="settings:PluginOAuthSettingsItem">
+                                                    <Grid Padding="2,6" ColumnSpacing="10">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="180" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Spacing="2">
+                                                            <TextBlock Text="{x:Bind Provider}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                            <TextBlock Text="{x:Bind ComponentKey}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1" Spacing="2">
+                                                            <TextBlock Text="{x:Bind StatusLabel, Mode=OneWay}" />
+                                                            <TextBlock Text="{x:Bind Scopes}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                                                        </StackPanel>
+                                                        <Button Grid.Column="2" Click="OnPluginOAuthActionClicked" Content="{x:Bind ActionLabel, Mode=OneWay}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Expander>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

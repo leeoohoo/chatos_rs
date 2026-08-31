@@ -1,0 +1,21 @@
+{
+  "name": "open-computer-use",
+  "version": "0.8.11",
+  "description": "Visual-first macOS Computer Use MCP server for ChatOS.",
+  "license": "UNLICENSED",
+  "bin": {
+    "open-computer-use": "bin/open-computer-use"
+  },
+  "scripts": {
+    "test": "swift test",
+    "build:app": "./scripts/build-macos-app.sh",
+    "pack:chatos": "node ./scripts/build-chatos-package.mjs"
+  },
+  "files": [
+    "bin/",
+    "chatos.plugin.json",
+    "dist/Visual Computer Use.app/",
+    "skills/",
+    "README.md"
+  ]
+}

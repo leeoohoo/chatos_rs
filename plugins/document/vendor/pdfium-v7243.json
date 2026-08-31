@@ -1,0 +1,57 @@
+{
+  "name": "PDFium WebAssembly",
+  "wrapper": {
+    "name": "@hyzyla/pdfium",
+    "version": "2.1.13",
+    "repository": "https://github.com/hyzyla/pdfium",
+    "tag": "v2.1.13",
+    "commit": "274cac6e238b780eb4cafc989d7a5a70ffc5772b",
+    "license": "MIT",
+    "licenseAsset": {
+      "target": "licenses/hyzyla-pdfium-MIT.txt",
+      "sha256": "5cc65587cf79f422edd88913836fd6ab3bc17a70f29a83a9ae7d5c7eac35ed94"
+    }
+  },
+  "builder": {
+    "name": "pdfium-lib",
+    "release": "7243",
+    "repository": "https://github.com/paulocoutinhox/pdfium-lib",
+    "sourceBranch": "chromium/7243",
+    "wasmArchiveUrl": "https://github.com/paulocoutinhox/pdfium-lib/releases/download/7243/wasm.tgz",
+    "wasmArchiveSha256": "efd95da1a8fcf162e63639176b57d9e60fb01b301d740d949f40365522d9eaf5",
+    "license": "MIT",
+    "licenseAsset": {
+      "target": "licenses/pdfium-lib-MIT.txt",
+      "sha256": "028bb31112cd51ad35dbdd90bd377b74879168654c12edb39ff89ef1bcfbe1b3"
+    }
+  },
+  "upstream": {
+    "name": "PDFium",
+    "repository": "https://pdfium.googlesource.com/pdfium/",
+    "branch": "chromium/7243",
+    "license": "BSD-3-Clause AND Apache-2.0",
+    "licenseAssets": [
+      {
+        "target": "licenses/PDFium-BSD-3-Clause.txt",
+        "sha256": "e4ba234e87ee9df5ed7c99854a4bab83df8bcfc5c301e7575bfe0470697d4801"
+      },
+      {
+        "target": "licenses/OfficeCLI-LICENSE.txt",
+        "sha256": "7e282402a5a6db33995fe638bb3fe79013f9884d8f7d15a42e481c1e86aadda1",
+        "note": "The same Apache-2.0 license text is shared with the OfficeCLI notice."
+      }
+    ]
+  },
+  "asset": {
+    "source": "node_modules/@hyzyla/pdfium/dist/pdfium.wasm",
+    "target": "dist/pdfium.wasm",
+    "size": 3988829,
+    "sha256": "71aec412a303a0405baee21c3d6d3f30ad2033dc02444130fe476be3976e2d09"
+  },
+  "review": {
+    "status": "complete",
+    "thirdPartyManifest": "pdfium-third-party-v7243.json",
+    "reviewedAt": "2026-08-21",
+    "scope": "Engineering inventory and redistribution-notice capture for the fixed chromium/7243 WASM build. This is not legal advice."
+  }
+}

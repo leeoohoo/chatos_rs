@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleDisplayName</key>
+    <string>Visual Computer Use</string>
+    <key>CFBundleExecutable</key>
+    <string>visual-computer-use-mcp</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.visualcomputeruse.mcp</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Visual Computer Use</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.8.11</string>
+    <key>CFBundleVersion</key>
+    <string>17</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Visual Computer Use 需要辅助功能权限来发送真实鼠标、键盘和滚动事件。</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Visual Computer Use 需要屏幕录制权限来获取截图并通过视觉定位界面。</string>
+</dict>
+</plist>

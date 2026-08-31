@@ -1,0 +1,79 @@
+<Window
+    x:Class="ChatOS.Desktop.Features.Plugins.PluginArtifactsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:plugins="using:ChatOS.Desktop.Features.Plugins"
+    mc:Ignorable="d"
+    Title="ChatOS Artifacts">
+
+    <Window.Resources>
+        <DataTemplate x:Key="ArtifactTemplate" x:DataType="plugins:PluginArtifactItemViewModel">
+            <Border Margin="0,0,0,8" Padding="12" Style="{StaticResource ChatOSCardStyle}">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind MediaType}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        <TextBlock Style="{StaticResource ChatOSCaptionTextStyle}">
+                            <Run Text="{x:Bind Producer}" /><Run Text=" · " /><Run Text="{x:Bind SizeLabel}" /><Run Text=" · " /><Run Text="{x:Bind CreatedLabel}" />
+                        </TextBlock>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                        <Button Click="OnOpenClicked" Content="{x:Bind OpenLabel}" />
+                        <Button Click="OnSaveAsClicked" Content="{x:Bind SaveAsLabel}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="TitleBar" Background="{StaticResource ChatOSTitleBarBackgroundBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Margin="16,0,0,0" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
+                <FontIcon Glyph="&#xE8B7;" Foreground="{StaticResource ChatOSAccentBrush}" />
+                <TextBlock Text="{x:Bind Localization.Artifacts, Mode=OneWay}" Style="{StaticResource ChatOSTitleTextStyle}" />
+            </StackPanel>
+            <Button Grid.Column="1" Margin="0,0,138,0" Click="OnRefreshClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.Refresh, Mode=OneWay}">
+                <FontIcon Glyph="&#xE72C;" />
+            </Button>
+        </Grid>
+
+        <Grid Grid.Row="1" Padding="18" RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="ScopeText" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+            <Grid Grid.Row="1">
+                <TextBlock x:Name="StatusText" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
+                <ProgressRing Width="20" Height="20" HorizontalAlignment="Right" IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" />
+            </Grid>
+            <Grid Grid.Row="2">
+                <ListView
+                    x:Name="ArtifactList"
+                    ItemsSource="{x:Bind ViewModel.Artifacts}"
+                    ItemTemplate="{StaticResource ArtifactTemplate}"
+                    SelectionMode="None" />
+                <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                    <FontIcon Glyph="&#xE8B7;" FontSize="30" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                    <TextBlock Text="{x:Bind Localization.NoPluginArtifacts, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

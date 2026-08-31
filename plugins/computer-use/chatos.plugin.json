@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 3,
+  "name": "open-computer-use",
+  "version": "0.8.11",
+  "description": "Visual-first macOS Computer Use MCP that observes real screenshots and sends real CoreGraphics input events.",
+  "author": {
+    "name": "Open Computer Use"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "computer-use",
+    "macos",
+    "visual-automation",
+    "mcp"
+  ],
+  "mcpServers": {
+    "computer-use": {
+      "type": "stdio",
+      "bin": "open-computer-use",
+      "requiresExclusiveExecution": true,
+      "args": [
+        "mcp"
+      ]
+    }
+  },
+  "skills": [
+    "./skills/visual-computer-use"
+  ],
+  "interface": {
+    "displayName": "Visual Computer Use",
+    "shortDescription": "Control macOS from real screenshots",
+    "longDescription": "Uses real macOS screenshots as the UI source of truth, renders a visible virtual cursor, and sends real CoreGraphics mouse, keyboard, paste, and scroll events without reading DOM or Accessibility UI trees.",
+    "developerName": "Open Computer Use",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Call observe_screen before acting and treat the latest screenshot as the UI source of truth",
+      "Call move_mouse and visually verify the virtual cursor hotspot before every click",
+      "Verify the fresh screenshot returned after every action before continuing"
+    ],
+    "brandColor": "#5965F2",
+    "screenshots": []
+  },
+  "dependencies": {
+    "supportedPlatforms": [
+      "macos"
+    ]
+  },
+  "permissions": [
+    {
+      "permission": "process.spawn",
+      "required": true,
+      "reason": "Launch the installed Visual Computer Use stdio MCP executable.",
+      "components": [
+        "computer-use"
+      ]
+    },
+    {
+      "permission": "computer.control",
+      "required": true,
+      "reason": "Send user-requested mouse, keyboard, paste, and scroll events to macOS applications.",
+      "components": [
+        "computer-use"
+      ]
+    }
+  ]
+}

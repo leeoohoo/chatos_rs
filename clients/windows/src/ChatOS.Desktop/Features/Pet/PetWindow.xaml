@@ -1,0 +1,512 @@
+<Window
+    x:Class="ChatOS.Desktop.Features.Pet.PetWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:chat="using:ChatOS.Presentation.Chat"
+    xmlns:pet="using:ChatOS.Presentation.Pet"
+    xmlns:desktopPet="using:ChatOS.Desktop.Features.Pet"
+    Title="ChatOS Pet">
+
+    <Grid
+        x:Name="WindowRoot"
+        AutomationProperties.AutomationId="ChatOS.Pet.Root"
+        AutomationProperties.Name="ChatOS pet"
+        Background="Black">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="170" />
+        </Grid.RowDefinitions>
+
+        <Border
+            x:Name="CompactActivityCard"
+            AutomationProperties.AutomationId="ChatOS.Pet.ActivityToast"
+            Margin="18,12,18,4"
+            Padding="14,12"
+            VerticalAlignment="Bottom"
+            Background="#F7FBFBFC"
+            BorderBrush="#CBD9D9DE"
+            BorderThickness="1"
+            CornerRadius="14"
+            Tapped="OnCompactActivityTapped">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="4" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border x:Name="CompactActivityAccent" Background="{StaticResource ChatOSAccentBrush}" CornerRadius="2" />
+                <StackPanel Grid.Column="1" Spacing="3">
+                    <TextBlock x:Name="CompactActivityStatus" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSAccentBrush}" />
+                    <TextBlock x:Name="CompactActivityTitle" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                    <TextBlock x:Name="CompactActivityDetail" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                </StackPanel>
+                <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+            </Grid>
+        </Border>
+
+        <Border
+            x:Name="ApprovalCard"
+            AutomationProperties.AutomationId="ChatOS.Pet.Approval"
+            Margin="12,10,12,4"
+            Padding="16"
+            VerticalAlignment="Bottom"
+            Background="#FCFBFBFC"
+            BorderBrush="{StaticResource ChatOSWarningBrush}"
+            BorderThickness="1"
+            CornerRadius="16">
+            <StackPanel Spacing="9">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="{x:Bind ViewModel.LocalApprovalRequiredLabel, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <TextBlock x:Name="ApprovalSourceText" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                    <Border Grid.Column="1" Padding="8,3" Background="#FFF4E8" CornerRadius="8">
+                        <TextBlock x:Name="ApprovalRiskText" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSWarningBrush}" />
+                    </Border>
+                </Grid>
+                <Border Padding="10,8" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock x:Name="ApprovalCommandText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" />
+                        <TextBlock x:Name="ApprovalWorkingDirectoryText" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
+                <TextBlock x:Name="ApprovalReasonText" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                <TextBlock x:Name="ApprovalQueueText" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                <Grid ColumnSpacing="7">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ProgressRing x:Name="ApprovalProgress" Width="20" Height="20" HorizontalAlignment="Left" />
+                    <Button x:Name="DeclineApprovalButton" AutomationProperties.AutomationId="ChatOS.Pet.Approval.Deny" Grid.Column="1" Click="OnDeclineApproval" Content="{x:Bind ViewModel.DenyLabel, Mode=OneWay}" />
+                    <Button x:Name="AcceptSessionApprovalButton" AutomationProperties.AutomationId="ChatOS.Pet.Approval.AllowSession" Grid.Column="2" Click="OnAcceptSessionApproval" Content="{x:Bind ViewModel.AllowForSessionLabel, Mode=OneWay}" />
+                    <Button x:Name="AcceptApprovalButton" AutomationProperties.AutomationId="ChatOS.Pet.Approval.AllowOnce" Grid.Column="3" Click="OnAcceptApproval" Content="{x:Bind ViewModel.AllowOnceLabel, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <Border
+            x:Name="DecisionCard"
+            AutomationProperties.AutomationId="ChatOS.Pet.DecisionToast"
+            Margin="18,12,18,4"
+            Padding="14,12"
+            VerticalAlignment="Bottom"
+            Background="#F7FBFBFC"
+            BorderBrush="#CBD9D9DE"
+            BorderThickness="1"
+            CornerRadius="14">
+            <StackPanel Spacing="7">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="DecisionTitleText" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock x:Name="DecisionSourceText" Grid.Column="1" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                </Grid>
+                <Border Padding="9,7" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="8">
+                    <TextBlock x:Name="DecisionCommandText" FontFamily="Consolas" FontSize="12" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" />
+                </Border>
+                <TextBlock x:Name="DecisionReasonText" MaxLines="3" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                <TextBlock x:Name="DecisionStatusText" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </StackPanel>
+        </Border>
+
+        <Border
+            x:Name="InboxCard"
+            AutomationProperties.AutomationId="ChatOS.Pet.Inbox"
+            Margin="8,8,8,2"
+            Padding="0"
+            VerticalAlignment="Stretch"
+            Background="#FCFBFBFC"
+            BorderBrush="#CBD9D9DE"
+            BorderThickness="1"
+            CornerRadius="16">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="48" />
+                    <RowDefinition Height="1" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid Padding="14,0" ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal" Spacing="7">
+                        <TextBlock Text="{x:Bind ViewModel.InboxTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <Border x:Name="InboxCountBadge" Padding="6,2" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="8">
+                            <TextBlock x:Name="InboxCountText" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                        </Border>
+                    </StackPanel>
+                    <Button Grid.Column="1" Click="OnRefreshClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.RefreshLabel, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE72C;" FontSize="13" />
+                    </Button>
+                    <Button Grid.Column="2" Click="OnCloseInboxClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.CloseLabel, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE70D;" FontSize="13" />
+                    </Button>
+                </Grid>
+                <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+                <Grid Grid.Row="2">
+                    <ListView
+                        x:Name="ActivityList"
+                        AutomationProperties.AutomationId="ChatOS.Pet.ActivityList"
+                        Margin="6"
+                        IsItemClickEnabled="True"
+                        ItemClick="OnActivityItemClick"
+                        ItemsSource="{x:Bind ViewModel.Activities}">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource ChatOSSidebarItemStyle}">
+                                <Setter Property="Padding" Value="6" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="pet:PetActivityItemViewModel">
+                                <Grid Padding="4,3" ColumnSpacing="9">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="4" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Background="{StaticResource ChatOSAccentBrush}" CornerRadius="2" />
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <Grid ColumnSpacing="6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind StatusLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                        </Grid>
+                                        <TextBlock Text="{x:Bind Detail}" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{x:Bind SourceLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" VerticalAlignment="Bottom" Text="{x:Bind TimeLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <StackPanel x:Name="EmptyInbox" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                        <FontIcon Glyph="&#xE8F2;" FontSize="28" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                        <TextBlock Text="{x:Bind ViewModel.EmptyMessage, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                </Grid>
+
+                <Border
+                    x:Name="ActivityDetailCard"
+                    AutomationProperties.AutomationId="ChatOS.Pet.ActivityDetail"
+                    Grid.Row="2"
+                    Margin="8"
+                    Padding="14"
+                    Background="{StaticResource ChatOSContentBackgroundBrush}"
+                    BorderBrush="{StaticResource ChatOSPurpleBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{x:Bind ViewModel.SelectedActivity.Title, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                    <TextBlock Text="{x:Bind ViewModel.SelectedActivity.StatusLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Click="OnCloseDetailClicked" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                                    <FontIcon Glyph="&#xE711;" FontSize="12" />
+                                </Button>
+                            </Grid>
+                            <TextBlock Text="{x:Bind ViewModel.SelectedActivity.Detail, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+
+                            <Border
+                                Padding="12"
+                                Background="{StaticResource ChatOSProcessBackgroundBrush}"
+                                CornerRadius="10"
+                                Visibility="{x:Bind ViewModel.HasActivePrompt, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel Spacing="9">
+                                    <TextBlock Text="{x:Bind ViewModel.ActivePrompt.Message, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                    <ItemsControl ItemsSource="{x:Bind ViewModel.ActivePrompt.Fields, Mode=OneWay}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="chat:AskUserFieldInputViewModel">
+                                                <StackPanel Margin="0,2" Spacing="4">
+                                                    <TextBlock Text="{x:Bind Label}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                    <TextBlock Text="{x:Bind Description}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBox
+                                                        AcceptsReturn="{x:Bind IsMultiline}"
+                                                        PlaceholderText="{x:Bind Placeholder}"
+                                                        Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                        TextWrapping="Wrap"
+                                                        Visibility="{x:Bind IsSecret, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                                    <PasswordBox
+                                                        PasswordChanged="OnAskUserSecretChanged"
+                                                        PlaceholderText="{x:Bind Placeholder}"
+                                                        Visibility="{x:Bind IsSecret, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <ComboBox
+                                        DisplayMemberPath="Label"
+                                        ItemsSource="{x:Bind ViewModel.ActivePrompt.Options, Mode=OneWay}"
+                                        SelectedItem="{x:Bind ViewModel.ActivePrompt.SelectedSingleOption, Mode=TwoWay}"
+                                        Visibility="{x:Bind ViewModel.ActivePrompt.IsSingleChoice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <ItemsControl
+                                        ItemsSource="{x:Bind ViewModel.ActivePrompt.Options, Mode=OneWay}"
+                                        Visibility="{x:Bind ViewModel.ActivePrompt.AllowsMultiple, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="chat:AskUserChoiceOptionViewModel">
+                                                <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" Content="{x:Bind Label}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="{x:Bind ViewModel.ActivePrompt.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="7">
+                                        <Button Command="{x:Bind ViewModel.ActivePrompt.CancelCommand, Mode=OneWay}" Content="{x:Bind ViewModel.ActivePrompt.CancelLabel, Mode=OneWay}" />
+                                        <Button Command="{x:Bind ViewModel.ActivePrompt.SubmitCommand, Mode=OneWay}" Content="{x:Bind ViewModel.ActivePrompt.SubmitLabel, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.ActionMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <Grid ColumnSpacing="7">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ProgressRing Width="20" Height="20" HorizontalAlignment="Left" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                                <Button Grid.Column="1" Click="OnIgnoreActivityClicked" Content="{x:Bind ViewModel.IgnoreLabel, Mode=OneWay}" />
+                                <Button Grid.Column="2" Click="OnMarkHandledClicked" Content="{x:Bind ViewModel.HandledLabel, Mode=OneWay}" />
+                                <Button
+                                    Grid.Column="3"
+                                    Click="OnCancelTaskClicked"
+                                    Content="{x:Bind ViewModel.CancelTaskLabel, Mode=OneWay}"
+                                    Style="{StaticResource ChatOSPrimaryButtonStyle}"
+                                    Visibility="{x:Bind ViewModel.CanCancelSelected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </Grid>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+
+                <TextBlock
+                    Grid.Row="3"
+                    Margin="14,4,14,10"
+                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                    TextWrapping="Wrap"
+                    Foreground="{StaticResource ChatOSFailureBrush}"
+                    Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </Grid>
+        </Border>
+
+        <Border
+            x:Name="QuickChatCard"
+            AutomationProperties.AutomationId="ChatOS.Pet.QuickChat"
+            Margin="8,8,8,2"
+            Background="#FCFBFBFC"
+            BorderBrush="#CBD9D9DE"
+            BorderThickness="1"
+            CornerRadius="16">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="50" />
+                    <RowDefinition Height="1" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid Padding="12,0" ColumnSpacing="7">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="QuickChatBackButton" AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Back" AutomationProperties.Name="{x:Bind QuickChat.BackLabel, Mode=OneWay}" Click="OnQuickChatBackClicked" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                        <FontIcon Glyph="&#xE72B;" FontSize="13" />
+                    </Button>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                        <TextBlock x:Name="QuickChatHeaderTitle" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <TextBlock x:Name="QuickChatHeaderSubtitle" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Click="OnOpenInboxFromChatClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind QuickChat.TaskMessagesLabel, Mode=OneWay}">
+                        <Grid>
+                            <FontIcon Glyph="&#xEA8F;" FontSize="14" />
+                            <Ellipse x:Name="QuickChatNotificationDot" Width="7" Height="7" Margin="18,0,0,18" Fill="{StaticResource ChatOSFailureBrush}" />
+                        </Grid>
+                    </Button>
+                    <Button Grid.Column="3" Click="OnCloseQuickChatClicked" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                        <FontIcon Glyph="&#xE711;" FontSize="12" />
+                    </Button>
+                </Grid>
+                <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+                <Grid Grid.Row="2">
+                    <ListView
+                        x:Name="QuickChatResourceList"
+                        AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Resources"
+                        Margin="7"
+                        IsItemClickEnabled="True"
+                        ItemClick="OnQuickChatResourceClicked"
+                        ItemsSource="{x:Bind QuickChat.Resources}">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource ChatOSSidebarItemStyle}">
+                                <Setter Property="Padding" Value="6" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="desktopPet:PetQuickChatResourceViewModel">
+                                <Grid Padding="5" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="34" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Width="32" Height="32" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="9">
+                                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <TextBlock Text="{x:Bind Subtitle}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    </StackPanel>
+                                    <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" FontSize="11" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <TextBlock
+                        x:Name="QuickChatEmptyHint"
+                        Margin="28"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Text="{x:Bind QuickChat.EmptyHint, Mode=OneWay}"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap"
+                        Style="{StaticResource ChatOSCaptionTextStyle}" />
+
+                    <Grid x:Name="QuickChatConversationRoot" AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Conversation">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="1" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <ListView Padding="10" ItemsSource="{x:Bind QuickChat.Conversation.Turns}">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="Margin" Value="0,3" />
+                                    <Setter Property="IsTabStop" Value="False" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="chat:ConversationTurnItemViewModel">
+                                    <StackPanel Spacing="6">
+                                        <Border MaxWidth="300" Padding="10,7" HorizontalAlignment="Right" Background="{StaticResource ChatOSAccentBrush}" CornerRadius="11">
+                                            <TextBlock Text="{x:Bind UserText}" TextWrapping="Wrap" Foreground="White" />
+                                        </Border>
+                                        <ItemsControl ItemsSource="{x:Bind Replies}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="chat:ConversationReplyItemViewModel">
+                                                    <Border MaxWidth="300" Margin="0,2" Padding="10,7" HorizontalAlignment="Left" Background="{StaticResource ChatOSSidebarBackgroundBrush}" CornerRadius="11">
+                                                        <TextBlock Text="{x:Bind Text}" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <ProgressRing Width="14" Height="14" IsActive="True" />
+                                            <TextBlock Text="{Binding Replying, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+                        <StackPanel Grid.Row="2" Padding="10" Spacing="5">
+                            <TextBlock Text="{x:Bind QuickChat.Conversation.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <Grid ColumnSpacing="7">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox
+                                    AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Composer"
+                                    AutomationProperties.Name="{x:Bind QuickChat.ComposerPlaceholder, Mode=OneWay}"
+                                    MinHeight="36"
+                                    MaxHeight="90"
+                                    AcceptsReturn="True"
+                                    PlaceholderText="{x:Bind QuickChat.ComposerPlaceholder, Mode=OneWay}"
+                                    Text="{x:Bind QuickChat.Conversation.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    TextWrapping="Wrap" />
+                                <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Stop" Grid.Column="1" Command="{x:Bind QuickChat.Conversation.StopCommand}" Content="{x:Bind QuickChat.CancelLabel, Mode=OneWay}" Visibility="{x:Bind QuickChat.Conversation.IsRunning, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Send" Grid.Column="2" Command="{x:Bind QuickChat.Conversation.SendCommand}" Content="{x:Bind QuickChat.SendLabel, Mode=OneWay}" IsEnabled="{x:Bind QuickChat.Conversation.CanSendDraft, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel x:Name="QuickChatPreparing" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="9">
+                        <ProgressRing Width="26" Height="26" IsActive="True" />
+                        <TextBlock Text="{x:Bind QuickChat.PreparingHint, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock Grid.Row="3" Margin="12,4,12,10" Text="{x:Bind QuickChat.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Bottom">
+            <Border
+                x:Name="PetHitTarget"
+                AutomationProperties.AutomationId="ChatOS.Pet.HitTarget"
+                AutomationProperties.Name="ChatOS pet"
+                Width="154"
+                Height="154"
+                Background="#01000000"
+                PointerPressed="OnPetPointerPressed"
+                PointerMoved="OnPetPointerMoved"
+                PointerReleased="OnPetPointerReleased"
+                PointerCanceled="OnPetPointerCanceled">
+                <Canvas x:Name="PetCanvas" Width="150" Height="150" RenderTransformOrigin="0.5,0.5">
+                    <Canvas.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform x:Name="PetDirectionTransform" ScaleX="1" />
+                            <TranslateTransform x:Name="PetBodyTransform" />
+                        </TransformGroup>
+                    </Canvas.RenderTransform>
+                    <Ellipse Canvas.Left="22" Canvas.Top="112" Width="108" Height="18" Fill="#22000000" />
+                    <Path Data="M35,72 C12,64 8,91 29,105 C14,105 10,117 28,120 C50,123 59,105 57,91 Z" Fill="#D9703A" Stroke="#A84E2D" StrokeThickness="2" />
+                    <Path Data="M55,45 L42,13 L73,31 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
+                    <Path Data="M95,45 L108,13 L78,31 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
+                    <Path Data="M50,41 C57,22 94,22 101,43 C111,62 106,94 88,105 C78,112 64,110 55,102 C40,89 39,59 50,41 Z" Fill="#ED8A4F" Stroke="#A84E2D" StrokeThickness="2" />
+                    <Path Data="M54,77 C59,59 90,59 97,77 C101,92 91,105 76,106 C60,105 50,92 54,77 Z" Fill="#FFF4E5" />
+                    <Ellipse Canvas.Left="60" Canvas.Top="57" Width="8" Height="10" Fill="#35251F" />
+                    <Ellipse Canvas.Left="85" Canvas.Top="57" Width="8" Height="10" Fill="#35251F" />
+                    <Path Data="M72,73 Q76,77 80,73 Q79,84 72,73 Z" Fill="#4A3028" />
+                    <Path Data="M72,84 Q77,89 83,84" Stroke="#A84E2D" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                    <Path Data="M61,101 C54,111 55,125 66,128 C74,129 76,116 73,105 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2">
+                        <Path.RenderTransform><RotateTransform x:Name="LeftPawTransform" CenterX="66" CenterY="108" /></Path.RenderTransform>
+                    </Path>
+                    <Path Data="M91,101 C99,111 98,125 87,128 C79,129 77,116 80,105 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2">
+                        <Path.RenderTransform><RotateTransform x:Name="RightPawTransform" CenterX="86" CenterY="108" /></Path.RenderTransform>
+                    </Path>
+                    <Path Data="M66,91 C57,78 52,94 64,104 C72,111 83,111 91,103 C101,92 94,78 86,91 C81,83 71,83 66,91 Z" Fill="#C94332" />
+                    <Path Data="M76,87 L78,108" Stroke="#8F2F26" StrokeThickness="2" />
+                    <Ellipse x:Name="AttentionBadge" Canvas.Left="108" Canvas.Top="24" Width="28" Height="28" Fill="{StaticResource ChatOSFailureBrush}" />
+                    <TextBlock x:Name="AttentionBadgeText" Canvas.Left="108" Canvas.Top="28" Width="28" TextAlignment="Center" Foreground="White" FontSize="12" FontWeight="SemiBold" />
+                </Canvas>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
