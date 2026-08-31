@@ -481,9 +481,9 @@ idle
 ~/Movies/ChatOS/
 ```
 
-### 6.4 排除 ChatOS 自身 UI
+### 6.4 显示器录制的 ChatOS 窗口规则
 
-录制显示器时使用 `SCContentFilter` 排除当前 ChatOS application，确保选区 Overlay、录制控制条、宠物和其他 ChatOS 窗口不进入最终视频。设置中可提供“包含 ChatOS 窗口”高级开关，默认关闭。
+录制整个显示器时应忠实记录用户在该屏幕上看到的内容，包括 ChatOS 主窗口和宠物；用户切换应用后继续录制。仅通过 `SCContentFilter` 排除录制控制条本身，避免停止按钮进入最终视频。单独录制窗口时只捕获所选窗口。
 
 ## 7. `Command + E` 剪贴板历史
 
@@ -754,7 +754,7 @@ finalScore = providerWeight
 - 截图保存目录。
 - 录屏保存目录。
 - 截图后复制到剪贴板。
-- 是否排除 ChatOS 窗口。
+- 显示器录制默认包含 ChatOS 主窗口和宠物，仅排除录制控制条。
 - 录屏帧率。
 - 系统声音。
 - 麦克风。

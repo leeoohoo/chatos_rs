@@ -56,7 +56,7 @@ struct RecordingTargetPickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(isEnglish ? "Screen Recording" : "录屏")
                         .font(.system(size: 19, weight: .semibold))
-                    Text(isEnglish ? "Choose a display or window" : "选择要录制的显示器或窗口")
+                    Text(isEnglish ? "Choose an entire display or one window" : "选择整个显示器或单个窗口")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -78,12 +78,12 @@ struct RecordingTargetPickerView: View {
             } else {
                 List(selection: $viewModel.selectedID) {
                     if !displayTargets.isEmpty {
-                        Section(isEnglish ? "Displays" : "显示器") {
+                        Section(isEnglish ? "Entire Displays" : "整个显示器（切换应用也会录制）") {
                             targetRows(displayTargets)
                         }
                     }
                     if !windowTargets.isEmpty {
-                        Section(isEnglish ? "Windows" : "窗口") {
+                        Section(isEnglish ? "Applications" : "应用（录制主窗口）") {
                             targetRows(windowTargets)
                         }
                     }
@@ -139,13 +139,30 @@ struct RecordingTargetPickerView: View {
                     .foregroundStyle(target.kind == .display ? .blue : .secondary)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(target.title).lineLimit(1)
-                    if let subtitle = target.subtitle {
+                    Text(targetTitle(target)).lineLimit(1)
+                    if let subtitle = targetSubtitle(target) {
                         Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
             .tag(Optional(target.id))
         }
+    }
+
+    private func targetTitle(_ target: NativeScreenRecordingTarget) -> String {
+        guard target.kind == .display,
+              let index = displayTargets.firstIndex(where: { $0.id == target.id }) else {
+            return target.title
+        }
+        return isEnglish ? "Entire Display \(index + 1)" : "整个显示器 \(index + 1)"
+    }
+
+    private func targetSubtitle(_ target: NativeScreenRecordingTarget) -> String? {
+        if target.kind == .display {
+            return isEnglish
+                ? "Records everything shown here, including app switching · \(target.subtitle ?? "")"
+                : "录制这个屏幕上显示的全部内容，切换应用也会继续 · \(target.subtitle ?? "")"
+        }
+        return target.subtitle
     }
 }

@@ -7,8 +7,6 @@ struct QuickSearchView: View {
     let isEnglish: Bool
     let shortcutLabel: String
 
-    @FocusState private var searchFocused: Bool
-
     var body: some View {
         VStack(spacing: 0) {
             searchHeader
@@ -24,15 +22,6 @@ struct QuickSearchView: View {
                 .strokeBorder(.white.opacity(0.16), lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .onAppear {
-            searchFocused = true
-        }
-        .onMoveCommand { direction in
-            viewModel.moveSelection(direction)
-        }
-        .onExitCommand {
-            viewModel.cancel()
-        }
     }
 
     private var searchHeader: some View {
@@ -40,17 +29,19 @@ struct QuickSearchView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 22, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField(
-                isEnglish ? "Search apps, files, ChatOS, and actions" : "搜索应用、文件、ChatOS 和操作",
+            GlobalCommandSearchField(
                 text: Binding(
                     get: { viewModel.query },
                     set: { viewModel.updateQuery($0) }
-                )
+                ),
+                placeholder: isEnglish
+                    ? "Search apps, files, ChatOS, and actions"
+                    : "搜索应用、文件、ChatOS 和操作",
+                fontSize: 21,
+                onMove: viewModel.moveSelection,
+                onSubmit: viewModel.executeSelected,
+                onCancel: viewModel.cancel
             )
-            .textFieldStyle(.plain)
-            .font(.system(size: 21, weight: .medium))
-            .focused($searchFocused)
-            .onSubmit(viewModel.executeSelected)
             if viewModel.isSearchingFiles {
                 ProgressView().controlSize(.small)
             }

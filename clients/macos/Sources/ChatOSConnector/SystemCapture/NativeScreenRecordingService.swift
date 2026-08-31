@@ -22,7 +22,7 @@ public actor NativeScreenRecordingService {
         }
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
-            onScreenWindowsOnly: true
+            onScreenWindowsOnly: false
         )
         var targets: [NativeScreenRecordingTarget] = content.displays.enumerated().map { index, display in
             NativeScreenRecordingTarget(
@@ -36,33 +36,47 @@ public actor NativeScreenRecordingService {
             )
         }
         let ownBundleID = Bundle.main.bundleIdentifier
-        targets.append(contentsOf: content.windows.compactMap { window in
-            guard window.isOnScreen,
-                  window.windowLayer == 0,
-                  window.frame.width >= 320,
-                  window.frame.height >= 180,
-                  window.owningApplication?.bundleIdentifier != ownBundleID else {
-                return nil
-            }
+        var bestWindowByApplication: [String: (target: NativeScreenRecordingTarget, score: Double)] = [:]
+        for window in content.windows {
             let applicationName = window.owningApplication?.applicationName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return NativeScreenRecordingTarget(
+            let isOwnWindow = window.owningApplication?.bundleIdentifier == ownBundleID
+            guard window.windowLayer == 0,
+                  window.frame.width >= 240,
+                  window.frame.height >= 140,
+                  applicationName?.isEmpty == false,
+                  title?.isEmpty == false,
+                  !isOwnWindow || title != "Screen Recording" else {
+                continue
+            }
+            let target = NativeScreenRecordingTarget(
                 id: "window:\(window.windowID)",
                 kind: .window,
                 nativeID: window.windowID,
-                title: title?.isEmpty == false ? title! : applicationName ?? "Window",
-                subtitle: applicationName,
+                title: applicationName ?? "Application",
+                subtitle: title,
                 width: max(1, Int(window.frame.width.rounded())),
                 height: max(1, Int(window.frame.height.rounded()))
             )
-        })
+            let identity = window.owningApplication?.bundleIdentifier ?? applicationName ?? target.id
+            let area = Double(window.frame.width * window.frame.height)
+            let score = (window.isOnScreen ? 1_000_000_000_000 : 0) + area
+            if score > bestWindowByApplication[identity]?.score ?? -.infinity {
+                bestWindowByApplication[identity] = (target, score)
+            }
+        }
+        targets.append(contentsOf: bestWindowByApplication.values
+            .map(\.target)
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending })
         return targets
     }
 
     public func start(
         target: NativeScreenRecordingTarget,
         outputURL: URL,
-        capturesSystemAudio: Bool
+        capturesSystemAudio: Bool,
+        excludedWindowIDs: [CGWindowID] = []
     ) async throws {
         guard stream == nil else { throw NativeScreenRecordingError.alreadyRecording }
         guard NativeSystemPermissionService.hasScreenCaptureAccess else {
@@ -70,7 +84,7 @@ public actor NativeScreenRecordingService {
         }
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
-            onScreenWindowsOnly: true
+            onScreenWindowsOnly: false
         )
 
         let filter: SCContentFilter
@@ -81,14 +95,10 @@ public actor NativeScreenRecordingService {
             guard let display = content.displays.first(where: { $0.displayID == target.nativeID }) else {
                 throw NativeScreenRecordingError.targetUnavailable
             }
-            let ownApplication = content.applications.first {
-                $0.bundleIdentifier == Bundle.main.bundleIdentifier
+            let excludedWindows = content.windows.filter {
+                excludedWindowIDs.contains($0.windowID)
             }
-            filter = SCContentFilter(
-                display: display,
-                excludingApplications: ownApplication.map { [$0] } ?? [],
-                exceptingWindows: []
-            )
+            filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
             width = max(2, display.width - display.width % 2)
             height = max(2, display.height - display.height % 2)
         case .window:

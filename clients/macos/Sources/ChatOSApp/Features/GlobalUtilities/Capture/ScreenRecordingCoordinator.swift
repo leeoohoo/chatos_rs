@@ -1,10 +1,12 @@
 import AppKit
 import ChatOSConnector
 import Foundation
+import OSLog
 import SwiftUI
 
 @MainActor
 final class ScreenRecordingCoordinator {
+    private static let logger = Logger(subsystem: "com.chatos.swift-client", category: "ScreenRecording")
     private enum State {
         case idle
         case selecting
@@ -71,6 +73,9 @@ final class ScreenRecordingCoordinator {
     ) {
         guard state == .selecting else { return }
         state = .preparing
+        let isEnglish = model?.interfaceLanguage == .english
+        controlPanel.prepare(isEnglish: isEnglish)
+        let excludedWindowIDs = controlPanel.windowID.map { [$0] } ?? []
         pickerPanel.closeAndRestorePreviousApplication()
         let temporaryURL = Self.recordingTemporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -83,13 +88,16 @@ final class ScreenRecordingCoordinator {
                 try await service.start(
                     target: target,
                     outputURL: temporaryURL,
-                    capturesSystemAudio: capturesSystemAudio
+                    capturesSystemAudio: capturesSystemAudio,
+                    excludedWindowIDs: excludedWindowIDs
                 )
                 state = .recording
-                controlPanel.present(isEnglish: model?.interfaceLanguage == .english)
+                controlPanel.present(isEnglish: isEnglish)
             } catch {
                 state = .idle
+                try? FileManager.default.removeItem(at: temporaryURL)
                 temporaryOutputURL = nil
+                controlPanel.dismiss()
                 presentError(
                     localized("无法开始录屏", "Unable to Start Recording"),
                     detail: error.localizedDescription
@@ -115,6 +123,11 @@ final class ScreenRecordingCoordinator {
                 )
             } catch {
                 state = .idle
+                if let temporaryOutputURL {
+                    try? FileManager.default.removeItem(at: temporaryOutputURL)
+                }
+                temporaryOutputURL = nil
+                Self.logger.error("Recording finalization failed: \(error.localizedDescription, privacy: .public)")
                 presentError(
                     localized("录屏保存失败", "Recording Save Failed"),
                     detail: error.localizedDescription
@@ -127,7 +140,7 @@ final class ScreenRecordingCoordinator {
         let directory = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ChatOS", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let finalURL = directory.appendingPathComponent(Self.recordingFilename())
+        let finalURL = Self.uniqueRecordingURL(in: directory)
         try FileManager.default.moveItem(at: temporaryURL, to: finalURL)
         return finalURL
     }
@@ -181,5 +194,20 @@ final class ScreenRecordingCoordinator {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         return "ChatOS Recording \(formatter.string(from: Date())).mov"
+    }
+
+    private static func uniqueRecordingURL(in directory: URL) -> URL {
+        let filename = recordingFilename()
+        let base = (filename as NSString).deletingPathExtension
+        let fileExtension = (filename as NSString).pathExtension
+        var candidate = directory.appendingPathComponent(filename)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory
+                .appendingPathComponent("\(base) \(suffix)")
+                .appendingPathExtension(fileExtension)
+            suffix += 1
+        }
+        return candidate
     }
 }

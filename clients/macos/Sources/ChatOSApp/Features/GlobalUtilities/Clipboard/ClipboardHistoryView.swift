@@ -5,8 +5,6 @@ struct ClipboardHistoryView: View {
     @ObservedObject var viewModel: ClipboardHistoryViewModel
     let isEnglish: Bool
 
-    @FocusState private var searchFocused: Bool
-
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -15,16 +13,13 @@ struct ClipboardHistoryView: View {
             Divider().opacity(0.65)
             footer
         }
-        .frame(width: 700, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(.white.opacity(0.16), lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .onAppear { searchFocused = true }
-        .onMoveCommand(perform: viewModel.moveSelection)
-        .onExitCommand(perform: viewModel.cancel)
     }
 
     private var header: some View {
@@ -32,17 +27,17 @@ struct ClipboardHistoryView: View {
             Image(systemName: "clipboard")
                 .font(.system(size: 21, weight: .semibold))
                 .foregroundStyle(.secondary)
-            TextField(
-                isEnglish ? "Search clipboard history" : "搜索剪贴板历史",
+            GlobalCommandSearchField(
                 text: Binding(
                     get: { viewModel.query },
                     set: { viewModel.updateQuery($0) }
-                )
+                ),
+                placeholder: isEnglish ? "Search clipboard history" : "搜索剪贴板历史",
+                fontSize: 20,
+                onMove: viewModel.moveSelection,
+                onSubmit: viewModel.restoreSelected,
+                onCancel: viewModel.cancel
             )
-            .textFieldStyle(.plain)
-            .font(.system(size: 20, weight: .medium))
-            .focused($searchFocused)
-            .onSubmit(viewModel.restoreSelected)
             if viewModel.isLoading {
                 ProgressView().controlSize(.small)
             }
@@ -53,6 +48,7 @@ struct ClipboardHistoryView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .disabled(viewModel.entries.isEmpty)
             .help(isEnglish ? "Clear history" : "清空历史")
         }
         .padding(.horizontal, 20)
@@ -61,19 +57,19 @@ struct ClipboardHistoryView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let error = viewModel.errorMessage {
+        if viewModel.isLoading, viewModel.entries.isEmpty {
+            ProgressView(isEnglish ? "Loading clipboard history…" : "正在读取剪贴板历史…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = viewModel.errorMessage {
             ContentUnavailableView(
                 isEnglish ? "Clipboard History Error" : "剪贴板历史异常",
                 systemImage: "exclamationmark.triangle",
                 description: Text(error)
             )
         } else if viewModel.filteredEntries.isEmpty {
-            ContentUnavailableView(
-                isEnglish ? "No Clipboard History" : "还没有剪贴板历史",
-                systemImage: "clipboard",
-                description: Text(isEnglish
-                    ? "Copy text, images, files, or links to see them here. Sensitive clipboard types are skipped."
-                    : "复制文字、图片、文件或链接后会显示在这里；敏感剪贴板类型默认不会记录。")
+            ClipboardHistoryEmptyState(
+                hasStoredEntries: !viewModel.entries.isEmpty,
+                isEnglish: isEnglish
             )
         } else {
             ScrollViewReader { proxy in
@@ -83,11 +79,13 @@ struct ClipboardHistoryView: View {
                             ClipboardHistoryRow(
                                 entry: entry,
                                 sourceName: viewModel.sourceName(for: entry),
+                                thumbnail: viewModel.thumbnail(for: entry),
                                 isSelected: viewModel.selectedIndex == index,
                                 isEnglish: isEnglish
                             )
                             .id(entry.id)
                             .contentShape(Rectangle())
+                            .onAppear { viewModel.loadThumbnailIfNeeded(for: entry) }
                             .onTapGesture { viewModel.select(index) }
                             .onTapGesture(count: 2) { viewModel.restore(entry) }
                         }
@@ -106,11 +104,15 @@ struct ClipboardHistoryView: View {
         HStack(spacing: 16) {
             Text(isEnglish ? "Stored only on this Mac" : "仅保存在这台 Mac 上")
             Spacer()
-            hint("⌘P", isEnglish ? "Pin" : "固定")
-                .onTapGesture(perform: viewModel.togglePinSelected)
-            hint("⌫", isEnglish ? "Delete" : "删除")
-                .onTapGesture(perform: viewModel.deleteSelected)
-            hint("↩", isEnglish ? "Restore" : "恢复")
+            if viewModel.filteredEntries.isEmpty {
+                hint("esc", isEnglish ? "Close" : "关闭")
+            } else {
+                hint("⌘P", isEnglish ? "Pin" : "固定")
+                    .onTapGesture(perform: viewModel.togglePinSelected)
+                hint("⌫", isEnglish ? "Delete" : "删除")
+                    .onTapGesture(perform: viewModel.deleteSelected)
+                hint("↩", isEnglish ? "Restore" : "恢复")
+            }
         }
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.secondary)
@@ -130,22 +132,56 @@ struct ClipboardHistoryView: View {
     }
 }
 
+private struct ClipboardHistoryEmptyState: View {
+    let hasStoredEntries: Bool
+    let isEnglish: Bool
+
+    var body: some View {
+        VStack(spacing: 13) {
+            Image(systemName: hasStoredEntries ? "magnifyingglass" : "clipboard")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 52, height: 52)
+                .background(Color.accentColor.opacity(0.11), in: RoundedRectangle(cornerRadius: 14))
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+            Text(detail)
+                .font(.system(size: 12.5))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 390)
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var title: String {
+        if hasStoredEntries {
+            return isEnglish ? "No Matching Clipboard Items" : "没有匹配的剪贴板内容"
+        }
+        return isEnglish ? "Clipboard History Is Empty" : "剪贴板历史还是空的"
+    }
+
+    private var detail: String {
+        if hasStoredEntries {
+            return isEnglish ? "Try another keyword." : "换一个关键词再试试。"
+        }
+        return isEnglish
+            ? "Copy text, images, files, or links and they will appear here. Sensitive clipboard types are skipped."
+            : "复制文字、图片、文件或链接后会显示在这里；密码等敏感剪贴板内容不会记录。"
+    }
+}
+
 private struct ClipboardHistoryRow: View {
     let entry: ClipboardHistoryEntry
     let sourceName: String?
+    let thumbnail: NSImage?
     let isSelected: Bool
     let isEnglish: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(isSelected ? Color.white : Color.accentColor)
-                .frame(width: 36, height: 36)
-                .background(
-                    isSelected ? .white.opacity(0.14) : Color.accentColor.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
+            leadingPreview
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 14, weight: .semibold))
@@ -168,11 +204,35 @@ private struct ClipboardHistoryRow: View {
         .foregroundStyle(isSelected ? .white : .primary)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .frame(minHeight: 52)
+        .frame(minHeight: entry.kind == .image ? 60 : 52)
         .background(
             isSelected ? Color.accentColor.opacity(0.88) : Color.clear,
             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
         )
+    }
+
+    @ViewBuilder
+    private var leadingPreview: some View {
+        if entry.kind == .image, let thumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 58, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(isSelected ? .white.opacity(0.34) : .black.opacity(0.10), lineWidth: 1)
+                }
+        } else {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(isSelected ? Color.white : Color.accentColor)
+                .frame(width: 36, height: 36)
+                .background(
+                    isSelected ? .white.opacity(0.14) : Color.accentColor.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+        }
     }
 
     private var title: String {

@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import SwiftUI
 
 @MainActor
@@ -8,7 +9,12 @@ final class RecordingControlPanelController {
     private var panel: NSPanel?
     private let status = RecordingControlStatus()
 
-    func present(isEnglish: Bool) {
+    var windowID: CGWindowID? {
+        guard let panel, panel.windowNumber > 0 else { return nil }
+        return CGWindowID(panel.windowNumber)
+    }
+
+    func prepare(isEnglish: Bool) {
         guard panel == nil else { return }
         let size = NSSize(width: 250, height: 54)
         let panel = NSPanel(
@@ -30,6 +36,11 @@ final class RecordingControlPanelController {
             onStop: { [weak self] in self?.onStop?() }
         ))
         self.panel = panel
+    }
+
+    func present(isEnglish: Bool) {
+        prepare(isEnglish: isEnglish)
+        guard let panel else { return }
         status.start()
         panel.orderFrontRegardless()
     }

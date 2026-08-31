@@ -47,7 +47,18 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
         let hosting = NSHostingView(rootView: view)
         hosting.sizingOptions = []
         hosting.frame = panel.contentView?.bounds ?? NSRect(origin: .zero, size: panel.frame.size)
+        hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
+    }
+
+    func setContentSize(_ size: NSSize) {
+        guard panel.contentRect(forFrameRect: panel.frame).size != size else { return }
+        let previousFrame = panel.frame
+        panel.setContentSize(size)
+        panel.setFrameOrigin(NSPoint(
+            x: previousFrame.midX - panel.frame.width / 2,
+            y: previousFrame.maxY - panel.frame.height
+        ))
     }
 
     func toggle() {

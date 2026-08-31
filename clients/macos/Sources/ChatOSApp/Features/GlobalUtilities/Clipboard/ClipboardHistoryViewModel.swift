@@ -1,6 +1,7 @@
 import AppKit
 import ChatOSCore
 import Foundation
+import ImageIO
 import SwiftUI
 
 @MainActor
@@ -10,11 +11,13 @@ final class ClipboardHistoryViewModel: ObservableObject {
     @Published private(set) var selectedIndex = 0
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var imageThumbnails: [UUID: NSImage] = [:]
 
     var onRestoreSucceeded: (() -> Void)?
     var onCancel: (() -> Void)?
 
     private let store: ClipboardHistoryStore
+    private var thumbnailTasks: [UUID: Task<Void, Never>] = [:]
 
     init(store: ClipboardHistoryStore) {
         self.store = store
@@ -43,6 +46,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
             do {
                 let values = try await store.entries()
                 self?.entries = values
+                self?.pruneThumbnailCache(validEntries: values)
                 self?.selectedIndex = min(self?.selectedIndex ?? 0, max(0, values.count - 1))
                 self?.errorMessage = nil
             } catch {
@@ -56,6 +60,30 @@ final class ClipboardHistoryViewModel: ObservableObject {
         entries.removeAll { $0.id == entry.id }
         entries.insert(entry, at: entry.isPinned ? 0 : entries.firstIndex(where: { !$0.isPinned }) ?? entries.count)
         selectedIndex = min(selectedIndex, max(0, filteredEntries.count - 1))
+    }
+
+    func thumbnail(for entry: ClipboardHistoryEntry) -> NSImage? {
+        imageThumbnails[entry.id]
+    }
+
+    func loadThumbnailIfNeeded(for entry: ClipboardHistoryEntry) {
+        guard entry.kind == .image,
+              imageThumbnails[entry.id] == nil,
+              thumbnailTasks[entry.id] == nil else {
+            return
+        }
+        thumbnailTasks[entry.id] = Task { [weak self, store] in
+            defer { self?.thumbnailTasks[entry.id] = nil }
+            guard let payload = try? await store.payload(for: entry),
+                  case let .image(data, _) = payload else {
+                return
+            }
+            let image = await Task.detached(priority: .utility) {
+                Self.makeThumbnail(data: data, maximumPixelSize: 180)
+            }.value
+            guard !Task.isCancelled, let image else { return }
+            self?.imageThumbnails[entry.id] = image
+        }
     }
 
     func updateQuery(_ value: String) {
@@ -122,6 +150,8 @@ final class ClipboardHistoryViewModel: ObservableObject {
             do {
                 try await store.delete(id: entry.id)
                 self?.entries.removeAll { $0.id == entry.id }
+                self?.imageThumbnails[entry.id] = nil
+                self?.thumbnailTasks.removeValue(forKey: entry.id)?.cancel()
                 self?.selectedIndex = min(self?.selectedIndex ?? 0, max(0, (self?.filteredEntries.count ?? 1) - 1))
             } catch {
                 self?.errorMessage = error.localizedDescription
@@ -134,6 +164,9 @@ final class ClipboardHistoryViewModel: ObservableObject {
             do {
                 try await store.clear()
                 self?.entries = []
+                self?.thumbnailTasks.values.forEach { $0.cancel() }
+                self?.thumbnailTasks.removeAll()
+                self?.imageThumbnails.removeAll()
                 self?.selectedIndex = 0
             } catch {
                 self?.errorMessage = error.localizedDescription
@@ -174,5 +207,34 @@ final class ClipboardHistoryViewModel: ObservableObject {
             entryID.uuidString,
             forType: ClipboardHistoryMonitor.restoredMarkerType
         )
+    }
+
+    private func pruneThumbnailCache(validEntries: [ClipboardHistoryEntry]) {
+        let validIDs = Set(validEntries.lazy.filter { $0.kind == .image }.map(\.id))
+        imageThumbnails = imageThumbnails.filter { validIDs.contains($0.key) }
+        let invalidTaskIDs = thumbnailTasks.keys.filter { !validIDs.contains($0) }
+        for id in invalidTaskIDs {
+            thumbnailTasks.removeValue(forKey: id)?.cancel()
+        }
+    }
+
+    nonisolated private static func makeThumbnail(
+        data: Data,
+        maximumPixelSize: Int
+    ) -> NSImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
+                    kCGImageSourceShouldCacheImmediately: true,
+                ] as CFDictionary
+              ) else {
+            return nil
+        }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 }

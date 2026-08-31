@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import CoreVideo
 import Foundation
 import ScreenCaptureKit
 
@@ -7,9 +8,12 @@ final class ScreenRecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable
     private let outputURL: URL
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
+    private let pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor
     private let audioInput: AVAssetWriterInput?
     private let processingQueue: DispatchQueue
     private var sessionStartTime: CMTime?
+    private var lastVideoTime: CMTime?
+    private var latestScreenTime: CMTime?
     private var isFinishing = false
     private var terminalError: Error?
 
@@ -25,7 +29,7 @@ final class ScreenRecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable
         self.writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         let pixelCount = max(1, width * height)
         let bitRate = min(28_000_000, max(5_000_000, pixelCount * 5))
-        self.videoInput = AVAssetWriterInput(
+        let videoInput = AVAssetWriterInput(
             mediaType: .video,
             outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.h264,
@@ -37,6 +41,16 @@ final class ScreenRecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable
                     AVVideoMaxKeyFrameIntervalKey: 60,
                     AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
                 ],
+            ]
+        )
+        self.videoInput = videoInput
+        self.pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:],
             ]
         )
         videoInput.expectsMediaDataInRealTime = true
@@ -107,6 +121,13 @@ final class ScreenRecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable
                     continuation.resume(throwing: NativeScreenRecordingError.writer("The recording did not receive any video frames."))
                     return
                 }
+                if let sessionStartTime {
+                    var endTime = latestScreenTime ?? lastVideoTime ?? sessionStartTime
+                    if endTime <= sessionStartTime {
+                        endTime = sessionStartTime + CMTime(value: 1, timescale: 30)
+                    }
+                    writer.endSession(atSourceTime: endTime)
+                }
                 videoInput.markAsFinished()
                 audioInput?.markAsFinished()
                 writer.finishWriting { [self] in
@@ -122,6 +143,11 @@ final class ScreenRecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable
 
     private func appendVideo(_ sampleBuffer: CMSampleBuffer) {
         let presentationTime = sampleBuffer.presentationTimeStamp
+        latestScreenTime = presentationTime
+        guard Self.isCompleteScreenFrame(sampleBuffer),
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return
+        }
         if sessionStartTime == nil {
             guard writer.startWriting() else {
                 terminalError = writer.error ?? NativeScreenRecordingError.writer("The video writer could not start.")
@@ -131,7 +157,9 @@ final class ScreenRecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable
             sessionStartTime = presentationTime
         }
         guard videoInput.isReadyForMoreMediaData else { return }
-        if !videoInput.append(sampleBuffer) {
+        if pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime) {
+            lastVideoTime = presentationTime
+        } else {
             terminalError = writer.error ?? NativeScreenRecordingError.writer("A video frame could not be written.")
         }
     }
@@ -144,5 +172,17 @@ final class ScreenRecordingWriter: NSObject, SCStreamOutput, @unchecked Sendable
         if !audioInput.append(sampleBuffer) {
             terminalError = writer.error ?? NativeScreenRecordingError.writer("A system audio frame could not be written.")
         }
+    }
+
+    private static func isCompleteScreenFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false
+        ) as? [[SCStreamFrameInfo: Any]],
+              let statusValue = attachments.first?[.status] as? Int,
+              let status = SCFrameStatus(rawValue: statusValue) else {
+            return false
+        }
+        return status == .complete
     }
 }

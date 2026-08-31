@@ -112,12 +112,12 @@ Windows 状态只允许使用：
 - 来源：全局效率工具实施方案。
 - 类型：功能更新、平台系统能力。
 - 预期行为：用户选择显示器或窗口开始录制，可选择系统声音；录制中显示悬浮停止条，再次按快捷键可停止；完成后明确展示文件并支持打开或在文件管理器中定位。
-- 设计原因：录屏必须使用平台原生采集链路，排除 ChatOS 自身浮层，并在高 DPI 屏幕下按实际像素输出。
+- 设计原因：录屏必须使用平台原生采集链路；整个显示器录制要包含用户实际看到的 ChatOS 主窗口与宠物，只排除录制控制条，并在高 DPI 屏幕下按实际像素输出。
 - 修复范围：新增 ScreenCaptureKit、AVAssetWriter、目标选择面板、录制状态控制条、结果提示和 Movies/ChatOS 文件归档。
 - macOS 状态：编译与自动化已验证，待显示器、窗口和系统声音真机验收。
 - macOS 验证证据：全量 Swift 测试通过；Retina 窗口按 `contentRect × pointPixelScale` 计算偶数像素尺寸；本地化审计无缺项。
 - Windows 是否需要代码修改：需要。Windows 应使用 Windows Graphics Capture/Media Foundation 或等价原生链路，不能复用 ScreenCaptureKit。
-- Windows 必做项：实现显示器与窗口选择、系统音频、30fps H.264、悬浮停止条、ChatOS 窗口排除、结果提示和高 DPI 验收。
+- Windows 必做项：实现显示器与窗口选择、系统音频、30fps H.264、悬浮停止条、仅排除录制控制条、结果提示和高 DPI 验收；显示器录制必须包含 ChatOS 主窗口和宠物。
 - Windows 状态：`待实现`。
 
 ## 新记录模板
