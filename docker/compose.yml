@@ -222,6 +222,10 @@ x-config-center-mtls-task-runner-secrets: &config-center-mtls-task-runner-secret
     target: chatos_mtls_ca
   - source: chatos_mtls_task_runner_identity
     target: chatos_mtls_client_identity
+  - source: user_service_mtls_ca
+    target: user_service_mtls_ca
+  - source: user_service_mtls_task_runner_identity
+    target: user_service_mtls_client_identity
 
 x-config-center-mtls-task-runner-api-secrets: &config-center-mtls-task-runner-api-secrets
   - source: config_center_mtls_ca
@@ -254,6 +258,10 @@ x-config-center-mtls-task-runner-api-secrets: &config-center-mtls-task-runner-ap
     target: chatos_mtls_ca
   - source: chatos_mtls_task_runner_identity
     target: chatos_mtls_client_identity
+  - source: user_service_mtls_ca
+    target: user_service_mtls_ca
+  - source: user_service_mtls_task_runner_identity
+    target: user_service_mtls_client_identity
 
 x-config-center-mtls-user-service-secrets: &config-center-mtls-user-service-secrets
   - source: config_center_mtls_ca
@@ -1431,6 +1439,8 @@ secrets:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/project-service.identity.pem
   user_service_mtls_chatos_identity:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/chatos-backend.identity.pem
+  user_service_mtls_task_runner_identity:
+    file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/task-runner.identity.pem
   plugin_management_mtls_ca:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/ca.crt
   plugin_management_mtls_server_cert:
