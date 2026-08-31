@@ -5,6 +5,58 @@ use serde::{Deserialize, Serialize};
 
 pub const PUBLIC_PROJECT_ID: &str = "-1";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskExecutionScope {
+    UserConversation {
+        tenant_id: String,
+        owner_user_id: String,
+    },
+    Project {
+        tenant_id: String,
+        owner_user_id: String,
+        project_id: String,
+    },
+}
+
+impl TaskExecutionScope {
+    pub fn workspace_project_id(&self) -> Option<&str> {
+        match self {
+            Self::UserConversation { .. } => None,
+            Self::Project { project_id, .. } => Some(project_id.as_str()),
+        }
+    }
+
+    pub fn owner_user_id(&self) -> &str {
+        match self {
+            Self::UserConversation { owner_user_id, .. } | Self::Project { owner_user_id, .. } => {
+                owner_user_id.as_str()
+            }
+        }
+    }
+}
+
+pub fn resolve_task_execution_scope(
+    project_id: &str,
+    tenant_id: &str,
+    owner_user_id: &str,
+) -> TaskExecutionScope {
+    let project_id = normalize_project_id(Some(project_id.to_string()));
+    let tenant_id = tenant_id.trim().to_string();
+    let owner_user_id = owner_user_id.trim().to_string();
+    if project_id == PUBLIC_PROJECT_ID {
+        TaskExecutionScope::UserConversation {
+            tenant_id,
+            owner_user_id,
+        }
+    } else {
+        TaskExecutionScope::Project {
+            tenant_id,
+            owner_user_id,
+            project_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -114,5 +166,28 @@ pub fn task_project_status_from_str(value: &str) -> TaskProjectStatus {
     match value.trim().to_ascii_lowercase().as_str() {
         "archived" => TaskProjectStatus::Archived,
         _ => TaskProjectStatus::Active,
+    }
+}
+
+#[cfg(test)]
+mod execution_scope_tests {
+    use super::*;
+
+    #[test]
+    fn public_conversation_scope_is_owner_scoped_instead_of_globally_shared() {
+        let first = resolve_task_execution_scope(PUBLIC_PROJECT_ID, "tenant-1", "user-1");
+        let second = resolve_task_execution_scope(PUBLIC_PROJECT_ID, "tenant-1", "user-2");
+
+        assert_ne!(first, second);
+        assert_eq!(first.workspace_project_id(), None);
+        assert_eq!(first.owner_user_id(), "user-1");
+    }
+
+    #[test]
+    fn concrete_project_scope_exposes_workspace_identity() {
+        let scope = resolve_task_execution_scope(" project-1 ", "tenant-1", "user-1");
+
+        assert_eq!(scope.workspace_project_id(), Some("project-1"));
+        assert_eq!(scope.owner_user_id(), "user-1");
     }
 }

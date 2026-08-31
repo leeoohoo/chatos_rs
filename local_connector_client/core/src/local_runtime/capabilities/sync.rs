@@ -2,121 +2,16 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use anyhow::{anyhow, Context, Result};
-use chatos_plugin_management_sdk::{
-    PluginComponentKind, ResolvedAgentCapabilities, SystemAgentKey,
-};
+use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, SystemAgentKey};
 use reqwest::header::AUTHORIZATION;
-use serde_json::Value;
-use std::collections::BTreeSet;
 
 use crate::config::{api_url, ClientConfig};
 use crate::local_runtime::LOCAL_RUNTIME_AGENT_KEYS;
-use crate::plugins::LocalPluginStatusSnapshot;
-use crate::skills::{fetch_user_skill_catalog, sync_skill_inventory, update_user_skill_preference};
-use crate::{tracing_stdout, LocalRuntime};
+use crate::LocalRuntime;
 
 pub(crate) async fn sync_local_plugin_control_plane(runtime: &LocalRuntime) -> Result<usize> {
-    if let Err(error) = sync_skill_inventory(runtime).await {
-        tracing_stdout(format!("sync local Skill inventory failed: {error}").as_str());
-    }
-    match enable_available_installed_plugin_skills(runtime).await {
-        Ok(enabled) if enabled > 0 => tracing_stdout(
-            format!("enabled {enabled} installed Plugin Skills before capability sync").as_str(),
-        ),
-        Ok(_) => {}
-        Err(error) => tracing_stdout(
-            format!("sync installed Plugin Skill preferences skipped: {error}").as_str(),
-        ),
-    }
     let status = crate::local_runtime::update_agent_prompt_bundle(runtime).await?;
     Ok(status.capability_count.max(0) as usize)
-}
-
-async fn enable_available_installed_plugin_skills(runtime: &LocalRuntime) -> Result<usize> {
-    let installer = runtime.plugin_installer.clone();
-    let snapshot = tokio::task::spawn_blocking(move || installer.status_snapshot()).await??;
-    let installed_skill_ids = installed_plugin_skill_ids(&snapshot);
-    if installed_skill_ids.is_empty() {
-        return Ok(0);
-    }
-    let catalog = fetch_user_skill_catalog(runtime).await?;
-    let mut enabled = 0usize;
-    for skill_id in available_disabled_skill_ids(&catalog, &installed_skill_ids) {
-        match update_user_skill_preference(runtime, skill_id.as_str(), true).await {
-            Ok(_) => enabled += 1,
-            Err(error) => tracing_stdout(
-                format!("enable installed Plugin Skill skipped for {skill_id}: {error}").as_str(),
-            ),
-        }
-    }
-    Ok(enabled)
-}
-
-fn installed_plugin_skill_ids(snapshot: &LocalPluginStatusSnapshot) -> BTreeSet<String> {
-    let mut ids = BTreeSet::new();
-    for plugin in snapshot.registry.plugins.values() {
-        let Some(active_version) = plugin.active_version.as_deref() else {
-            continue;
-        };
-        let Some(version) = plugin.versions.get(active_version) else {
-            continue;
-        };
-        for component in &version.inventory.components {
-            if component.kind != PluginComponentKind::SkillCollection {
-                continue;
-            }
-            if let Some(skill_id) = component
-                .metadata
-                .get("skill_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                ids.insert(skill_id.to_string());
-            }
-        }
-    }
-    ids
-}
-
-fn available_disabled_skill_ids(
-    catalog: &Value,
-    installed_skill_ids: &BTreeSet<String>,
-) -> Vec<String> {
-    catalog
-        .get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            let skill_id = item
-                .get("skill")
-                .and_then(|skill| skill.get("id"))
-                .and_then(Value::as_str)?
-                .trim();
-            if !installed_skill_ids.contains(skill_id) {
-                return None;
-            }
-            let available = item
-                .get("available")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let user_enabled = item
-                .get("user_enabled")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            (available && !user_enabled).then(|| skill_id.to_string())
-        })
-        .collect()
-}
-
-pub(crate) async fn sync_local_capability_snapshots(runtime: &LocalRuntime) -> Result<usize> {
-    let snapshots = fetch_all_capability_snapshots(runtime).await?;
-    let database = runtime.local_database()?;
-    database
-        .replace_capability_snapshots(snapshots.as_slice())
-        .await?;
-    Ok(snapshots.len())
 }
 
 pub(crate) async fn fetch_all_capability_snapshots(

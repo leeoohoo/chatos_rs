@@ -22,6 +22,7 @@ fn request() -> CreateRuntimeSessionRequest {
         execution_group_id: None,
         turn_id: None,
         task_id: Some("task-1".to_string()),
+        task_title: Some("Task one".to_string()),
         task_profile: Some("implementation".to_string()),
         source_session_id: None,
         source_user_message_id: None,
@@ -121,8 +122,7 @@ fn capabilities_for_scope_test() -> ResolvedAgentCapabilities {
         agent_enabled: true,
         mcps: vec![
             resolved_mcp("required-core", true),
-            resolved_mcp("builtin_browser_tools", false),
-            resolved_mcp("builtin_web_tools", false),
+            resolved_mcp("optional-tools", false),
         ],
         skills: Vec::new(),
         plugins: Vec::new(),
@@ -134,11 +134,8 @@ fn capabilities_for_scope_test() -> ResolvedAgentCapabilities {
 fn requested_mcp_scope_keeps_required_resources_and_only_selected_optionals() {
     let mut capabilities = capabilities_for_scope_test();
 
-    apply_requested_mcp_scope(
-        &mut capabilities,
-        Some(&["builtin_browser_tools".to_string()]),
-    )
-    .expect("selected browser scope");
+    apply_requested_mcp_scope(&mut capabilities, Some(&["optional-tools".to_string()]))
+        .expect("selected browser scope");
 
     assert_eq!(
         capabilities
@@ -146,7 +143,7 @@ fn requested_mcp_scope_keeps_required_resources_and_only_selected_optionals() {
             .iter()
             .map(|resolved| resolved.resource.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["required-core", "builtin_browser_tools"]
+        vec!["required-core", "optional-tools"]
     );
     assert!(capabilities
         .mcps
@@ -417,7 +414,7 @@ fn required_route_without_registered_provider_adapter_is_blocked() {
     let routes = vec![chatos_mcp_management_sdk::ResolvedMcpRoute {
         resource_id: "required-mcp".to_string(),
         server_name: "required".to_string(),
-        provider_kind: chatos_mcp_management_sdk::McpProviderKind::ExternalHttp,
+        provider_kind: chatos_mcp_management_sdk::McpProviderKind::LocalConnector,
         provider_ref: Some("mcp-resource:required-mcp".to_string()),
         tool_namespace: "required".to_string(),
         allow_writes: false,

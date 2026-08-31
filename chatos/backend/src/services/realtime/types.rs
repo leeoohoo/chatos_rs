@@ -3,8 +3,10 @@
 
 use serde::Serialize;
 use serde_json::Value;
+use std::ops::Deref;
 
 use crate::models::memory_mapping_types::MemoryContactDto;
+use crate::models::pet_activity_inbox::PetActivityInboxRecord;
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnectionView;
 use crate::models::session::Session;
@@ -180,6 +182,16 @@ pub struct AskUserPromptRealtimePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PetActivityInboxRealtimePayload {
+    pub action: String,
+    pub activity_id: String,
+    pub activity_key: String,
+    pub activity_version: String,
+    pub inbox_status: String,
+    pub activity: PetActivityInboxRecord,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatStreamRealtimePayload {
     pub conversation_id: String,
     pub conversation_turn_id: Option<String>,
@@ -208,6 +220,7 @@ pub enum RealtimeEventPayload {
     ProjectMembersUpdated(ProjectMembersUpdatedRealtimePayload),
     TaskBoard(TaskBoardRealtimePayload),
     AskUserPrompt(AskUserPromptRealtimePayload),
+    PetActivityInboxUpdated(PetActivityInboxRealtimePayload),
     ChatStream(ChatStreamRealtimePayload),
 }
 
@@ -221,4 +234,60 @@ pub struct RealtimeEventEnvelope {
     pub project_id: Option<String>,
     pub payload: RealtimeEventPayload,
     pub ts: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SequencedRealtimeEventEnvelope {
+    pub event_id: String,
+    pub event_sequence: u64,
+    #[serde(flatten)]
+    pub envelope: RealtimeEventEnvelope,
+}
+
+impl Deref for SequencedRealtimeEventEnvelope {
+    type Target = RealtimeEventEnvelope;
+
+    fn deref(&self) -> &Self::Target {
+        &self.envelope
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        ChatStreamRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
+        SequencedRealtimeEventEnvelope,
+    };
+
+    #[test]
+    fn sequenced_event_serializes_identity_at_top_level() {
+        let event = SequencedRealtimeEventEnvelope {
+            event_id: "event-1".to_string(),
+            event_sequence: 42,
+            envelope: RealtimeEventEnvelope {
+                message_type: "event",
+                event: "chat.completed",
+                user_id: "user-1".to_string(),
+                conversation_id: Some("conversation-1".to_string()),
+                project_id: None,
+                payload: RealtimeEventPayload::ChatStream(ChatStreamRealtimePayload {
+                    conversation_id: "conversation-1".to_string(),
+                    conversation_turn_id: Some("turn-1".to_string()),
+                    project_id: None,
+                    user_message_id: None,
+                    stream_type: "completed".to_string(),
+                    raw: json!({"type": "completed"}),
+                }),
+                ts: "2026-08-24T03:00:00Z".to_string(),
+            },
+        };
+
+        let value = serde_json::to_value(event).expect("serialize event");
+        assert_eq!(value["event_id"], "event-1");
+        assert_eq!(value["event_sequence"], 42);
+        assert_eq!(value["type"], "event");
+        assert_eq!(value["payload"]["kind"], "chat_stream");
+    }
 }

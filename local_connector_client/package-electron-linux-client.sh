@@ -10,9 +10,6 @@ FRONTEND_DIR="$CLIENT_DIR/frontend"
 STAGING_DIR="$CLIENT_DIR/.package/linux"
 DIST_DIR="$CLIENT_DIR/dist/electron-linux"
 BUILDER_CONFIG="$CLIENT_DIR/electron-builder-linux.yml"
-SKILL_CATALOG="$CLIENT_DIR/skill_bundles/catalog/internal-skill-catalog.json"
-PLUGIN_CATALOG="$CLIENT_DIR/plugin_bundles/catalog/bundled-plugin-catalog.json"
-PLUGIN_BUNDLE_TOOL="$CLIENT_DIR/prepare-plugin-bundles.mjs"
 INSTALLED_PACKAGE_VERIFIER="$CLIENT_DIR/verify-installed-package.mjs"
 PACKAGE_TARGET_OWNED=0
 
@@ -97,8 +94,7 @@ fi
   cd "$ROOT_DIR"
   cargo build --release \
     -p local_connector_client_core \
-    --bin local_connector_client_core \
-    --bin chatos_chrome_native_host
+    --bin local_connector_client_core
 )
 
 TARGET_DIR="$({
@@ -111,10 +107,9 @@ process.stdin.on("data", (chunk) => input += chunk);
 process.stdin.on("end", () => process.stdout.write(JSON.parse(input).target_directory));
 ')"
 CORE_BIN="$TARGET_DIR/release/local_connector_client_core"
-CHROME_NATIVE_HOST_BIN="$TARGET_DIR/release/chatos_chrome_native_host"
 TOOLS_DIR="$ROOT_DIR/bundled-tools/$TOOLS_PLATFORM"
 
-for executable_path in "$CORE_BIN" "$CHROME_NATIVE_HOST_BIN"; do
+for executable_path in "$CORE_BIN"; do
   if [[ ! -x "$executable_path" ]]; then
     echo "Required Linux executable was not built: $executable_path" >&2
     exit 1
@@ -127,32 +122,11 @@ fi
 
 mkdir -p \
   "$STAGING_DIR/bundled-tools" \
-  "$STAGING_DIR/chrome-extension" \
-  "$STAGING_DIR/skill-bundles" \
-  "$STAGING_DIR/plugin-bundles" \
   "$STAGING_DIR/sqlite-migrations"
 cp "$CORE_BIN" "$STAGING_DIR/local_connector_client_core"
-cp "$CHROME_NATIVE_HOST_BIN" "$STAGING_DIR/chatos_chrome_native_host"
-cp -R "$CLIENT_DIR/chrome_extension/." "$STAGING_DIR/chrome-extension/"
 cp -R "$TOOLS_DIR" "$STAGING_DIR/bundled-tools/$TOOLS_PLATFORM"
-cp -R "$CLIENT_DIR/skill_bundles/." "$STAGING_DIR/skill-bundles/"
-node "$PLUGIN_BUNDLE_TOOL" \
-  --plugin-catalog "$PLUGIN_CATALOG" \
-  --skill-catalog "$SKILL_CATALOG" \
-  --skill-root "$CLIENT_DIR/skill_bundles/internal" \
-  --output "$STAGING_DIR/plugin-bundles" \
-  --platform "$TOOLS_PLATFORM"
-node "$PLUGIN_BUNDLE_TOOL" \
-  --verify-only \
-  --plugin-catalog "$PLUGIN_CATALOG" \
-  --skill-catalog "$SKILL_CATALOG" \
-  --skill-root "$CLIENT_DIR/skill_bundles/internal" \
-  --output "$STAGING_DIR/plugin-bundles" \
-  --platform "$TOOLS_PLATFORM"
 cp -R "$CLIENT_DIR/core/migrations/." "$STAGING_DIR/sqlite-migrations/"
-chmod 755 \
-  "$STAGING_DIR/local_connector_client_core" \
-  "$STAGING_DIR/chatos_chrome_native_host"
+chmod 755 "$STAGING_DIR/local_connector_client_core"
 
 (
   cd "$FRONTEND_DIR"
@@ -178,10 +152,8 @@ fi
 
 node "$INSTALLED_PACKAGE_VERIFIER" \
   --platform "$TOOLS_PLATFORM" \
-  --runtime-profile linux-browser \
+  --runtime-profile linux-core \
   --resources "$RESOURCES_PATH" \
-  --plugin-catalog "$PLUGIN_CATALOG" \
-  --skill-catalog "$SKILL_CATALOG" \
   --electron-runtime-source "$FRONTEND_DIR/electron/core-runtime.cjs" \
   --report "$VERIFICATION_REPORT" \
   >/dev/null
@@ -189,4 +161,4 @@ node "$INSTALLED_PACKAGE_VERIFIER" \
 echo "[OK] Linux desktop installer: $DEB_PATH"
 echo "[OK] Installed-package verification: $VERIFICATION_REPORT"
 echo "[OK] SHA-256: $(sha256sum "$DEB_PATH" | awk '{print $1}')"
-echo "[INFO] Runtime profile: linux-browser (Chrome/Chromium Native Messaging included; Computer Use and bundled browser/document runtimes are excluded)."
+echo "[INFO] Runtime profile: linux-core (browser capabilities are installed separately as Marketplace MCP plugins)."

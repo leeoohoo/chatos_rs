@@ -359,7 +359,6 @@ fn merge_safe_request_overrides(base: &mut Value, request_model_cfg: &Value) {
         "temperature",
         "system_prompt",
         "use_active_system_context",
-        "model_name",
         "thinking_level",
     ] {
         if let Some(value) = request_map.get(key) {
@@ -479,10 +478,33 @@ pub async fn resolve_model_runtime_for_request(
 mod tests {
     use super::{
         compatible_replacement_profiles, from_task_runner_model_runtime_config,
-        select_model_id_by_precedence,
+        merge_safe_request_overrides, select_model_id_by_precedence,
     };
     use crate::models::ai_model_config::AiModelConfig;
     use crate::services::task_runner_api_client::ChatosModelRuntimeConfig;
+    use serde_json::json;
+
+    #[test]
+    fn request_overrides_cannot_change_model_identity() {
+        let mut base = json!({
+            "model_name": "gpt-5.6-sol",
+            "temperature": 0.2,
+            "thinking_level": "high",
+        });
+
+        merge_safe_request_overrides(
+            &mut base,
+            &json!({
+                "model_name": "gpt-5.6-luna",
+                "temperature": 0.7,
+                "thinking_level": "medium",
+            }),
+        );
+
+        assert_eq!(base["model_name"], "gpt-5.6-sol");
+        assert_eq!(base["temperature"], 0.7);
+        assert_eq!(base["thinking_level"], "medium");
+    }
 
     #[test]
     fn task_runner_runtime_preserves_model_capabilities() {

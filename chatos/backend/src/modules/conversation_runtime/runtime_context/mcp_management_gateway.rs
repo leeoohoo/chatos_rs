@@ -84,6 +84,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         execution_group_id: None,
         turn_id: Some(turn_id.to_string()),
         task_id: None,
+        task_title: None,
         task_profile: request
             .agent_profile
             .task_runner_task_profile()
@@ -131,6 +132,7 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         execution_group_id: None,
         turn_id: None,
         task_id: None,
+        task_title: None,
         task_profile: None,
         source_session_id: None,
         source_user_message_id: None,

@@ -36,7 +36,6 @@ import {
   createJsonApiClient,
   normalizeApiBaseUrl,
   withQuery,
-  type QueryValue,
 } from '@chatos/frontend-runtime';
 
 const RAW_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();

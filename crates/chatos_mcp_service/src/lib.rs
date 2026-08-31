@@ -11,10 +11,10 @@ pub use catalog::{contains_tool_name, sort_tools_by_name, tool_name, tool_name_s
 pub use policy::{
     builtin_kind_header_value, classify_builtin_tool, normalize_builtin_kind_name,
     selected_host_builtin_kind_names, split_builtin_kind_header, BuiltinHostBackend,
-    BuiltinToolAccess, HostCapabilityPolicy, BUILTIN_KIND_BROWSER_TOOLS,
-    BUILTIN_KIND_CODE_MAINTAINER_READ, BUILTIN_KIND_CODE_MAINTAINER_WRITE,
-    BUILTIN_KIND_LOCAL_COMMAND_APPROVAL, BUILTIN_KIND_TERMINAL_CONTROLLER,
-    HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER, LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+    BuiltinToolAccess, HostCapabilityPolicy, BUILTIN_KIND_CODE_MAINTAINER_READ,
+    BUILTIN_KIND_CODE_MAINTAINER_WRITE, BUILTIN_KIND_LOCAL_COMMAND_APPROVAL,
+    BUILTIN_KIND_TERMINAL_CONTROLLER, HARNESS_CODE_ENABLED_BUILTIN_KINDS_HEADER,
+    LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
 };
 pub use protocol::{
     jsonrpc_error, jsonrpc_ok, CancelledNotificationParams, JsonRpcError, JsonRpcRequest,

@@ -7,11 +7,6 @@ import type {
   ChatStoreGet,
   ChatStoreSet,
 } from '../types';
-import {
-  cloneStreamingMessageDraft,
-  extractCompactHistoryMessages,
-  writeSessionMessagesCache,
-} from './sessionsUtils';
 import { createMessageLoadingActions } from './messagesLoading';
 
 interface Deps {
@@ -53,17 +48,6 @@ export function createMessageActions({ set, get, client }: Deps) {
         if (state.currentSessionId === sessionId) {
           state.messages = mergeMessages(state.messages || []);
         }
-
-        const cached = state.sessionMessagesCache?.[sessionId];
-        const cachedMessages = cached?.messages || [];
-        const mergedCachedMessages = mergeMessages(cachedMessages);
-        writeSessionMessagesCache(state, sessionId, {
-          messages: cloneStreamingMessageDraft(extractCompactHistoryMessages(mergedCachedMessages)),
-          nextBefore: state.sessionMessagePaginationState?.[sessionId]?.nextBefore
-            ?? cached?.nextBefore
-            ?? null,
-          loaded: cached?.loaded ?? state.sessionMessagePaginationState?.[sessionId]?.loaded ?? true,
-        });
       });
     },
 

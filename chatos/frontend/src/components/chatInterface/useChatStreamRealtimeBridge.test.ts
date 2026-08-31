@@ -23,7 +23,6 @@ const message = (role: 'user' | 'assistant', turnId: string): Message => ({
 const activeState = (): ChatStoreDraft => ({
   currentSessionId: 'session-1',
   messages: [],
-  sessionMessagesCache: {},
   sessionChatState: {
     'session-1': {
       isLoading: true,

@@ -9,6 +9,7 @@ import {
   List,
   Space,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import dayjs from 'dayjs';
@@ -27,6 +28,7 @@ import {
   isTaskRunActionDisabled,
   JsonBlock,
   statusColorMap,
+  taskPluginDisplay,
   taskCreatorLabel,
   taskProfileColorMap,
   taskProfileLabel,
@@ -224,28 +226,54 @@ export function TaskDetailDrawer({
                 t('common.loading')
               ) : task.plugin_config?.selected_plugins?.length ? (
                 <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                  {task.plugin_config.selected_plugins.map((plugin) => (
-                    <Space
-                      key={plugin.plugin_id}
-                      direction="vertical"
-                      size={0}
-                      style={{ width: '100%' }}
-                    >
-                      <Tag color="purple">{plugin.plugin_id}</Tag>
-                      <Typography.Text type="secondary">
-                        {t('tasks.detail.pluginPendingSnapshot')}
-                      </Typography.Text>
-                      {(plugin.selected_command_ids || []).length ? (
-                        <Typography.Text type="secondary">
-                          {t('tasks.detail.pluginCommandList', {
-                            commands: (plugin.selected_command_ids || []).map((commandId) => (
-                              `/${commandId}`
-                            )).join(', '),
-                          })}
-                        </Typography.Text>
-                      ) : null}
-                    </Space>
-                  ))}
+                  {task.plugin_config.selected_plugins.map((plugin) => {
+                    const display = taskPluginDisplay(task, plugin.plugin_id);
+                    return (
+                      <Space
+                        key={plugin.plugin_id}
+                        direction="vertical"
+                        size={0}
+                        style={{ width: '100%' }}
+                      >
+                        <Tooltip
+                          title={t('tasks.detail.pluginIdTooltip', { id: plugin.plugin_id })}
+                        >
+                          <Tag color="purple">
+                            {display.displayName}
+                            {display.version ? ` · v${display.version}` : ''}
+                          </Tag>
+                        </Tooltip>
+                        {display.pluginKey ? (
+                          <Typography.Text type="secondary">
+                            {t('tasks.detail.pluginIdentity', {
+                              pluginKey: display.pluginKey,
+                            })}
+                          </Typography.Text>
+                        ) : null}
+                        {display.reason ? (
+                          <Typography.Text type="secondary">
+                            {t('tasks.detail.pluginSelectionReason', {
+                              reason: display.reason,
+                            })}
+                          </Typography.Text>
+                        ) : null}
+                        {!display.hasSnapshot ? (
+                          <Typography.Text type="secondary">
+                            {t('tasks.detail.pluginPendingSnapshot')}
+                          </Typography.Text>
+                        ) : null}
+                        {(plugin.selected_command_ids || []).length ? (
+                          <Typography.Text type="secondary">
+                            {t('tasks.detail.pluginCommandList', {
+                              commands: (plugin.selected_command_ids || []).map((commandId) => (
+                                `/${commandId}`
+                              )).join(', '),
+                            })}
+                          </Typography.Text>
+                        ) : null}
+                      </Space>
+                    );
+                  })}
                 </Space>
               ) : !detailLastRunId ? (
                 t('tasks.detail.pluginsPendingRun')

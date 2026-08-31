@@ -82,8 +82,6 @@ describe('createSession', () => {
       selectedModelId: 'model_current',
       selectedAgentId: null,
       sessionAiSelectionBySession: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
 
     const set = (updater: (draftState: ChatStoreDraft) => void) => {
@@ -173,8 +171,6 @@ describe('createSession', () => {
       selectedModelId: 'model_local',
       selectedAgentId: null,
       sessionAiSelectionBySession: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
     const set = (updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);

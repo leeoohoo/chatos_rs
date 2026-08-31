@@ -8,12 +8,11 @@ use serde_json::json;
 use super::{
     builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
     compose_builtin_mcp_system_prompt, compose_effective_builtin_mcp_system_prompt,
-    inspect_builtin_mcp_system_prompt, inspect_effective_builtin_mcp_system_prompt,
+    inspect_builtin_mcp_system_prompt,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_tools::ToolInfo;
 use crate::services::mcp_loader::{BuiltinMcpKind, McpBuiltinServer};
-use chatos_mcp_runtime::{BROWSER_TOOLS_SERVER_NAME, WEB_TOOLS_SERVER_NAME};
 
 fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
     McpBuiltinServer {
@@ -88,28 +87,6 @@ fn includes_global_and_selected_sections_only() {
 }
 
 #[test]
-fn keeps_browser_and_web_sections_together_in_stable_order() {
-    let prompt = compose_builtin_mcp_system_prompt(
-        &[
-            build_builtin_server(BuiltinMcpKind::WebTools),
-            build_builtin_server(BuiltinMcpKind::BrowserTools),
-            build_builtin_server(BuiltinMcpKind::BrowserTools),
-        ],
-        InternalContextLocale::ZhCn,
-    )
-    .expect("prompt");
-
-    let browser_idx = prompt
-        .find(format!("`{}_browser_inspect`", BROWSER_TOOLS_SERVER_NAME).as_str())
-        .expect("browser section");
-    let web_idx = prompt
-        .find(format!("`{}_web_research`", WEB_TOOLS_SERVER_NAME).as_str())
-        .expect("web section");
-    assert!(browser_idx < web_idx);
-    assert!(prompt.contains("只要问题和当前浏览器页有关"));
-}
-
-#[test]
 fn includes_memory_reader_section_when_contact_reader_tools_are_present() {
     let prompt = compose_builtin_mcp_system_prompt(
         &[
@@ -123,24 +100,6 @@ fn includes_memory_reader_section_when_contact_reader_tools_are_present() {
     assert!(prompt.contains("`memory_skill_reader_get_skill_detail`"));
     assert!(prompt.contains("`memory_command_reader_get_command_detail`"));
     assert!(prompt.contains("`memory_plugin_reader_get_plugin_detail`"));
-}
-
-#[test]
-fn effective_prompt_drops_fully_unavailable_sections() {
-    let info = inspect_effective_builtin_mcp_system_prompt(
-        &[build_builtin_server(BuiltinMcpKind::BrowserTools)],
-        &HashMap::new(),
-        &[json!({
-            "server_name": "builtin",
-            "tool_name": "browser_inspect",
-            "reason": "agent-browser unavailable"
-        })],
-        InternalContextLocale::ZhCn,
-    );
-
-    assert!(info.prompt.is_none());
-    assert_eq!(info.omitted_section_ids, vec!["builtin_browser_tools"]);
-    assert_eq!(info.omitted_builtin_server_names, vec!["builtin"]);
 }
 
 #[test]

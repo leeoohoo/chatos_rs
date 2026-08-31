@@ -32,25 +32,28 @@ impl LocalConnectorProvider {
     }
 
     pub(in crate::providers) fn supports(&self, route: &ResolvedMcpRoute) -> bool {
-        if self.internal_secret.is_none()
-            || route.provider_kind != McpProviderKind::LocalConnector
-            || !route
-                .provider_ref
-                .as_deref()
-                .is_some_and(|value| value.starts_with("device:"))
+        if self.internal_secret.is_none() || route.provider_kind != McpProviderKind::LocalConnector
         {
             return false;
         }
-        let Some(descriptor) = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-        else {
-            return false;
-        };
-        matches!(
-            descriptor.key,
-            SystemMcpKey::CodeMaintainerRead
-                | SystemMcpKey::CodeMaintainerWrite
-                | SystemMcpKey::TerminalController
-                | SystemMcpKey::BrowserTools
-        )
+        match system_mcp_descriptor_by_resource_id(route.resource_id.as_str()) {
+            Some(descriptor) => {
+                route
+                    .provider_ref
+                    .as_deref()
+                    .is_some_and(|value| value.starts_with("device:"))
+                    && matches!(
+                        descriptor.key,
+                        SystemMcpKey::CodeMaintainerRead
+                            | SystemMcpKey::CodeMaintainerWrite
+                            | SystemMcpKey::TerminalController
+                            | SystemMcpKey::RemoteConnectionController
+                    )
+            }
+            None => route
+                .provider_ref
+                .as_deref()
+                .is_some_and(|value| value.starts_with("mcp-resource:")),
+        }
     }
 }

@@ -126,7 +126,12 @@ impl PluginComponentProvider {
             .request_local(
                 snapshot.owner_user_id.as_str(),
                 binding.device_id.as_str(),
-                binding.workspace_id.as_str(),
+                binding.workspace_id.as_deref(),
+                snapshot
+                    .project_context
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.relative_root.as_deref()),
                 "execute",
                 Value::Object(body),
             )
@@ -181,7 +186,8 @@ impl PluginComponentProvider {
                 .request_local(
                     owner_user_id,
                     binding.device_id.as_str(),
-                    binding.workspace_id.as_str(),
+                    binding.workspace_id.as_deref(),
+                    None,
                     "cancel",
                     body,
                 )

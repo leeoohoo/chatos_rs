@@ -71,7 +71,7 @@ macro_rules! embedded_descriptor {
     };
 }
 
-static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 16] = [
+static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 14] = [
     embedded_descriptor!(
         CodeMaintainerRead,
         "builtin_code_maintainer_read",
@@ -166,31 +166,6 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 16] = [
         NO_RUNTIME_HOSTS,
         RemoteConnectionController
     ),
-    embedded_descriptor!(
-        WebTools,
-        "builtin_web_tools",
-        "web_tools",
-        "Web Tools (Builtin)",
-        "Web research and content retrieval tools.",
-        true,
-        "shared",
-        CHATOS_TASK_HOSTS,
-        WebTools
-    ),
-    SystemMcpDescriptor {
-        key: SystemMcpKey::BrowserTools,
-        resource_id: "builtin_browser_tools",
-        server_name: "browser_tools",
-        display_name: "Browser Tools (Builtin)",
-        description: "Interactive browser automation tools.",
-        allow_writes: true,
-        tags: &["system", "builtin"],
-        category: Some("builtin"),
-        owner_service: "chatos",
-        backend: SystemMcpBackend::ServiceHttp,
-        implementation_hosts: CHATOS_TASK_LOCAL_HOSTS,
-        embedded_kind: Some(BuiltinMcpKind::BrowserTools),
-    },
     embedded_descriptor!(
         MemorySkillReader,
         "system_builtin_memory_skill_reader",
@@ -424,18 +399,6 @@ mod tests {
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::AgentBuilder));
         assert!(descriptor.supports_implementation_host(SystemMcpHost::Chatos));
         assert!(!descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
-    }
-
-    #[test]
-    fn browser_tools_use_chatos_cloud_service_with_local_connector_compatibility() {
-        let descriptor = system_mcp_descriptor(SystemMcpKey::BrowserTools);
-
-        assert_eq!(descriptor.owner_service, "chatos");
-        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
-        assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::BrowserTools));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::Chatos));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::TaskRunner));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
     }
 
     #[test]

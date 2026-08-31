@@ -104,7 +104,7 @@ describe('useSessionListActions', () => {
     });
   });
 
-  it('keeps the current project-scoped session when opening the same contact', async () => {
+  it('switches from a project-scoped session to the public session for the same contact', async () => {
     const ensureSessionForContact = vi.fn().mockResolvedValue('public-session');
     const selectSession = vi.fn().mockResolvedValue(undefined);
     const setActivePanel = vi.fn();
@@ -165,9 +165,14 @@ describe('useSessionListActions', () => {
 
     await result.current.handleSelectSession('contact-placeholder:contact-1');
 
-    expect(ensureSessionForContact).not.toHaveBeenCalled();
-    expect(selectSession).not.toHaveBeenCalled();
-    expect(setActivePanel).toHaveBeenCalledWith('chat');
+    expect(ensureSessionForContact).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'contact-1',
+      agentId: 'agent-1',
+    }));
+    expect(selectSession).toHaveBeenCalledWith('public-session', {
+      skipBackgroundSync: true,
+    });
+    expect(setActivePanel).not.toHaveBeenCalled();
   });
 
   it('creates terminals from the selected local connector workspace', async () => {

@@ -355,6 +355,7 @@ impl TaskRunnerSingleStepResolver {
                 "Plugin Management capability configuration is required before Task Runner Agent execution"
                     .to_string()
             })?;
+        capability_policy.validate_task_plugin_selection_for_run(&task)?;
         capability_policy.apply_to_task(&mut task)?;
         ensure_queued_mcp_scope_unchanged(&task, &run)?;
         let input = StartTaskRunRequest {

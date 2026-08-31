@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::mcp_runtime::load_verified_manifest;
-use super::portable_bundle::validate_local_portable_bundle;
 use crate::plugins::PluginInstaller;
 
 const MAX_COMMAND_BYTES: u64 = 256 * 1024;
@@ -106,15 +105,7 @@ impl PluginCommandLoader {
         validate_required_permissions(&installation, component_key, permission_snapshot)?;
 
         let relative_source_path = command.source.path.as_str();
-        let portable_bundle = validate_local_portable_bundle(
-            &installation,
-            &manifest,
-            component_key,
-            expected_content_sha256,
-        )?;
-        let (raw, content_sha256) = if let Some(bundle) = portable_bundle {
-            (bundle.primary_text, bundle.bundle_sha256)
-        } else {
+        let (raw, content_sha256) = {
             let package_source_path = relative_source_path.trim_start_matches("./");
             let expected_package_sha256 = installation
                 .version
@@ -158,7 +149,6 @@ impl PluginCommandLoader {
             plugin_id,
             installation.version.release_id.as_str(),
             component_key,
-            manifest.execution.host_for(component_key),
             command.source.path.as_str(),
             command.description.as_deref(),
             command.argument_hint.as_deref(),

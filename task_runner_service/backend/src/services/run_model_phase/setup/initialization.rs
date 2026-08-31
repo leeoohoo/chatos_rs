@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::services::status_display::TaskStatusExt;
 
 pub(super) async fn initialize_model_phase(
     service: &RunService,
@@ -68,9 +69,13 @@ async fn wait_for_execution_lane(
     let Some(execution_lane_key) = run.execution_lane_key.as_deref() else {
         return Ok(false);
     };
-    let Some(active_run) = service
+    let Some(blocking_run) = service
         .store
-        .get_running_run_for_execution_lane(execution_lane_key, run.id.as_str())
+        .get_prior_active_run_for_execution_lane(
+            execution_lane_key,
+            run.created_at.as_str(),
+            run.id.as_str(),
+        )
         .await?
     else {
         return Ok(false);
@@ -78,7 +83,7 @@ async fn wait_for_execution_lane(
     let current = service
         .store
         .subscribe_run_terminal(crate::store::RunTerminalSubscriptionRecord::cloud_agent(
-            active_run.id.as_str(),
+            blocking_run.id.as_str(),
             run.id.as_str(),
         ))
         .await?;
@@ -91,22 +96,30 @@ async fn wait_for_execution_lane(
     ) {
         return Ok(false);
     }
+    let (waiting_message, lane_kind) = if execution_lane_key.starts_with("plugin-exclusive-device:")
+    {
+        ("等待本机独占插件资源空闲", "plugin_exclusive_device")
+    } else {
+        ("等待同项目上一任务完成终态收敛", "workspace_execution")
+    };
     if let Err(error) = service
         .store
         .append_run_event(TaskRunEventRecord::new(
             run.id.clone(),
             "execution_lane_waiting_event",
-            Some("等待同项目上一任务完成终态收敛".to_string()),
+            Some(waiting_message.to_string()),
             Some(json!({
                 "execution_lane_key": execution_lane_key,
-                "active_run_id": active_run.id,
+                "lane_kind": lane_kind,
+                "blocking_run_id": blocking_run.id,
+                "blocking_run_status": blocking_run.status.status_string(),
             })),
         ))
         .await
     {
         warn!(
             run_id = run.id.as_str(),
-            active_run_id = active_run.id.as_str(),
+            blocking_run_id = blocking_run.id.as_str(),
             error = error.as_str(),
             "failed to append execution lane waiting event"
         );

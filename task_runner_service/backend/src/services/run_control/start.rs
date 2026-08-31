@@ -169,13 +169,16 @@ impl RunService {
             .unwrap_or(self.resolve_task_runner_agent_key_for_task(&task).await?);
         let mut runtime_task = task.clone();
         if let Some(policy) = capability_policy.as_ref() {
+            policy.validate_task_plugin_selection_for_run(&runtime_task)?;
             policy.apply_to_task(&mut runtime_task)?;
         }
         let effective_workspace_dir =
             ensure_effective_task_workspace_dir(&self.config, &runtime_task, &model_config)?;
-        let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
-            &runtime_task.mcp_config,
-        );
+        let effective_tools =
+            crate::services::workspace_execution::effective_task_tool_snapshot_for_scope(
+                &runtime_task.mcp_config,
+                &runtime_task.execution_scope(),
+            );
         crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
             &runtime_task,
             &effective_tools,
@@ -184,12 +187,18 @@ impl RunService {
             crate::services::workspace_execution::task_runtime_capability_fingerprint(
                 &runtime_task,
             );
-        let execution_lane_key = crate::services::workspace_execution::model_execution_lane_key(
-            self,
-            &runtime_task,
-            &effective_tools,
-        )
-        .await?;
+        let workspace_execution_lane_key =
+            crate::services::workspace_execution::model_execution_lane_key(
+                self,
+                &runtime_task,
+                &effective_tools,
+            )
+            .await?;
+        let plugin_execution_lane_key = match capability_policy.as_ref() {
+            Some(policy) => policy.exclusive_execution_lane_key(&runtime_task.plugin_config)?,
+            None => None,
+        };
+        let execution_lane_key = plugin_execution_lane_key.or(workspace_execution_lane_key);
         let run_id = Uuid::new_v4().to_string();
         let (execution_timeout_ms, ai_read_timeout_ms) = self.effective_run_timeouts_ms().await?;
         let execution_timeout =
@@ -199,11 +208,6 @@ impl RunService {
         let deadline_at = Utc::now()
             .checked_add_signed(execution_timeout)
             .ok_or_else(|| "Task Runner execution deadline exceeds supported range".to_string())?;
-        let skill_snapshots = capability_policy
-            .as_ref()
-            .map(|policy| policy.skill_snapshots(&runtime_task))
-            .transpose()?
-            .unwrap_or_default();
         let input_snapshot = json!({
             "agent_key": agent_key.as_str(),
             "task_id": task.id,
@@ -216,7 +220,6 @@ impl RunService {
             "model_config_id": model_config_id,
             "plugin_config": runtime_task.plugin_config,
             "mcp_config": runtime_task.mcp_config,
-            "skill_snapshots": skill_snapshots,
             "effective_workspace_dir": effective_workspace_dir.as_str(),
             "task_runtime_capability_fingerprint": task_runtime_capability_fingerprint,
             "retry_of_run_id": retry_of_run_id,

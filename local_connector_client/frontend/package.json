@@ -48,10 +48,6 @@
         "to": "bundled-tools"
       },
       {
-        "from": "electron/resources/skill_bundles",
-        "to": "skill-bundles"
-      },
-      {
         "from": "electron/resources/sqlite-migrations",
         "to": "sqlite-migrations"
       }

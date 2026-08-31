@@ -18,13 +18,13 @@ use chatos_config_sdk::{
 use chatos_service_runtime::{verify_internal_service_token, InternalServiceTokenClaims};
 use chrono::Utc;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::auth;
 use crate::models::{
-    ConfigDraftRecord, CurrentUser, CustomDefinitionRequest, DraftUpdateRequest, HealthResponse,
+    CurrentUser, CustomDefinitionRequest, DraftUpdateRequest, HealthResponse,
     InstanceHeartbeatRequest, LoginRequest, PublishRequest, ServiceInstanceRecord,
 };
 use crate::state::AppState;
@@ -48,6 +48,3 @@ where
 fn error(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(json!({ "error": message.into() }))).into_response()
 }
-
-#[allow(dead_code)]
-fn _type_anchors(_draft: ConfigDraftRecord, _values: BTreeMap<String, Value>) {}

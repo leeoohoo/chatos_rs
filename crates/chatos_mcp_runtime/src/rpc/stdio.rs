@@ -19,6 +19,8 @@ use super::{tools_list_stdio_cache_key, DEFAULT_MCP_RPC_TIMEOUT};
 const MCP_STDIO_SESSION_MAX: usize = 32;
 const MCP_STDIO_SESSION_IDLE_TTL: Duration = Duration::from_secs(10 * 60);
 const MCP_STDIO_RESPONSE_LINE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+const SUPPORTED_MCP_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 static MCP_STDIO_SESSIONS: OnceLock<Mutex<HashMap<String, StdioSessionEntry>>> = OnceLock::new();
 static MCP_STDIO_SESSION_START_LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> =
     OnceLock::new();
@@ -27,6 +29,7 @@ struct StdioRpcSession {
     child: Child,
     stdin: ChildStdin,
     reader: BufReader<ChildStdout>,
+    initialize_result: Value,
 }
 
 impl Drop for StdioRpcSession {
@@ -99,6 +102,13 @@ pub async fn jsonrpc_stdio_call_with_timeout(
             timeout.as_secs()
         )
     })?
+}
+
+pub async fn jsonrpc_stdio_initialize_result(cfg: &McpStdioServer) -> Result<Value, String> {
+    let session_key = stdio_session_cache_key(cfg);
+    let session = get_stdio_session(cfg, session_key.as_str()).await?;
+    let guard = session.lock().await;
+    Ok(guard.initialize_result.clone())
 }
 
 async fn jsonrpc_stdio_call_with_session(
@@ -300,11 +310,14 @@ async fn spawn_stdio_session(cfg: &McpStdioServer) -> Result<StdioRpcSession, St
     let stdout = child.stdout.take().ok_or("missing stdout")?;
     let reader = BufReader::new(stdout);
 
-    Ok(StdioRpcSession {
+    let mut session = StdioRpcSession {
         child,
         stdin,
         reader,
-    })
+        initialize_result: Value::Null,
+    };
+    session.initialize_result = session.initialize(cfg.name.as_str()).await?;
+    Ok(session)
 }
 
 fn build_stdio_command(cfg: &McpStdioServer) -> Result<tokio::process::Command, String> {
@@ -353,6 +366,48 @@ fn terminate_stdio_process_tree(child: &mut Child) {
 }
 
 impl StdioRpcSession {
+    async fn initialize(&mut self, server_name: &str) -> Result<Value, String> {
+        let id = Uuid::new_v4().to_string();
+        let response = self
+            .send_request(
+                id.as_str(),
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {
+                            "name": "chatos-local-connector",
+                            "version": env!("CARGO_PKG_VERSION")
+                        }
+                    }
+                }),
+            )
+            .await
+            .map_err(|err| format!("initialize stdio MCP `{server_name}` failed: {err}"))?;
+        validate_initialize_result(server_name, &response)?;
+        self.send_notification(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }))
+        .await
+        .map_err(|err| {
+            format!("send initialized notification to stdio MCP `{server_name}` failed: {err}")
+        })?;
+        Ok(response)
+    }
+
+    async fn send_notification(&mut self, payload: &Value) -> Result<(), String> {
+        let data = payload.to_string() + "\n";
+        self.stdin
+            .write_all(data.as_bytes())
+            .await
+            .map_err(|err| err.to_string())?;
+        self.stdin.flush().await.map_err(|err| err.to_string())
+    }
+
     async fn send_request(&mut self, id: &str, payload: &Value) -> Result<Value, String> {
         let data = payload.to_string() + "\n";
         self.stdin
@@ -392,6 +447,26 @@ impl StdioRpcSession {
     async fn is_finished(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
+}
+
+fn validate_initialize_result(server_name: &str, result: &Value) -> Result<(), String> {
+    let protocol_version = result
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!("stdio MCP `{server_name}` initialize result is missing protocolVersion")
+        })?;
+    if !SUPPORTED_MCP_PROTOCOL_VERSIONS.contains(&protocol_version) {
+        return Err(format!(
+            "stdio MCP `{server_name}` returned unsupported protocolVersion `{protocol_version}`"
+        ));
+    }
+    if !result.get("capabilities").is_some_and(Value::is_object) {
+        return Err(format!(
+            "stdio MCP `{server_name}` initialize result is missing an object capabilities field"
+        ));
+    }
+    Ok(())
 }
 
 async fn read_stdio_response_line_limited<R>(

@@ -5,7 +5,7 @@ use chatos_mcp_management_sdk::{
     ProjectExecutionContext, RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget,
     WorkspaceProviderKind,
 };
-use chatos_plugin_management_sdk::{PluginExecutionHost, PluginMcpServer};
+use chatos_plugin_management_sdk::PluginMcpServer;
 
 use super::*;
 
@@ -20,7 +20,6 @@ fn plugin_runtime_binding() -> PluginMcpRuntimeBinding {
         normalized_manifest_sha256: "b".repeat(64),
         component_key: "workspace".to_string(),
         component_content_sha256: "c".repeat(64),
-        declared_execution_host: PluginExecutionHost::Local,
         installation_device_id: Some("device-private-1".to_string()),
         permission_snapshot: vec!["workspace.read".to_string()],
         auth_connection_ids: vec!["oauth-private-reference".to_string()],
@@ -30,6 +29,7 @@ fn plugin_runtime_binding() -> PluginMcpRuntimeBinding {
             headers: Default::default(),
             oauth_resource: None,
             connect_timeout_ms: None,
+            requires_exclusive_execution: false,
         },
         server_key: None,
         tool_allowlist: vec!["read_file".to_string()],
@@ -42,10 +42,6 @@ fn plugin_runtime_binding() -> PluginMcpRuntimeBinding {
 fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
     let expires_at_unix = chrono::Utc::now().timestamp() + 300;
     let plugin_runtime = plugin_runtime_binding();
-    let mut headers = HeaderMap::new();
-    let mut authorization = HeaderValue::from_static("Bearer shared-store-secret");
-    authorization.set_sensitive(true);
-    headers.insert("authorization", authorization);
     RuntimeSessionSnapshot {
         session_id: session_id.to_string(),
         caller_service: "task-runner".to_string(),
@@ -64,6 +60,7 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         execution_scope_generation: Some(1),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
+        task_title: Some("Task one".to_string()),
         source_session_id: Some("conversation-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-1".to_string()),
@@ -105,11 +102,14 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
                 runtime: plugin_runtime,
                 run_id: session_id.to_string(),
                 device_id: "device-private-1".to_string(),
-                workspace_id: "workspace-private-1".to_string(),
+                workspace_id: Some("workspace-private-1".to_string()),
                 adapter_session_id: "adapter-private-1".to_string(),
                 operation: "mcp_tools_call".to_string(),
                 session_sha256: "d".repeat(64),
+                snapshot_sha256: "f".repeat(64),
                 tool_snapshot_sha256: "e".repeat(64),
+                server_instructions_sha256: "a".repeat(64),
+                server_instructions: Some("Observe again after every UI mutation.".to_string()),
                 tools: vec![serde_json::json!({
                     "name": "read_file",
                     "inputSchema": {"type": "object"}
@@ -120,15 +120,20 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
         )]),
         plugin_tool_component_bindings: Default::default(),
         plugin_local_tool_component_bindings: Default::default(),
-        plugin_cloud_tool_component_bindings: Default::default(),
-        external_http_bindings: HashMap::from([(
+        local_connector_mcp_bindings: HashMap::from([(
             "external-1".to_string(),
-            ExternalHttpProviderBinding {
+            LocalConnectorMcpProviderBinding {
                 provider_ref: "mcp-resource:external-1".to_string(),
-                endpoint: reqwest::Url::parse("https://mcp.example.com/rpc").unwrap(),
-                headers,
-                http: reqwest::Client::new(),
-                resolved_addresses: vec!["8.8.8.8:443".parse().unwrap()],
+                device_id: "device-private-1".to_string(),
+                workspace_id: None,
+                inline_http: Some(LocalConnectorInlineHttpRuntime {
+                    url: "https://mcp.example.com/rpc".to_string(),
+                    headers: std::collections::BTreeMap::from([(
+                        "authorization".to_string(),
+                        "Bearer shared-store-secret".to_string(),
+                    )]),
+                    timeout_ms: 30_000,
+                }),
                 allow_writes: false,
                 allowed_tool_names: HashSet::from(["search".to_string()]),
                 blocked_tool_names: HashSet::from(["delete".to_string()]),
@@ -175,7 +180,7 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
         assert!(!encoded.windows(secret.len()).any(|window| window == secret));
     }
 
-    let restored = cipher.decrypt(document, Duration::from_secs(60)).unwrap();
+    let restored = cipher.decrypt(document).unwrap();
     assert_eq!(restored.trace_id, "00000000-0000-4000-8000-000000000001");
     assert_eq!(restored.tool_result_max_chars, Some(40_000));
     assert_eq!(restored.effective_mcp_ids, ["plugin-mcp-1"]);
@@ -184,17 +189,22 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
         Some("# Tool Usage Instructions")
     );
     assert_eq!(restored.plugin_instruction_items.len(), 1);
-    let external = restored.external_http_bindings.get("external-1").unwrap();
+    let external = restored
+        .local_connector_mcp_bindings
+        .get("external-1")
+        .unwrap();
     assert_eq!(
         external
+            .inline_http
+            .as_ref()
+            .unwrap()
             .headers
             .get("authorization")
             .unwrap()
-            .to_str()
-            .unwrap(),
+            .as_str(),
         "Bearer shared-store-secret"
     );
-    assert_eq!(external.resolved_addresses[0].to_string(), "8.8.8.8:443");
+    assert_eq!(external.device_id, "device-private-1");
     assert_eq!(
         restored.plugin_mcp_bindings["plugin-mcp-1"].release_id,
         "private-release-1"
@@ -211,36 +221,20 @@ fn encrypted_snapshot_rejects_envelope_identity_tampering_and_wrong_keys() {
     let mut document = cipher.encrypt(&snapshot("bound-session")).unwrap();
     document.session_id = "attacker-session".to_string();
     assert!(cipher
-        .decrypt(document, Duration::from_secs(60))
+        .decrypt(document)
         .unwrap_err()
         .contains("key mismatch or corrupted data"));
 
     let document = cipher.encrypt(&snapshot("wrong-key-session")).unwrap();
     let wrong_cipher = SnapshotCipher::new("another-encryption-secret").unwrap();
-    assert!(wrong_cipher
-        .decrypt(document, Duration::from_secs(60))
-        .is_err());
+    assert!(wrong_cipher.decrypt(document).is_err());
 
     let mut old_schema = cipher.encrypt(&snapshot("old-schema-session")).unwrap();
     old_schema.schema_version = 4;
     assert!(cipher
-        .decrypt(old_schema, Duration::from_secs(60))
+        .decrypt(old_schema)
         .unwrap_err()
         .contains("unsupported Runtime Session Snapshot schema version"));
-}
-
-#[test]
-fn restored_external_http_binding_revalidates_pinned_public_addresses() {
-    let binding = PersistedExternalHttpProviderBinding {
-        provider_ref: "mcp-resource:external-1".to_string(),
-        endpoint: "https://mcp.example.com/rpc".to_string(),
-        headers: Vec::new(),
-        resolved_addresses: vec!["127.0.0.1:443".to_string()],
-        allow_writes: false,
-        allowed_tool_names: HashSet::from(["search".to_string()]),
-        blocked_tool_names: HashSet::new(),
-    };
-    assert!(restore_external_http_binding(binding, Duration::from_secs(60)).is_err());
 }
 
 #[test]
@@ -357,7 +351,6 @@ async fn mongodb_store_is_shared_across_service_instances() {
     let first = RuntimeSessionStore::connect(
         database_url.as_str(),
         "shared-session-encryption-secret",
-        Duration::from_secs(60),
         RuntimeSessionCacheLimits::new(2_048, 32 * 1024 * 1024).unwrap(),
     )
     .await
@@ -365,7 +358,6 @@ async fn mongodb_store_is_shared_across_service_instances() {
     let second = RuntimeSessionStore::connect(
         database_url.as_str(),
         "shared-session-encryption-secret",
-        Duration::from_secs(60),
         RuntimeSessionCacheLimits::new(2_048, 32 * 1024 * 1024).unwrap(),
     )
     .await

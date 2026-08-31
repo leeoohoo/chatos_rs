@@ -95,19 +95,15 @@ pub struct PluginInterfaceMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "transport", rename_all = "snake_case")]
 pub enum PluginMcpServer {
-    ConfigFile {
-        component_key: String,
-        path: PluginPathRef,
-    },
     Stdio {
         component_key: String,
-        command: String,
+        bin: String,
         #[serde(default)]
         args: Vec<String>,
         #[serde(default)]
         env: BTreeMap<String, String>,
-        #[serde(default)]
-        cwd: Option<PluginPathRef>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        requires_exclusive_execution: bool,
     },
     Http {
         component_key: String,
@@ -118,15 +114,32 @@ pub enum PluginMcpServer {
         oauth_resource: Option<String>,
         #[serde(default)]
         connect_timeout_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        requires_exclusive_execution: bool,
     },
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl PluginMcpServer {
     pub fn component_key(&self) -> &str {
         match self {
-            Self::ConfigFile { component_key, .. }
-            | Self::Stdio { component_key, .. }
-            | Self::Http { component_key, .. } => component_key,
+            Self::Stdio { component_key, .. } | Self::Http { component_key, .. } => component_key,
+        }
+    }
+
+    pub fn requires_exclusive_execution(&self) -> bool {
+        match self {
+            Self::Stdio {
+                requires_exclusive_execution,
+                ..
+            }
+            | Self::Http {
+                requires_exclusive_execution,
+                ..
+            } => *requires_exclusive_execution,
         }
     }
 }

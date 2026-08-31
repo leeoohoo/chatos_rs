@@ -3,34 +3,22 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::components::{
     component_key_from_path, PluginAgent, PluginApp, PluginAuthor, PluginCommand,
     PluginDependencySpec, PluginHook, PluginInterfaceMetadata, PluginMcpServer, PluginPathRef,
     PluginPermissionRequirement, PluginUiContribution,
 };
-use super::normalized::{
-    PluginExecutionPolicy, PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION_V1,
-    PLUGIN_MANIFEST_SCHEMA_VERSION_V2,
-};
+use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION};
 use super::paths::normalize_plugin_relative_path;
 use super::{validate_plugin_manifest, PluginManifestError};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginManifestSource {
-    Codex,
-    Chatos,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawPluginManifest {
     #[serde(default)]
     schema_version: Option<u32>,
-    #[serde(default)]
-    execution: Option<PluginExecutionPolicy>,
     name: String,
     version: String,
     description: String,
@@ -62,8 +50,6 @@ struct RawPluginManifest {
     dependencies: PluginDependencySpec,
     #[serde(default)]
     permissions: Vec<PermissionInput>,
-    #[serde(default)]
-    bundled_content_variant: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,13 +108,11 @@ struct RawMcpServer {
     #[serde(default, rename = "type")]
     transport: Option<String>,
     #[serde(default)]
-    command: Option<String>,
+    bin: Option<String>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
     env: BTreeMap<String, String>,
-    #[serde(default)]
-    cwd: Option<String>,
     #[serde(default)]
     url: Option<String>,
     #[serde(default)]
@@ -137,6 +121,8 @@ struct RawMcpServer {
     oauth_resource: Option<String>,
     #[serde(default)]
     connect_timeout_ms: Option<u64>,
+    #[serde(default)]
+    requires_exclusive_execution: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,36 +140,11 @@ enum UiInput {
     Items(Vec<PluginUiContribution>),
 }
 
-pub fn parse_plugin_manifest(
-    raw: &str,
-    _source: PluginManifestSource,
-) -> Result<PluginManifest, PluginManifestError> {
+pub fn parse_plugin_manifest(raw: &str) -> Result<PluginManifest, PluginManifestError> {
     let raw: RawPluginManifest = serde_json::from_str(raw)?;
-    let schema_version = raw
-        .schema_version
-        .unwrap_or(PLUGIN_MANIFEST_SCHEMA_VERSION_V1);
-    let execution = match (schema_version, raw.execution) {
-        (PLUGIN_MANIFEST_SCHEMA_VERSION_V1, None) => PluginExecutionPolicy::default(),
-        (PLUGIN_MANIFEST_SCHEMA_VERSION_V1, Some(_)) => {
-            return Err(PluginManifestError::InvalidField {
-                field: "execution".to_string(),
-                message: "schemaVersion 1 must not declare execution".to_string(),
-            });
-        }
-        (PLUGIN_MANIFEST_SCHEMA_VERSION_V2, Some(execution)) => {
-            PluginExecutionPolicy::explicit(execution.default_host, execution.component_hosts)
-        }
-        (PLUGIN_MANIFEST_SCHEMA_VERSION_V2, None) => {
-            return Err(PluginManifestError::InvalidField {
-                field: "execution".to_string(),
-                message: "schemaVersion 2 requires execution.defaultHost".to_string(),
-            });
-        }
-        (_, execution) => execution.unwrap_or_default(),
-    };
+    let schema_version = raw.schema_version.unwrap_or(PLUGIN_MANIFEST_SCHEMA_VERSION);
     let manifest = PluginManifest {
         schema_version,
-        execution,
         name: raw.name.trim().to_string(),
         version: raw.version.trim().to_string(),
         description: raw.description.trim().to_string(),
@@ -205,7 +166,6 @@ pub fn parse_plugin_manifest(
         interface: normalize_interface(raw.interface)?,
         dependencies: raw.dependencies,
         permissions: normalize_permissions(raw.permissions),
-        bundled_content_variant: normalize_optional(raw.bundled_content_variant),
     };
     validate_plugin_manifest(&manifest)?;
     Ok(manifest)
@@ -427,10 +387,10 @@ fn normalize_mcp_servers(
 ) -> Result<Vec<PluginMcpServer>, PluginManifestError> {
     match input {
         None => Ok(Vec::new()),
-        Some(McpServersInput::ConfigPath(path)) => Ok(vec![PluginMcpServer::ConfigFile {
-            component_key: "mcp-config".to_string(),
-            path: normalize_path(path, "mcpServers".to_string())?,
-        }]),
+        Some(McpServersInput::ConfigPath(path)) => invalid_field(
+            format!("mcpServers ({path})"),
+            "MCP config-file plugins are no longer supported; declare npm MCP servers inline",
+        ),
         Some(McpServersInput::Inline(servers)) => servers
             .into_iter()
             .map(|(component_key, server)| normalize_inline_mcp(component_key, server))
@@ -447,7 +407,7 @@ fn normalize_inline_mcp(
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty());
-    let inferred = match (raw.command.is_some(), raw.url.is_some()) {
+    let inferred = match (raw.bin.is_some(), raw.url.is_some()) {
         (true, false) => "stdio",
         (false, true) => "http",
         _ => "",
@@ -455,8 +415,7 @@ fn normalize_inline_mcp(
     let transport = transport.unwrap_or(inferred);
     match transport {
         "stdio" => {
-            let command =
-                required_optional(raw.command, format!("mcpServers.{component_key}.command"))?;
+            let bin = required_optional(raw.bin, format!("mcpServers.{component_key}.bin"))?;
             if raw.url.is_some() {
                 return invalid_field(
                     format!("mcpServers.{component_key}.url"),
@@ -465,21 +424,18 @@ fn normalize_inline_mcp(
             }
             Ok(PluginMcpServer::Stdio {
                 component_key,
-                command,
+                bin,
                 args: raw.args,
                 env: raw.env,
-                cwd: raw
-                    .cwd
-                    .map(|value| normalize_path(value, "mcpServers.cwd".to_string()))
-                    .transpose()?,
+                requires_exclusive_execution: raw.requires_exclusive_execution,
             })
         }
         "http" => {
             let url = required_optional(raw.url, format!("mcpServers.{component_key}.url"))?;
-            if raw.command.is_some() {
+            if raw.bin.is_some() {
                 return invalid_field(
-                    format!("mcpServers.{component_key}.command"),
-                    "HTTP MCP servers cannot define command",
+                    format!("mcpServers.{component_key}.bin"),
+                    "HTTP MCP servers cannot define bin",
                 );
             }
             Ok(PluginMcpServer::Http {
@@ -488,11 +444,12 @@ fn normalize_inline_mcp(
                 headers: raw.headers,
                 oauth_resource: normalize_optional(raw.oauth_resource),
                 connect_timeout_ms: raw.connect_timeout_ms,
+                requires_exclusive_execution: raw.requires_exclusive_execution,
             })
         }
         _ => invalid_field(
             format!("mcpServers.{component_key}.type"),
-            "type must be stdio or http, or be inferable from command/url",
+            "type must be stdio or http, or be inferable from bin/url",
         ),
     }
 }

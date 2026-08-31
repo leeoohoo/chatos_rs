@@ -31,27 +31,22 @@ pub(crate) use handlers::spawn_plugin_auto_update_checker;
 
 use handlers::{
     local_add_workspace, local_agent_prompt_status, local_approval_settings,
-    local_approve_pending_approval, local_begin_plugin_oauth, local_browser_session_command,
-    local_check_agent_prompt_updates, local_check_plugin_updates, local_chrome_integration_status,
-    local_chrome_native_connect, local_chrome_native_disconnect, local_chrome_native_event,
-    local_chrome_native_next, local_clear_command_history, local_command_history,
-    local_complete_plugin_oauth, local_complete_plugin_oauth_query, local_delete_mcp_config,
-    local_delete_plugin_credential, local_deny_pending_approval, local_desktop_ticket,
-    local_disable_chrome_integration, local_disable_mcp_config, local_disconnect_plugin_oauth,
-    local_enable_chrome_integration, local_enable_mcp_config, local_fs_list_handler,
-    local_get_mcp_config, local_install_plugin, local_login, local_logout, local_mcp_configs,
-    local_model_configs, local_model_settings, local_pending_approvals, local_plugin_catalog,
-    local_plugin_credentials, local_plugin_events, local_plugin_oauth_connections,
-    local_plugin_status, local_recover_plugin_transactions, local_refresh_model_configs,
-    local_register, local_remove_workspace, local_request_system_permission, local_rollback_plugin,
+    local_approve_pending_approval, local_begin_plugin_oauth, local_check_agent_prompt_updates,
+    local_check_plugin_updates, local_clear_command_history, local_command_history,
+    local_complete_plugin_oauth, local_complete_plugin_oauth_query,
+    local_create_plugin_file_grants, local_delete_plugin_credential, local_deny_pending_approval,
+    local_desktop_ticket, local_disconnect_plugin_oauth, local_fs_list_handler,
+    local_install_plugin, local_login, local_logout, local_model_configs, local_model_settings,
+    local_pending_approvals, local_plugin_catalog, local_plugin_credentials, local_plugin_events,
+    local_plugin_oauth_connections, local_plugin_status, local_plugin_visual_session,
+    local_recover_plugin_transactions, local_refresh_model_configs, local_register,
+    local_remove_workspace, local_request_system_permission, local_rollback_plugin,
     local_runtime_settings, local_sandbox_capabilities, local_sandbox_leases,
-    local_sandbox_settings, local_save_mcp_config, local_send_register_email_code,
-    local_shutdown_sandboxes, local_skills, local_status, local_sync_mcp_config,
-    local_sync_skill_inventory, local_system_permissions, local_terminal_exec,
-    local_test_mcp_config, local_toggle_sandbox, local_uninstall_plugin,
-    local_update_agent_prompt_bundle, local_update_approval_settings, local_update_mcp_config,
-    local_update_model_settings, local_update_plugin_preference, local_update_runtime_settings,
-    local_update_sandbox_settings, local_update_skill_preference,
+    local_sandbox_settings, local_send_register_email_code, local_shutdown_sandboxes, local_status,
+    local_system_permissions, local_terminal_exec, local_toggle_sandbox, local_uninstall_plugin,
+    local_update_agent_prompt_bundle, local_update_approval_settings, local_update_model_settings,
+    local_update_plugin_permission_grants, local_update_plugin_preference,
+    local_update_runtime_settings, local_update_sandbox_settings,
     local_update_workspace_project_config_trust, local_upsert_plugin_credential,
 };
 
@@ -67,25 +62,6 @@ pub(crate) async fn serve_local_api(runtime: LocalRuntime) -> Result<()> {
             "LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN is required when the Local Connector TCP API or Windows named-pipe API is enabled"
         ));
     }
-    let _chrome_rendezvous = if tcp_enabled {
-        desktop_auth_token.as_deref().and_then(|token| {
-            match crate::chrome_integration::publish_chrome_native_rendezvous(
-                runtime.state_path.as_path(),
-                token,
-                local_api_port(),
-            ) {
-                Ok(guard) => Some(guard),
-                Err(error) => {
-                    tracing_stdout(
-                        format!("Chrome Native Host rendezvous is unavailable: {error}").as_str(),
-                    );
-                    None
-                }
-            }
-        })
-    } else {
-        None
-    };
     let app = local_api_app(runtime, desktop_auth_token);
     if let Some(endpoint) = ipc_endpoint {
         if env_flag("LOCAL_CONNECTOR_ENABLE_TCP_API") {
@@ -180,74 +156,18 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
             post(local_shutdown_sandboxes),
         )
         .route("/api/local/terminal/exec", post(local_terminal_exec))
-        .route(
-            "/api/local/runtime/browser/sessions/{session_id}/command",
-            post(local_browser_session_command),
-        )
-        .route(
-            "/api/local/chrome-integration",
-            get(local_chrome_integration_status),
-        )
-        .route(
-            "/api/local/chrome-integration/enable",
-            post(local_enable_chrome_integration),
-        )
-        .route(
-            "/api/local/chrome-integration/disable",
-            post(local_disable_chrome_integration),
-        )
-        .route(
-            "/api/local/chrome/native/connect",
-            post(local_chrome_native_connect),
-        )
-        .route(
-            "/api/local/chrome/native/event",
-            post(local_chrome_native_event),
-        )
-        .route(
-            "/api/local/chrome/native/next",
-            post(local_chrome_native_next),
-        )
-        .route(
-            "/api/local/chrome/native/disconnect",
-            post(local_chrome_native_disconnect),
-        )
         .route("/api/local/model-configs", get(local_model_configs))
         .route(
             "/api/local/model-configs/refresh",
             post(local_refresh_model_configs),
         )
-        .route(
-            "/api/local/mcp-configs",
-            get(local_mcp_configs).post(local_save_mcp_config),
-        )
-        .route(
-            "/api/local/mcp-configs/{manifest_id}",
-            get(local_get_mcp_config)
-                .post(local_update_mcp_config)
-                .delete(local_delete_mcp_config),
-        )
-        .route(
-            "/api/local/mcp-configs/{manifest_id}/test",
-            post(local_test_mcp_config),
-        )
-        .route(
-            "/api/local/mcp-configs/{manifest_id}/enable",
-            post(local_enable_mcp_config),
-        )
-        .route(
-            "/api/local/mcp-configs/{manifest_id}/disable",
-            post(local_disable_mcp_config),
-        )
-        .route(
-            "/api/local/mcp-configs/{manifest_id}/sync",
-            post(local_sync_mcp_config),
-        )
-        .route("/api/local/skills", get(local_skills))
-        .route("/api/local/skills/sync", post(local_sync_skill_inventory))
         .route("/api/local/plugins", get(local_plugin_status))
         .route("/api/local/plugins/catalog", get(local_plugin_catalog))
         .route("/api/local/plugins/events", get(local_plugin_events))
+        .route(
+            "/api/local/plugins/runtime-visual-session",
+            get(local_plugin_visual_session),
+        )
         .route(
             "/api/local/plugins/check-updates",
             post(local_check_plugin_updates),
@@ -267,6 +187,14 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         .route(
             "/api/local/plugins/{plugin_id}/preference",
             put(local_update_plugin_preference),
+        )
+        .route(
+            "/api/local/plugins/{plugin_id}/permission-grants",
+            put(local_update_plugin_permission_grants),
+        )
+        .route(
+            "/api/local/plugins/runtime-sessions/{adapter_session_id}/file-grants",
+            post(local_create_plugin_file_grants),
         )
         .route(
             "/api/local/plugins/{plugin_id}/credentials",
@@ -291,10 +219,6 @@ fn local_api_routes(desktop_auth_token: Option<String>) -> Router<LocalRuntime> 
         .route(
             "/api/local/plugins/recover",
             post(local_recover_plugin_transactions),
-        )
-        .route(
-            "/api/local/skills/{skill_id}/preference",
-            post(local_update_skill_preference),
         )
         .route(
             "/api/local/model-settings",

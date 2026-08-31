@@ -293,6 +293,13 @@ count=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
 echo $((count + 1)) > "$COUNT_FILE"
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  if printf '%s\n' "$line" | grep -q '"method":"initialize"'; then
+    printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"test","version":"1.0.0"},"instructions":"Observe after each action."}}\n' "$id"
+    continue
+  fi
+  if printf '%s\n' "$line" | grep -q '"method":"notifications/initialized"'; then
+    continue
+  fi
   printf '{"jsonrpc":"2.0","id":"%s","result":{"ok":true}}\n' "$id"
 done
 "#;
@@ -314,8 +321,15 @@ done
     let second = jsonrpc_stdio_call(&cfg, "demo/two", json!({}), None)
         .await
         .expect("second stdio response");
+    let initialize = jsonrpc_stdio_initialize_result(&cfg)
+        .await
+        .expect("cached initialize response");
     assert_eq!(first.pointer("/ok"), Some(&Value::Bool(true)));
     assert_eq!(second.pointer("/ok"), Some(&Value::Bool(true)));
+    assert_eq!(
+        initialize.get("instructions").and_then(Value::as_str),
+        Some("Observe after each action.")
+    );
     assert_eq!(
         std::fs::read_to_string(&count_file)
             .expect("count file")
@@ -339,6 +353,13 @@ count=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
 echo $((count + 1)) > "$COUNT_FILE"
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  if printf '%s\n' "$line" | grep -q '"method":"initialize"'; then
+    printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"test","version":"1.0.0"}}}\n' "$id"
+    continue
+  fi
+  if printf '%s\n' "$line" | grep -q '"method":"notifications/initialized"'; then
+    continue
+  fi
   printf '{"jsonrpc":"2.0","id":"%s","result":{"ok":true}}\n' "$id"
 done
 "#;

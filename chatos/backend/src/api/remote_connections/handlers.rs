@@ -21,6 +21,7 @@ use crate::core::user_scope::resolve_user_id;
 use crate::models::remote_connection::RemoteConnectionService;
 use crate::services::realtime::publish_remote_connections_updated;
 
+use super::request_normalize::is_native_client_execution_target;
 use super::{
     error_payload, internal_error_response, normalize_create_request, normalize_update_request,
     remote_connectivity_error_response, resolve_jump_connection_snapshot,
@@ -84,13 +85,18 @@ pub(super) async fn create_remote_connection(
             );
         }
     };
-    if let Err(err) = validate_local_connector_execution_target(
+    if !is_native_client_execution_target(
         normalized.local_connector_device_id.as_str(),
         normalized.local_connector_workspace_id.as_str(),
-    )
-    .await
-    {
-        return err;
+    ) {
+        if let Err(err) = validate_local_connector_execution_target(
+            normalized.local_connector_device_id.as_str(),
+            normalized.local_connector_workspace_id.as_str(),
+        )
+        .await
+        {
+            return err;
+        }
     }
 
     if let Err(err) = RemoteConnectionService::create(normalized.clone()).await {
@@ -193,13 +199,18 @@ pub(super) async fn update_remote_connection(
             );
         }
     };
-    if let Err(err) = validate_local_connector_execution_target(
+    if !is_native_client_execution_target(
         normalized.local_connector_device_id.as_str(),
         normalized.local_connector_workspace_id.as_str(),
-    )
-    .await
-    {
-        return err;
+    ) {
+        if let Err(err) = validate_local_connector_execution_target(
+            normalized.local_connector_device_id.as_str(),
+            normalized.local_connector_workspace_id.as_str(),
+        )
+        .await
+        {
+            return err;
+        }
     }
 
     if let Err(err) = RemoteConnectionService::update(&id, &normalized).await {

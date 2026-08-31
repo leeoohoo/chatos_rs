@@ -1094,7 +1094,6 @@ impl AppState {
         tracing::info!(
             user_service_base_url_key = PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
             task_runner_base_url_key = PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-            oauth_public_base_url_key = PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
             catalog_request_timeout_key = PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             shared_service_url_key = SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
             shared_internal_service_url_key =

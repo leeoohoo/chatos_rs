@@ -36,6 +36,32 @@ fn catalog_exposes_shared_and_task_runner_iteration_limits() {
 }
 
 #[test]
+fn catalog_exposes_separate_mcp_management_timeout_profiles() {
+    let definitions = builtin_definitions();
+    let control = definitions
+        .iter()
+        .find(|definition| definition.key == SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY)
+        .expect("MCP Management control request timeout definition");
+    let runtime_session = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == SHARED_MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS_CONFIG_KEY
+        })
+        .expect("MCP Management runtime session request timeout definition");
+
+    assert_eq!(control.default_value, json!(5_000));
+    assert_eq!(
+        control.env_aliases,
+        vec!["MCP_MANAGEMENT_REQUEST_TIMEOUT_MS"]
+    );
+    assert_eq!(runtime_session.default_value, json!(315_000));
+    assert_eq!(
+        runtime_session.env_aliases,
+        vec!["MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS"]
+    );
+}
+
+#[test]
 fn catalog_exposes_authoritative_pressure_controls() {
     let definitions = builtin_definitions();
     let platform = definitions
@@ -115,7 +141,7 @@ fn catalog_exposes_task_runner_runtime_controls_without_env_overrides() {
         .find(|definition| definition.key == TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY)
         .expect("task runner AI read timeout definition");
     assert_eq!(ai_read_timeout.value_type, "duration_ms");
-    assert_eq!(ai_read_timeout.default_value, json!(7_200_000));
+    assert_eq!(ai_read_timeout.default_value, json!(180_000));
     assert_eq!(ai_read_timeout.reload_mode, "next_run");
 
     let audit_level = definitions
@@ -652,36 +678,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
             "string",
         ),
         (
-            PLUGIN_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_PUBLIC_BASE_URL",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_FRONTEND_ORIGIN_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_FRONTEND_ORIGIN",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS",
-            "integer",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS",
-            "integer",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
-            PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES",
-            "bytes",
-        ),
-        (
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS",
             "integer",
@@ -774,6 +770,21 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
         (
             PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES",
+            "bytes",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL",
+            "string",
+        ),
+        (
+            PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY,
+            "PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES",
             "bytes",
         ),
         (
@@ -1636,12 +1647,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "plugin-management-service",
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             json!("change_me_plugin_management_mcp_management_secret"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET_CONFIG_KEY,
-            "plugin-management-service",
-            "PLUGIN_MANAGEMENT_CLOUD_CREDENTIAL_ENCRYPTION_SECRET",
-            json!("change_me_plugin_management_cloud_credential_encryption_secret"),
         ),
         (
             USER_SERVICE_JWT_SECRET_CONFIG_KEY,

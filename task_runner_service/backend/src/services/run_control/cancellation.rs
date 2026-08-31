@@ -253,6 +253,14 @@ impl RunService {
             task.updated_at = now_rfc3339();
             self.store.save_task(task.clone()).await?;
         }
+        if !automatic {
+            if let Some(policy) = self.resolve_task_runner_policy_for_task(&task).await? {
+                if policy.refresh_task_plugin_selection_for_manual_retry(&mut task)? {
+                    task.updated_at = now_rfc3339();
+                    self.store.save_task(task.clone()).await?;
+                }
+            }
+        }
         self.ensure_project_execution_retry_configuration_changed(&run, &task)
             .await?;
 
@@ -289,11 +297,14 @@ impl RunService {
         }
         let mut runtime_task = task.clone();
         if let Some(policy) = self.resolve_task_runner_policy_for_task(task).await? {
+            policy.validate_task_plugin_selection_for_run(&runtime_task)?;
             policy.apply_to_task(&mut runtime_task)?;
         }
-        let effective_tools = crate::services::workspace_execution::effective_task_tool_snapshot(
-            &runtime_task.mcp_config,
-        );
+        let effective_tools =
+            crate::services::workspace_execution::effective_task_tool_snapshot_for_scope(
+                &runtime_task.mcp_config,
+                &runtime_task.execution_scope(),
+            );
         let Err(contract_error) =
             crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
                 &runtime_task,

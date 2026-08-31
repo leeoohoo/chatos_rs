@@ -123,10 +123,6 @@ pub(crate) fn shared_builtin_kind(
         ChatosBuiltinMcpKind::RemoteConnectionController => {
             Some(chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController)
         }
-        ChatosBuiltinMcpKind::WebTools => Some(chatos_mcp_runtime::BuiltinMcpKind::WebTools),
-        ChatosBuiltinMcpKind::BrowserTools => {
-            Some(chatos_mcp_runtime::BuiltinMcpKind::BrowserTools)
-        }
         ChatosBuiltinMcpKind::MemorySkillReader => {
             Some(chatos_mcp_runtime::BuiltinMcpKind::MemorySkillReader)
         }
@@ -185,10 +181,6 @@ pub(crate) fn chatos_builtin_kind(
         chatos_mcp_runtime::BuiltinMcpKind::AskUser => Some(ChatosBuiltinMcpKind::AskUser),
         chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController => {
             Some(ChatosBuiltinMcpKind::RemoteConnectionController)
-        }
-        chatos_mcp_runtime::BuiltinMcpKind::WebTools => Some(ChatosBuiltinMcpKind::WebTools),
-        chatos_mcp_runtime::BuiltinMcpKind::BrowserTools => {
-            Some(ChatosBuiltinMcpKind::BrowserTools)
         }
         chatos_mcp_runtime::BuiltinMcpKind::MemorySkillReader => {
             Some(ChatosBuiltinMcpKind::MemorySkillReader)

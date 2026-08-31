@@ -43,7 +43,6 @@ import type {
   ConfigDefinition,
   ConfigRelease,
   ConfigValue,
-  CurrentUser,
 } from './types';
 
 type PageKey = 'dashboard' | 'config' | 'releases' | 'queues' | 'instances' | 'audit';

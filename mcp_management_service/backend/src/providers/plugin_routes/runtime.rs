@@ -15,9 +15,6 @@ impl PluginRouteDispatcher {
             McpProviderKind::PluginLocal => {
                 self.local.supports(route) || self.components.supports(route)
             }
-            McpProviderKind::PluginCloud => {
-                self.cloud.supports(route) || self.components.supports(route)
-            }
             _ => false,
         }
     }
@@ -25,7 +22,6 @@ impl PluginRouteDispatcher {
     pub(super) fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
             McpProviderKind::PluginLocal => self.local.supports(route),
-            McpProviderKind::PluginCloud => self.cloud.supports(route),
             _ => false,
         }
     }
@@ -55,22 +51,6 @@ impl PluginRouteDispatcher {
                     .call_tool(snapshot, route, original_tool_name, arguments)
                     .await,
             ),
-            McpProviderKind::PluginCloud if self.cloud.supports(route) => Some(
-                self.cloud
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await,
-            ),
-            McpProviderKind::PluginCloud if self.components.supports(route) => Some(
-                self.components
-                    .call_tool(snapshot, route, original_tool_name, arguments)
-                    .await,
-            ),
             _ => None,
         }
     }
@@ -84,11 +64,6 @@ impl PluginRouteDispatcher {
         match route.provider_kind {
             McpProviderKind::PluginLocal if self.local.supports(route) => Some(
                 self.local
-                    .cancel_invocation(snapshot, route, invocation_id)
-                    .await,
-            ),
-            McpProviderKind::PluginCloud if self.cloud.supports(route) => Some(
-                self.cloud
                     .cancel_invocation(snapshot, route, invocation_id)
                     .await,
             ),

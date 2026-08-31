@@ -28,3 +28,5 @@ pub const SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "shared.downstream.mcp_management_service_base_url";
 pub const SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "shared.downstream.mcp_management_request_timeout_ms";
+pub const SHARED_MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
+    "shared.downstream.mcp_management_runtime_session_request_timeout_ms";

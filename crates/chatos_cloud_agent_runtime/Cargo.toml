@@ -10,6 +10,7 @@ edition = "2021"
 async-trait = "0.1"
 chatos_ai_runtime = { path = "../chatos_ai_runtime" }
 chatos_cloud_agent_protocol = { path = "../chatos_cloud_agent_protocol" }
+chatos_mcp_runtime = { path = "../chatos_mcp_runtime" }
 chatos_mcp_service = { path = "../chatos_mcp_service" }
 chrono = { version = "0.4", features = ["serde", "clock"] }
 futures-util = "0.3"

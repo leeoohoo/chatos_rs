@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,7 +11,136 @@ const CORE_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const CORE_RESTART_BASE_DELAY_MS = 250;
 const CORE_RESTART_MAX_DELAY_MS = 5_000;
 const CORE_RESTART_STABLE_WINDOW_MS = 10_000;
-const UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER = 'computer-use-unsigned-local-dev.json';
+const USER_SHELL_PATH_TIMEOUT_MS = 10_000;
+const USER_SHELL_PATH_PREFIX = '__CHATOS_PATH_BEGIN__';
+const USER_SHELL_PATH_SUFFIX = '__CHATOS_PATH_END__';
+const USER_SHELL_PATH_CACHE_VERSION = 1;
+const USER_SHELL_PATH_CACHE_FILE = 'user-shell-path-cache.json';
+const ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV = 'CHATOS_ALLOW_ADHOC_MACOS_PLUGIN_APPS';
+
+function existingPathDirectories(value, directoryExists = defaultDirectoryExists) {
+  return String(value || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => path.isAbsolute(entry) && directoryExists(entry));
+}
+
+function defaultDirectoryExists(candidate) {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch (_error) {
+    return false;
+  }
+}
+
+function readCachedUserShellPath(cachePath, directoryExists = defaultDirectoryExists) {
+  try {
+    const payload = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    if (payload?.version !== USER_SHELL_PATH_CACHE_VERSION || !Array.isArray(payload.entries)) {
+      return [];
+    }
+    return existingPathDirectories(payload.entries.join(path.delimiter), directoryExists);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function writeCachedUserShellPath(cachePath, entries) {
+  try {
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(
+      cachePath,
+      `${JSON.stringify({ version: USER_SHELL_PATH_CACHE_VERSION, entries }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    fs.chmodSync(cachePath, 0o600);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function discoverUserShellPath({
+  platform = process.platform,
+  env = process.env,
+  spawnSyncImpl = spawnSync,
+  fileExists = fs.existsSync,
+  directoryExists = defaultDirectoryExists,
+  onDiagnostic = () => {},
+} = {}) {
+  const startedAt = Date.now();
+  const report = (status, details = {}) => {
+    onDiagnostic({
+      status,
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+      ...details,
+    });
+  };
+  if (platform === 'win32') {
+    report('unsupported-platform');
+    return [];
+  }
+  const configuredShell = String(env.SHELL || '').trim();
+  const fallbackShell = platform === 'darwin' ? '/bin/zsh' : '/bin/sh';
+  const shell = path.isAbsolute(configuredShell) && fileExists(configuredShell)
+    ? configuredShell
+    : fallbackShell;
+  if (!fileExists(shell)) {
+    report('shell-missing');
+    return [];
+  }
+  try {
+    const result = spawnSyncImpl(
+      shell,
+      ['-ilc', `printf "${USER_SHELL_PATH_PREFIX}%s${USER_SHELL_PATH_SUFFIX}" "$PATH"`],
+      {
+        env,
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024,
+        timeout: USER_SHELL_PATH_TIMEOUT_MS,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+    if (result.error) {
+      report('spawn-error', {
+        errorCode: String(result.error.code || result.error.name || 'unknown'),
+      });
+      return [];
+    }
+    if (result.status !== 0) {
+      report('shell-exit', {
+        exitCode: Number.isInteger(result.status) ? result.status : null,
+        signal: result.signal ? String(result.signal) : null,
+      });
+      return [];
+    }
+    const stdout = String(result.stdout || '');
+    const prefixIndex = stdout.lastIndexOf(USER_SHELL_PATH_PREFIX);
+    const suffixIndex = stdout.indexOf(
+      USER_SHELL_PATH_SUFFIX,
+      prefixIndex + USER_SHELL_PATH_PREFIX.length,
+    );
+    if (prefixIndex < 0 || suffixIndex < 0) {
+      report('markers-missing');
+      return [];
+    }
+    const discoveredPath = stdout.slice(
+      prefixIndex + USER_SHELL_PATH_PREFIX.length,
+      suffixIndex,
+    );
+    const entries = existingPathDirectories(discoveredPath, directoryExists);
+    report(entries.length > 0 ? 'success' : 'no-valid-entries', {
+      entryCount: entries.length,
+    });
+    return entries;
+  } catch (error) {
+    report('exception', {
+      errorCode: String(error?.code || error?.name || 'unknown'),
+    });
+    return [];
+  }
+}
 
 function coreRestartDelayMs(attempt) {
   const normalizedAttempt = Number.isInteger(attempt) && attempt > 0 ? attempt : 0;
@@ -21,7 +150,50 @@ function coreRestartDelayMs(attempt) {
   );
 }
 
-function createCoreRuntime({ app, desktopAuthToken }) {
+function allowAdhocMacosPluginApps({
+  platform = process.platform,
+  env = process.env,
+  executablePath = process.execPath,
+  spawnSyncImpl = spawnSync,
+} = {}) {
+  const configured = String(env[ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV] || '').trim();
+  if (configured) {
+    return configured === '1';
+  }
+  if (platform !== 'darwin' || !path.isAbsolute(executablePath)) {
+    return false;
+  }
+  try {
+    const result = spawnSyncImpl(
+      '/usr/bin/codesign',
+      ['--display', '--verbose=4', executablePath],
+      {
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024,
+        timeout: 5_000,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    if (result.error || result.status !== 0) {
+      return false;
+    }
+    const diagnostic = `${String(result.stdout || '')}\n${String(result.stderr || '')}`;
+    return diagnostic
+      .split(/\r?\n/)
+      .some((line) => line.trim().toLowerCase() === 'signature=adhoc');
+  } catch (_error) {
+    return false;
+  }
+}
+
+function createCoreRuntime({
+  app,
+  desktopAuthToken,
+  spawnImpl = spawn,
+  discoverUserShellPathImpl = discoverUserShellPath,
+  allowAdhocMacosPluginAppsImpl = allowAdhocMacosPluginApps,
+}) {
   let coreProcess = null;
   let ipcEndpoint = null;
   let ipcSocketDir = null;
@@ -29,6 +201,9 @@ function createCoreRuntime({ app, desktopAuthToken }) {
   let restartTimer = null;
   let stableTimer = null;
   let stopRequested = false;
+  let cachedCoreExecutablePath = null;
+  let coreExecutablePathSource = 'fallback';
+  let coreExecutablePathDiagnostic = { status: 'not-run', elapsedMs: 0 };
 
   function resourcePath(...segments) {
     const packagedPath = path.join(process.resourcesPath, ...segments);
@@ -38,103 +213,26 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     return path.join(__dirname, 'resources', ...segments);
   }
 
-  function bundledToolsPlatformName() {
-    const os = process.platform === 'darwin'
-      ? 'macos'
-      : process.platform === 'win32'
-        ? 'windows'
-        : 'linux';
-    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-    return `${os}-${arch}`;
-  }
-
-  function chromeExtensionPath() {
-    const packaged = resourcePath('chrome-extension');
-    if (fs.existsSync(path.join(packaged, 'manifest.json'))) {
-      return packaged;
-    }
-    return path.join(__dirname, '..', '..', 'chrome_extension');
-  }
-
-  function chromeExtensionInstallPath() {
-    return path.join(app.getPath('home'), 'ChatOS Chrome Extension');
-  }
-
-  function prepareChromeExtensionInstallDirectory() {
-    const source = chromeExtensionPath();
-    if (!fs.existsSync(path.join(source, 'manifest.json'))) {
-      throw new Error(`Chrome extension source is missing manifest.json: ${source}`);
-    }
-
-    const destination = chromeExtensionInstallPath();
-    const homeDir = app.getPath('home');
-    const relativeDestination = path.relative(homeDir, destination);
-    if (
-      !relativeDestination
-      || relativeDestination.startsWith('..')
-      || path.isAbsolute(relativeDestination)
-    ) {
-      throw new Error(`Refusing to prepare Chrome extension outside the user home directory: ${destination}`);
-    }
-
-    const temporaryDestination = `${destination}.partial-${process.pid}`;
-    fs.rmSync(temporaryDestination, { recursive: true, force: true });
-    fs.rmSync(destination, { recursive: true, force: true });
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.cpSync(source, temporaryDestination, { recursive: true, dereference: true });
-    if (!fs.existsSync(path.join(temporaryDestination, 'manifest.json'))) {
-      fs.rmSync(temporaryDestination, { recursive: true, force: true });
-      throw new Error(`Prepared Chrome extension directory is missing manifest.json: ${temporaryDestination}`);
-    }
-    fs.renameSync(temporaryDestination, destination);
-    return destination;
-  }
-
-  function bundledBrowserRuntime() {
-    const toolsDir = resourcePath('bundled-tools', bundledToolsPlatformName());
-    const agentBrowser = path.join(
-      toolsDir,
-      process.platform === 'win32' ? 'agent-browser.exe' : 'agent-browser',
-    );
-    const browserExecutable = process.platform === 'darwin'
-      ? path.join(
-          toolsDir,
-          'browser',
-          'Google Chrome for Testing.app',
-          'Contents',
-          'MacOS',
-          'Google Chrome for Testing',
-        )
-      : process.platform === 'win32'
-        ? path.join(toolsDir, 'browser', 'chrome-win64', 'chrome.exe')
-        : path.join(toolsDir, 'browser', 'chrome-linux64', 'chrome');
-    return {
-      toolsDir,
-      agentBrowser,
-      browserExecutable,
-    };
-  }
-
-  function unsignedComputerUseLocalDevAllowed() {
-    const envValue = String(process.env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV || '').trim();
-    if (['1', 'true', 'TRUE', 'yes', 'YES'].includes(envValue)) {
-      return true;
-    }
-    const markerPath = resourcePath(UNSIGNED_COMPUTER_USE_LOCAL_DEV_MARKER);
-    if (!fs.existsSync(markerPath)) {
-      return false;
-    }
-    try {
-      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
-      return marker && marker.allowUnsignedComputerUseLocalDev === true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
   function coreExecutablePath() {
-    const existing = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
-    const candidates = [bundledBrowserRuntime().toolsDir];
+    if (cachedCoreExecutablePath) {
+      return cachedCoreExecutablePath;
+    }
+    const existing = existingPathDirectories(process.env.PATH);
+    const shellPathCache = path.join(app.getPath('userData'), USER_SHELL_PATH_CACHE_FILE);
+    const discoveredUserShellPath = discoverUserShellPathImpl({
+      onDiagnostic: (diagnostic) => {
+        coreExecutablePathDiagnostic = diagnostic;
+      },
+    });
+    let userShellPath = discoveredUserShellPath;
+    if (discoveredUserShellPath.length > 0) {
+      coreExecutablePathSource = 'shell';
+      writeCachedUserShellPath(shellPathCache, discoveredUserShellPath);
+    } else {
+      userShellPath = readCachedUserShellPath(shellPathCache);
+      coreExecutablePathSource = userShellPath.length > 0 ? 'cache' : 'fallback';
+    }
+    const candidates = [resourcePath('bundled-tools')];
     if (process.platform === 'darwin') {
       candidates.push(
         '/opt/homebrew/bin',
@@ -143,7 +241,9 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     } else if (process.platform !== 'win32') {
       candidates.push('/usr/local/bin', '/usr/bin', '/snap/bin');
     }
-    return [...new Set([...candidates, ...existing])].join(path.delimiter);
+    cachedCoreExecutablePath = [...new Set([...candidates, ...userShellPath, ...existing])]
+      .join(path.delimiter);
+    return cachedCoreExecutablePath;
   }
 
   function startCore() {
@@ -158,48 +258,44 @@ function createCoreRuntime({ app, desktopAuthToken }) {
     const coreName = process.platform === 'win32'
       ? 'local_connector_client_core.exe'
       : 'local_connector_client_core';
-    const chromeNativeHostName = process.platform === 'win32'
-      ? 'chatos_chrome_native_host.exe'
-      : 'chatos_chrome_native_host';
-    const computerUseHelperName = process.platform === 'win32'
-      ? 'chatos_computer_use_helper.exe'
-      : 'chatos_computer_use_helper';
     const corePath = resourcePath(coreName);
-    const browserRuntime = bundledBrowserRuntime();
-    const browserStateDir = process.platform === 'win32'
-      ? path.join(app.getPath('userData'), 'browser-runtime')
-      : path.join('/tmp', `chatos-agent-browser-${process.getuid?.() ?? process.pid}`);
-    fs.mkdirSync(browserStateDir, { recursive: true, mode: 0o700 });
     const env = {
       ...process.env,
       PATH: coreExecutablePath(),
       CHATOS_BUNDLED_TOOLS_DIR: resourcePath('bundled-tools'),
-      CHATOS_DOCUMENT_RUNTIME_DIR: path.join(browserRuntime.toolsDir, 'documents-runtime'),
-      CHATOS_BUNDLED_SKILLS_DIR: resourcePath('skill-bundles'),
-      CHATOS_BUNDLED_PLUGINS_DIR: resourcePath('plugin-bundles'),
-      CHATOS_CHROME_NATIVE_HOST_PATH: resourcePath(chromeNativeHostName),
-      CHATOS_CHROME_EXTENSION_DIR: chromeExtensionPath(),
       LOCAL_CONNECTOR_DESKTOP_AUTH_TOKEN: desktopAuthToken,
+      LOCAL_CONNECTOR_PARENT_PID: String(process.pid),
       LOCAL_CONNECTOR_IPC_ENDPOINT: ipcEndpoint,
       LOCAL_CONNECTOR_ENABLE_TCP_API: '1',
       LOCAL_CONNECTOR_OPEN_UI: '0',
       LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE: process.env.LOCAL_CONNECTOR_REQUIRE_SECURE_REMOTE || '1',
     };
-    if (process.platform === 'darwin') {
-      env.CHATOS_COMPUTER_USE_HELPER_PATH = resourcePath(computerUseHelperName);
-      if (unsignedComputerUseLocalDevAllowed()) {
-        env.CHATOS_COMPUTER_USE_ALLOW_UNSIGNED_LOCAL_DEV = '1';
-      } else if (app.isPackaged) {
-        env.CHATOS_COMPUTER_USE_HELPER_REQUIRE_SIGNED = '1';
-      }
+    const adhocMacosPluginAppsAllowed = allowAdhocMacosPluginAppsImpl();
+    if (adhocMacosPluginAppsAllowed) {
+      env[ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV] = '1';
+    } else {
+      delete env[ALLOW_ADHOC_MACOS_PLUGIN_APPS_ENV];
     }
-    env.AGENT_BROWSER_BIN = browserRuntime.agentBrowser;
-    env.AGENT_BROWSER_EXECUTABLE_PATH = browserRuntime.browserExecutable;
-    env.AGENT_BROWSER_SOCKET_DIR = browserStateDir;
 
     const coreLog = openCoreLog();
+    appendCoreLog(
+      coreLog.path,
+      [
+        `core PATH source=${coreExecutablePathSource}`,
+        `entries=${env.PATH.split(path.delimiter).length}`,
+        `shell_discovery=${coreExecutablePathDiagnostic.status}`,
+        `shell_elapsed_ms=${coreExecutablePathDiagnostic.elapsedMs}`,
+        coreExecutablePathDiagnostic.errorCode
+          ? `shell_error_code=${coreExecutablePathDiagnostic.errorCode}`
+          : null,
+        Number.isInteger(coreExecutablePathDiagnostic.exitCode)
+          ? `shell_exit_code=${coreExecutablePathDiagnostic.exitCode}`
+          : null,
+        `adhoc_plugin_apps=${adhocMacosPluginAppsAllowed ? 'enabled' : 'disabled'}`,
+      ].filter(Boolean).join(' '),
+    );
     try {
-      coreProcess = spawn(corePath, [], {
+      coreProcess = spawnImpl(corePath, [], {
         cwd: path.dirname(corePath),
         env,
         stdio: coreLog.fd === null ? 'ignore' : ['ignore', coreLog.fd, coreLog.fd],
@@ -346,7 +442,7 @@ function createCoreRuntime({ app, desktopAuthToken }) {
 
   function runHiddenProcess(command, args) {
     return new Promise((resolve) => {
-      const child = spawn(command, args, {
+      const child = spawnImpl(command, args, {
         stdio: 'ignore',
         windowsHide: true,
       });
@@ -394,15 +490,19 @@ function createCoreRuntime({ app, desktopAuthToken }) {
 
   return {
     cleanupIpcEndpoint,
-    chromeExtensionPath,
-    chromeExtensionInstallPath,
     getIpcEndpoint,
     isRunning,
-    prepareChromeExtensionInstallDirectory,
     resourcePath,
     startCore,
     stopCoreProcessTree,
   };
 }
 
-module.exports = { coreRestartDelayMs, createCoreRuntime };
+module.exports = {
+  allowAdhocMacosPluginApps,
+  coreRestartDelayMs,
+  createCoreRuntime,
+  discoverUserShellPath,
+  readCachedUserShellPath,
+  writeCachedUserShellPath,
+};

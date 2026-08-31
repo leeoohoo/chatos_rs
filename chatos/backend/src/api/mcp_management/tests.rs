@@ -3,7 +3,6 @@
 
 use serde_json::json;
 
-use super::browser::cloud_browser_binding;
 use super::*;
 use crate::models::message::Message;
 use crate::models::session::Session;
@@ -160,36 +159,6 @@ fn agent_builder_tool_arguments_cannot_override_the_bound_owner() {
         "role_definition": "unsafe"
     }))
     .is_err());
-}
-
-#[test]
-fn browser_tool_arguments_cannot_override_the_bound_runtime_identity() {
-    assert!(reject_browser_identity_overrides(&json!({
-        "url": "https://example.com"
-    }))
-    .is_ok());
-    for key in [
-        "owner_user_id",
-        "user_id",
-        "runtime_session_id",
-        "session_id",
-        "source_session_id",
-        "conversation_id",
-        "project_id",
-    ] {
-        assert!(reject_browser_identity_overrides(&json!({(key): "attacker"})).is_err());
-    }
-}
-
-#[test]
-fn browser_runtime_binding_comes_only_from_management_headers() {
-    let binding = binding();
-    let browser = cloud_browser_binding(&binding).expect("browser binding");
-    assert_eq!(browser.runtime_session_id, "mcp-session-1");
-    assert_eq!(browser.owner_user_id, "user-1");
-    assert_eq!(browser.project_id, "project-1");
-    assert_eq!(browser.source_session_id, "conversation-1");
-    assert_eq!(browser.agent_key, SystemAgentKey::ChatosConversationAgent);
 }
 
 fn binding() -> McpManagementBinding {

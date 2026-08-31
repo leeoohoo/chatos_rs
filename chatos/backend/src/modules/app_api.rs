@@ -38,7 +38,6 @@ mod tests {
         for path in [
             "/api/agent/chat/task-runner/callback",
             "/internal/mcp-management/mcp/ask_user",
-            "/internal/mcp-management/mcp/browser_tools/sessions/session-1/close",
         ] {
             let response = public_routes()
                 .oneshot(
@@ -57,7 +56,6 @@ mod tests {
         for path in [
             "/api/agent/chat/task-runner/callback",
             "/internal/mcp-management/mcp/ask_user",
-            "/internal/mcp-management/mcp/browser_tools/sessions/session-1/close",
         ] {
             let response = internal_routes()
                 .oneshot(

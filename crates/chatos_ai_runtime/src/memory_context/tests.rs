@@ -240,7 +240,7 @@ fn compose_response_to_input_items_skips_orphan_tool_calls() {
 }
 
 #[test]
-fn compose_response_to_input_items_omits_large_tool_outputs() {
+fn compose_response_to_input_items_preserves_large_tool_output_head_and_tail() {
     let response = ComposeContextResponse {
         thread_id: "thread-1".to_string(),
         blocks: Vec::new(),
@@ -278,7 +278,7 @@ fn compose_response_to_input_items_omits_large_tool_outputs() {
                 external_record_id: None,
                 role: "tool".to_string(),
                 record_type: "message".to_string(),
-                content: "x".repeat(9_000),
+                content: "x".repeat(45_000),
                 structured_payload: None,
                 metadata: Some(json!({
                     "tool_call_id": "call_1",
@@ -306,9 +306,11 @@ fn compose_response_to_input_items_omits_large_tool_outputs() {
         .and_then(|value| value.as_str())
         .unwrap_or_default();
 
-    assert!(output.contains("Tool result omitted"));
+    assert!(output.contains("tool_result_truncated"));
     assert!(output.contains("code.read_file"));
-    assert!(output.len() < 1_000);
+    assert!(output.starts_with('x'));
+    assert!(output.ends_with('x'));
+    assert!(output.chars().count() <= 40_000);
 }
 
 #[test]
@@ -399,7 +401,7 @@ fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
     );
     assert!(outputs
         .get("call_new")
-        .is_some_and(|output| output.contains("combined tool results exceed")));
+        .is_some_and(|output| { output.starts_with("{\"cou") && output.chars().count() == 5 }));
 }
 
 #[test]

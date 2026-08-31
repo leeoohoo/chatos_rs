@@ -3,7 +3,7 @@
 
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Message } from '../types';
@@ -250,5 +250,72 @@ describe('MessageList initial scroll', () => {
     );
 
     expect(scrollContainer.scrollTop).toBe(0);
+  });
+
+  it('preserves the viewport when older messages are prepended by load more', async () => {
+    let resolveLoadMore!: () => void;
+    const onLoadMore = vi.fn(() => new Promise<void>((resolve) => {
+      resolveLoadMore = resolve;
+    }));
+    const currentMessages = [
+      buildMessage('user-1', 'user', 'hello'),
+      buildMessage('assistant-1', 'assistant', 'hi'),
+    ];
+    const { container, rerender } = render(
+      <I18nProvider>
+        <MessageList
+          sessionId="session-1"
+          messages={currentMessages}
+          isLoading={false}
+          hasMore
+          onLoadMore={onLoadMore}
+        />
+      </I18nProvider>,
+    );
+
+    const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLDivElement;
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 640,
+    });
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 420,
+    });
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '加载更多' }));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 820,
+    });
+    rerender(
+      <I18nProvider>
+        <MessageList
+          sessionId="session-1"
+          messages={[
+            buildMessage('user-older', 'user', 'older'),
+            ...currentMessages,
+          ]}
+          isLoading={false}
+          hasMore={false}
+          onLoadMore={onLoadMore}
+        />
+      </I18nProvider>,
+    );
+
+    expect(scrollContainer.scrollTop).toBe(180);
+    expect(scrollContainer.scrollTop).not.toBe(820);
+
+    await act(async () => {
+      resolveLoadMore();
+      await Promise.resolve();
+    });
   });
 });

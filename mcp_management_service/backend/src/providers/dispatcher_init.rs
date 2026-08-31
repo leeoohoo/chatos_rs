@@ -4,10 +4,9 @@
 use std::time::Duration;
 
 use super::{
-    ChatosProvider, ChatosProviderConfig, EmbeddedProvider, ExternalHttpProvider,
-    LocalConnectorProvider, PluginCloudProvider, PluginComponentProvider, PluginLocalProvider,
-    PluginRouteDispatcher, ProjectServiceProvider, ProviderDispatcher, ProviderRuntimeConfig,
-    TaskRunnerProvider, TaskRunnerProviderConfig,
+    ChatosProvider, ChatosProviderConfig, LocalConnectorProvider, PluginComponentProvider,
+    PluginLocalProvider, PluginRouteDispatcher, ProjectServiceProvider, ProviderDispatcher,
+    ProviderRuntimeConfig, TaskRunnerProvider, TaskRunnerProviderConfig,
 };
 
 impl ProviderDispatcher {
@@ -21,29 +20,23 @@ impl ProviderDispatcher {
         local_connector_http: reqwest::Client,
         local_connector_service_base_url: impl Into<String>,
         local_connector_internal_secret: Option<String>,
-        embedded_work_dir: std::path::PathBuf,
         runtime: ProviderRuntimeConfig,
     ) -> Result<Self, String> {
         let local_connector_service_base_url = local_connector_service_base_url.into();
-        let external_http = ExternalHttpProvider::new(
-            runtime.external_http_request_timeout,
-            runtime.response_limit_bytes,
-        );
         let plugin_local = PluginLocalProvider::new(
             local_connector_http.clone(),
             local_connector_service_base_url.clone(),
-            runtime.downstream_request_timeout,
+            runtime.local_connector_request_timeout,
             local_connector_internal_secret.clone(),
             runtime.response_limit_bytes,
         )?;
         let plugin_components = PluginComponentProvider::new(
             local_connector_http.clone(),
             local_connector_service_base_url.clone(),
-            runtime.downstream_request_timeout,
+            runtime.local_connector_request_timeout,
             local_connector_internal_secret.clone(),
             runtime.response_limit_bytes,
         )?;
-        let plugin_cloud = PluginCloudProvider::new(external_http.clone());
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
                 local_connector_http.clone(),
@@ -52,7 +45,7 @@ impl ProviderDispatcher {
                 local_connector_internal_secret.clone(),
                 runtime.response_limit_bytes,
             )?,
-            plugins: PluginRouteDispatcher::new(plugin_local, plugin_cloud, plugin_components),
+            plugins: PluginRouteDispatcher::new(plugin_local, plugin_components),
             project_service: ProjectServiceProvider::new(
                 project_service_http,
                 project_service_base_url,
@@ -77,8 +70,6 @@ impl ProviderDispatcher {
                 chatos.internal_secret,
                 runtime.response_limit_bytes,
             )?,
-            embedded: EmbeddedProvider::new(embedded_work_dir, runtime.response_limit_bytes)?,
-            external_http,
         })
     }
 }

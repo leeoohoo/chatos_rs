@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_management_sdk::{
-    McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute, WorkspaceProviderKind,
-};
+use chatos_mcp_management_sdk::{McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute};
 use chatos_plugin_management_sdk::PluginComponentKind;
 use serde_json::{json, Value};
 
@@ -11,10 +9,13 @@ use super::result::{plugin_agent_result, plugin_command_result};
 use super::validation::*;
 use super::{
     PluginComponentProvider, PluginPrepareResponse, AGENT_APPLY_OPERATION,
-    COMMAND_INVOKE_OPERATION, LOCAL_SKILL_APPLY_OPERATION, NATIVE_SKILL_TOOL_CALL_OPERATION,
+    COMMAND_INVOKE_OPERATION, LOCAL_SKILL_APPLY_OPERATION,
 };
 use crate::providers::ProviderCallError;
-use crate::runtime::{PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding};
+use crate::runtime::{
+    resolve_plugin_local_execution_target, PluginLocalToolComponentBinding,
+    PluginToolComponentRuntimeBinding,
+};
 
 impl PluginComponentProvider {
     pub(super) async fn prepare_local(
@@ -27,37 +28,12 @@ impl PluginComponentProvider {
         expires_at_unix: i64,
     ) -> Result<PluginLocalToolComponentBinding, ProviderCallError> {
         validate_immutable_route(immutable, route, McpProviderKind::PluginLocal)?;
-        if context.workspace_provider != WorkspaceProviderKind::LocalConnector {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Local tool component requires a Local Connector project workspace",
-            ));
-        }
-        let workspace = context.workspace.as_ref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "Plugin Local tool component is missing its project workspace snapshot",
-            )
-        })?;
-        let device_id = workspace
-            .device_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ProviderCallError::provider_unavailable(
-                    "Plugin Local tool component is missing its device id",
-                )
-            })?;
-        if immutable.installation_device_id.as_deref() != Some(device_id) {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin tool component installation is not pinned to the Project Context device",
-            ));
-        }
-        let workspace_id = workspace.workspace_id.trim();
-        if workspace_id.is_empty() {
-            return Err(ProviderCallError::provider_unavailable(
-                "Plugin Local tool component is missing its workspace id",
-            ));
-        }
+        let target = resolve_plugin_local_execution_target(
+            context,
+            immutable.installation_device_id.as_deref(),
+            immutable.permission_snapshot.as_slice(),
+        )
+        .map_err(ProviderCallError::provider_unavailable)?;
         let mut body = serde_json::Map::from_iter([
             ("run_id".to_string(), json!(runtime_session_id)),
             ("plugin_id".to_string(), json!(immutable.plugin_id)),
@@ -85,14 +61,6 @@ impl PluginComponentProvider {
                     "skill_keys".to_string(),
                     json!([immutable.component.component_key]),
                 );
-                body.insert(
-                    "runtime_kind".to_string(),
-                    json!(immutable.component.runtime_kind),
-                );
-                body.insert(
-                    "runtime_metadata".to_string(),
-                    Value::Object(immutable.component.metadata.clone().into_iter().collect()),
-                );
             }
             PluginComponentKind::Command | PluginComponentKind::Agent => {
                 body.insert("catalog_only".to_string(), json!(true));
@@ -111,8 +79,9 @@ impl PluginComponentProvider {
         let bytes = self
             .request_local(
                 owner_user_id,
-                device_id,
-                workspace_id,
+                target.device_id.as_str(),
+                target.workspace_id.as_deref(),
+                target.project_root.as_deref(),
                 "prepare",
                 Value::Object(body),
             )
@@ -150,35 +119,15 @@ impl PluginComponentProvider {
                         ))
                     })
                     .collect();
-                if let Some(native_skill) = prepared.native_skill.as_ref() {
-                    validate_native_skill_snapshot(immutable, native_skill)?;
-                    let operation = required_operation(
-                        prepared.operations.as_slice(),
-                        NATIVE_SKILL_TOOL_CALL_OPERATION,
-                    )?;
-                    let tools = native_skill
-                        .get("tools")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .ok_or_else(|| {
-                            ProviderCallError::invalid_response(
-                                "native Plugin Skill prepare response is missing tools",
-                            )
-                        })?;
-                    validate_tool_snapshot(tools.as_slice())?;
-                    validate_native_tool_snapshot_hash(native_skill, tools.as_slice())?;
-                    (operation, tools, instruction_items, None)
-                } else {
-                    required_operation(prepared.operations.as_slice(), "load_skill_resource")?;
-                    let result =
-                        super::result::plugin_skill_result_from_local_snapshot(immutable, skill)?;
-                    (
-                        LOCAL_SKILL_APPLY_OPERATION.to_string(),
-                        vec![skill_tool_definition(immutable)],
-                        instruction_items,
-                        Some(result),
-                    )
-                }
+                required_operation(prepared.operations.as_slice(), "load_skill_resource")?;
+                let result =
+                    super::result::plugin_skill_result_from_local_snapshot(immutable, skill)?;
+                (
+                    LOCAL_SKILL_APPLY_OPERATION.to_string(),
+                    vec![skill_tool_definition(immutable)],
+                    instruction_items,
+                    Some(result),
+                )
             }
             PluginComponentKind::Command => {
                 if prepared.commands.len() != 1 {
@@ -199,8 +148,9 @@ impl PluginComponentProvider {
                         immutable,
                         runtime_session_id,
                         owner_user_id,
-                        device_id,
-                        workspace_id,
+                        target.device_id.as_str(),
+                        target.workspace_id.as_deref(),
+                        target.project_root.as_deref(),
                         prepared.adapter_session_id.as_str(),
                         operation.as_str(),
                     )
@@ -232,8 +182,8 @@ impl PluginComponentProvider {
         Ok(PluginLocalToolComponentBinding {
             runtime: immutable.clone(),
             run_id: runtime_session_id.to_string(),
-            device_id: device_id.to_string(),
-            workspace_id: workspace_id.to_string(),
+            device_id: target.device_id,
+            workspace_id: target.workspace_id,
             adapter_session_id: prepared.adapter_session_id,
             operation,
             session_sha256: prepared.session_sha256,
@@ -253,7 +203,8 @@ impl PluginComponentProvider {
         runtime_session_id: &str,
         owner_user_id: &str,
         device_id: &str,
-        workspace_id: &str,
+        workspace_id: Option<&str>,
+        project_root: Option<&str>,
         adapter_session_id: &str,
         operation: &str,
     ) -> Result<Value, ProviderCallError> {
@@ -280,6 +231,7 @@ impl PluginComponentProvider {
                 owner_user_id,
                 device_id,
                 workspace_id,
+                project_root,
                 "execute",
                 Value::Object(body),
             )

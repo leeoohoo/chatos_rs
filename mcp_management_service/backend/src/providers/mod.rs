@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod cancel_response;
+mod canonical_json;
 mod chatos;
 mod dispatcher_init;
 mod dispatcher_prepare;
@@ -12,11 +13,8 @@ mod dispatcher_prepare_system;
 mod dispatcher_runtime;
 mod dispatcher_runtime_lifecycle;
 mod dispatcher_support;
-mod embedded;
-mod external_http;
 mod local_connector;
-mod plugin_cloud;
-mod plugin_components;
+pub(crate) mod plugin_components;
 mod plugin_local;
 mod plugin_routes;
 #[path = "plugin_routes/prepare.rs"]
@@ -33,14 +31,7 @@ use serde_json::{json, Value};
 pub(super) use cancel_response::decode_cancel_notification_response;
 pub(crate) use chatos::memory_provider_ref as chatos_memory_provider_ref;
 use chatos::ChatosProvider;
-use embedded::EmbeddedProvider;
-use external_http::ExternalHttpProvider;
-pub(crate) use external_http::{
-    build_pinned_external_http_client,
-    header_is_managed_or_unsafe as external_http_header_is_managed_or_unsafe,
-};
 use local_connector::LocalConnectorProvider;
-use plugin_cloud::PluginCloudProvider;
 use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
 use plugin_routes::PluginRouteDispatcher;
@@ -68,7 +59,6 @@ pub struct ChatosProviderConfig {
 pub struct ProviderRuntimeConfig {
     pub downstream_request_timeout: Duration,
     pub local_connector_request_timeout: Duration,
-    pub external_http_request_timeout: Duration,
     pub response_limit_bytes: usize,
 }
 
@@ -86,8 +76,6 @@ pub struct ProviderDispatcher {
     project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
-    embedded: EmbeddedProvider,
-    external_http: ExternalHttpProvider,
 }
 
 const TOOL_RESULT_MAX_CHARS_META_KEY: &str = "chatos/toolResultMaxChars";

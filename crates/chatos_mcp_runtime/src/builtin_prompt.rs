@@ -24,8 +24,6 @@ const SECTION_CODE_MAINTAINER_READ: &str = "builtin_code_maintainer_read";
 const SECTION_CODE_MAINTAINER_WRITE: &str = "builtin_code_maintainer_write";
 const SECTION_TERMINAL_CONTROLLER: &str = "builtin_terminal_controller";
 const SECTION_REMOTE_CONNECTION_CONTROLLER: &str = "builtin_remote_connection_controller";
-const SECTION_BROWSER_TOOLS: &str = "builtin_browser_tools";
-const SECTION_WEB_TOOLS: &str = "builtin_web_tools";
 const SECTION_NOTEPAD: &str = "builtin_notepad";
 const SECTION_AGENT_BUILDER: &str = "builtin_agent_builder";
 const SECTION_CONDITIONAL_CONTACT_MEMORY_READERS: &str = "conditional_contact_memory_readers";
@@ -39,8 +37,6 @@ const SECTION_ORDER: &[&str] = &[
     SECTION_CODE_MAINTAINER_WRITE,
     SECTION_TERMINAL_CONTROLLER,
     SECTION_REMOTE_CONNECTION_CONTROLLER,
-    SECTION_BROWSER_TOOLS,
-    SECTION_WEB_TOOLS,
     SECTION_NOTEPAD,
     SECTION_AGENT_BUILDER,
     SECTION_CONDITIONAL_CONTACT_MEMORY_READERS,
@@ -157,8 +153,6 @@ fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
         BuiltinMcpKind::Notepad => Some(SECTION_NOTEPAD),
         BuiltinMcpKind::AskUser => Some(SECTION_ASK_USER),
         BuiltinMcpKind::RemoteConnectionController => Some(SECTION_REMOTE_CONNECTION_CONTROLLER),
-        BuiltinMcpKind::WebTools => Some(SECTION_WEB_TOOLS),
-        BuiltinMcpKind::BrowserTools => Some(SECTION_BROWSER_TOOLS),
         BuiltinMcpKind::MemorySkillReader
         | BuiltinMcpKind::MemoryCommandReader
         | BuiltinMcpKind::MemoryPluginReader => Some(SECTION_CONDITIONAL_CONTACT_MEMORY_READERS),

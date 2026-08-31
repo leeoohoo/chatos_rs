@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 import type { Session } from '../../types';
 import {
   findBestMatchedSession,
   hasSessionMessages,
-  isSessionMatchedContactAndProject,
+  isSessionMatchedKnownContactAndProject,
   normalizeProjectScopeId,
   PUBLIC_PROJECT_ID,
-  resolveContactAgentIdFromSession,
-  resolveContactIdFromSession,
   resolveSessionProjectScopeId,
   resolveSessionTimestamp,
 } from './sessionResolver';
@@ -49,6 +47,7 @@ interface SessionResolverApiClient {
 interface UseContactSessionResolverOptions {
   sessions: Session[];
   currentSession: Session | null | undefined;
+  knownContacts?: ContactSessionEntity[];
   createSession: CreateSessionFn;
   apiClient?: SessionResolverApiClient;
   defaultProjectId?: string | null;
@@ -90,6 +89,7 @@ const normalizeSessionId = (value: string | null | undefined): string => (
 export const useContactSessionResolver = ({
   sessions,
   currentSession,
+  knownContacts = [],
   createSession,
   apiClient,
   defaultProjectId = PUBLIC_PROJECT_ID,
@@ -103,9 +103,33 @@ export const useContactSessionResolver = ({
     return normalizeProjectScopeId(projectId ?? defaultProjectId);
   }, [defaultProjectId]);
 
+  const knownContactsScopeKey = useMemo(() => (
+    (knownContacts || [])
+      .map((contact) => `${contact.id.trim()}:${contact.agentId.trim()}`)
+      .sort()
+      .join('|')
+  ), [knownContacts]);
+
   const resolveCacheKey = useCallback((contactId: string, projectId?: string | null): string => {
-    return `${contactId}::${resolveProjectId(projectId)}`;
-  }, [resolveProjectId]);
+    return `${contactId}::${resolveProjectId(projectId)}::${knownContactsScopeKey}`;
+  }, [knownContactsScopeKey, resolveProjectId]);
+
+  const resolveKnownContacts = useCallback((contact: ContactSessionEntity): ContactSessionEntity[] => {
+    return knownContacts.length > 0 ? knownContacts : [contact];
+  }, [knownContacts]);
+
+  const sessionMatchesKnownContactAndProject = useCallback((
+    session: unknown,
+    contact: ContactSessionEntity,
+    projectId?: string | null,
+  ): boolean => {
+    return isSessionMatchedKnownContactAndProject(
+      session,
+      contact,
+      resolveKnownContacts(contact),
+      resolveProjectId(projectId),
+    );
+  }, [resolveKnownContacts, resolveProjectId]);
 
   const findSessionInStoreById = useCallback((sessionId: string): Session | null => {
     const targetId = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -138,8 +162,8 @@ export const useContactSessionResolver = ({
       return false;
     }
     return sessionMatchesExecutionPlane(sessionId, projectId)
-      && isSessionMatchedContactAndProject(matchedSession, contact, resolveProjectId(projectId));
-  }, [findSessionInStoreById, resolveProjectId, sessionMatchesExecutionPlane]);
+      && sessionMatchesKnownContactAndProject(matchedSession, contact, projectId);
+  }, [findSessionInStoreById, sessionMatchesExecutionPlane, sessionMatchesKnownContactAndProject]);
 
   const findExistingSessionIdInStore = useCallback((
     contact: ContactSessionEntity,
@@ -152,9 +176,17 @@ export const useContactSessionResolver = ({
       resolveProjectId(projectId),
       preferredSessionId,
     );
-    const sessionId = typeof matched?.id === 'string' ? matched.id.trim() : '';
+    const compatibleCandidates = (sessions || [])
+      .filter((session) => sessionMatchesExecutionPlane(session.id, projectId))
+      .filter((session) => sessionMatchesKnownContactAndProject(session, contact, projectId))
+      .sort((left, right) => resolveSessionTimestamp(right) - resolveSessionTimestamp(left));
+    const compatibleMatch = matched
+      || compatibleCandidates.find(hasSessionMessages)
+      || compatibleCandidates[0]
+      || null;
+    const sessionId = typeof compatibleMatch?.id === 'string' ? compatibleMatch.id.trim() : '';
     return sessionId || null;
-  }, [resolveProjectId, sessionMatchesExecutionPlane, sessions]);
+  }, [resolveProjectId, sessionMatchesExecutionPlane, sessionMatchesKnownContactAndProject, sessions]);
 
   const findExistingSessionIdFromApi = useCallback(async (
     contact: ContactSessionEntity,
@@ -178,7 +210,7 @@ export const useContactSessionResolver = ({
         break;
       }
       for (const row of rows) {
-        if (isSessionMatchedContactAndProject(row as Record<string, unknown>, contact, normalizedProjectId)) {
+        if (sessionMatchesKnownContactAndProject(row, contact, normalizedProjectId)) {
           candidates.push(row);
         }
       }
@@ -217,7 +249,7 @@ export const useContactSessionResolver = ({
 
     const fallback = shortlist.find((item) => readStringField(item, 'id').length > 0);
     return fallback ? readStringField(fallback, 'id') : null;
-  }, [apiClient, includeApiLookup, resolveProjectId]);
+  }, [apiClient, includeApiLookup, resolveProjectId, sessionMatchesKnownContactAndProject]);
 
   const readCachedSessionId = useCallback((
     cacheKey: string,
@@ -296,17 +328,11 @@ export const useContactSessionResolver = ({
     const cacheKey = resolveCacheKey(contact.id, normalizedProjectId);
     const preferredSessionId = normalizeSessionId(options?.preferredSessionId);
 
-    const currentContactId = resolveContactIdFromSession(currentSession);
-    const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
     const currentSessionProjectId = resolveSessionProjectScopeId(currentSession);
-    const normalizedContactId = typeof contact.id === 'string' ? contact.id.trim() : '';
-    const normalizedContactAgentId = typeof contact.agentId === 'string' ? contact.agentId.trim() : '';
     if (
       currentSession?.id
       && sessionMatchesExecutionPlane(currentSession.id, normalizedProjectId)
-      && (normalizedContactId
-        ? currentContactId === normalizedContactId
-        : Boolean(normalizedContactAgentId && currentContactAgentId === normalizedContactAgentId))
+      && sessionMatchesKnownContactAndProject(currentSession, contact, normalizedProjectId)
       && currentSessionProjectId === normalizedProjectId
       && (
         !preferredSessionId
@@ -345,6 +371,7 @@ export const useContactSessionResolver = ({
     resolveCacheKey,
     resolveProjectId,
     sessionMatchesExecutionPlane,
+    sessionMatchesKnownContactAndProject,
   ]);
 
   const buildDisplayRuntimeSessionIdMap = useCallback((
@@ -379,19 +406,9 @@ export const useContactSessionResolver = ({
         delete apiLookupResultRef.current[cacheKey];
       } else {
         const preferredLocalSession = findSessionInStoreById(preferredSessionId);
-        const preferredContactId = resolveContactIdFromSession(preferredLocalSession);
-        const preferredContactAgentId = resolveContactAgentIdFromSession(preferredLocalSession);
-        const preferredProjectId = resolveSessionProjectScopeId(preferredLocalSession);
-        const legacyPreferredSessionMatches = Boolean(
-          preferredLocalSession
-          && !preferredContactId
-          && preferredContactAgentId === contact.agentId
-          && preferredProjectId === normalizedProjectId,
-        );
         if (
           !preferredLocalSession
-          || isSessionMatchedContactAndProject(preferredLocalSession, contact, normalizedProjectId)
-          || legacyPreferredSessionMatches
+          || sessionMatchesKnownContactAndProject(preferredLocalSession, contact, normalizedProjectId)
         ) {
           sessionCacheRef.current[cacheKey] = preferredSessionId;
           apiLookupResultRef.current[cacheKey] = preferredSessionId;
@@ -463,6 +480,7 @@ export const useContactSessionResolver = ({
     resolveExistingSessionIdFromApi,
     resolveProjectId,
     sessionMatchesExecutionPlane,
+    sessionMatchesKnownContactAndProject,
   ]);
 
   const clearCachedSessionIdsForContact = useCallback((

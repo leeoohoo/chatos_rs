@@ -7,7 +7,6 @@ use thiserror::Error;
 
 mod components;
 mod hook_set;
-mod mcp_config;
 mod normalized;
 mod parser;
 mod paths;
@@ -17,10 +16,9 @@ mod validator;
 pub(crate) use components::component_key_from_path;
 pub use components::*;
 pub use hook_set::*;
-pub use mcp_config::*;
 pub use normalized::*;
-pub use parser::{parse_plugin_manifest, PluginManifestSource};
-pub use paths::{normalize_plugin_relative_path, plugin_manifest_source_from_path};
+pub use parser::parse_plugin_manifest;
+pub use paths::normalize_plugin_relative_path;
 pub use validator::{validate_plugin_manifest, PluginManifestValidationError};
 
 #[derive(Debug, Error)]

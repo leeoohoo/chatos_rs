@@ -44,7 +44,6 @@ fn plan_task_builtin_selection_uses_fixed_allowlist() {
     assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(!selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
-    assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
     assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(!selected.contains(&BuiltinMcpKind::AgentBuilder));
@@ -82,7 +81,6 @@ fn legacy_harness_endpoint_cannot_suppress_selected_capabilities() {
         vec![
             "CodeMaintainerWrite".to_string(),
             "TerminalController".to_string(),
-            "WebTools".to_string(),
         ],
     );
     task.mcp_config
@@ -94,7 +92,6 @@ fn legacy_harness_endpoint_cannot_suppress_selected_capabilities() {
     assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(selected.contains(&BuiltinMcpKind::TerminalController));
-    assert!(selected.contains(&BuiltinMcpKind::WebTools));
 }
 
 #[test]
@@ -110,7 +107,6 @@ fn legacy_harness_endpoint_cannot_change_plan_capabilities() {
     assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
-    assert!(selected.contains(&BuiltinMcpKind::BrowserTools));
     assert!(!selected.contains(&BuiltinMcpKind::TaskManager));
     assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
 }
@@ -186,6 +182,7 @@ fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRe
         prerequisite_task_ids: Vec::new(),
         task_tool_state: Default::default(),
         plugin_config: Default::default(),
+        plugin_selection_audit: None,
         mcp_config: TaskMcpConfig {
             enabled_builtin_kinds,
             ..TaskMcpConfig::default()

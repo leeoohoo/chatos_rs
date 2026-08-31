@@ -10,9 +10,6 @@ import type {
   CommandExecutionApprovalDecision,
   CommandHistoryResponse,
   ConnectorStatus,
-  FsListResponse,
-  LocalMcpConfig,
-  LocalMcpConfigDraft,
   LocalModelConfigListResponse,
   LocalModelSettings,
   LocalRuntimeSettings,
@@ -22,12 +19,10 @@ import type {
   LocalPluginAutoUpdateReport,
   LocalPluginOAuthConnection,
   PluginOAuthAuthorizationStart,
+  PluginFileGrantSummary,
+  PluginRuntimeVisualSessionResponse,
   UserPluginPreferenceRecord,
-  ChromeIntegrationStatus,
   UpdateLocalRuntimeSettingsPayload,
-  LocalSkillCatalogItem,
-  LocalSkillCatalogResponse,
-  LocalSkillInstallation,
   PendingApprovalsResponse,
   SandboxCapabilities,
   SandboxLease,
@@ -76,30 +71,6 @@ export const api = {
     request<ConnectorStatus>('/api/local/auth/logout', {
       method: 'POST',
     }),
-  fsList: (path?: string | null) => {
-    const query = path ? `?path=${encodeURIComponent(path)}` : '';
-    return request<FsListResponse>(`/api/local/fs/list${query}`);
-  },
-  addWorkspace: (payload: { path: string; alias?: string }) =>
-    request<ConnectorStatus>('/api/local/workspaces', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  removeWorkspace: (workspaceId: string) =>
-    request<ConnectorStatus>(`/api/local/workspaces/${encodeURIComponent(workspaceId)}`, {
-      method: 'DELETE',
-    }),
-  setWorkspaceProjectConfigTrust: (
-    workspaceId: string,
-    payload: { trusted: boolean; risk_acknowledged?: boolean },
-  ) =>
-    request<ConnectorStatus>(
-      `/api/local/workspaces/${encodeURIComponent(workspaceId)}/project-config-trust`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
-    ),
   setSandboxEnabled: (payload: { enabled: boolean }) =>
     request<ConnectorStatus>('/api/local/sandbox/toggle', {
       method: 'POST',
@@ -164,18 +135,6 @@ export const api = {
       throw error;
     }
   },
-  chromeIntegration: () => request<ChromeIntegrationStatus>('/api/local/chrome-integration'),
-  enableChromeIntegration: () => request<ChromeIntegrationStatus>(
-    '/api/local/chrome-integration/enable',
-    {
-      method: 'POST',
-      body: JSON.stringify({ acknowledge_sensitive_browser_access: true }),
-    },
-  ),
-  disableChromeIntegration: () => request<ChromeIntegrationStatus>(
-    '/api/local/chrome-integration/disable',
-    { method: 'POST' },
-  ),
   agentPromptStatus: () =>
     request<AgentPromptUpdateStatus>('/api/local/agent-prompts/status'),
   checkAgentPromptUpdates: () =>
@@ -236,7 +195,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  mcpConfigs: () => request<LocalMcpConfig[]>('/api/local/mcp-configs'),
   plugins: () => request<LocalPluginStoreSnapshot>('/api/local/plugins/catalog'),
   pluginStatus: () => request<LocalPluginStatusSnapshot>('/api/local/plugins'),
   pluginEvents: (cursor?: string) => {
@@ -244,6 +202,9 @@ export const api = {
     if (cursor) query.set('cursor', cursor);
     return request<LocalPluginStatusEvent>(`/api/local/plugins/events?${query.toString()}`);
   },
+  pluginRuntimeVisualSession: () => request<PluginRuntimeVisualSessionResponse>(
+    '/api/local/plugins/runtime-visual-session',
+  ),
   recoverPlugins: () => request<{
     completed_transactions: number;
     rolled_back_transactions: number;
@@ -276,6 +237,16 @@ export const api = {
       `/api/local/plugins/${encodeURIComponent(pluginId)}/install`,
       { method: 'POST' },
     ),
+  updatePluginPermissionGrants: (pluginId: string, grantedPermissions: string[]) =>
+    request<LocalPluginStatusSnapshot>(
+      `/api/local/plugins/${encodeURIComponent(pluginId)}/permission-grants`,
+      { method: 'PUT', body: JSON.stringify({ granted_permissions: grantedPermissions }) },
+    ),
+  createPluginFileGrants: (adapterSessionId: string, paths: string[]) =>
+    request<PluginFileGrantSummary[]>(
+      `/api/local/plugins/runtime-sessions/${encodeURIComponent(adapterSessionId)}/file-grants`,
+      { method: 'POST', body: JSON.stringify({ paths }) },
+    ),
   uninstallPlugin: (pluginId: string) =>
     request<LocalPluginStatusSnapshot>(`/api/local/plugins/${encodeURIComponent(pluginId)}`, {
       method: 'DELETE',
@@ -298,43 +269,6 @@ export const api = {
       `/api/local/plugins/${encodeURIComponent(pluginId)}/components/${encodeURIComponent(componentKey)}/oauth/${encodeURIComponent(provider)}`,
       { method: 'DELETE' },
     ),
-  skills: () => request<LocalSkillCatalogResponse>('/api/local/skills'),
-  syncSkills: () => request<LocalSkillInstallation[]>('/api/local/skills/sync', { method: 'POST' }),
-  setSkillEnabled: (skillId: string, enabled: boolean) =>
-    request<LocalSkillCatalogItem>(
-      `/api/local/skills/${encodeURIComponent(skillId)}/preference`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ enabled }),
-      },
-    ),
-  saveMcpConfig: (draft: LocalMcpConfigDraft) =>
-    request<LocalMcpConfig>('/api/local/mcp-configs', {
-      method: 'POST',
-      body: JSON.stringify(draft),
-    }),
-  updateMcpConfig: (manifestId: string, draft: LocalMcpConfigDraft) =>
-    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}`, {
-      method: 'POST',
-      body: JSON.stringify(draft),
-    }),
-  testMcpConfig: (manifestId: string) =>
-    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}/test`, {
-      method: 'POST',
-    }),
-  setMcpConfigEnabled: (manifestId: string, enabled: boolean) =>
-    request<LocalMcpConfig>(
-      `/api/local/mcp-configs/${encodeURIComponent(manifestId)}/${enabled ? 'enable' : 'disable'}`,
-      { method: 'POST' },
-    ),
-  syncMcpConfig: (manifestId: string) =>
-    request<LocalMcpConfig>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}/sync`, {
-      method: 'POST',
-    }),
-  deleteMcpConfig: (manifestId: string) =>
-    request<{ ok: boolean }>(`/api/local/mcp-configs/${encodeURIComponent(manifestId)}`, {
-      method: 'DELETE',
-    }),
 };
 
 function isCoreBridgeUnavailable(error: unknown): boolean {

@@ -9,7 +9,7 @@ import {
   readSessionAiSelectionFromMetadata,
 } from '../../helpers/sessionAiSelection';
 import { mergeSessionRuntimeIntoMetadata } from '../../helpers/sessionRuntime';
-import { findBestMatchedSession } from '../../../domain/contactSessions';
+import { findBestMatchedSession, PUBLIC_PROJECT_ID } from '../../../domain/contactSessions';
 import type {
   ChatStoreDraft,
   SessionAiSelection,
@@ -17,7 +17,6 @@ import type {
   SessionCreatePayload,
 } from '../../types';
 import {
-  deleteSessionMessagesCacheEntry,
   matchSessionContactProjectScope,
   normalizeProjectScopeId,
   syncCurrentProjectFromSession,
@@ -62,7 +61,7 @@ export function createSessionCreateActions({
         const contactId = typeof payloadObject.contactId === 'string'
           ? (payloadObject.contactId.trim() || null)
           : null;
-        const effectiveProjectRoot = effectiveProjectId === '0'
+        const effectiveProjectRoot = effectiveProjectId === PUBLIC_PROJECT_ID
           ? null
           : (typeof payloadObject.projectRoot === 'string'
             ? (payloadObject.projectRoot.trim() || null)
@@ -210,9 +209,6 @@ export function createSessionCreateActions({
           state.error = null;
         });
 
-        set((state: ChatStoreDraft) => {
-          deleteSessionMessagesCacheEntry(state, formattedSession.id);
-        });
         if (shouldActivateSession) {
           localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId}`, formattedSession.id);
           debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);

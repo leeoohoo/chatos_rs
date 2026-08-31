@@ -3,7 +3,7 @@
 
 use chatos_mcp::{system_mcp_catalog, SystemMcpDescriptor, SystemMcpKey};
 use chatos_mcp_management_sdk::{
-    McpExecutionHost, McpProviderKind, McpRetryClass, McpRouteCandidate, McpRouteResourceKind,
+    McpProviderKind, McpRetryClass, McpRouteCandidate, McpRouteResourceKind,
     ProjectExecutionContext, ResolveMcpRoutesRequest, ResolveMcpRoutesResponse, ResolvedMcpRoute,
     WorkspaceProviderKind,
 };
@@ -42,15 +42,11 @@ impl RoutingEngine {
     ) -> ResolvedMcpRoute {
         match resource.resource_kind {
             McpRouteResourceKind::System => self.resolve_system(context, resource),
-            McpRouteResourceKind::ExternalHttp => available_route(
+            McpRouteResourceKind::ExternalHttp => resource_local_connector_route(
                 resource,
-                McpProviderKind::ExternalHttp,
-                resource
-                    .provider_ref
-                    .clone()
-                    .or_else(|| Some(resource.resource_id.clone())),
-                "external HTTP MCP is executed by the cloud gateway",
+                McpProviderKind::LocalConnector,
                 resource.allow_writes,
+                "HTTP MCP is executed by the Local Connector Client",
             ),
             McpRouteResourceKind::Stdio => self.resolve_stdio(context, resource),
             McpRouteResourceKind::Plugin => self.resolve_plugin(context, resource),
@@ -130,34 +126,9 @@ impl RoutingEngine {
                 "Notepad is owned by the cloud ChatOS user store",
                 allow_writes,
             ),
-            SystemMcpKey::BrowserTools
-                if context.workspace_provider == WorkspaceProviderKind::LocalConnector =>
-            {
-                local_connector_route(
-                    context,
-                    resource,
-                    allow_writes,
-                    "local project browser tools are routed through Local Connector",
-                )
+            SystemMcpKey::RemoteConnectionController => {
+                self.resolve_command_workspace(context, resource, allow_writes)
             }
-            SystemMcpKey::BrowserTools => available_route(
-                resource,
-                McpProviderKind::InternalService,
-                Some("chatos".to_string()),
-                "cloud browser tools are owned by the ChatOS Browser Runtime",
-                allow_writes,
-            ),
-            SystemMcpKey::WebTools => available_route(
-                resource,
-                McpProviderKind::Embedded,
-                Some("mcp-management-service".to_string()),
-                "capability uses the cloud embedded provider",
-                allow_writes,
-            ),
-            SystemMcpKey::RemoteConnectionController => unavailable_route(
-                resource,
-                "remote connection controller has no registered management provider",
-            ),
             SystemMcpKey::TaskManager => {
                 unavailable_route(resource, "legacy task manager is not a routable system MCP")
             }
@@ -209,21 +180,12 @@ impl RoutingEngine {
         _context: &ProjectExecutionContext,
         resource: &McpRouteCandidate,
     ) -> ResolvedMcpRoute {
-        let Some(execution_host) = resource.execution_host else {
-            return unavailable_route(resource, "stdio MCP execution host is not resolved");
-        };
-        match execution_host {
-            McpExecutionHost::Local | McpExecutionHost::Portable => resource_local_connector_route(
-                resource,
-                McpProviderKind::LocalConnector,
-                resource.allow_writes,
-                "stdio MCP is executed through Local Connector",
-            ),
-            McpExecutionHost::Cloud => unavailable_route(
-                resource,
-                "cloud stdio execution is no longer supported; use Local Connector",
-            ),
-        }
+        resource_local_connector_route(
+            resource,
+            McpProviderKind::LocalConnector,
+            resource.allow_writes,
+            "stdio MCP is executed through Local Connector",
+        )
     }
 
     fn resolve_plugin(
@@ -231,45 +193,11 @@ impl RoutingEngine {
         context: &ProjectExecutionContext,
         resource: &McpRouteCandidate,
     ) -> ResolvedMcpRoute {
-        let Some(execution_host) = resource.execution_host else {
-            return unavailable_route(resource, "plugin MCP execution host is not resolved");
-        };
-        match execution_host {
-            McpExecutionHost::Cloud => available_route(
-                resource,
-                McpProviderKind::PluginCloud,
-                resource
-                    .provider_ref
-                    .clone()
-                    .or_else(|| Some(resource.resource_id.clone())),
-                "plugin component is pinned to its cloud execution host",
-                resource.allow_writes,
-            ),
-            McpExecutionHost::Local => plugin_local_route(
-                context,
-                resource,
-                "plugin component is pinned to its local execution host",
-            ),
-            McpExecutionHost::Portable
-                if context.workspace_provider == WorkspaceProviderKind::LocalConnector =>
-            {
-                plugin_local_route(
-                    context,
-                    resource,
-                    "portable plugin was pinned to Local Connector for this session",
-                )
-            }
-            McpExecutionHost::Portable => available_route(
-                resource,
-                McpProviderKind::PluginCloud,
-                resource
-                    .provider_ref
-                    .clone()
-                    .or_else(|| Some(resource.resource_id.clone())),
-                "portable plugin was pinned to its cloud host for this session",
-                resource.allow_writes,
-            ),
-        }
+        plugin_local_route(
+            context,
+            resource,
+            "plugin component is executed through Local Connector",
+        )
     }
 }
 

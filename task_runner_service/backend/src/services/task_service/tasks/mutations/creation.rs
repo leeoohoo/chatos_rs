@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::models::normalize_task_profile;
+use crate::models::TaskPluginSelectionAudit;
 use crate::services::status_display::TaskScheduleModeExt;
 
 impl TaskService {
@@ -12,6 +13,26 @@ impl TaskService {
         creator: Option<&CurrentUser>,
         source_context: Option<TaskSourceContext>,
     ) -> Result<TaskRecord, String> {
+        self.create_task_with_plugin_selection_audit(input, creator, source_context, None)
+            .await
+    }
+
+    pub(crate) async fn create_task_with_plugin_selection_audit(
+        &self,
+        input: CreateTaskRequest,
+        creator: Option<&CurrentUser>,
+        source_context: Option<TaskSourceContext>,
+        plugin_selection_audit: Option<TaskPluginSelectionAudit>,
+    ) -> Result<TaskRecord, String> {
+        if (!input.plugin_config.selected_plugins.is_empty()
+            || !input.plugin_config.command_invocations.is_empty())
+            && plugin_selection_audit.is_none()
+        {
+            return Err(
+                "Task Plugin selection must be produced by the trusted Task Runner selector"
+                    .to_string(),
+            );
+        }
         validate_required("title", &input.title)?;
         validate_required("objective", &input.objective)?;
         if let Some(model_config_id) = input.default_model_config_id.as_deref() {
@@ -174,6 +195,7 @@ impl TaskService {
             prerequisite_task_ids: prerequisite_task_ids.clone(),
             task_tool_state: TaskToolState::default(),
             plugin_config,
+            plugin_selection_audit,
             mcp_config,
             created_at: now.clone(),
             updated_at: now,
@@ -381,6 +403,27 @@ mod tests {
             .await
             .expect("create task with empty project");
         assert_eq!(task_with_empty.project_id, PUBLIC_PROJECT_ID);
+    }
+
+    #[tokio::test]
+    async fn create_task_rejects_untrusted_plugin_config() {
+        let service = test_service().await;
+        let mut request = create_task_request("Plugin task");
+        request.plugin_config.selected_plugins.push(
+            chatos_plugin_management_sdk::SelectedPluginRef {
+                plugin_id: "plugin-browser".to_string(),
+                selected_skill_ids: Vec::new(),
+                selected_command_ids: Vec::new(),
+                selected_agent_ids: Vec::new(),
+            },
+        );
+
+        let error = service
+            .create_task(request, None, None)
+            .await
+            .expect_err("untrusted Plugin config must fail closed");
+
+        assert!(error.contains("trusted Task Runner selector"));
     }
 
     #[tokio::test]

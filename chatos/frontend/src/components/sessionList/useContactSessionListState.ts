@@ -6,10 +6,7 @@ import { useCallback, useMemo } from 'react';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type { Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
-import {
-  resolveContactAgentIdFromSession,
-  resolveContactIdFromSession,
-} from '../../features/contactSession/sessionResolver';
+import { isSessionMatchedKnownContactAndProject } from '../../features/contactSession/sessionResolver';
 import { useContactSessionResolver } from '../../features/contactSession/useContactSessionResolver';
 import { translateSessionListMessage } from './helpers';
 
@@ -91,6 +88,7 @@ export const useContactSessionListState = ({
     currentSession,
     createSession,
     apiClient,
+    knownContacts: contacts,
     defaultProjectId: CONTACT_CHAT_PROJECT_ID,
   });
 
@@ -147,19 +145,17 @@ export const useContactSessionListState = ({
   }, [contacts]);
 
   const currentDisplaySessionId = useMemo(() => {
-    if (activePanel !== 'chat') {
+    if (activePanel !== 'chat' || !currentSession) {
       return null;
     }
-    const currentContactId = resolveContactIdFromSession(currentSession);
-    if (currentContactId) {
-      return `${CONTACT_PLACEHOLDER_PREFIX}${currentContactId}`;
-    }
-
-    const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
-    if (!currentContactAgentId) {
-      return null;
-    }
-    const matched = contacts.find((item) => item.agentId === currentContactAgentId);
+    const matched = contacts.find((contact) => (
+      isSessionMatchedKnownContactAndProject(
+        currentSession,
+        contact,
+        contacts,
+        CONTACT_CHAT_PROJECT_ID,
+      )
+    ));
     if (!matched) {
       return null;
     }

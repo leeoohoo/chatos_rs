@@ -289,203 +289,6 @@ impl PluginRuntimeHost {
                     "operation": operation,
                 }))
             }
-            NATIVE_SKILL_TOOL_CALL_OPERATION => {
-                let tool_name = required_body_text(&request.body, "tool_name")?;
-                let mut arguments = request
-                    .body
-                    .get("arguments")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
-                if !arguments.is_object() {
-                    return Err((
-                        400,
-                        "native Plugin Skill tool arguments must be an object".to_string(),
-                    ));
-                }
-                let native_skill = session.native_skill.as_ref().ok_or_else(|| {
-                    (
-                        403,
-                        "native Plugin Skill operation was not published during prepare"
-                            .to_string(),
-                    )
-                })?;
-                if !native_skill.publishes_tool(tool_name.as_str()) {
-                    return Err((
-                        403,
-                        format!(
-                            "native Plugin Skill tool was not published during prepare: {tool_name}"
-                        ),
-                    ));
-                }
-                self.skill_loader
-                    .validate_bundled_native_binding(&native_skill.binding)
-                    .map_err(|error| (409, error.to_string()))?;
-                let tool_result_max_chars = request
-                    .body
-                    .get("tool_result_max_chars")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .filter(|value| {
-                        (1..=chatos_mcp_service::TOOL_RESULT_MAX_CHARS_UPPER_BOUND).contains(value)
-                    });
-                crate::skills::native::apply_managed_tool_result_limit(
-                    native_skill.binding.skill_id.as_str(),
-                    tool_name.as_str(),
-                    &mut arguments,
-                    tool_result_max_chars,
-                );
-                let requires_interactive_approval =
-                    crate::skills::native::requires_interactive_approval(
-                        native_skill.binding.skill_id.as_str(),
-                        tool_name.as_str(),
-                    );
-                let _action_guard = if requires_interactive_approval {
-                    let guard = session.native_action_lock.lock().await;
-                    self.load_exact_session(request, adapter_session_id)?;
-                    Some(guard)
-                } else {
-                    None
-                };
-                let mut approved_command_args = None;
-                if requires_interactive_approval {
-                    let state = self.state_snapshot().await?;
-                    let approval_command = crate::skills::native::approval_command(
-                        native_skill.binding.skill_id.as_str(),
-                        tool_name.as_str(),
-                        &arguments,
-                    )
-                    .map_err(|error| (400, error.to_string()))?;
-                    let command = approval_command.command;
-                    let args = approval_command.args;
-                    approved_command_args = Some(args.clone());
-                    let approval = self
-                        .approval_service()?
-                        .approve_interactive(CommandApprovalRequest {
-                            request_id: request.request_id.clone(),
-                            project_key: approval_project_key_for_relay_scope(&state, request),
-                            command,
-                            args,
-                            redact_arguments_in_history:
-                                crate::skills::native::redact_approval_arguments(
-                                    native_skill.binding.skill_id.as_str(),
-                                    tool_name.as_str(),
-                                ),
-                            cwd: ".".to_string(),
-                            source: match native_skill.binding.skill_id.as_str() {
-                                "internal_skill_computer_use" => "plugin_computer_use",
-                                "internal_skill_chrome" => "plugin_chrome_existing_session",
-                                "internal_skill_excel_live_control" => "plugin_excel_live_control",
-                                _ => "plugin_privileged_browser",
-                            }
-                            .to_string(),
-                            requested_permissions: None,
-                            session_id: Some(adapter_session_id.to_string()),
-                            action_audit: approval_command.action_audit,
-                        })
-                        .await
-                        .map_err(internal_error)?;
-                    if let ApprovalDecision::Denied { reason, .. } = approval {
-                        return Err((
-                            403,
-                            format!("Privileged local action was not approved: {reason}"),
-                        ));
-                    }
-                    self.load_exact_session(request, adapter_session_id)?;
-                }
-                let artifact_arguments = arguments.clone();
-                let state = self.state_snapshot().await?;
-                let mut result = if requires_interactive_approval {
-                    let skill_id = native_skill.binding.skill_id.clone();
-                    let tool_name = tool_name.clone();
-                    let request = request.clone();
-                    let action_cancelled = session.native_action_cancelled.clone();
-                    tokio::task::spawn_blocking(move || {
-                        crate::skills::native::execute_approved(
-                            skill_id.as_str(),
-                            tool_name.as_str(),
-                            &arguments,
-                            &state,
-                            &request,
-                            approved_command_args.as_deref(),
-                            Some(action_cancelled.as_ref()),
-                        )
-                    })
-                    .await
-                    .map_err(|error| {
-                        (
-                            500,
-                            format!("Privileged local action worker failed: {error}"),
-                        )
-                    })?
-                } else {
-                    let skill_id = native_skill.binding.skill_id.clone();
-                    let tool_name = tool_name.clone();
-                    let request = request.clone();
-                    let action_cancelled = session.native_action_cancelled.clone();
-                    tokio::task::spawn_blocking(move || {
-                        crate::skills::native::execute_with_cancellation(
-                            skill_id.as_str(),
-                            tool_name.as_str(),
-                            &arguments,
-                            &state,
-                            &request,
-                            Some(action_cancelled.as_ref()),
-                        )
-                    })
-                    .await
-                    .map_err(|error| (500, format!("Native local action worker failed: {error}")))?
-                }
-                .map_err(|error| (400, error.to_string()))?;
-                let artifact_state = self.state_snapshot().await?;
-                let artifacts = self
-                    .artifact_store
-                    .register_native_outputs(
-                        &artifact_state,
-                        request,
-                        PluginArtifactProducer {
-                            owner_user_id: session.owner_user_id.as_str(),
-                            device_id: session.device_id.as_str(),
-                            workspace_id: session.workspace_id.as_str(),
-                            run_id: session.run_id.as_str(),
-                            plugin_id: session.plugin_id.as_str(),
-                            release_id: session.release_id.as_str(),
-                            artifact_sha256: session.artifact_sha256.as_str(),
-                            component_key: session.component_key.as_str(),
-                            adapter_session_id,
-                            skill_id: native_skill.binding.skill_id.as_str(),
-                            tool_name: tool_name.as_str(),
-                        },
-                        &artifact_arguments,
-                        &result,
-                    )
-                    .map_err(|error| (409, error.to_string()))?;
-                if !artifacts.is_empty() {
-                    result
-                        .as_object_mut()
-                        .ok_or_else(|| {
-                            (
-                                500,
-                                "native Plugin Artifact result must be an object".to_string(),
-                            )
-                        })?
-                        .insert("_plugin_artifacts".to_string(), json!(artifacts));
-                }
-                Ok(json!({
-                    "plugin_id": session.plugin_id,
-                    "release_id": session.release_id,
-                    "version": session.version,
-                    "artifact_sha256": session.artifact_sha256,
-                    "component_key": session.component_key,
-                    "skill_id": native_skill.binding.skill_id,
-                    "bundle_id": native_skill.binding.bundle_id,
-                    "bundle_version": native_skill.binding.bundle_version,
-                    "bundle_hash": native_skill.binding.bundle_hash,
-                    "tool_name": tool_name,
-                    "result": result,
-                    "adapter_session_id": adapter_session_id,
-                    "operation": operation,
-                }))
-            }
             operation
                 if session
                     .mcp
@@ -497,6 +300,7 @@ impl PluginRuntimeHost {
                     .as_ref()
                     .context("prepared Plugin MCP session is unavailable")
                     .map_err(internal_error)?;
+                self.validate_mcp_workspace_binding(session, mcp).await?;
                 mcp.validate_active()
                     .map_err(|error| (409, error.to_string()))?;
                 let health = mcp.check_health().await.map_err(internal_error)?;
@@ -519,12 +323,12 @@ impl PluginRuntimeHost {
             {
                 let tool_name = required_body_text(&request.body, "tool_name")?;
                 let invocation_id = required_body_text(&request.body, "invocation_id")?;
-                let arguments = request
+                let requested_arguments = request
                     .body
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                if !arguments.is_object() {
+                if !requested_arguments.is_object() {
                     return Err((
                         400,
                         "Plugin MCP tool arguments must be an object".to_string(),
@@ -541,9 +345,123 @@ impl PluginRuntimeHost {
                         format!("Plugin MCP tool was not published during prepare: {tool_name}"),
                     ));
                 }
+                let arguments = mcp
+                    .apply_host_argument_defaults(tool_name.as_str(), requested_arguments)
+                    .map_err(|error| (409, error.to_string()))?;
+                self.validate_mcp_workspace_binding(session, mcp).await?;
                 mcp.validate_active()
                     .map_err(|error| (409, error.to_string()))?;
-                let result = mcp
+                let policy = mcp
+                    .tool_policy_for_call(tool_name.as_str(), &arguments)
+                    .map_err(|error| (409, error.to_string()))?;
+                if policy.approval_mode == "per_call" {
+                    let arguments_sha256 = hex::encode(Sha256::digest(
+                        serde_json::to_vec(&arguments)
+                            .map_err(|error| internal_error(error.into()))?,
+                    ));
+                    self.load_exact_session(request, adapter_session_id)?;
+                    let state = self.state_snapshot().await?;
+                    let approval = self
+                        .approval_service()?
+                        .approve_interactive(CommandApprovalRequest {
+                            request_id: format!(
+                                "{}:plugin-mcp:{}",
+                                request.request_id, invocation_id
+                            ),
+                            project_key: approval_project_key_for_relay_scope(&state, request),
+                            command: "plugin-mcp-tool-call".to_string(),
+                            args: vec![
+                                session.plugin_id.clone(),
+                                session.release_id.clone(),
+                                session.component_key.clone(),
+                                tool_name.clone(),
+                                invocation_id.clone(),
+                                arguments_sha256.clone(),
+                            ],
+                            redact_arguments_in_history: false,
+                            cwd: ".".to_string(),
+                            source: "plugin_mcp_tool_call".to_string(),
+                            requested_permissions: None,
+                            session_id: Some(adapter_session_id.to_string()),
+                            action_audit: Some(ApprovalActionAudit {
+                                kind: "plugin_mcp_tool_call".to_string(),
+                                operation: tool_name.clone(),
+                                details: vec![
+                                    ApprovalActionAuditDetail {
+                                        key: "owner_user_id".to_string(),
+                                        value: session.owner_user_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "device_id".to_string(),
+                                        value: session.device_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "run_id".to_string(),
+                                        value: session.run_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "plugin_id".to_string(),
+                                        value: session.plugin_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "release_id".to_string(),
+                                        value: session.release_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "component_key".to_string(),
+                                        value: session.component_key.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "invocation_id".to_string(),
+                                        value: invocation_id.clone(),
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "arguments_sha256".to_string(),
+                                        value: arguments_sha256,
+                                    },
+                                    ApprovalActionAuditDetail {
+                                        key: "risk_level".to_string(),
+                                        value: policy.risk_level.clone(),
+                                    },
+                                ],
+                                privacy: Some(
+                                    "Tool arguments and results are not persisted; approval history stores only the arguments SHA-256."
+                                        .to_string(),
+                                ),
+                                safety: Some(
+                                    "Approval authorizes exactly one invocation of this immutable Plugin MCP tool snapshot."
+                                        .to_string(),
+                                ),
+                                recovery: Some(
+                                    "Deny the request to prevent tools/call from being sent to the Plugin MCP."
+                                        .to_string(),
+                                ),
+                            }),
+                        })
+                        .await
+                        .map_err(internal_error)?;
+                    if let ApprovalDecision::Denied { reason, .. } = approval {
+                        return Err((
+                            403,
+                            format!("Plugin MCP tool call was not approved: {reason}"),
+                        ));
+                    }
+                    self.load_exact_session(request, adapter_session_id)?;
+                    self.validate_mcp_workspace_binding(session, mcp).await?;
+                    mcp.validate_active()
+                        .map_err(|error| (409, error.to_string()))?;
+                    if mcp
+                        .tool_policy_for_call(tool_name.as_str(), &arguments)
+                        .map_err(|error| (409, error.to_string()))?
+                        != policy
+                    {
+                        return Err((
+                            409,
+                            "Plugin MCP tool policy changed while awaiting approval".to_string(),
+                        ));
+                    }
+                }
+                let mut result = mcp
                     .call_tool(
                         invocation_id.as_str(),
                         tool_name.as_str(),
@@ -556,6 +474,13 @@ impl PluginRuntimeHost {
                     )
                     .await
                     .map_err(|error| (502, error.to_string()))?;
+                self.register_mcp_artifacts(
+                    session,
+                    adapter_session_id,
+                    tool_name.as_str(),
+                    &mut result,
+                )
+                .map_err(|error| (409, error.to_string()))?;
                 let health = mcp.health_snapshot().map_err(internal_error)?;
                 Ok(json!({
                     "plugin_id": session.plugin_id,

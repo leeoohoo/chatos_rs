@@ -19,7 +19,6 @@ chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_queue_observability = { path = "../../crates/chatos_queue_observability" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
-chatos_plugin_package = { path = "../../crates/chatos_plugin_package" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 futures-util = "0.3"
 hex = "0.4"

@@ -344,6 +344,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         execution_scope_generation: Some(1),
         turn_id: Some("turn-1".to_string()),
         task_id: Some("task-1".to_string()),
+        task_title: Some("Task one".to_string()),
         source_session_id: Some("source-session-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("chatos-agent-1".to_string()),
@@ -369,8 +370,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         plugin_local_bindings: Default::default(),
         plugin_tool_component_bindings: Default::default(),
         plugin_local_tool_component_bindings: Default::default(),
-        plugin_cloud_tool_component_bindings: Default::default(),
-        external_http_bindings: Default::default(),
+        local_connector_mcp_bindings: Default::default(),
         expires_at: "2099-01-01T00:00:00Z".to_string(),
         expires_at_unix: i64::MAX,
     }

@@ -10,29 +10,19 @@ mod plugins;
 pub use plugins::*;
 
 pub use chatos_plugin_management_sdk::{
-    AgentBindingRecord, AgentToolPlane, BeginPluginCloudOAuthAuthorizationRequest,
-    BeginPluginCloudOAuthAuthorizationResponse, BindingConditions,
-    LocalConnectorMcpStatusBatchRequest as LocalConnectorMcpStatusBatchPayload,
-    LocalConnectorMcpStatusItem, LocalConnectorMcpStatusRequest as LocalConnectorMcpStatusPayload,
-    LocalConnectorMcpSyncRequest as LocalConnectorMcpSyncPayload, LocalConnectorRef,
-    LocalConnectorRequirement, LocalConnectorSkillInventoryItem,
-    LocalConnectorSkillInventoryRequest as LocalConnectorSkillInventoryPayload, McpProviderSkill,
-    McpRecord, McpRuntime, PluginAuditLogRecord, PluginAvailabilityStatus, PluginCatalogDocument,
-    PluginCatalogRecord, PluginCloudComponentBundle, PluginCloudCredentialMetadata,
-    PluginCloudOAuthConnectionRecord, PluginComponentKind, PluginComponentOwnership,
-    PluginComponentSnapshot, PluginComponentStatus, PluginExecutionHost, PluginInstallStatus,
+    AgentBindingRecord, AgentToolPlane, BindingConditions, LocalConnectorRef,
+    LocalConnectorRequirement, McpProviderSkill, McpRecord, McpRuntime, PluginAuditLogRecord,
+    PluginAvailabilityStatus, PluginCatalogDocument, PluginCatalogRecord, PluginComponentKind,
+    PluginComponentOwnership, PluginComponentSnapshot, PluginComponentStatus, PluginInstallStatus,
     PluginInstallationRecord, PluginInstallationSyncPayload, PluginInterfaceMetadata,
-    PluginLicenseMetadata, PluginManifest, PluginManifestSource, PluginMarketplaceRecord,
+    PluginLicenseMetadata, PluginManifest, PluginMarketplaceRecord, PluginNpmPackage,
     PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload, PluginPublisher,
     PluginReleaseRecord, PluginReleaseSignature, PluginRequirementStatus,
     ResolveAgentCapabilitiesRequest as RuntimeCapabilitiesRequest,
-    ResolvePluginMcpCloudCredentialsRequest,
     ResolvedAgentCapabilities as RuntimeCapabilitiesResponse, ResolvedMcp, ResolvedPlugin,
-    ResolvedPluginComponent, ResolvedPluginMcpCloudCredentials, ResolvedSkill, ResourceCheckRecord,
-    ResourceMetadata, ResourceSecurity, SigningKeyRef, SkillContent, SkillInstallationRecord,
-    SkillRecord, UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
-    UpdateUserSkillPreferenceRequest as UpdateUserSkillPreferencePayload,
-    UserPluginPreferenceRecord, UserSkillCatalogItem, UserSkillCatalogResponse,
+    ResolvedPluginComponent, ResolvedSkill, ResourceCheckRecord, ResourceMetadata,
+    ResourceSecurity, SigningKeyRef, SkillContent, SkillRecord, UpdateUserPluginPreferenceRequest,
+    UpdateUserPluginPreferenceResponse, UserPluginPreferenceRecord,
 };
 
 pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
@@ -49,23 +39,17 @@ pub const OWNER_KIND_SYSTEM: &str = "system";
 pub const SOURCE_KIND_SYSTEM_SEED: &str = "system_seed";
 pub const SOURCE_KIND_ADMIN_CREATED: &str = "admin_created";
 pub const SOURCE_KIND_USER_CREATED: &str = "user_created";
-pub const SOURCE_KIND_LOCAL_CONNECTOR_DISCOVERED: &str = "local_connector_discovered";
 
 pub const RUNTIME_KIND_SYSTEM: &str = chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND;
 pub const RUNTIME_KIND_BUILTIN: &str =
     chatos_plugin_management_sdk::LEGACY_BUILTIN_MCP_RUNTIME_KIND;
 pub const RUNTIME_KIND_HTTP: &str = "http";
-pub const RUNTIME_KIND_STDIO_CLOUD: &str = "stdio_cloud";
-pub const RUNTIME_KIND_LOCAL_CONNECTOR_STDIO: &str = "local_connector_stdio";
-pub const RUNTIME_KIND_LOCAL_CONNECTOR_HTTP: &str = "local_connector_http";
-pub const RUNTIME_KIND_LOCAL_CONNECTOR_BUILTIN_PROXY: &str = "local_connector_builtin_proxy";
 
 pub const RESOURCE_KIND_MCP: &str = "mcp";
 pub const RESOURCE_KIND_SKILL: &str = "skill";
 pub const RESOURCE_KIND_SKILL_PACKAGE: &str = "skill_package";
 pub const RESOURCE_KIND_PLUGIN: &str = "plugin";
 pub const RESOURCE_KIND_PLUGIN_COMPONENT: &str = "plugin_component";
-pub const SKILL_CONTENT_KIND_LOCAL_CONNECTOR_BUNDLE: &str = "local_connector_bundle";
 
 pub const BINDING_SCOPE_GLOBAL_DEFAULT: &str = "global_default";
 pub const BINDING_SCOPE_USER_OVERRIDE: &str = "user_override";
@@ -379,29 +363,6 @@ pub struct AgentBindingPayload {
     pub component_allowlist: Option<Vec<String>>,
     pub tool_allowlist: Option<Vec<String>>,
     pub tool_blocklist: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSkillPreferenceRecord {
-    pub id: String,
-    pub owner_user_id: String,
-    pub skill_id: String,
-    pub enabled: bool,
-    pub enabled_at: Option<String>,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct LocalConnectorMcpInternalQuery {
-    pub owner_user_id: Option<String>,
-    pub device_id: Option<String>,
-    pub manifest_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct LocalConnectorSkillInternalQuery {
-    pub owner_user_id: Option<String>,
-    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

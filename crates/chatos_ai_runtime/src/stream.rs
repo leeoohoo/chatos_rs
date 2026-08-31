@@ -3,6 +3,9 @@
 
 use futures::{Stream, StreamExt};
 use serde_json::Value;
+use std::future::pending;
+use std::time::Duration;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -109,8 +112,22 @@ fn drain_sse_json_event_batch(buffer: &mut String) -> SseEventBatch {
 }
 
 pub async fn consume_sse_stream<S, E, F>(
+    stream: S,
+    token: Option<CancellationToken>,
+    on_event: F,
+) -> Result<SseStreamStats, SseStreamError>
+where
+    S: Stream<Item = Result<bytes::Bytes, E>> + Unpin,
+    E: ToString,
+    F: FnMut(Value),
+{
+    consume_sse_stream_with_progress_timeout(stream, token, None, on_event).await
+}
+
+pub async fn consume_sse_stream_with_progress_timeout<S, E, F>(
     mut stream: S,
     token: Option<CancellationToken>,
+    progress_timeout: Option<Duration>,
     mut on_event: F,
 ) -> Result<SseStreamStats, SseStreamError>
 where
@@ -121,54 +138,65 @@ where
     let mut buffer = String::new();
     let mut decoder = Utf8ChunkDecoder::default();
     let mut stats = SseStreamStats::default();
+    let mut progress_deadline = progress_timeout.map(|timeout| Instant::now() + timeout);
 
-    if let Some(token) = token {
-        loop {
-            tokio::select! {
-                _ = token.cancelled() => {
-                    stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
-                    return Err(SseStreamError {
-                        message: "aborted".to_string(),
-                        stats,
-                    });
-                },
-                next = stream.next() => {
-                    match next {
-                        Some(Ok(bytes)) => process_stream_bytes(
+    loop {
+        tokio::select! {
+            _ = async {
+                if let Some(token) = token.as_ref() {
+                    token.cancelled().await;
+                } else {
+                    pending::<()>().await;
+                }
+            } => {
+                stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
+                return Err(SseStreamError {
+                    message: "aborted".to_string(),
+                    stats,
+                });
+            },
+            _ = async {
+                if let Some(deadline) = progress_deadline {
+                    tokio::time::sleep_until(deadline).await;
+                } else {
+                    pending::<()>().await;
+                }
+            } => {
+                stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
+                let timeout_ms = progress_timeout
+                    .map(|timeout| timeout.as_millis())
+                    .unwrap_or_default();
+                return Err(SseStreamError {
+                    message: format!(
+                        "AI transport error (kind=timeout): no valid SSE event progress for {timeout_ms} ms"
+                    ),
+                    stats,
+                });
+            },
+            next = stream.next() => {
+                match next {
+                    Some(Ok(bytes)) => {
+                        let parsed_event_count = stats.parsed_event_count;
+                        process_stream_bytes(
                             bytes,
                             &mut decoder,
                             &mut buffer,
                             &mut stats,
                             &mut on_event,
-                        ),
-                        Some(Err(err)) => {
-                            stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
-                            return Err(SseStreamError {
-                                message: err.to_string(),
-                                stats,
-                            });
+                        );
+                        if stats.parsed_event_count > parsed_event_count {
+                            progress_deadline = progress_timeout
+                                .map(|timeout| Instant::now() + timeout);
                         }
-                        None => break,
                     }
-                }
-            }
-        }
-    } else {
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(bytes) => process_stream_bytes(
-                    bytes,
-                    &mut decoder,
-                    &mut buffer,
-                    &mut stats,
-                    &mut on_event,
-                ),
-                Err(err) => {
-                    stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
-                    return Err(SseStreamError {
-                        message: err.to_string(),
-                        stats,
-                    });
+                    Some(Err(err)) => {
+                        stats.buffered_tail_bytes = buffer.len() + decoder.pending.len();
+                        return Err(SseStreamError {
+                            message: err.to_string(),
+                            stats,
+                        });
+                    }
+                    None => break,
                 }
             }
         }
@@ -274,10 +302,13 @@ where
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use futures::stream;
+    use futures::{stream, StreamExt};
     use serde_json::json;
+    use std::time::{Duration, Instant};
 
-    use super::{consume_sse_stream, drain_sse_json_events};
+    use super::{
+        consume_sse_stream, consume_sse_stream_with_progress_timeout, drain_sse_json_events,
+    };
 
     #[test]
     fn drain_sse_json_events_ignores_done_and_invalid_payloads() {
@@ -383,5 +414,34 @@ mod tests {
         assert_eq!(stats.parsed_event_count, 1);
         assert_eq!(stats.malformed_event_count, 0);
         assert_eq!(events, vec![json!({"type":"delta","text":"hello"})]);
+    }
+
+    #[tokio::test]
+    async fn valid_event_progress_timeout_is_not_reset_by_sse_heartbeats() {
+        let chunks = stream::unfold(0usize, |index| async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let chunk = if index == 0 {
+                "data: {\"type\":\"delta\",\"text\":\"started\"}\n\n"
+            } else {
+                ": keepalive\n\n"
+            };
+            Some((Ok::<Bytes, String>(Bytes::from(chunk)), index + 1))
+        })
+        .boxed();
+        let started_at = Instant::now();
+
+        let error = consume_sse_stream_with_progress_timeout(
+            chunks,
+            None,
+            Some(Duration::from_millis(50)),
+            |_| {},
+        )
+        .await
+        .expect_err("heartbeats must not keep a stalled model response alive");
+
+        assert_eq!(error.stats.parsed_event_count, 1);
+        assert!(error.message.contains("kind=timeout"));
+        assert!(error.message.contains("no valid SSE event progress"));
+        assert!(started_at.elapsed() < Duration::from_millis(500));
     }
 }

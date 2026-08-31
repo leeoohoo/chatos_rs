@@ -9,11 +9,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 
-import type {
-  InputAreaProps,
-  PluginCommandInvocationPayload,
-  Project,
-} from '../../types';
+import type { InputAreaProps, Project } from '../../types';
 
 interface UseInputAreaMessageDraftOptions {
   attachments: File[];
@@ -23,10 +19,7 @@ interface UseInputAreaMessageDraftOptions {
   maxLength: number;
   onSend: InputAreaProps['onSend'];
   requireModelSelection: () => boolean;
-  requireValidPluginSelection: () => boolean;
-  selectedPluginIds: string[];
-  pluginCommandInvocations: PluginCommandInvocationPayload[];
-  commandMessageFallback: string;
+  selectedPluginKeys: string[];
   clearSelectedPlugins: () => void;
   selectedProjectId: string | null;
   selectedRuntimeProject: Project | null;
@@ -40,10 +33,7 @@ export const useInputAreaMessageDraft = ({
   maxLength,
   onSend,
   requireModelSelection,
-  requireValidPluginSelection,
-  selectedPluginIds,
-  pluginCommandInvocations,
-  commandMessageFallback,
+  selectedPluginKeys,
   clearSelectedPlugins,
   selectedProjectId,
   selectedRuntimeProject,
@@ -84,11 +74,10 @@ export const useInputAreaMessageDraft = ({
 
   const handleSend = useCallback(() => {
     const trimmedMessage = message.trim();
-    const content = trimmedMessage || commandMessageFallback;
+    const content = trimmedMessage;
     if (
       !content
       && (!effectiveAllowAttachments || attachments.length === 0)
-      && pluginCommandInvocations.length === 0
     ) {
       return;
     }
@@ -99,10 +88,6 @@ export const useInputAreaMessageDraft = ({
     if (requireModelSelection()) {
       return;
     }
-    if (requireValidPluginSelection()) {
-      return;
-    }
-
     const runtimeProjectId = selectedRuntimeProject?.id?.trim() || selectedProjectId?.trim() || '0';
     const runtimeProjectRoot = runtimeProjectId === '0'
       ? null
@@ -111,8 +96,7 @@ export const useInputAreaMessageDraft = ({
     onSend(content, attachments, {
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
-      selectedPluginIds,
-      pluginCommandInvocations,
+      taskPluginPreferences: selectedPluginKeys,
     });
     resetComposer();
   }, [
@@ -121,13 +105,10 @@ export const useInputAreaMessageDraft = ({
     effectiveAllowAttachments,
     message,
     onSend,
-    commandMessageFallback,
-    pluginCommandInvocations,
     requireModelSelection,
-    requireValidPluginSelection,
     resetComposer,
     selectedProjectId,
-    selectedPluginIds,
+    selectedPluginKeys,
     selectedRuntimeProject,
   ]);
 
@@ -148,7 +129,6 @@ export const useInputAreaMessageDraft = ({
     canSend: Boolean(
       message.trim()
       || attachments.length > 0
-      || pluginCommandInvocations.length > 0
     ),
   };
 };

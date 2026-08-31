@@ -23,7 +23,6 @@ fn context(workspace_provider: WorkspaceProviderKind) -> ProjectExecutionContext
 fn resource(
     kind: McpRouteResourceKind,
     system_key: Option<&str>,
-    host: Option<McpExecutionHost>,
     allow_writes: bool,
 ) -> McpRouteCandidate {
     McpRouteCandidate {
@@ -31,7 +30,6 @@ fn resource(
         server_name: system_key.unwrap_or("external").to_string(),
         resource_kind: kind,
         system_key: system_key.map(ToOwned::to_owned),
-        execution_host: host,
         provider_ref: Some("mcp-resource:test".to_string()),
         required: true,
         allow_writes,
@@ -54,10 +52,11 @@ fn project_files_and_commands_use_local_connector() {
         "code_maintainer_read",
         "code_maintainer_write",
         "terminal_controller",
+        "remote_connection_controller",
     ] {
         let route = resolve_one(
             context(WorkspaceProviderKind::LocalConnector),
-            resource(McpRouteResourceKind::System, Some(key), None, true),
+            resource(McpRouteResourceKind::System, Some(key), true),
         );
         assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
         assert_eq!(
@@ -74,7 +73,6 @@ fn missing_workspace_provider_cannot_route_project_files() {
         resource(
             McpRouteResourceKind::System,
             Some("code_maintainer_read"),
-            None,
             false,
         ),
     );
@@ -83,44 +81,27 @@ fn missing_workspace_provider_cannot_route_project_files() {
 }
 
 #[test]
-fn portable_stdio_is_local_and_cloud_stdio_is_rejected() {
-    let portable = resolve_one(
+fn stdio_is_local() {
+    let local = resolve_one(
         context(WorkspaceProviderKind::LocalConnector),
-        resource(
-            McpRouteResourceKind::Stdio,
-            None,
-            Some(McpExecutionHost::Portable),
-            false,
-        ),
+        resource(McpRouteResourceKind::Stdio, None, false),
     );
-    assert_eq!(portable.provider_kind, McpProviderKind::LocalConnector);
-
-    let cloud = resolve_one(
-        context(WorkspaceProviderKind::LocalConnector),
-        resource(
-            McpRouteResourceKind::Stdio,
-            None,
-            Some(McpExecutionHost::Cloud),
-            false,
-        ),
-    );
-    assert_eq!(cloud.provider_kind, McpProviderKind::Unavailable);
+    assert_eq!(local.provider_kind, McpProviderKind::LocalConnector);
 }
 
 #[test]
-fn external_http_and_internal_services_stay_cloud_orchestrated() {
+fn external_http_is_local_and_internal_services_remain_managed() {
     let external = resolve_one(
         context(WorkspaceProviderKind::None),
-        resource(McpRouteResourceKind::ExternalHttp, None, None, false),
+        resource(McpRouteResourceKind::ExternalHttp, None, false),
     );
-    assert_eq!(external.provider_kind, McpProviderKind::ExternalHttp);
+    assert_eq!(external.provider_kind, McpProviderKind::LocalConnector);
 
     let project = resolve_one(
         context(WorkspaceProviderKind::None),
         resource(
             McpRouteResourceKind::System,
             Some("project_management"),
-            None,
             true,
         ),
     );
@@ -128,11 +109,20 @@ fn external_http_and_internal_services_stay_cloud_orchestrated() {
 }
 
 #[test]
+fn plugins_are_pinned_to_local_connector() {
+    let local = resolve_one(
+        context(WorkspaceProviderKind::None),
+        resource(McpRouteResourceKind::Plugin, None, false),
+    );
+    assert_eq!(local.provider_kind, McpProviderKind::PluginLocal);
+    assert!(local.reason.contains("Local Connector"));
+}
+
+#[test]
 fn route_revision_is_stable_and_context_sensitive() {
     let candidate = resource(
         McpRouteResourceKind::System,
         Some("code_maintainer_read"),
-        None,
         false,
     );
     let first = RoutingEngine.resolve(ResolveMcpRoutesRequest {

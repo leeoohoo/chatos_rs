@@ -14,13 +14,14 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::{Extension, Json};
 use chatos_plugin_management_sdk::{
-    PluginInstallSource, PluginInstallSourceList, UpdateUserPluginPreferenceRequest,
+    verify_plugin_release_signature, PluginInstallSource, PluginInstallSourceList,
+    PluginReleaseVerificationContext, UpdateUserPluginPreferenceRequest,
     UpdateUserPluginPreferenceResponse,
 };
 use futures::StreamExt;
 use reqwest::redirect::Policy;
 use serde::Deserialize;
-use url::Url;
+use url::{Host, Url};
 
 use crate::models::CurrentUser;
 use crate::state::AppState;
@@ -105,13 +106,14 @@ pub(super) async fn proxy_plugin_release_artifact(
         .map_err(plugin_management_error)?;
     ensure_source_identity(&source, plugin_id.as_str(), release_id.as_str())?;
     ensure_source_preference_identity(&source, user.effective_owner_user_id())?;
+    verify_install_source_signature(&source)?;
     let url = validate_artifact_url(source.release.artifact_ref.as_str())?;
     let client = build_artifact_client(&url).await?;
     let upstream = client
         .get(url)
         .header(
             reqwest::header::ACCEPT,
-            "application/zip, application/octet-stream",
+            "application/gzip, application/octet-stream",
         )
         .send()
         .await
@@ -151,7 +153,7 @@ pub(super) async fn proxy_plugin_release_artifact(
     });
     let mut response = Response::builder()
         .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "application/zip")
+        .header(CONTENT_TYPE, "application/gzip")
         .header(
             "x-chatos-plugin-id",
             header_value(source.catalog.id.as_str())?,
@@ -204,6 +206,36 @@ fn ensure_source_identity(
     Ok(())
 }
 
+fn verify_install_source_signature(source: &PluginInstallSource) -> Result<(), ApiError> {
+    let key = source
+        .marketplace
+        .trusted_signing_keys
+        .iter()
+        .find(|key| key.key_id == source.release.signature.key_id)
+        .ok_or_else(|| {
+            ApiError::service_unavailable(
+                "Plugin Release signing key is not trusted by its Marketplace",
+            )
+        })?;
+    verify_plugin_release_signature(
+        PluginReleaseVerificationContext {
+            plugin_id: source.catalog.id.as_str(),
+            version: source.release.version.as_str(),
+            marketplace_id: source.marketplace.id.as_str(),
+            publisher_id: source.catalog.publisher.id.as_str(),
+            artifact_sha256: source.release.artifact_sha256.as_str(),
+        },
+        &source.release.normalized_manifest,
+        &source.release.signature,
+        key,
+    )
+    .map_err(|error| {
+        ApiError::service_unavailable(format!(
+            "Plugin install source signature verification failed: {error}"
+        ))
+    })
+}
+
 fn require_human_user(user: &CurrentUser) -> Result<(), ApiError> {
     if user.principal_type != "human_user" {
         return Err(ApiError::forbidden(
@@ -246,17 +278,27 @@ fn header_value(value: &str) -> Result<HeaderValue, ApiError> {
 fn validate_artifact_url(value: &str) -> Result<Url, ApiError> {
     let url = Url::parse(value)
         .map_err(|_| ApiError::service_unavailable("Plugin artifact URL is invalid"))?;
-    if url.scheme() != "https"
+    let loopback_development_url = url.scheme() == "http" && is_loopback_artifact_url(&url);
+    if (url.scheme() != "https" && !loopback_development_url)
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
         || url.fragment().is_some()
     {
         return Err(ApiError::service_unavailable(
-            "Plugin artifact URL must use HTTPS without credentials or fragments",
+            "Plugin artifact URL must use HTTPS, except for HTTP loopback development URLs, and cannot contain credentials or fragments",
         ));
     }
     Ok(url)
+}
+
+fn is_loopback_artifact_url(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
 }
 
 async fn build_artifact_client(url: &Url) -> Result<reqwest::Client, ApiError> {
@@ -274,15 +316,21 @@ async fn build_artifact_client(url: &Url) -> Result<reqwest::Client, ApiError> {
         .collect::<Vec<_>>();
     addresses.sort_unstable();
     addresses.dedup();
-    if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+    let loopback_development_url = url.scheme() == "http" && is_loopback_artifact_url(url);
+    let addresses_are_allowed = if loopback_development_url {
+        addresses.iter().all(|address| address.ip().is_loopback())
+    } else {
+        addresses.iter().all(|address| is_public_ip(address.ip()))
+    };
+    if addresses.is_empty() || !addresses_are_allowed {
         return Err(ApiError::service_unavailable(
-            "Plugin artifact host resolved to a non-public network address",
+            "Plugin artifact host resolved outside its allowed public or loopback network scope",
         ));
     }
     reqwest::Client::builder()
         .redirect(Policy::none())
         .no_proxy()
-        .https_only(true)
+        .https_only(!loopback_development_url)
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(5 * 60))
         .resolve_to_addrs(host, addresses.as_slice())
@@ -332,10 +380,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artifact_url_rejects_non_https_and_embedded_credentials() {
-        assert!(validate_artifact_url("https://plugins.example.com/demo.zip").is_ok());
-        assert!(validate_artifact_url("http://plugins.example.com/demo.zip").is_err());
-        assert!(validate_artifact_url("https://user@plugins.example.com/demo.zip").is_err());
+    fn artifact_url_allows_http_only_for_loopback_development() {
+        assert!(validate_artifact_url("https://registry.npmjs.org/demo/-/demo-1.0.0.tgz").is_ok());
+        assert!(validate_artifact_url("http://127.0.0.1:39260/api/plugin-artifacts/demo").is_ok());
+        assert!(validate_artifact_url("http://localhost:39260/api/plugin-artifacts/demo").is_ok());
+        assert!(validate_artifact_url("http://[::1]:39260/api/plugin-artifacts/demo").is_ok());
+        assert!(validate_artifact_url("http://registry.npmjs.org/demo/-/demo-1.0.0.tgz").is_err());
+    }
+
+    #[test]
+    fn artifact_url_rejects_embedded_credentials_and_fragments() {
+        assert!(
+            validate_artifact_url("https://user@registry.npmjs.org/demo/-/demo-1.0.0.tgz").is_err()
+        );
+        assert!(validate_artifact_url("http://user@127.0.0.1:39260/demo.tgz").is_err());
         assert!(validate_artifact_url("https://plugins.example.com/demo.zip#hash").is_err());
     }
 

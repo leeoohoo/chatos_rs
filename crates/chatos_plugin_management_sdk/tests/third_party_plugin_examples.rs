@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::{parse_plugin_manifest, PluginManifestSource};
+use chatos_plugin_management_sdk::parse_plugin_manifest;
 
 #[test]
 fn documented_third_party_plugin_manifests_parse() {
@@ -19,7 +19,7 @@ fn documented_third_party_plugin_manifests_parse() {
             include_str!("../../../docs/plugins/examples/build-web-plugin.manifest.json"),
         ),
     ] {
-        let manifest = parse_plugin_manifest(raw, PluginManifestSource::Codex)
+        let manifest = parse_plugin_manifest(raw)
             .unwrap_or_else(|error| panic!("{name} example manifest should parse: {error}"));
         assert_eq!(manifest.name, name);
         assert!(

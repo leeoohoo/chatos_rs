@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use chatos_plugin_management_sdk::PluginInstallStatus;
 use chrono::Utc;
 
-use super::archive::{verify_installed_file_checksums, PluginArchiveLimits};
+use super::archive::{verify_installed_file_checksums, PluginPackageLimits};
 use super::journal::{
     finish_transaction, load_journal, PluginRecoveryReport, PluginTransactionOperation,
     PluginTransactionRecord,
@@ -18,7 +18,7 @@ use super::state::load_registry;
 
 pub(super) fn recover_incomplete_transactions(
     plugin_root: &Path,
-    limits: PluginArchiveLimits,
+    limits: PluginPackageLimits,
 ) -> Result<PluginRecoveryReport> {
     let journal = load_journal(plugin_root)?;
     let registry = load_registry(plugin_root)?;
@@ -60,7 +60,7 @@ fn recover_transaction(
     plugin_root: &Path,
     registry: &super::LocalPluginRegistry,
     record: &PluginTransactionRecord,
-    limits: PluginArchiveLimits,
+    limits: PluginPackageLimits,
 ) -> Result<(PluginInstallStatus, bool, Option<String>)> {
     match record.operation {
         PluginTransactionOperation::Install | PluginTransactionOperation::Update => {
@@ -75,7 +75,7 @@ fn recover_install(
     plugin_root: &Path,
     registry: &super::LocalPluginRegistry,
     record: &PluginTransactionRecord,
-    limits: PluginArchiveLimits,
+    limits: PluginPackageLimits,
 ) -> Result<(PluginInstallStatus, bool, Option<String>)> {
     remove_record_path(plugin_root, record.relative_storage_path.as_deref())?;
     remove_record_path(plugin_root, record.relative_staging_path.as_deref())?;

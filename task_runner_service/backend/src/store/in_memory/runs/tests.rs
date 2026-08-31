@@ -111,28 +111,70 @@ fn running_run_initializes_a_durable_started_callback_without_terminal_delivery(
 }
 
 #[test]
-fn running_execution_lane_lookup_excludes_the_waiting_run() {
+fn execution_lane_lookup_prefers_prior_queued_runs_and_excludes_the_waiting_run() {
     let store = test_store();
-    let mut active = queued_run();
-    active.id = "run-active".to_string();
-    active.task_id = "task-active".to_string();
-    active.status = TaskRunStatus::Running;
-    active.execution_lane_key = Some("project:one".to_string());
-    store.save_run(active).expect("save active lane owner");
+    let mut first = queued_run();
+    first.id = "run-first".to_string();
+    first.task_id = "task-first".to_string();
+    first.created_at = "2026-08-28T01:00:00Z".to_string();
+    first.execution_lane_key = Some("plugin-exclusive-device:owner-1:device-1".to_string());
+    store.save_run(first).expect("save first lane waiter");
 
     let mut waiting = queued_run();
     waiting.id = "run-waiting".to_string();
     waiting.task_id = "task-waiting".to_string();
-    waiting.execution_lane_key = Some("project:one".to_string());
+    waiting.created_at = "2026-08-28T01:01:00Z".to_string();
+    waiting.execution_lane_key = Some("plugin-exclusive-device:owner-1:device-1".to_string());
+    let waiting_created_at = waiting.created_at.clone();
+    let waiting_id = waiting.id.clone();
     store.save_run(waiting).expect("save queued lane waiter");
 
-    let owner = store
-        .get_running_run_for_execution_lane("project:one", "run-waiting")
-        .expect("find active lane owner");
-    assert_eq!(owner.id, "run-active");
+    let blocker = store
+        .get_prior_active_run_for_execution_lane(
+            "plugin-exclusive-device:owner-1:device-1",
+            waiting_created_at.as_str(),
+            waiting_id.as_str(),
+        )
+        .expect("find prior lane waiter");
+    assert_eq!(blocker.id, "run-first");
     assert!(store
-        .get_running_run_for_execution_lane("project:two", "run-waiting")
+        .get_prior_active_run_for_execution_lane(
+            "plugin-exclusive-device:owner-1:another-device",
+            waiting_created_at.as_str(),
+            waiting_id.as_str(),
+        )
         .is_none());
+}
+
+#[test]
+fn execution_lane_lookup_ignores_paused_waiters_but_never_a_running_owner() {
+    let store = test_store();
+    let lane = "plugin-exclusive-device:owner-1:device-1";
+
+    let mut paused = queued_run();
+    paused.id = "run-paused".to_string();
+    paused.task_id = "task-paused".to_string();
+    paused.created_at = "2026-08-28T01:00:00Z".to_string();
+    paused.dispatch_paused = true;
+    paused.execution_lane_key = Some(lane.to_string());
+    store.save_run(paused).expect("save paused waiter");
+
+    assert!(store
+        .get_prior_active_run_for_execution_lane(lane, "2026-08-28T01:01:00Z", "run-current",)
+        .is_none());
+
+    let mut running = queued_run();
+    running.id = "run-running".to_string();
+    running.task_id = "task-running".to_string();
+    running.created_at = "2026-08-28T01:02:00Z".to_string();
+    running.status = TaskRunStatus::Running;
+    running.execution_lane_key = Some(lane.to_string());
+    store.save_run(running).expect("save running owner");
+
+    let blocker = store
+        .get_prior_active_run_for_execution_lane(lane, "2026-08-28T01:01:00Z", "run-current")
+        .expect("running owner always blocks");
+    assert_eq!(blocker.id, "run-running");
 }
 
 #[test]

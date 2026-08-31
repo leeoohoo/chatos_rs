@@ -12,7 +12,8 @@ impl PluginLocalProvider {
         &self,
         owner_user_id: &str,
         device_id: &str,
-        workspace_id: &str,
+        workspace_id: Option<&str>,
+        project_root: Option<&str>,
         action: &str,
         body: Value,
     ) -> Result<Vec<u8>, ProviderCallError> {
@@ -43,8 +44,19 @@ impl PluginLocalProvider {
                 "build Plugin Local Provider URL failed: {error}"
             ))
         })?;
-        url.query_pairs_mut()
-            .append_pair("workspace_id", workspace_id);
+        if let Some(workspace_id) = workspace_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            url.query_pairs_mut()
+                .append_pair("workspace_id", workspace_id);
+        }
+        if let Some(project_root) = project_root
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            url.query_pairs_mut().append_pair("cwd", project_root);
+        }
         let response = self
             .http
             .post(url)
@@ -73,11 +85,31 @@ impl PluginLocalProvider {
             ))
         })?;
         if !status.is_success() {
+            let detail = relay_error_detail(bytes.as_ref())
+                .map(|detail| format!(": {detail}"))
+                .unwrap_or_default();
             return Err(ProviderCallError::provider_unavailable(format!(
-                "Plugin Local Provider rejected {action} with HTTP {}",
-                status.as_u16()
+                "Plugin Local Provider rejected {action} with HTTP {}{detail}",
+                status.as_u16(),
             )));
         }
         Ok(bytes.to_vec())
     }
+}
+
+pub(super) fn relay_error_detail(bytes: &[u8]) -> Option<String> {
+    const MAX_DETAIL_CHARS: usize = 512;
+    let value = serde_json::from_slice::<Value>(bytes).ok()?;
+    let detail = value
+        .get("error")
+        .or_else(|| value.get("message"))?
+        .as_str()?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let detail = detail.trim();
+    if detail.is_empty() {
+        return None;
+    }
+    Some(detail.chars().take(MAX_DETAIL_CHARS).collect())
 }

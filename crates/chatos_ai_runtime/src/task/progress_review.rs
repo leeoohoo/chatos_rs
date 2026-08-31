@@ -248,7 +248,6 @@ impl TaskExecutionProgressState {
 
     pub fn observe_tool_result(&self, payload: &Value) {
         self.record_confirmed_project_paths(payload);
-        self.record_confirmed_acceptance_tool(payload);
         let iteration = self.current_iteration.load(Ordering::Relaxed);
         if tool_result_is_project_mutation(payload) {
             self.project_mutation_generation
@@ -363,25 +362,6 @@ impl TaskExecutionProgressState {
                 break;
             }
             confirmed.insert(path);
-        }
-    }
-
-    fn record_confirmed_acceptance_tool(&self, payload: &Value) {
-        if payload.get("success").and_then(Value::as_bool) != Some(true)
-            || payload.get("is_error").and_then(Value::as_bool) == Some(true)
-        {
-            return;
-        }
-        let Some(name) = payload.get("name").and_then(Value::as_str) else {
-            return;
-        };
-        if !name.contains("browser_tools") {
-            return;
-        }
-        if let Ok(mut tools) = self.confirmed_acceptance_tools.lock() {
-            if tools.len() < MAX_CONFIRMED_ACCEPTANCE_TOOLS {
-                tools.insert(name.to_string());
-            }
         }
     }
 
@@ -1414,22 +1394,6 @@ mod tests {
         assert_eq!(
             progress.confirmed_validation_commands(),
             vec!["cargo test -p example".to_string()]
-        );
-    }
-
-    #[test]
-    fn successful_browser_tools_are_kept_for_acceptance_evidence() {
-        let progress = TaskExecutionProgressState::default();
-        progress.observe_tool_result(&json!({
-            "name": "browser_tools_browser_snapshot",
-            "success": true,
-            "is_error": false,
-            "result": { "url": "http://127.0.0.1:4173" },
-        }));
-
-        assert_eq!(
-            progress.confirmed_acceptance_tools(),
-            vec!["browser_tools_browser_snapshot".to_string()]
         );
     }
 

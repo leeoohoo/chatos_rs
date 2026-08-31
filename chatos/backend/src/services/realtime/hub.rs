@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use crate::core::time::now_rfc3339;
 use crate::core::user_visible_path::display_path;
@@ -12,6 +15,7 @@ use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::models::memory_runtime_types::{
     ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
 };
+use crate::models::pet_activity_inbox::PetActivityInboxRecord;
 use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
@@ -22,18 +26,19 @@ use crate::services::task_manager::{TaskDraft, TaskRecord};
 use super::types::{
     AskUserPromptRealtimePayload, ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
     ConversationSummariesUpdatedRealtimePayload, NotepadUpdatedRealtimePayload,
-    ProjectChangeSummaryRealtimePayload, ProjectMembersUpdatedRealtimePayload,
-    ProjectRunCatalogRealtimePayload, ProjectRunInstanceRealtimePayload,
-    ProjectRunStateRealtimePayload, ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope,
-    RealtimeEventPayload, RemoteConnectionsUpdatedRealtimePayload, ReviewRepairRealtimePayload,
-    SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
+    PetActivityInboxRealtimePayload, ProjectChangeSummaryRealtimePayload,
+    ProjectMembersUpdatedRealtimePayload, ProjectRunCatalogRealtimePayload,
+    ProjectRunInstanceRealtimePayload, ProjectRunStateRealtimePayload,
+    ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
+    RemoteConnectionsUpdatedRealtimePayload, ReviewRepairRealtimePayload,
+    SequencedRealtimeEventEnvelope, SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
     TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
 };
 
 const REALTIME_CHANNEL_CAPACITY: usize = 512;
 
 pub struct RealtimeHub {
-    tx: broadcast::Sender<Arc<RealtimeEventEnvelope>>,
+    tx: broadcast::Sender<Arc<SequencedRealtimeEventEnvelope>>,
 }
 
 impl RealtimeHub {
@@ -43,18 +48,45 @@ impl RealtimeHub {
     }
 
     fn send(&self, envelope: RealtimeEventEnvelope) {
-        let _ = self.tx.send(Arc::new(envelope));
+        let _ = self.tx.send(Arc::new(SequencedRealtimeEventEnvelope {
+            event_id: Uuid::new_v4().to_string(),
+            event_sequence: next_realtime_event_sequence(),
+            envelope,
+        }));
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
+    fn subscribe(&self) -> broadcast::Receiver<Arc<SequencedRealtimeEventEnvelope>> {
         self.tx.subscribe()
     }
 }
 
 static REALTIME_HUB: Lazy<RealtimeHub> = Lazy::new(RealtimeHub::new);
+static REALTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub fn subscribe_user_events() -> broadcast::Receiver<Arc<RealtimeEventEnvelope>> {
+pub fn subscribe_user_events() -> broadcast::Receiver<Arc<SequencedRealtimeEventEnvelope>> {
     REALTIME_HUB.subscribe()
+}
+
+fn next_realtime_event_sequence() -> u64 {
+    let wall_clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64;
+    let mut previous = REALTIME_EVENT_SEQUENCE.load(Ordering::Relaxed);
+
+    loop {
+        let next = wall_clock.max(previous.saturating_add(1));
+        match REALTIME_EVENT_SEQUENCE.compare_exchange_weak(
+            previous,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(observed) => previous = observed,
+        }
+    }
 }
 
 fn project_for_realtime(mut project: Project) -> Project {
@@ -512,6 +544,15 @@ pub fn publish_task_board_updated(
     draft_tasks: Option<Vec<TaskDraft>>,
     timeout_ms: Option<u64>,
 ) {
+    crate::services::pet_activity_inbox::project_task_board_event(
+        user_id,
+        conversation_id,
+        conversation_turn_id,
+        review_id,
+        task_id,
+        action,
+        task.clone(),
+    );
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
         event: "conversation.task_board.updated",
@@ -533,6 +574,7 @@ pub fn publish_task_board_updated(
 }
 
 pub fn publish_ask_user_prompt_updated(user_id: &str, update: AskUserPromptRealtimePayload) {
+    crate::services::pet_activity_inbox::project_ask_user_prompt_event(user_id, &update);
     let conversation_id = update.conversation_id.clone();
     let project_id = update.project_id.clone();
     REALTIME_HUB.send(RealtimeEventEnvelope {
@@ -542,6 +584,29 @@ pub fn publish_ask_user_prompt_updated(user_id: &str, update: AskUserPromptRealt
         conversation_id: Some(conversation_id),
         project_id,
         payload: RealtimeEventPayload::AskUserPrompt(update),
+        ts: now_rfc3339(),
+    });
+}
+
+pub fn publish_pet_activity_inbox_updated(
+    user_id: &str,
+    action: &str,
+    activity: &PetActivityInboxRecord,
+) {
+    REALTIME_HUB.send(RealtimeEventEnvelope {
+        message_type: "event",
+        event: "pet_activity_inbox.updated",
+        user_id: user_id.to_string(),
+        conversation_id: activity.route.conversation_id.clone(),
+        project_id: activity.route.project_id.clone(),
+        payload: RealtimeEventPayload::PetActivityInboxUpdated(PetActivityInboxRealtimePayload {
+            action: action.to_string(),
+            activity_id: activity.id.clone(),
+            activity_key: activity.activity_key.clone(),
+            activity_version: activity.activity_version.clone(),
+            inbox_status: activity.inbox_status.as_str().to_string(),
+            activity: activity.clone(),
+        }),
         ts: now_rfc3339(),
     });
 }
@@ -556,6 +621,16 @@ pub fn publish_chat_stream_event(
     stream_type: &str,
     raw: serde_json::Value,
 ) {
+    crate::services::pet_activity_inbox::project_chat_stream_event(
+        user_id,
+        conversation_id,
+        conversation_turn_id,
+        project_id,
+        user_message_id,
+        event,
+        stream_type,
+        &raw,
+    );
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
         event,
@@ -589,4 +664,16 @@ fn publish_review_repair_event(
         payload: RealtimeEventPayload::ReviewRepair(payload),
         ts: now_rfc3339(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_realtime_event_sequence;
+
+    #[test]
+    fn realtime_event_sequence_is_strictly_monotonic() {
+        let first = next_realtime_event_sequence();
+        let second = next_realtime_event_sequence();
+        assert!(second > first);
+    }
 }

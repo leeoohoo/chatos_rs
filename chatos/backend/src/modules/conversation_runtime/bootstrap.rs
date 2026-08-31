@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::PluginCommandInvocation;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -24,8 +23,7 @@ pub struct CommonChatBootstrapInput {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    pub selected_plugin_ids: Vec<String>,
-    pub plugin_command_invocations: Vec<PluginCommandInvocation>,
+    pub task_plugin_preferences: Vec<String>,
     pub plan_mode: bool,
     pub project_requirement_execution_planner: bool,
     pub project_requirement_execution_task_ids: Vec<String>,
@@ -75,8 +73,7 @@ pub async fn load_common_chat_bootstrap(input: CommonChatBootstrapInput) -> Comm
             project_root: input.project_root,
             workspace_root: input.workspace_root,
             remote_connection_id: input.remote_connection_id,
-            selected_plugin_ids: input.selected_plugin_ids,
-            plugin_command_invocations: input.plugin_command_invocations,
+            task_plugin_preferences: input.task_plugin_preferences,
             plan_mode: input.plan_mode,
             project_requirement_execution_planner: input.project_requirement_execution_planner,
             project_requirement_execution_task_ids: input.project_requirement_execution_task_ids,

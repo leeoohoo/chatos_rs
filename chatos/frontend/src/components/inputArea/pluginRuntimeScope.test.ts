@@ -20,10 +20,7 @@ const project = (overrides: Partial<Project> = {}): Project => ({
   ...overrides,
 });
 
-const plugin = (
-  id: string,
-  providers: Array<'task_runner_cloud' | 'local_connector'>,
-): TaskRunnerSelectablePluginResponse => ({
+const plugin = (id: string): TaskRunnerSelectablePluginResponse => ({
   id,
   plugin_key: id,
   display_name: id,
@@ -31,19 +28,16 @@ const plugin = (
   version: '1.0.0',
   release_id: `release-${id}`,
   artifact_sha256: 'a'.repeat(64),
-  execution_type: providers.includes('local_connector') ? 'local' : 'cloud',
-  requires_device: providers.includes('local_connector'),
-  component_hosts: {},
-  component_keys: providers.map((_, index) => `component-${index}`),
-  components: providers.map((provider, index) => ({
-    component_key: `component-${index}`,
+  requires_device: false,
+  component_keys: ['component-0'],
+  components: [{
+    component_key: 'component-0',
     kind: 'mcp_server',
-    execution_host: provider === 'local_connector' ? 'local' : 'cloud',
     available: true,
     status: 'ready',
-    prepare_provider: provider,
-    requires_workspace: provider === 'local_connector',
-  })),
+    prepare_provider: 'mcp_management',
+    requires_workspace: true,
+  }],
   commands: [],
 });
 
@@ -79,12 +73,13 @@ describe('Plugin runtime scope', () => {
     )).toBeNull();
   });
 
-  it('keeps only Local Connector-capable Plugins', () => {
-    const cloud = plugin('cloud', ['task_runner_cloud']);
-    const local = plugin('local', ['local_connector']);
-    const hybrid = plugin('hybrid', ['task_runner_cloud', 'local_connector']);
+  it('keeps Plugins with an available component for Local Connector execution', () => {
+    const first = plugin('first');
+    const second = plugin('second');
+    const unavailable = plugin('unavailable');
+    unavailable.components[0].available = false;
 
-    expect(filterPluginsForProjectRuntime([cloud, local, hybrid], 'local_connector'))
-      .toEqual([local, hybrid]);
+    expect(filterPluginsForProjectRuntime([first, second, unavailable], 'local_connector'))
+      .toEqual([first, second]);
   });
 });

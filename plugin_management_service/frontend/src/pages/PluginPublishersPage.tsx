@@ -3,7 +3,7 @@
 
 import { CheckOutlined, PlusOutlined, StopOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useMemo, useState } from 'react';
 
@@ -12,7 +12,7 @@ import { CompactId, DateTimeCell } from '../components/DisplayCells';
 import { useI18n } from '../i18n/I18nProvider';
 import type { PluginMarketplaceRecord, PluginPublisherRecord } from '../pluginTypes';
 import type { CurrentUser } from '../types';
-import { optionalText, parseJsonArray } from './formUtils';
+import { optionalText } from './formUtils';
 
 type ReviewDecision = 'approve' | 'reject' | 'suspend';
 
@@ -44,7 +44,6 @@ export function PluginPublishersPage({ user }: { user: CurrentUser }) {
         marketplace_id: values.marketplace_id,
         name: values.name,
         website: optionalText(values.website),
-        signing_keys: parseJsonArray(values.signing_keys_json),
       }),
     onSuccess: () => {
       message.success(t('pluginPublisher.submitted'));
@@ -76,7 +75,6 @@ export function PluginPublishersPage({ user }: { user: CurrentUser }) {
       marketplace_id: record?.marketplace_id || eligibleMarketplaces[0]?.id,
       name: record?.name || '',
       website: record?.website || '',
-      signing_keys_json: JSON.stringify(record?.signing_keys || [], null, 2),
     });
     setApplicationOpen(true);
   };
@@ -272,13 +270,7 @@ export function PluginPublishersPage({ user }: { user: CurrentUser }) {
               <Input placeholder="https://example.com" />
             </Form.Item>
           </div>
-          <Form.Item
-            name="signing_keys_json"
-            label={t('pluginPublisher.keysJson')}
-            rules={[{ required: true }]}
-          >
-            <Input.TextArea rows={11} className="code-input" />
-          </Form.Item>
+          <Alert type="info" showIcon message={t('pluginPublisher.managedSigningNotice')} />
         </Form>
       </Modal>
 

@@ -152,14 +152,6 @@ export const applyTaskRunnerCallbackRealtimeUpdate = (
     state.messages = nextMessages;
   }
 
-  const cachedEntry = state.sessionMessagesCache?.[sessionId];
-  if (cachedEntry && Array.isArray(cachedEntry.messages)) {
-    let nextMessages = [...cachedEntry.messages];
-    nextMessages = upsertRealtimeMessage(nextMessages, persistedUserMessage);
-    nextMessages = upsertRealtimeMessage(nextMessages, persistedAssistantMessage);
-    cachedEntry.messages = nextMessages;
-  }
-
   const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();
   const activeTurnId = readString(prev.activeTurnId);
   const terminalTurnMatchesActive = !activeTurnId || (Boolean(turnId) && turnId === activeTurnId);
@@ -202,12 +194,6 @@ export const applyTaskRunnerRealtimeError = (
   if (state.currentSessionId === sessionId) {
     state.messages = markUserMessageTurnFailed(state.messages || [], turnId, terminalStatus);
     state.messages = upsertRealtimeMessage(state.messages || [], failureMessage);
-  }
-
-  const cachedEntry = state.sessionMessagesCache?.[sessionId];
-  if (cachedEntry && Array.isArray(cachedEntry.messages)) {
-    cachedEntry.messages = markUserMessageTurnFailed(cachedEntry.messages, turnId, terminalStatus);
-    cachedEntry.messages = upsertRealtimeMessage(cachedEntry.messages, failureMessage);
   }
 
   const prev = state.sessionChatState?.[sessionId] || createDefaultSessionChatState();

@@ -6,14 +6,18 @@ import type ApiClient from '../../../api/client';
 import { normalizeSession } from '../../helpers/sessions';
 import type { ContactRecord } from '../../types';
 import {
+  normalizeProjectScopeId,
   normalizeContactSessions,
   resolveSessionContactIdentity,
+  resolveSessionProjectScopeId,
   isSessionActive,
 } from '../sessionsUtils';
 
 interface SessionContactScope {
   contactAgentIds: Set<string>;
   contactIds: Set<string>;
+  projectId: string | null;
+  userId: string | null;
 }
 
 interface SessionsListCacheEntry {
@@ -40,7 +44,10 @@ const normalizeUserId = (userId: string): string => String(userId || '').trim();
 
 const normalizeSessionId = (sessionId: string): string => String(sessionId || '').trim();
 
-const buildContactScope = (contacts: ContactRecord[]): SessionContactScope => {
+const buildContactScope = (
+  contacts: ContactRecord[],
+  options?: { projectId?: string | null; userId?: string | null },
+): SessionContactScope => {
   const contactIds = new Set<string>();
   const contactAgentIds = new Set<string>();
   for (const contact of contacts || []) {
@@ -56,6 +63,12 @@ const buildContactScope = (contacts: ContactRecord[]): SessionContactScope => {
   return {
     contactAgentIds,
     contactIds,
+    projectId: typeof options?.projectId === 'string' && options.projectId.trim()
+      ? normalizeProjectScopeId(options.projectId)
+      : null,
+    userId: typeof options?.userId === 'string' && options.userId.trim()
+      ? normalizeUserId(options.userId)
+      : null,
   };
 };
 
@@ -64,6 +77,13 @@ const shouldIncludeSessionForScope = (
   scope?: SessionContactScope | null,
 ): boolean => {
   if (!session || !isSessionActive(session)) {
+    return false;
+  }
+  if (scope?.projectId && resolveSessionProjectScopeId(session) !== scope.projectId) {
+    return false;
+  }
+  const sessionUserId = String(session.userId ?? session.user_id ?? '').trim();
+  if (scope?.userId && sessionUserId && sessionUserId !== scope.userId) {
     return false;
   }
   const identity = resolveSessionContactIdentity(session);
@@ -101,7 +121,11 @@ export const normalizeTrackedSessions = (
 export const buildSessionsListCacheKey = (
   userId: string,
   projectId?: string | null,
-): string => `${normalizeUserId(userId)}::${String(projectId || '*').trim() || '*'}`;
+): string => {
+  const rawProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+  const projectScope = rawProjectId ? normalizeProjectScopeId(rawProjectId) : '*';
+  return `${normalizeUserId(userId)}::${projectScope}`;
+};
 
 export const getOrCreateSessionsClientCacheState = (
   apiClient: ApiClient,
@@ -154,13 +178,14 @@ export const syncLoadedSessions = (
   contacts: ContactRecord[],
 ) => {
   const cacheState = getOrCreateSessionsClientCacheState(apiClient);
-  const scope = buildContactScope(contacts);
+  const scope = buildContactScope(contacts, { userId, projectId });
+  const scopedSessions = normalizeSessionsForScope(sessions, scope);
   cacheState.listCache.set(buildSessionsListCacheKey(userId, projectId), {
-    sessions,
+    sessions: scopedSessions,
     stale: false,
     scope,
   });
-  sessions.forEach((session) => {
+  scopedSessions.forEach((session) => {
     syncSessionDetailCache(apiClient, session);
   });
 };

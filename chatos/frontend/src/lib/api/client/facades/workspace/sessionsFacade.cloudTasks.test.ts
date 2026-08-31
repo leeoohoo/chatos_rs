@@ -23,7 +23,7 @@ describe('workspaceSessionFacade cloud task routing', () => {
 
     expect(request).toHaveBeenNthCalledWith(
       1,
-      '/conversations/session-1/user-message-turns?limit=10',
+      '/conversations/session-1/compact-history?limit=10',
     );
     expect(request).toHaveBeenNthCalledWith(
       2,

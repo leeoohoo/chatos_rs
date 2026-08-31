@@ -214,6 +214,7 @@ export const zhCNWorkspaceMessages: MessageDictionary = {
   'runSettings.suggestions': '建议操作',
   'runSettings.preflight': '运行前检查',
   'runSettings.preflightClean': '当前未发现明显的本地运行配置问题。',
+  'runSettings.preflightUnavailable': '检测到可运行目标后才能执行运行前检查。',
   'runSettings.issueHint': '建议: {hint}',
   'runSettings.otherTargetIssues': '查看其它运行入口的问题 ({count})',
   'runSettings.runTargets': '运行目标',

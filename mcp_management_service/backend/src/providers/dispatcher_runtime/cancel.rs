@@ -48,11 +48,6 @@ impl ProviderDispatcher {
                         .cancel_invocation(snapshot, route, invocation_id)
                         .await
                 }
-                McpProviderKind::ExternalHttp if self.external_http.supports(route) => {
-                    self.external_http
-                        .cancel_invocation(snapshot, route, invocation_id)
-                        .await
-                }
                 _ => Ok(ProviderCancelOutcome::NotSupported),
             }
         };

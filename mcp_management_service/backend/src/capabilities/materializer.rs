@@ -4,10 +4,8 @@
 use std::collections::HashMap;
 
 use chatos_mcp::system_mcp_descriptor_for_record;
-use chatos_mcp_management_sdk::{McpExecutionHost, McpRouteCandidate, McpRouteResourceKind};
-use chatos_plugin_management_sdk::{
-    McpRecord, PluginExecutionHost, ResolvedAgentCapabilities, ResolvedPlugin,
-};
+use chatos_mcp_management_sdk::{McpRouteCandidate, McpRouteResourceKind};
+use chatos_plugin_management_sdk::{ResolvedAgentCapabilities, ResolvedPlugin};
 
 use crate::runtime::{PluginMcpRuntimeBinding, PluginToolComponentRuntimeBinding};
 
@@ -36,13 +34,10 @@ pub fn materialize_mcp_candidates(
         .map(|resolved| {
             let resource = &resolved.resource;
             let system_descriptor = system_mcp_descriptor_for_record(resource);
-            let (resource_kind, execution_host) = if system_descriptor.is_some() {
-                (McpRouteResourceKind::System, None)
+            let resource_kind = if system_descriptor.is_some() {
+                McpRouteResourceKind::System
             } else if resource.plugin_component.is_release_managed() {
-                (
-                    McpRouteResourceKind::Plugin,
-                    plugin_execution_host(capabilities, resource),
-                )
+                McpRouteResourceKind::Plugin
             } else {
                 classify_runtime(resource.runtime.kind.as_str())
             };
@@ -59,7 +54,6 @@ pub fn materialize_mcp_candidates(
                 server_name,
                 resource_kind,
                 system_key: system_descriptor.map(|descriptor| descriptor.key.as_str().to_string()),
-                execution_host,
                 provider_ref: Some(format!("mcp-resource:{}", resource.id)),
                 required: resolved.binding.required,
                 allow_writes,
@@ -103,6 +97,17 @@ pub(crate) fn plugin_permission_snapshot(
     plugin: &ResolvedPlugin,
     component_key: &str,
 ) -> Vec<String> {
+    let granted = plugin
+        .installation
+        .as_ref()
+        .map(|installation| {
+            installation
+                .granted_permissions
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
     let mut permissions = plugin
         .release
         .iter()
@@ -124,7 +129,7 @@ pub(crate) fn plugin_permission_snapshot(
                 .map(|permission| permission.permission.as_str()),
         )
         .map(str::trim)
-        .filter(|permission| !permission.is_empty())
+        .filter(|permission| !permission.is_empty() && granted.contains(permission))
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     permissions.sort();
@@ -149,40 +154,11 @@ fn is_lower_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-fn classify_runtime(kind: &str) -> (McpRouteResourceKind, Option<McpExecutionHost>) {
+fn classify_runtime(kind: &str) -> McpRouteResourceKind {
     match kind.trim() {
-        "http" => (
-            McpRouteResourceKind::ExternalHttp,
-            Some(McpExecutionHost::Cloud),
-        ),
-        "stdio_cloud" => (McpRouteResourceKind::Stdio, Some(McpExecutionHost::Cloud)),
-        "local_connector_stdio" | "local_connector_http" | "local_connector_builtin_proxy" => (
-            McpRouteResourceKind::LocalConnector,
-            Some(McpExecutionHost::Local),
-        ),
-        _ => (McpRouteResourceKind::Unsupported, None),
+        "http" => McpRouteResourceKind::ExternalHttp,
+        _ => McpRouteResourceKind::Unsupported,
     }
-}
-
-fn plugin_execution_host(
-    capabilities: &ResolvedAgentCapabilities,
-    resource: &McpRecord,
-) -> Option<McpExecutionHost> {
-    let (plugin_id, release_id, component_key) = resource.plugin_component.complete_identity()?;
-    capabilities
-        .plugins
-        .iter()
-        .flat_map(|plugin| plugin.component_snapshots.iter())
-        .find(|snapshot| {
-            snapshot.plugin_id == plugin_id
-                && snapshot.release_id == release_id
-                && snapshot.component.component_key == component_key
-        })
-        .map(|snapshot| match snapshot.component.execution_host {
-            PluginExecutionHost::Cloud => McpExecutionHost::Cloud,
-            PluginExecutionHost::Local => McpExecutionHost::Local,
-            PluginExecutionHost::Portable => McpExecutionHost::Portable,
-        })
 }
 
 fn normalized(value: Option<&str>) -> Option<String> {
@@ -197,9 +173,9 @@ mod tests {
     use super::*;
     use chatos_plugin_management_sdk::{
         parse_plugin_manifest, plugin_component_descriptors, AgentBindingRecord, BindingConditions,
-        McpRuntime, PluginAvailabilityStatus, PluginCatalogRecord, PluginComponentOwnership,
-        PluginComponentSnapshot, PluginComponentStatus, PluginInstallStatus,
-        PluginInstallationRecord, PluginLicenseMetadata, PluginManifestSource, PluginPublisher,
+        McpRecord, McpRuntime, PluginAvailabilityStatus, PluginCatalogRecord,
+        PluginComponentOwnership, PluginComponentSnapshot, PluginComponentStatus,
+        PluginInstallStatus, PluginInstallationRecord, PluginLicenseMetadata, PluginPublisher,
         PluginReleaseRecord, PluginReleaseSignature, PluginRequirementStatus, ResolvedMcp,
         ResolvedPlugin, ResolvedPluginComponent, ResourceMetadata, ResourceSecurity,
         SystemAgentKey, UserPluginPreferenceRecord, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
@@ -228,7 +204,7 @@ mod tests {
     pub(super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
         let manifest = parse_plugin_manifest(
             r#"{
-                "schemaVersion": 1,
+                "schemaVersion": 3,
                 "name": "workspace-tools",
                 "version": "1.0.0",
                 "description": "Workspace Plugin MCP",
@@ -252,7 +228,6 @@ mod tests {
                     "components": ["workspace"]
                 }]
             }"#,
-            PluginManifestSource::Chatos,
         )
         .unwrap();
         let components = plugin_component_descriptors(&manifest);
@@ -291,7 +266,12 @@ mod tests {
             version: manifest.version.clone(),
             manifest_schema_version: manifest.schema_version,
             normalized_manifest: manifest.clone(),
-            artifact_ref: "https://plugins.example.com/workspace.zip".to_string(),
+            npm_package: chatos_plugin_management_sdk::PluginNpmPackage {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                integrity: "sha512-dGVzdA==".to_string(),
+            },
+            artifact_ref: "https://registry.npmjs.org/workspace/-/workspace-1.0.0.tgz".to_string(),
             artifact_sha256: "a".repeat(64),
             signature: PluginReleaseSignature {
                 key_id: "key-1".to_string(),
@@ -324,6 +304,11 @@ mod tests {
             availability_status: PluginAvailabilityStatus::Ready,
             dependency_status: PluginRequirementStatus::Satisfied,
             permission_status: PluginRequirementStatus::Satisfied,
+            granted_permissions: release
+                .permissions
+                .iter()
+                .map(|permission| permission.permission.clone())
+                .collect(),
             auth_status: PluginRequirementStatus::Satisfied,
             component_statuses: components
                 .iter()
@@ -484,33 +469,12 @@ mod tests {
     }
 
     #[test]
-    fn local_connector_runtime_is_explicitly_pinned_local() {
-        let result = materialize_mcp_candidates(&capabilities(vec![resolved_mcp(
-            "local-mcp",
-            "local_connector_stdio",
-            true,
-            true,
-            true,
-        )]))
-        .unwrap();
-        assert_eq!(
-            result.resources[0].resource_kind,
-            McpRouteResourceKind::LocalConnector
-        );
-        assert_eq!(
-            result.resources[0].execution_host,
-            Some(McpExecutionHost::Local)
-        );
-    }
-
-    #[test]
     fn selected_plugin_mcp_component_materializes_an_immutable_private_binding() {
         let result =
             materialize_mcp_candidates(&capabilities_with_plugin(resolved_plugin(true))).unwrap();
         assert_eq!(result.resources.len(), 1);
         let resource = &result.resources[0];
         assert_eq!(resource.resource_kind, McpRouteResourceKind::Plugin);
-        assert_eq!(resource.execution_host, Some(McpExecutionHost::Local));
         assert!(resource.required);
         assert!(resource.allow_writes);
         let binding = result.plugin_bindings.get(&resource.resource_id).unwrap();

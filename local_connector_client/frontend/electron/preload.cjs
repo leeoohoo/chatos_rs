@@ -6,14 +6,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('chatosLocalConnector', {
   apiRequest: (request) => ipcRenderer.invoke('local-connector:api-request', request),
   runtimeApiRequest: (request) => ipcRenderer.invoke('local-connector:runtime-api-request', request),
-  getDesktopSystemPermissions: () => ipcRenderer.invoke('local-connector:desktop-system-permissions'),
-  requestDesktopSystemPermission: (permissionId) => (
-    ipcRenderer.invoke('local-connector:desktop-system-permission-request', permissionId)
-  ),
+  selectPluginFiles: () => ipcRenderer.invoke('local-connector:select-plugin-files'),
   openSettings: (tab) => ipcRenderer.invoke('local-connector:settings-open', tab),
   closeSettings: () => ipcRenderer.invoke('local-connector:settings-close'),
   setApprovalOverlayMode: (mode) => (
     ipcRenderer.invoke('local-connector:approval-overlay-mode', mode)
+  ),
+  setVisualPreviewMode: (mode) => (
+    ipcRenderer.invoke('local-connector:visual-preview-mode', mode)
   ),
   onSettingsTabRequested: (callback) => {
     const listener = (_event, tab) => callback(tab);
@@ -25,14 +25,5 @@ contextBridge.exposeInMainWorld('chatosLocalConnector', {
   runtimeSettings: () => ipcRenderer.invoke('local-connector:runtime-settings'),
   updateRuntimeSettings: (payload) => (
     ipcRenderer.invoke('local-connector:runtime-settings-update', payload)
-  ),
-  showChromeExtensionDirectory: () => (
-    ipcRenderer.invoke('local-connector:chrome-extension-directory-show')
-  ),
-  copyChromeExtensionInstallPath: () => (
-    ipcRenderer.invoke('local-connector:chrome-extension-install-path-copy')
-  ),
-  openChromeExtensionsPage: () => (
-    ipcRenderer.invoke('local-connector:chrome-extensions-page-open')
   ),
 });

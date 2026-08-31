@@ -9,7 +9,6 @@ import {
   createSession,
   fetchSession,
   fetchSessionMessages,
-  installBackgroundSyncSpy,
   type ChatStoreDraft,
   type ChatStoreShape,
   type FetchSessionMessagesResult,
@@ -33,10 +32,7 @@ describe('selectSession', () => {
       sessionAiSelectionBySession: {},
       sessionChatState: {},
       sessionMessagePaginationState: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
-    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -122,10 +118,7 @@ describe('selectSession', () => {
       sessionAiSelectionBySession: {},
       sessionChatState: {},
       sessionMessagePaginationState: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
-    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -154,6 +147,8 @@ describe('selectSession', () => {
 
     expect(state.currentSessionId).toBe('session_1');
     expect(state.currentSession?.id).toBe('session_1');
+    expect(state.currentProjectId).toBeNull();
+    expect(state.currentProject).toBeNull();
     expect(state.activePanel).toBe('chat');
     expect(state.sessionChatState.session_1).toMatchObject({
       isLoading: true,
@@ -176,7 +171,7 @@ describe('selectSession', () => {
     });
   });
 
-  it('clears previous session messages immediately when switching to an uncached session', async () => {
+  it('clears previous session messages immediately while fetching the selected session', async () => {
     const state = {
       sessions: [createSession('session_1'), createSession('session_2')],
       currentSessionId: 'session_1',
@@ -209,10 +204,7 @@ describe('selectSession', () => {
           loaded: true,
         },
       },
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
-    installBackgroundSyncSpy(state);
 
     const set = vi.fn((updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);

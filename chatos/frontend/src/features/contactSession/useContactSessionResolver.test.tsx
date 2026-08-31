@@ -87,4 +87,33 @@ describe('useContactSessionResolver legacy preferred sessions', () => {
     expect(sessionId).toBeNull();
     expect(createSession).not.toHaveBeenCalled();
   });
+
+  it('does not reuse an agent-only legacy session when multiple contacts share the agent', async () => {
+    const createSession = vi.fn();
+    const { result } = renderHook(() => useContactSessionResolver({
+      sessions: [legacySession()],
+      currentSession: legacySession(),
+      knownContacts: [
+        { id: 'contact-1', agentId: 'agent-1' },
+        { id: 'contact-2', agentId: 'agent-1' },
+      ],
+      createSession,
+      includeApiLookup: false,
+      defaultProjectId: 'project-1',
+    }));
+
+    let sessionId: string | null = null;
+    await act(async () => {
+      sessionId = await result.current.ensureContactSession(
+        { id: 'contact-1', agentId: 'agent-1' },
+        {
+          projectId: 'project-1',
+          createIfMissing: false,
+        },
+      );
+    });
+
+    expect(sessionId).toBeNull();
+    expect(createSession).not.toHaveBeenCalled();
+  });
 });

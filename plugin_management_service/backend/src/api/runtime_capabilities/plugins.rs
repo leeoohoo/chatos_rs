@@ -37,15 +37,7 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     owner_user_id: &str,
     device_id: Option<&str>,
     runtime_provider: Option<&str>,
-) -> Result<
-    (
-        bool,
-        String,
-        Option<String>,
-        Option<SkillInstallationRecord>,
-    ),
-    ApiError,
-> {
+) -> Result<(bool, String, Option<String>), ApiError> {
     match plugin_component_gate(
         state,
         &resource.plugin_component,
@@ -55,9 +47,7 @@ pub(super) async fn availability_for_skill_with_plugin_gate(
     )
     .await?
     {
-        Some(gate) if !gate.available => {
-            Ok((false, "plugin_unavailable".to_string(), gate.reason, None))
-        }
+        Some(gate) if !gate.available => Ok((false, "plugin_unavailable".to_string(), gate.reason)),
         _ => super::availability_for_skill(state, resource, owner_user_id).await,
     }
 }
@@ -67,7 +57,7 @@ pub(super) async fn resolve_plugin_binding(
     binding: AgentBindingRecord,
     owner_user_id: &str,
     device_id: Option<&str>,
-    runtime_provider: Option<&str>,
+    _runtime_provider: Option<&str>,
 ) -> Result<Option<ResolvedPlugin>, ApiError> {
     let Some(catalog) = state
         .store
@@ -94,8 +84,16 @@ pub(super) async fn resolve_plugin_binding(
             .get_plugin_installation(owner_user_id, device_id, catalog.id.as_str())
             .await
             .map_err(ApiError::internal)?,
-        None => None,
+        None => state
+            .store
+            .get_preferred_plugin_installation(owner_user_id, catalog.id.as_str())
+            .await
+            .map_err(ApiError::internal)?,
     };
+    let resolved_device_id = installation
+        .as_ref()
+        .map(|installation| installation.device_id.clone())
+        .or_else(|| device_id.map(str::to_string));
     let release = match installation.as_ref() {
         Some(installation) => state
             .store
@@ -117,36 +115,6 @@ pub(super) async fn resolve_plugin_binding(
             .map_err(ApiError::internal)?,
         None => Vec::new(),
     };
-    let mut cloud_bundle_keys = match release.as_ref() {
-        Some(release) => state
-            .store
-            .list_plugin_cloud_component_bundles(catalog.id.as_str(), release.id.as_str())
-            .await
-            .map_err(ApiError::internal)?
-            .into_iter()
-            .map(|bundle| bundle.component_key)
-            .collect::<HashSet<_>>(),
-        None => HashSet::new(),
-    };
-    if let Some(release) = release.as_ref() {
-        let runtime_bundles = state
-            .store
-            .list_plugin_mcp_cloud_runtime_bundles(catalog.id.as_str(), release.id.as_str())
-            .await
-            .map_err(ApiError::internal)?;
-        for bundle in runtime_bundles {
-            if component_snapshots.iter().any(|snapshot| {
-                snapshot.plugin_id == bundle.plugin_id
-                    && snapshot.release_id == bundle.release_id
-                    && snapshot.component == bundle.component
-                    && snapshot.content_sha256 == bundle.bundle_sha256
-                    && chatos_plugin_management_sdk::plugin_mcp_cloud_runtime_bundle_sha256(&bundle)
-                        .is_ok_and(|sha256| sha256 == bundle.bundle_sha256)
-            }) {
-                cloud_bundle_keys.insert(bundle.component.component_key.clone());
-            }
-        }
-    }
     let mut auth_connection_ids = match installation.as_ref() {
         Some(installation) => state
             .store
@@ -165,34 +133,8 @@ pub(super) async fn resolve_plugin_binding(
             .collect(),
         None => Vec::new(),
     };
-    if let Some(release) = release.as_ref() {
-        auth_connection_ids.extend(
-            state
-                .store
-                .list_plugin_cloud_oauth_connections(
-                    owner_user_id,
-                    catalog.id.as_str(),
-                    release.id.as_str(),
-                )
-                .await
-                .map_err(ApiError::internal)?
-                .into_iter()
-                .filter(|record| {
-                    record.connection.connected
-                        && !record.connection.needs_auth
-                        && (record.connection.refreshable
-                            || record.connection.expires_at.as_deref().is_none_or(|value| {
-                                chrono::DateTime::parse_from_rfc3339(value).is_ok_and(|expiry| {
-                                    expiry.timestamp() > chrono::Utc::now().timestamp()
-                                })
-                            }))
-                })
-                .map(|record| record.connection.id),
-        );
-    }
     auth_connection_ids.sort();
     auth_connection_ids.dedup();
-    let portable_uses_local = portable_uses_local(runtime_provider, binding.agent_key.as_str());
     Ok(Some(resolve_plugin_records(
         catalog,
         release,
@@ -201,9 +143,7 @@ pub(super) async fn resolve_plugin_binding(
         preference,
         component_snapshots,
         auth_connection_ids,
-        device_id,
-        &cloud_bundle_keys,
-        portable_uses_local,
+        resolved_device_id.as_deref(),
     )))
 }
 
@@ -287,16 +227,12 @@ fn resolve_plugin_records(
     component_snapshots: Vec<PluginComponentSnapshot>,
     auth_connection_ids: Vec<String>,
     device_id: Option<&str>,
-    cloud_bundle_keys: &HashSet<String>,
-    portable_uses_local: bool,
 ) -> ResolvedPlugin {
     let component_result = resolve_components(
         release.as_ref(),
         installation.as_ref(),
         preference.as_ref(),
         &binding,
-        cloud_bundle_keys,
-        portable_uses_local,
     );
     let components = component_result.as_ref().cloned().unwrap_or_default();
     let unavailable = |status, reason: String| ResolvedPlugin {
@@ -319,7 +255,7 @@ fn resolve_plugin_records(
             "Plugin catalog entry is disabled".to_string(),
         );
     }
-    if preference.is_none() && portable_uses_local {
+    if preference.is_none() {
         return unavailable(
             PluginAvailabilityStatus::Unavailable,
             "Plugin user preference is missing for Local Connector execution".to_string(),
@@ -367,11 +303,7 @@ fn resolve_plugin_records(
             return unavailable(PluginAvailabilityStatus::Unavailable, reason);
         }
     };
-    let requires_local = components.iter().any(|component| {
-        component.component.execution_host == PluginExecutionHost::Local
-            || (component.component.execution_host == PluginExecutionHost::Portable
-                && portable_uses_local)
-    });
+    let requires_local = !components.is_empty();
     if requires_local {
         let Some(device_id) = device_id else {
             return unavailable(
@@ -397,10 +329,12 @@ fn resolve_plugin_records(
             );
         }
         if !release_ref.supported_platforms.is_empty()
-            && !release_ref
-                .supported_platforms
-                .iter()
-                .any(|platform| platform == &installation_ref.platform)
+            && !release_ref.supported_platforms.iter().any(|platform| {
+                super::super::plugin_installations::platform_constraint_matches(
+                    platform,
+                    installation_ref.platform.as_str(),
+                )
+            })
         {
             return unavailable(
                 PluginAvailabilityStatus::UnsupportedPlatform,
@@ -502,23 +436,11 @@ fn resolve_plugin_records(
     }
 }
 
-fn portable_uses_local(runtime_provider: Option<&str>, agent_key: &str) -> bool {
-    let _ = agent_key;
-    matches!(
-        runtime_provider
-            .map(str::trim)
-            .filter(|value| !value.is_empty()),
-        Some("local_connector")
-    )
-}
-
 fn resolve_components(
     release: Option<&PluginReleaseRecord>,
     installation: Option<&PluginInstallationRecord>,
     preference: Option<&UserPluginPreferenceRecord>,
     binding: &AgentBindingRecord,
-    cloud_bundle_keys: &HashSet<String>,
-    portable_uses_local: bool,
 ) -> Result<Vec<ResolvedPluginComponent>, String> {
     let Some(release) = release else {
         return Ok(Vec::new());
@@ -580,28 +502,8 @@ fn resolve_components(
         .components
         .iter()
         .filter(|component| selected.contains(&component.component_key))
-        .map(|component| {
-            let cloud_execution = component.execution_host == PluginExecutionHost::Cloud
-                || (component.execution_host == PluginExecutionHost::Portable
-                    && !portable_uses_local);
-            if cloud_execution {
-                return if cloud_bundle_keys.contains(component.component_key.as_str()) {
-                    ResolvedPluginComponent {
-                        component: component.clone(),
-                        available: true,
-                        status: PluginAvailabilityStatus::Ready,
-                        reason: None,
-                    }
-                } else {
-                    ResolvedPluginComponent {
-                        component: component.clone(),
-                        available: false,
-                        status: PluginAvailabilityStatus::Unavailable,
-                        reason: Some("immutable cloud runtime Bundle is missing".to_string()),
-                    }
-                };
-            }
-            match statuses.get(component.component_key.as_str()) {
+        .map(
+            |component| match statuses.get(component.component_key.as_str()) {
                 Some(status) if status.kind == component.kind => ResolvedPluginComponent {
                     component: component.clone(),
                     available: status.availability_status == PluginAvailabilityStatus::Ready,
@@ -625,8 +527,8 @@ fn resolve_components(
                         "Plugin component status is missing from installation".to_string(),
                     ),
                 },
-            }
-        })
+            },
+        )
         .collect())
 }
 

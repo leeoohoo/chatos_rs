@@ -6,7 +6,7 @@ use crate::models::message::Message;
 
 use super::super::history_process_support::{
     count_assistant_thinking_steps, extract_tool_calls_from_message,
-    is_task_runner_callback_message,
+    is_cancelled_task_runner_callback_message, is_task_runner_callback_message,
 };
 
 pub(super) struct TurnProcessStats {
@@ -36,7 +36,9 @@ pub(super) fn collect_turn_process_stats(
         .skip(user_index + 1)
     {
         if is_task_runner_callback_message(message) {
-            stats.callback_updates.push(index);
+            if !is_cancelled_task_runner_callback_message(message) {
+                stats.callback_updates.push(index);
+            }
             continue;
         }
 

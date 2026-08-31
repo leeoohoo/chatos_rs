@@ -55,10 +55,51 @@ pub struct TaskRecord {
     pub task_tool_state: TaskToolState,
     #[serde(default)]
     pub plugin_config: TaskPluginConfig,
+    #[serde(default)]
+    pub plugin_selection_audit: Option<TaskPluginSelectionAudit>,
     pub mcp_config: TaskMcpConfig,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+}
+
+impl TaskRecord {
+    pub fn execution_scope(&self) -> crate::models::TaskExecutionScope {
+        let owner_user_id = self
+            .owner_user_id
+            .as_deref()
+            .or(self.creator_user_id.as_deref())
+            .unwrap_or(self.subject_id.as_str());
+        crate::models::resolve_task_execution_scope(
+            self.project_id.as_str(),
+            self.tenant_id.as_str(),
+            owner_user_id,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskPluginSelectionAudit {
+    pub selection_source: String,
+    pub policy_revision: String,
+    pub selected_at: String,
+    pub project_context_revision: String,
+    #[serde(default)]
+    pub plugins: Vec<TaskSelectedPluginSnapshot>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSelectedPluginSnapshot {
+    pub plugin_id: String,
+    pub plugin_key: String,
+    #[serde(default)]
+    pub display_name: String,
+    pub release_id: String,
+    pub version: String,
+    pub artifact_sha256: String,
+    pub device_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 fn default_task_project_id() -> String {

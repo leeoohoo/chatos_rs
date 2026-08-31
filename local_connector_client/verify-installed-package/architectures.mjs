@@ -87,8 +87,6 @@ export function binaryArchitectures(filePath, platform) {
 
 export function assertNoObsoleteCriticalAliases(resources, platform) {
   const aliases = [
-    'skill_bundles',
-    'plugin_bundles',
     'chrome_extension',
     'chatos_frontend',
     'sqlite_migrations',
@@ -99,10 +97,10 @@ export function assertNoObsoleteCriticalAliases(resources, platform) {
     }
   }
   const unexpectedBinaries = platform.startsWith('macos-')
-    ? ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe', 'chatos_computer_use_helper.exe']
+    ? ['local_connector_client_core.exe']
     : platform.startsWith('windows-')
-      ? ['local_connector_client_core', 'chatos_chrome_native_host', 'chatos_computer_use_helper', 'chatos_computer_use_helper.exe']
-      : ['local_connector_client_core.exe', 'chatos_chrome_native_host.exe', 'chatos_computer_use_helper.exe'];
+      ? ['local_connector_client_core']
+      : ['local_connector_client_core.exe'];
   for (const fileName of unexpectedBinaries) {
     if (fs.existsSync(path.join(resources, fileName))) {
       throw new Error(`Installed package contains an unexpected critical executable: ${fileName}`);

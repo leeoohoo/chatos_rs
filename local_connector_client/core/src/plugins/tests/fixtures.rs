@@ -3,23 +3,22 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chatos_agent::SystemAgentKey;
 use chatos_plugin_management_sdk::*;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::json;
-use sha2::{Digest, Sha256};
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use sha2::{Digest, Sha256, Sha512};
+use tar::{Builder, EntryType, Header};
 
 use super::super::*;
 
 const MARKETPLACE_ID: &str = "trusted-marketplace";
-const BUNDLED_MARKETPLACE_ID: &str = "chatos-bundled";
 const PUBLISHER_ID: &str = "publisher-demo";
 pub(in crate::plugins) const PLUGIN_ID: &str = "plugin-demo";
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
@@ -27,12 +26,10 @@ const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 #[derive(Debug, Clone, Copy)]
 pub(in crate::plugins) enum ArchiveMutation {
     None,
-    Traversal,
     Symlink,
     Duplicate,
-    MissingChecksum,
-    WrongChecksum,
-    InvalidSbom,
+    MissingPackageJson,
+    WrongIntegrity,
     SkillReferenceCycle,
     SkillTraversalReference,
 }
@@ -46,10 +43,6 @@ pub(in crate::plugins) struct TestSigner {
 impl TestSigner {
     pub(in crate::plugins) fn new() -> Self {
         Self::for_marketplace(MARKETPLACE_ID)
-    }
-
-    pub(in crate::plugins) fn new_bundled() -> Self {
-        Self::for_marketplace(BUNDLED_MARKETPLACE_ID)
     }
 
     fn for_marketplace(marketplace_id: &'static str) -> Self {
@@ -87,44 +80,6 @@ impl TestSigner {
         )
     }
 
-    pub(in crate::plugins) fn package_with_prompt_execution(
-        &self,
-        root: &Path,
-        version: &str,
-        execution_host: PluginExecutionHost,
-    ) -> TestPackage {
-        let default_host = match execution_host {
-            PluginExecutionHost::Cloud => "cloud",
-            PluginExecutionHost::Local => "local",
-            PluginExecutionHost::Portable => "portable",
-        };
-        self.package_from_manifest(
-            root,
-            version,
-            ArchiveMutation::None,
-            json!({
-                "schemaVersion": 2,
-                "execution": {"defaultHost": default_host, "componentHosts": {}},
-                "name": "demo-plugin",
-                "version": version,
-                "description": "A signed schema v2 Prompt Plugin fixture",
-                "author": {"name": "Demo Publisher"},
-                "skills": ["./skills/demo"],
-                "interface": {
-                    "displayName": "Demo Plugin",
-                    "shortDescription": "Signed Prompt Plugin",
-                    "longDescription": "A signed schema v2 Prompt Plugin fixture",
-                    "developerName": "Demo Publisher",
-                    "category": "Developer Tools"
-                },
-                "dependencies": {},
-                "permissions": []
-            })
-            .to_string(),
-            BTreeMap::new(),
-        )
-    }
-
     pub(in crate::plugins) fn package_with_command(
         &self,
         root: &Path,
@@ -147,7 +102,7 @@ impl TestSigner {
                     "argumentHint": "[path]",
                     "requiresConfirmation": requires_confirmation,
                     "targetAgent": RUN_AGENT_KEY,
-                    "allowedTools": ["browser_tools_browser_snapshot"]
+                    "allowedTools": ["plugin_snapshot"]
                 }],
                 "interface": {
                     "displayName": "Demo Plugin",
@@ -186,7 +141,7 @@ impl TestSigner {
                     "source": "./agents/reviewer.md",
                     "description": "Review the current change",
                     "baseAgent": RUN_AGENT_KEY,
-                    "allowedTools": ["browser_tools_browser_snapshot"],
+                    "allowedTools": ["plugin_snapshot"],
                     "maxIterations": 12
                 }],
                 "interface": {
@@ -447,28 +402,7 @@ impl TestSigner {
         version: &str,
         html: &[u8],
     ) -> TestPackage {
-        assert_eq!(
-            self.marketplace_id, BUNDLED_MARKETPLACE_ID,
-            "native Adapter fixtures must use the bundled Marketplace identity"
-        );
-        let documents = crate::skills::internal_skill_catalog()
-            .expect("internal Skill catalog")
-            .skills
-            .into_iter()
-            .find(|item| item.skill_id == "internal_skill_documents")
-            .expect("Documents Skill inventory");
-        let skill_manifest = crate::skills::internal_skill_manifest(documents.skill_id.as_str())
-            .expect("embedded Documents skill.json");
-        let instructions = crate::skills::internal_skill_instructions(documents.skill_id.as_str())
-            .expect("embedded Documents instructions");
-        let description = serde_json::to_string(documents.description.as_str())
-            .expect("encode Documents description");
-        let skill_document = format!(
-            "---\nname: {}\ndescription: {}\ndisable-model-invocation: false\n---\n\n{}\n",
-            documents.name,
-            description,
-            instructions.trim_end()
-        );
+        let skill_document = "---\nname: documents\ndescription: Use the plugin MCP to create and edit documents.\ndisable-model-invocation: false\n---\n\nCall the plugin's document tools when the task needs document operations.\n";
         self.package_from_manifest(
             root,
             version,
@@ -528,15 +462,7 @@ impl TestSigner {
             BTreeMap::from([
                 (
                     "skills/documents/SKILL.md".to_string(),
-                    skill_document.into_bytes(),
-                ),
-                (
-                    "skills/documents/instructions.md".to_string(),
-                    instructions.as_bytes().to_vec(),
-                ),
-                (
-                    "skills/documents/skill.json".to_string(),
-                    skill_manifest.as_bytes().to_vec(),
+                    skill_document.as_bytes().to_vec(),
                 ),
                 ("ui/index.html".to_string(), html.to_vec()),
                 (
@@ -666,8 +592,7 @@ impl TestSigner {
                 json!({
                     "demo-stdio": {
                         "type": "stdio",
-                        "command": "./mcp/server.sh",
-                        "cwd": "./mcp"
+                        "bin": "demo-mcp"
                     }
                 }),
                 json!({
@@ -677,6 +602,73 @@ impl TestSigner {
                 }),
             ),
             BTreeMap::from([("mcp/server.sh".to_string(), b"#!/bin/sh\nexit 0\n".to_vec())]),
+        )
+    }
+
+    #[cfg(unix)]
+    pub(in crate::plugins) fn package_with_workspace_stdio_mcp(
+        &self,
+        root: &Path,
+        version: &str,
+    ) -> TestPackage {
+        let script = br##"#!/bin/sh
+while IFS= read -r request; do
+  id=$(printf '%s\n' "$request" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  case "$request" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"workspace-fixture","version":"1.0.0"}}}\n' "$id"
+      ;;
+    *'"method":"tools/list"'*)
+      if [ -z "$CHATOS_WORKSPACE" ] || [ ! -d "$CHATOS_WORKSPACE" ]; then
+        printf '{"jsonrpc":"2.0","id":"%s","error":{"code":-32000,"message":"missing workspace"}}\n' "$id"
+      else
+        printf '{"jsonrpc":"2.0","id":"%s","result":{"tools":[{"name":"inspect","description":"Inspect workspace","inputSchema":{"type":"object"},"_meta":{"chatos/policyVersion":1,"chatos/requiredPermissions":["workspace.read"],"chatos/riskLevel":"low","chatos/approvalMode":"none","chatos/parallelSafe":true,"chatos/timeoutMs":30000}}]}}\n' "$id"
+      fi
+      ;;
+    *'"method":"tools/call"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"content":[{"type":"text","text":"workspace-ok"}]}}\n' "$id"
+      ;;
+  esac
+done
+"##;
+        self.package_from_manifest(
+            root,
+            version,
+            ArchiveMutation::None,
+            json!({
+                "name": "demo-plugin",
+                "version": version,
+                "description": "A signed workspace MCP test Plugin",
+                "author": {"name": "Demo Publisher"},
+                "skills": "./skills",
+                "mcpServers": {
+                    "demo-stdio": {
+                        "type": "stdio",
+                        "bin": "demo-mcp"
+                    }
+                },
+                "interface": {
+                    "displayName": "Demo Plugin",
+                    "shortDescription": "Signed test Plugin",
+                    "longDescription": "A signed workspace MCP test Plugin",
+                    "developerName": "Demo Publisher",
+                    "category": "Developer Tools"
+                },
+                "permissions": [
+                    {
+                        "permission": "process.spawn",
+                        "required": true,
+                        "components": ["demo-stdio"]
+                    },
+                    {
+                        "permission": "workspace.read",
+                        "required": true,
+                        "components": ["skills", "demo-stdio"]
+                    }
+                ]
+            })
+            .to_string(),
+            BTreeMap::from([("mcp/server.sh".to_string(), script.to_vec())]),
         )
     }
 
@@ -694,8 +686,7 @@ impl TestSigner {
                 json!({
                     "demo-stdio": {
                         "type": "stdio",
-                        "command": "./mcp/server.sh",
-                        "cwd": "./mcp",
+                        "bin": "demo-mcp",
                         "env": {
                             "DEMO_TOKEN": "${credential:access_token}"
                         }
@@ -728,6 +719,9 @@ impl TestSigner {
 while IFS= read -r request; do
   id=$(printf '%s\n' "$request" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
   case "$request" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"hanging-fixture","version":"1.0.0"}}}\n' "$id"
+      ;;
     *'"method":"tools/list"'*)
       if [ "$DEMO_TOKEN" != "stdio-top-secret" ]; then
         printf '{"jsonrpc":"2.0","id":"%s","error":{"code":-32000,"message":"missing credential"}}\n' "$id"
@@ -753,8 +747,7 @@ done
                 json!({
                     "demo-stdio": {
                         "type": "stdio",
-                        "command": "./mcp/server.sh",
-                        "cwd": "./mcp",
+                        "bin": "demo-mcp",
                         "env": {
                             "DEMO_TOKEN": "${credential:access_token}"
                         }
@@ -774,53 +767,6 @@ done
                 ]),
             ),
             BTreeMap::from([("mcp/server.sh".to_string(), script.to_vec())]),
-        )
-    }
-
-    pub(in crate::plugins) fn package_with_mcp_config(
-        &self,
-        root: &Path,
-        version: &str,
-        url: &str,
-    ) -> TestPackage {
-        self.package_from_manifest(
-            root,
-            version,
-            ArchiveMutation::None,
-            manifest_json_with_mcp(
-                version,
-                json!("./.mcp.json"),
-                json!({
-                    "permission": format!(
-                        "network.domain:{}",
-                        reqwest::Url::parse(url)
-                            .expect("fixture MCP URL")
-                            .host_str()
-                            .expect("fixture MCP host")
-                    ),
-                    "required": true,
-                    "components": ["mcp-config"]
-                }),
-            ),
-            BTreeMap::from([(
-                ".mcp.json".to_string(),
-                json!({
-                    "mcpServers": {
-                        "config-http": {
-                            "type": "http",
-                            "url": url,
-                            "connectTimeoutMs": 5_000
-                        },
-                        "config-http-secondary": {
-                            "type": "http",
-                            "url": url,
-                            "connectTimeoutMs": 5_000
-                        }
-                    }
-                })
-                .to_string()
-                .into_bytes(),
-            )]),
         )
     }
 
@@ -954,18 +900,11 @@ done
         manifest_raw: String,
         extra_files: BTreeMap<String, Vec<u8>>,
     ) -> TestPackage {
-        let manifest = parse_plugin_manifest(manifest_raw.as_str(), PluginManifestSource::Codex)
-            .expect("normalized manifest");
-        let archive_path = root.join(format!("demo-{version}-{mutation:?}.zip"));
-        write_test_archive(
-            archive_path.as_path(),
-            manifest_raw.as_bytes(),
-            version,
-            mutation,
-            extra_files,
-        );
+        let manifest = parse_plugin_manifest(manifest_raw.as_str()).expect("normalized manifest");
+        let package_path = root.join(format!("demo-{version}-{mutation:?}.tgz"));
+        write_test_package(package_path.as_path(), version, mutation, extra_files);
         let artifact_sha256 = sha256_bytes(
-            fs::read(&archive_path)
+            fs::read(&package_path)
                 .expect("read test archive")
                 .as_slice(),
         );
@@ -1035,7 +974,16 @@ done
             version: version.to_string(),
             manifest_schema_version: manifest.schema_version,
             normalized_manifest: manifest.clone(),
-            artifact_ref: format!("https://plugins.example.com/demo-{version}.zip"),
+            npm_package: chatos_plugin_management_sdk::PluginNpmPackage {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                integrity: if matches!(mutation, ArchiveMutation::WrongIntegrity) {
+                    "sha512-d3JvbmctaW50ZWdyaXR5".to_string()
+                } else {
+                    npm_integrity(package_path.as_path())
+                },
+            },
+            artifact_ref: format!("https://registry.npmjs.org/demo/-/demo-{version}.tgz"),
             artifact_sha256,
             signature,
             sbom_ref: Some("./sbom.json".to_string()),
@@ -1048,7 +996,7 @@ done
             revoked_at: None,
         };
         TestPackage {
-            archive_path,
+            package_path,
             marketplace,
             catalog,
             release,
@@ -1057,15 +1005,15 @@ done
 }
 
 pub(in crate::plugins) struct TestPackage {
-    pub(super) archive_path: PathBuf,
+    pub(super) package_path: PathBuf,
     marketplace: PluginMarketplaceRecord,
     catalog: PluginCatalogRecord,
     release: PluginReleaseRecord,
 }
 
 impl TestPackage {
-    pub(in crate::plugins) fn archive_path(&self) -> &Path {
-        self.archive_path.as_path()
+    pub(in crate::plugins) fn package_path(&self) -> &Path {
+        self.package_path.as_path()
     }
 
     pub(in crate::plugins) fn install_source(&self) -> PluginInstallSource {
@@ -1082,7 +1030,7 @@ impl TestPackage {
             marketplace: &self.marketplace,
             catalog: &self.catalog,
             release: &self.release,
-            archive_path: self.archive_path.as_path(),
+            package_path: self.package_path.as_path(),
         }
     }
 
@@ -1093,12 +1041,12 @@ impl TestPackage {
     pub(super) fn verification_request<'a>(
         &'a self,
         extraction_root: &'a Path,
-    ) -> PluginArtifactVerificationRequest<'a> {
-        PluginArtifactVerificationRequest {
+    ) -> PluginPackageVerificationRequest<'a> {
+        PluginPackageVerificationRequest {
             marketplace: &self.marketplace,
             catalog: &self.catalog,
             release: &self.release,
-            archive_path: self.archive_path.as_path(),
+            package_path: self.package_path.as_path(),
             extraction_root,
         }
     }
@@ -1189,9 +1137,8 @@ fn manifest_json_with_mcp(
     .to_string()
 }
 
-fn write_test_archive(
+fn write_test_package(
     path: &Path,
-    manifest: &[u8],
     version: &str,
     mutation: ArchiveMutation,
     extra_files: BTreeMap<String, Vec<u8>>,
@@ -1208,17 +1155,9 @@ fn write_test_archive(
         ),
     }
     .into_bytes();
-    let sbom = if matches!(mutation, ArchiveMutation::InvalidSbom) {
-        json!({"format":"unknown"}).to_string().into_bytes()
-    } else {
-        json!({"bomFormat":"CycloneDX","specVersion":"1.5"})
-            .to_string()
-            .into_bytes()
-    };
     let mut files = BTreeMap::from([
-        (".codex-plugin/plugin.json".to_string(), manifest.to_vec()),
         ("skills/demo/SKILL.md".to_string(), skill),
-        ("sbom.json".to_string(), sbom),
+        ("mcp/server.sh".to_string(), b"#!/bin/sh\nexit 0\n".to_vec()),
     ]);
     files.extend(extra_files);
     match mutation {
@@ -1248,68 +1187,68 @@ fn write_test_archive(
             );
         }
     }
-    let mut checksums = files
-        .iter()
-        .map(|(path, content)| (path.clone(), sha256_bytes(content)))
-        .collect::<BTreeMap<_, _>>();
-    if matches!(mutation, ArchiveMutation::MissingChecksum) {
-        checksums.remove("skills/demo/SKILL.md");
-    }
-    if matches!(mutation, ArchiveMutation::WrongChecksum) {
-        checksums.insert("skills/demo/SKILL.md".to_string(), "0".repeat(64));
-    }
-    files.insert(
-        ".codex-plugin/checksums.json".to_string(),
-        json!({"schemaVersion":1,"files":checksums})
+    if !matches!(mutation, ArchiveMutation::MissingPackageJson) {
+        files.insert(
+            "package.json".to_string(),
+            json!({
+                "name": "demo-plugin",
+                "version": version,
+                "bin": {"demo-mcp": "mcp/server.sh"}
+            })
             .to_string()
             .into_bytes(),
-    );
+        );
+    }
 
-    let file = File::create(path).expect("create test archive");
-    let mut writer = ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated)
-        .unix_permissions(0o644);
+    let file = File::create(path).expect("create test npm package");
+    let encoder = GzEncoder::new(file, Compression::default());
+    let mut builder = Builder::new(encoder);
     for (name, content) in &files {
-        let file_options = if name.starts_with("mcp/")
-            || name.starts_with("scripts/")
-            || name.starts_with("binaries/")
-        {
-            options.unix_permissions(0o755)
-        } else {
-            options
-        };
-        writer
-            .start_file(name, file_options)
-            .expect("start ZIP file");
-        writer.write_all(content).expect("write ZIP file");
+        append_tar_file(&mut builder, name.as_str(), content.as_slice());
     }
     match mutation {
-        ArchiveMutation::Traversal => {
-            writer
-                .start_file("../outside", options)
-                .expect("start traversal entry");
-            writer.write_all(b"outside").expect("write traversal entry");
+        ArchiveMutation::Symlink => {
+            let mut header = Header::new_gnu();
+            header.set_entry_type(EntryType::Symlink);
+            header.set_mode(0o777);
+            header.set_size(0);
+            header.set_cksum();
+            builder
+                .append_link(&mut header, "package/skills/demo/link", "../../outside")
+                .expect("append npm symlink");
         }
-        ArchiveMutation::Symlink => writer
-            .add_symlink("skills/demo/link", "../../outside", options)
-            .expect("add symlink entry"),
         ArchiveMutation::Duplicate => {
-            writer
-                .start_file("skills/demo/skill.md", options)
-                .expect("start case-colliding entry");
-            writer
-                .write_all(b"case collision")
-                .expect("write case-colliding entry");
+            append_tar_file(&mut builder, "skills/demo/skill.md", b"case collision");
         }
         ArchiveMutation::None
-        | ArchiveMutation::MissingChecksum
-        | ArchiveMutation::WrongChecksum
-        | ArchiveMutation::InvalidSbom
+        | ArchiveMutation::MissingPackageJson
+        | ArchiveMutation::WrongIntegrity
         | ArchiveMutation::SkillReferenceCycle
         | ArchiveMutation::SkillTraversalReference => {}
     }
-    writer.finish().expect("finish test archive");
+    builder.finish().expect("finish npm tarball");
+}
+
+fn append_tar_file(builder: &mut Builder<GzEncoder<File>>, name: &str, content: &[u8]) {
+    let mut header = Header::new_gnu();
+    header.set_entry_type(EntryType::Regular);
+    header.set_mode(
+        if name.starts_with("mcp/") || name.starts_with("scripts/") {
+            0o755
+        } else {
+            0o644
+        },
+    );
+    header.set_size(content.len() as u64);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, format!("package/{name}"), content)
+        .expect("append npm package file");
+}
+
+fn npm_integrity(path: &Path) -> String {
+    let bytes = fs::read(path).expect("read npm package for integrity");
+    format!("sha512-{}", STANDARD.encode(Sha512::digest(bytes)))
 }
 
 fn sha256_bytes(value: &[u8]) -> String {

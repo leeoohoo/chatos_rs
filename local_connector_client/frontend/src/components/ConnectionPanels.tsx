@@ -4,17 +4,12 @@
 import React from 'react';
 import {
   CheckCircle2,
-  ChevronLeft,
   CloudOff,
-  FolderOpen,
   LogOut,
-  Plus,
   Server,
-  ShieldCheck,
-  Trash2,
 } from 'lucide-react';
 
-import { api, type ConnectorStatus, type FsEntry } from '../api';
+import { api, type ConnectorStatus } from '../api';
 
 const DEFAULT_CLOUD_URL =
   import.meta.env.VITE_LOCAL_CONNECTOR_CLOUD_BASE_URL || 'https://local-connector.jgoool.com';
@@ -174,19 +169,19 @@ export function ConnectionCard({
   );
 }
 
-export function LocalBoundaryPanel({ status }: { status: ConnectorStatus }) {
+export function LocalBoundaryPanel() {
   return (
     <section className="panel">
       <div className="panelHeader">
         <div>
           <h2><CloudOff size={18} />本机边界</h2>
-          <p>目录、终端和本机权限控制运行在当前电脑，云端只通过已登录设备的长连接发起授权请求。</p>
+          <p>文件、终端和本机权限控制运行在当前电脑，云端只通过已登录设备的长连接发起授权请求。</p>
         </div>
       </div>
       <div className="metaGrid">
         <div>
-          <span>开放目录</span>
-          <strong>{status.workspaces.length} 个</strong>
+          <span>文件路由</span>
+          <strong>自动连接本机</strong>
         </div>
         <div>
           <span>权限控制</span>
@@ -196,195 +191,11 @@ export function LocalBoundaryPanel({ status }: { status: ConnectorStatus }) {
       </div>
       <div className="boundaryList">
         <div><CheckCircle2 size={16} />Local Connector Core 执行本机权限控制、文件和终端操作。</div>
+        <div><CheckCircle2 size={16} />无需另行登记目录；任务文件权限、沙箱和系统权限仍独立生效。</div>
         <div><CheckCircle2 size={16} />Local Connector Service 只负责登录设备、保存配对和 relay 消息。</div>
         <div><CheckCircle2 size={16} />本机任务租约由 Local Connector Client 在用户设备上管理。</div>
       </div>
     </section>
-  );
-}
-
-export function WorkspacePanel({
-  status,
-  onStatus,
-}: {
-  status: ConnectorStatus;
-  onStatus: (status: ConnectorStatus) => void;
-}) {
-  const [pickerOpen, setPickerOpen] = React.useState(false);
-  return (
-    <section className="panel">
-      <div className="panelHeader">
-        <div>
-          <h2><FolderOpen size={18} />开放目录</h2>
-          <p>默认关闭。只有这里授权过的目录，Chat OS 才能看到并用于创建项目或终端。</p>
-        </div>
-        <button className="primaryButton compact" onClick={() => setPickerOpen(true)}>
-          <Plus size={16} />开放目录
-        </button>
-      </div>
-      {status.workspaces.length === 0 ? (
-        <div className="emptyState">还没有开放任何本地目录。</div>
-      ) : (
-        <div className="workspaceList">
-          {status.workspaces.map((workspace) => (
-            <div className="workspaceRow" key={workspace.id}>
-              <div>
-                <strong>{workspace.alias}</strong>
-                <span>{workspace.absolute_root}</span>
-                <span>
-                  项目配置：{workspace.project_config_trusted
-                    ? '已信任'
-                    : workspace.project_config_trust_stale
-                      ? '目录身份已变化，信任失效'
-                      : '未信任'}
-                </span>
-              </div>
-              <button
-                className={`iconButton ${workspace.project_config_trusted ? 'active' : ''}`}
-                title={workspace.project_config_trusted ? '停止信任项目配置' : '信任项目配置'}
-                onClick={async () => {
-                  const trusted = !workspace.project_config_trusted;
-                  if (
-                    trusted
-                    && !window.confirm(
-                      '信任后，ChatOS 会读取该目录中的 .chatos/config.toml。仓库内容可能改变本机权限策略，但仍不能突破管理员 managed requirements。确认信任？',
-                    )
-                  ) {
-                    return;
-                  }
-                  onStatus(await api.setWorkspaceProjectConfigTrust(workspace.id, {
-                    trusted,
-                    risk_acknowledged: trusted,
-                  }));
-                }}
-              >
-                <ShieldCheck size={16} />
-              </button>
-              <button
-                className="iconButton danger"
-                title="移除"
-                onClick={async () => onStatus(await api.removeWorkspace(workspace.id))}
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      {pickerOpen ? <DirectoryPicker onClose={() => setPickerOpen(false)} onStatus={onStatus} /> : null}
-    </section>
-  );
-}
-
-function DirectoryPicker({
-  onClose,
-  onStatus,
-}: {
-  onClose: () => void;
-  onStatus: (status: ConnectorStatus) => void;
-}) {
-  const [path, setPath] = React.useState<string | null>(null);
-  const [items, setItems] = React.useState<FsEntry[]>([]);
-  const [parent, setParent] = React.useState<string | null>(null);
-  const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [alias, setAlias] = React.useState('');
-  const [error, setError] = React.useState<string | null>(null);
-
-  const load = React.useCallback(async (nextPath?: string | null) => {
-    setError(null);
-    try {
-      const result = await api.fsList(nextPath);
-      setPath(result.path);
-      setParent(result.parent || null);
-      setItems(result.entries.filter((entry) => entry.is_dir));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '目录读取失败');
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void load(null);
-  }, [load]);
-
-  const toggle = (entryPath: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(entryPath)) {
-        next.delete(entryPath);
-      } else {
-        next.add(entryPath);
-      }
-      return next;
-    });
-  };
-
-  const apply = async () => {
-    setError(null);
-    try {
-      let latest: ConnectorStatus | null = null;
-      for (const selectedPath of selected) {
-        latest = await api.addWorkspace({
-          path: selectedPath,
-          alias: selected.size === 1 ? alias.trim() || undefined : undefined,
-        });
-      }
-      if (latest) {
-        onStatus(latest);
-      }
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '授权目录失败');
-    }
-  };
-
-  return (
-    <div className="modalBackdrop">
-      <div className="modal">
-        <div className="panelHeader">
-          <div>
-            <h2>选择要开放的本地目录</h2>
-            <p className="mono">{path || '-'}</p>
-          </div>
-          <button className="iconButton" onClick={onClose}>×</button>
-        </div>
-        <div className="pickerToolbar">
-          <button className="ghostButton" disabled={!parent} onClick={() => void load(parent)}>
-            <ChevronLeft size={16} />上一级
-          </button>
-          <button className="ghostButton" disabled={!path} onClick={() => path && toggle(path)}>
-            选择当前目录
-          </button>
-        </div>
-        <div className="dirList">
-          {items.map((entry) => (
-            <div className="dirRow" key={entry.path}>
-              <input
-                type="checkbox"
-                checked={selected.has(entry.path)}
-                onChange={() => toggle(entry.path)}
-              />
-              <button type="button" onClick={() => void load(entry.path)}>
-                <FolderOpen size={15} />{entry.name}
-              </button>
-            </div>
-          ))}
-        </div>
-        <label>
-          单目录别名
-          <input value={alias} onChange={(event) => setAlias(event.target.value)} />
-        </label>
-        {selected.size > 0 ? (
-          <div className="selectionSummary">已选择 {selected.size} 个目录</div>
-        ) : null}
-        {error ? <div className="formError">{error}</div> : null}
-        <div className="modalActions">
-          <button className="ghostButton" onClick={onClose}>取消</button>
-          <button className="primaryButton compact" disabled={selected.size === 0} onClick={() => void apply()}>
-            开放所选目录
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 

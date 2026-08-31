@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::{McpExecutionHost, McpRouteCandidate, McpRouteResourceKind};
+use chatos_mcp_management_sdk::{McpRouteCandidate, McpRouteResourceKind};
 use chatos_plugin_management_sdk::{
     normalized_plugin_manifest_sha256, PluginComponentDescriptor, PluginComponentKind,
-    PluginExecutionHost, ResolvedPlugin,
+    ResolvedPlugin,
 };
 use sha2::{Digest, Sha256};
 
@@ -107,11 +107,6 @@ pub(super) fn materialize_plugin_tool_components(
             ),
             resource_kind: McpRouteResourceKind::Plugin,
             system_key: None,
-            execution_host: Some(match component.execution_host {
-                PluginExecutionHost::Cloud => McpExecutionHost::Cloud,
-                PluginExecutionHost::Local => McpExecutionHost::Local,
-                PluginExecutionHost::Portable => McpExecutionHost::Portable,
-            }),
             provider_ref: Some(provider_ref),
             required,
             allow_writes,
@@ -174,14 +169,13 @@ mod tests {
     use chatos_agent::SystemAgentKey;
     use chatos_plugin_management_sdk::{
         parse_plugin_manifest, plugin_component_descriptors, PluginAvailabilityStatus,
-        PluginComponentSnapshot, PluginComponentStatus, PluginManifestSource,
-        ResolvedPluginComponent,
+        PluginComponentSnapshot, PluginComponentStatus, ResolvedPluginComponent,
     };
 
     const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
     fn resolved_plugin_with_manifest(raw: &str, required: bool) -> ResolvedPlugin {
-        let manifest = parse_plugin_manifest(raw, PluginManifestSource::Chatos).unwrap();
+        let manifest = parse_plugin_manifest(raw).unwrap();
         let components = plugin_component_descriptors(&manifest);
         let mut plugin = resolved_plugin(required);
         plugin.catalog.name = manifest.name.clone();
@@ -194,6 +188,12 @@ mod tests {
         release.permissions = manifest.permissions.clone();
         let installation = plugin.installation.as_mut().unwrap();
         installation.version = release.version.clone();
+        installation.granted_permissions = release
+            .permissions
+            .iter()
+            .filter(|permission| permission.required)
+            .map(|permission| permission.permission.clone())
+            .collect();
         installation.component_statuses = components
             .iter()
             .map(|component| PluginComponentStatus {
@@ -233,8 +233,8 @@ mod tests {
     }
 
     #[test]
-    fn native_skill_materializes_as_a_local_executable_tool_component() {
-        let mut plugin = resolved_plugin_with_manifest(
+    fn packaged_skill_materializes_as_a_local_tool_component() {
+        let plugin = resolved_plugin_with_manifest(
             r#"{
                 "name": "native-tools",
                 "version": "1.0.0",
@@ -256,24 +256,10 @@ mod tests {
             }"#,
             true,
         );
-        let component = &mut plugin.components[0].component;
-        component.runtime_kind = "native_adapter".to_string();
-        component.metadata.insert(
-            "skill_id".to_string(),
-            serde_json::json!("internal_skill_documents"),
-        );
-        component.metadata.insert(
-            "bundle_id".to_string(),
-            serde_json::json!("chatos.internal.documents"),
-        );
-        plugin.release.as_mut().unwrap().components[0] = component.clone();
-        plugin.component_snapshots[0].component = component.clone();
-
         let result = materialize_mcp_candidates(&capabilities_with_plugin(plugin)).unwrap();
         assert!(result.plugin_bindings.is_empty());
         assert_eq!(result.plugin_tool_component_bindings.len(), 1);
         let resource = &result.resources[0];
-        assert_eq!(resource.execution_host, Some(McpExecutionHost::Local));
         assert!(resource.required);
         assert!(resource.allow_writes);
         let binding = result
@@ -313,10 +299,6 @@ mod tests {
         let command_result =
             materialize_mcp_candidates(&capabilities_with_plugin(command.clone())).unwrap();
         assert_eq!(command_result.plugin_tool_component_bindings.len(), 1);
-        assert_eq!(
-            command_result.resources[0].execution_host,
-            Some(McpExecutionHost::Local)
-        );
         assert!(!command_result.resources[0].allow_writes);
 
         let mut wrong_agent = capabilities_with_plugin(command);

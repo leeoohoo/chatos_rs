@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::lifecycle::{sanitize_terminal_result, MAX_INLINE_MCP_RESULT_BYTES};
 use super::*;
 use chatos_mcp_service::MCP_ERROR_INTERNAL;
 
@@ -30,6 +31,42 @@ fn record() -> RuntimeInvocationRecord {
         expires_at: DateTime::from_millis((chrono::Utc::now().timestamp() + 60) * 1_000),
         expires_at_unix: chrono::Utc::now().timestamp() + 60,
     }
+}
+
+#[test]
+fn terminal_result_keeps_supported_visual_payloads_inline() {
+    let result = serde_json::json!({
+        "content": [{
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "a".repeat(MAX_INLINE_MCP_RESULT_BYTES - 256),
+        }]
+    });
+
+    assert_eq!(
+        sanitize_terminal_result(Some(result.clone())).unwrap(),
+        Some(result)
+    );
+}
+
+#[test]
+fn terminal_result_truncates_only_after_visual_payload_budget_is_exceeded() {
+    let result = serde_json::json!({
+        "content": [{
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "a".repeat(MAX_INLINE_MCP_RESULT_BYTES),
+        }]
+    });
+    let encoded_bytes = serde_json::to_vec(&result).unwrap().len();
+
+    assert_eq!(
+        sanitize_terminal_result(Some(result)).unwrap(),
+        Some(serde_json::json!({
+            "status": "result_truncated",
+            "result_bytes": encoded_bytes,
+        }))
+    );
 }
 
 #[tokio::test]

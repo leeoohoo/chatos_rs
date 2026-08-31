@@ -6,7 +6,8 @@ use serde_json::json;
 
 use super::{
     error_support::{remote_connectivity_error_status_and_code, remote_terminal_error_code},
-    internal_error_response, remote_connectivity_error_response, ws_error_output, WsOutput,
+    internal_error_response, normalize_create_request, remote_connectivity_error_response,
+    ws_error_output, CreateRemoteConnectionRequest, WsOutput,
 };
 use crate::core::remote_connection_error_codes::remote_connection_codes;
 
@@ -100,4 +101,42 @@ fn emits_internal_error_payload_with_code() {
             "code": remote_connection_codes::REMOTE_CONNECTION_DELETE_FAILED
         })
     );
+}
+
+#[test]
+fn native_swift_client_connection_does_not_require_cloud_credentials() {
+    let connection = normalize_create_request(
+        CreateRemoteConnectionRequest {
+            name: Some("Native SSH".to_string()),
+            host: Some("server.example.com".to_string()),
+            port: Some(22),
+            username: Some("root".to_string()),
+            auth_type: Some("password".to_string()),
+            password: None,
+            private_key_path: None,
+            certificate_path: None,
+            default_remote_path: None,
+            host_key_policy: Some("accept_new".to_string()),
+            local_connector_device_id: Some("chatos-swift-native-client".to_string()),
+            local_connector_workspace_id: Some("local-machine".to_string()),
+            jump_enabled: Some(false),
+            jump_connection_id: None,
+            jump_host: None,
+            jump_port: None,
+            jump_username: None,
+            jump_private_key_path: None,
+            jump_certificate_path: None,
+            jump_password: None,
+            user_id: None,
+        },
+        Some("user-1".to_string()),
+    )
+    .expect("native client stores credentials locally");
+
+    assert_eq!(
+        connection.local_connector_device_id,
+        "chatos-swift-native-client"
+    );
+    assert_eq!(connection.local_connector_workspace_id, "local-machine");
+    assert!(connection.password.is_none());
 }

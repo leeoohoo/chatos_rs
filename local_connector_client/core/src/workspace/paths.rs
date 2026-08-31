@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use anyhow::{anyhow, Result};
+use std::path::{Path, PathBuf};
+
+use anyhow::{anyhow, Context, Result};
 
 use crate::relay::RelayRequest;
 use crate::{LocalState, WorkspaceState};
@@ -15,6 +17,7 @@ pub(crate) use normalize::{
 pub(crate) use resolve::{
     canonicalize_existing_dir, relative_to_workspace, resolve_request_workspace_dir,
     resolve_workspace_dir, resolve_workspace_path, workspace_fingerprint,
+    workspace_fingerprint_with_salt,
 };
 
 #[cfg(test)]
@@ -74,4 +77,47 @@ pub(crate) fn request_owned_paths(request: &RelayRequest) -> Result<Option<Vec<S
     } else {
         Ok(Some(normalized))
     }
+}
+
+pub(crate) fn safe_workspace_path(
+    state: &LocalState,
+    request: &RelayRequest,
+    requested: &str,
+) -> Result<(PathBuf, String)> {
+    if request.workspace_id.trim().is_empty() {
+        return Err(anyhow!("workspace_id is required for this operation"));
+    }
+    let workspace = workspace_for_request(state, request.workspace_id.as_str())?;
+    let root = canonicalize_existing_dir(workspace.absolute_root.as_path())?;
+    let relative = normalize_request_workspace_relative_path(workspace, request, requested)?;
+    if relative == "." {
+        return Err(anyhow!("a file or directory path is required"));
+    }
+    let candidate = root.join(Path::new(relative.as_str()));
+    ensure_existing_ancestor_inside_workspace(root.as_path(), candidate.as_path())?;
+    if candidate.exists() {
+        let canonical = candidate
+            .canonicalize()
+            .with_context(|| format!("resolve output path {}", candidate.display()))?;
+        if !canonical.starts_with(root.as_path()) {
+            return Err(anyhow!("output path escapes the authorized workspace"));
+        }
+    }
+    Ok((candidate, relative))
+}
+
+fn ensure_existing_ancestor_inside_workspace(root: &Path, candidate: &Path) -> Result<()> {
+    let mut cursor = candidate;
+    while !cursor.exists() {
+        cursor = cursor
+            .parent()
+            .ok_or_else(|| anyhow!("output path has no existing parent"))?;
+    }
+    let canonical = cursor
+        .canonicalize()
+        .with_context(|| format!("resolve output parent {}", cursor.display()))?;
+    if !canonical.starts_with(root) {
+        return Err(anyhow!("output path escapes the authorized workspace"));
+    }
+    Ok(())
 }

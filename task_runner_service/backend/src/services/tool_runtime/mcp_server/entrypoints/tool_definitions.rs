@@ -152,23 +152,22 @@ impl TaskRunnerMcpService {
                 }
             }
         }
-        if tool_profile != McpToolProfile::ChatosAsyncPlanner {
-            match self
-                .task_mcp_schema_choices(current_user, request_context)
-                .await
-            {
-                Ok((builtin_choices, external_choices)) => {
-                    enrich_tool_schemas_with_task_mcp_choices(
-                        &mut tools,
-                        builtin_choices.as_slice(),
-                        external_choices.as_slice(),
-                    );
-                }
-                Err(err) => tracing::warn!(
-                    error = err.as_str(),
-                    "task runner could not enrich MCP tool schemas with Agent-bound MCP choices"
-                ),
+        match self
+            .task_mcp_schema_choices(current_user, request_context)
+            .await
+        {
+            Ok((builtin_choices, external_choices, plugin_choices)) => {
+                enrich_tool_schemas_with_task_mcp_choices(
+                    &mut tools,
+                    builtin_choices.as_slice(),
+                    external_choices.as_slice(),
+                    plugin_choices.as_slice(),
+                );
             }
+            Err(err) => tracing::warn!(
+                error = err.as_str(),
+                "task runner could not enrich MCP tool schemas with Agent-bound MCP choices"
+            ),
         }
         if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
             enrich_project_execution_task_scope_schema(
@@ -195,7 +194,14 @@ impl TaskRunnerMcpService {
         &self,
         current_user: &CurrentUser,
         request_context: &McpRequestContext,
-    ) -> Result<(Vec<TaskMcpSchemaChoice>, Vec<TaskMcpSchemaChoice>), String> {
+    ) -> Result<
+        (
+            Vec<TaskMcpSchemaChoice>,
+            Vec<TaskMcpSchemaChoice>,
+            Vec<TaskMcpSchemaChoice>,
+        ),
+        String,
+    > {
         let owner_user_id = current_user
             .effective_owner_user_id()
             .ok_or_else(|| "current Agent is missing owner scope".to_string())?;
@@ -217,6 +223,7 @@ impl TaskRunnerMcpService {
         ];
         let mut builtin = BTreeMap::<String, String>::new();
         let mut external = BTreeMap::<String, String>::new();
+        let mut plugins = BTreeMap::<String, String>::new();
         for (task_profile, requires_execution, target_label) in targets {
             let agent_key =
                 crate::models::task_runner_agent_key_for(task_profile, requires_execution);
@@ -240,6 +247,17 @@ impl TaskRunnerMcpService {
             for (value, title) in policy.selectable_external_mcp_choices() {
                 merge_mcp_choice(&mut external, value, title, target_label);
             }
+            for plugin in policy.selectable_plugin_views() {
+                let title = format!(
+                    "{} — {}",
+                    plugin.display_name,
+                    task_plugin_routing_description(
+                        plugin.plugin_key.as_str(),
+                        plugin.description.as_str(),
+                    )
+                );
+                merge_mcp_choice(&mut plugins, plugin.plugin_key, title, target_label);
+            }
         }
         Ok((
             builtin
@@ -250,7 +268,42 @@ impl TaskRunnerMcpService {
                 .into_iter()
                 .map(|(value, title)| TaskMcpSchemaChoice { value, title })
                 .collect(),
+            plugins
+                .into_iter()
+                .map(|(value, title)| TaskMcpSchemaChoice { value, title })
+                .collect(),
         ))
+    }
+}
+
+fn task_plugin_routing_description(plugin_key: &str, description: &str) -> String {
+    let normalized_key = plugin_key.trim().to_ascii_lowercase();
+    if normalized_key.contains("computer-use") {
+        return format!(
+            "{description} Use this for native desktop applications and operating-system UI, including Feishu/Lark, WeChat, DingTalk, Finder and other installed apps. Prefer it over browser automation whenever the target is a desktop app."
+        );
+    }
+    if normalized_key.contains("browser-cdp") {
+        return format!(
+            "{description} Use this only for websites in managed Chromium or an explicitly connected Chrome session. Do not select it for native desktop applications such as Feishu/Lark, WeChat or DingTalk."
+        );
+    }
+    description.to_string()
+}
+
+#[cfg(test)]
+mod plugin_routing_tests {
+    use super::task_plugin_routing_description;
+
+    #[test]
+    fn distinguishes_native_apps_from_browser_pages() {
+        let computer = task_plugin_routing_description("open-computer-use", "Desktop control.");
+        assert!(computer.contains("native desktop applications"));
+        assert!(computer.contains("Feishu/Lark"));
+
+        let browser = task_plugin_routing_description("chatos-browser-cdp", "Browser control.");
+        assert!(browser.contains("only for websites"));
+        assert!(browser.contains("Do not select it for native desktop applications"));
     }
 }
 

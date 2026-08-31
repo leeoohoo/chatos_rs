@@ -12,9 +12,6 @@ use crate::agent_builder::{AgentBuilderOptions, AgentBuilderService, AgentBuilde
 use crate::ask_user::{
     AskUserOptions, AskUserService, AskUserStoreRef, ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
 };
-use crate::browser_tools::{
-    BrowserToolCallContext, BrowserToolsOptions, BrowserToolsService, BrowserVisionAdapterRef,
-};
 use crate::code_maintainer::{
     CodeMaintainerHooksRef, CodeMaintainerOptions, CodeMaintainerService,
 };
@@ -32,7 +29,6 @@ use crate::remote_connection_controller::{
 use crate::terminal_controller::{
     TerminalControllerOptions, TerminalControllerService, TerminalControllerStoreRef,
 };
-use crate::web_tools::{WebToolsOptions, WebToolsService};
 
 #[derive(Clone, Default)]
 pub struct BuiltinToolServiceDependencies {
@@ -42,14 +38,12 @@ pub struct BuiltinToolServiceDependencies {
     pub agent_builder_store: Option<AgentBuilderStoreRef>,
     pub ask_user_store: Option<AskUserStoreRef>,
     pub remote_connection_controller_store: Option<RemoteConnectionControllerStoreRef>,
-    pub browser_vision_adapter: Option<BrowserVisionAdapterRef>,
     pub memory_reader_store: Option<MemoryReaderStoreRef>,
 }
 
 #[derive(Clone)]
 pub enum SharedBuiltinToolService {
     AgentBuilder(AgentBuilderService),
-    BrowserTools(BrowserToolsService),
     CodeMaintainer(CodeMaintainerService),
     MemoryCommandReader(MemoryCommandReaderService),
     MemoryPluginReader(MemoryPluginReaderService),
@@ -58,7 +52,6 @@ pub enum SharedBuiltinToolService {
     RemoteConnectionController(RemoteConnectionControllerService),
     TerminalController(TerminalControllerService),
     AskUser(AskUserService),
-    WebTools(WebToolsService),
 }
 
 pub fn build_builtin_tool_service_with_dependencies(
@@ -168,21 +161,6 @@ pub fn build_builtin_tool_service_with_dependencies(
                 })?,
             ))
         }
-        BuiltinMcpKind::WebTools => Ok(SharedBuiltinToolService::WebTools(WebToolsService::new(
-            WebToolsOptions {
-                server_name: server.name.clone(),
-                workspace_dir: std::path::PathBuf::from(&server.workspace_dir),
-                ..Default::default()
-            },
-        )?)),
-        BuiltinMcpKind::BrowserTools => Ok(SharedBuiltinToolService::BrowserTools(
-            BrowserToolsService::new(BrowserToolsOptions {
-                server_name: server.name.clone(),
-                workspace_dir: std::path::PathBuf::from(&server.workspace_dir),
-                vision_adapter: dependencies.browser_vision_adapter,
-                ..Default::default()
-            })?,
-        )),
         BuiltinMcpKind::MemorySkillReader => {
             let agent_id = required_trimmed_value(
                 server.contact_agent_id.as_deref(),
@@ -249,7 +227,6 @@ impl SharedBuiltinToolService {
     pub fn list_tools(&self) -> Vec<Value> {
         match self {
             Self::AgentBuilder(service) => service.list_tools(),
-            Self::BrowserTools(service) => service.list_tools(),
             Self::CodeMaintainer(service) => service.list_tools(),
             Self::MemoryCommandReader(service) => service.list_tools(),
             Self::MemoryPluginReader(service) => service.list_tools(),
@@ -258,7 +235,6 @@ impl SharedBuiltinToolService {
             Self::RemoteConnectionController(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
             Self::AskUser(service) => service.list_tools(),
-            Self::WebTools(service) => service.list_tools(),
         }
     }
 
@@ -276,11 +252,6 @@ impl SharedBuiltinToolService {
                 context.conversation_id.as_deref(),
                 context.conversation_turn_id.as_deref(),
                 on_stream_chunk,
-            ),
-            Self::BrowserTools(service) => service.call_tool_with_context(
-                name,
-                args,
-                BrowserToolCallContext::from_tool_call_context(context),
             ),
             Self::CodeMaintainer(service) => {
                 service.call_tool(name, args, context.conversation_id.as_deref())
@@ -300,14 +271,12 @@ impl SharedBuiltinToolService {
                 context.conversation_turn_id.as_deref(),
                 on_stream_chunk,
             ),
-            Self::WebTools(service) => service.call_tool(name, args),
         }
     }
 
     pub fn unavailable_tools(&self) -> Vec<(String, String)> {
         match self {
             Self::AgentBuilder(_) => Vec::new(),
-            Self::BrowserTools(service) => service.unavailable_tools(),
             Self::CodeMaintainer(_) => Vec::new(),
             Self::MemoryCommandReader(_) => Vec::new(),
             Self::MemoryPluginReader(_) => Vec::new(),
@@ -316,7 +285,6 @@ impl SharedBuiltinToolService {
             Self::RemoteConnectionController(service) => service.unavailable_tools(),
             Self::TerminalController(_) => Vec::new(),
             Self::AskUser(_) => Vec::new(),
-            Self::WebTools(service) => service.unavailable_tools(),
         }
     }
 }
@@ -327,13 +295,12 @@ pub fn build_shared_builtin_tool_service(
     let kind = builtin_kind_by_any(server.kind.as_str())
         .ok_or_else(|| format!("unknown builtin mcp kind: {}", server.kind))?;
     match kind {
-        BuiltinMcpKind::CodeMaintainerRead
-        | BuiltinMcpKind::CodeMaintainerWrite
-        | BuiltinMcpKind::BrowserTools
-        | BuiltinMcpKind::WebTools => Ok(Some(build_builtin_tool_service_with_dependencies(
-            server,
-            BuiltinToolServiceDependencies::default(),
-        )?)),
+        BuiltinMcpKind::CodeMaintainerRead | BuiltinMcpKind::CodeMaintainerWrite => {
+            Ok(Some(build_builtin_tool_service_with_dependencies(
+                server,
+                BuiltinToolServiceDependencies::default(),
+            )?))
+        }
         _ => Ok(None),
     }
 }

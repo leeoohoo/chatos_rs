@@ -366,22 +366,32 @@ pub fn cloud_agent_mcp_result_input_items(
     for (index, (call, result)) in calls.iter().zip(results).enumerate() {
         let call_id = chatos_ai_runtime::tool_call::extract_tool_call_id(call)
             .ok_or_else(|| format!("pending tool call {index} has no call id"))?;
-        let output = if result.get("status").and_then(Value::as_str) == Some("completed") {
-            result
-                .get("result")
-                .cloned()
-                .unwrap_or(Value::Null)
-                .to_string()
+        if result.get("status").and_then(Value::as_str) == Some("completed") {
+            let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)
+                .ok_or_else(|| format!("pending tool call {index} has no name"))?;
+            let tool_result = chatos_mcp_runtime::execution::external_tool_result_from_value(
+                call_id.to_string(),
+                name.to_string(),
+                None,
+                result.get("result").unwrap_or(&Value::Null),
+                None,
+            );
+            items.extend(chatos_ai_runtime::tool_runtime::build_tool_output_items(&[
+                tool_result,
+            ]));
         } else {
-            result
+            let output = result
                 .get("error")
                 .and_then(Value::as_str)
                 .unwrap_or("MCP tool call failed")
-                .to_string()
-        };
-        items.push(
-            chatos_ai_runtime::tool_call::build_function_call_output_item(call_id, output.as_str()),
-        );
+                .to_string();
+            items.push(
+                chatos_ai_runtime::tool_call::build_function_call_output_item(
+                    call_id,
+                    output.as_str(),
+                ),
+            );
+        }
     }
     Ok(items)
 }
@@ -403,27 +413,47 @@ pub fn cloud_agent_mcp_result_callback_payload(
             let name = chatos_ai_runtime::tool_call::extract_tool_call_name(call)
                 .ok_or_else(|| format!("pending tool call {index} has no name"))?;
             let completed = result.get("status").and_then(Value::as_str) == Some("completed");
-            let content = if completed {
-                result
-                    .get("result")
-                    .cloned()
-                    .unwrap_or(Value::Null)
-                    .to_string()
+            let normalized = if completed {
+                Some(
+                    chatos_mcp_runtime::execution::external_tool_result_from_value(
+                        tool_call_id.to_string(),
+                        name.to_string(),
+                        call.get("conversation_turn_id")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        result.get("result").unwrap_or(&Value::Null),
+                        None,
+                    ),
+                )
             } else {
-                result
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("MCP tool call failed")
-                    .to_string()
+                None
             };
+            let content = normalized
+                .as_ref()
+                .map(|item| item.content.clone())
+                .unwrap_or_else(|| {
+                    result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("MCP tool call failed")
+                        .to_string()
+                });
+            let success = normalized
+                .as_ref()
+                .map(|item| item.success)
+                .unwrap_or(false);
+            let is_error = normalized
+                .as_ref()
+                .map(|item| item.is_error)
+                .unwrap_or(true);
             let mut payload = serde_json::json!({
                 "tool_call_id": tool_call_id,
                 "name": name,
-                "success": completed,
-                "is_error": !completed,
+                "success": success,
+                "is_error": is_error,
                 "is_stream": false,
                 "content": content,
-                "result": result.get("result").cloned().unwrap_or(Value::Null),
+                "result": normalized.and_then(|item| item.result).unwrap_or(Value::Null),
                 "error": result.get("error").cloned().unwrap_or(Value::Null),
             });
             if let Some(invocation_id) = call.get("invocation_id").and_then(Value::as_str) {
@@ -1464,6 +1494,59 @@ mod tests {
         assert_eq!(items[0]["call_id"], "call-1");
         assert_eq!(items[1]["type"], "function_call_output");
         assert_eq!(items[1]["call_id"], "call-1");
+    }
+
+    #[test]
+    fn mcp_image_result_is_forwarded_as_visual_input_instead_of_base64_text() {
+        let calls = serde_json::json!([{
+            "id": "call-image",
+            "function": {"name": "computer_get_app_state", "arguments": "{}"}
+        }]);
+        let results = serde_json::json!([{
+            "status": "completed",
+            "result": {
+                "content": [
+                    {"type": "text", "text": "App=md.obsidian"},
+                    {
+                        "type": "image",
+                        "data": "iVBORw0KGgo=",
+                        "mimeType": "image/png"
+                    }
+                ],
+                "isError": false
+            }
+        }]);
+        let response_output = serde_json::json!([{
+            "type": "function_call",
+            "call_id": "call-image",
+            "name": "computer_get_app_state",
+            "arguments": "{}"
+        }]);
+
+        let items = cloud_agent_mcp_result_input_items(
+            response_output.as_array().unwrap(),
+            calls.as_array().unwrap(),
+            results.as_array().unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[1]["output"], "App=md.obsidian");
+        assert!(!items[1].to_string().contains("iVBORw0KGgo="));
+        assert_eq!(
+            items[2]
+                .pointer("/content/0/image_url")
+                .and_then(Value::as_str),
+            Some("data:image/png;base64,iVBORw0KGgo=")
+        );
+
+        let callback = cloud_agent_mcp_result_callback_payload(
+            calls.as_array().unwrap(),
+            results.as_array().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(callback["tool_results"][0]["content"], "App=md.obsidian");
+        assert!(!callback.to_string().contains("iVBORw0KGgo="));
     }
 
     #[test]

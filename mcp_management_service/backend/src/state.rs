@@ -102,13 +102,11 @@ impl AppState {
             config.local_connector_http_client.clone(),
             config.local_connector_service_base_url.clone(),
             config.local_connector_internal_api_secret.clone(),
-            config.embedded_work_dir.clone(),
             ProviderRuntimeConfig {
                 downstream_request_timeout: config.downstream_request_timeout,
                 local_connector_request_timeout: local_connector_tool_timeout(
                     config.downstream_request_timeout,
                 ),
-                external_http_request_timeout: config.external_http_request_timeout,
                 response_limit_bytes: config.provider_response_limit_bytes,
             },
         )?;
@@ -117,7 +115,6 @@ impl AppState {
                 RuntimeSessionStore::connect(
                     database_url,
                     config.runtime_session_encryption_secret.as_str(),
-                    config.external_http_request_timeout,
                     runtime_session_cache_limits,
                 )
                 .await?

@@ -3,11 +3,11 @@
 
 use chatos_mcp::{AskUserPromptPayload, AskUserResponseSubmission};
 use chatos_mcp_management_sdk::RuntimeWorkspaceRouteTarget;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::{default_true, now_rfc3339};
+use super::{default_true, is_reserved_internal_mcp_resource_id, now_rfc3339};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -71,7 +71,7 @@ pub struct ChatosCallbackDeliveryState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EffectiveTaskToolSnapshot {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_effective_mcp_resource_ids")]
     pub requested_mcp_resource_ids: Vec<String>,
     #[serde(default)]
     pub workspace_read: bool,
@@ -79,6 +79,21 @@ pub struct EffectiveTaskToolSnapshot {
     pub workspace_write: bool,
     #[serde(default)]
     pub terminal: bool,
+}
+
+fn deserialize_effective_mcp_resource_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut values = Vec::<String>::deserialize(deserializer)?;
+    values.retain(|resource_id| {
+        !is_reserved_internal_mcp_resource_id(resource_id)
+            || chatos_mcp::system_mcp_descriptor_by_resource_id(resource_id).is_some()
+            || resource_id == chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID
+    });
+    values.sort();
+    values.dedup();
+    Ok(values)
 }
 
 impl EffectiveTaskToolSnapshot {
@@ -551,6 +566,28 @@ mod tests {
         assert_eq!(
             decoded.effective_tools,
             EffectiveTaskToolSnapshot::default()
+        );
+    }
+
+    #[test]
+    fn legacy_unknown_internal_resources_are_removed_from_effective_tool_snapshots() {
+        let snapshot = serde_json::from_value::<EffectiveTaskToolSnapshot>(json!({
+            "requested_mcp_resource_ids": [
+                "builtin_ask_user",
+                "builtin_removed_resource",
+                "external-mcp-1",
+                "system_mcp_removed_resource",
+                chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID
+            ]
+        }))
+        .expect("legacy effective tool snapshot");
+        assert_eq!(
+            snapshot.requested_mcp_resource_ids,
+            vec![
+                "builtin_ask_user".to_string(),
+                "external-mcp-1".to_string(),
+                chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID.to_string(),
+            ]
         );
     }
 }

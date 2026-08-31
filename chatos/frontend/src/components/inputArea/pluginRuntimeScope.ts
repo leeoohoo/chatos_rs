@@ -37,7 +37,5 @@ export const filterPluginsForProjectRuntime = (
 ): TaskRunnerSelectablePluginResponse[] => plugins.filter((plugin) => {
   const availableComponents = (Array.isArray(plugin.components) ? plugin.components : [])
     .filter((component) => component.available);
-  return availableComponents.some((component) => (
-    component.prepare_provider === 'local_connector'
-  ));
+  return availableComponents.length > 0;
 });

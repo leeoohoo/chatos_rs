@@ -42,7 +42,7 @@ fn system_agent_keys_match_registry_keys() {
 
 #[test]
 fn system_mcp_keys_are_stable_and_complete() {
-    assert_eq!(SystemMcpKey::ALL.len(), 16);
+    assert_eq!(SystemMcpKey::ALL.len(), 14);
     assert!("task_manager".parse::<SystemMcpKey>().is_err());
     assert_eq!(SystemMcpKey::TaskProcessLog.as_str(), "task_process_log");
     assert_eq!(
@@ -68,34 +68,6 @@ fn resource_security_default_snapshot_matches_service_policy() {
             "allowed_tool_names": [],
             "blocked_tool_names": []
         })
-    );
-}
-
-#[test]
-fn local_connector_status_batch_round_trips_flattened_contract() {
-    let snapshot = serde_json::json!({
-        "items": [{
-            "mcp_id": "mcp-1",
-            "owner_user_id": "user-1",
-            "device_id": "device-1",
-            "workspace_id": "workspace-1",
-            "manifest_id": "manifest-1",
-            "status": "available",
-            "last_error": null,
-            "tool_snapshot": [{"name": "read_file"}],
-            "manifest_hash": "sha256:demo"
-        }]
-    });
-
-    let batch: LocalConnectorMcpStatusBatchRequest =
-        serde_json::from_value(snapshot.clone()).expect("decode status batch");
-    assert_eq!(
-        batch.items[0].status.workspace_id.as_deref(),
-        Some("workspace-1")
-    );
-    assert_eq!(
-        serde_json::to_value(batch).expect("encode status batch"),
-        snapshot
     );
 }
 

@@ -14,13 +14,19 @@ use crate::core::chat_stream::{
     ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::messages::set_task_runner_async_overall_status_for_session;
+use crate::services::agent_runtime::message_manager::MessageManager;
+use crate::services::ai_common::{
+    build_user_message_metadata, TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE,
+};
 use crate::utils::abort_registry;
 use crate::utils::attachments::Attachment;
 use crate::utils::log_helpers::log_chat_begin;
 use crate::utils::sse::SseSender;
 
 use super::bootstrap::CommonChatBootstrap;
-use super::chat_execution::{effective_codex_gateway_mcp_passthrough, prepare_mcp_execution};
+use super::chat_execution::{
+    effective_codex_gateway_mcp_passthrough, merge_user_record_metadata, prepare_mcp_execution,
+};
 use super::cloud_agent::{start_chatos_cloud_agent, StartChatosCloudAgent};
 use super::guidance;
 use super::runtime_context::{ResolvedConversationRuntimeContext, ToolMetadataMap};
@@ -121,6 +127,42 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         project_id.clone(),
         Some(user_message_id.clone()),
     );
+
+    let persisted_content = persisted_user_message_content.as_deref().unwrap_or(content);
+    let persisted_metadata = merge_user_record_metadata(
+        persisted_user_message_metadata.clone(),
+        build_user_message_metadata(attachments.as_slice(), Some(resolved_turn_id.as_str())),
+    );
+    if let Err(error) = MessageManager::new()
+        .save_user_message(
+            session_id,
+            persisted_content,
+            Some(user_message_id.clone()),
+            Some(TASK_RUNNER_ASYNC_PLAN_MESSAGE_MODE.to_string()),
+            Some(model_runtime.model.clone()),
+            persisted_metadata,
+        )
+        .await
+    {
+        let empty_chunk_sent = Arc::new(AtomicBool::new(false));
+        let empty_streamed_content = Arc::new(Mutex::new(String::new()));
+        finalize_chat_result(
+            &sink,
+            session_id,
+            resolved_turn_id.as_str(),
+            user_message_id.as_str(),
+            false,
+            None,
+            &empty_chunk_sent,
+            &empty_streamed_content,
+            Err(format!("保存用户消息失败: {error}")),
+            true,
+            || crate::utils::log_helpers::log_chat_cancelled(session_id),
+            crate::utils::log_helpers::log_chat_error,
+        )
+        .await;
+        return;
+    }
 
     if let Some(runtime_error) = runtime_context.runtime_error.clone() {
         close_mcp_management_runtime_session(

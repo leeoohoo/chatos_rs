@@ -3,8 +3,7 @@
 
 use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions, McpRecord as PluginMcpRecord, McpRuntime, ResolvedMcp,
-    ResolvedSkill, ResourceMetadata, ResourceSecurity, SkillContent, SkillInstallationRecord,
-    SkillRecord, SystemAgentKey,
+    ResolvedSkill, ResourceMetadata, ResourceSecurity, SkillContent, SkillRecord, SystemAgentKey,
 };
 
 use super::super::super::BUILTIN_RUNTIME_KIND;
@@ -89,11 +88,8 @@ pub(in super::super) fn resolved_skill(id: &str, required: bool, available: bool
             description: Some("Local prompt-only Skill".to_string()),
             enabled: true,
             content: SkillContent {
-                kind: "local_connector_bundle".to_string(),
-                bundle_id: Some("chatos.internal.remotion-best-practices".to_string()),
-                bundle_version: Some("1.0.0".to_string()),
-                bundle_hash: Some("bundle-hash-1".to_string()),
-                entrypoint_kind: Some("prompt_only".to_string()),
+                kind: "inline".to_string(),
+                inline: Some("Use the plugin-provided rendering guidance.".to_string()),
                 ..SkillContent::default()
             },
             metadata: ResourceMetadata::default(),
@@ -129,19 +125,5 @@ pub(in super::super) fn resolved_skill(id: &str, required: bool, available: bool
         available,
         status: if available { "available" } else { "offline" }.to_string(),
         reason: (!available).then(|| "offline".to_string()),
-        installation: available.then(|| SkillInstallationRecord {
-            id: format!("owner-1:device-1:{id}"),
-            owner_user_id: "owner-1".to_string(),
-            device_id: "device-1".to_string(),
-            skill_id: id.to_string(),
-            bundle_id: "chatos.internal.remotion-best-practices".to_string(),
-            version: "1.0.0".to_string(),
-            bundle_hash: "bundle-hash-1".to_string(),
-            platform: "macos-arm64".to_string(),
-            status: "available".to_string(),
-            dependency_status: "available".to_string(),
-            last_error: None,
-            last_checked_at: "now".to_string(),
-        }),
     }
 }

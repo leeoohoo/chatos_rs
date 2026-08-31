@@ -3,30 +3,6 @@
 
 use super::*;
 
-pub(super) fn reject_browser_identity_overrides(arguments: &Value) -> Result<(), String> {
-    let Some(arguments) = arguments.as_object() else {
-        return Ok(());
-    };
-    if [
-        "owner_user_id",
-        "user_id",
-        "runtime_session_id",
-        "session_id",
-        "source_session_id",
-        "conversation_id",
-        "project_id",
-    ]
-    .into_iter()
-    .any(|key| arguments.contains_key(key))
-    {
-        return Err(
-            "Browser Runtime identity is bound by MCP Management and cannot be supplied by tool arguments"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
 pub(super) fn reject_notepad_identity_overrides(arguments: &Value) -> Result<(), String> {
     let Some(arguments) = arguments.as_object() else {
         return Ok(());

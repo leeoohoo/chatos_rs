@@ -46,21 +46,3 @@ test('normalizes developer URLs to loopback defaults', (context) => {
   assert.equal(saved.developer_chatos_web_url, 'http://localhost:8088');
   assert.deepEqual(readRuntimeSettings(statePath), saved);
 });
-
-test('requires explicit risk acknowledgement before enabling full CDP fallback setting', (context) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatos-runtime-settings-'));
-  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const statePath = path.join(root, 'state.json');
-
-  assert.throws(
-    () => updateRuntimeSettings({ browser_full_cdp_access_enabled: true }, statePath),
-    /explicit risk acknowledgement/,
-  );
-  assert.equal(
-    updateRuntimeSettings({
-      browser_full_cdp_access_enabled: true,
-      acknowledge_browser_full_cdp_risk: true,
-    }, statePath).browser_full_cdp_access_enabled,
-    true,
-  );
-});

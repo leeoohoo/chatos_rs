@@ -46,21 +46,20 @@ impl PluginRuntimeHost {
             ));
         }
         let adapter_session_id = Uuid::new_v4().to_string();
-        let (skills, agents, commands, hooks, ui, native_skill, mcp, version, operations) =
-            match component_kind {
-                PluginComponentKind::SkillCollection => {
-                    let skill_keys = required_body_text_array(&request.body, "skill_keys", 64)?;
-                    let available = self
-                        .skill_loader
-                        .load_component(plugin_id.as_str(), component_key.as_str())
-                        .map_err(|error| (409, error.to_string()))?;
-                    let mut by_key = available
-                        .into_iter()
-                        .map(|skill| (skill.skill_key.clone(), skill))
-                        .collect::<BTreeMap<_, _>>();
-                    let mut selected = BTreeMap::new();
-                    for skill_key in skill_keys {
-                        let skill = by_key.remove(skill_key.as_str()).ok_or_else(|| {
+        let (skills, agents, commands, hooks, ui, mcp, version, operations) = match component_kind {
+            PluginComponentKind::SkillCollection => {
+                let skill_keys = required_body_text_array(&request.body, "skill_keys", 64)?;
+                let available = self
+                    .skill_loader
+                    .load_component(plugin_id.as_str(), component_key.as_str())
+                    .map_err(|error| (409, error.to_string()))?;
+                let mut by_key = available
+                    .into_iter()
+                    .map(|skill| (skill.skill_key.clone(), skill))
+                    .collect::<BTreeMap<_, _>>();
+                let mut selected = BTreeMap::new();
+                for skill_key in skill_keys {
+                    let skill = by_key.remove(skill_key.as_str()).ok_or_else(|| {
                         (
                             404,
                             format!(
@@ -68,188 +67,133 @@ impl PluginRuntimeHost {
                             ),
                         )
                     })?;
-                        validate_prepared_release(
-                            skill.release_id.as_str(),
-                            skill.artifact_sha256.as_str(),
-                            release_id.as_str(),
-                            artifact_sha256.as_str(),
-                        )?;
-                        selected.insert(skill_key, skill);
-                    }
-                    let version = selected
-                        .values()
-                        .next()
-                        .context("Plugin prepare selected no Skills")
-                        .map_err(internal_error)?
-                        .version
-                        .clone();
-                    let runtime_kind = optional_body_text(&request.body, "runtime_kind")?;
-                    let runtime_metadata = request.body.get("runtime_metadata");
-                    let content_sha256 = optional_body_text(&request.body, "content_sha256")?;
-                    self.skill_loader
-                        .validate_component_content_snapshot(
-                            plugin_id.as_str(),
-                            component_key.as_str(),
-                            content_sha256.as_deref(),
-                        )
-                        .map_err(|error| (409, error.to_string()))?;
-                    let native_binding = self
-                        .skill_loader
-                        .load_bundled_native_binding(
-                            plugin_id.as_str(),
-                            component_key.as_str(),
-                            runtime_kind.as_deref(),
-                            runtime_metadata,
-                            content_sha256.as_deref(),
-                            &selected,
-                        )
-                        .map_err(|error| (409, error.to_string()))?;
-                    let native_skill = if let Some(binding) = native_binding {
-                        for permission in &binding.permissions {
-                            if !permission_snapshot.contains(permission) {
-                                return Err((
-                                403,
-                                format!(
-                                    "native Plugin Skill permission was not granted in the immutable Run snapshot: {permission}"
-                                ),
-                            ));
-                            }
-                        }
-                        if binding.requires_workspace && request.workspace_id.trim().is_empty() {
-                            return Err((
-                                400,
-                                "native Plugin Skill requires an authorized local workspace"
-                                    .to_string(),
-                            ));
-                        }
-                        if let Some(error) =
-                            crate::skills::native::dependency_error(binding.skill_id.as_str())
-                        {
-                            return Err((409, error));
-                        }
-                        let state = self.state_snapshot().await?;
-                        if binding.requires_workspace
-                            && state.workspace_by_id(request.workspace_id.trim()).is_none()
-                        {
-                            return Err((
-                                404,
-                                "native Plugin Skill workspace is not registered locally"
-                                    .to_string(),
-                            ));
-                        }
-                        let allow_interactive_control = binding
-                            .permissions
-                            .iter()
-                            .any(|permission| permission == "desktop.control")
-                            && permission_snapshot.contains("desktop.control");
-                        let tools = crate::skills::native::plugin_tool_definitions(
-                            binding.skill_id.as_str(),
-                            &state,
-                            request,
-                            allow_interactive_control,
-                            self.approval_state_path.is_some(),
-                        )
-                        .map_err(|error| (409, error.to_string()))?;
-                        if tools.is_empty() {
-                            return Err((
-                                409,
-                                "native Plugin Skill published no executable tools".to_string(),
-                            ));
-                        }
-                        let tool_snapshot_sha256 = native_tool_snapshot_sha256(&binding, &tools)
-                            .map_err(internal_error)?;
-                        Some(PreparedPluginNativeSkill {
-                            binding,
-                            tools,
-                            tool_snapshot_sha256,
-                        })
-                    } else {
-                        None
-                    };
-                    let mut operations = vec![LOAD_SKILL_RESOURCE_OPERATION];
-                    if native_skill.is_some() {
-                        operations.push(NATIVE_SKILL_TOOL_CALL_OPERATION);
-                    }
-                    (
-                        selected,
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        None,
-                        native_skill,
-                        None,
-                        version,
-                        operations,
-                    )
-                }
-                PluginComponentKind::McpServer => {
-                    let server_key = optional_body_text(&request.body, "server_key")?;
-                    let tool_allowlist =
-                        optional_body_text_set(&request.body, "tool_allowlist", 200)?;
-                    let tool_blocklist =
-                        optional_body_text_set(&request.body, "tool_blocklist", 200)?;
-                    let mcp = self
-                        .mcp_adapter
-                        .prepare(
-                            plugin_id.as_str(),
-                            component_key.as_str(),
-                            server_key.as_deref(),
-                            adapter_session_id.as_str(),
-                            owner_user_id.as_str(),
-                            device_id.as_str(),
-                            &permission_snapshot,
-                            &tool_allowlist,
-                            &tool_blocklist,
-                        )
-                        .await
-                        .map_err(|error| (409, error.to_string()))?;
                     validate_prepared_release(
-                        mcp.snapshot().release_id.as_str(),
-                        mcp.snapshot().artifact_sha256.as_str(),
+                        skill.release_id.as_str(),
+                        skill.artifact_sha256.as_str(),
                         release_id.as_str(),
                         artifact_sha256.as_str(),
                     )?;
-                    let version = mcp.snapshot().version.clone();
-                    let operation = mcp.operation();
-                    let health_operation = mcp.health_operation();
-                    (
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        None,
-                        None,
-                        Some(mcp),
-                        version,
-                        vec![operation, health_operation],
-                    )
+                    selected.insert(skill_key, skill);
                 }
-                PluginComponentKind::Command => {
-                    let content_sha256 = required_sha256(&request.body, "content_sha256")?;
-                    let arguments = optional_body_text(&request.body, "arguments")?;
-                    let mut command = self
-                        .command_loader
-                        .load(
-                            plugin_id.as_str(),
-                            component_key.as_str(),
-                            content_sha256.as_str(),
-                            &permission_snapshot,
-                            arguments.as_deref(),
+                let version = selected
+                    .values()
+                    .next()
+                    .context("Plugin prepare selected no Skills")
+                    .map_err(internal_error)?
+                    .version
+                    .clone();
+                let content_sha256 = optional_body_text(&request.body, "content_sha256")?;
+                self.skill_loader
+                    .validate_component_content_snapshot(
+                        plugin_id.as_str(),
+                        component_key.as_str(),
+                        content_sha256.as_deref(),
+                    )
+                    .map_err(|error| (409, error.to_string()))?;
+                (
+                    selected,
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    None,
+                    None,
+                    version,
+                    vec![LOAD_SKILL_RESOURCE_OPERATION],
+                )
+            }
+            PluginComponentKind::McpServer => {
+                if permission_snapshot.contains("workspace.write") {
+                    return Err((
+                        409,
+                        "Plugin MCP workspace.write is unavailable until per-call workspace approval is enforced"
+                            .to_string(),
+                    ));
+                }
+                let workspace_root = if permission_snapshot.contains("workspace.read") {
+                    let workspace_id = request.workspace_id.trim();
+                    if workspace_id.is_empty() {
+                        return Err((
+                            409,
+                            "Plugin MCP workspace.read requires a bound Local Connector workspace"
+                                .to_string(),
+                        ));
+                    }
+                    let state = self.state_snapshot().await?;
+                    let workspace = state.workspace_by_id(workspace_id).ok_or_else(|| {
+                        (
+                            409,
+                            "Plugin MCP workspace is not registered locally".to_string(),
                         )
-                        .map_err(|error| (409, error.to_string()))?;
-                    validate_prepared_release(
-                        command.release_id.as_str(),
-                        command.artifact_sha256.as_str(),
-                        release_id.as_str(),
-                        artifact_sha256.as_str(),
-                    )?;
-                    if command.requires_confirmation && !catalog_only {
-                        let state = self.state_snapshot().await?;
-                        let mut approval_args = vec![plugin_id.clone(), component_key.clone()];
-                        if let Some(arguments) = command.arguments.as_ref() {
-                            approval_args.push(arguments.clone());
-                        }
-                        let approval = self
+                    })?;
+                    Some(approved_workspace_root(workspace.absolute_root.as_path())?)
+                } else {
+                    None
+                };
+                let server_key = optional_body_text(&request.body, "server_key")?;
+                let tool_allowlist = optional_body_text_set(&request.body, "tool_allowlist", 200)?;
+                let tool_blocklist = optional_body_text_set(&request.body, "tool_blocklist", 200)?;
+                let mcp = self
+                    .mcp_adapter
+                    .prepare(
+                        plugin_id.as_str(),
+                        component_key.as_str(),
+                        server_key.as_deref(),
+                        adapter_session_id.as_str(),
+                        owner_user_id.as_str(),
+                        device_id.as_str(),
+                        workspace_root.as_deref(),
+                        &permission_snapshot,
+                        &tool_allowlist,
+                        &tool_blocklist,
+                    )
+                    .await
+                    .map_err(|error| (409, error.to_string()))?;
+                validate_prepared_release(
+                    mcp.snapshot().release_id.as_str(),
+                    mcp.snapshot().artifact_sha256.as_str(),
+                    release_id.as_str(),
+                    artifact_sha256.as_str(),
+                )?;
+                let version = mcp.snapshot().version.clone();
+                let operation = mcp.operation();
+                let health_operation = mcp.health_operation();
+                (
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    None,
+                    Some(mcp),
+                    version,
+                    vec![operation, health_operation],
+                )
+            }
+            PluginComponentKind::Command => {
+                let content_sha256 = required_sha256(&request.body, "content_sha256")?;
+                let arguments = optional_body_text(&request.body, "arguments")?;
+                let mut command = self
+                    .command_loader
+                    .load(
+                        plugin_id.as_str(),
+                        component_key.as_str(),
+                        content_sha256.as_str(),
+                        &permission_snapshot,
+                        arguments.as_deref(),
+                    )
+                    .map_err(|error| (409, error.to_string()))?;
+                validate_prepared_release(
+                    command.release_id.as_str(),
+                    command.artifact_sha256.as_str(),
+                    release_id.as_str(),
+                    artifact_sha256.as_str(),
+                )?;
+                if command.requires_confirmation && !catalog_only {
+                    let state = self.state_snapshot().await?;
+                    let mut approval_args = vec![plugin_id.clone(), component_key.clone()];
+                    if let Some(arguments) = command.arguments.as_ref() {
+                        approval_args.push(arguments.clone());
+                    }
+                    let approval = self
                         .approval_service()?
                         .approve_interactive(CommandApprovalRequest {
                             request_id: request.request_id.clone(),
@@ -294,155 +238,147 @@ impl PluginRuntimeHost {
                         })
                         .await
                         .map_err(internal_error)?;
-                        if let ApprovalDecision::Denied { reason, .. } = approval {
-                            return Err((
-                                403,
-                                format!("Plugin Command was not approved: {reason}"),
-                            ));
-                        }
-                        let reloaded = self
-                            .command_loader
-                            .load(
-                                plugin_id.as_str(),
-                                component_key.as_str(),
-                                content_sha256.as_str(),
-                                &permission_snapshot,
-                                arguments.as_deref(),
-                            )
-                            .map_err(|error| (409, error.to_string()))?;
-                        validate_prepared_release(
-                            reloaded.release_id.as_str(),
-                            reloaded.artifact_sha256.as_str(),
-                            release_id.as_str(),
-                            artifact_sha256.as_str(),
-                        )?;
-                        if reloaded != command {
-                            return Err((
-                                409,
-                                "Plugin Command snapshot changed while awaiting approval"
-                                    .to_string(),
-                            ));
-                        }
-                        command.confirmation_approved = true;
+                    if let ApprovalDecision::Denied { reason, .. } = approval {
+                        return Err((403, format!("Plugin Command was not approved: {reason}")));
                     }
-                    let version = command.version.clone();
-                    (
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::from([(component_key.clone(), command)]),
-                        BTreeMap::new(),
-                        None,
-                        None,
-                        None,
-                        version,
-                        if catalog_only {
-                            vec![COMMAND_INVOKE_OPERATION]
-                        } else {
-                            Vec::new()
-                        },
-                    )
-                }
-                PluginComponentKind::Agent => {
-                    let content_sha256 = required_sha256(&request.body, "content_sha256")?;
-                    let agent = self
-                        .agent_loader
+                    let reloaded = self
+                        .command_loader
                         .load(
                             plugin_id.as_str(),
                             component_key.as_str(),
                             content_sha256.as_str(),
                             &permission_snapshot,
+                            arguments.as_deref(),
                         )
                         .map_err(|error| (409, error.to_string()))?;
                     validate_prepared_release(
-                        agent.release_id.as_str(),
-                        agent.artifact_sha256.as_str(),
+                        reloaded.release_id.as_str(),
+                        reloaded.artifact_sha256.as_str(),
                         release_id.as_str(),
                         artifact_sha256.as_str(),
                     )?;
-                    let version = agent.version.clone();
-                    (
-                        BTreeMap::new(),
-                        BTreeMap::from([(component_key.clone(), agent)]),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        None,
-                        None,
-                        None,
-                        version,
-                        if catalog_only {
-                            vec![AGENT_APPLY_OPERATION]
-                        } else {
-                            Vec::new()
-                        },
+                    if reloaded != command {
+                        return Err((
+                            409,
+                            "Plugin Command snapshot changed while awaiting approval".to_string(),
+                        ));
+                    }
+                    command.confirmation_approved = true;
+                }
+                let version = command.version.clone();
+                (
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::from([(component_key.clone(), command)]),
+                    BTreeMap::new(),
+                    None,
+                    None,
+                    version,
+                    if catalog_only {
+                        vec![COMMAND_INVOKE_OPERATION]
+                    } else {
+                        Vec::new()
+                    },
+                )
+            }
+            PluginComponentKind::Agent => {
+                let content_sha256 = required_sha256(&request.body, "content_sha256")?;
+                let agent = self
+                    .agent_loader
+                    .load(
+                        plugin_id.as_str(),
+                        component_key.as_str(),
+                        content_sha256.as_str(),
+                        &permission_snapshot,
                     )
-                }
-                PluginComponentKind::HookSet => {
-                    let content_sha256 = required_sha256(&request.body, "content_sha256")?;
-                    let hook_set = self
-                        .hook_loader
-                        .load(
-                            plugin_id.as_str(),
-                            component_key.as_str(),
-                            content_sha256.as_str(),
-                            &permission_snapshot,
-                        )
-                        .map_err(|error| (409, error.to_string()))?;
-                    validate_prepared_release(
-                        hook_set.release_id.as_str(),
-                        hook_set.artifact_sha256.as_str(),
-                        release_id.as_str(),
-                        artifact_sha256.as_str(),
-                    )?;
-                    let version = hook_set.version.clone();
-                    (
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::from([(component_key.clone(), hook_set)]),
-                        None,
-                        None,
-                        None,
-                        version,
-                        vec![self.hook_loader.operation()],
+                    .map_err(|error| (409, error.to_string()))?;
+                validate_prepared_release(
+                    agent.release_id.as_str(),
+                    agent.artifact_sha256.as_str(),
+                    release_id.as_str(),
+                    artifact_sha256.as_str(),
+                )?;
+                let version = agent.version.clone();
+                (
+                    BTreeMap::new(),
+                    BTreeMap::from([(component_key.clone(), agent)]),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    None,
+                    None,
+                    version,
+                    if catalog_only {
+                        vec![AGENT_APPLY_OPERATION]
+                    } else {
+                        Vec::new()
+                    },
+                )
+            }
+            PluginComponentKind::HookSet => {
+                let content_sha256 = required_sha256(&request.body, "content_sha256")?;
+                let hook_set = self
+                    .hook_loader
+                    .load(
+                        plugin_id.as_str(),
+                        component_key.as_str(),
+                        content_sha256.as_str(),
+                        &permission_snapshot,
                     )
-                }
-                PluginComponentKind::UiContribution => {
-                    let content_sha256 = required_sha256(&request.body, "content_sha256")?;
-                    let ui = self
-                        .ui_loader
-                        .load(
-                            plugin_id.as_str(),
-                            component_key.as_str(),
-                            content_sha256.as_str(),
-                            &permission_snapshot,
-                        )
-                        .map_err(|error| (409, error.to_string()))?;
-                    validate_prepared_release(
-                        ui.release_id.as_str(),
-                        ui.artifact_sha256.as_str(),
-                        release_id.as_str(),
-                        artifact_sha256.as_str(),
-                    )?;
-                    let version = ui.version.clone();
-                    (
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        BTreeMap::new(),
-                        Some(ui),
-                        None,
-                        None,
-                        version,
-                        Vec::new(),
+                    .map_err(|error| (409, error.to_string()))?;
+                validate_prepared_release(
+                    hook_set.release_id.as_str(),
+                    hook_set.artifact_sha256.as_str(),
+                    release_id.as_str(),
+                    artifact_sha256.as_str(),
+                )?;
+                let version = hook_set.version.clone();
+                (
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::from([(component_key.clone(), hook_set)]),
+                    None,
+                    None,
+                    version,
+                    vec![self.hook_loader.operation()],
+                )
+            }
+            PluginComponentKind::UiContribution => {
+                let content_sha256 = required_sha256(&request.body, "content_sha256")?;
+                let ui = self
+                    .ui_loader
+                    .load(
+                        plugin_id.as_str(),
+                        component_key.as_str(),
+                        content_sha256.as_str(),
+                        &permission_snapshot,
                     )
-                }
-                _ => {
-                    return Err((
-                        409,
-                        "Plugin component runtime is not implemented by this Host".to_string(),
-                    ));
-                }
-            };
+                    .map_err(|error| (409, error.to_string()))?;
+                validate_prepared_release(
+                    ui.release_id.as_str(),
+                    ui.artifact_sha256.as_str(),
+                    release_id.as_str(),
+                    artifact_sha256.as_str(),
+                )?;
+                let version = ui.version.clone();
+                (
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    BTreeMap::new(),
+                    Some(ui),
+                    None,
+                    version,
+                    Vec::new(),
+                )
+            }
+            _ => {
+                return Err((
+                    409,
+                    "Plugin component runtime is not implemented by this Host".to_string(),
+                ));
+            }
+        };
         let expires_at = Utc::now().timestamp() + PLUGIN_SESSION_TTL_SECONDS;
         let session = PreparedPluginSession {
             run_id: run_id.clone(),
@@ -460,7 +396,6 @@ impl PluginRuntimeHost {
             commands: commands.clone(),
             hooks: hooks.clone(),
             ui: ui.clone(),
-            native_skill: native_skill.clone(),
             native_action_lock: Arc::new(AsyncMutex::new(())),
             hook_dispatch_lock: Arc::new(AsyncMutex::new(())),
             native_action_cancelled: Arc::new(AtomicBool::new(false)),
@@ -513,7 +448,6 @@ impl PluginRuntimeHost {
             "commands": commands,
             "hooks": hooks,
             "ui": ui,
-            "native_skill": native_skill,
             "mcp": mcp_snapshot,
             "mcp_health": mcp_health,
             "operations": operations,

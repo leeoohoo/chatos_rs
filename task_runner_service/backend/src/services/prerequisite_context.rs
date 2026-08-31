@@ -70,12 +70,6 @@ pub(super) fn build_task_prompt(
         } else {
             "\n\n规划范围：以只读方式了解项目事实，交付分析、技术方案、实施任务和依赖关系；工程修改与运行验证由后续执行阶段承接。"
         });
-    } else if !task.mcp_config.requires_execution {
-        current_task_prompt.push_str(if locale.is_english() {
-            "\n\nExecution policy: this is a file-only task. Use the available managed file tools to inspect and modify project files. Do not require, initialize, start, build, test, or validate the project's dedicated runtime environment unless the user explicitly changes the task policy."
-        } else {
-            "\n\n执行策略：这是一个仅文件处理任务。使用当前可用的受管文件工具读取和修改项目文件；除非用户明确修改任务策略，否则不要要求、初始化、启动、构建、测试或验证项目专属运行环境。"
-        });
     }
     append_retry_instruction(&mut current_task_prompt, retry_instruction, locale);
 

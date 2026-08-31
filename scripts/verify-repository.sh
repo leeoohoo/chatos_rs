@@ -136,7 +136,6 @@ run_native_platform() {
   "${CARGO[@]}" test \
     -p local_connector_client_core \
     --lib \
-    chrome_integration::tests:: \
     -- \
     --nocapture
   if [[ "$platform" == "macos" ]]; then

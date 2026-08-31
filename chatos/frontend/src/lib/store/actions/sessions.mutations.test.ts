@@ -6,20 +6,11 @@ import { describe, expect, it } from 'vitest';
 import type {
   ChatStoreDraft,
   ChatStoreShape,
-  SessionMessagesSnapshot,
 } from '../types';
 import { createSessionMutationActions } from './sessions/mutations';
-import {
-  readSessionMessagesCache,
-  writeSessionMessagesCache,
-} from './sessionsUtils';
 
 describe('applyRealtimeSessionSnapshot', () => {
-  const writeCache = (state: ChatStoreShape, sessionId: string, snapshot: SessionMessagesSnapshot) => {
-    writeSessionMessagesCache(state, sessionId, snapshot);
-  };
-
-  it('removeSessionLocally clears session pagination and cache state', () => {
+  it('removeSessionLocally clears session pagination and current view state', () => {
     const state = {
       sessions: [{
         id: 'session_1',
@@ -58,15 +49,7 @@ describe('applyRealtimeSessionSnapshot', () => {
           loaded: true,
         },
       },
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
-
-    writeCache(state, 'session_1', {
-      messages: [],
-      nextBefore: 'turn_older',
-      loaded: true,
-    });
 
     const set = (updater: (draftState: ChatStoreDraft) => void) => {
       updater(state as unknown as ChatStoreDraft);
@@ -82,7 +65,6 @@ describe('applyRealtimeSessionSnapshot', () => {
     actions.removeSessionLocally('session_1');
 
     expect(state.sessionMessagePaginationState.session_1).toBeUndefined();
-    expect(readSessionMessagesCache(state, 'session_1')).toBeNull();
     expect(state.currentSessionId).toBeNull();
     expect(state.currentSession).toBeNull();
     expect(state.messages).toEqual([]);
@@ -142,8 +124,6 @@ describe('applyRealtimeSessionSnapshot', () => {
       selectedModelId: null,
       selectedAgentId: null,
       sessionAiSelectionBySession: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
 
     const set = (updater: (draftState: ChatStoreDraft) => void) => {
@@ -240,8 +220,6 @@ describe('applyRealtimeSessionSnapshot', () => {
       selectedModelId: null,
       selectedAgentId: null,
       sessionAiSelectionBySession: {},
-      sessionMessagesCache: {},
-      sessionMessagesCacheOrder: [],
     } as unknown as ChatStoreShape;
 
     const set = (updater: (draftState: ChatStoreDraft) => void) => {

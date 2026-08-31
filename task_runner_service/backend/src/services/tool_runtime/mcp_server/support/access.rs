@@ -215,7 +215,6 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
                 "plugin_config",
                 "mcp_config",
                 "plugin_snapshots",
-                "skill_snapshots",
                 "effective_workspace_dir",
                 "task_tool_state",
                 "worker_id",

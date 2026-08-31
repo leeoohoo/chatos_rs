@@ -5,11 +5,12 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use chatos_mcp_runtime::{
-    invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_tool_call_cancellable,
-    jsonrpc_stdio_call, McpStdioServer,
+    invalidate_stdio_session, jsonrpc_http_call, jsonrpc_http_notification,
+    jsonrpc_http_tool_call_cancellable, jsonrpc_stdio_call, jsonrpc_stdio_call_with_timeout,
+    jsonrpc_stdio_initialize_result, McpStdioServer,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -23,7 +24,7 @@ use super::super::credentials::{
 use super::preparation;
 use super::validation::{validate_invocation_id, wait_for_invocation_cancellation};
 use super::{
-    MAX_ACTIVE_MCP_INVOCATIONS, MCP_DEGRADED_STATUS, MCP_HEALTHY_STATUS,
+    PluginMcpToolPolicy, MAX_ACTIVE_MCP_INVOCATIONS, MCP_DEGRADED_STATUS, MCP_HEALTHY_STATUS,
     MCP_HEALTH_CHECK_OPERATION, MCP_HEALTH_PROBE_INTERVAL, MCP_TOOL_CALL_OPERATION,
 };
 use crate::plugins::PluginInstaller;
@@ -37,11 +38,17 @@ pub struct PluginMcpSnapshot {
     pub component_key: String,
     pub server_key: String,
     pub transport: String,
+    #[serde(default)]
+    pub workspace_snapshot_sha256: Option<String>,
     pub credential_snapshot_sha256: Option<String>,
     pub oauth_connection_id: Option<String>,
     pub oauth_snapshot_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_instructions: Option<String>,
+    pub server_instructions_sha256: String,
     pub tools: Vec<Value>,
     pub tool_snapshot_sha256: String,
+    pub permission_snapshot_sha256: String,
     pub snapshot_sha256: String,
 }
 
@@ -99,10 +106,12 @@ pub(in crate::plugins::runtime) struct PreparedPluginMcp {
     snapshot: PluginMcpSnapshot,
     transport: PreparedPluginMcpTransport,
     published_tools: BTreeSet<String>,
+    permission_snapshot: BTreeSet<String>,
     invoker: Arc<dyn PluginMcpInvoker>,
     installer: PluginInstaller,
     health: Arc<Mutex<PluginMcpHealthState>>,
     health_probe_lock: Arc<tokio::sync::Mutex<()>>,
+    serial_invocation_lock: Arc<tokio::sync::Mutex<()>>,
     active_invocations: Arc<Mutex<std::collections::HashMap<String, ActivePluginMcpInvocation>>>,
 }
 
@@ -148,8 +157,74 @@ impl PreparedPluginMcp {
         self.published_tools.contains(tool_name)
     }
 
+    pub(in crate::plugins::runtime) fn apply_host_argument_defaults(
+        &self,
+        tool_name: &str,
+        arguments: Value,
+    ) -> Result<Value> {
+        let tool = self
+            .snapshot
+            .tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
+            .with_context(|| {
+                format!("Plugin MCP tool is not in the immutable snapshot: {tool_name}")
+            })?;
+        Ok(apply_nonintrusive_macos_click_default(
+            tool_name, tool, arguments,
+        ))
+    }
+
+    pub(in crate::plugins::runtime) fn tool_policy(
+        &self,
+        tool_name: &str,
+    ) -> Result<PluginMcpToolPolicy> {
+        let tool = self
+            .snapshot
+            .tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
+            .with_context(|| {
+                format!("Plugin MCP tool is not in the immutable snapshot: {tool_name}")
+            })?;
+        let policy = preparation::tool_policy(tool)?;
+        Ok(policy)
+    }
+
+    pub(in crate::plugins::runtime) fn tool_policy_for_call(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+    ) -> Result<PluginMcpToolPolicy> {
+        let mut policy = self.tool_policy(tool_name)?;
+        let mut matched_rule = policy.permission_rules.is_empty();
+        for rule in &policy.permission_rules {
+            let actual = arguments.pointer(rule.argument_pointer.as_str());
+            if actual == Some(&rule.equals) || (actual.is_none() && rule.match_when_missing) {
+                matched_rule = true;
+                policy
+                    .required_permissions
+                    .extend(rule.required_permissions.iter().cloned());
+            }
+        }
+        if !matched_rule {
+            bail!("Plugin MCP tool arguments did not match any signed permission rule");
+        }
+        if !policy
+            .required_permissions
+            .is_subset(&self.permission_snapshot)
+        {
+            bail!("Plugin MCP tool permission grant changed or is insufficient");
+        }
+        Ok(policy)
+    }
+
     pub(in crate::plugins::runtime) fn validate_active(&self) -> Result<()> {
-        preparation::validate_active_mcp_snapshot(&self.installer, &self.snapshot)?;
+        preparation::validate_active_mcp_snapshot(
+            &self.installer,
+            &self.snapshot,
+            &self.permission_snapshot,
+        )?;
         self.transport.verify_bindings()
     }
 
@@ -158,6 +233,18 @@ impl PreparedPluginMcp {
             .lock()
             .map(|health| health.snapshot.clone())
             .map_err(|_| anyhow!("Plugin MCP health state is unavailable"))
+    }
+
+    pub(in crate::plugins::runtime) fn artifact_dir(&self) -> Result<&std::path::Path> {
+        self.transport
+            .artifact_dir()
+            .context("Plugin MCP transport does not provide a local Artifact directory")
+    }
+
+    pub(in crate::plugins::runtime) fn file_grant_dir(&self) -> Result<&std::path::Path> {
+        self.transport
+            .file_grant_dir()
+            .context("Plugin MCP transport does not provide a local File Grant directory")
     }
 
     #[cfg(test)]
@@ -182,6 +269,12 @@ impl PreparedPluginMcp {
         tool_result_max_chars: Option<usize>,
     ) -> Result<Value> {
         validate_invocation_id(invocation_id)?;
+        let policy = self.tool_policy_for_call(tool_name, &arguments)?;
+        let _serial_guard = if policy.parallel_safe {
+            None
+        } else {
+            Some(self.serial_invocation_lock.lock().await)
+        };
         self.ensure_recent_health().await?;
         let active = ActivePluginMcpInvocation {
             cancellation: CancellationToken::new(),
@@ -201,22 +294,40 @@ impl PreparedPluginMcp {
             invocations.insert(invocation_id.to_string(), active.clone());
         }
         let mut params = json!({"name": tool_name, "arguments": arguments});
-        if let Some(max_chars) = tool_result_max_chars.filter(|value| {
+        let result_max_chars = match (tool_result_max_chars, policy.result_max_chars) {
+            (Some(requested), Some(policy_max)) => Some(requested.min(policy_max)),
+            (Some(requested), None) => Some(requested),
+            (None, Some(policy_max)) => Some(policy_max),
+            (None, None) => None,
+        };
+        if let Some(max_chars) = result_max_chars.filter(|value| {
             (1..=chatos_mcp_service::TOOL_RESULT_MAX_CHARS_UPPER_BOUND).contains(value)
         }) {
             params["_meta"] = json!({
                 chatos_mcp_service::TOOL_RESULT_MAX_CHARS_META_KEY: max_chars,
             });
         }
-        let result = self
-            .invoker
-            .call(
+        let result = tokio::time::timeout(
+            Duration::from_millis(policy.timeout_ms),
+            self.invoker.call(
                 &self.transport,
                 "tools/call",
                 params,
                 Some(active.cancellation.clone()),
-            )
-            .await;
+                Some(Duration::from_millis(policy.timeout_ms)),
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            active.cancellation.cancel();
+            let _ = self
+                .invoker
+                .cancel_invocation(&self.transport, &active.cancellation);
+            Err(anyhow!(
+                "Plugin MCP tool {tool_name} timed out after {}ms",
+                policy.timeout_ms
+            ))
+        });
         if let Ok(mut invocations) = self.active_invocations.lock() {
             if invocations
                 .get(invocation_id)
@@ -235,6 +346,7 @@ impl PreparedPluginMcp {
             }
         }
         self.invoker.cancel(&self.transport);
+        self.transport.cleanup_session_directories();
     }
 
     pub(in crate::plugins::runtime) fn cancel_invocation(
@@ -281,7 +393,7 @@ impl PreparedPluginMcp {
     async fn probe_health(&self) -> Result<PluginMcpHealthSnapshot> {
         let healthy = match self
             .invoker
-            .call(&self.transport, "tools/list", json!({}), None)
+            .call(&self.transport, "tools/list", json!({}), None, None)
             .await
         {
             Ok(response) => {
@@ -306,6 +418,7 @@ impl PreparedPluginMcp {
         snapshot: PluginMcpSnapshot,
         transport: PreparedPluginMcpTransport,
         published_tools: BTreeSet<String>,
+        permission_snapshot: BTreeSet<String>,
         invoker: Arc<dyn PluginMcpInvoker>,
         installer: PluginInstaller,
     ) -> Self {
@@ -313,13 +426,73 @@ impl PreparedPluginMcp {
             snapshot,
             transport,
             published_tools,
+            permission_snapshot,
             invoker,
             installer,
             health: Arc::new(Mutex::new(PluginMcpHealthState::healthy())),
             health_probe_lock: Arc::new(tokio::sync::Mutex::new(())),
+            serial_invocation_lock: Arc::new(tokio::sync::Mutex::new(())),
             active_invocations: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
+}
+
+fn apply_nonintrusive_macos_click_default(
+    tool_name: &str,
+    tool: &Value,
+    mut arguments: Value,
+) -> Value {
+    #[cfg(target_os = "macos")]
+    {
+        if tool_name != "click" {
+            return arguments;
+        }
+        let Some(object) = arguments.as_object_mut() else {
+            return arguments;
+        };
+        let requested_method = object.get("click_method").and_then(Value::as_str);
+        if requested_method.is_some_and(|method| method != "auto" && method != "global") {
+            return arguments;
+        }
+        let methods = tool
+            .pointer("/inputSchema/properties/click_method/enum")
+            .and_then(Value::as_array);
+        let supports = |method: &str| {
+            methods.is_some_and(|methods| {
+                methods
+                    .iter()
+                    .any(|candidate| candidate.as_str() == Some(method))
+            })
+        };
+        let button = object
+            .get("mouse_button")
+            .and_then(Value::as_str)
+            .unwrap_or("left");
+        let click_count = object
+            .get("click_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        let has_element_index = object
+            .get("element_index")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        let method = if has_element_index && supports("accessibility") {
+            Some("accessibility")
+        } else if button == "left" && (1..=2).contains(&click_count) && supports("sky_click") {
+            Some("sky_click")
+        } else if supports("app_post") {
+            Some("app_post")
+        } else {
+            None
+        };
+        if let Some(method) = method {
+            object.insert(
+                "click_method".to_string(),
+                Value::String(method.to_string()),
+            );
+        }
+    }
+    arguments
 }
 
 #[derive(Debug, Clone)]
@@ -328,6 +501,9 @@ pub(in crate::plugins::runtime) enum PreparedPluginMcpTransport {
         server: McpStdioServer,
         environment: PluginStdioEnvironmentTemplates,
         credential_bindings: Option<PluginCredentialBindings>,
+        artifact_dir: std::path::PathBuf,
+        file_grant_dir: std::path::PathBuf,
+        visual_session_dir: std::path::PathBuf,
         cancellation: CancellationToken,
     },
     Http {
@@ -341,6 +517,34 @@ pub(in crate::plugins::runtime) enum PreparedPluginMcpTransport {
 }
 
 impl PreparedPluginMcpTransport {
+    pub(super) fn artifact_dir(&self) -> Option<&std::path::Path> {
+        match self {
+            Self::Stdio { artifact_dir, .. } => Some(artifact_dir.as_path()),
+            Self::Http { .. } => None,
+        }
+    }
+
+    pub(super) fn file_grant_dir(&self) -> Option<&std::path::Path> {
+        match self {
+            Self::Stdio { file_grant_dir, .. } => Some(file_grant_dir.as_path()),
+            Self::Http { .. } => None,
+        }
+    }
+
+    fn cleanup_session_directories(&self) {
+        if let Self::Stdio {
+            artifact_dir,
+            file_grant_dir,
+            visual_session_dir,
+            ..
+        } = self
+        {
+            let _ = std::fs::remove_dir_all(artifact_dir);
+            let _ = std::fs::remove_dir_all(file_grant_dir);
+            let _ = std::fs::remove_dir_all(visual_session_dir);
+        }
+    }
+
     pub(super) fn credential_snapshot_sha256(&self) -> Option<&str> {
         match self {
             Self::Stdio {
@@ -408,12 +612,15 @@ impl PreparedPluginMcpTransport {
 pub(in crate::plugins::runtime) trait PluginMcpInvoker:
     Send + Sync
 {
+    async fn initialize(&self, transport: &PreparedPluginMcpTransport) -> Result<Value>;
+
     async fn call(
         &self,
         transport: &PreparedPluginMcpTransport,
         method: &str,
         params: Value,
         invocation_cancellation: Option<CancellationToken>,
+        request_timeout: Option<Duration>,
     ) -> Result<Value>;
 
     fn cancel(&self, transport: &PreparedPluginMcpTransport);
@@ -430,12 +637,88 @@ pub(super) struct DefaultPluginMcpInvoker;
 
 #[async_trait]
 impl PluginMcpInvoker for DefaultPluginMcpInvoker {
+    async fn initialize(&self, transport: &PreparedPluginMcpTransport) -> Result<Value> {
+        match transport {
+            PreparedPluginMcpTransport::Stdio {
+                server,
+                environment,
+                credential_bindings,
+                cancellation,
+                ..
+            } => {
+                let request = async {
+                    let values = environment.resolve(credential_bindings.as_ref())?;
+                    let server = ResolvedPluginStdioServer::new(server, values.cloned_map());
+                    jsonrpc_stdio_initialize_result(server.as_server())
+                        .await
+                        .map_err(anyhow::Error::msg)
+                };
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => bail!("Plugin MCP stdio initialization was cancelled"),
+                    result = request => result,
+                }
+            }
+            PreparedPluginMcpTransport::Http {
+                url,
+                headers,
+                credential_bindings,
+                oauth_binding,
+                cancellation,
+                timeout,
+            } => {
+                let request = async {
+                    let mut headers = headers.resolve(credential_bindings.as_ref())?;
+                    if let Some(binding) = oauth_binding {
+                        let token = binding.resolve().await?;
+                        headers.insert(
+                            "authorization".to_string(),
+                            format!("Bearer {}", token.as_str()),
+                        );
+                    }
+                    let result = jsonrpc_http_call(
+                        url,
+                        Some(headers.as_map()),
+                        "initialize",
+                        json!({
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "clientInfo": {
+                                "name": "chatos-local-connector",
+                                "version": env!("CARGO_PKG_VERSION")
+                            }
+                        }),
+                        Some(*timeout),
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                    jsonrpc_http_notification(
+                        url,
+                        Some(headers.as_map()),
+                        "notifications/initialized",
+                        None,
+                        Some(*timeout),
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                    Ok(result)
+                };
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => bail!("Plugin MCP HTTP initialization was cancelled"),
+                    result = request => result,
+                }
+            }
+        }
+    }
+
     async fn call(
         &self,
         transport: &PreparedPluginMcpTransport,
         method: &str,
         params: Value,
         invocation_cancellation: Option<CancellationToken>,
+        request_timeout: Option<Duration>,
     ) -> Result<Value> {
         match transport {
             PreparedPluginMcpTransport::Stdio {
@@ -448,9 +731,20 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
                 let request = async {
                     let values = environment.resolve(credential_bindings.as_ref())?;
                     let server = ResolvedPluginStdioServer::new(server, values.cloned_map());
-                    jsonrpc_stdio_call(server.as_server(), method, params, None)
+                    match request_timeout {
+                        Some(timeout) => jsonrpc_stdio_call_with_timeout(
+                            server.as_server(),
+                            method,
+                            params,
+                            None,
+                            timeout,
+                        )
                         .await
-                        .map_err(anyhow::Error::msg)
+                        .map_err(anyhow::Error::msg),
+                        None => jsonrpc_stdio_call(server.as_server(), method, params, None)
+                            .await
+                            .map_err(anyhow::Error::msg),
+                    }
                 };
                 tokio::select! {
                     biased;
@@ -485,7 +779,7 @@ impl PluginMcpInvoker for DefaultPluginMcpInvoker {
                             url,
                             Some(headers.as_map()),
                             params,
-                            Some(*timeout),
+                            Some(request_timeout.unwrap_or(*timeout)),
                             chatos_mcp_runtime::McpAsyncResultTransport::Disabled,
                         )
                         .await
@@ -572,5 +866,101 @@ impl Drop for ResolvedPluginStdioServer {
                 value.zeroize();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod host_argument_default_tests {
+    use super::*;
+
+    fn click_tool() -> Value {
+        json!({
+            "name": "click",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "click_method": {
+                        "type": "string",
+                        "enum": ["auto", "accessibility", "app_post", "sky_click", "global"]
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn macos_defaults_element_clicks_to_accessibility() {
+        let arguments = apply_nonintrusive_macos_click_default(
+            "click",
+            &click_tool(),
+            json!({"app": "com.example.App", "element_index": "12"}),
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(arguments["click_method"], "accessibility");
+        #[cfg(not(target_os = "macos"))]
+        assert!(arguments.get("click_method").is_none());
+    }
+
+    #[test]
+    fn macos_defaults_coordinate_left_clicks_to_sky_click() {
+        let arguments = apply_nonintrusive_macos_click_default(
+            "click",
+            &click_tool(),
+            json!({"app": "com.example.App", "x": 20, "y": 30}),
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(arguments["click_method"], "sky_click");
+        #[cfg(not(target_os = "macos"))]
+        assert!(arguments.get("click_method").is_none());
+    }
+
+    #[test]
+    fn macos_uses_app_post_for_clicks_sky_click_cannot_handle() {
+        let arguments = apply_nonintrusive_macos_click_default(
+            "click",
+            &click_tool(),
+            json!({
+                "app": "com.example.App",
+                "x": 20,
+                "y": 30,
+                "mouse_button": "right"
+            }),
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(arguments["click_method"], "app_post");
+        #[cfg(not(target_os = "macos"))]
+        assert!(arguments.get("click_method").is_none());
+    }
+
+    #[test]
+    fn explicit_nonintrusive_click_method_is_preserved() {
+        let arguments = apply_nonintrusive_macos_click_default(
+            "click",
+            &click_tool(),
+            json!({
+                "app": "com.example.App",
+                "x": 20,
+                "y": 30,
+                "click_method": "accessibility"
+            }),
+        );
+        assert_eq!(arguments["click_method"], "accessibility");
+    }
+
+    #[test]
+    fn explicit_global_click_method_is_replaced_with_background_delivery() {
+        let arguments = apply_nonintrusive_macos_click_default(
+            "click",
+            &click_tool(),
+            json!({
+                "app": "com.example.App",
+                "element_index": "12",
+                "click_method": "global"
+            }),
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(arguments["click_method"], "accessibility");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(arguments["click_method"], "global");
     }
 }

@@ -13,6 +13,7 @@ import type {
   SessionRuntimeSettingsResponse,
   ConversationTaskRunnerActiveMessageTasksResponse,
   TurnRuntimeSnapshotLookupResponse,
+  UserMessageTurnResponse,
   UserMessageTurnsResponse,
 } from '../types';
 import type { ApiRequestFn, SessionPaging } from './common';
@@ -122,18 +123,94 @@ export const getConversationCompactHistory = (
   return request<CompactHistoryResponse>(`/conversations/${conversationId}/compact-history${query}`);
 };
 
+const readRecord = (value: unknown): Record<string, unknown> | null => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+);
+
+const readString = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const messageMetadata = (message: SessionMessageResponse): Record<string, unknown> => (
+  readRecord(message.metadata) || {}
+);
+
+export const compactHistoryToUserMessageTurns = (
+  response: CompactHistoryResponse,
+): UserMessageTurnsResponse => {
+  const messages = Array.isArray(response.items) ? response.items : [];
+  const assistantsById = new Map<string, SessionMessageResponse>();
+  const assistantsByUserMessageId = new Map<string, SessionMessageResponse>();
+  const assistantsByTurnId = new Map<string, SessionMessageResponse>();
+
+  messages.forEach((message) => {
+    if (message.role !== 'assistant') {
+      return;
+    }
+    const id = readString(message.id);
+    if (id) {
+      assistantsById.set(id, message);
+    }
+    const metadata = messageMetadata(message);
+    const userMessageId = readString(metadata['historyFinalForUserMessageId']);
+    if (userMessageId) {
+      assistantsByUserMessageId.set(userMessageId, message);
+    }
+    const taskRunnerAsync = readRecord(metadata['task_runner_async']);
+    const turnId = readString(metadata['historyFinalForTurnId'])
+      || readString(metadata['conversation_turn_id'])
+      || readString(taskRunnerAsync?.['source_turn_id']);
+    if (turnId) {
+      assistantsByTurnId.set(turnId, message);
+    }
+  });
+
+  const items = messages.flatMap<UserMessageTurnResponse>((message) => {
+    if (message.role !== 'user') {
+      return [];
+    }
+    const metadata = messageMetadata(message);
+    const historyProcess = readRecord(metadata['historyProcess']);
+    const taskRunnerAsync = readRecord(metadata['task_runner_async']);
+    const turnId = readString(historyProcess?.['turnId'])
+      || readString(metadata['conversation_turn_id'])
+      || readString(taskRunnerAsync?.['source_turn_id'])
+      || readString(message.id);
+    const finalAssistantId = readString(historyProcess?.['finalAssistantMessageId']);
+    const finalAssistantMessage = (finalAssistantId
+      ? assistantsById.get(finalAssistantId)
+      : undefined)
+      || assistantsByUserMessageId.get(readString(message.id))
+      || assistantsByTurnId.get(turnId)
+      || null;
+
+    return [{
+      turn_id: turnId,
+      user_message: message,
+      final_assistant_message: finalAssistantMessage,
+      has_process: historyProcess?.['hasProcess'] === true,
+      tool_call_count: Number(historyProcess?.['toolCallCount'] || 0),
+      thinking_count: Number(historyProcess?.['thinkingCount'] || 0),
+      process_message_count: Number(historyProcess?.['processMessageCount'] || 0),
+    }];
+  });
+
+  return {
+    items,
+    has_more: response.has_more === true,
+    next_before: response.next_before || null,
+  };
+};
+
 export const getConversationUserMessageTurns = (
   request: ApiRequestFn,
   conversationId: string,
   params?: { limit?: number; before?: string | null },
 ): Promise<UserMessageTurnsResponse> => {
-  const query = buildQuery({
-    limit: params?.limit,
-    before: params?.before,
-  });
-  return request<UserMessageTurnsResponse>(
-    `/conversations/${conversationId}/user-message-turns${query}`,
-  );
+  return getConversationCompactHistory(request, conversationId, params)
+    .then(compactHistoryToUserMessageTurns);
 };
 
 export const getConversationTaskRunnerActiveMessageTasks = (

@@ -318,8 +318,7 @@ pub(super) async fn execute_requirement_inner(
         project_root: Some(project.root_path.clone()),
         workspace_root: Some(project.root_path.clone()),
         remote_connection_id: None,
-        selected_plugin_ids: Vec::new(),
-        plugin_command_invocations: Vec::new(),
+        task_plugin_preferences: Vec::new(),
         unsupported_plugin_agent_selection: None,
         user_message_id: Some(execution_group_id.clone()),
         project_requirement_execution_planner: true,
@@ -330,7 +329,7 @@ pub(super) async fn execute_requirement_inner(
     };
     let persisted_user_message_metadata = message.metadata.clone();
     prepare_requirement_planner_turn(session.id.as_str(), execution_group_id.as_str());
-    run_chat_usecase(RunChatUsecaseInput {
+    let planner_input = RunChatUsecaseInput {
         sender: None,
         req: chat_req,
         persisted_user_message_content: Some(user_visible_content),
@@ -347,8 +346,10 @@ pub(super) async fn execute_requirement_inner(
             "replacement_identity": replacement_identity,
             "replacement_work_items": replacement_work_items,
         })),
-    })
-    .await;
+    };
+    tokio::spawn(async move {
+        run_chat_usecase(planner_input).await;
+    });
 
     Ok(json!({
         "success": true,

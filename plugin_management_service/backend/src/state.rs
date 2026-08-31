@@ -2,13 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use mongodb::Client;
+use std::fs;
 use tracing::warn;
 
 use chatos_queue_observability::RabbitMqQueueInspector;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::auth::login_via_user_service;
-use crate::cloud_secrets::CloudSecretCipher;
 use crate::config::AppConfig;
 use crate::models::LoginRequest;
 use crate::pressure::PluginManagementPressureState;
@@ -19,7 +19,6 @@ use crate::store::AppStore;
 pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
-    pub(crate) cloud_secret_cipher: CloudSecretCipher,
     pub(crate) user_service_http: reqwest::Client,
     pub(crate) rabbitmq_queue_inspector: RabbitMqQueueInspector,
     pub(crate) pressure: PluginManagementPressureState,
@@ -30,14 +29,21 @@ impl AppState {
         config: AppConfig,
         pressure: PluginManagementPressureState,
     ) -> Result<Self, String> {
+        fs::create_dir_all(config.plugin_artifact_storage_dir.as_path()).map_err(|err| {
+            format!(
+                "create Plugin artifact storage directory {} failed: {err}",
+                config.plugin_artifact_storage_dir.display()
+            )
+        })?;
         let client = Client::with_uri_str(config.database_url.as_str())
             .await
             .map_err(|err| format!("connect MongoDB failed: {err}"))?;
         let db = client.database(config.mongodb_database.as_str());
         let store = AppStore::new(db);
         store.initialize().await?;
-        let cloud_secret_cipher =
-            CloudSecretCipher::new(config.cloud_credential_encryption_secret.as_str())?;
+        store.remove_retired_direct_local_mcps().await?;
+        store.remove_retired_builtin_skills().await?;
+        store.remove_retired_bundled_plugin_marketplaces().await?;
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
                 .map_err(|err| format!("build user_service client failed: {err}"))?;
@@ -51,7 +57,6 @@ impl AppState {
         Ok(Self {
             config,
             store,
-            cloud_secret_cipher,
             user_service_http,
             rabbitmq_queue_inspector,
             pressure,

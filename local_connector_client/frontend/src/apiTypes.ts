@@ -22,7 +22,6 @@ export interface ConnectorStatus {
   configured: boolean;
   connector_running: boolean;
   developer_mode?: boolean;
-  browser_full_cdp_access_enabled?: boolean;
   developer_cloud_base_url?: string | null;
   developer_user_service_base_url?: string | null;
   developer_chatos_web_url?: string | null;
@@ -31,19 +30,28 @@ export interface ConnectorStatus {
   device_id?: string | null;
   device_name?: string | null;
   user?: AuthUser | null;
+  default_workspace_id?: string | null;
   workspaces: WorkspaceRecord[];
 }
 
-export interface FsEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
+export interface PluginRuntimeVisualSession {
+  session_id: string;
+  adapter_session_id: string;
+  plugin_id: string;
+  component_key: string;
+  title: string;
+  target_app?: string | null;
+  status: 'running';
+  mime_type?: 'image/jpeg' | 'image/png' | null;
+  frame_sequence: number;
+  captured_at: string;
+  width?: number | null;
+  height?: number | null;
+  frame_data_url?: string | null;
 }
 
-export interface FsListResponse {
-  path: string;
-  parent?: string | null;
-  entries: FsEntry[];
+export interface PluginRuntimeVisualSessionResponse {
+  session: PluginRuntimeVisualSession | null;
 }
 
 export interface TerminalExecResponse {
@@ -248,7 +256,6 @@ export interface LocalModelConfigListResponse {
 
 export interface LocalRuntimeSettings {
   developer_mode: boolean;
-  browser_full_cdp_access_enabled: boolean;
   developer_cloud_base_url: string;
   developer_user_service_base_url: string;
   developer_chatos_web_url: string;
@@ -301,6 +308,7 @@ export interface LocalInstalledPluginVersion {
   relative_installation_path: string;
   installed_at: string;
   package_file_sha256: Record<string, string>;
+  granted_permissions: string[];
   inventory: {
     dependencies: Record<string, unknown>;
     permissions: LocalPluginPermissionRequirement[];
@@ -392,6 +400,14 @@ export interface PluginRuntimeSessionTelemetry {
   last_error?: string | null;
 }
 
+export interface PluginFileGrantSummary {
+  file_grant_id: string;
+  display_name: string;
+  size: number;
+  sha256: string;
+  expires_at_unix_ms: number;
+}
+
 export interface PluginRuntimeTelemetryEvent {
   sequence: number;
   run_id: string;
@@ -438,8 +454,10 @@ export interface LocalPluginStoreItem {
   published_at: string;
   artifact_revision: string;
   skill_ids: string[];
-  install_source: 'bundled' | 'network' | 'installed';
+  install_source: 'network' | 'installed';
   install_available: boolean;
+  execution_type: 'local_npm_mcp';
+  requires_local_install: true;
   lifecycle_status: string;
   update_available: boolean;
   rollback_available: boolean;
@@ -455,7 +473,6 @@ export interface LocalPluginStoreSnapshot {
   catalog_revision: string;
   marketplace_id: string;
   marketplace_name: string;
-  bundled_install_available: boolean;
   network_install_available: boolean;
   network_catalog_error?: string | null;
   auto_update_error?: string | null;
@@ -522,34 +539,7 @@ export interface PluginOAuthAuthorizationStart {
   browser_error?: string | null;
 }
 
-export interface UpdateLocalRuntimeSettingsPayload extends Partial<LocalRuntimeSettings> {
-  acknowledge_browser_full_cdp_risk?: boolean;
-}
-
-export interface ChromeBridgeStatus {
-  connected: boolean;
-  extension_id: string;
-  extension_version?: string | null;
-  extension_compatible: boolean;
-  connected_at_ms?: number | null;
-  last_seen_at_ms?: number | null;
-  claimed_tab_count: number;
-  authorized_origin_count: number;
-  pending_command_count: number;
-}
-
-export interface ChromeIntegrationStatus {
-  platform_supported: boolean;
-  enabled: boolean;
-  native_host_available: boolean;
-  native_host_manifest_path?: string | null;
-  extension_available: boolean;
-  extension_directory?: string | null;
-  extension_id: string;
-  bridge: ChromeBridgeStatus;
-  setup_note: string;
-  last_error?: string | null;
-}
+export type UpdateLocalRuntimeSettingsPayload = Partial<LocalRuntimeSettings>;
 
 export interface AgentPromptUpdateStatus {
   configured: boolean;
@@ -573,7 +563,17 @@ export type SystemPermissionStatus =
   | 'needs_attention'
   | 'missing_dependency'
   | 'not_applicable'
+  | 'on_demand'
   | 'unknown';
+
+export interface PluginSystemPermissionSubject {
+  plugin_id: string;
+  display_name: string;
+  version: string;
+  component_keys: string[];
+  runtime_granted: boolean;
+  onboarding_available: boolean;
+}
 
 export interface SystemPermissionItem {
   id: string;
@@ -586,7 +586,7 @@ export interface SystemPermissionItem {
   request_label: string;
   settings_target?: string | null;
   builtin_kinds: string[];
-  skill_ids: string[];
+  plugin_subjects: PluginSystemPermissionSubject[];
   note: string;
   last_error?: string | null;
 }
@@ -595,95 +595,6 @@ export interface SystemPermissionsResponse {
   platform: string;
   platform_label: string;
   items: SystemPermissionItem[];
-}
-
-export type LocalMcpTransport = 'stdio' | 'http';
-
-export interface LocalMcpConfig {
-  manifest_id: string;
-  plugin_mcp_id?: string | null;
-  internal_name: string;
-  display_name: string;
-  description?: string | null;
-  transport: LocalMcpTransport;
-  command?: string | null;
-  args: string[];
-  env: Record<string, string>;
-  url?: string | null;
-  headers: Record<string, string>;
-  timeout_ms?: number | null;
-  enabled: boolean;
-  sync_status: string;
-  last_check_status: string;
-  last_checked_at?: string | null;
-  last_error?: string | null;
-  tool_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface LocalMcpConfigDraft {
-  manifest_id?: string | null;
-  display_name: string;
-  description?: string | null;
-  transport: LocalMcpTransport;
-  enabled?: boolean | null;
-  command?: string | null;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string | null;
-  headers?: Record<string, string>;
-  timeout_ms?: number | null;
-}
-
-export interface LocalSkillInstallation {
-  id: string;
-  owner_user_id: string;
-  device_id: string;
-  skill_id: string;
-  bundle_id: string;
-  version: string;
-  bundle_hash: string;
-  platform: string;
-  status: string;
-  dependency_status: string;
-  last_error?: string | null;
-  last_checked_at: string;
-}
-
-export interface LocalSkillRecord {
-  id: string;
-  name: string;
-  display_name: string;
-  description?: string | null;
-  enabled: boolean;
-  content: {
-    kind: string;
-    bundle_id?: string | null;
-    bundle_version?: string | null;
-    bundle_hash?: string | null;
-    entrypoint_kind?: string | null;
-  };
-  metadata: {
-    version?: string | null;
-    category?: string | null;
-    tags: string[];
-    extra: Record<string, unknown>;
-  };
-}
-
-export interface LocalSkillCatalogItem {
-  skill: LocalSkillRecord;
-  user_enabled: boolean;
-  available: boolean;
-  status: string;
-  reason?: string | null;
-  installation?: LocalSkillInstallation | null;
-}
-
-export interface LocalSkillCatalogResponse {
-  items: LocalSkillCatalogItem[];
-  total: number;
 }
 
 export type SandboxBackendKind = 'local_process';

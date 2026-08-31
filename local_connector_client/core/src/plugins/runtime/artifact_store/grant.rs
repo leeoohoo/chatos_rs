@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_plugin_management_sdk::{
-    PluginArtifactDescriptor, PluginArtifactUiAccess,
-    PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST,
-    PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ,
-};
-use chrono::Utc;
+use chatos_plugin_management_sdk::{PluginArtifactDescriptor, PluginArtifactUiAccess};
 
-use super::{PluginArtifactProducer, PluginArtifactStoreState, PluginUiArtifactGrant};
+use super::{PluginArtifactStoreState, PluginUiArtifactGrant};
 use crate::relay::RelayRequest;
 
 impl PluginUiArtifactGrant {
@@ -54,28 +49,6 @@ impl PluginUiArtifactGrant {
             ));
         }
         Ok(())
-    }
-
-    pub(super) fn matches_producer(&self, producer: &PluginArtifactProducer<'_>) -> bool {
-        self.owner_user_id == producer.owner_user_id
-            && self.device_id == producer.device_id
-            && self.workspace_id == producer.workspace_id
-            && self.run_id == producer.run_id
-            && self.plugin_id == producer.plugin_id
-            && self.release_id == producer.release_id
-            && self.artifact_sha256 == producer.artifact_sha256
-            && self.expires_at > Utc::now().timestamp()
-    }
-
-    pub(super) fn allows_any_artifact_read(&self) -> bool {
-        self.ui.bridge_capabilities.iter().any(|capability| {
-            matches!(
-                capability.as_str(),
-                PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST
-                    | PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ
-                    | PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD
-            )
-        })
     }
 
     pub(super) fn can_access(&self, artifact: &PluginArtifactDescriptor) -> bool {

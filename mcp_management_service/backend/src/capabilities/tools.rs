@@ -298,16 +298,10 @@ pub fn runtime_route_revision(
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
-fn tool_snapshot(resolved: &ResolvedMcp, route: &ResolvedMcpRoute) -> Result<Vec<Value>, String> {
+fn tool_snapshot(resolved: &ResolvedMcp, _route: &ResolvedMcpRoute) -> Result<Vec<Value>, String> {
     let Some(descriptor) = system_mcp_descriptor_for_record(&resolved.resource) else {
         return Ok(resolved.tool_snapshot.clone());
     };
-    if descriptor.key == SystemMcpKey::BrowserTools
-        && route.provider_kind == chatos_mcp_management_sdk::McpProviderKind::InternalService
-        && route.provider_ref.as_deref() == Some("chatos")
-    {
-        return Ok(resolved.tool_snapshot.clone());
-    }
     match system_mcp_tool_catalog(descriptor.key)? {
         SystemMcpToolCatalog::Static(tools) => Ok(tools),
         SystemMcpToolCatalog::Dynamic => Ok(resolved.tool_snapshot.clone()),
@@ -320,8 +314,7 @@ mod tests {
     use chatos_mcp_management_sdk::{McpProviderKind, McpRetryClass};
     use chatos_plugin_management_sdk::{
         AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, PluginComponentDescriptor,
-        PluginComponentKind, PluginExecutionHost, PluginMcpServer, ResolvedMcp, ResourceMetadata,
-        ResourceSecurity,
+        PluginComponentKind, PluginMcpServer, ResolvedMcp, ResourceMetadata, ResourceSecurity,
     };
     use serde_json::json;
 
@@ -402,44 +395,12 @@ mod tests {
         ResolvedMcpRoute {
             resource_id: "external-1".to_string(),
             server_name: "demo".to_string(),
-            provider_kind: McpProviderKind::ExternalHttp,
+            provider_kind: McpProviderKind::LocalConnector,
             provider_ref: Some("mcp-resource:external-1".to_string()),
             tool_namespace: "demo".to_string(),
             allow_writes: false,
             retry_class: McpRetryClass::IdempotentRead,
             cancel_supported: true,
-            reason: "test".to_string(),
-        }
-    }
-
-    fn resolved_cloud_browser_mcp() -> ResolvedMcp {
-        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::BrowserTools);
-        let mut resolved = resolved_external_mcp();
-        resolved.resource.id = descriptor.resource_id.to_string();
-        resolved.resource.name = descriptor.server_name.to_string();
-        resolved.resource.runtime.kind = "system".to_string();
-        resolved.resource.runtime.system_key = Some(descriptor.key.as_str().to_string());
-        resolved.resource.runtime.server_name = Some(descriptor.server_name.to_string());
-        resolved.binding.resource_id = descriptor.resource_id.to_string();
-        resolved.tool_snapshot = vec![json!({
-            "name": "browser_navigate",
-            "description": "Navigate",
-            "inputSchema": {"type": "object"}
-        })];
-        resolved
-    }
-
-    fn cloud_browser_route() -> ResolvedMcpRoute {
-        let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::BrowserTools);
-        ResolvedMcpRoute {
-            resource_id: descriptor.resource_id.to_string(),
-            server_name: descriptor.server_name.to_string(),
-            provider_kind: McpProviderKind::InternalService,
-            provider_ref: Some("chatos".to_string()),
-            tool_namespace: descriptor.server_name.to_string(),
-            allow_writes: true,
-            retry_class: McpRetryClass::NoRetry,
-            cancel_supported: false,
             reason: "test".to_string(),
         }
     }
@@ -455,7 +416,6 @@ mod tests {
             normalized_manifest_sha256: "b".repeat(64),
             component_key: "workspace".to_string(),
             component_content_sha256: "c".repeat(64),
-            declared_execution_host: PluginExecutionHost::Local,
             installation_device_id: Some("device-1".to_string()),
             permission_snapshot: vec!["workspace.read".to_string()],
             auth_connection_ids: Vec::new(),
@@ -465,6 +425,7 @@ mod tests {
                 headers: Default::default(),
                 oauth_resource: None,
                 connect_timeout_ms: None,
+                requires_exclusive_execution: false,
             },
             server_key: None,
             tool_allowlist: vec!["read_file".to_string()],
@@ -501,7 +462,6 @@ mod tests {
                 component_key: "review".to_string(),
                 kind: PluginComponentKind::Command,
                 display_name: "Review".to_string(),
-                execution_host: PluginExecutionHost::Cloud,
                 runtime_kind: "command".to_string(),
                 entrypoint: None,
                 required: false,
@@ -509,7 +469,7 @@ mod tests {
                 metadata: Default::default(),
             },
             component_content_sha256: "c".repeat(64),
-            installation_device_id: None,
+            installation_device_id: Some("device-1".to_string()),
             permission_snapshot: Vec::new(),
             auth_connection_ids: Vec::new(),
             required: true,
@@ -522,7 +482,7 @@ mod tests {
         ResolvedMcpRoute {
             resource_id: "plugin-component-review".to_string(),
             server_name: "plugin_review_review".to_string(),
-            provider_kind: McpProviderKind::PluginCloud,
+            provider_kind: McpProviderKind::PluginLocal,
             provider_ref: Some(format!("plugin-tool-binding:{}", "c".repeat(64))),
             tool_namespace: "plugin_review_review".to_string(),
             allow_writes: false,
@@ -569,23 +529,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["search"]
         );
-    }
-
-    #[test]
-    fn cloud_browser_uses_the_live_chatos_tool_snapshot() {
-        let capabilities = capabilities_with_mcp(resolved_cloud_browser_mcp());
-        let materialized =
-            materialize_runtime_tools(&capabilities, &[cloud_browser_route()]).unwrap();
-        assert_eq!(materialized.tools.len(), 1);
-        assert_eq!(materialized.tools[0].original_name, "browser_navigate");
-        assert!(materialized
-            .tools
-            .iter()
-            .all(|tool| tool.original_name != "browser_route_add"));
-        assert!(materialized
-            .tools
-            .iter()
-            .all(|tool| tool.original_name != "browser_cdp_command"));
     }
 
     #[test]

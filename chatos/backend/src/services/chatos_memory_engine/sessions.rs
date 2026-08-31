@@ -454,28 +454,44 @@ pub async fn upsert_chatos_message(
     sync_chatos_session(session).await?;
     let mapping = build_thread_mapping(session)?;
     let client = build_client()?;
+    let existing_revision = client
+        .get_record(
+            message.id.as_str(),
+            Some(mapping.tenant_id.as_str()),
+            Some(mapping.thread_id.as_str()),
+        )
+        .await?
+        .map(engine_record_to_message)
+        .map(|existing| existing.revision())
+        .unwrap_or(0);
+    let mut persisted_message = message.clone();
+    persisted_message.set_revision(
+        existing_revision
+            .max(message.revision().saturating_sub(1))
+            .saturating_add(1),
+    );
     client
         .batch_sync_records(
             mapping.thread_id.as_str(),
             &SdkBatchSyncRecordsRequest {
                 tenant_id: mapping.tenant_id,
                 records: vec![UpsertRecordInput {
-                    id: message.id.clone(),
+                    id: persisted_message.id.clone(),
                     external_record_id: None,
-                    role: message.role.clone(),
+                    role: persisted_message.role.clone(),
                     record_type: "message".to_string(),
-                    content: message.content.clone(),
+                    content: persisted_message.content.clone(),
                     structured_payload: None,
-                    metadata: pack_message_metadata(message),
-                    summary_status: Some(message.summary_status.clone()),
-                    summary_id: message.summary_id.clone(),
-                    summarized_at: message.summarized_at.clone(),
-                    created_at: message.created_at.clone(),
+                    metadata: pack_message_metadata(&persisted_message),
+                    summary_status: Some(persisted_message.summary_status.clone()),
+                    summary_id: persisted_message.summary_id.clone(),
+                    summarized_at: persisted_message.summarized_at.clone(),
+                    created_at: persisted_message.created_at.clone(),
                 }],
             },
         )
         .await?;
-    Ok(message.clone())
+    Ok(persisted_message)
 }
 
 pub async fn delete_chatos_message_by_id(message_id: &str) -> Result<bool, String> {

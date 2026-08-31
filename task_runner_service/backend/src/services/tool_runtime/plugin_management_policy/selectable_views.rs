@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeMap;
-
-use chatos_plugin_management_sdk::{PluginComponentKind, PluginExecutionHost};
+use chatos_plugin_management_sdk::PluginComponentKind;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -19,9 +17,7 @@ pub(crate) struct SelectablePluginView {
     pub release_id: String,
     pub artifact_sha256: String,
     pub device_id: Option<String>,
-    pub execution_type: String,
     pub requires_device: bool,
-    pub component_hosts: BTreeMap<String, PluginExecutionHost>,
     pub component_keys: Vec<String>,
     pub components: Vec<SelectablePluginComponentView>,
     pub commands: Vec<SelectablePluginCommandView>,
@@ -31,7 +27,6 @@ pub(crate) struct SelectablePluginView {
 pub(crate) struct SelectablePluginComponentView {
     pub component_key: String,
     pub kind: PluginComponentKind,
-    pub execution_host: PluginExecutionHost,
     pub available: bool,
     pub status: chatos_plugin_management_sdk::PluginAvailabilityStatus,
     pub reason: Option<String>,
@@ -57,18 +52,6 @@ impl TaskRunnerCapabilityPolicy {
             .into_iter()
             .filter_map(|plugin| {
                 let release = plugin.release.as_ref()?;
-                let component_hosts = plugin
-                    .components
-                    .iter()
-                    .filter(|component| component.component.kind != PluginComponentKind::Agent)
-                    .map(|component| {
-                        (
-                            component.component.component_key.clone(),
-                            component.component.execution_host,
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>();
-                let execution_type = plugin_execution_type(component_hosts.values().copied());
                 let components = plugin
                     .components
                     .iter()
@@ -80,7 +63,6 @@ impl TaskRunnerCapabilityPolicy {
                         SelectablePluginComponentView {
                             component_key: component.component.component_key.clone(),
                             kind: component.component.kind,
-                            execution_host: component.component.execution_host,
                             available: component.available,
                             status: component.status,
                             reason: component.reason.clone(),
@@ -107,9 +89,7 @@ impl TaskRunnerCapabilityPolicy {
                         .installation
                         .as_ref()
                         .map(|installation| installation.device_id.clone()),
-                    requires_device: false,
-                    execution_type,
-                    component_hosts,
+                    requires_device: true,
                     component_keys: plugin
                         .components
                         .iter()
@@ -184,21 +164,4 @@ impl TaskRunnerCapabilityPolicy {
             })
             .collect()
     }
-}
-
-fn plugin_execution_type(hosts: impl Iterator<Item = PluginExecutionHost>) -> String {
-    let hosts = hosts.collect::<std::collections::HashSet<_>>();
-    if hosts.len() != 1 {
-        return "hybrid".to_string();
-    }
-    match hosts
-        .into_iter()
-        .next()
-        .unwrap_or(PluginExecutionHost::Local)
-    {
-        PluginExecutionHost::Cloud => "cloud",
-        PluginExecutionHost::Local => "local",
-        PluginExecutionHost::Portable => "portable",
-    }
-    .to_string()
 }

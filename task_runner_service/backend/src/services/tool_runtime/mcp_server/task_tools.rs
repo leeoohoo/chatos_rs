@@ -73,9 +73,9 @@ impl TaskRunnerMcpService {
             }
             "create_task" => {
                 let decoded = decode_args::<CreateTaskArgs>(args)?;
+                let plugin_hints = decoded.normalized_plugin_hints()?;
                 let mut input: CreateTaskRequest = decoded.into_request()?;
-                request_context.enforce_plugin_config(&mut input);
-                request_context.enforce_created_task_kind(&mut input);
+                request_context.enforce_created_task_context(&mut input);
                 let source_context = request_context.task_source_context()?;
                 if let Some(prerequisite_task_ids) = input.prerequisite_task_ids.as_ref() {
                     self.require_tasks_for_user_in_context(
@@ -115,9 +115,23 @@ impl TaskRunnerMcpService {
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
                 }
+                let plugin_selection = self
+                    .task_service
+                    .resolve_trusted_task_plugin_selection(
+                        &input,
+                        plugin_hints.as_slice(),
+                        current_user,
+                    )
+                    .await?;
+                input.plugin_config = plugin_selection.plugin_config;
                 let task = self
                     .task_service
-                    .create_task(input, Some(current_user), source_context)
+                    .create_task_with_plugin_selection_audit(
+                        input,
+                        Some(current_user),
+                        source_context,
+                        plugin_selection.audit,
+                    )
                     .await?;
                 let task = if request_context.tool_profile() == McpToolProfile::ChatosAsyncPlanner {
                     self.dispatch_chatos_async_tasks(std::slice::from_ref(&task))

@@ -7,14 +7,12 @@ use crate::builtin::remote_connection_controller::ChatosRemoteConnectionControll
 use crate::services::mcp_loader::{BuiltinMcpKind, McpBuiltinServer};
 use crate::services::shared_builtin_agent_builder::ChatosAgentBuilderStore;
 use crate::services::shared_builtin_ask_user::ChatosAskUserStore;
-use crate::services::shared_builtin_browser_tools::ChatosBrowserVisionAdapter;
 use crate::services::shared_builtin_code_maintainer::ChatosCodeMaintainerHooks;
 use crate::services::shared_builtin_memory_readers::ChatosMemoryReaderStore;
 use crate::services::shared_builtin_notepad::ChatosNotepadStore;
 use chatos_mcp::{
-    AgentBuilderStoreRef, AskUserStoreRef, BrowserVisionAdapterRef, BuiltinToolServiceDependencies,
-    CodeMaintainerHooksRef, MemoryReaderStoreRef, NotepadStoreRef,
-    RemoteConnectionControllerStoreRef,
+    AgentBuilderStoreRef, AskUserStoreRef, BuiltinToolServiceDependencies, CodeMaintainerHooksRef,
+    MemoryReaderStoreRef, NotepadStoreRef, RemoteConnectionControllerStoreRef,
 };
 
 pub use chatos_mcp::SharedBuiltinToolService as BuiltinToolService;
@@ -74,11 +72,6 @@ fn chatos_dependencies(
                     ChatosRemoteConnectionControllerStore,
                 )));
         }
-        BuiltinMcpKind::BrowserTools => {
-            dependencies.browser_vision_adapter = Some(BrowserVisionAdapterRef::new(Arc::new(
-                ChatosBrowserVisionAdapter,
-            )));
-        }
         BuiltinMcpKind::MemorySkillReader
         | BuiltinMcpKind::MemoryCommandReader
         | BuiltinMcpKind::MemoryPluginReader => {
@@ -87,8 +80,7 @@ fn chatos_dependencies(
         }
         BuiltinMcpKind::CodeMaintainerRead
         | BuiltinMcpKind::TaskManager
-        | BuiltinMcpKind::ProjectManagement
-        | BuiltinMcpKind::WebTools => {}
+        | BuiltinMcpKind::ProjectManagement => {}
     }
     Ok(dependencies)
 }

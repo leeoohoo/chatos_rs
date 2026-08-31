@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 
 use super::internal_auth::{
     require_project_internal_request, MCP_MANAGEMENT_CALLER, PROJECT_EXECUTION_CONTEXT_SCOPE,
+    TASK_RUNNER_CALLER,
 };
 use super::ApiError;
 use crate::models::ProjectRecord;
@@ -32,7 +33,7 @@ pub(in crate::api) async fn resolve_project_execution_context(
     require_project_internal_request(
         &state.config,
         &headers,
-        &[MCP_MANAGEMENT_CALLER],
+        &[MCP_MANAGEMENT_CALLER, TASK_RUNNER_CALLER],
         PROJECT_EXECUTION_CONTEXT_SCOPE,
     )?;
     let owner_user_id = required_text(query.owner_user_id.as_str(), "owner_user_id")?;

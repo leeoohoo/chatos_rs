@@ -8,6 +8,7 @@ use std::time::Duration;
 pub struct McpManagementClientConfig {
     pub base_url: String,
     pub request_timeout: Duration,
+    pub runtime_session_request_timeout: Duration,
     pub internal_api_secret: Option<String>,
     pub caller_service: String,
     pub mtls_ca_cert_path: PathBuf,
@@ -24,12 +25,24 @@ impl McpManagementClientConfig {
                 format!("MCP_MANAGEMENT_REQUEST_TIMEOUT_MS must be an integer: {error}")
             })?
             .max(300);
+        let runtime_session_request_timeout_ms =
+            required_managed_env("MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS")?
+                .parse::<u64>()
+                .map_err(|error| {
+                    format!(
+                "MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS must be an integer: {error}"
+            )
+                })?
+                .max(request_timeout_ms);
         let secret_env_key = caller_secret_env_key(caller_service.as_str()).ok_or_else(|| {
             format!("MCP Management caller service is not configured: {caller_service}")
         })?;
         Ok(Self {
             base_url: normalize_base_url(base_url),
             request_timeout: Duration::from_millis(request_timeout_ms),
+            runtime_session_request_timeout: Duration::from_millis(
+                runtime_session_request_timeout_ms,
+            ),
             internal_api_secret: Some(required_managed_env(secret_env_key)?),
             caller_service,
             mtls_ca_cert_path: PathBuf::from(required_bootstrap_env(

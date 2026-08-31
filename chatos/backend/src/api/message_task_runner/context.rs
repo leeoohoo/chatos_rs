@@ -21,6 +21,8 @@ use super::normalize_text;
 #[derive(Debug, Clone)]
 pub(super) struct MessageTaskRunnerContext {
     pub(super) base_url: String,
+    pub(super) agent_account_id: String,
+    pub(super) contact_id: Option<String>,
     pub(super) source_session_id: String,
     pub(super) source_user_message_id: Option<String>,
     pub(super) source_turn_id: Option<String>,
@@ -317,9 +319,14 @@ pub(super) async fn resolve_message_task_runner_context(
     let Some(config) = config else {
         return Ok(None);
     };
+    let Some(agent_account_id) = config.agent_account_id else {
+        return Ok(None);
+    };
 
     Ok(Some(MessageTaskRunnerContext {
         base_url: config.base_url,
+        agent_account_id,
+        contact_id,
         source_session_id: session.id,
         source_user_message_id,
         source_turn_id,

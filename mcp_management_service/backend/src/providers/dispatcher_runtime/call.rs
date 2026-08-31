@@ -136,28 +136,6 @@ impl ProviderDispatcher {
                     )
                     .await
             }
-            McpProviderKind::Embedded if self.embedded.supports(route) => {
-                self.embedded
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
-            McpProviderKind::ExternalHttp if self.external_http.supports(route) => {
-                self.external_http
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
             McpProviderKind::Unavailable => Err(ProviderCallError::provider_unavailable(
                 route.reason.clone(),
             )),

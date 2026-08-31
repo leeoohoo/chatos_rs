@@ -15,8 +15,8 @@ pub struct ToolResultModelBudgetLimits {
     pub total_max_chars: usize,
 }
 
-pub const DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS: usize = 8_000;
-pub const DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS: usize = 48_000;
+pub const DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS: usize = 40_000;
+pub const DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS: usize = 200_000;
 pub const TOOL_RESULT_MODEL_MAX_CHARS_ENV: &str = "AI_RUNTIME_TOOL_RESULT_MODEL_MAX_CHARS";
 pub const TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV: &str =
     "AI_RUNTIME_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS";
@@ -45,13 +45,26 @@ impl ToolResultModelBudget {
             return content.to_string();
         }
 
-        let reason = if content_chars > self.per_result_max_chars {
-            "single tool result exceeds the per-result model input limit"
+        let (reason, available_chars) = if content_chars > self.per_result_max_chars {
+            (
+                "per_result_limit",
+                self.per_result_max_chars.min(self.remaining_total_chars),
+            )
         } else {
-            "combined tool results exceed the model input budget"
+            ("total_budget", self.remaining_total_chars)
         };
-        self.remaining_total_chars = 0;
-        oversized_tool_result_advisory(tool_name, content_chars, content.len(), reason)
+        let truncated = truncate_tool_result_for_model(
+            tool_name,
+            content,
+            content_chars,
+            content.len(),
+            reason,
+            available_chars,
+        );
+        self.remaining_total_chars = self
+            .remaining_total_chars
+            .saturating_sub(truncated.chars().count());
+        truncated
     }
 }
 
@@ -105,24 +118,45 @@ fn env_usize(key: &str, default_value: usize) -> usize {
         .unwrap_or(default_value)
 }
 
-fn oversized_tool_result_advisory(
+fn truncate_tool_result_for_model(
     tool_name: &str,
+    content: &str,
     content_chars: usize,
     content_bytes: usize,
     reason: &str,
+    max_chars: usize,
 ) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
     let tool_name = tool_name.trim();
     let tool_display = if tool_name.is_empty() {
         "unknown"
     } else {
         tool_name
     };
-    format!(
-        "[Tool result omitted before sending to the model]\n\
-Tool: {tool_display}\n\
-Original size: {content_chars} chars, {content_bytes} bytes.\n\
-Reason: {reason}.\n\
-The output is too large for the next model request, so its content was not included. \
-Use a narrower query or read the file by line/range, for example with explicit start and end lines, instead of requesting the whole file."
-    )
+    let marker = format!(
+        "\n...[tool_result_truncated tool={tool_display} original_chars={content_chars} original_bytes={content_bytes} reason={reason}]...\n"
+    );
+    let marker_chars = marker.chars().count();
+    if marker_chars >= max_chars {
+        // A tiny remaining batch budget cannot fit the diagnostic marker.
+        // Preserve actual tool content rather than spending the final bytes on
+        // an incomplete marker that tells the model nothing useful.
+        return content.chars().take(max_chars).collect();
+    }
+
+    let excerpt_chars = max_chars - marker_chars;
+    let head_chars = (excerpt_chars * 3 / 5).max(1);
+    let tail_chars = excerpt_chars.saturating_sub(head_chars);
+    let head: String = content.chars().take(head_chars).collect();
+    let tail: String = content
+        .chars()
+        .rev()
+        .take(tail_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{head}{marker}{tail}")
 }

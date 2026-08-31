@@ -12,9 +12,6 @@ use tokio::sync::RwLock;
 
 mod api;
 mod approval;
-mod chrome_bridge;
-mod chrome_integration;
-mod chrome_native_host;
 mod config;
 mod connector;
 mod device_keys;
@@ -33,7 +30,6 @@ mod remote_control_auth;
 mod runtime;
 mod sandbox;
 mod secure_storage;
-mod skills;
 mod state;
 mod system_permissions;
 mod terminal;
@@ -55,14 +51,8 @@ pub(crate) use state::{
     AuthState, AuthUserState, LocalState, WorkspaceProjectConfigTrust, WorkspaceState,
 };
 
-pub use chrome_native_host::run_chrome_native_host;
-
 pub fn local_runtime_migration_versions() -> Vec<i64> {
     local_runtime::embedded_migration_versions()
-}
-
-pub fn run_computer_use_helper() -> Result<()> {
-    skills::native::run_computer_use_helper()
 }
 
 pub(crate) const LOCAL_SANDBOX_STATUS_READY: &str = "ready";

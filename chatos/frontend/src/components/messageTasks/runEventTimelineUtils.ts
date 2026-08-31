@@ -160,9 +160,6 @@ function describeEventTitle(event: MessageTaskRunnerRunEvent): string {
     const toolName = readString(payload?.name);
     return toolName ? `工具输出 · ${toolName}` : '工具输出';
   }
-  if (eventType === 'browser_session') {
-    return '浏览器会话';
-  }
   if (eventType === 'chunk') {
     return '模型回复';
   }
@@ -210,12 +207,6 @@ function describeSingleEventSummary(event: MessageTaskRunnerRunEvent): string | 
     const payload = asRecord(event.payload);
     const status = payload?.success === false || payload?.is_error === true ? '失败' : '完成';
     return `${status}${payload?.result !== undefined ? ` · ${describeStructuredValueSummary(payload.result)}` : ''}`;
-  }
-  if (eventType === 'browser_session') {
-    const payload = asRecord(event.payload);
-    const id = readString(payload?.id);
-    const status = readString(payload?.status);
-    return [id, status].filter(Boolean).join(' · ') || '浏览器会话状态已更新';
   }
   return null;
 }

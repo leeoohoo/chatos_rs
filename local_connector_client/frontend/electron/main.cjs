@@ -4,13 +4,12 @@
 const {
   app,
   BrowserWindow,
+  dialog,
   Menu,
   WebContentsView,
-  clipboard,
   ipcMain,
   session,
   shell,
-  systemPreferences,
 } = require('electron');
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -49,6 +48,8 @@ let chatosView = null;
 let chatosViewLoader = null;
 let approvalOverlayView = null;
 let approvalOverlayMode = 'hidden';
+let visualPreviewView = null;
+let visualPreviewMode = 'hidden';
 let shutdownStarted = false;
 const desktopAuthToken = crypto.randomBytes(32).toString('base64url');
 const coreRuntime = createCoreRuntime({ app, desktopAuthToken });
@@ -155,6 +156,11 @@ function createWindow() {
     }
     approvalOverlayView = null;
     approvalOverlayMode = 'hidden';
+    if (visualPreviewView && !visualPreviewView.webContents.isDestroyed()) {
+      trustedLocalWebContents.delete(visualPreviewView.webContents.id);
+    }
+    visualPreviewView = null;
+    visualPreviewMode = 'hidden';
     chatosViewLoader?.dispose();
     chatosViewLoader = null;
     chatosView = null;
@@ -162,12 +168,92 @@ function createWindow() {
     mainWindow = null;
   });
   createChatosView();
+  createVisualPreviewView();
   createApprovalOverlayView();
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     openExternalIfSafe(url);
     return { action: 'deny' };
   });
+}
+
+function createVisualPreviewView() {
+  if (!mainWindow || mainWindow.isDestroyed() || visualPreviewView) {
+    return;
+  }
+  visualPreviewView = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  const previewWebContentsId = visualPreviewView.webContents.id;
+  visualPreviewView.setBackgroundColor('#00000000');
+  trustedLocalWebContents.add(previewWebContentsId);
+  mainWindow.contentView.addChildView(visualPreviewView);
+  visualPreviewView.setVisible(false);
+  attachLocalFrontendNavigationGuard(visualPreviewView.webContents);
+  visualPreviewView.webContents.loadFile(localFrontendIndexPath(), {
+    query: { view: 'visual-preview' },
+  });
+  visualPreviewView.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalIfSafe(url);
+    return { action: 'deny' };
+  });
+  visualPreviewView.webContents.once('destroyed', () => {
+    if (visualPreviewView?.webContents.id !== previewWebContentsId) {
+      return;
+    }
+    trustedLocalWebContents.delete(previewWebContentsId);
+    visualPreviewView = null;
+    visualPreviewMode = 'hidden';
+  });
+}
+
+function normalizeVisualPreviewMode(mode) {
+  return mode === 'expanded' || mode === 'collapsed' ? mode : 'hidden';
+}
+
+function layoutVisualPreviewView() {
+  if (!mainWindow || !visualPreviewView) {
+    return;
+  }
+  if (visualPreviewMode === 'hidden') {
+    visualPreviewView.setVisible(false);
+    return;
+  }
+  const bounds = mainWindow.getContentBounds();
+  const margin = 18;
+  const requested = visualPreviewMode === 'collapsed'
+    ? { width: 168, height: 44 }
+    : { width: 376, height: 276 };
+  const width = Math.min(requested.width, Math.max(0, bounds.width - margin * 2));
+  const height = Math.min(
+    requested.height,
+    Math.max(0, bounds.height - SHELL_HEIGHT - margin * 2),
+  );
+  visualPreviewView.setBounds({
+    x: Math.max(margin, bounds.width - width - margin),
+    y: Math.max(SHELL_HEIGHT + margin, bounds.height - height - margin),
+    width,
+    height,
+  });
+  visualPreviewView.setVisible(width > 0 && height > 0);
+}
+
+function bringVisualPreviewToFront() {
+  if (!mainWindow || mainWindow.isDestroyed() || !visualPreviewView) {
+    return;
+  }
+  try {
+    mainWindow.contentView.addChildView(visualPreviewView);
+  } catch {
+    // The main window may be changing views while it is closing.
+  }
+  layoutVisualPreviewView();
 }
 
 function createChatosView() {
@@ -244,6 +330,7 @@ function createChatosView() {
       }
     },
   });
+  bringVisualPreviewToFront();
   bringApprovalOverlayToFront();
 }
 
@@ -356,6 +443,7 @@ function layoutApprovalOverlayView() {
 function layoutMainViews() {
   layoutChatosView();
   layoutSettingsView();
+  layoutVisualPreviewView();
   layoutApprovalOverlayView();
 }
 
@@ -383,6 +471,7 @@ function restoreMainWindowContent() {
     settingsView.setVisible(true);
     layoutSettingsView();
     repaintView(settingsView);
+    bringVisualPreviewToFront();
     bringApprovalOverlayToFront();
     return;
   }
@@ -393,6 +482,7 @@ function restoreMainWindowContent() {
     layoutChatosView();
     repaintView(chatosView);
   }
+  bringVisualPreviewToFront();
   bringApprovalOverlayToFront();
 }
 
@@ -526,35 +616,6 @@ function openExternalIfSafe(url) {
   }
 }
 
-function desktopSystemPermissionStatuses() {
-  if (process.platform !== 'darwin') {
-    return {};
-  }
-  const accessibilityReady = systemPreferences.isTrustedAccessibilityClient(false);
-  const screenStatus = systemPreferences.getMediaAccessStatus('screen');
-  return {
-    accessibility_control: {
-      status: accessibilityReady ? 'ready' : 'needs_attention',
-      status_label: accessibilityReady ? '已授权' : '需要授权',
-      last_error: accessibilityReady ? null : 'Chat OS Local Connector 尚未获得 macOS 辅助功能权限。',
-    },
-    screen_recording: {
-      status: screenStatus === 'granted' ? 'ready' : 'needs_attention',
-      status_label: screenStatus === 'granted' ? '已授权' : '需要授权',
-      last_error: screenStatus === 'granted'
-        ? null
-        : `macOS 屏幕录制权限状态：${screenStatus || 'unknown'}`,
-    },
-  };
-}
-
-function requestDesktopSystemPermission(permissionId) {
-  if (process.platform === 'darwin' && permissionId === 'accessibility_control') {
-    systemPreferences.isTrustedAccessibilityClient(true);
-  }
-  return desktopSystemPermissionStatuses();
-}
-
 function openSettingsView(requestedTab) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -570,6 +631,7 @@ function openSettingsView(requestedTab) {
     if (requestedTab) {
       settingsView.webContents.send('local-connector:settings-tab', requestedTab);
     }
+    bringVisualPreviewToFront();
     bringApprovalOverlayToFront();
     settingsView.webContents.focus();
     mainWindow.show();
@@ -605,6 +667,7 @@ function openSettingsView(requestedTab) {
   });
   settingsView.webContents.once('did-finish-load', () => {
     repaintView(settingsView);
+    bringVisualPreviewToFront();
     bringApprovalOverlayToFront();
   });
   settingsView.webContents.once('destroyed', () => {
@@ -668,17 +731,19 @@ app.whenReady().then(async () => {
     }
     return authenticateDesktopTicket(ticket);
   });
-  ipcMain.handle('local-connector:desktop-system-permissions', (event) => {
-    if (!isTrustedLocalEvent(event)) {
-      return {};
+  ipcMain.handle('local-connector:select-plugin-files', async (event) => {
+    if (
+      !isTrustedLocalEvent(event)
+      || !settingsView
+      || event.sender.id !== settingsView.webContents.id
+    ) {
+      throw new Error('Plugin file selection requires the trusted settings window');
     }
-    return desktopSystemPermissionStatuses();
-  });
-  ipcMain.handle('local-connector:desktop-system-permission-request', (event, permissionId) => {
-    if (!isTrustedLocalEvent(event)) {
-      return {};
-    }
-    return requestDesktopSystemPermission(String(permissionId || ''));
+    const result = await dialog.showOpenDialog(mainWindow || undefined, {
+      title: '选择要授权给 Plugin 的文件',
+      properties: ['openFile', 'multiSelections'],
+    });
+    return result.canceled ? [] : result.filePaths;
   });
   ipcMain.handle('local-connector:settings-open', (event, requestedTab) => {
     if (!isTrustedLocalEvent(event) && !isTrustedRuntimeEvent(event)) {
@@ -698,6 +763,19 @@ app.whenReady().then(async () => {
     }
     approvalOverlayMode = normalizeApprovalOverlayMode(requestedMode);
     layoutApprovalOverlayView();
+    return true;
+  });
+  ipcMain.handle('local-connector:visual-preview-mode', (event, requestedMode) => {
+    if (
+      !isTrustedLocalEvent(event)
+      || !visualPreviewView
+      || event.sender.id !== visualPreviewView.webContents.id
+    ) {
+      return false;
+    }
+    visualPreviewMode = normalizeVisualPreviewMode(requestedMode);
+    bringVisualPreviewToFront();
+    bringApprovalOverlayToFront();
     return true;
   });
   ipcMain.handle('local-connector:settings-close', (event) => {
@@ -764,35 +842,6 @@ app.whenReady().then(async () => {
       recreateChatosView();
     }
     return next;
-  });
-  ipcMain.handle('local-connector:chrome-extension-directory-show', async (event) => {
-    if (!isTrustedLocalEvent(event)) {
-      return false;
-    }
-    const extensionDirectory = coreRuntime.prepareChromeExtensionInstallDirectory();
-    const error = await shell.openPath(extensionDirectory);
-    if (error) {
-      throw new Error(error);
-    }
-    return true;
-  });
-  ipcMain.handle('local-connector:chrome-extension-install-path-copy', (event) => {
-    if (!isTrustedLocalEvent(event)) {
-      return false;
-    }
-    const extensionDirectory = coreRuntime.prepareChromeExtensionInstallDirectory();
-    clipboard.writeText(extensionDirectory);
-    return extensionDirectory;
-  });
-  ipcMain.handle('local-connector:chrome-extensions-page-open', async (event) => {
-    if (!isTrustedLocalEvent(event)) {
-      return false;
-    }
-    const error = await shell.openExternal('chrome://extensions/');
-    if (error) {
-      throw new Error(error);
-    }
-    return true;
   });
   coreRuntime.startCore();
   createWindow();

@@ -35,7 +35,7 @@ Depending on the project type, it can use:
 - Project files and full-text search
 - Git status, branches, diffs, commits, and synchronization
 - Terminals and long-running commands
-- Browser automation, code maintenance, and other engineering tools
+- Marketplace-installed MCP plugins, code maintenance, and other engineering tools
 - Project languages, toolchains, and environment variables
 - An isolated cloud environment or a local directory you have authorized
 
@@ -300,9 +300,9 @@ Package the Linux core profile on Linux:
 ./local_connector_client/package-electron-linux-client.sh
 ```
 
-The Linux package includes the desktop client, Local Connector Core, and the verified Plugin/Skill
-catalogs. Browser automation, Chrome Native Messaging, Computer Use, and the
-bundled document runtime remain excluded until Linux-native runtime assets are available.
+The Linux package includes the desktop client and Local Connector Core. Browser, Computer Use,
+document, PDF, and similar capabilities are installed separately from the Marketplace and execute
+through the Local Connector plugin runtime.
 
 ### Build and test
 

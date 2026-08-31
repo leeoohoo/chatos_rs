@@ -19,6 +19,9 @@ use crate::modules::conversation_runtime::session_scope::resolve_session_project
 use crate::services::ask_user_prompt_manager::{
     upsert_external_ask_user_prompt_record, AskUserPromptRecord, AskUserPromptStatus,
 };
+use crate::services::pet_activity_inbox::{
+    record_task_runner_activity, TaskRunnerPetActivityInput,
+};
 use crate::services::realtime::publish_sessions_updated;
 use crate::services::{chatos_sessions, project_management_api_client};
 
@@ -370,6 +373,46 @@ async fn task_runner_callback_authorized(
             saved_user_message.as_ref(),
             saved_assistant_message.as_ref(),
         );
+        let detail = payload
+            .error_message
+            .as_deref()
+            .or(payload.result_summary.as_deref())
+            .or(payload.report_content.as_deref())
+            .map(|value| value.trim().chars().take(600).collect::<String>())
+            .filter(|value| !value.is_empty());
+        if let Err(err) = record_task_runner_activity(TaskRunnerPetActivityInput {
+            user_id: user_id.to_string(),
+            conversation_id: callback_session.id.clone(),
+            project_id: callback_session.project_id.clone(),
+            turn_id: payload.source_turn_id.clone(),
+            message_id: saved_assistant_message
+                .as_ref()
+                .map(|message| message.id.clone())
+                .or_else(|| Some(user_message_id.clone())),
+            task_id: payload.task_id.clone(),
+            run_id: payload
+                .run_id
+                .clone()
+                .or_else(|| payload.source_run_id.clone()),
+            event: payload.event.clone(),
+            status: payload
+                .task_status
+                .clone()
+                .unwrap_or_else(|| payload.status.clone()),
+            task_title: payload.task_title.clone(),
+            detail,
+            occurred_at: payload.callback_at.clone(),
+        })
+        .await
+        {
+            warn!(
+                user_id,
+                task_id = payload.task_id.as_str(),
+                event = payload.event.as_str(),
+                error = err,
+                "failed to persist task runner pet activity"
+            );
+        }
         if session_changed {
             publish_sessions_updated(
                 user_id,

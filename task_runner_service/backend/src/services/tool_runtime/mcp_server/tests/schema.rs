@@ -29,6 +29,15 @@ fn create_task_schema_hides_memory_scope_fields() {
     assert!(properties.contains_key("default_model_config_id"));
     assert!(properties.contains_key("enabled_builtin_kinds"));
     assert!(properties.contains_key("external_mcp_config_ids"));
+    assert!(properties.contains_key("plugin_hints"));
+    let plugin_hint_description = properties
+        .get("plugin_hints")
+        .and_then(|value| value.get("description"))
+        .and_then(serde_json::Value::as_str)
+        .expect("plugin_hints description");
+    assert!(plugin_hint_description.contains("native desktop applications"));
+    assert!(plugin_hint_description.contains("Browser CDP only for websites"));
+    assert!(plugin_hint_description.contains("Feishu/Lark"));
     assert!(!properties.contains_key("selected_skill_ids"));
     assert!(!properties.contains_key("plugin_device_id"));
     assert!(!properties.contains_key("plugin_workspace_id"));
@@ -193,6 +202,7 @@ fn ai_task_input_cannot_supply_mcp_configuration() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
+        plugin_hints: Vec::new(),
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: Some(TaskMcpConfig {
@@ -308,6 +318,7 @@ fn create_task_args_preserve_agent_mcp_capability_selection() {
             String::new(),
             "external-mcp-1".to_string(),
         ]),
+        plugin_hints: Vec::new(),
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -342,6 +353,7 @@ fn explicit_execution_requirement_is_never_downgraded_by_read_selection() {
         schedule: None,
         enabled_builtin_kinds: Some(vec!["CodeMaintainerRead".to_string()]),
         external_mcp_config_ids: None,
+        plugin_hints: Vec::new(),
         selected_plugins: None,
         prerequisite_task_ids: None,
         mcp_config: None,
@@ -369,6 +381,7 @@ fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
         schedule: None,
         enabled_builtin_kinds: None,
         external_mcp_config_ids: None,
+        plugin_hints: Vec::new(),
         selected_plugins: Some(vec![
             chatos_plugin_management_sdk::SelectedPluginRef {
                 plugin_id: " plugin-browser ".to_string(),
@@ -390,59 +403,6 @@ fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
     .expect_err("AI Plugin routing must fail closed");
 
     assert!(error.contains("controlled by the program"));
-}
-
-#[test]
-fn request_context_plugin_selection_is_applied_without_ai_plugin_input() {
-    let mut request = CreateTaskArgs {
-        title: "browser task".to_string(),
-        description: None,
-        objective: "control browser".to_string(),
-        input_payload: None,
-        priority: None,
-        tags: None,
-        default_model_config_id: None,
-        requires_execution: Some(true),
-        schedule: None,
-        enabled_builtin_kinds: None,
-        external_mcp_config_ids: None,
-        selected_plugins: None,
-        prerequisite_task_ids: None,
-        mcp_config: None,
-    }
-    .into_request()
-    .expect("model request");
-    let context = McpRequestContext {
-        plugin_config_override: Some(chatos_plugin_management_sdk::TaskPluginConfig {
-            selected_plugins: vec![chatos_plugin_management_sdk::SelectedPluginRef {
-                plugin_id: "user-plugin".to_string(),
-                selected_skill_ids: Vec::new(),
-                selected_command_ids: vec!["review".to_string()],
-                selected_agent_ids: Vec::new(),
-            }],
-            command_invocations: vec![chatos_plugin_management_sdk::PluginCommandInvocation {
-                plugin_id: "user-plugin".to_string(),
-                command_id: "review".to_string(),
-                arguments: Some("src/lib.rs".to_string()),
-            }],
-        }),
-        ..McpRequestContext::default()
-    };
-
-    context.enforce_plugin_config(&mut request);
-    assert_eq!(request.plugin_config.selected_plugins.len(), 1);
-    assert_eq!(
-        request.plugin_config.selected_plugins[0].plugin_id,
-        "user-plugin"
-    );
-    assert_eq!(
-        request.plugin_config.command_invocations,
-        vec![chatos_plugin_management_sdk::PluginCommandInvocation {
-            plugin_id: "user-plugin".to_string(),
-            command_id: "review".to_string(),
-            arguments: Some("src/lib.rs".to_string()),
-        }]
-    );
 }
 
 #[test]
@@ -541,6 +501,10 @@ fn task_creation_schema_exposes_agent_bound_mcp_choices() {
             value: "postgres-mcp".to_string(),
             title: "PostgreSQL (postgres-mcp) [execution task]".to_string(),
         }],
+        &[super::super::support::TaskMcpSchemaChoice {
+            value: "open-computer-use".to_string(),
+            title: "Open Computer Use [execution task]".to_string(),
+        }],
     );
 
     assert_eq!(
@@ -550,6 +514,10 @@ fn task_creation_schema_exposes_agent_bound_mcp_choices() {
     assert_eq!(
         tools[0].pointer("/inputSchema/properties/external_mcp_config_ids/items/enum/0"),
         Some(&json!("postgres-mcp"))
+    );
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/plugin_hints/items/properties/plugin_key/enum/0"),
+        Some(&json!("open-computer-use"))
     );
 }
 
@@ -860,6 +828,20 @@ fn mcp_request_context_normalizes_legacy_public_project_scope() {
 }
 
 #[test]
+fn mcp_request_context_applies_project_scope_before_trusted_plugin_selection() {
+    let context = McpRequestContext {
+        project_id: Some("project-1".to_string()),
+        ..McpRequestContext::default()
+    };
+    let mut request = valid_planner_create_request();
+
+    context.enforce_created_task_context(&mut request);
+
+    assert_eq!(request.project_id.as_deref(), Some("project-1"));
+    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
+}
+
+#[test]
 fn mcp_request_context_detects_chatos_plan_task_profile() {
     let context = McpRequestContext {
         task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
@@ -884,7 +866,7 @@ fn chatos_plan_context_forces_created_tasks_to_plan_phase() {
     };
     let mut request = valid_planner_create_request();
 
-    context.enforce_created_task_kind(&mut request);
+    context.enforce_created_task_context(&mut request);
 
     assert_eq!(
         request.task_profile.as_deref(),
@@ -905,7 +887,7 @@ fn project_execution_planner_always_creates_ordinary_execution_tasks() {
 
     let mut request = valid_planner_create_request();
 
-    context.enforce_created_task_kind(&mut request);
+    context.enforce_created_task_context(&mut request);
 
     assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
 }
@@ -915,7 +897,7 @@ fn ordinary_context_forces_created_tasks_to_default_profile() {
     let context = McpRequestContext::default();
     let mut request = valid_planner_create_request();
 
-    context.enforce_created_task_kind(&mut request);
+    context.enforce_created_task_context(&mut request);
 
     assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
     assert!(request.mcp_config.is_some());

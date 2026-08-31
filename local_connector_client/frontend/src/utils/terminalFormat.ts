@@ -16,9 +16,6 @@ export function sourceLabel(source: string) {
     task_runner_lease: 'Task Runner',
     local_connector_ui: 'Local Connector 页面',
     plugin_computer_use: 'Computer Use 插件',
-    plugin_chrome_existing_session: 'Chrome existing-session 插件',
-    plugin_privileged_browser: 'Browser 特权操作',
-    browser_privileged_action: 'Browser 特权操作',
     plugin_hook_workspace_write: 'Plugin Hook 工作区写入',
   };
   return labels[source] || source;

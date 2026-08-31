@@ -53,7 +53,7 @@ export function resolveSandboxPolicyView(
     builtinProfiles,
     customPermissionProfileActive,
     localProcessSelectable,
-    networkPresentation: describeNetworkAccess(network, approvalMode, backend),
+    networkPresentation: describeNetworkAccess(network, approvalMode),
     permissionProfile,
     permissionProfileName,
     recommended:
@@ -152,7 +152,7 @@ function describeNetworkAccess(network: {
   access: SandboxNetworkAccess;
   unrestricted: boolean;
   requirements: SandboxNetworkRequirements;
-}, approvalMode: SandboxApprovalMode, backend: SandboxBackendKind) {
+}, approvalMode: SandboxApprovalMode) {
   if (network.unrestricted) {
     return {
       access: 'host' as const,

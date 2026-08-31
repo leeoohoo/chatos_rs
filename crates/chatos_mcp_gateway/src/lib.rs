@@ -349,6 +349,7 @@ mod tests {
             execution_group_id: Some("group-1".to_string()),
             turn_id: None,
             task_id: Some("task-1".to_string()),
+            task_title: Some("Task one".to_string()),
             task_profile: Some("task".to_string()),
             source_session_id: None,
             source_user_message_id: None,

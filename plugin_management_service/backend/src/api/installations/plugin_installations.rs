@@ -96,6 +96,7 @@ pub(super) async fn sync_plugin_installation_internal(
         availability_status: payload.availability_status,
         dependency_status: payload.dependency_status,
         permission_status: payload.permission_status,
+        granted_permissions: payload.granted_permissions,
         auth_status: payload.auth_status,
         component_statuses: payload.component_statuses,
         active: payload.active,
@@ -130,7 +131,7 @@ pub(super) async fn sync_plugin_installation_internal(
                 owner_user_id: record.owner_user_id.clone(),
                 plugin_id: record.plugin_id.clone(),
                 enabled: record.active,
-                auto_update: record.plugin_id.starts_with("bundled-plugin-"),
+                auto_update: true,
                 release_channel: release.release_channel.clone(),
                 enabled_components: Vec::new(),
                 updated_at: now.clone(),
@@ -173,6 +174,8 @@ fn normalize_installation_payload(
     payload.artifact_sha256 =
         normalize_sha256(payload.artifact_sha256.as_str(), "artifact_sha256")?;
     payload.platform = required_text(Some(payload.platform.as_str()), "platform")?;
+    payload.granted_permissions =
+        normalize_permission_grants(std::mem::take(&mut payload.granted_permissions))?;
     payload.previous_release_id = payload
         .previous_release_id
         .as_deref()
@@ -204,21 +207,45 @@ fn validate_installation_release(
             "Plugin installation version or artifact hash does not match release",
         ));
     }
-    if !release.components.iter().any(|component| {
-        matches!(
-            component.execution_host,
-            PluginExecutionHost::Local | PluginExecutionHost::Portable
-        )
-    }) {
+    let declared = release
+        .permissions
+        .iter()
+        .map(|requirement| requirement.permission.as_str())
+        .collect::<HashSet<_>>();
+    if payload
+        .granted_permissions
+        .iter()
+        .any(|permission| !declared.contains(permission.as_str()))
+    {
         return Err(ApiError::bad_request(
-            "cloud-only Plugins do not create Local Connector installations",
+            "Plugin installation reported an undeclared permission grant",
+        ));
+    }
+    let required_satisfied = release
+        .permissions
+        .iter()
+        .filter(|requirement| requirement.required)
+        .all(|requirement| {
+            payload
+                .granted_permissions
+                .iter()
+                .any(|permission| permission == &requirement.permission)
+        });
+    let expected_permission_status = if required_satisfied {
+        PluginRequirementStatus::Satisfied
+    } else {
+        PluginRequirementStatus::Missing
+    };
+    if payload.permission_status != expected_permission_status {
+        return Err(ApiError::bad_request(
+            "Plugin installation permission status does not match its actual grants",
         ));
     }
     if !release.supported_platforms.is_empty()
         && !release
             .supported_platforms
             .iter()
-            .any(|platform| platform == &payload.platform)
+            .any(|platform| platform_constraint_matches(platform, payload.platform.as_str()))
     {
         return Err(ApiError::conflict(
             "Plugin installation platform is not supported by release",
@@ -230,6 +257,42 @@ fn validate_installation_release(
         ));
     }
     Ok(())
+}
+
+fn normalize_permission_grants(values: Vec<String>) -> Result<Vec<String>, ApiError> {
+    if values.len() > 256 {
+        return Err(ApiError::bad_request(
+            "granted_permissions contains too many items",
+        ));
+    }
+    let mut normalized_values = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .collect::<Vec<_>>();
+    if normalized_values.iter().any(|value| {
+        value.is_empty()
+            || value.len() > 256
+            || value
+                .bytes()
+                .any(|byte| !(byte.is_ascii_alphanumeric() || b"._:-".contains(&byte)))
+    }) {
+        return Err(ApiError::bad_request(
+            "granted_permissions contains an invalid permission",
+        ));
+    }
+    normalized_values.sort();
+    normalized_values.dedup();
+    Ok(normalized_values)
+}
+
+pub(super) fn platform_constraint_matches(constraint: &str, installed_platform: &str) -> bool {
+    if constraint == installed_platform {
+        return true;
+    }
+    let Some((platform_family, architecture)) = installed_platform.split_once('-') else {
+        return false;
+    };
+    !architecture.is_empty() && constraint == platform_family
 }
 
 fn validate_component_statuses(
@@ -267,11 +330,7 @@ fn validate_component_statuses(
 
 #[cfg(test)]
 mod tests {
-    use chatos_agent::SystemAgentKey;
-
     use super::*;
-
-    const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 
     #[test]
     fn active_installations_require_installed_state() {
@@ -284,93 +343,14 @@ mod tests {
     }
 
     #[test]
-    fn cloud_only_releases_cannot_create_local_installations() {
-        let manifest = chatos_plugin_management_sdk::parse_plugin_manifest(
-            json!({
-                "schemaVersion": 2,
-                "execution": {"defaultHost": "cloud", "componentHosts": {}},
-                "name": "cloud-demo",
-                "version": "1.0.0",
-                "description": "Cloud-only installation rejection fixture",
-                "author": {"name": "ChatOS"},
-                "commands": [{
-                    "componentKey": "review",
-                    "source": "./commands/review.md",
-                    "targetAgent": RUN_AGENT_KEY
-                }],
-                "interface": {
-                    "displayName": "Cloud Demo",
-                    "shortDescription": "Cloud demo",
-                    "longDescription": "Cloud-only installation rejection fixture.",
-                    "developerName": "ChatOS",
-                    "category": "Developer Tools"
-                },
-                "dependencies": {},
-                "permissions": []
-            })
-            .to_string()
-            .as_str(),
-            PluginManifestSource::Chatos,
-        )
-        .expect("cloud-only Manifest");
-        let plugin = PluginCatalogRecord {
-            id: "plugin-1".to_string(),
-            plugin_key: "cloud-demo@official".to_string(),
-            marketplace_id: "official".to_string(),
-            owner_user_id: None,
-            name: manifest.name.clone(),
-            display_name: manifest.interface.display_name.clone(),
-            description: manifest.description.clone(),
-            publisher: PluginPublisher {
-                id: "publisher-1".to_string(),
-                name: "ChatOS".to_string(),
-                website: None,
-                verified: true,
-            },
-            interface: manifest.interface.clone(),
-            keywords: Vec::new(),
-            visibility: "public".to_string(),
-            featured: false,
-            enabled: true,
-            latest_release_id: "release-1".to_string(),
-            license: PluginLicenseMetadata {
-                license_id: "MIT".to_string(),
-                license_url: None,
-                redistributable: true,
-                reviewed_at: None,
-            },
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-        };
-        let release = PluginReleaseRecord {
-            id: "release-1".to_string(),
-            plugin_id: plugin.id.clone(),
-            version: manifest.version.clone(),
-            manifest_schema_version: manifest.schema_version,
-            normalized_manifest: manifest.clone(),
-            artifact_ref: "artifact".to_string(),
-            artifact_sha256: "a".repeat(64),
-            signature: PluginReleaseSignature {
-                key_id: "key-1".to_string(),
-                publisher_id: plugin.publisher.id.clone(),
-                marketplace_id: plugin.marketplace_id.clone(),
-                algorithm: "ed25519".to_string(),
-                signature_base64: "signature".to_string(),
-                signed_at: "now".to_string(),
-                manifest_sha256: "b".repeat(64),
-            },
-            sbom_ref: None,
-            supported_platforms: Vec::new(),
-            components: chatos_plugin_management_sdk::plugin_component_descriptors(&manifest),
-            dependencies: manifest.dependencies.clone(),
-            permissions: manifest.permissions.clone(),
-            release_channel: "stable".to_string(),
-            published_at: "now".to_string(),
-            revoked_at: None,
-        };
-        let error = validate_installation_release(&installation_payload(), &plugin, &release)
-            .expect_err("cloud-only Release must not create an installation");
-        assert!(error.message.contains("cloud-only Plugins"));
+    fn generic_release_platforms_accept_architecture_specific_client_platforms() {
+        assert!(platform_constraint_matches("macos", "macos-arm64"));
+        assert!(platform_constraint_matches("windows", "windows-x86_64"));
+        assert!(platform_constraint_matches("linux", "linux-aarch64"));
+        assert!(platform_constraint_matches("macos-arm64", "macos-arm64"));
+        assert!(!platform_constraint_matches("macos-x86_64", "macos-arm64"));
+        assert!(!platform_constraint_matches("linux", "macos-arm64"));
+        assert!(!platform_constraint_matches("macos", "macos-"));
     }
 
     fn installation_payload() -> PluginInstallationSyncPayload {
@@ -386,6 +366,7 @@ mod tests {
             availability_status: PluginAvailabilityStatus::Ready,
             dependency_status: PluginRequirementStatus::Satisfied,
             permission_status: PluginRequirementStatus::Satisfied,
+            granted_permissions: Vec::new(),
             auth_status: PluginRequirementStatus::Satisfied,
             component_statuses: Vec::new(),
             active: false,

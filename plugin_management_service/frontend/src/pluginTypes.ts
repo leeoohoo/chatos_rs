@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-export type PluginTrustLevel = 'bundled' | 'trusted' | 'untrusted';
+export type PluginTrustLevel = 'trusted' | 'untrusted';
 export type PluginMarketplaceSource =
   | 'official_registry'
-  | 'admin_registry'
-  | 'local_directory';
+  | 'admin_registry';
 export type PluginVisibility = 'public' | 'private';
 export type PluginReleaseChannel = 'stable' | 'beta' | 'canary';
-export type PluginExecutionHost = 'cloud' | 'local' | 'portable';
-export type PluginRuntimeTarget = 'cloud' | 'local_connector';
+export type PluginRuntimeTarget = 'local_connector';
 export type PluginPublisherStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 export type PluginInstallStatus =
   | 'not_installed'
@@ -180,7 +178,6 @@ export interface PluginPermissionRequirement {
 export interface PluginComponentDescriptor {
   component_key: string;
   kind: PluginComponentKind;
-  execution_host: PluginExecutionHost;
   display_name: string;
   runtime_kind: string;
   entrypoint?: { path: string } | null;
@@ -205,6 +202,11 @@ export interface PluginReleaseRecord {
   version: string;
   manifest_schema_version: number;
   normalized_manifest: Record<string, unknown>;
+  npm_package: {
+    name: string;
+    version: string;
+    integrity: string;
+  };
   artifact_ref: string;
   artifact_sha256: string;
   signature: PluginReleaseSignature;
@@ -218,15 +220,34 @@ export interface PluginReleaseRecord {
   revoked_at?: string | null;
 }
 
-export interface PluginMcpCloudRuntimeMetadata {
-  plugin_id: string;
-  release_id: string;
-  component_key: string;
-  server_key: string;
-  transport: 'stdio' | 'http';
-  secret_names: string[];
-  oauth_resource?: string | null;
-  bundle_sha256: string;
+export interface PluginPackageAnalysis {
+  artifact_sha256: string;
+  artifact_ref: string;
+  package_name: string;
+  package_version: string;
+  npm_integrity: string;
+  package_bins: string[];
+  manifest: {
+    schemaVersion: number;
+    name: string;
+    version: string;
+    description: string;
+    author: {
+      name: string;
+      email?: string | null;
+      url?: string | null;
+    };
+    license?: string | null;
+    interface: PluginInterfaceMetadata;
+    permissions?: PluginPermissionRequirement[];
+    dependencies?: Record<string, unknown>;
+  };
+  components: PluginComponentDescriptor[];
+}
+
+export interface PublishUploadedPluginResponse {
+  catalog: PluginCatalogRecord;
+  release: PluginReleaseRecord;
 }
 
 export interface PluginComponentStatusRecord {
@@ -272,29 +293,4 @@ export interface PluginOAuthConnectionRecord {
   expires_at?: string | null;
   account_display?: string | null;
   updated_at: string;
-}
-
-export interface PluginCloudOAuthConnectionRecord {
-  id: string;
-  owner_user_id: string;
-  plugin_id: string;
-  release_id: string;
-  component_key: string;
-  provider: string;
-  resource: string;
-  scopes: string[];
-  connected: boolean;
-  needs_auth: boolean;
-  refreshable: boolean;
-  expires_at?: string | null;
-  account_display?: string | null;
-  revision: string;
-  updated_at: string;
-}
-
-export interface BeginPluginCloudOAuthAuthorizationResponse {
-  flow_id: string;
-  authorization_url: string;
-  callback_origin: string;
-  expires_at: string;
 }

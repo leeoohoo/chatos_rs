@@ -9,6 +9,11 @@ const RESTART_INTERRUPTED_MESSAGE: &str =
     "MCP Management restarted before the provider returned a durable tool result";
 const MISSING_BATCH_MESSAGE: &str =
     "MCP Management could not recover the durable tool batch for this invocation";
+// MCP model inputs may contain up to 2 MiB of decoded image bytes. Base64 adds
+// roughly one third, and the surrounding JSON/MCP envelope adds more overhead.
+// Four MiB preserves the supported visual payload while remaining well below
+// MongoDB's 16 MiB document limit.
+pub(super) const MAX_INLINE_MCP_RESULT_BYTES: usize = 4 * 1024 * 1024;
 
 impl RuntimeInvocationStore {
     pub async fn recover_after_restart(
@@ -412,14 +417,12 @@ fn is_file_modification_tool(original_tool_name: &str) -> bool {
     )
 }
 
-fn sanitize_terminal_result(result: Option<Value>) -> Result<Option<Value>, String> {
-    const MAX_INLINE_RESULT_BYTES: usize = 256 * 1024;
-
+pub(super) fn sanitize_terminal_result(result: Option<Value>) -> Result<Option<Value>, String> {
     let Some(result) = result else {
         return Ok(None);
     };
     let encoded = serde_json::to_vec(&result).map_err(|error| error.to_string())?;
-    if encoded.len() <= MAX_INLINE_RESULT_BYTES {
+    if encoded.len() <= MAX_INLINE_MCP_RESULT_BYTES {
         return Ok(Some(result));
     }
     Ok(Some(serde_json::json!({

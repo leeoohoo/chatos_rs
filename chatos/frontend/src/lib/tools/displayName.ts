@@ -23,10 +23,6 @@ const TOOL_NAME_PREFIXES = [
 ];
 
 const GENERIC_BUILTIN_SERVER_PREFIXES = [
-  'builtin_browser_tools_',
-  'browser_tools_',
-  'builtin_web_tools_',
-  'web_tools_',
   'builtin_terminal_controller_',
   'terminal_controller_',
   'builtin_remote_connection_controller_',

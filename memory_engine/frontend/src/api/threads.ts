@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type {
-  EngineRecord,
   EngineSubjectMemory,
   EngineSummary,
   EngineThread,

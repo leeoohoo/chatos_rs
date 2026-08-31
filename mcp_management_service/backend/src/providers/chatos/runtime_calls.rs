@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
-
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
 use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
@@ -17,7 +15,6 @@ use crate::runtime::RuntimeSessionSnapshot;
 
 use super::{
     is_memory_reader, memory_provider_ref, ChatosProvider, ChatosRequestBinding, ProviderCallError,
-    CLOUD_BROWSER_SESSION_CLOSE_METHOD,
 };
 use crate::providers::managed_tool_call_params;
 
@@ -74,7 +71,6 @@ impl ChatosProvider {
         );
         let timeout = match descriptor.key {
             SystemMcpKey::AskUser => self.ask_user_request_timeout,
-            SystemMcpKey::BrowserTools => self.browser_request_timeout,
             _ => self.request_timeout,
         };
         let response = self
@@ -171,62 +167,9 @@ impl ChatosProvider {
 
     pub(in crate::providers) async fn close_session(
         &self,
-        snapshot: &RuntimeSessionSnapshot,
+        _snapshot: &RuntimeSessionSnapshot,
     ) -> Result<(), ProviderCallError> {
-        let has_cloud_browser = snapshot.routes.iter().any(|route| {
-            self.supports(route)
-                && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-                    .is_some_and(|descriptor| descriptor.key == SystemMcpKey::BrowserTools)
-        });
-        if !has_cloud_browser {
-            return Ok(());
-        }
-        let secret = self.internal_secret.as_deref().ok_or_else(|| {
-            ProviderCallError::provider_unavailable(
-                "ChatOS Provider internal secret is not configured",
-            )
-        })?;
-        let invocation_id = format!("close-{}", snapshot.session_id);
-        let binding = ChatosRequestBinding::from(snapshot);
-        let endpoint = format!(
-            "{}/internal/mcp-management/mcp/browser_tools/sessions/{}/close",
-            self.base_url,
-            urlencoding::encode(snapshot.session_id.as_str())
-        );
-        let response = self
-            .bound_request(&binding, endpoint, self.browser_request_timeout, secret)?
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": invocation_id,
-                "method": CLOUD_BROWSER_SESSION_CLOSE_METHOD,
-                "params": {}
-            }))
-            .send()
-            .await
-            .map_err(|error| {
-                ProviderCallError::provider_unavailable(format!(
-                    "ChatOS Browser Runtime close request failed: {error}"
-                ))
-            })?;
-        let status = response.status();
-        let bytes = read_response_bytes_limited(response, self.response_limit_bytes)
-            .await
-            .map_err(|error| {
-                ProviderCallError::invalid_response(format!(
-                    "ChatOS Browser Runtime close response could not be read: {error}"
-                ))
-            })?;
-        if !status.is_success() {
-            return Err(ProviderCallError::provider_unavailable(format!(
-                "ChatOS Browser Runtime close was rejected with HTTP {}",
-                status.as_u16()
-            )));
-        }
-        decode_jsonrpc_response(
-            bytes.as_slice(),
-            invocation_id.as_str(),
-            "ChatOS Browser Runtime close",
-        )?;
         Ok(())
     }
 }
+use std::time::Duration;

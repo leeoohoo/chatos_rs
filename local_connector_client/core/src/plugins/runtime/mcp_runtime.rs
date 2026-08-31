@@ -6,13 +6,12 @@
 // scattered transport and credential internals.
 #[path = "mcp/mod.rs"]
 mod adapter;
-#[path = "mcp_config.rs"]
-mod config;
 #[path = "mcp_credentials.rs"]
 mod credentials;
 
 pub(in crate::plugins::runtime) use adapter::{
-    load_verified_manifest, PluginMcpInvocationCancelOutcome, PreparedPluginMcp,
+    load_verified_manifest, plugin_mcp_workspace_root_sha256, PluginMcpInvocationCancelOutcome,
+    PreparedPluginMcp,
 };
 pub use adapter::{PluginMcpAdapter, PluginMcpHealthSnapshot, PluginMcpSnapshot};
 #[cfg(test)]

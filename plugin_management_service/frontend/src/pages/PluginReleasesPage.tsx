@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { EyeOutlined, PlusOutlined, StopOutlined } from '@ant-design/icons';
+import { EyeOutlined, StopOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, Modal, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -12,7 +12,7 @@ import { CompactId, DateTimeCell } from '../components/DisplayCells';
 import { useI18n } from '../i18n/I18nProvider';
 import type { PluginReleaseRecord } from '../pluginTypes';
 import type { CurrentUser } from '../types';
-import { jsonText, optionalText, parseJsonObject } from './formUtils';
+import { jsonText } from './formUtils';
 
 interface PluginReleasesPageProps {
   user: CurrentUser;
@@ -21,10 +21,8 @@ interface PluginReleasesPageProps {
 
 export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPageProps) {
   const { t } = useI18n();
-  const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const [pluginId, setPluginId] = useState(initialPluginId || '');
-  const [modalOpen, setModalOpen] = useState(false);
   const [detail, setDetail] = useState<PluginReleaseRecord | null>(null);
   const isAdmin = user.role === 'super_admin';
   useEffect(() => {
@@ -46,24 +44,6 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
     queryKey: ['plugin-releases', pluginId],
     queryFn: () => api.listPluginReleases(pluginId),
     enabled: isAdmin && Boolean(pluginId),
-  });
-  const createMutation = useMutation({
-    mutationFn: (values: Record<string, unknown>) => api.createPluginRelease(pluginId, {
-      manifest_source: values.manifest_source,
-      manifest: parseJsonObject(values.manifest_json),
-      artifact_ref: values.artifact_ref,
-      artifact_sha256: values.artifact_sha256,
-      signature: parseJsonObject(values.signature_json),
-      sbom_ref: optionalText(values.sbom_ref),
-      release_channel: values.release_channel,
-    }),
-    onSuccess: () => {
-      message.success(t('pluginRelease.created'));
-      setModalOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['plugin-releases', pluginId] });
-      queryClient.invalidateQueries({ queryKey: ['admin-plugins'] });
-    },
-    onError: (error) => message.error((error as Error).message),
   });
   const revokeMutation = useMutation({
     mutationFn: api.revokePluginRelease,
@@ -172,22 +152,6 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
             onChange={setPluginId}
           />
         </Space>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          disabled={!pluginId}
-          onClick={() => {
-            form.setFieldsValue({
-              manifest_source: 'chatos',
-              manifest_json: '{}',
-              signature_json: '{}',
-              release_channel: 'stable',
-            });
-            setModalOpen(true);
-          }}
-        >
-          {t('pluginRelease.add')}
-        </Button>
       </div>
       <Table
         rowKey="id"
@@ -197,31 +161,6 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
         scroll={{ x: 1250 }}
         pagination={false}
       />
-      <Modal
-        title={t('pluginRelease.addTitle')}
-        open={modalOpen}
-        onCancel={() => setModalOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={createMutation.isPending}
-        width={900}
-        destroyOnClose
-      >
-        <Form form={form} layout="vertical" onFinish={(values) => createMutation.mutate(values)}>
-          <div className="form-grid">
-            <Form.Item name="manifest_source" label={t('pluginRelease.manifestSource')} rules={[{ required: true }]}>
-              <Select options={['codex', 'chatos'].map((value) => ({ value, label: value }))} />
-            </Form.Item>
-            <Form.Item name="release_channel" label={t('pluginRelease.channel')} rules={[{ required: true }]}>
-              <Select options={['stable', 'beta', 'canary'].map((value) => ({ value, label: value }))} />
-            </Form.Item>
-          </div>
-          <Form.Item name="artifact_ref" label={t('pluginRelease.artifactRef')} rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="artifact_sha256" label={t('pluginRelease.artifactHash')} rules={[{ required: true }]}><Input className="code-input" /></Form.Item>
-          <Form.Item name="sbom_ref" label={t('pluginRelease.sbomRef')}><Input /></Form.Item>
-          <Form.Item name="manifest_json" label={t('pluginRelease.manifestJson')} rules={[{ required: true }]}><Input.TextArea rows={13} className="code-input" /></Form.Item>
-          <Form.Item name="signature_json" label={t('pluginRelease.signatureJson')} rules={[{ required: true }]}><Input.TextArea rows={9} className="code-input" /></Form.Item>
-        </Form>
-      </Modal>
       <Modal
         title={detail ? `${detail.version} · ${t('pluginRelease.details')}` : t('pluginRelease.details')}
         open={Boolean(detail)}

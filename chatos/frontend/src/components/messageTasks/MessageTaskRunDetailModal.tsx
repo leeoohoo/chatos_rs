@@ -17,7 +17,6 @@ import { RunEventTimeline } from './RunEventTimeline';
 import { RunProcessTimeline } from './RunProcessTimeline';
 import { buildRunEventTimelineEntries } from './runEventTimelineUtils';
 import { buildRunProcessTimelineItems } from './runProcessTimelineModel';
-import { BrowserSessionEventsCard } from './BrowserSessionEventsCard';
 import { PluginRunSnapshotCard } from './PluginRunSnapshotCard';
 import { PluginRuntimeEventsCard } from './PluginRuntimeEventsCard';
 import { PluginUiWorkbenchCard } from './PluginUiWorkbenchCard';
@@ -191,7 +190,6 @@ export const MessageTaskRunDetailModal: FC<MessageTaskRunDetailModalProps> = ({
           ) : null}
         </CollapsibleSection>
       ) : null}
-      <BrowserSessionEventsCard events={events} />
       <PluginRuntimeEventsCard events={events} />
       {messageId && taskLookup ? (
         <PluginUiWorkbenchCard events={events} messageId={messageId} lookup={taskLookup} />

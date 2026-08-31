@@ -220,6 +220,8 @@ async fn chatos_message_graph_excludes_subtasks_from_nodes_and_prerequisites() {
 
     let mut root_with_child_prerequisite = root.clone();
     root_with_child_prerequisite.prerequisite_task_ids = vec![child.id.clone()];
+    root_with_child_prerequisite.process_log = Some("large process log".to_string());
+    root_with_child_prerequisite.result_summary = Some("large result summary".to_string());
     service
         .store
         .save_task(root_with_child_prerequisite)
@@ -239,6 +241,8 @@ async fn chatos_message_graph_excludes_subtasks_from_nodes_and_prerequisites() {
     assert_eq!(graph.root_task_ids, vec![root.id.clone()]);
     assert_eq!(graph.nodes.len(), 1);
     assert_eq!(graph.nodes[0].task.id, root.id);
+    assert!(graph.nodes[0].task.process_log.is_none());
+    assert!(graph.nodes[0].task.result_summary.is_none());
     assert!(graph.nodes[0].task.prerequisite_task_ids.is_empty());
     assert!(graph.nodes[0].task.prerequisite_tasks.is_empty());
     assert!(graph.edges.is_empty());

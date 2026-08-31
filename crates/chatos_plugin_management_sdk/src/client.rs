@@ -7,19 +7,14 @@ use serde::Deserialize;
 
 use crate::config::PluginManagementClientConfig;
 use crate::dto::{
-    AgentPromptBundle, AgentPromptBundleManifest, LocalConnectorMcpListResponse,
-    LocalConnectorMcpStatusBatchRequest, LocalConnectorMcpStatusRequest,
-    LocalConnectorMcpSyncRequest, LocalConnectorSkillInventoryRequest, McpRecord,
-    ResolveAgentCapabilitiesRequest, ResolveAgentPromptRequest, ResolvedAgentCapabilities,
-    ResolvedAgentPrompt, ResourceCheckRecord, SkillInstallationRecord,
-    UpdateUserSkillPreferenceRequest, UserSkillCatalogItem, UserSkillCatalogResponse,
+    AgentPromptBundle, AgentPromptBundleManifest, ResolveAgentCapabilitiesRequest,
+    ResolveAgentPromptRequest, ResolvedAgentCapabilities, ResolvedAgentPrompt,
 };
 use crate::error::PluginManagementClientError;
 use crate::plugin_runtime::{
-    PluginCloudComponentBundle, PluginInstallSource, PluginInstallSourceList,
-    PluginInstallationRecord, PluginInstallationSyncPayload, PluginMcpCloudRuntimeBundle,
-    ResolvePluginMcpCloudCredentialsRequest, ResolvedPluginMcpCloudCredentials,
-    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
+    PluginInstallSource, PluginInstallSourceList, PluginInstallationRecord,
+    PluginInstallationSyncPayload, UpdateUserPluginPreferenceRequest,
+    UpdateUserPluginPreferenceResponse,
 };
 use crate::plugin_runtime::{PluginOAuthConnectionRecord, PluginOAuthStatusSyncPayload};
 
@@ -29,12 +24,8 @@ const INTERNAL_TOKEN_AUDIENCE: &str = "plugin-management-service";
 const CAPABILITIES_RESOLVE_SCOPE: &str = "capabilities.resolve";
 const AGENT_PROMPTS_RESOLVE_SCOPE: &str = "agent-prompts.resolve";
 const AGENT_PROMPTS_SYNC_SCOPE: &str = "agent-prompts.sync";
-const LOCAL_CONNECTOR_READ_SCOPE: &str = "local-connector.read";
-const LOCAL_CONNECTOR_WRITE_SCOPE: &str = "local-connector.write";
 const PLUGIN_OAUTH_MANAGE_SCOPE: &str = "plugin.oauth.manage";
 const PLUGIN_INSTALL_MANAGE_SCOPE: &str = "plugin.install.manage";
-const PLUGIN_CLOUD_READ_SCOPE: &str = "plugin.cloud.read";
-const PLUGIN_CLOUD_CREDENTIALS_RESOLVE_SCOPE: &str = "plugin.cloud.credentials.resolve";
 
 #[derive(Clone)]
 pub struct PluginManagementClient {
@@ -176,170 +167,6 @@ impl PluginManagementClient {
         parse_response(response).await
     }
 
-    pub async fn list_local_connector_mcps(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-    ) -> Result<LocalConnectorMcpListResponse, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/mcps",
-            self.config.internal_base_url
-        );
-        let response = self
-            .internal_request(Method::GET, url, LOCAL_CONNECTOR_READ_SCOPE)?
-            .query(&[("owner_user_id", owner_user_id), ("device_id", device_id)])
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn sync_local_connector_mcp(
-        &self,
-        request: &LocalConnectorMcpSyncRequest,
-    ) -> Result<McpRecord, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/mcps",
-            self.config.internal_base_url
-        );
-        let response = self
-            .internal_request(Method::POST, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn update_local_connector_mcp(
-        &self,
-        mcp_id: &str,
-        request: &LocalConnectorMcpSyncRequest,
-    ) -> Result<McpRecord, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/mcps/{}",
-            self.config.internal_base_url,
-            urlencoding::encode(mcp_id)
-        );
-        let response = self
-            .internal_request(Method::PATCH, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn delete_local_connector_mcp(
-        &self,
-        mcp_id: &str,
-        owner_user_id: &str,
-        device_id: &str,
-        manifest_id: &str,
-    ) -> Result<(), PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/mcps/{}",
-            self.config.internal_base_url,
-            urlencoding::encode(mcp_id)
-        );
-        let response = self
-            .internal_request(Method::DELETE, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
-            .query(&[
-                ("owner_user_id", owner_user_id),
-                ("device_id", device_id),
-                ("manifest_id", manifest_id),
-            ])
-            .send()
-            .await?;
-        parse_empty_response(response).await
-    }
-
-    pub async fn update_local_connector_mcp_status(
-        &self,
-        mcp_id: &str,
-        request: &LocalConnectorMcpStatusRequest,
-    ) -> Result<ResourceCheckRecord, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/mcps/{}/status",
-            self.config.internal_base_url,
-            urlencoding::encode(mcp_id)
-        );
-        let response = self
-            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn update_local_connector_mcp_status_batch(
-        &self,
-        request: &LocalConnectorMcpStatusBatchRequest,
-    ) -> Result<Vec<ResourceCheckRecord>, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/mcps/status/batch",
-            self.config.internal_base_url
-        );
-        let response = self
-            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn list_user_skill_catalog(
-        &self,
-        owner_user_id: &str,
-        device_id: Option<&str>,
-    ) -> Result<UserSkillCatalogResponse, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/skills/catalog",
-            self.config.internal_base_url
-        );
-        let mut query = vec![("owner_user_id", owner_user_id)];
-        if let Some(device_id) = device_id {
-            query.push(("device_id", device_id));
-        }
-        let response = self
-            .internal_request(Method::GET, url, LOCAL_CONNECTOR_READ_SCOPE)?
-            .query(&query)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn update_user_skill_preference(
-        &self,
-        skill_id: &str,
-        request: &UpdateUserSkillPreferenceRequest,
-    ) -> Result<UserSkillCatalogItem, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/skills/{}/preference",
-            self.config.internal_base_url,
-            urlencoding::encode(skill_id)
-        );
-        let response = self
-            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn sync_local_connector_skill_inventory(
-        &self,
-        request: &LocalConnectorSkillInventoryRequest,
-    ) -> Result<Vec<SkillInstallationRecord>, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/local-connector/skills/inventory",
-            self.config.internal_base_url
-        );
-        let response = self
-            .internal_request(Method::PUT, url, LOCAL_CONNECTOR_WRITE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
     pub async fn sync_plugin_oauth_status(
         &self,
         request: &PluginOAuthStatusSyncPayload,
@@ -426,68 +253,6 @@ impl PluginManagementClient {
         parse_response(response).await
     }
 
-    pub async fn get_plugin_cloud_component_bundle_for_service(
-        &self,
-        plugin_id: &str,
-        release_id: &str,
-        component_key: &str,
-    ) -> Result<PluginCloudComponentBundle, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/plugins/{}/releases/{}/cloud-components/{}",
-            self.config.internal_base_url,
-            urlencoding::encode(plugin_id),
-            urlencoding::encode(release_id),
-            urlencoding::encode(component_key),
-        );
-        let response = self
-            .internal_request(Method::GET, url, PLUGIN_CLOUD_READ_SCOPE)?
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn get_plugin_mcp_cloud_runtime_bundle_for_service(
-        &self,
-        plugin_id: &str,
-        release_id: &str,
-        component_key: &str,
-    ) -> Result<PluginMcpCloudRuntimeBundle, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/plugins/{}/releases/{}/cloud-mcp-components/{}",
-            self.config.internal_base_url,
-            urlencoding::encode(plugin_id),
-            urlencoding::encode(release_id),
-            urlencoding::encode(component_key),
-        );
-        let response = self
-            .internal_request(Method::GET, url, PLUGIN_CLOUD_READ_SCOPE)?
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
-    pub async fn resolve_plugin_mcp_cloud_credentials_for_service(
-        &self,
-        plugin_id: &str,
-        release_id: &str,
-        component_key: &str,
-        request: &ResolvePluginMcpCloudCredentialsRequest,
-    ) -> Result<ResolvedPluginMcpCloudCredentials, PluginManagementClientError> {
-        let url = format!(
-            "{}/api/internal/plugins/{}/releases/{}/cloud-mcp-components/{}/credentials",
-            self.config.internal_base_url,
-            urlencoding::encode(plugin_id),
-            urlencoding::encode(release_id),
-            urlencoding::encode(component_key),
-        );
-        let response = self
-            .internal_request(Method::POST, url, PLUGIN_CLOUD_CREDENTIALS_RESOLVE_SCOPE)?
-            .json(request)
-            .send()
-            .await?;
-        parse_response(response).await
-    }
-
     fn internal_request(
         &self,
         method: Method,
@@ -531,26 +296,6 @@ where
             .await
             .map_err(PluginManagementClientError::Transport);
     }
-    let status_code = status.as_u16();
-    let body = response.text().await.unwrap_or_default();
-    let message = serde_json::from_str::<ErrorResponse>(body.as_str())
-        .ok()
-        .and_then(|value| value.error)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| default_error_message(status));
-    Err(PluginManagementClientError::Rejected {
-        status: status_code,
-        message,
-    })
-}
-
-async fn parse_empty_response(
-    response: reqwest::Response,
-) -> Result<(), PluginManagementClientError> {
-    if response.status().is_success() {
-        return Ok(());
-    }
-    let status = response.status();
     let status_code = status.as_u16();
     let body = response.text().await.unwrap_or_default();
     let message = serde_json::from_str::<ErrorResponse>(body.as_str())

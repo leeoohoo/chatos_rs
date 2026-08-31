@@ -49,6 +49,7 @@ pub(crate) fn enrich_tool_schemas_with_task_mcp_choices(
     tools: &mut [Value],
     builtin_choices: &[TaskMcpSchemaChoice],
     external_choices: &[TaskMcpSchemaChoice],
+    plugin_choices: &[TaskMcpSchemaChoice],
 ) {
     let builtin_schema = task_mcp_selection_schema(
         "Select the builtin MCP capabilities this task needs. Choose only the minimum sufficient subset exposed by Plugin Management for the target Task Runner Agent. Required capabilities are added automatically.",
@@ -58,6 +59,7 @@ pub(crate) fn enrich_tool_schemas_with_task_mcp_choices(
         "Select the external MCP configurations this task needs. Values are MCP configuration ids exposed by Plugin Management for the target Task Runner Agent. Provider and project runtime routing are resolved by the program.",
         external_choices,
     );
+    let plugin_hints_schema = task_plugin_hints_schema(plugin_choices);
     for tool in tools {
         let properties_pointer = match tool.get("name").and_then(Value::as_str) {
             Some("create_task") => "/inputSchema/properties",
@@ -77,7 +79,51 @@ pub(crate) fn enrich_tool_schemas_with_task_mcp_choices(
             "external_mcp_config_ids".to_string(),
             external_schema.clone(),
         );
+        properties.insert("plugin_hints".to_string(), plugin_hints_schema.clone());
     }
+}
+
+fn task_plugin_hints_schema(choices: &[TaskMcpSchemaChoice]) -> Value {
+    let mut plugin_key_schema = json!({ "type": "string", "minLength": 1 });
+    if !choices.is_empty() {
+        plugin_key_schema["enum"] = Value::Array(
+            choices
+                .iter()
+                .map(|choice| Value::String(choice.value.clone()))
+                .collect(),
+        );
+        plugin_key_schema["oneOf"] = Value::Array(
+            choices
+                .iter()
+                .map(|choice| json!({ "const": choice.value, "title": choice.title }))
+                .collect(),
+        );
+        plugin_key_schema["x-enum-labels"] = Value::Array(
+            choices
+                .iter()
+                .map(|choice| Value::String(choice.title.clone()))
+                .collect(),
+        );
+    }
+    json!({
+        "type": "array",
+        "maxItems": 16,
+        "uniqueItems": true,
+        "description": "Suggest Plugins required by this specific Task. Use only plugin_key values from the request-scoped Task Plugin catalog. Route by the actual interaction surface: use Computer Use for native desktop applications and operating-system UI; use Browser CDP only for websites in managed Chromium or an explicitly connected Chrome session. An app name such as Feishu/Lark, WeChat or DingTalk means the native desktop app unless the objective explicitly says web page, website, browser or Chrome. Do not select both merely as a fallback. These hints are non-authoritative; Task Runner resolves and validates the trusted Plugin ids, device installation and policy before saving the Task.",
+        "items": {
+            "type": "object",
+            "properties": {
+                "plugin_key": plugin_key_schema,
+                "reason": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "description": "Why this specific Task requires the Plugin."
+                }
+            },
+            "required": ["plugin_key"],
+            "additionalProperties": false
+        }
+    })
 }
 
 fn task_mcp_selection_schema(description: &str, choices: &[TaskMcpSchemaChoice]) -> Value {
@@ -130,6 +176,7 @@ pub(crate) fn create_task_schema() -> Value {
                 "Select the external MCP configuration ids this task needs from the target Agent binding.",
                 &[],
             ),
+            "plugin_hints": task_plugin_hints_schema(&[]),
             "schedule": { "type": "object", "description": "Optional task schedule configuration." },
             "prerequisite_task_ids": prerequisite_task_ids_schema()
         },
@@ -196,6 +243,7 @@ pub(crate) fn create_tasks_with_prerequisites_schema() -> Value {
                             "Select the external MCP configuration ids this task needs from the target Agent binding.",
                             &[],
                         ),
+                        "plugin_hints": task_plugin_hints_schema(&[]),
                         "owned_paths": {
                             "type": "array",
                             "maxItems": 200,
@@ -307,6 +355,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                             "Select the external MCP configuration ids this execution task needs from the Task Runner execution Agent binding.",
                             &[],
                         ),
+                        "plugin_hints": task_plugin_hints_schema(&[]),
                         "owned_paths": {
                             "type": "array",
                             "maxItems": 200,
@@ -415,6 +464,7 @@ fn collect_project_execution_task_errors(value: &Value, index: usize, errors: &m
             "requires_execution",
             "enabled_builtin_kinds",
             "external_mcp_config_ids",
+            "plugin_hints",
             "owned_paths",
             "prerequisite_refs",
             "context_refs",

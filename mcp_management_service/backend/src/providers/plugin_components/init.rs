@@ -35,11 +35,7 @@ impl PluginComponentProvider {
             .provider_ref
             .as_deref()
             .is_some_and(|value| value.starts_with("plugin-tool-binding:"))
-            && matches!(
-                route.provider_kind,
-                McpProviderKind::PluginLocal | McpProviderKind::PluginCloud
-            )
-            && (route.provider_kind != McpProviderKind::PluginLocal
-                || self.internal_secret.is_some())
+            && route.provider_kind == McpProviderKind::PluginLocal
+            && self.internal_secret.is_some()
     }
 }

@@ -18,46 +18,6 @@ resolve_local_dev_host_address() {
   printf '%s\n' "host.docker.internal"
 }
 
-configure_local_dev_cloud_browser_runtime() {
-  local platform package_os agent_browser chrome
-  case "$(uname -s):$(uname -m)" in
-    Darwin:arm64) platform="macos-arm64"; package_os="macos" ;;
-    Darwin:x86_64) platform="macos-x64"; package_os="macos" ;;
-    Linux:x86_64) platform="linux-x64"; package_os="linux" ;;
-    Linux:aarch64|Linux:arm64) platform="linux-arm64"; package_os="linux" ;;
-    *) platform=""; package_os="" ;;
-  esac
-
-  if [[ -z "${AGENT_BROWSER_BIN:-}" ]] && command -v agent-browser >/dev/null 2>&1; then
-    export AGENT_BROWSER_BIN="$(command -v agent-browser)"
-  fi
-  if [[ -z "${AGENT_BROWSER_BIN:-}" && -n "$platform" ]]; then
-    for agent_browser in \
-      "$ROOT_DIR/bundled-tools/$platform/agent-browser" \
-      "$ROOT_DIR/local_connector_client/.package/$package_os/bundled-tools/$platform/agent-browser"; do
-      if [[ -x "$agent_browser" ]]; then
-        export AGENT_BROWSER_BIN="$agent_browser"
-        break
-      fi
-    done
-  fi
-
-  if [[ -z "${AGENT_BROWSER_EXECUTABLE_PATH:-}" && -n "$platform" ]]; then
-    for chrome in \
-      "$ROOT_DIR/bundled-tools/$platform/browser/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
-      "$ROOT_DIR/local_connector_client/.package/$package_os/bundled-tools/$platform/browser/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
-      "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-      "/usr/bin/chromium" \
-      "/usr/bin/chromium-browser"; do
-      if [[ -x "$chrome" ]]; then
-        export AGENT_BROWSER_EXECUTABLE_PATH="$chrome"
-        break
-      fi
-    done
-  fi
-}
-
 export_local_env() {
   local mongo_user mongo_password mongo_port host_address
   mongo_user="$(env_value MONGODB_USER admin)"
@@ -65,8 +25,6 @@ export_local_env() {
   mongo_port="$(env_value MONGODB_HOST_PORT 27018)"
   host_address="$(resolve_local_dev_host_address)"
   export CHATOS_LOCAL_DEV_HOST_ADDRESS="$host_address"
-  configure_local_dev_cloud_browser_runtime
-
   export CHATOS_ENV="${CHATOS_LOCAL_DEV_ENV:-local}"
   export CHATOS_SERVICE_RUNTIME_ENABLED="${CHATOS_LOCAL_DEV_SERVICE_RUNTIME_ENABLED:-true}"
   export CHATOS_SERVICE_DISCOVERY_MODE="${CHATOS_LOCAL_DEV_DISCOVERY_MODE:-consul,static}"
@@ -136,7 +94,11 @@ export_local_env() {
 
   export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
   export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
-  export CHATOS_OBJECT_STORAGE_ENDPOINT="${CHATOS_OBJECT_STORAGE_ENDPOINT:-https://oss.jgoool.com}"
+  export MINIO_API_PORT="${MINIO_API_PORT:-39000}"
+  export MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-39001}"
+  export MINIO_ROOT_USER="${MINIO_ROOT_USER:-chatos_local}"
+  export MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-chatos_local_secret_change_me}"
+  export CHATOS_OBJECT_STORAGE_ENDPOINT="${CHATOS_OBJECT_STORAGE_ENDPOINT:-http://127.0.0.1:${MINIO_API_PORT}}"
   export CHATOS_OBJECT_STORAGE_REGION="${CHATOS_OBJECT_STORAGE_REGION:-us-east-1}"
   export CHATOS_OBJECT_STORAGE_BUCKET="${CHATOS_OBJECT_STORAGE_BUCKET:-chatos-attachments}"
   export CHATOS_OBJECT_STORAGE_ACCESS_KEY="${CHATOS_OBJECT_STORAGE_ACCESS_KEY:-${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-}}}"
@@ -208,12 +170,9 @@ export_local_env() {
   export PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT="${PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT:-39262}"
   export PLUGIN_MANAGEMENT_SERVICE_URL="${PLUGIN_MANAGEMENT_SERVICE_URL:-http://127.0.0.1:${PLUGIN_MANAGEMENT_SERVICE_PORT}}"
   export PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL="${PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL:-https://127.0.0.1:${PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT}}"
-  export PLUGIN_MANAGEMENT_PUBLIC_BASE_URL="${PLUGIN_MANAGEMENT_PUBLIC_BASE_URL:-http://127.0.0.1:${PLUGIN_MANAGEMENT_SERVICE_PORT}}"
-  export PLUGIN_MANAGEMENT_FRONTEND_ORIGIN="${PLUGIN_MANAGEMENT_FRONTEND_ORIGIN:-http://127.0.0.1:${PLUGIN_MANAGEMENT_FRONTEND_PORT:-39261}}"
-  export PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS="${PLUGIN_MANAGEMENT_OAUTH_FLOW_TTL_SECONDS:-600}"
-  export PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS="${PLUGIN_MANAGEMENT_OAUTH_REFRESH_SKEW_SECONDS:-90}"
-  export PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS="${PLUGIN_MANAGEMENT_OAUTH_REQUEST_TIMEOUT_MS:-15000}"
-  export PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES="${PLUGIN_MANAGEMENT_OAUTH_MAX_RESPONSE_BYTES:-262144}"
+  export PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR="${PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR:-$STATE_DIR/plugin-artifacts}"
+  export PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL="${PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL:-http://127.0.0.1:${PLUGIN_MANAGEMENT_SERVICE_PORT}}"
+  export PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES="${PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES:-134217728}"
   export LOCAL_CONNECTOR_SERVICE_HOST="${LOCAL_CONNECTOR_SERVICE_HOST:-0.0.0.0}"
   export LOCAL_CONNECTOR_SERVICE_PORT="${LOCAL_CONNECTOR_SERVICE_PORT:-39230}"
   export LOCAL_CONNECTOR_INTERNAL_MTLS_PORT="${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT:-39231}"
@@ -438,6 +397,9 @@ infra_service_host_port() {
       ;;
     mongodb)
       printf '%s\n' "${MONGODB_HOST_PORT:-27018}"
+      ;;
+    minio)
+      printf '%s\n' "${MINIO_API_PORT:-39000}"
       ;;
     rabbitmq)
       printf '%s\n' "${RABBITMQ_PORT:-5672}"

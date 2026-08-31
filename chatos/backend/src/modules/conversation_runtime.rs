@@ -53,6 +53,7 @@ pub fn routes() -> Router {
         .merge(api::attachments::router())
         .merge(api::message_task_runner::router())
         .merge(api::messages::router())
+        .merge(api::pet_activities::router())
         .merge(api::realtime::router())
         .merge(api::sessions::router())
         .merge(api::task_runner_plugins::router())

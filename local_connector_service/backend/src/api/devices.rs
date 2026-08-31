@@ -25,14 +25,8 @@ use crate::store::SessionAcquireError;
 use super::plugin_management_installations::{
     is_plugin_installation_status_message, sync_socket_plugin_installations,
 };
-use super::plugin_management_mcps::{
-    is_mcp_manifest_status_message, mark_device_mcps_offline, sync_socket_mcp_statuses,
-};
 use super::plugin_management_oauth::{
     is_plugin_oauth_status_message, sync_socket_plugin_oauth_statuses,
-};
-use super::plugin_management_skills::{
-    is_skill_inventory_status_message, mark_device_skills_offline, sync_socket_skill_inventory,
 };
 use super::{required_text, ApiError};
 
@@ -170,24 +164,6 @@ pub(super) async fn revoke_device(
         .revoke_device(user.effective_owner_user_id(), id.as_str())
         .await
         .map_err(ApiError::internal)?;
-    if let Err(err) =
-        mark_device_mcps_offline(&state, user.effective_owner_user_id(), id.as_str()).await
-    {
-        tracing::warn!(
-            device_id = id,
-            error = err,
-            "mark revoked device MCPs offline failed"
-        );
-    }
-    if let Err(err) =
-        mark_device_skills_offline(&state, user.effective_owner_user_id(), id.as_str()).await
-    {
-        tracing::warn!(
-            device_id = id,
-            error = err,
-            "mark revoked device Skills offline failed"
-        );
-    }
     Ok(Json(json!({ "success": true })))
 }
 
@@ -203,24 +179,6 @@ pub(super) async fn disconnect_device(
         .mark_device_offline(device.id.as_str())
         .await
         .map_err(ApiError::internal)?;
-    if let Err(err) =
-        mark_device_mcps_offline(&state, user.effective_owner_user_id(), device.id.as_str()).await
-    {
-        tracing::warn!(
-            device_id = device.id,
-            error = err,
-            "mark disconnected device MCPs offline failed"
-        );
-    }
-    if let Err(err) =
-        mark_device_skills_offline(&state, user.effective_owner_user_id(), device.id.as_str()).await
-    {
-        tracing::warn!(
-            device_id = device.id,
-            error = err,
-            "mark disconnected device Skills offline failed"
-        );
-    }
     load_owned_device(&state, &user, id.as_str(), true)
         .await
         .map(Json)
@@ -236,11 +194,6 @@ pub(super) async fn connect_device(
     let device = load_owned_device(&state, &user, id.as_str(), true).await?;
     verify_device_connect_signature(&state, &headers, &device).await?;
     let owner_user_id = user.effective_owner_user_id().to_string();
-    let owner_devices = state
-        .store
-        .list_devices(owner_user_id.as_str())
-        .await
-        .map_err(ApiError::internal)?;
     let session = LocalConnectorSession::new(
         owner_user_id.clone(),
         device.id.clone(),
@@ -262,31 +215,6 @@ pub(super) async fn connect_device(
         .mark_device_online(device.id.as_str())
         .await
         .map_err(ApiError::internal)?;
-    for previous_device in owner_devices
-        .into_iter()
-        .filter(|item| item.id != device.id)
-    {
-        if let Err(err) =
-            mark_device_mcps_offline(&state, owner_user_id.as_str(), previous_device.id.as_str())
-                .await
-        {
-            tracing::warn!(
-                device_id = previous_device.id,
-                error = err,
-                "mark previous device MCPs offline after lease acquisition failed"
-            );
-        }
-        if let Err(err) =
-            mark_device_skills_offline(&state, owner_user_id.as_str(), previous_device.id.as_str())
-                .await
-        {
-            tracing::warn!(
-                device_id = previous_device.id,
-                error = err,
-                "mark previous device Skills offline after lease acquisition failed"
-            );
-        }
-    }
     Ok(ws
         .on_upgrade(move |socket| handle_connector_socket(state, session, socket))
         .into_response())
@@ -456,78 +384,6 @@ async fn handle_connector_socket(
                     {
                         break;
                     }
-                } else if is_mcp_manifest_status_message(text.as_str()) {
-                    match sync_socket_mcp_statuses(
-                        &state,
-                        session.owner_user_id.as_str(),
-                        device_id.as_str(),
-                        text.as_str(),
-                    )
-                    .await
-                    {
-                        Ok(count) => {
-                            if !send_outbound_json(
-                                &outbound_tx,
-                                json!({
-                                    "type": "mcp_manifest_status_ack",
-                                    "count": count,
-                                    "timestamp": crate::models::now_rfc3339(),
-                                }),
-                            )
-                            .await
-                            {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            let _ = send_outbound_json(
-                                &outbound_tx,
-                                json!({
-                                    "type": "error",
-                                    "code": "mcp_manifest_status_rejected",
-                                    "message": err,
-                                    "timestamp": crate::models::now_rfc3339(),
-                                }),
-                            )
-                            .await;
-                        }
-                    }
-                } else if is_skill_inventory_status_message(text.as_str()) {
-                    match sync_socket_skill_inventory(
-                        &state,
-                        session.owner_user_id.as_str(),
-                        device_id.as_str(),
-                        text.as_str(),
-                    )
-                    .await
-                    {
-                        Ok(count) => {
-                            if !send_outbound_json(
-                                &outbound_tx,
-                                json!({
-                                    "type": "skill_inventory_status_ack",
-                                    "count": count,
-                                    "timestamp": crate::models::now_rfc3339(),
-                                }),
-                            )
-                            .await
-                            {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            let _ = send_outbound_json(
-                                &outbound_tx,
-                                json!({
-                                    "type": "error",
-                                    "code": "skill_inventory_status_rejected",
-                                    "message": err,
-                                    "timestamp": crate::models::now_rfc3339(),
-                                }),
-                            )
-                            .await;
-                        }
-                    }
                 } else if is_plugin_installation_status_message(text.as_str()) {
                     match sync_socket_plugin_installations(
                         &state,
@@ -690,24 +546,6 @@ async fn handle_connector_socket(
             device_id = device_id.as_str(),
             error = error.as_str(),
             "unregister Local Connector device presence failed"
-        );
-    }
-    if let Err(err) =
-        mark_device_mcps_offline(&state, session.owner_user_id.as_str(), device_id.as_str()).await
-    {
-        tracing::warn!(
-            device_id,
-            error = err,
-            "mark socket device MCPs offline failed"
-        );
-    }
-    if let Err(err) =
-        mark_device_skills_offline(&state, session.owner_user_id.as_str(), device_id.as_str()).await
-    {
-        tracing::warn!(
-            device_id,
-            error = err,
-            "mark socket device Skills offline failed"
         );
     }
     send_task.abort();

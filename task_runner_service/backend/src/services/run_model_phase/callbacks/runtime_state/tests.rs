@@ -163,7 +163,7 @@ fn ai_reported_blocked_outcome_is_authoritative_even_with_success_receipts() {
         &["integration passes".to_string()],
         vec!["src/main.rs".to_string()],
         vec!["cargo check".to_string()],
-        vec!["browser_tools_browser_snapshot".to_string()],
+        vec!["plugin_snapshot".to_string()],
         AiReportedTaskOutcome {
             status: TaskExecutionOutcomeStatus::Blocked,
             reason: "缺少上游凭据".to_string(),
@@ -265,26 +265,6 @@ fn runtime_iteration_context(reason: &str) -> RuntimeIterationContext {
         reason: reason.to_string(),
         input: Value::Null,
     }
-}
-
-#[test]
-fn browser_session_event_is_extracted_from_nested_tool_result() {
-    let payload = json!({
-        "name": "browser_tools_browser_navigate",
-        "result": {
-            "success": true,
-            "browser_session": {
-                "id": "h_session_123",
-                "mode": "managed",
-                "status": "active",
-                "event": "updated"
-            }
-        }
-    });
-
-    let session = browser_session_event_payload(&payload).expect("browser session");
-    assert_eq!(session["id"], "h_session_123");
-    assert_eq!(session["status"], "active");
 }
 
 #[test]

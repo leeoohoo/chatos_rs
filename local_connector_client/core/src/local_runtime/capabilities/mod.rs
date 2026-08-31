@@ -3,7 +3,4 @@
 
 mod sync;
 
-pub(crate) use sync::{
-    fetch_all_capability_snapshots, sync_local_capability_snapshots,
-    sync_local_plugin_control_plane,
-};
+pub(crate) use sync::{fetch_all_capability_snapshots, sync_local_plugin_control_plane};

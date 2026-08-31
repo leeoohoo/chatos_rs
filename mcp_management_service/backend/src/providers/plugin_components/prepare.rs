@@ -3,21 +3,16 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::{McpProviderKind, ProjectExecutionContext, ResolvedMcpRoute};
-use chatos_plugin_management_sdk::PluginManagementClient;
+use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute};
 use serde_json::Value;
 
-use super::{PluginComponentProvider, PreparedComponentBinding};
-use crate::runtime::{
-    PluginCloudToolComponentBinding, PluginLocalToolComponentBinding,
-    PluginToolComponentRuntimeBinding,
-};
+use super::PluginComponentProvider;
+use crate::runtime::{PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding};
 
 impl PluginComponentProvider {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::providers) async fn prepare_routes(
         &self,
-        plugin_management: &PluginManagementClient,
         immutable_bindings: &HashMap<String, PluginToolComponentRuntimeBinding>,
         routes: &mut [ResolvedMcpRoute],
         context: &ProjectExecutionContext,
@@ -26,11 +21,9 @@ impl PluginComponentProvider {
         expires_at_unix: i64,
     ) -> (
         HashMap<String, PluginLocalToolComponentBinding>,
-        HashMap<String, PluginCloudToolComponentBinding>,
         HashMap<String, Vec<Value>>,
     ) {
         let mut local_bindings = HashMap::new();
-        let mut cloud_bindings = HashMap::new();
         let mut tool_snapshots = HashMap::new();
         for route in routes.iter_mut().filter(|route| self.supports(route)) {
             route.cancel_supported = false;
@@ -41,36 +34,33 @@ impl PluginComponentProvider {
                 );
                 continue;
             };
-            let result = match route.provider_kind {
-                McpProviderKind::PluginLocal => self
-                    .prepare_local(
-                        immutable,
-                        route,
-                        context,
-                        runtime_session_id,
-                        owner_user_id,
-                        expires_at_unix,
-                    )
-                    .await
-                    .map(PreparedComponentBinding::Local),
-                McpProviderKind::PluginCloud => self
-                    .prepare_cloud(plugin_management, immutable, route)
-                    .await
-                    .map(PreparedComponentBinding::Cloud),
-                _ => unreachable!("filtered Plugin component route kind"),
-            };
+            let result = self
+                .prepare_local(
+                    immutable,
+                    route,
+                    context,
+                    runtime_session_id,
+                    owner_user_id,
+                    expires_at_unix,
+                )
+                .await;
             match result {
-                Ok(PreparedComponentBinding::Local(binding)) => {
+                Ok(binding) => {
                     tool_snapshots.insert(route.resource_id.clone(), binding.tools.clone());
                     local_bindings.insert(route.resource_id.clone(), binding);
                 }
-                Ok(PreparedComponentBinding::Cloud(binding)) => {
-                    tool_snapshots.insert(route.resource_id.clone(), binding.tools.clone());
-                    cloud_bindings.insert(route.resource_id.clone(), binding);
+                Err(error) => {
+                    tracing::warn!(
+                        resource_id = route.resource_id.as_str(),
+                        plugin_id = immutable.plugin_id.as_str(),
+                        component_key = immutable.component.component_key.as_str(),
+                        error = error.message.as_str(),
+                        "prepare Plugin tool component route failed"
+                    );
+                    super::result::make_route_unavailable(route, error.message.as_str());
                 }
-                Err(error) => super::result::make_route_unavailable(route, error.message.as_str()),
             }
         }
-        (local_bindings, cloud_bindings, tool_snapshots)
+        (local_bindings, tool_snapshots)
     }
 }

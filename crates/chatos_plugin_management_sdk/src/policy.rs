@@ -285,7 +285,6 @@ mod tests {
             available: true,
             status: "available".to_string(),
             reason: None,
-            installation: None,
         }
     }
 

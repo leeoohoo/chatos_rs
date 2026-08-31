@@ -3,13 +3,14 @@
 
 use std::collections::HashSet;
 
-use chatos_mcp_management_sdk::{ResolvedMcpRoute, WorkspaceProviderKind};
+use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::{PluginLocalProviderBinding, PluginPrepareResponse};
-use crate::providers::ProviderCallError;
-use crate::runtime::{PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
+use crate::providers::{canonical_json, ProviderCallError};
+use crate::runtime::{
+    resolve_plugin_local_execution_target, PluginMcpRuntimeBinding, RuntimeSessionSnapshot,
+};
 
 pub(super) fn validate_prepare_response(
     immutable: &PluginMcpRuntimeBinding,
@@ -35,7 +36,9 @@ pub(super) fn validate_prepare_response(
     }
     if prepared.adapter_session_id.trim().is_empty()
         || !is_lower_sha256(prepared.session_sha256.as_str())
+        || !is_lower_sha256(prepared.mcp.snapshot_sha256.as_str())
         || !is_lower_sha256(prepared.mcp.tool_snapshot_sha256.as_str())
+        || !is_lower_sha256(prepared.mcp.server_instructions_sha256.as_str())
         || prepared.expires_at <= chrono::Utc::now().timestamp()
         || prepared.expires_at < runtime_expires_at_unix
     {
@@ -47,6 +50,10 @@ pub(super) fn validate_prepare_response(
         prepared.mcp.tools.as_slice(),
         prepared.mcp.tool_snapshot_sha256.as_str(),
     )?;
+    validate_server_instructions(
+        prepared.mcp.server_instructions.as_deref(),
+        prepared.mcp.server_instructions_sha256.as_str(),
+    )?;
     if prepared.mcp.oauth_connection_id.as_ref().is_some_and(|id| {
         !immutable
             .auth_connection_ids
@@ -55,6 +62,35 @@ pub(super) fn validate_prepare_response(
     }) {
         return Err(ProviderCallError::invalid_response(
             "Plugin Local prepare selected an OAuth connection outside the immutable snapshot",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_server_instructions(
+    instructions: Option<&str>,
+    expected_sha256: &str,
+) -> Result<(), ProviderCallError> {
+    if instructions.is_some_and(|value| {
+        value.is_empty()
+            || value.trim() != value
+            || value.len() > super::MAX_PLUGIN_SERVER_INSTRUCTIONS_BYTES
+            || value.contains('\0')
+            || value.contains('\r')
+    }) {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin MCP server instructions are not normalized or exceed the byte limit",
+        ));
+    }
+    let value = instructions.map_or(Value::Null, |value| Value::String(value.to_string()));
+    let actual_sha256 = canonical_json::canonical_json_sha256(&value).map_err(|error| {
+        ProviderCallError::invalid_response(format!(
+            "serialize Plugin MCP server instructions failed: {error}"
+        ))
+    })?;
+    if actual_sha256 != expected_sha256 {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin MCP server instructions hash is invalid",
         ));
     }
     Ok(())
@@ -73,21 +109,21 @@ pub(super) fn validate_bound_route(
                 "immutable Plugin MCP runtime binding is missing",
             )
         })?;
-    let workspace = snapshot.project_context.workspace.as_ref();
-    if !matches!(
-        snapshot.project_context.workspace_provider,
-        WorkspaceProviderKind::LocalConnector
-    ) || !snapshot
+    let target = resolve_plugin_local_execution_target(
+        &snapshot.project_context,
+        immutable.installation_device_id.as_deref(),
+        immutable.permission_snapshot.as_slice(),
+    )
+    .map_err(ProviderCallError::provider_unavailable)?;
+    if !snapshot
         .expires_at_unix
         .min(binding.expires_at_unix)
         .gt(&chrono::Utc::now().timestamp())
         || immutable != &binding.runtime
         || route.provider_ref.as_deref() != Some(binding.runtime.provider_ref.as_str())
         || route.allow_writes != binding.runtime.allow_writes
-        || workspace.and_then(|workspace| workspace.device_id.as_deref())
-            != Some(binding.device_id.as_str())
-        || workspace.map(|workspace| workspace.workspace_id.as_str())
-            != Some(binding.workspace_id.as_str())
+        || target.device_id != binding.device_id
+        || target.workspace_id != binding.workspace_id
     {
         return Err(ProviderCallError::provider_unavailable(
             "Plugin Local route does not match its prepared runtime session",
@@ -102,13 +138,18 @@ fn validate_tool_snapshot(tools: &[Value], expected_sha256: &str) -> Result<(), 
             "Plugin MCP tool snapshot must contain between 1 and 200 tools",
         ));
     }
-    let encoded = serde_json::to_vec(tools).map_err(|error| {
+    let value = Value::Array(tools.to_vec());
+    let encoded = canonical_json::canonical_json_bytes(&value).map_err(|error| {
         ProviderCallError::invalid_response(format!(
             "serialize Plugin MCP tool snapshot failed: {error}"
         ))
     })?;
     if encoded.len() > super::MAX_PLUGIN_TOOL_SNAPSHOT_BYTES
-        || hex::encode(Sha256::digest(encoded)) != expected_sha256
+        || canonical_json::canonical_json_sha256(&value).map_err(|error| {
+            ProviderCallError::invalid_response(format!(
+                "hash Plugin MCP tool snapshot failed: {error}"
+            ))
+        })? != expected_sha256
     {
         return Err(ProviderCallError::invalid_response(
             "Plugin MCP tool snapshot hash or size is invalid",

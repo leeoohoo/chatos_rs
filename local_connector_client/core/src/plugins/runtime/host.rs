@@ -26,9 +26,12 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex as AsyncMutex, RwLock};
 use uuid::Uuid;
 
-use super::artifact_store::{PluginArtifactProducer, PluginArtifactStore, PluginUiArtifactGrant};
+use super::artifact_store::{PluginArtifactStore, PluginUiArtifactGrant};
 use super::hook_loader::PluginHookWorkspaceWriteDecision;
-use super::mcp_runtime::{PluginMcpAdapter, PluginMcpInvocationCancelOutcome, PreparedPluginMcp};
+use super::mcp_runtime::{
+    plugin_mcp_workspace_root_sha256, PluginMcpAdapter, PluginMcpInvocationCancelOutcome,
+    PreparedPluginMcp,
+};
 use super::protocol::*;
 use super::telemetry::{
     sanitize_error, PluginRuntimeTelemetryIdentity, PluginRuntimeTelemetryPhase,
@@ -36,8 +39,8 @@ use super::telemetry::{
 };
 use super::{
     PluginAgentLoader, PluginAgentSnapshot, PluginCommandLoader, PluginCommandSnapshot,
-    PluginHookLoader, PluginHookSetSnapshot, PluginNativeSkillBindingSnapshot, PluginSkillLoader,
-    PluginSkillSnapshot, PluginUiLoader,
+    PluginHookLoader, PluginHookSetSnapshot, PluginSkillLoader, PluginSkillSnapshot,
+    PluginUiLoader,
 };
 use crate::approval::{
     approval_project_key_for_relay_scope, cancel_pending_approvals_for_session,
@@ -49,16 +52,18 @@ use crate::LocalState;
 
 const PLUGIN_SESSION_TTL_SECONDS: i64 = 2 * 60 * 60;
 const LOAD_SKILL_RESOURCE_OPERATION: &str = "load_skill_resource";
-const NATIVE_SKILL_TOOL_CALL_OPERATION: &str = "native_skill_tool_call";
 const COMMAND_INVOKE_OPERATION: &str = "command_invoke";
 const AGENT_APPLY_OPERATION: &str = "agent_apply";
 
 mod artifact_ui;
 mod execution;
+mod file_grants;
+mod mcp_artifacts;
 mod plugin_lifecycle;
 mod prepare;
 mod support;
 
+pub use file_grants::PluginFileGrantSummary;
 use support::*;
 
 #[derive(Debug, Clone)]
@@ -73,6 +78,7 @@ pub struct PluginRuntimeHost {
     approval_state_path: Option<PathBuf>,
     sessions: Arc<Mutex<HashMap<String, PreparedPluginSession>>>,
     artifact_store: PluginArtifactStore,
+    mcp_artifacts: Arc<Mutex<HashMap<String, mcp_artifacts::RegisteredMcpArtifact>>>,
     disabled_plugins: Arc<Mutex<BTreeSet<String>>>,
     telemetry: Arc<Mutex<PluginRuntimeTelemetryState>>,
 }
@@ -94,20 +100,11 @@ struct PreparedPluginSession {
     commands: BTreeMap<String, PluginCommandSnapshot>,
     hooks: BTreeMap<String, PluginHookSetSnapshot>,
     ui: Option<PluginUiSnapshot>,
-    native_skill: Option<PreparedPluginNativeSkill>,
     native_action_lock: Arc<AsyncMutex<()>>,
     hook_dispatch_lock: Arc<AsyncMutex<()>>,
     native_action_cancelled: Arc<AtomicBool>,
     mcp: Option<PreparedPluginMcp>,
     expires_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct PreparedPluginNativeSkill {
-    #[serde(flatten)]
-    binding: PluginNativeSkillBindingSnapshot,
-    tools: Vec<Value>,
-    tool_snapshot_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,14 +121,6 @@ pub struct PluginDisabledHookReport {
     pub dispatches: Vec<super::PluginHookDispatchResult>,
     #[serde(default)]
     pub errors: Vec<String>,
-}
-
-impl PreparedPluginNativeSkill {
-    fn publishes_tool(&self, tool_name: &str) -> bool {
-        self.tools
-            .iter()
-            .any(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
-    }
 }
 
 impl PluginRuntimeHost {
@@ -152,6 +141,7 @@ impl PluginRuntimeHost {
             approval_state_path: None,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             artifact_store: PluginArtifactStore::default(),
+            mcp_artifacts: Arc::new(Mutex::new(HashMap::new())),
             disabled_plugins: Arc::new(Mutex::new(BTreeSet::new())),
             telemetry: Arc::new(Mutex::new(PluginRuntimeTelemetryState::default())),
         }
@@ -175,17 +165,6 @@ impl PluginRuntimeHost {
         &self,
     ) -> Result<crate::plugins::LocalPluginStatusSnapshot> {
         self.skill_loader.installer().status_snapshot()
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_artifact_persistence_for_tests(
-        mut self,
-        state_path: PathBuf,
-        storage: crate::secure_storage::SecureStorage,
-    ) -> Self {
-        self.artifact_store =
-            PluginArtifactStore::for_state_path_with_storage(state_path.as_path(), storage);
-        self
     }
 
     pub async fn handle_prepare(&self, value: Value) -> Value {
@@ -432,6 +411,7 @@ impl PluginRuntimeHost {
             if let Some(mcp) = &session.mcp {
                 mcp.cancel();
             }
+            self.remove_mcp_artifacts_for_session(adapter_session_id.as_str());
             let cancelled_approvals = cancel_pending_approvals_for_session(
                 adapter_session_id.as_str(),
                 "Plugin session was cancelled by the user or Task Runner",
@@ -515,6 +495,7 @@ impl PluginRuntimeHost {
             if let Some(mcp) = &session.mcp {
                 mcp.cancel();
             }
+            self.remove_mcp_artifacts_for_session(adapter_session_id.as_str());
             self.telemetry()
                 .record_expired(&session.telemetry_identity(), adapter_session_id.as_str());
         }
@@ -676,6 +657,42 @@ impl PluginRuntimeHost {
             )
         })?;
         Ok(state.read().await.clone())
+    }
+
+    async fn validate_mcp_workspace_binding(
+        &self,
+        session: &PreparedPluginSession,
+        mcp: &PreparedPluginMcp,
+    ) -> Result<(), (u16, String)> {
+        let expected = mcp.snapshot().workspace_snapshot_sha256.as_deref();
+        if expected.is_none() {
+            if session.permission_snapshot.contains("workspace.read") {
+                return Err((
+                    409,
+                    "Plugin MCP workspace permission is not bound to a prepared workspace"
+                        .to_string(),
+                ));
+            }
+            return Ok(());
+        }
+        let state = self.state_snapshot().await?;
+        let workspace = state
+            .workspace_by_id(session.workspace_id.as_str())
+            .ok_or_else(|| {
+                (
+                    409,
+                    "Plugin MCP workspace is not registered locally".to_string(),
+                )
+            })?;
+        let current_root = approved_workspace_root(workspace.absolute_root.as_path())?;
+        if plugin_mcp_workspace_root_sha256(current_root.as_path()) != expected.unwrap_or_default()
+        {
+            return Err((
+                409,
+                "Plugin MCP workspace registration changed after prepare".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn approval_service(&self) -> Result<CommandApprovalService, (u16, String)> {
