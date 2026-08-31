@@ -10,7 +10,7 @@ final class ScreenshotCoordinator {
     private let toastController = CaptureResultToastController()
 
     private var selectionController: ScreenSelectionOverlayController?
-    private var annotationEditor: ScreenshotAnnotationEditorController?
+    private var annotationController: ScreenshotInlineAnnotationController?
     private var captureTask: Task<Void, Never>?
     private var previousApplication: NSRunningApplication?
     private var selectedScreen: NSScreen?
@@ -57,8 +57,8 @@ final class ScreenshotCoordinator {
             selectionController.cancel()
             return
         }
-        if let annotationEditor {
-            annotationEditor.cancel()
+        if let annotationController {
+            annotationController.cancel()
             return
         }
         captureTask?.cancel()
@@ -75,7 +75,10 @@ final class ScreenshotCoordinator {
                 let image = try await self.captureService.capture(region: selection.captureRegion)
                 try Task.checkCancellation()
                 self.captureTask = nil
-                self.presentAnnotationEditor(image: image, screen: selection.screen)
+                self.presentInlineAnnotation(
+                    image: image,
+                    selection: selection
+                )
             } catch is CancellationError {
                 self.captureTask = nil
                 self.finishWorkflow()
@@ -92,29 +95,32 @@ final class ScreenshotCoordinator {
         }
     }
 
-    private func presentAnnotationEditor(image: CGImage, screen: NSScreen) {
-        let editor = ScreenshotAnnotationEditorController(
+    private func presentInlineAnnotation(
+        image: CGImage,
+        selection: ScreenSelection
+    ) {
+        let controller = ScreenshotInlineAnnotationController(
             image: image,
-            screen: screen,
+            selection: selection,
             isEnglish: model?.interfaceLanguage == .english
         )
-        editor.onComplete = { [weak self] renderedImage in
+        controller.onComplete = { [weak self] renderedImage in
             guard let self else { return }
-            self.annotationEditor = nil
+            self.annotationController = nil
             let output = self.persist(renderedImage)
             self.toastController.show(
                 output: output,
-                on: screen,
+                on: selection.screen,
                 isEnglish: self.model?.interfaceLanguage == .english
             )
             self.finishWorkflow()
         }
-        editor.onCancel = { [weak self] in
-            self?.annotationEditor = nil
+        controller.onCancel = { [weak self] in
+            self?.annotationController = nil
             self?.finishWorkflow()
         }
-        annotationEditor = editor
-        editor.present()
+        annotationController = controller
+        controller.present()
     }
 
     private func persist(_ image: CGImage) -> ScreenshotOutput {
@@ -168,17 +174,26 @@ final class ScreenshotCoordinator {
     @discardableResult
     static func copyToPasteboard(_ image: CGImage, pngData: Data? = nil) -> Bool {
         let bitmap = NSBitmapImageRep(cgImage: image)
-        guard let png = pngData ?? bitmap.representation(using: .png, properties: [:]),
-              let tiff = bitmap.representation(using: .tiff, properties: [:]) else {
+        guard let png = pngData ?? bitmap.representation(using: .png, properties: [:]) else {
             return false
         }
 
-        let item = NSPasteboardItem()
-        item.setData(png, forType: .png)
-        item.setData(tiff, forType: .tiff)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        return pasteboard.writeObjects([item])
+        var types: [NSPasteboard.PasteboardType] = [.png]
+        let tiff = bitmap.representation(using: .tiff, properties: [:])
+        if tiff != nil {
+            types.append(.tiff)
+        }
+        pasteboard.declareTypes(types, owner: nil)
+
+        let wrotePNG = pasteboard.setData(png, forType: .png)
+        if let tiff {
+            pasteboard.setData(tiff, forType: .tiff)
+        }
+        guard wrotePNG else { return false }
+        return pasteboard.availableType(from: [.png, .tiff]) != nil
+            && pasteboard.data(forType: .png) != nil
     }
 
     private func ensureScreenCapturePermission() -> Bool {
@@ -220,7 +235,7 @@ final class ScreenshotCoordinator {
 
     private func finishWorkflow() {
         selectionController = nil
-        annotationEditor = nil
+        annotationController = nil
         captureTask = nil
         selectedScreen = nil
         isRunning = false

@@ -31,7 +31,7 @@ final class ScreenshotAnnotationView: NSView {
         )
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(calibratedWhite: 0.09, alpha: 1).cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     @available(*, unavailable)
@@ -60,8 +60,6 @@ final class ScreenshotAnnotationView: NSView {
         let frame = imageFrame
         guard frame.width > 0, frame.height > 0 else { return }
 
-        NSColor(calibratedWhite: 0.04, alpha: 1).setFill()
-        NSBezierPath(roundedRect: frame.insetBy(dx: -1, dy: -1), xRadius: 5, yRadius: 5).fill()
         displayImage.draw(
             in: frame,
             from: .zero,
@@ -76,11 +74,6 @@ final class ScreenshotAnnotationView: NSView {
         if let workingAnnotation {
             draw(workingAnnotation, in: frame)
         }
-
-        NSColor.white.withAlphaComponent(0.16).setStroke()
-        let border = NSBezierPath(roundedRect: frame.insetBy(dx: -0.5, dy: -0.5), xRadius: 5, yRadius: 5)
-        border.lineWidth = 1
-        border.stroke()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -200,26 +193,7 @@ final class ScreenshotAnnotationView: NSView {
     }
 
     private var imageFrame: NSRect {
-        let available = bounds.insetBy(dx: 28, dy: 24)
-        guard available.width > 0, available.height > 0 else { return .zero }
-        let imageAspect = CGFloat(sourceImage.width) / CGFloat(sourceImage.height)
-        let availableAspect = available.width / available.height
-        if imageAspect > availableAspect {
-            let height = available.width / imageAspect
-            return NSRect(
-                x: available.minX,
-                y: available.midY - height / 2,
-                width: available.width,
-                height: height
-            )
-        }
-        let width = available.height * imageAspect
-        return NSRect(
-            x: available.midX - width / 2,
-            y: available.minY,
-            width: width,
-            height: available.height
-        )
+        bounds
     }
 
     private func imagePoint(from viewPoint: CGPoint) -> CGPoint {

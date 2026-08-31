@@ -32,7 +32,7 @@ final class ScreenSelectionOverlayController {
         for screen in NSScreen.screens {
             let window = ScreenSelectionWindow(
                 contentRect: screen.frame,
-                styleMask: [.borderless],
+                styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false,
                 screen: screen
@@ -55,9 +55,16 @@ final class ScreenSelectionOverlayController {
             window.backgroundColor = .clear
             window.hasShadow = false
             window.level = .screenSaver
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            window.collectionBehavior = [
+                .canJoinAllSpaces,
+                .fullScreenAuxiliary,
+                .ignoresCycle,
+            ]
             window.isReleasedWhenClosed = false
             window.animationBehavior = .none
+            window.isFloatingPanel = true
+            window.hidesOnDeactivate = false
+            window.becomesKeyOnlyIfNeeded = false
             window.onCancel = { [weak self] in self?.cancel() }
             windows.append(window)
             views.append(view)
@@ -69,7 +76,6 @@ final class ScreenSelectionOverlayController {
             return nil
         }
 
-        NSApp.activate(ignoringOtherApps: true)
         windows.forEach { $0.orderFrontRegardless() }
         let mouse = NSEvent.mouseLocation
         let keyWindow = windows.first { $0.frame.contains(mouse) } ?? windows.first
@@ -169,7 +175,7 @@ final class ScreenSelectionOverlayController {
     }
 }
 
-private final class ScreenSelectionWindow: NSWindow {
+private final class ScreenSelectionWindow: NSPanel {
     var onCancel: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
