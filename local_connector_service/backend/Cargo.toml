@@ -21,7 +21,7 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 futures = "0.3"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-redis = { version = "0.27", features = ["connection-manager", "tokio-comp"] }
+redis = { version = "1.6", features = ["connection-manager", "tokio-comp"] }
 base64 = "0.22"
 hex = "0.4"
 ring = "0.17"
