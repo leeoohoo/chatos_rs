@@ -2,6 +2,29 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 routes:
+  # Never let a bare service-internal path fall through to a public website
+  # route. Service-specific internal APIs are blocked again on their aliased
+  # /api prefixes below, before any proxy rewrite is applied.
+  - id: block-direct-internal-root
+    priority: 1000
+    uri: /internal
+    plugins:
+      request-id: &request_id
+        header_name: X-Request-Id
+        include_in_response: true
+        algorithm: uuid
+      fault-injection: &reject_not_found
+        abort:
+          http_status: 404
+          body: '{"error":"route not found"}'
+
+  - id: block-direct-internal-paths
+    priority: 1000
+    uri: /internal/*
+    plugins:
+      request-id: *request_id
+      fault-injection: *reject_not_found
+
   # The unified admin console is the only browser frontend for internal
   # management. Service APIs retain independent upstreams and explicit path
   # prefixes so backend boundaries remain unchanged. The blocker is attached
@@ -13,10 +36,7 @@ routes:
       - admin.jgoool.com
     uri: /api/admin/user-service/*
     plugins:
-      request-id: &request_id
-        header_name: X-Request-Id
-        include_in_response: true
-        algorithm: uuid
+      request-id: *request_id
       uri-blocker: &block_internal_api
         block_rules:
           - "^/api/(?:admin/(?:user-service|project-service|task-runner|plugin-management|memory-engine|config-center)/|(?:chatos|user|project|plugin|plugins|task|memory|local)/)(?:api/)?internal(?:/|\\?|$)"
