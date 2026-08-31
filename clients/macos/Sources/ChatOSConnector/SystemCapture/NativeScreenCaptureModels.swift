@@ -5,15 +5,18 @@ public struct NativeScreenCaptureRegion: Sendable {
     public let displayID: CGDirectDisplayID
     public let sourceRect: CGRect
     public let outputSize: CGSize
+    public let excludedWindowIDs: [CGWindowID]
 
     public init(
         displayID: CGDirectDisplayID,
         sourceRect: CGRect,
-        outputSize: CGSize
+        outputSize: CGSize,
+        excludedWindowIDs: [CGWindowID] = []
     ) {
         self.displayID = displayID
         self.sourceRect = sourceRect
         self.outputSize = outputSize
+        self.excludedWindowIDs = excludedWindowIDs
     }
 }
 

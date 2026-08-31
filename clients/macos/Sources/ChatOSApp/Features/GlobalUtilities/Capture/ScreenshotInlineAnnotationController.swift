@@ -5,6 +5,7 @@ import CoreGraphics
 final class ScreenshotInlineAnnotationController {
     var onComplete: ((CGImage) -> Void)?
     var onCancel: (() -> Void)?
+    var onRequestLongCapture: (() -> Void)?
 
     private let annotationView: ScreenshotAnnotationView
     private let selection: ScreenSelection
@@ -16,6 +17,7 @@ final class ScreenshotInlineAnnotationController {
     private var hasFinished = false
     private weak var undoButton: NSButton?
     private weak var clearButton: NSButton?
+    private weak var longCaptureButton: NSButton?
 
     init(image: CGImage, selection: ScreenSelection, isEnglish: Bool) {
         annotationView = ScreenshotAnnotationView(image: image)
@@ -68,6 +70,7 @@ final class ScreenshotInlineAnnotationController {
             guard let self else { return }
             self.undoButton?.isEnabled = self.annotationView.canUndo
             self.clearButton?.isEnabled = self.annotationView.hasAnnotations
+            self.longCaptureButton?.isEnabled = !self.annotationView.hasAnnotations
         }
         panel.contentView = annotationView
         configureOverlayPanel(panel, levelOffset: 1)
@@ -78,7 +81,7 @@ final class ScreenshotInlineAnnotationController {
     }
 
     private func presentToolbar() {
-        let toolbarSize = NSSize(width: 390, height: 48)
+        let toolbarSize = NSSize(width: 570, height: 48)
         let panel = ScreenshotOverlayPanel(
             contentRect: NSRect(origin: toolbarOrigin(for: toolbarSize), size: toolbarSize),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -105,7 +108,7 @@ final class ScreenshotInlineAnnotationController {
         material.layer?.masksToBounds = true
 
         let tools = NSSegmentedControl(
-            labels: ["", ""],
+            labels: ["", "", "", "", ""],
             trackingMode: .selectOne,
             target: self,
             action: #selector(toolChanged(_:))
@@ -113,10 +116,20 @@ final class ScreenshotInlineAnnotationController {
         tools.selectedSegment = 0
         tools.setImage(symbol("pencil.tip", description: localized("画笔", "Pen")), forSegment: 0)
         tools.setImage(symbol("rectangle", description: localized("矩形", "Rectangle")), forSegment: 1)
-        tools.setWidth(38, forSegment: 0)
-        tools.setWidth(38, forSegment: 1)
-        tools.setToolTip(localized("画笔", "Pen"), forSegment: 0)
-        tools.setToolTip(localized("矩形", "Rectangle"), forSegment: 1)
+        tools.setImage(symbol("circle", description: localized("圆形或椭圆", "Circle or ellipse")), forSegment: 2)
+        tools.setImage(symbol("arrow.up.right", description: localized("箭头", "Arrow")), forSegment: 3)
+        tools.setImage(symbol("textformat", description: localized("文字", "Text")), forSegment: 4)
+        let toolTips = [
+            localized("画笔", "Pen"),
+            localized("矩形", "Rectangle"),
+            localized("圆形或椭圆", "Circle or ellipse"),
+            localized("箭头", "Arrow"),
+            localized("文字", "Text"),
+        ]
+        for index in 0..<5 {
+            tools.setWidth(38, forSegment: index)
+            tools.setToolTip(toolTips[index], forSegment: index)
+        }
 
         let colorWell = NSColorWell()
         colorWell.color = .systemRed
@@ -124,6 +137,13 @@ final class ScreenshotInlineAnnotationController {
         colorWell.target = self
         colorWell.action = #selector(colorChanged(_:))
         colorWell.toolTip = localized("标注颜色", "Annotation color")
+
+        let longCapture = iconButton(
+            "arrow.down.to.line",
+            help: localized("长截图", "Long screenshot"),
+            action: #selector(longCapturePressed)
+        )
+        longCaptureButton = longCapture
 
         let undo = iconButton(
             "arrow.uturn.backward",
@@ -161,7 +181,16 @@ final class ScreenshotInlineAnnotationController {
         divider.translatesAutoresizingMaskIntoConstraints = false
         divider.setContentHuggingPriority(.required, for: .horizontal)
 
-        let stack = NSStackView(views: [tools, colorWell, undo, clear, divider, cancel, done])
+        let stack = NSStackView(views: [
+            tools,
+            colorWell,
+            longCapture,
+            undo,
+            clear,
+            divider,
+            cancel,
+            done,
+        ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 9
@@ -179,6 +208,9 @@ final class ScreenshotInlineAnnotationController {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            if self.annotationView.isEditingText {
+                return event
+            }
             if event.keyCode == 53 {
                 self.cancel()
                 return nil
@@ -253,6 +285,16 @@ final class ScreenshotInlineAnnotationController {
         complete()
     }
 
+    @objc private func longCapturePressed() {
+        guard !hasFinished, !annotationView.hasAnnotations else { return }
+        hasFinished = true
+        dismissWindows()
+        onRequestLongCapture?()
+        onComplete = nil
+        onCancel = nil
+        onRequestLongCapture = nil
+    }
+
     private func complete() {
         guard !hasFinished, let image = annotationView.renderedImage() else { return }
         hasFinished = true
@@ -260,6 +302,7 @@ final class ScreenshotInlineAnnotationController {
         onComplete?(image)
         onComplete = nil
         onCancel = nil
+        onRequestLongCapture = nil
     }
 
     private func finish(cancelled: Bool) {
@@ -271,6 +314,7 @@ final class ScreenshotInlineAnnotationController {
         }
         onComplete = nil
         onCancel = nil
+        onRequestLongCapture = nil
     }
 
     private func dismissWindows() {

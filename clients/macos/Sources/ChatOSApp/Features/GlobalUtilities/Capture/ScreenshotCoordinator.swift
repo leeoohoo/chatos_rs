@@ -11,6 +11,7 @@ final class ScreenshotCoordinator {
 
     private var selectionController: ScreenSelectionOverlayController?
     private var annotationController: ScreenshotInlineAnnotationController?
+    private var longCaptureController: LongScreenshotCaptureController?
     private var captureTask: Task<Void, Never>?
     private var previousApplication: NSRunningApplication?
     private var selectedScreen: NSScreen?
@@ -59,6 +60,10 @@ final class ScreenshotCoordinator {
         }
         if let annotationController {
             annotationController.cancel()
+            return
+        }
+        if let longCaptureController {
+            longCaptureController.cancel()
             return
         }
         captureTask?.cancel()
@@ -119,7 +124,37 @@ final class ScreenshotCoordinator {
             self?.annotationController = nil
             self?.finishWorkflow()
         }
+        controller.onRequestLongCapture = { [weak self] in
+            guard let self else { return }
+            self.annotationController = nil
+            self.presentLongCapture(initialImage: image, selection: selection)
+        }
         annotationController = controller
+        controller.present()
+    }
+
+    private func presentLongCapture(initialImage: CGImage, selection: ScreenSelection) {
+        let controller = LongScreenshotCaptureController(
+            initialImage: initialImage,
+            selection: selection,
+            isEnglish: model?.interfaceLanguage == .english
+        )
+        controller.onComplete = { [weak self] image in
+            guard let self else { return }
+            self.longCaptureController = nil
+            let output = self.persist(image)
+            self.toastController.show(
+                output: output,
+                on: selection.screen,
+                isEnglish: self.model?.interfaceLanguage == .english
+            )
+            self.finishWorkflow()
+        }
+        controller.onCancel = { [weak self] in
+            self?.longCaptureController = nil
+            self?.finishWorkflow()
+        }
+        longCaptureController = controller
         controller.present()
     }
 
@@ -236,6 +271,7 @@ final class ScreenshotCoordinator {
     private func finishWorkflow() {
         selectionController = nil
         annotationController = nil
+        longCaptureController = nil
         captureTask = nil
         selectedScreen = nil
         isRunning = false
