@@ -26,6 +26,7 @@ let package = Package(
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreGraphics"),
+                .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("Security"),
             ]
         ),
@@ -33,6 +34,7 @@ let package = Package(
             name: "ChatOSApp",
             dependencies: ["ChatOSCore", "ChatOSAPI", "ChatOSConnector"],
             linkerSettings: [
+                .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
             ]
         ),

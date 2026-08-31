@@ -12,7 +12,10 @@ struct ChatOSApp: App {
                 .environment(\.interfaceFontScale, model.interfaceFontScale)
                 .dynamicTypeSize(model.interfaceDynamicTypeSize)
                 .frame(minWidth: 1_100, minHeight: 720)
-                .task { model.startPetOverlayIfNeeded() }
+                .task {
+                    model.startPetOverlayIfNeeded()
+                    model.startGlobalUtilitiesIfNeeded()
+                }
         }
         .defaultSize(width: 1_440, height: 900)
         .windowStyle(.titleBar)

@@ -68,6 +68,11 @@ final class AppModel: ObservableObject {
     let visualSessionStore = VisualSessionPresentationStore()
     let petPreferences = PetPreferencesStore()
     let petOverlayStore = PetOverlayStore()
+    let globalUtilityPreferences = GlobalUtilityPreferencesStore()
+    private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
+        model: self,
+        preferences: globalUtilityPreferences
+    )
 
     var terminals: [ResourceItem] {
         [
@@ -259,6 +264,10 @@ final class AppModel: ObservableObject {
             store: petOverlayStore,
             preferences: petPreferences
         )
+    }
+
+    func startGlobalUtilitiesIfNeeded() {
+        globalUtilityCoordinator.start()
     }
 
     func openPetActivity(_ activity: PetActivity?) {

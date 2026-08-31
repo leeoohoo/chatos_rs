@@ -63,7 +63,7 @@ enum NativeSystemPermissions {
             AXIsProcessTrustedWithOptions(options as CFDictionary)
             openPrivacySettings(anchor: "Privacy_Accessibility")
         case "screen_recording":
-            CGRequestScreenCaptureAccess()
+            NativeSystemPermissionService.requestScreenCaptureAccess()
             openPrivacySettings(anchor: "Privacy_ScreenCapture")
         case "full_disk_access":
             openPrivacySettings(anchor: "Privacy_AllFiles")
@@ -77,7 +77,7 @@ enum NativeSystemPermissions {
         case "accessibility":
             AXIsProcessTrusted()
         case "screen_recording":
-            CGPreflightScreenCaptureAccess()
+            NativeSystemPermissionService.hasScreenCaptureAccess
         case "full_disk_access":
             hasFullDiskAccess()
         default:

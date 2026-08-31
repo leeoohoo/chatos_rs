@@ -11,6 +11,7 @@ struct SettingsView: View {
                 Section("ChatOS") {
                     settingsRow(.general)
                     settingsRow(.pet)
+                    settingsRow(.globalUtilities)
                     settingsRow(.cloudAI)
                 }
                 Section(model.localized("本机连接器", english: "Native Connector")) {
@@ -75,6 +76,11 @@ struct SettingsView: View {
             generalSettings
         case .pet:
             PetSettingsView(preferences: model.petPreferences)
+        case .globalUtilities:
+            GlobalUtilitiesSettingsView(
+                preferences: model.globalUtilityPreferences,
+                hotKeys: model.globalUtilityCoordinator.hotKeys
+            )
         default:
             connectorDetail
         }
@@ -295,7 +301,7 @@ struct SettingsView: View {
         case .approvals: LocalConnectorApprovalsView(viewModel: model.localConnectorControl)
         case .runtime: LocalConnectorRuntimePermissionsView(viewModel: model.localConnectorControl)
         case .sandbox: LocalConnectorSandboxView(viewModel: model.localConnectorControl)
-        case .general, .pet: EmptyView()
+        case .general, .pet, .globalUtilities: EmptyView()
         }
     }
 
@@ -333,13 +339,14 @@ struct SettingsView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Hashable {
-    case general, pet, cloudAI, connection, plugins, approvals, runtime, sandbox
+    case general, pet, globalUtilities, cloudAI, connection, plugins, approvals, runtime, sandbox
 
     func title(language: ChatOSLanguage) -> String {
         if language == .english {
             switch self {
             case .general: return "General & Account"
             case .pet: return "Pet"
+            case .globalUtilities: return "Global Utilities"
             case .cloudAI: return "AI Models"
             case .connection: return "Device & Gateway"
             case .plugins: return "Plugins & Skills"
@@ -351,6 +358,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         return switch self {
         case .general: "常规与账号"
         case .pet: "宠物"
+        case .globalUtilities: "全局工具"
         case .cloudAI: "AI 模型配置"
         case .connection: "设备与网关"
         case .plugins: "插件与 Skills"
@@ -364,6 +372,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         return switch self {
         case .general: "gearshape"
         case .pet: "pawprint.fill"
+        case .globalUtilities: "command.square.fill"
         case .cloudAI: "sparkles"
         case .connection: "network"
         case .plugins: "puzzlepiece.extension"
@@ -376,6 +385,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
     var eyebrow: String {
         switch self {
         case .pet: "PET"
+        case .globalUtilities: "GLOBAL UTILITIES"
         case .cloudAI: "CLOUD AI"
         case .connection: "NATIVE CONNECTOR"
         case .plugins: "PLUGINS & SKILLS"
@@ -391,6 +401,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
             switch self {
             case .general: return "Manage interface language and the current account."
             case .pet: return "Manage the global pet and event notifications outside the main window."
+            case .globalUtilities: return "Manage global shortcuts, capture, clipboard history, and quick search."
             case .cloudAI: return "Manage ChatOS cloud models and the local approval model."
             case .connection: return "Manage the Swift Native Connector device identity and gateway connection."
             case .plugins: return "Manage plugins and skills running on this Mac."
@@ -402,6 +413,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         return switch self {
         case .general: "管理界面语言与当前账号。"
         case .pet: "管理脱离主窗口显示的全局宠物与事件提醒。"
+        case .globalUtilities: "管理全局快捷键、截屏录屏、剪贴板历史和快速搜索。"
         case .cloudAI: "管理 ChatOS 云端模型，并选择本机审批模型。"
         case .connection: "管理 Swift Native Connector 的设备身份与网关长连接。"
         case .plugins: "管理运行在这台 Mac 上的 Plugin 与 Skills。"
@@ -413,7 +425,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
 
     var connectorTab: LocalConnectorControlTab? {
         switch self {
-        case .general, .pet: nil
+        case .general, .pet, .globalUtilities: nil
         case .cloudAI: .models
         case .connection: .connection
         case .plugins: .plugins
