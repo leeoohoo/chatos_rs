@@ -588,6 +588,8 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      configuration-center-backend:
+        condition: service_healthy
       harness:
         condition: service_healthy
     healthcheck:

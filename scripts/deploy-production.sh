@@ -129,6 +129,24 @@ ensure_admin_certificate() {
   [[ "$current_sans" == "$expected_sans" ]]
 }
 
+start_release_with_retries() {
+  local target_release="$1"
+  local attempt
+  for attempt in 1 2 3; do
+    if (
+      cd "$target_release"
+      ./docker/deploy.sh fast
+    ); then
+      return 0
+    fi
+    echo "[WARN] release startup attempt $attempt failed: $target_release" >&2
+    if (( attempt < 3 )); then
+      sleep 10
+    fi
+  done
+  return 1
+}
+
 rollback() {
   local exit_code=$?
   trap - EXIT
@@ -140,10 +158,7 @@ rollback() {
   if (( switched == 1 )) && [[ -n "$previous_release" && -d "$previous_release" ]]; then
     ln -sfn "$previous_release" "$deploy_root/current.rollback"
     mv -Tf "$deploy_root/current.rollback" "$current_link"
-    (
-      cd "$previous_release"
-      ./docker/deploy.sh fast
-    ) || true
+    start_release_with_retries "$previous_release" || true
   fi
   if [[ -n "$nginx_backup" && -f "$nginx_backup" ]]; then
     install -m 0644 "$nginx_backup" "$nginx_target"
@@ -258,10 +273,7 @@ mv -Tf "$deploy_root/current.next" "$current_link"
 switched=1
 
 echo "[INFO] switching containers to the new release"
-(
-  cd "$release_dir"
-  ./docker/deploy.sh fast
-)
+start_release_with_retries "$release_dir"
 
 install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
 nginx -t
