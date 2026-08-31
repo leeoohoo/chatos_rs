@@ -77,7 +77,14 @@ final class ScreenshotCoordinator {
         captureTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let image = try await self.captureService.capture(region: selection.captureRegion)
+                let image = try await self.captureService.capture(
+                    region: NativeScreenCaptureRegion(
+                        displayID: selection.captureRegion.displayID,
+                        sourceRect: selection.captureRegion.sourceRect,
+                        outputSize: selection.captureRegion.outputSize,
+                        excludedWindowIDs: ScreenshotWindowExclusion.visibleOverlayWindowIDs()
+                    )
+                )
                 try Task.checkCancellation()
                 self.captureTask = nil
                 self.presentInlineAnnotation(

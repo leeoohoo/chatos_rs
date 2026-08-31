@@ -189,11 +189,14 @@ final class LongScreenshotCaptureController {
     }
 
     private func captureRegionExcludingControls() -> NativeScreenCaptureRegion {
-        NativeScreenCaptureRegion(
+        let additionalWindows = controlPanel.map { [$0] } ?? []
+        return NativeScreenCaptureRegion(
             displayID: selection.captureRegion.displayID,
             sourceRect: selection.captureRegion.sourceRect,
             outputSize: selection.captureRegion.outputSize,
-            excludedWindowIDs: controlPanel.map { [CGWindowID($0.windowNumber)] } ?? []
+            excludedWindowIDs: ScreenshotWindowExclusion.visibleOverlayWindowIDs(
+                additionalWindows: additionalWindows
+            )
         )
     }
 
