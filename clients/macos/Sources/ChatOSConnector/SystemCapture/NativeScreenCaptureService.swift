@@ -24,14 +24,10 @@ public actor NativeScreenCaptureService {
             throw NativeScreenCaptureError.displayUnavailable
         }
 
-        let ownApplications = content.applications.filter {
-            $0.bundleIdentifier == Bundle.main.bundleIdentifier
-        }
-        let filter = SCContentFilter(
-            display: display,
-            excludingApplications: ownApplications,
-            exceptingWindows: []
-        )
+        // The selection overlays are ordered out before capture. Excluding the
+        // entire ChatOS application here would also remove the main window and
+        // leave transparent/blank areas whenever users capture ChatOS itself.
+        let filter = SCContentFilter(display: display, excludingWindows: [])
         let configuration = SCStreamConfiguration()
         configuration.sourceRect = region.sourceRect
         configuration.width = max(1, Int(region.outputSize.width.rounded()))
