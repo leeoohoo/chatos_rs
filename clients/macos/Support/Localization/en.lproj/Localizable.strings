@@ -324,3 +324,4 @@
 "缺陷修复" = "Bug Fix";
 "变更" = "Change";
 "查看执行计划" = "View Execution Plan";
+"正在同步真实任务图…" = "Syncing the live task graph…";

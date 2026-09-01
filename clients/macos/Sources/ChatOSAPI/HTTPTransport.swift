@@ -5,17 +5,20 @@ public struct HTTPRequest: Sendable {
     public var method: String
     public var headers: [String: String]
     public var body: Data?
+    public var timeoutInterval: TimeInterval?
 
     public init(
         url: URL,
         method: String,
         headers: [String: String] = [:],
-        body: Data? = nil
+        body: Data? = nil,
+        timeoutInterval: TimeInterval? = nil
     ) {
         self.url = url
         self.method = method
         self.headers = headers
         self.body = body
+        self.timeoutInterval = timeoutInterval
     }
 }
 
@@ -46,6 +49,9 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body
+        if let timeoutInterval = request.timeoutInterval {
+            urlRequest.timeoutInterval = timeoutInterval
+        }
         request.headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
 
         let (data, response) = try await session.data(for: urlRequest)

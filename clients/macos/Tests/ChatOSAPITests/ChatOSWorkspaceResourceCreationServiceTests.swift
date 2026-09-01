@@ -44,6 +44,8 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
             "/api/chatos/conversations",
         ])
         XCTAssertEqual(requests.map(\.method), ["POST", "POST", "GET", "GET", "POST"])
+        XCTAssertEqual(requests.first?.timeoutInterval, 2 * 60 * 60)
+        XCTAssertNil(requests[1].timeoutInterval)
 
         let projectBody = try XCTUnwrap(requests.first?.body)
         let projectJSON = try XCTUnwrap(
@@ -84,6 +86,7 @@ private actor ResourceCreationTransport: HTTPTransport {
         var path: String
         var method: String
         var body: Data?
+        var timeoutInterval: TimeInterval?
     }
 
     private var requests: [RecordedRequest] = []
@@ -92,7 +95,8 @@ private actor ResourceCreationTransport: HTTPTransport {
         requests.append(.init(
             path: request.url.path(percentEncoded: true),
             method: request.method,
-            body: request.body
+            body: request.body,
+            timeoutInterval: request.timeoutInterval
         ))
         switch (request.method, request.url.path(percentEncoded: true)) {
         case ("POST", "/api/chatos/local-connectors/projects"):
