@@ -33,10 +33,15 @@ if [[ -n "$DEPLOY_SERVICES_CSV" ]]; then
   for service in "${requested_services[@]}"; do
     service="$(printf '%s' "$service" | xargs)"
     [[ -n "$service" ]] || continue
+    if [[ "$service" == "gateway-config" ]]; then
+      normalized_services+=("$service")
+      continue
+    fi
     if ! grep -Fxq "$service" <<< "$available_services"; then
       echo "[ERROR] service is not independently buildable: $service" >&2
       echo "Available services:" >&2
       printf '%s\n' "$available_services" >&2
+      printf '%s\n' "gateway-config" >&2
       exit 2
     fi
     normalized_services+=("$service")
@@ -74,8 +79,12 @@ if [[ "$release_commit" != "$origin_commit" ]]; then
   exit 1
 fi
 
-echo "[INFO] checking every production Rust service before remote deployment"
-bash scripts/verify-repository.sh rust-build
+if [[ "$DEPLOY_SERVICES_CSV" == "gateway-config" ]]; then
+  echo "[INFO] gateway-only deployment skips unrelated Rust service builds"
+else
+  echo "[INFO] checking every production Rust service before remote deployment"
+  bash scripts/verify-repository.sh rust-build
+fi
 
 release_tag="$(date +%Y%m%d-%H%M%S)-${release_commit:0:8}"
 echo "[INFO] deploying $release_commit as $release_tag to $DEPLOY_SERVER"
@@ -178,10 +187,21 @@ for name, service in services.items():
 ' "$@"
 }
 
+deploy_all=0
+deploy_gateway_config=0
 deploy_services=()
 selected_runtime_services=()
-if [[ -n "$deploy_services_csv" ]]; then
-  IFS=',' read -r -a deploy_services <<< "$deploy_services_csv"
+if [[ -z "$deploy_services_csv" ]]; then
+  deploy_all=1
+else
+  IFS=',' read -r -a requested_components <<< "$deploy_services_csv"
+  for component in "${requested_components[@]}"; do
+    if [[ "$component" == "gateway-config" ]]; then
+      deploy_gateway_config=1
+    else
+      deploy_services+=("$component")
+    fi
+  done
 fi
 
 ensure_admin_certificate() {
@@ -363,19 +383,25 @@ write_deploy_status running validate "Validating production configuration and mT
   ./docker/deploy.sh validate-runtime-material
 )
 
-python3 - "$release_dir/docker/bootstrap.conf" "$release_tag" <<'PY'
+update_image_tag=true
+if (( deploy_all == 0 )) && [[ ${#deploy_services[@]} -eq 0 ]]; then
+  update_image_tag=false
+fi
+python3 - "$release_dir/docker/bootstrap.conf" "$release_tag" "$update_image_tag" <<'PY'
 from pathlib import Path
 import secrets
 import sys
 
 path = Path(sys.argv[1])
 release_tag = sys.argv[2]
+update_image_tag = sys.argv[3] == "true"
 secret_key = "CHATOS_USER_SERVICE_INTERNAL_API_SECRET"
 development_secret = "change_me_chatos_user_service_secret"
 updates = {
     "CHATOS_DOCKER_MODE": "build",
-    "CHATOS_IMAGE_TAG": release_tag,
 }
+if update_image_tag:
+    updates["CHATOS_IMAGE_TAG"] = release_tag
 lines = path.read_text().splitlines()
 current_values = {}
 for line in lines:
@@ -405,9 +431,9 @@ echo "[INFO] building release images while the current release stays online"
 write_deploy_status running build "Building selected production images"
 (
   cd "$release_dir"
-  if [[ ${#deploy_services[@]} -eq 0 ]]; then
+  if (( deploy_all == 1 )); then
     ./docker/deploy.sh build
-  else
+  elif [[ ${#deploy_services[@]} -gt 0 ]]; then
     all_build_services="$(./docker/deploy.sh build-services)"
     while IFS= read -r service; do
       [[ -n "$service" ]] || continue
@@ -421,6 +447,8 @@ write_deploy_status running build "Building selected production images"
       docker tag "$old_image" "$new_image"
     done <<< "$all_build_services"
     ./docker/deploy.sh build "${deploy_services[@]}"
+  else
+    echo "[INFO] no service image build is required for gateway configuration"
   fi
 )
 
@@ -435,8 +463,12 @@ if [[ ${#deploy_services[@]} -gt 0 ]]; then
   fi
   echo "[INFO] runtime services selected for restart: ${selected_runtime_services[*]}"
 fi
+if (( deploy_gateway_config == 1 )); then
+  selected_runtime_services+=("apisix-gateway")
+  echo "[INFO] gateway configuration selected for restart"
+fi
 
-if [[ ${#selected_runtime_services[@]} -eq 0 ]]; then
+if (( deploy_all == 1 || deploy_gateway_config == 1 )); then
   nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
   mkdir -p "$deploy_root/backups"
   cp -p "$nginx_target" "$nginx_backup"
@@ -448,10 +480,12 @@ switched=1
 
 echo "[INFO] switching containers to the new release"
 write_deploy_status running switch "Switching containers to the new release"
-if [[ ${#selected_runtime_services[@]} -gt 0 ]]; then
+if (( deploy_all == 0 )); then
   restart_selected_release_with_retries "$release_dir" "${selected_runtime_services[@]}"
 else
   start_release_with_retries "$release_dir"
+fi
+if (( deploy_all == 1 || deploy_gateway_config == 1 )); then
   install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
   nginx -t
   systemctl reload nginx

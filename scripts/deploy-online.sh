@@ -47,6 +47,7 @@ Usage:
   scripts/deploy-online.sh cloud              # all cloud services
   scripts/deploy-online.sh cloud-backends     # all backend services
   scripts/deploy-online.sh cloud-frontends    # all frontend services
+  scripts/deploy-online.sh gateway            # APISIX + public Nginx configuration only
   scripts/deploy-online.sh service NAME [...] # selected cloud services
   scripts/deploy-online.sh plugin all
   scripts/deploy-online.sh plugin browser
@@ -312,6 +313,8 @@ list_components() {
   echo "Cloud build services:"
   "$ROOT_DIR/docker/deploy.sh" build-services | sed 's/^/  /'
   cat <<'EOF'
+Cloud configuration components:
+  gateway-config
 Plugins:
   browser
   computer-use
@@ -329,12 +332,13 @@ ChatOS online deployment
   2) Deploy all cloud services
   3) Deploy all backend services
   4) Deploy selected cloud service(s)
-  5) Deploy all Plugins
-  6) Deploy Browser CDP
-  7) Deploy Computer Use
-  8) Deploy Document Tools
-  9) Show deployment status
- 10) Follow service logs
+  5) Deploy gateway configuration only
+  6) Deploy all Plugins
+  7) Deploy Browser CDP
+  8) Deploy Computer Use
+  9) Deploy Document Tools
+ 10) Show deployment status
+ 11) Follow service logs
 EOF
   read -r -p "Select: " selection
   case "$selection" in
@@ -347,12 +351,13 @@ EOF
       # shellcheck disable=SC2086
       set -- service $services
       ;;
-    5) set -- plugin all ;;
-    6) set -- plugin browser ;;
-    7) set -- plugin computer-use ;;
-    8) set -- plugin document ;;
-    9) set -- status ;;
-    10)
+    5) set -- gateway ;;
+    6) set -- plugin all ;;
+    7) set -- plugin browser ;;
+    8) set -- plugin computer-use ;;
+    9) set -- plugin document ;;
+    10) set -- status ;;
+    11)
       read -r -p "Service name (empty for all): " service
       set -- logs "$service"
       ;;
@@ -382,6 +387,9 @@ main() {
       ;;
     cloud-frontends)
       deploy_cloud "$(join_csv "${FRONTEND_SERVICES[@]}")"
+      ;;
+    gateway)
+      deploy_cloud "gateway-config"
       ;;
     service)
       [[ $# -gt 0 ]] || { echo "[ERROR] provide at least one service" >&2; exit 2; }

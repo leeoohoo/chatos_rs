@@ -202,6 +202,29 @@ routes:
         uri: https://admin.jgoool.com/projects
         ret_code: 302
 
+  # Plugin artifacts remain public download resources even though the legacy
+  # Plugin Management hostname redirects ordinary UI traffic to Admin Console.
+  - id: plugin-artifact-download
+    priority: 900
+    hosts:
+      - plugin.jgoool.com
+    uri: /api/plugin-artifacts/*
+    methods:
+      - GET
+      - HEAD
+    plugins:
+      request-id: *request_id
+      client-control:
+        max_body_size: 268435456
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 300
+        read: 600
+      nodes:
+        "plugin-management-backend:39260": 1
+
   - id: legacy-plugin-admin-redirect
     priority: 700
     hosts:
