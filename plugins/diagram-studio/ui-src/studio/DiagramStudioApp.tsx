@@ -152,7 +152,12 @@ export function DiagramStudioApp() {
     if (!dirty) return document;
     setIsSaving(true);
     try {
-      const saved = await repository.save(document, persistedRevision);
+      const nodeIds = new Set(document.nodes.map((node) => node.id));
+      const normalizedDocument = {
+        ...document,
+        edges: document.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+      };
+      const saved = await repository.save(normalizedDocument, persistedRevision);
       setDocument(saved);
       setPersistedRevision(saved.revision);
       setDirty(false);

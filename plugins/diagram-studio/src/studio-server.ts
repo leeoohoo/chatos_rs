@@ -3,7 +3,7 @@ import { watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DiagramDocumentStore, RevisionConflictError } from './document-store.js';
-import { assertDiagramDocument, type DiagramKind } from './schema.js';
+import { assertDiagramDocument, type DiagramDocument, type DiagramKind } from './schema.js';
 
 const port = Number.parseInt(process.env.DIAGRAM_STUDIO_PORT ?? '4178', 10);
 const host = process.env.DIAGRAM_STUDIO_HOST ?? '127.0.0.1';
@@ -98,8 +98,17 @@ app.post('/api/documents', async (request, response, next) => {
 app.put('/api/documents/:documentId', async (request, response, next) => {
   try {
     const expectedRevision = request.body?.expectedRevision;
-    const document: unknown = request.body?.document;
+    const submitted: unknown = request.body?.document;
     if (!Number.isSafeInteger(expectedRevision)) throw new Error('expectedRevision is required.');
+    if (!submitted || typeof submitted !== 'object') throw new Error('document is required.');
+    const candidate = submitted as DiagramDocument;
+    const nodeIds = new Set(Array.isArray(candidate.nodes) ? candidate.nodes.map((node) => node?.id) : []);
+    const document: unknown = {
+      ...candidate,
+      edges: Array.isArray(candidate.edges)
+        ? candidate.edges.filter((edge) => nodeIds.has(edge?.source) && nodeIds.has(edge?.target))
+        : candidate.edges
+    };
     assertDiagramDocument(document);
     if (document.documentId !== request.params.documentId) throw new Error('Document identity mismatch.');
     const saved = await store.replace(document, expectedRevision);
