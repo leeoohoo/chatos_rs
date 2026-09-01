@@ -495,7 +495,7 @@ function App() {
 
       <footer className="footer">
         <div className="footer-brand"><BrandMark /><div><strong>{manifest.product_name}</strong><small>让 AI 进入项目，把事情做完。</small></div></div>
-        <div className="footer-links"><a href="#why">产品能力</a><a href="#download">客户端下载</a><a href="#register">注册</a><a href={manifest.app_url}>登录</a><a href="/admin/releases">发布管理</a></div>
+        <div className="footer-links"><a href="#why">产品能力</a><a href="#download">客户端下载</a><a href="#register">注册</a><a href={manifest.app_url}>登录</a><a href="/privacy/browser-bridge">隐私政策</a><a href="/admin/releases">发布管理</a></div>
         <span className="copyright">© 2025–2026 Okra</span>
       </footer>
     </main>

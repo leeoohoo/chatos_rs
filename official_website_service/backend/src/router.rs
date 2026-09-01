@@ -152,6 +152,11 @@ async fn sitemap(State(config): State<AppConfig>) -> impl IntoResponse {
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
+  <url>
+    <loc>{root}/privacy/browser-bridge</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
 </urlset>
 "#
     );
