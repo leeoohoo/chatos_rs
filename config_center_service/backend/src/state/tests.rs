@@ -2387,6 +2387,7 @@ fn chatos_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&CHATOS_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_BACKEND_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
@@ -2414,6 +2415,42 @@ fn chatos_runtime_backfill_keeps_explicit_values() {
         Some(&json!("http://chatos-user.internal"))
     );
     assert!(!changed_keys.contains(&CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
+}
+
+#[test]
+fn chatos_runtime_backfill_replaces_legacy_loopback_user_service_internal_url() {
+    let definitions = builtin_definitions();
+    let defaults = chatos_service_default_values(&definitions);
+    let mut values = BTreeMap::from([(
+        CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+        json!("https://127.0.0.1:39192"),
+    )]);
+
+    let changed_keys = ensure_chatos_runtime_values(&mut values, &defaults);
+
+    assert_eq!(
+        values.get(CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY),
+        Some(&json!("https://user-service-backend:39192"))
+    );
+    assert!(changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
+}
+
+#[test]
+fn chatos_runtime_backfill_keeps_explicit_user_service_internal_url() {
+    let definitions = builtin_definitions();
+    let defaults = chatos_service_default_values(&definitions);
+    let mut values = BTreeMap::from([(
+        CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+        json!("https://users.internal.example:8443"),
+    )]);
+
+    let changed_keys = ensure_chatos_runtime_values(&mut values, &defaults);
+
+    assert_eq!(
+        values.get(CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY),
+        Some(&json!("https://users.internal.example:8443"))
+    );
+    assert!(!changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
 }
 
 #[test]

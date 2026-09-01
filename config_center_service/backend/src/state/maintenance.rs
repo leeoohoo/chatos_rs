@@ -1178,6 +1178,15 @@ impl AppState {
                 &mut draft.changes,
                 CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
                 replacement,
+            ) | migrate_service_url_draft(
+                &mut draft.changes,
+                CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+                defaults
+                    .get(CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "ChatOS User Service internal HTTPS default is missing".to_string()
+                    })?,
+                &["https://127.0.0.1:39192", "https://localhost:39192"],
             ) | migrate_https_url_draft(
                 &mut draft.changes,
                 CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -1200,6 +1209,7 @@ impl AppState {
 
         tracing::info!(
             user_service_base_url_key = CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            user_service_internal_base_url_key = CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
             project_service_base_url_key = CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
             task_runner_base_url_key = CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             memory_engine_base_url_key = CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,

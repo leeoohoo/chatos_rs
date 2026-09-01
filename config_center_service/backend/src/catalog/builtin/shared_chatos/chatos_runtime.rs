@@ -240,7 +240,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "service",
             Some("chatos-backend"),
             "string",
-            json!("https://127.0.0.1:39192"),
+            json!("https://user-service-backend:39192"),
             None,
             None,
             &[],

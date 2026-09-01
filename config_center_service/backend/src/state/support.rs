@@ -883,6 +883,7 @@ pub(super) fn chatos_service_default_values(
                 CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY,
                 CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY,
                 CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
                 CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
                 CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
                 CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -1086,6 +1087,15 @@ pub(super) fn ensure_chatos_runtime_values(
             if ensure_root_vhost_rabbitmq_url(values, key, fallback) {
                 changed_keys.push(key.clone());
             }
+        } else if key == CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY {
+            if ensure_service_url_value(
+                values,
+                key,
+                fallback,
+                &["https://127.0.0.1:39192", "https://localhost:39192"],
+            ) {
+                changed_keys.push(key.clone());
+            }
         } else if [
             CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -1102,6 +1112,26 @@ pub(super) fn ensure_chatos_runtime_values(
         }
     }
     changed_keys
+}
+
+pub(super) fn ensure_service_url_value(
+    values: &mut BTreeMap<String, Value>,
+    key: &str,
+    fallback: &Value,
+    legacy_values: &[&str],
+) -> bool {
+    let current = values.get(key).and_then(Value::as_str).map(str::trim);
+    let is_valid = current.is_some_and(|value| {
+        value.starts_with("https://")
+            && !legacy_values
+                .iter()
+                .any(|legacy| value.eq_ignore_ascii_case(legacy))
+    });
+    if is_valid {
+        return false;
+    }
+    values.insert(key.to_string(), fallback.clone());
+    true
 }
 
 pub(super) fn ensure_https_url_value(
@@ -1126,6 +1156,15 @@ pub(super) fn migrate_https_url_draft(
     fallback: &Value,
 ) -> bool {
     values.contains_key(key) && ensure_https_url_value(values, key, fallback)
+}
+
+pub(super) fn migrate_service_url_draft(
+    values: &mut BTreeMap<String, Value>,
+    key: &str,
+    fallback: &Value,
+    legacy_values: &[&str],
+) -> bool {
+    values.contains_key(key) && ensure_service_url_value(values, key, fallback, legacy_values)
 }
 
 pub(super) fn ensure_changed_key(keys: &mut Vec<String>, key: &str) {
