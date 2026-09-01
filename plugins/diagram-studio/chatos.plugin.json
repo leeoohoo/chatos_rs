@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 3,
+  "name": "chatos-diagram-studio",
+  "version": "0.1.0",
+  "description": "Create and edit architecture diagrams, flowcharts, swimlane diagrams, and topology maps with a structured AI-editable document model.",
+  "author": {
+    "name": "Chatos"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["architecture", "flowchart", "swimlane", "topology", "diagram", "mcp"],
+  "mcpServers": {
+    "diagram-studio": {
+      "type": "stdio",
+      "bin": "chatos-diagram-studio",
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+  "skills": [
+    "./skills/diagram-studio"
+  ],
+  "ui": [
+    {
+      "componentKey": "diagram-workbench",
+      "source": "./ui/index.html",
+      "title": "Diagram Studio",
+      "surface": "workbench",
+      "assets": ["./ui/assets/app.js", "./ui/assets/app.css"],
+      "bridgeCapabilities": [
+        "host.context.read",
+        "artifact.list",
+        "artifact.read",
+        "artifact.download",
+        "artifact.create",
+        "artifact.update"
+      ],
+      "artifactMimeTypes": [
+        "application/vnd.chatos.diagram+json",
+        "application/json",
+        "image/svg+xml",
+        "image/png"
+      ]
+    }
+  ],
+  "interface": {
+    "displayName": "Diagram Studio",
+    "shortDescription": "Architecture, flowchart, swimlane, and topology diagrams",
+    "longDescription": "A native-feeling visual workbench for creating structured diagrams by hand or through AI tools. Documents use stable nodes, edges, groups, revisions, and source references.",
+    "developerName": "Chatos",
+    "category": "Productivity",
+    "capabilities": [
+      "Architecture diagrams",
+      "Flowcharts",
+      "Swimlane diagrams",
+      "Topology maps",
+      "AI-editable structured documents",
+      "SVG, PNG, and JSON export"
+    ],
+    "defaultPrompt": [
+      "Analyze this project and create an architecture diagram.",
+      "Turn this process description into a flowchart.",
+      "Create a swimlane diagram for this workflow."
+    ],
+    "brandColor": "#6E57D8",
+    "logo": "./assets/logo.svg",
+    "logoDark": "./assets/logo.svg"
+  },
+  "dependencies": {
+    "minimumHostVersion": ">=2.2.0",
+    "supportedPlatforms": ["macos", "windows", "linux"]
+  },
+  "permissions": [
+    {
+      "permission": "process.spawn",
+      "required": true,
+      "reason": "Launch the installed Diagram Studio MCP executable.",
+      "components": ["diagram-studio"]
+    },
+    {
+      "permission": "artifact.create",
+      "required": true,
+      "reason": "Export diagram documents as JSON, SVG, and PNG deliverables.",
+      "components": ["diagram-studio", "diagram-workbench"]
+    }
+  ]
+}

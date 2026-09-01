@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "diagram-studio": {
+      "command": "node",
+      "args": ["./dist/mcp-server.mjs", "mcp"]
+    }
+  }
+}
