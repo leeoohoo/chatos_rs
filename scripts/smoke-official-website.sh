@@ -116,6 +116,11 @@ if ! grep -Eq '^Sitemap: https?://.*/sitemap\.xml$' "$robots_file"; then
   cat "$robots_file" >&2
   exit 1
 fi
+if grep -Eq '^Sitemap: https?://(localhost|127\.0\.0\.1)(:[0-9]+)?/' "$robots_file"; then
+  echo "[ERROR] robots.txt exposes a loopback sitemap URL" >&2
+  cat "$robots_file" >&2
+  exit 1
+fi
 if ! grep -q '^Disallow: /admin/$' "$robots_file"; then
   echo "[ERROR] robots.txt does not protect the admin route from indexing" >&2
   cat "$robots_file" >&2

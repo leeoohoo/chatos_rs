@@ -408,6 +408,14 @@ for line in lines:
     key, separator, value = line.partition("=")
     if separator:
         current_values[key] = value
+website_public_base_key = "OFFICIAL_WEBSITE_PUBLIC_BASE_URL"
+website_public_base = current_values.get(website_public_base_key, "").strip().lower()
+if (
+    not website_public_base
+    or "localhost" in website_public_base
+    or "127.0.0.1" in website_public_base
+):
+    updates[website_public_base_key] = "https://www.jgoool.com"
 current_secret = current_values.get(secret_key, "").strip()
 if not current_secret or current_secret == development_secret or len(current_secret) < 32:
     updates[secret_key] = secrets.token_urlsafe(48)
