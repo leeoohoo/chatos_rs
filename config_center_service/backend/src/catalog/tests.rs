@@ -4,6 +4,19 @@
 use super::*;
 
 #[test]
+fn catalog_does_not_reintroduce_retired_configuration() {
+    let definitions = builtin_definitions();
+    let retired = RETIRED_CONFIG_KEYS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(retired.len(), RETIRED_CONFIG_KEYS.len());
+    assert!(definitions
+        .iter()
+        .all(|definition| !retired.contains(definition.key.as_str())));
+}
+
+#[test]
 fn catalog_exposes_shared_and_task_runner_iteration_limits() {
     let definitions = builtin_definitions();
     let iteration_definitions = definitions

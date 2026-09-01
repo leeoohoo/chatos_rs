@@ -168,11 +168,18 @@ impl AppState {
     pub(super) async fn publish_values(
         &self,
         environment: &str,
-        values: BTreeMap<String, Value>,
+        mut values: BTreeMap<String, Value>,
         user: &CurrentUser,
         message: &str,
-        changed_keys: Vec<String>,
+        mut changed_keys: Vec<String>,
     ) -> Result<ConfigReleaseRecord, String> {
+        if let Some(active_release) = self.store.get_active_release(environment).await? {
+            preserve_user_service_secret_rotation(
+                &active_release.values,
+                &mut values,
+                &mut changed_keys,
+            );
+        }
         let definitions = self.store.list_definitions().await?;
         let active = self.store.get_active(environment).await?;
         let revision = self.store.next_release_revision(environment).await?;
@@ -517,6 +524,55 @@ impl AppState {
             );
         }
         Ok(errors)
+    }
+}
+
+pub(super) fn preserve_user_service_secret_rotation(
+    current: &BTreeMap<String, Value>,
+    next: &mut BTreeMap<String, Value>,
+    changed_keys: &mut Vec<String>,
+) {
+    let Some(current_primary) = current
+        .get(USER_SERVICE_SECRET_KEY_CONFIG_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some(next_primary) = next
+        .get(USER_SERVICE_SECRET_KEY_CONFIG_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    if current_primary == next_primary {
+        return;
+    }
+
+    let mut previous = next
+        .get(USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .split([',', ';', '\n'])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !previous.iter().any(|value| value == current_primary) {
+        previous.push(current_primary.to_string());
+        next.insert(
+            USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY.to_string(),
+            Value::String(previous.join(",")),
+        );
+        if !changed_keys
+            .iter()
+            .any(|key| key == USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY)
+        {
+            changed_keys.push(USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY.to_string());
+        }
     }
 }
 

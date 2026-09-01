@@ -2651,3 +2651,38 @@ fn chatos_snapshot_exposes_runtime_environment_aliases() {
         Some(&"120000".to_string())
     );
 }
+
+#[test]
+fn publishing_a_new_user_service_secret_preserves_the_previous_primary_key() {
+    let current = BTreeMap::from([
+        (
+            USER_SERVICE_SECRET_KEY_CONFIG_KEY.to_string(),
+            json!("old-primary"),
+        ),
+        (
+            USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY.to_string(),
+            json!("older-key"),
+        ),
+    ]);
+    let mut next = BTreeMap::from([
+        (
+            USER_SERVICE_SECRET_KEY_CONFIG_KEY.to_string(),
+            json!("new-primary"),
+        ),
+        (
+            USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY.to_string(),
+            json!("older-key"),
+        ),
+    ]);
+    let mut changed_keys = vec![USER_SERVICE_SECRET_KEY_CONFIG_KEY.to_string()];
+
+    releases::preserve_user_service_secret_rotation(&current, &mut next, &mut changed_keys);
+
+    assert_eq!(
+        next.get(USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY),
+        Some(&json!("older-key,old-primary"))
+    );
+    assert!(changed_keys
+        .iter()
+        .any(|key| key == USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY));
+}

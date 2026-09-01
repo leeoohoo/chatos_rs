@@ -16,6 +16,7 @@ impl AppState {
         store
             .delete_definitions(LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS)
             .await?;
+        store.delete_definitions(RETIRED_CONFIG_KEYS).await?;
         for definition in builtin_definitions() {
             store.upsert_definition(&definition).await?;
         }
@@ -34,6 +35,7 @@ impl AppState {
             .ensure_initial_release(state.config.default_environment.as_str())
             .await?;
         state.purge_user_preferences_from_config_center().await?;
+        state.purge_retired_config_keys().await?;
         state.migrate_agent_max_iterations_config().await?;
         state.migrate_task_runner_runtime_config().await?;
         state.migrate_mcp_management_runtime_config().await?;

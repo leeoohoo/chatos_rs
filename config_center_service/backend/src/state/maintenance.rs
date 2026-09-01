@@ -102,6 +102,75 @@ impl AppState {
         Ok(())
     }
 
+    pub(super) async fn purge_retired_config_keys(&self) -> Result<(), String> {
+        for mut release in self.store.list_all_releases().await? {
+            let previous_values_len = release.values.len();
+            release
+                .values
+                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            let previous_changed_keys_len = release.changed_keys.len();
+            release
+                .changed_keys
+                .retain(|key| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            if release.values.len() != previous_values_len
+                || release.changed_keys.len() != previous_changed_keys_len
+            {
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        let definitions = self.store.list_definitions().await?;
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            let previous_values_len = snapshot.values.len();
+            snapshot
+                .values
+                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if snapshot.values.len() != previous_values_len || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        for mut draft in self.store.list_drafts().await? {
+            let previous_len = draft.changes.len();
+            draft
+                .changes
+                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            if draft.changes.len() != previous_len {
+                draft.validation_status = "pending".to_string();
+                draft.validation_errors.clear();
+                draft.updated_at = Utc::now().to_rfc3339();
+                self.store.save_draft(&draft).await?;
+            }
+        }
+
+        for mut event in self.store.list_all_audit().await? {
+            let previous_len = event.changed_keys.len();
+            event
+                .changed_keys
+                .retain(|key| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            if event.changed_keys.len() != previous_len {
+                self.store.save_audit(&event).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(&definitions, "remove retired configuration")
+            .await?;
+        tracing::info!(
+            retired_key_count = RETIRED_CONFIG_KEYS.len(),
+            "retired configuration has been removed from configuration center"
+        );
+        Ok(())
+    }
+
     pub(super) async fn migrate_agent_max_iterations_config(&self) -> Result<(), String> {
         use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
 
