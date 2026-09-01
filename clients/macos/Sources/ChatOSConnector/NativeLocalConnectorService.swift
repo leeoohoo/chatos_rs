@@ -642,6 +642,15 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     func publishPluginInstallationStatus() async throws {
+        let token = try requireAccessToken()
+        let sources = try await gateway.pluginSources(token: token)
+        if reconcileInstalledPluginIdentities(with: sources.items) {
+            try stateStore.save(state)
+        }
+        try await sendPluginInstallationStatus()
+    }
+
+    func sendPluginInstallationStatus() async throws {
         guard let socket = webSocket,
               let ownerUserID = state.user?.id,
               let deviceID = state.deviceID else {

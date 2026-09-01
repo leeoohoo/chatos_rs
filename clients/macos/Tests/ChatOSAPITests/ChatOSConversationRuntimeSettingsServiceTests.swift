@@ -58,7 +58,7 @@ private actor RuntimeSettingsTransport: HTTPTransport {
         let body: String
         switch (request.method, request.url.path) {
         case ("GET", "/api/chatos/ai-model-configs"):
-            body = #"[{"id":"model-sol","name":"my / gpt-5.6-sol","model":"gpt-5.6-sol","thinking_level":"high","enabled":true,"task_enabled":false},{"id":"model-disabled","name":"Disabled","model":"gpt-disabled","enabled":false}]"#
+            body = #"[{"id":"model-sol","name":"my / gpt-5.6-sol","model":"gpt-5.6-sol","thinking_level":"high","enabled":true,"task_enabled":false},{"id":"model-sol","name":"my / gpt-5.6-sol","model":"gpt-5.6-sol","thinking_level":"high","enabled":true},{"id":"stale-duplicate","name":"my / gpt-5.6-sol","model":"gpt-5.6-sol","thinking_level":"high","enabled":true},{"id":"model-disabled","name":"Disabled","model":"gpt-disabled","enabled":false}]"#
         case ("PUT", "/api/chatos/conversations/conversation-1/runtime-settings"):
             body = #"{"selected_model_id":"model-sol","selected_model_name":"gpt-5.6-sol","selected_thinking_level":"high","reasoning_enabled":true,"plan_mode_enabled":false}"#
         default:

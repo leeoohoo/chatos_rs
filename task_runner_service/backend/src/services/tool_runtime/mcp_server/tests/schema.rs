@@ -522,6 +522,28 @@ fn task_creation_schema_exposes_agent_bound_mcp_choices() {
 }
 
 #[test]
+fn task_creation_schema_forbids_unadvertised_capability_ids() {
+    let mut tools = vec![json!({
+        "name": "create_task",
+        "inputSchema": create_task_schema(),
+    })];
+    super::super::support::enrich_tool_schemas_with_task_mcp_choices(&mut tools, &[], &[], &[]);
+
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/enabled_builtin_kinds/maxItems"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/external_mcp_config_ids/maxItems"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/plugin_hints/maxItems"),
+        Some(&json!(0))
+    );
+}
+
+#[test]
 fn async_planner_profile_exposes_only_planning_tools() {
     assert!(chatos_async_planner::planner_agent_tool_allowed(
         "list_tasks"

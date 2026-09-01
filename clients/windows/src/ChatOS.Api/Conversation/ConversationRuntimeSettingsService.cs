@@ -30,10 +30,26 @@ public sealed class ConversationRuntimeSettingsService : IConversationRuntimeSet
         var response = await _client.GetAsync<IReadOnlyList<ModelConfigDto>>(
             "ai-model-configs",
             cancellationToken).ConfigureAwait(false);
-        return response
-            .Where(static config => config.Enabled != false && config.ModelName.TrimmedOrNull() is not null)
-            .Select(static config => config.ToDomain())
-            .ToArray();
+        var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenDisplayModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var models = new List<ConversationModelOption>();
+        foreach (var config in response)
+        {
+            var modelName = config.ModelName.TrimmedOrNull();
+            if (config.Enabled == false || modelName is null)
+            {
+                continue;
+            }
+            var id = config.Id.TrimmedOrNull();
+            var displayName = config.Name.TrimmedOrNull() ?? modelName;
+            var displayModelKey = $"{displayName}\0{modelName}";
+            if (id is null || !seenIds.Add(id) || !seenDisplayModels.Add(displayModelKey))
+            {
+                continue;
+            }
+            models.Add(config.ToDomain());
+        }
+        return models;
     }
 
     public Task<ConversationRuntimeSettings> UpdateModelAsync(

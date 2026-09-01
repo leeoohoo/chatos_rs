@@ -17,12 +17,23 @@ public struct ChatOSConversationRuntimeSettingsService: ConversationRuntimeSetti
 
     public func fetchAvailableModels() async throws -> [ConversationModelOption] {
         let response: [ModelConfigDTO] = try await client.request("/ai-model-configs")
+        var seenIDs = Set<String>()
+        var seenDisplayModels = Set<String>()
         return response
             .filter { $0.enabled != false && $0.modelName.trimmedNonEmptyValue != nil }
-            .map {
-                ConversationModelOption(
+            .compactMap {
+                let displayName = $0.name.trimmedNonEmptyValue ?? $0.modelName
+                let normalizedID = $0.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let normalizedDisplayModel = "\(displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())\u{0}\($0.modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+                guard !normalizedID.isEmpty,
+                      seenIDs.insert(normalizedID).inserted,
+                      seenDisplayModels.insert(normalizedDisplayModel).inserted else {
+                    return nil
+                }
+                return ConversationModelOption(
                     id: $0.id,
-                    displayName: $0.name.trimmedNonEmptyValue ?? $0.modelName,
+                    displayName: displayName,
                     modelName: $0.modelName,
                     thinkingLevel: $0.thinkingLevel?.trimmedNonEmptyValue
                 )

@@ -51,4 +51,51 @@ struct NativeConnectorStateStoreTests {
         #expect(restored.pluginPreferences["plugin-a"] == false)
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
     }
+
+    @Test
+    func stalePluginIdentityMigratesToRepublishedCatalogEntryByArtifact() throws {
+        var state = NativeConnectorPersistentState.empty
+        state.installedPluginIDs = ["old-plugin-id"]
+        state.pluginPreferences = ["old-plugin-id": false]
+        state.installedPluginRecords = [
+            "old-plugin-id": .init(
+                pluginID: "old-plugin-id",
+                releaseID: "old-release-id",
+                version: "0.1.6",
+                artifactSHA256: String(repeating: "a", count: 64),
+                installationPath: "/tmp/browser/0.1.6",
+                installedAt: "2026-08-25T00:00:00Z"
+            ),
+        ]
+        let source = GatewayPluginSourceDTO(
+            catalog: GatewayPluginCatalogDTO(
+                id: "current-plugin-id",
+                displayName: "Browser CDP",
+                name: "chatos-browser-cdp",
+                description: nil,
+                publisher: nil,
+                interface: nil
+            ),
+            release: GatewayPluginReleaseDTO(
+                id: "current-release-id",
+                version: "0.1.6",
+                artifactSHA256: String(repeating: "a", count: 64),
+                npmPackage: nil
+            ),
+            preference: nil
+        )
+
+        let changed = NativeLocalConnectorService.reconcileInstalledPluginIdentities(
+            state: &state,
+            sources: [source]
+        )
+
+        #expect(changed)
+        #expect(state.installedPluginIDs == ["current-plugin-id"])
+        #expect(state.installedPluginRecords?["old-plugin-id"] == nil)
+        #expect(state.installedPluginRecords?["current-plugin-id"]?.pluginID == "current-plugin-id")
+        #expect(state.installedPluginRecords?["current-plugin-id"]?.releaseID == "current-release-id")
+        #expect(state.pluginPreferences["old-plugin-id"] == nil)
+        #expect(state.pluginPreferences["current-plugin-id"] == false)
+    }
 }

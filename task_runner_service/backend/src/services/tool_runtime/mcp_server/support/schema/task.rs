@@ -105,7 +105,7 @@ fn task_plugin_hints_schema(choices: &[TaskMcpSchemaChoice]) -> Value {
                 .collect(),
         );
     }
-    json!({
+    let mut schema = json!({
         "type": "array",
         "maxItems": 16,
         "uniqueItems": true,
@@ -123,7 +123,15 @@ fn task_plugin_hints_schema(choices: &[TaskMcpSchemaChoice]) -> Value {
             "required": ["plugin_key"],
             "additionalProperties": false
         }
-    })
+    });
+    if choices.is_empty() {
+        schema["maxItems"] = Value::from(0);
+        schema["description"] = Value::String(
+            "No Task Plugins are selectable for this request context. Send an empty plugin_hints array; never invent a plugin_key."
+                .to_string(),
+        );
+    }
+    schema
 }
 
 fn task_mcp_selection_schema(description: &str, choices: &[TaskMcpSchemaChoice]) -> Value {
@@ -148,12 +156,16 @@ fn task_mcp_selection_schema(description: &str, choices: &[TaskMcpSchemaChoice])
                 .collect(),
         );
     }
-    json!({
+    let mut schema = json!({
         "type": "array",
         "items": item_schema,
         "uniqueItems": true,
         "description": description
-    })
+    });
+    if choices.is_empty() {
+        schema["maxItems"] = Value::from(0);
+    }
+    schema
 }
 
 pub(crate) fn create_task_schema() -> Value {

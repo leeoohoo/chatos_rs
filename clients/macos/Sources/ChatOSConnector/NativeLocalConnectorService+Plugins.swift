@@ -5,6 +5,10 @@ extension NativeLocalConnectorService {
     public func fetchPlugins() async throws -> [LocalConnectorPlugin] {
         let token = try requireAccessToken()
         let sources = try await gateway.pluginSources(token: token)
+        if reconcileInstalledPluginIdentities(with: sources.items) {
+            try stateStore.save(state)
+            try? await sendPluginInstallationStatus()
+        }
         return sources.items.map { source in
             let id = source.catalog.id
             let installedRecord = state.installedPluginRecords?[id]
@@ -117,5 +121,60 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.pluginInstallation("Plugin 权限清单与安装记录不一致")
         }
         return manifest
+    }
+
+    @discardableResult
+    func reconcileInstalledPluginIdentities(with sources: [GatewayPluginSourceDTO]) -> Bool {
+        Self.reconcileInstalledPluginIdentities(state: &state, sources: sources)
+    }
+
+    @discardableResult
+    static func reconcileInstalledPluginIdentities(
+        state: inout NativeConnectorPersistentState,
+        sources: [GatewayPluginSourceDTO]
+    ) -> Bool {
+        guard var records = state.installedPluginRecords, !records.isEmpty else { return false }
+        let currentIDs = Set(sources.map(\.catalog.id))
+        var sourcesByArtifact: [String: [GatewayPluginSourceDTO]] = [:]
+        for source in sources {
+            guard let artifact = source.release.artifactSHA256?
+                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines),
+                  !artifact.isEmpty else {
+                continue
+            }
+            sourcesByArtifact[artifact, default: []].append(source)
+        }
+        var changed = false
+
+        for (storedID, record) in records.sorted(by: { $0.key < $1.key }) {
+            guard !currentIDs.contains(storedID) else { continue }
+            let artifact = record.artifactSHA256.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !artifact.isEmpty,
+                  let matches = sourcesByArtifact[artifact],
+                  matches.count == 1,
+                  let source = matches.first,
+                  source.release.version?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    == record.version.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                continue
+            }
+
+            let currentID = source.catalog.id
+            var migrated = record
+            migrated.pluginID = currentID
+            migrated.releaseID = source.release.id
+            records[storedID] = nil
+            records[currentID] = migrated
+            state.installedPluginIDs.remove(storedID)
+            state.installedPluginIDs.insert(currentID)
+            if let enabled = state.pluginPreferences.removeValue(forKey: storedID) {
+                state.pluginPreferences[currentID] = enabled
+            }
+            changed = true
+        }
+
+        if changed {
+            state.installedPluginRecords = records
+        }
+        return changed
     }
 }

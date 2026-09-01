@@ -47,7 +47,24 @@ pub(super) async fn list_plugin_install_sources_internal(
         if !is_network_marketplace(&marketplace) {
             continue;
         }
-        items.push(load_install_source(&state, plugin, None, owner_user_id.as_str()).await?);
+        let plugin_id = plugin.id.clone();
+        let plugin_name = plugin.name.clone();
+        match load_install_source(&state, plugin, None, owner_user_id.as_str()).await {
+            Ok(source) => items.push(source),
+            Err(error) => {
+                // A single unpublished, unlicensed, or otherwise invalid Plugin must not hide
+                // every valid install source from Local Connector clients. The direct lookup
+                // endpoint remains fail-closed for that specific Plugin; the catalog listing
+                // simply omits entries that cannot currently be installed.
+                tracing::warn!(
+                    plugin_id = plugin_id.as_str(),
+                    plugin_name = plugin_name.as_str(),
+                    owner_user_id = owner_user_id.as_str(),
+                    error = ?error,
+                    "omitting unavailable Plugin install source from catalog"
+                );
+            }
+        }
     }
     Ok(Json(PluginInstallSourceList { items }))
 }
