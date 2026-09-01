@@ -30,8 +30,8 @@ use self::workspace::{authorize_runtime_workspace_dir, resolve_runtime_project_r
 use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
-    compose_contact_system_prompt, normalize_id, resolve_project_runtime_context,
-    ChatRuntimeMetadata, ContactSkillPromptMode,
+    compose_contact_system_prompt, normalize_id, normalize_project_id,
+    resolve_project_runtime_context, ChatRuntimeMetadata, ContactSkillPromptMode,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
@@ -197,7 +197,7 @@ pub async fn resolve_runtime_context(
     );
     let selected_commands_for_snapshot = Arc::new(Mutex::new(Vec::new()));
 
-    let requested_project_id = normalize_id(req.project_id.clone())
+    let requested_project_id = normalize_project_id(req.project_id.as_deref())
         .or_else(|| runtime_metadata.project_id.clone())
         .or_else(|| {
             memory_session

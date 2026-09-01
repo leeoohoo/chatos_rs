@@ -39,7 +39,7 @@ public struct WorkspaceContact: Sendable, Equatable, Identifiable {
 public struct WorkspaceConversation: Sendable, Equatable, Identifiable {
     public var id: String
     public var title: String
-    public var projectID: String
+    public var projectID: String?
     public var contactID: String?
     public var contactAgentID: String?
     public var messageCount: Int
@@ -49,7 +49,7 @@ public struct WorkspaceConversation: Sendable, Equatable, Identifiable {
     public init(
         id: String,
         title: String,
-        projectID: String,
+        projectID: String?,
         contactID: String?,
         contactAgentID: String?,
         messageCount: Int,

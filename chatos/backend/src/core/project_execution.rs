@@ -48,11 +48,12 @@ pub async fn ensure_cloud_session_execution(
     {
         project_ids.insert(session_project_id);
     }
-    if let Some(project_id) = requested_project_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    if let Some(project_id) =
+        crate::modules::conversation_runtime::session_scope::normalize_project_scope(
+            requested_project_id,
+        )
     {
-        project_ids.insert(project_id.to_string());
+        project_ids.insert(project_id);
     }
 
     for project_id in project_ids {

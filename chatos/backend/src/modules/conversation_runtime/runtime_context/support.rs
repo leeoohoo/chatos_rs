@@ -9,5 +9,5 @@ pub(super) fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 }
 
 pub(super) fn is_concrete_project_id(project_id: &str) -> bool {
-    !project_id.trim().is_empty()
+    crate::core::chat_runtime::normalize_project_id(Some(project_id)).is_some()
 }

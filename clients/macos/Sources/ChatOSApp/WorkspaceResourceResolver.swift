@@ -14,7 +14,7 @@ enum WorkspaceResourceResolver {
         let contacts = snapshot.contacts.map { contact in
             let conversation = bestConversation(
                 conversations.filter {
-                    $0.projectID == "-1" && matches($0, contact: contact)
+                    $0.projectID == nil && matches($0, contact: contact)
                 }
             )
             return ResourceItem(

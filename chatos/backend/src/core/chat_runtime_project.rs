@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use crate::core::chat_runtime::normalize_project_id;
 use crate::models::project::ProjectService;
 
 #[derive(Debug, Clone, Default)]
@@ -29,7 +30,7 @@ pub(crate) async fn resolve_project_runtime_context(
     project_id: Option<String>,
     project_root: Option<String>,
 ) -> ResolvedProjectRuntime {
-    let mut resolved_project_id = normalize_optional_string(project_id);
+    let mut resolved_project_id = normalize_project_id(project_id.as_deref());
     let mut resolved_project_root = normalize_optional_string(project_root);
 
     let Some(project_id) = resolved_project_id.clone() else {

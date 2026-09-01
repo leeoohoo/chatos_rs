@@ -4,7 +4,8 @@
 use serde_json::{json, Value};
 
 use crate::core::chat_runtime::{
-    contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
+    contact_agent_id_from_metadata, contact_id_from_metadata, normalize_project_id,
+    project_id_from_metadata,
 };
 use crate::models::message::Message;
 use crate::models::session::Session;
@@ -37,7 +38,7 @@ pub(crate) fn resolve_session_project_scope(
     project_id: Option<&str>,
     metadata: Option<&Value>,
 ) -> Option<String> {
-    normalize_optional_text(project_id).or_else(|| project_id_from_metadata(metadata))
+    normalize_project_id(project_id).or_else(|| project_id_from_metadata(metadata))
 }
 
 pub(crate) fn build_thread_mapping(session: &Session) -> Result<ChatosThreadMapping, String> {

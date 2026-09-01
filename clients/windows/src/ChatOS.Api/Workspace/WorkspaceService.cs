@@ -123,8 +123,8 @@ internal sealed record ConversationDto
         var runtime = source.Object("chat_runtime") ?? JsonObject.Empty;
         var contact = source.Object("contact") ?? JsonObject.Empty;
         var uiContact = source.Object("ui_contact") ?? JsonObject.Empty;
-        var projectId = ProjectId.TrimmedOrNull()
-            ?? runtime.FirstString("project_id", "projectId");
+        var projectId = ProjectScope(ProjectId)
+            ?? ProjectScope(runtime.FirstString("project_id", "projectId"));
         var contactId = contact.FirstString("contact_id", "contactId")
             ?? uiContact.FirstString("contact_id", "contactId");
         var contactAgentId = contact.FirstString("agent_id", "agentId")
@@ -141,6 +141,12 @@ internal sealed record ConversationDto
             Math.Max(0, MessageCount ?? 0),
             ParseDate(UpdatedAt) ?? ParseDate(CreatedAt) ?? DateTimeOffset.MinValue,
             Archived == true || normalizedStatus is "archived" or "archiving");
+    }
+
+    private static string? ProjectScope(string? value)
+    {
+        var normalized = value.TrimmedOrNull();
+        return normalized is "-1" or "0" ? null : normalized;
     }
 
     private static DateTimeOffset? ParseDate(string? value) =>

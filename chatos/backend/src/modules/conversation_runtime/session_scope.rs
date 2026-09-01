@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::core::chat_runtime::{
     contact_agent_id_from_metadata as runtime_contact_agent_id_from_metadata,
-    contact_id_from_metadata as runtime_contact_id_from_metadata,
+    contact_id_from_metadata as runtime_contact_id_from_metadata, normalize_project_id,
     project_id_from_metadata as runtime_project_id_from_metadata,
 };
 
@@ -17,7 +17,7 @@ pub fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 }
 
 pub fn normalize_project_scope(project_id: Option<&str>) -> Option<String> {
-    normalize_optional_text(project_id)
+    normalize_project_id(project_id)
 }
 
 pub fn resolve_session_project_scope(
@@ -51,16 +51,15 @@ mod tests {
     }
 
     #[test]
-    fn resolves_project_scope_from_metadata_without_a_sentinel() {
+    fn rejects_legacy_global_project_sentinels() {
         let metadata = json!({
             "chat_runtime": {
                 "project_id": "0"
             }
         });
 
-        assert_eq!(
-            resolve_session_project_scope(None, Some(&metadata)).as_deref(),
-            Some("0")
-        );
+        assert_eq!(normalize_project_scope(Some("-1")), None);
+        assert_eq!(normalize_project_scope(Some("0")), None);
+        assert_eq!(resolve_session_project_scope(None, Some(&metadata)), None);
     }
 }
