@@ -54,7 +54,11 @@ bash scripts/verify-repository.sh rust-build
 release_tag="$(date +%Y%m%d-%H%M%S)-${release_commit:0:8}"
 echo "[INFO] deploying $release_commit as $release_tag to $DEPLOY_SERVER"
 
-ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
+ssh \
+  -o BatchMode=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=120 \
+  "$DEPLOY_SERVER" bash -s -- \
   "$release_commit" \
   "$release_tag" \
   "$DEPLOY_BRANCH" \
