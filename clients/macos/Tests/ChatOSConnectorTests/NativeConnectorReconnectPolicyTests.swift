@@ -10,4 +10,9 @@ struct NativeConnectorReconnectPolicyTests {
 
         #expect(delays == [0, 1, 2, 4, 8, 16, 30, 30, 30])
     }
+
+    @Test
+    func transientGatewayFailurePreservesPreparedPluginSessions() {
+        #expect(!NativeLocalConnectorService.transientGatewayFailureTerminatesPluginSessions)
+    }
 }

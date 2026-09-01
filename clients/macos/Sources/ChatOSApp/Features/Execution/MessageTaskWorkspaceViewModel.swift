@@ -3,6 +3,8 @@ import Foundation
 
 @MainActor
 final class MessageTaskWorkspaceViewModel: ObservableObject {
+    static let emptyGraphRetryLimit = 3
+
     enum InspectorSection: String, CaseIterable {
         case detail = "任务详情"
         case process = "执行过程"
@@ -27,6 +29,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     @Published var taskDetail: MessageTask?
     @Published var runDetail: MessageTaskRunDetail?
     @Published private(set) var isLoading = false
+    @Published private(set) var isAwaitingInitialGraph = false
     @Published var isLoadingInspector = false
     @Published var isLoadingModelOutput = false
     @Published var isLoadingRun = false
@@ -48,6 +51,8 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     var pollingTask: Task<Void, Never>?
     var realtimeTask: Task<Void, Never>?
     var loadedModelOutputRunID: String?
+    var workspaceRefreshGeneration = 0
+    var emptyGraphRetryAttemptsRemaining = MessageTaskWorkspaceViewModel.emptyGraphRetryLimit
 
     init(
         turn: ConversationTurn,
@@ -105,8 +110,8 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         Task {
-            startRealtime()
             await refreshWorkspaceState(refreshInspector: false)
+            startRealtime()
             startPollingIfNeeded()
             isLoading = false
         }
@@ -114,6 +119,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
 
     func refresh() {
         errorMessage = nil
+        resetEmptyGraphRetryBudgetIfNeeded()
         Task {
             await refreshWorkspaceState(refreshInspector: true)
             startPollingIfNeeded()
@@ -180,8 +186,44 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         turn.resolvedMessageTaskLookup
     }
 
+    var expectsTaskGraph: Bool {
+        turn.messageTaskLookup != nil
+            || turn.projectExecutionContext != nil
+            || initialTaskID != nil
+            || initialRunID != nil
+    }
+
+    var shouldRetryEmptyGraph: Bool {
+        expectsTaskGraph
+            && graph?.nodes.isEmpty == true
+            && emptyGraphRetryAttemptsRemaining > 0
+    }
+
+    func resetEmptyGraphRetryBudgetIfNeeded() {
+        guard graph?.nodes.isEmpty != false, expectsTaskGraph else { return }
+        emptyGraphRetryAttemptsRemaining = Self.emptyGraphRetryLimit
+        isAwaitingInitialGraph = graph != nil
+    }
+
+    func recordEmptyGraphRetryAttempt() {
+        guard graph?.nodes.isEmpty == true else { return }
+        emptyGraphRetryAttemptsRemaining = max(0, emptyGraphRetryAttemptsRemaining - 1)
+        isAwaitingInitialGraph = shouldRetryEmptyGraph
+    }
+
     func applyGraph(_ graph: MessageTaskGraphSnapshot) {
+        if graph.nodes.isEmpty {
+            // A graph that has already been observed is stable for the lifetime of a
+            // message. Do not let a transient empty gateway response erase the canvas.
+            guard self.graph?.nodes.isEmpty != false else { return }
+            self.graph = graph
+            isAwaitingInitialGraph = shouldRetryEmptyGraph
+            return
+        }
+
         self.graph = graph
+        emptyGraphRetryAttemptsRemaining = 0
+        isAwaitingInitialGraph = false
         var normalized = MessageTaskGraphNormalizer.normalize(graph, mode: displayMode)
         if let initialTaskID,
            !normalized.nodes.contains(where: { $0.id == initialTaskID }),

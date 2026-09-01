@@ -575,9 +575,16 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         guard webSocket === socket else { return }
         Self.logger.error("网关长连接中断：\(error.localizedDescription, privacy: .public)")
         recordGatewayReconnectFailure()
-        await closeGatewayConnection(terminatePluginSessions: true)
+        // A transient gateway outage must not destroy prepared Plugin MCP
+        // processes. Their adapter session IDs remain valid locally and can be
+        // reused after the authenticated connector channel is re-established.
+        await closeGatewayConnection(
+            terminatePluginSessions: Self.transientGatewayFailureTerminatesPluginSessions
+        )
         scheduleGatewayReconnect()
     }
+
+    static let transientGatewayFailureTerminatesPluginSessions = false
 
     private func scheduleGatewayReconnect() {
         guard shouldMaintainGatewayConnection,

@@ -3,15 +3,19 @@ import Foundation
 
 extension MessageTaskWorkspaceViewModel {
     func refreshWorkspaceState(refreshInspector: Bool) async {
+        workspaceRefreshGeneration += 1
+        let refreshGeneration = workspaceRefreshGeneration
+
         do {
-            applyGraph(
-                try await graphService.fetchGraph(
-                    messageID: turn.userMessage.id,
-                    lookup: baseLookup
-                )
+            let refreshedGraph = try await graphService.fetchGraph(
+                messageID: turn.userMessage.id,
+                lookup: baseLookup
             )
+            guard refreshGeneration == workspaceRefreshGeneration else { return }
+            applyGraph(refreshedGraph)
             errorMessage = nil
         } catch {
+            guard refreshGeneration == workspaceRefreshGeneration else { return }
             errorMessage = error.localizedDescription
         }
 
@@ -19,9 +23,11 @@ extension MessageTaskWorkspaceViewModel {
            let identity = executionState.identity {
             do {
                 if let launch = try await service.fetchExecution(identity) {
+                    guard refreshGeneration == workspaceRefreshGeneration else { return }
                     applyExecution(launch)
                 }
             } catch {
+                guard refreshGeneration == workspaceRefreshGeneration else { return }
                 if errorMessage == nil {
                     errorMessage = "执行计划状态刷新失败：\(error.localizedDescription)"
                 }
@@ -259,18 +265,27 @@ extension MessageTaskWorkspaceViewModel {
 
     func startPollingIfNeeded(force: Bool = false) {
         stopPolling()
-        let shouldPoll = executionState.isProjectExecution
-            ? [.planning, .running].contains(executionState.phase)
-            : graph?.nodes.contains(where: { $0.task.isActive }) == true
+        let shouldPollExecution = executionState.isProjectExecution
+            && [.planning, .running].contains(executionState.phase)
+        let shouldPollActiveTask = graph?.nodes.contains(where: { $0.task.isActive }) == true
+        let shouldPoll = shouldPollExecution || shouldPollActiveTask || shouldRetryEmptyGraph
         guard force || shouldPoll else { return }
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled else { return }
+                let isEmptyGraphRetry = self.shouldRetryEmptyGraph
+                try? await Task.sleep(for: isEmptyGraphRetry ? .milliseconds(600) : .seconds(2))
+                guard !Task.isCancelled else { return }
                 await self.refreshWorkspaceState(refreshInspector: true)
-                let shouldContinue = self.executionState.isProjectExecution
-                    ? [.planning, .running].contains(self.executionState.phase)
-                    : self.graph?.nodes.contains(where: { $0.task.isActive }) == true
+                if isEmptyGraphRetry {
+                    self.recordEmptyGraphRetryAttempt()
+                }
+                let shouldContinueExecution = self.executionState.isProjectExecution
+                    && [.planning, .running].contains(self.executionState.phase)
+                let hasActiveTask = self.graph?.nodes.contains(where: { $0.task.isActive }) == true
+                let shouldContinue = shouldContinueExecution
+                    || hasActiveTask
+                    || self.shouldRetryEmptyGraph
                 if !shouldContinue {
                     return
                 }
