@@ -8,7 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY_SERVER="${CHATOS_DEPLOY_SERVER:-root@8.155.171.124}"
 REMOTE_DEPLOY_ROOT="${CHATOS_DEPLOY_ROOT:-/opt/chatos-deploy}"
-PLUGIN_API_BASE_URL="${CHATOS_PLUGIN_API_BASE_URL:-https://plugin.jgoool.com}"
+ADMIN_AUTH_BASE_URL="${CHATOS_ADMIN_AUTH_BASE_URL:-https://admin.jgoool.com/api/admin/user-service}"
+PLUGIN_API_BASE_URL="${CHATOS_PLUGIN_API_BASE_URL:-https://admin.jgoool.com/api/admin/plugin-management}"
 ADMIN_USERNAME="${CHATOS_DEPLOY_ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${CHATOS_DEPLOY_ADMIN_PASSWORD:-}"
 DEPLOY_TMP=""
@@ -62,6 +63,8 @@ Environment:
   CHATOS_DEPLOY_SERVER          SSH target (default: root@8.155.171.124)
   CHATOS_DEPLOY_ADMIN_USERNAME Plugin administrator (default: admin)
   CHATOS_DEPLOY_ADMIN_PASSWORD Plugin administrator password; prompts when omitted
+  CHATOS_ADMIN_AUTH_BASE_URL    Unified admin User Service gateway prefix
+  CHATOS_PLUGIN_API_BASE_URL    Unified admin Plugin Management gateway prefix
 EOF
 }
 
@@ -121,15 +124,14 @@ ensure_plugin_admin_password() {
     exit 2
   fi
   read -r -s -p "Plugin administrator password: " ADMIN_PASSWORD
-  echo
+  echo >&2
 }
 
 plugin_admin_token() {
-  ensure_plugin_admin_password
   curl --fail-with-body --silent --show-error \
     -H 'content-type: application/json' \
     --data "$(jq -nc --arg username "$ADMIN_USERNAME" --arg password "$ADMIN_PASSWORD" '{username:$username,password:$password}')" \
-    "$PLUGIN_API_BASE_URL/api/auth/login" \
+    "$ADMIN_AUTH_BASE_URL/auth/login" \
     | jq -er '.token'
 }
 
@@ -192,7 +194,7 @@ publish_plugin() {
   analysis="$(curl --fail-with-body --silent --show-error \
     -H "authorization: Bearer $token" \
     -F "package=@$artifact" \
-    "$PLUGIN_API_BASE_URL/api/admin/plugin-package/analyze")"
+    "$PLUGIN_API_BASE_URL/admin/plugin-package/analyze")"
   artifact_sha="$(jq -er '.artifact_sha256' <<< "$analysis")"
   name="$(jq -er '.manifest.name' <<< "$analysis")"
   version="$(jq -er '.manifest.version' <<< "$analysis")"
@@ -208,14 +210,14 @@ publish_plugin() {
 
   catalog_response="$(curl --fail-with-body --silent --show-error \
     -H "authorization: Bearer $token" \
-    "$PLUGIN_API_BASE_URL/api/admin/plugins?q=$name&limit=50")"
+    "$PLUGIN_API_BASE_URL/admin/plugins?q=$name&limit=50")"
   catalog_id="$(jq -r --arg name "$name" '.items[]? | select(.name == $name) | .id' <<< "$catalog_response" | head -n 1)"
   latest_release_id="$(jq -r --arg name "$name" '.items[]? | select(.name == $name) | .latest_release_id' <<< "$catalog_response" | head -n 1)"
 
   if [[ -n "$catalog_id" && -n "$latest_release_id" ]]; then
     releases="$(curl --fail-with-body --silent --show-error \
       -H "authorization: Bearer $token" \
-      "$PLUGIN_API_BASE_URL/api/admin/plugins/$catalog_id/releases?limit=100")"
+      "$PLUGIN_API_BASE_URL/admin/plugins/$catalog_id/releases?limit=100")"
     current_release="$(jq -c --arg id "$latest_release_id" '.items[]? | select(.id == $id)' <<< "$releases")"
     current_version="$(jq -r '.version // empty' <<< "$current_release")"
     current_sha="$(jq -r '.artifact_sha256 // empty' <<< "$current_release")"
@@ -238,10 +240,10 @@ publish_plugin() {
         --arg license_id "$license" \
         --arg license_url "$license_url" \
         '{artifact_sha256:$artifact_sha256,marketplace_id:"chatos-marketplace",publisher_id:$publisher_id,publisher_name:$publisher_name,publisher_website:$publisher_website,license_id:$license_id,license_url:(if $license_url == "" then null else $license_url end),redistributable:true,visibility:"public",featured:true,release_channel:"stable"}')" \
-      "$PLUGIN_API_BASE_URL/api/admin/plugin-package/publish" >/dev/null
+      "$PLUGIN_API_BASE_URL/admin/plugin-package/publish" >/dev/null
     catalog_response="$(curl --fail-with-body --silent --show-error \
       -H "authorization: Bearer $token" \
-      "$PLUGIN_API_BASE_URL/api/admin/plugins?q=$name&limit=50")"
+      "$PLUGIN_API_BASE_URL/admin/plugins?q=$name&limit=50")"
     catalog_id="$(jq -er --arg name "$name" '.items[] | select(.name == $name) | .id' <<< "$catalog_response" | head -n 1)"
   else
     echo "[INFO] $name $version is already published with the same artifact"
@@ -253,7 +255,7 @@ publish_plugin() {
     -H "authorization: Bearer $token" \
     -H 'content-type: application/json' \
     --data "$(jq -nc --arg license_id "$license" --arg license_url "$license_url" '{license_id:$license_id,license_url:(if $license_url == "" then null else $license_url end),redistributable:true}')" \
-    "$PLUGIN_API_BASE_URL/api/admin/plugins/$catalog_id/license" >/dev/null
+    "$PLUGIN_API_BASE_URL/admin/plugins/$catalog_id/license" >/dev/null
   echo "[OK] Plugin deployed: $name $version"
 }
 
@@ -273,12 +275,16 @@ deploy_plugins() {
   fi
   for plugin in "${plugins[@]}"; do
     case "$plugin" in
-      browser|computer-use|document) publish_plugin "$plugin" ;;
+      browser|computer-use|document) ;;
       *)
         echo "[ERROR] unknown Plugin: $plugin" >&2
         exit 2
         ;;
     esac
+  done
+  ensure_plugin_admin_password
+  for plugin in "${plugins[@]}"; do
+    publish_plugin "$plugin"
   done
 }
 

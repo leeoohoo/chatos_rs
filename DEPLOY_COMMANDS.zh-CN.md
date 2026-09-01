@@ -36,7 +36,9 @@
 ./scripts/deploy-online.sh logs plugin-management-backend
 ```
 
-生产云服务部署要求当前位于 `3.0.0` 分支、所有已跟踪文件均已提交，并且提交已经推送到 `origin/3.0.0`。本地未跟踪且不会进入 Release 的目录不会阻断部署。插件部署会安全地提示输入管理员密码；自动化环境可通过 `CHATOS_DEPLOY_ADMIN_PASSWORD` 提供。
+指定服务部署只构建所选镜像，并且只重启使用这些镜像的运行服务。例如选择 `task-runner-backend` 时会一起重启同镜像的 API、Worker 和 Scheduler；没有选择的容器不会重启。`cloud`、`cloud-backends`、`cloud-frontends` 和 `all` 是显式的批量范围。
+
+生产云服务部署要求当前位于 `3.0.0` 分支、所有已跟踪文件均已提交，并且提交已经推送到 `origin/3.0.0`。本地未跟踪且不会进入 Release 的目录不会阻断部署。插件部署会安全地提示输入管理员密码；自动化环境可通过 `CHATOS_DEPLOY_ADMIN_PASSWORD` 提供。插件管理和管理员登录均通过统一管理端网关访问，不依赖服务自身端口。
 
 ## 首次启动
 

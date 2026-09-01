@@ -153,7 +153,33 @@ except KeyError as exc:
 ' "$service"
 }
 
+resolve_runtime_services_for_images() {
+  local target_release="$1"
+  shift
+  (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      config --format json
+  ) | python3 -c '
+import json, sys
+selected = set(sys.argv[1:])
+document = json.load(sys.stdin)
+services = document.get("services", {})
+missing = sorted(name for name in selected if name not in services)
+if missing:
+    raise SystemExit(f"missing selected Compose services: {missing}")
+images = {services[name].get("image") for name in selected}
+for name, service in services.items():
+    if service.get("image") in images:
+        print(name)
+' "$@"
+}
+
 deploy_services=()
+selected_runtime_services=()
 if [[ -n "$deploy_services_csv" ]]; then
   IFS=',' read -r -a deploy_services <<< "$deploy_services_csv"
 fi
@@ -231,6 +257,25 @@ start_release_with_retries() {
   return 1
 }
 
+restart_selected_release_with_retries() {
+  local target_release="$1"
+  shift
+  local attempt
+  for attempt in 1 2 3; do
+    if (
+      cd "$target_release"
+      ./docker/deploy.sh restart-fast "$@"
+    ); then
+      return 0
+    fi
+    echo "[WARN] selected service restart attempt $attempt failed: $target_release" >&2
+    if (( attempt < 3 )); then
+      sleep 10
+    fi
+  done
+  return 1
+}
+
 rollback() {
   local exit_code=$?
   trap - EXIT
@@ -243,7 +288,11 @@ rollback() {
   if (( switched == 1 )) && [[ -n "$previous_release" && -d "$previous_release" ]]; then
     ln -sfn "$previous_release" "$deploy_root/current.rollback"
     mv -Tf "$deploy_root/current.rollback" "$current_link"
-    start_release_with_retries "$previous_release" || true
+    if [[ ${#selected_runtime_services[@]} -gt 0 ]]; then
+      restart_selected_release_with_retries "$previous_release" "${selected_runtime_services[@]}" || true
+    else
+      start_release_with_retries "$previous_release" || true
+    fi
   fi
   if [[ -n "$nginx_backup" && -f "$nginx_backup" ]]; then
     install -m 0644 "$nginx_backup" "$nginx_target"
@@ -375,9 +424,23 @@ write_deploy_status running build "Building selected production images"
   fi
 )
 
-nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
-mkdir -p "$deploy_root/backups"
-cp -p "$nginx_target" "$nginx_backup"
+if [[ ${#deploy_services[@]} -gt 0 ]]; then
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    selected_runtime_services+=("$service")
+  done < <(resolve_runtime_services_for_images "$release_dir" "${deploy_services[@]}")
+  if [[ ${#selected_runtime_services[@]} -eq 0 ]]; then
+    echo "[ERROR] selected images do not map to any Compose runtime service" >&2
+    exit 1
+  fi
+  echo "[INFO] runtime services selected for restart: ${selected_runtime_services[*]}"
+fi
+
+if [[ ${#selected_runtime_services[@]} -eq 0 ]]; then
+  nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
+  mkdir -p "$deploy_root/backups"
+  cp -p "$nginx_target" "$nginx_backup"
+fi
 
 ln -sfn "$release_dir" "$deploy_root/current.next"
 mv -Tf "$deploy_root/current.next" "$current_link"
@@ -385,11 +448,14 @@ switched=1
 
 echo "[INFO] switching containers to the new release"
 write_deploy_status running switch "Switching containers to the new release"
-start_release_with_retries "$release_dir"
-
-install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
-nginx -t
-systemctl reload nginx
+if [[ ${#selected_runtime_services[@]} -gt 0 ]]; then
+  restart_selected_release_with_retries "$release_dir" "${selected_runtime_services[@]}"
+else
+  start_release_with_retries "$release_dir"
+  install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
+  nginx -t
+  systemctl reload nginx
+fi
 
 deadline=$((SECONDS + 300))
 write_deploy_status running health "Waiting for service health checks"
