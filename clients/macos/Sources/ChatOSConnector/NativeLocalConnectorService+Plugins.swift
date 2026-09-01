@@ -59,6 +59,7 @@ extension NativeLocalConnectorService {
         records[id] = record
         state.installedPluginRecords = records
         state.installedPluginIDs.insert(id)
+        _ = reconcileInstalledPluginIdentities(with: sources.items)
         try stateStore.save(state)
         try? await publishPluginInstallationStatus()
     }
@@ -138,6 +139,9 @@ extension NativeLocalConnectorService {
         let sourcesByPluginKey = Dictionary(grouping: sources) {
             $0.catalog.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
+        let sourcesByPackageName = Dictionary(grouping: sources) {
+            ($0.catalog.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         var sourcesByArtifact: [String: [GatewayPluginSourceDTO]] = [:]
         for source in sources {
             guard let artifact = source.release.artifactSHA256?
@@ -164,9 +168,23 @@ extension NativeLocalConnectorService {
             let artifact = record.artifactSHA256.trimmingCharacters(in: .whitespacesAndNewlines)
             let pluginKey = record.pluginKey?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let matches = !pluginKey.isEmpty
+            let packageName = installedPluginPackageName(record: record)
+            let identityMatches = !pluginKey.isEmpty
                 ? sourcesByPluginKey[pluginKey]
-                : sourcesByArtifact[artifact]
+                : packageName.flatMap { sourcesByPackageName[$0] }
+
+            if let identityMatches,
+               identityMatches.count == 1,
+               let source = identityMatches.first,
+               records[source.catalog.id] != nil {
+                records[storedID] = nil
+                state.installedPluginIDs.remove(storedID)
+                state.pluginPreferences[storedID] = nil
+                changed = true
+                continue
+            }
+
+            let matches = identityMatches ?? sourcesByArtifact[artifact]
             guard !artifact.isEmpty,
                   let matches,
                   matches.count == 1,
@@ -197,5 +215,18 @@ extension NativeLocalConnectorService {
             state.installedPluginRecords = records
         }
         return changed
+    }
+
+    private static func installedPluginPackageName(
+        record: NativeInstalledPluginRecord
+    ) -> String? {
+        let manifestURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+            .appendingPathComponent("chatos.plugin.json")
+        guard let data = try? Data(contentsOf: manifestURL, options: .mappedIfSafe),
+              let manifest = try? JSONDecoder().decode(NativePluginManifest.self, from: data) else {
+            return nil
+        }
+        let name = manifest.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
     }
 }

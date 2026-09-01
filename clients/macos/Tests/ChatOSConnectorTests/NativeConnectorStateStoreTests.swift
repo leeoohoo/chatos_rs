@@ -168,4 +168,78 @@ struct NativeConnectorStateStoreTests {
                 == "open-computer-use@chatos-marketplace"
         )
     }
+
+    @Test
+    func currentInstallRemovesLegacyDuplicateByInstalledPackageName() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacyInstall = directory.appendingPathComponent("0.8.11", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyInstall, withIntermediateDirectories: true)
+        let legacyManifest = """
+        {
+          "schemaVersion": 3,
+          "name": "open-computer-use",
+          "version": "0.8.11",
+          "mcpServers": {},
+          "skills": []
+        }
+        """
+        try Data(legacyManifest.utf8).write(
+            to: legacyInstall.appendingPathComponent("chatos.plugin.json")
+        )
+
+        var state = NativeConnectorPersistentState.empty
+        state.installedPluginIDs = ["legacy-id", "current-id"]
+        state.pluginPreferences = ["legacy-id": false, "current-id": true]
+        state.installedPluginRecords = [
+            "legacy-id": .init(
+                pluginID: "legacy-id",
+                releaseID: "legacy-release",
+                version: "0.8.11",
+                artifactSHA256: String(repeating: "a", count: 64),
+                installationPath: legacyInstall.path,
+                installedAt: "2026-08-25T00:00:00Z"
+            ),
+            "current-id": .init(
+                pluginID: "current-id",
+                releaseID: "current-release",
+                version: "0.8.12",
+                artifactSHA256: String(repeating: "b", count: 64),
+                installationPath: "/tmp/computer-use/0.8.12",
+                installedAt: "2026-09-01T00:00:00Z",
+                pluginKey: "open-computer-use@chatos-marketplace"
+            ),
+        ]
+        let source = GatewayPluginSourceDTO(
+            catalog: GatewayPluginCatalogDTO(
+                id: "current-id",
+                displayName: "Visual Computer Use",
+                name: "open-computer-use",
+                description: nil,
+                publisher: nil,
+                interface: nil,
+                pluginKey: "open-computer-use@chatos-marketplace"
+            ),
+            release: GatewayPluginReleaseDTO(
+                id: "current-release",
+                version: "0.8.12",
+                artifactSHA256: String(repeating: "b", count: 64),
+                npmPackage: nil
+            ),
+            preference: nil
+        )
+
+        let changed = NativeLocalConnectorService.reconcileInstalledPluginIdentities(
+            state: &state,
+            sources: [source]
+        )
+
+        #expect(changed)
+        #expect(state.installedPluginIDs == ["current-id"])
+        #expect(state.installedPluginRecords?["legacy-id"] == nil)
+        #expect(state.installedPluginRecords?["current-id"]?.version == "0.8.12")
+        #expect(state.pluginPreferences["legacy-id"] == nil)
+        #expect(state.pluginPreferences["current-id"] == true)
+    }
 }
