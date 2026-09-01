@@ -17,7 +17,9 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
             name: "Swift App",
             deviceID: "device-1",
             workspaceID: "workspace-1",
-            relativePath: "projects/swift-app"
+            relativePath: "projects/swift-app",
+            repositoryMode: .managed,
+            gitURL: nil
         ))
         try await service.bindContact(projectID: project.id, contactID: "contact-default")
         let conversationID = try await service.ensureConversation(
@@ -55,6 +57,8 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
         XCTAssertEqual(projectJSON["device_id"] as? String, "device-1")
         XCTAssertEqual(projectJSON["workspace_id"] as? String, "workspace-1")
         XCTAssertEqual(projectJSON["relative_path"] as? String, "projects/swift-app")
+        XCTAssertEqual(projectJSON["repository_mode"] as? String, "managed")
+        XCTAssertNil(projectJSON["git_url"])
 
         let contactBody = try XCTUnwrap(requests[1].body)
         let contactJSON = try XCTUnwrap(
@@ -78,6 +82,33 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
             runtime["project_root"] as? String,
             "local://connector/device-1/workspace-1/projects/swift-app"
         )
+    }
+
+    func testExternalGitProjectSendsRemoteWithoutHarnessTimeout() async throws {
+        let transport = ResourceCreationTransport()
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            accessToken: "token",
+            transport: transport
+        )
+        let service = ChatOSWorkspaceResourceCreationService(client: client)
+
+        _ = try await service.createLocalProject(.init(
+            name: "Existing Git",
+            deviceID: "device-1",
+            workspaceID: "workspace-1",
+            relativePath: "projects/existing",
+            repositoryMode: .external,
+            gitURL: "git@github.com:example/existing.git"
+        ))
+
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertNil(request.timeoutInterval)
+        let body = try XCTUnwrap(request.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["repository_mode"] as? String, "external")
+        XCTAssertEqual(json["git_url"] as? String, "git@github.com:example/existing.git")
     }
 }
 

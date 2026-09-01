@@ -34,8 +34,16 @@ public sealed record WorkspaceSnapshot(
         Array.Empty<WorkspaceConversation>());
 }
 
+public enum LocalProjectRepositoryMode
+{
+    External,
+    Managed,
+}
+
 public sealed record LocalProjectCreationDraft(
     string Name,
     string DeviceId,
     string WorkspaceId,
-    string? RelativePath);
+    string? RelativePath,
+    LocalProjectRepositoryMode RepositoryMode,
+    string? GitUrl);

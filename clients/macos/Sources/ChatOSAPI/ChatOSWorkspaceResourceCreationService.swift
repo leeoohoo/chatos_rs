@@ -18,7 +18,9 @@ public struct ChatOSWorkspaceResourceCreationService: WorkspaceResourceCreating 
             "/local-connectors/projects",
             method: "POST",
             body: body,
-            timeoutInterval: Self.harnessImportTimeout
+            timeoutInterval: draft.repositoryMode == .managed
+                ? Self.harnessImportTimeout
+                : nil
         )
         return response.domainModel
     }

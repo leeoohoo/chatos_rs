@@ -177,6 +177,7 @@ struct ResourceSidebar: View {
                     connectorStatus: model.localConnectorControl.status,
                     defaultContact: model.defaultProjectContact,
                     filesystemService: model.projectFilesystemService,
+                    gitService: model.projectGitService,
                     creationService: model.workspaceResourceCreationService,
                     onCreated: model.registerCreatedProject
                 )

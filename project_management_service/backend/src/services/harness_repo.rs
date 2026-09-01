@@ -5,7 +5,7 @@ use reqwest::Method;
 use serde::Deserialize;
 
 use crate::http_body::{read_response_text_limited_or_message, ERROR_BODY_PREVIEW_LIMIT_BYTES};
-use crate::models::{now_rfc3339, ProjectRecord};
+use crate::models::{now_rfc3339, ProjectRecord, ProjectRepositoryMode};
 use crate::state::AppState;
 use crate::trace_context::InternalTraceContextExt;
 use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
@@ -78,6 +78,7 @@ pub async fn ensure_harness_repo_for_project(
     access_token: &str,
     project: &mut ProjectRecord,
 ) -> Result<HarnessProjectRepoResponse, String> {
+    require_managed_repository(project.repository_mode)?;
     project.harness_provision_status = Some(HARNESS_PROVISION_STATUS_PENDING.to_string());
     project.harness_provision_error = None;
     project.updated_at = now_rfc3339();
@@ -104,6 +105,7 @@ pub async fn ensure_harness_repo_for_project_owner(
     owner_user_id: &str,
     project: &mut ProjectRecord,
 ) -> Result<HarnessProjectRepoResponse, String> {
+    require_managed_repository(project.repository_mode)?;
     if project_harness_metadata_ready(project) {
         return Ok(HarnessProjectRepoResponse {
             space_identifier: project.harness_space_identifier.clone().unwrap_or_default(),
@@ -141,13 +143,22 @@ pub async fn ensure_harness_repo_for_project_owner(
 }
 
 pub fn project_harness_metadata_ready(project: &ProjectRecord) -> bool {
-    [
-        project.harness_repo_path.as_deref(),
-        project.harness_git_url.as_deref(),
-        project.harness_space_identifier.as_deref(),
-    ]
-    .into_iter()
-    .all(|value| value.map(str::trim).is_some_and(|value| !value.is_empty()))
+    project.repository_mode == ProjectRepositoryMode::Managed
+        && [
+            project.harness_repo_path.as_deref(),
+            project.harness_git_url.as_deref(),
+            project.harness_space_identifier.as_deref(),
+        ]
+        .into_iter()
+        .all(|value| value.map(str::trim).is_some_and(|value| !value.is_empty()))
+}
+
+fn require_managed_repository(repository_mode: ProjectRepositoryMode) -> Result<(), String> {
+    if repository_mode == ProjectRepositoryMode::Managed {
+        Ok(())
+    } else {
+        Err("project uses an external Git repository; Harness provisioning is disabled".to_string())
+    }
 }
 
 fn apply_harness_repo_metadata(project: &mut ProjectRecord, repo: &HarnessProjectRepoResponse) {
@@ -163,4 +174,17 @@ fn apply_harness_repo_metadata(project: &mut ProjectRecord, repo: &HarnessProjec
     project.harness_provision_error = None;
     project.harness_provisioned_at = Some(now.clone());
     project.updated_at = now;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn harness_provisioning_rejects_external_projects() {
+        assert!(require_managed_repository(ProjectRepositoryMode::Managed).is_ok());
+        let error = require_managed_repository(ProjectRepositoryMode::External)
+            .expect_err("external repositories must not provision Harness");
+        assert!(error.contains("external Git repository"));
+    }
 }

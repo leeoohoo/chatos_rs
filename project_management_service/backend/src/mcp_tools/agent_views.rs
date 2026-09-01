@@ -110,6 +110,7 @@ mod tests {
             name: "Project".to_string(),
             root_path: Some("/private/workspace".to_string()),
             git_url: Some("ssh://private/repository".to_string()),
+            repository_mode: crate::models::ProjectRepositoryMode::Managed,
             cloud_import_source: CloudImportSource::Git,
             import_status: ProjectImportStatus::Ready,
             source_git_url: Some("ssh://source/repository".to_string()),

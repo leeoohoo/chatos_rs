@@ -6,12 +6,16 @@ struct CreateLocalProjectRequest: Encodable {
     var deviceID: String
     var workspaceID: String
     var relativePath: String?
+    var repositoryMode: String
+    var gitURL: String?
 
     init(draft: LocalProjectCreationDraft) {
         name = draft.name
         deviceID = draft.deviceID
         workspaceID = draft.workspaceID
         relativePath = draft.relativePath
+        repositoryMode = draft.repositoryMode.rawValue
+        gitURL = draft.gitURL
     }
 
     enum CodingKeys: String, CodingKey {
@@ -19,6 +23,8 @@ struct CreateLocalProjectRequest: Encodable {
         case deviceID = "device_id"
         case workspaceID = "workspace_id"
         case relativePath = "relative_path"
+        case repositoryMode = "repository_mode"
+        case gitURL = "git_url"
     }
 }
 

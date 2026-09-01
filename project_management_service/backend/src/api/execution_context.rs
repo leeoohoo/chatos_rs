@@ -140,6 +140,7 @@ mod tests {
             name: "Project".to_string(),
             root_path: Some("local://connector/device-1/workspace-1".to_string()),
             git_url: None,
+            repository_mode: crate::models::ProjectRepositoryMode::Managed,
             cloud_import_source: crate::models::CloudImportSource::Empty,
             import_status: crate::models::ProjectImportStatus::Ready,
             source_git_url: None,

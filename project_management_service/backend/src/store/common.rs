@@ -25,6 +25,15 @@ pub(super) fn normalize_git_url(value: Option<String>) -> Result<Option<String>,
             "git_url 需要是常见 Git 地址，例如 https://、ssh:// 或 git@host:path".to_string(),
         );
     }
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        let url = reqwest::Url::parse(value.as_str())
+            .map_err(|err| format!("git_url 不是有效 URL: {err}"))?;
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(
+                "git_url 不能包含用户名、密码或访问令牌，请使用本机 Git 凭据管理".to_string(),
+            );
+        }
+    }
     Ok(Some(value))
 }
 
@@ -42,4 +51,29 @@ pub(super) fn task_runner_status_is_active(status: &str) -> bool {
         status.trim().to_ascii_lowercase().as_str(),
         "ready" | "queued" | "running" | "processing" | "in_progress"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_git_url;
+
+    #[test]
+    fn git_url_rejects_embedded_http_credentials() {
+        assert!(normalize_git_url(Some(
+            "https://user:token@example.com/owner/repo.git".to_string()
+        ))
+        .is_err());
+        assert!(
+            normalize_git_url(Some("https://token@example.com/owner/repo.git".to_string()))
+                .is_err()
+        );
+        assert_eq!(
+            normalize_git_url(Some("https://example.com/owner/repo.git".to_string())).unwrap(),
+            Some("https://example.com/owner/repo.git".to_string())
+        );
+        assert_eq!(
+            normalize_git_url(Some("git@example.com:owner/repo.git".to_string())).unwrap(),
+            Some("git@example.com:owner/repo.git".to_string())
+        );
+    }
 }

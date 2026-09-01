@@ -408,10 +408,24 @@ async fn create_project(
         workspace_id.as_str(),
         relative_path.as_deref(),
     );
+    let repository_mode = match parse_repository_mode(req.repository_mode.as_deref()) {
+        Ok(mode) => mode.to_string(),
+        Err(message) => {
+            return error(StatusCode::BAD_REQUEST, message);
+        }
+    };
+    let git_url = normalize_non_empty(req.git_url);
+    if repository_mode == "external" && git_url.is_none() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "使用现有 Git 时必须提供当前目录的远程仓库地址",
+        );
+    }
     let project = Project::new(
         name,
         root_path,
-        normalize_non_empty(req.git_url),
+        git_url,
+        repository_mode.clone(),
         normalize_non_empty(req.description),
         Some(user_id.clone()),
     );
@@ -432,22 +446,24 @@ async fn create_project(
             id: saved_id.clone(),
             ..project
         });
-    if let Err(err) = import_local_project_to_harness(
-        saved.id.as_str(),
-        device_id.as_str(),
-        workspace_id.as_str(),
-        relative_path.as_deref(),
-    )
-    .await
-    {
-        let failure = error(
-            StatusCode::BAD_GATEWAY,
-            json!({
-                "error": "导入本地项目到 Harness 失败",
-                "detail": err,
-            }),
-        );
-        return project_create_error_with_rollback(saved.clone(), &[], failure, true).await;
+    if repository_mode == "managed" {
+        if let Err(err) = import_local_project_to_harness(
+            saved.id.as_str(),
+            device_id.as_str(),
+            workspace_id.as_str(),
+            relative_path.as_deref(),
+        )
+        .await
+        {
+            let failure = error(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "error": "导入本地项目到 Harness 失败",
+                    "detail": err,
+                }),
+            );
+            return project_create_error_with_rollback(saved.clone(), &[], failure, true).await;
+        }
     }
 
     let mut bindings = Vec::new();
@@ -1084,11 +1100,28 @@ fn error(status: StatusCode, payload: impl Into<Value>) -> (StatusCode, Json<Val
     }
 }
 
+fn parse_repository_mode(value: Option<&str>) -> Result<&'static str, &'static str> {
+    match value.map(str::trim) {
+        Some("managed") => Ok("managed"),
+        Some("external") => Ok("external"),
+        Some(_) => Err("repository_mode must be managed or external"),
+        None => Err("请选择使用现有 Git 或 ChatOS 托管 Git"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::local_harness_import_command;
+    use super::{local_harness_import_command, parse_repository_mode};
     use std::fs;
     use std::process::Command;
+
+    #[test]
+    fn project_creation_requires_an_explicit_repository_mode() {
+        assert_eq!(parse_repository_mode(Some("managed")), Ok("managed"));
+        assert_eq!(parse_repository_mode(Some(" external ")), Ok("external"));
+        assert!(parse_repository_mode(None).is_err());
+        assert!(parse_repository_mode(Some("default")).is_err());
+    }
 
     #[test]
     fn harness_import_honors_gitignore_and_pushes_source_files() {

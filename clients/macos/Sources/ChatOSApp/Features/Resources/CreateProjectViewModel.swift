@@ -11,8 +11,13 @@ final class CreateProjectViewModel: ObservableObject {
     @Published private(set) var isSaving = false
     @Published private(set) var pendingCreatedProject: WorkspaceProject?
     @Published private(set) var showsHiddenDirectories = false
+    @Published private(set) var detectedGitRemotes: [ProjectGitRemote] = []
+    @Published private(set) var isInspectingGit = false
+    @Published private(set) var gitInspectionMessage: String?
     private(set) var selectedWorkspaceID: String
     @Published var projectName = ""
+    @Published var repositoryMode: LocalProjectRepositoryMode?
+    @Published var selectedGitRemoteName: String?
     @Published var errorMessage: String?
 
     let deviceID: String?
@@ -20,6 +25,7 @@ final class CreateProjectViewModel: ObservableObject {
 
     private let defaultContact: WorkspaceContact?
     private let filesystemService: any ProjectFilesystemServicing
+    private let gitService: any ProjectGitServicing
     private let creationService: any WorkspaceResourceCreating
     private var userEditedProjectName = false
     private var allDirectoryEntries: [ProjectFileEntry] = []
@@ -28,12 +34,14 @@ final class CreateProjectViewModel: ObservableObject {
         connectorStatus: LocalConnectorStatus?,
         defaultContact: WorkspaceContact?,
         filesystemService: any ProjectFilesystemServicing,
+        gitService: any ProjectGitServicing,
         creationService: any WorkspaceResourceCreating
     ) {
         deviceID = connectorStatus?.deviceID
         workspaces = connectorStatus?.workspaces ?? []
         self.defaultContact = defaultContact
         self.filesystemService = filesystemService
+        self.gitService = gitService
         self.creationService = creationService
         selectedWorkspaceID = connectorStatus?.defaultWorkspaceID
             ?? connectorStatus?.workspaces.first?.id
@@ -51,7 +59,10 @@ final class CreateProjectViewModel: ObservableObject {
             && deviceID != nil
             && selectedWorkspace != nil
             && defaultContact != nil
+            && repositoryMode != nil
+            && externalGitURLIsReady
             && !isLoadingDirectory
+            && (repositoryMode != .external || !isInspectingGit)
             && !isSaving
     }
 
@@ -63,6 +74,24 @@ final class CreateProjectViewModel: ObservableObject {
         guard let workspace = selectedWorkspace else { return "没有可用工作区" }
         guard let currentRelativePath else { return workspace.alias }
         return workspace.alias + "/" + currentRelativePath
+    }
+
+    var selectedGitRemote: ProjectGitRemote? {
+        guard let selectedGitRemoteName else { return nil }
+        return detectedGitRemotes.first(where: { $0.name == selectedGitRemoteName })
+    }
+
+    var externalGitURLIsReady: Bool {
+        repositoryMode != .external || selectedGitRemote?.url.trimmedNonEmpty != nil
+    }
+
+    func selectRepositoryMode(_ mode: LocalProjectRepositoryMode) {
+        repositoryMode = mode
+        errorMessage = nil
+    }
+
+    func selectGitRemote(named name: String) {
+        selectedGitRemoteName = name
     }
 
     func loadInitialDirectory() async {
@@ -140,6 +169,17 @@ final class CreateProjectViewModel: ObservableObject {
             errorMessage = "请输入项目名称。"
             return nil
         }
+        guard let repositoryMode else {
+            errorMessage = "请选择代码托管方式。"
+            return nil
+        }
+        let gitURL = repositoryMode == .external
+            ? selectedGitRemote?.url.trimmedNonEmpty
+            : nil
+        if repositoryMode == .external, gitURL == nil {
+            errorMessage = "使用现有 Git 时，所选目录必须已经配置远程仓库。"
+            return nil
+        }
 
         isSaving = true
         errorMessage = nil
@@ -153,7 +193,9 @@ final class CreateProjectViewModel: ObservableObject {
                         name: normalizedProjectName,
                         deviceID: deviceID,
                         workspaceID: workspace.id,
-                        relativePath: currentRelativePath
+                        relativePath: currentRelativePath,
+                        repositoryMode: repositoryMode,
+                        gitURL: gitURL
                     )
                 )
                 pendingCreatedProject = project
@@ -207,6 +249,7 @@ final class CreateProjectViewModel: ObservableObject {
             allDirectoryEntries = listing.entries.filter(\.isDirectory)
             applyDirectoryFilter()
             applySuggestedProjectName()
+            await inspectGitRepository(projectRoot: listing.path)
         } catch {
             errorMessage = error.localizedDescription
             allDirectoryEntries = []
@@ -247,6 +290,9 @@ final class CreateProjectViewModel: ObservableObject {
         parentPath = nil
         allDirectoryEntries = []
         entries = []
+        detectedGitRemotes = []
+        selectedGitRemoteName = nil
+        gitInspectionMessage = nil
     }
 
     private func openInitialDirectory() async {
@@ -287,6 +333,36 @@ final class CreateProjectViewModel: ObservableObject {
         }
     }
 
+    private func inspectGitRepository(projectRoot: String) async {
+        isInspectingGit = true
+        defer { isInspectingGit = false }
+        do {
+            let snapshot = try await gitService.snapshot(projectRoot: projectRoot)
+            guard snapshot.isRepository else {
+                detectedGitRemotes = []
+                selectedGitRemoteName = nil
+                gitInspectionMessage = "所选目录不是 Git 仓库。"
+                return
+            }
+            detectedGitRemotes = snapshot.remotes.filter { $0.url.trimmedNonEmpty != nil }
+            if let selectedGitRemoteName,
+               detectedGitRemotes.contains(where: { $0.name == selectedGitRemoteName }) {
+                // Keep the user's current choice.
+            } else {
+                selectedGitRemoteName = detectedGitRemotes
+                    .first(where: { $0.name == "origin" })?.name
+                    ?? detectedGitRemotes.first?.name
+            }
+            gitInspectionMessage = detectedGitRemotes.isEmpty
+                ? "Git 仓库还没有配置远程仓库。"
+                : nil
+        } catch {
+            detectedGitRemotes = []
+            selectedGitRemoteName = nil
+            gitInspectionMessage = "无法读取所选目录的 Git 配置：\(error.localizedDescription)"
+        }
+    }
+
     private var isSystemRootDirectory: Bool {
         selectedWorkspace?.absoluteRoot == "/" && currentRelativePath == nil
     }
@@ -303,4 +379,11 @@ final class CreateProjectViewModel: ObservableObject {
     private static let userSystemDirectoryNames: Set<String> = [
         "Applications", "Applications (Parallels)", "Library", "bin", "opt",
     ]
+}
+
+private extension String {
+    var trimmedNonEmpty: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
 }

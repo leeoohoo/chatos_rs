@@ -79,6 +79,7 @@ mod tests {
             "Project".to_string(),
             "/workspace/project".to_string(),
             None,
+            "managed".to_string(),
             None,
             Some("user-1".to_string()),
         )
