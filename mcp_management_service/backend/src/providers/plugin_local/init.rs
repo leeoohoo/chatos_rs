@@ -27,6 +27,8 @@ impl PluginLocalProvider {
                 .filter(|value| !value.is_empty()),
             request_timeout,
             response_limit_bytes,
+            recovered_bindings: Default::default(),
+            recovery_lock: Default::default(),
         })
     }
 
