@@ -1,25 +1,25 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:d16882cb-25ea-4538-a945-87fcc3a6ef98",
+  "serialNumber": "urn:uuid:22414ce4-2880-4362-8c0c-45c96df3642e",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-28T08:52:51.904Z",
+    "timestamp": "2026-09-01T06:46:36.736Z",
     "tools": {
       "components": [
         {
           "type": "application",
           "name": "browser-cdp-sbom-generator",
-          "version": "0.1.6"
+          "version": "0.1.7"
         }
       ]
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/chatos-browser-cdp@0.1.6",
+      "bom-ref": "pkg:npm/chatos-browser-cdp@0.1.7",
       "name": "chatos-browser-cdp",
-      "version": "0.1.6",
-      "purl": "pkg:npm/chatos-browser-cdp@0.1.6"
+      "version": "0.1.7",
+      "purl": "pkg:npm/chatos-browser-cdp@0.1.7"
     }
   },
   "components": [
@@ -36,7 +36,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aho-corasick-1.1.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aho-corasick-1.1.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -64,7 +64,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/android_system_properties-0.1.6/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/android_system_properties-0.1.6/Cargo.toml"
         }
       ],
       "licenses": [
@@ -92,7 +92,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-trait-0.1.92/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-trait-0.1.92/Cargo.toml"
         }
       ],
       "licenses": [
@@ -120,7 +120,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-tungstenite-0.32.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-tungstenite-0.32.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -148,7 +148,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/atomic-waker-1.1.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/atomic-waker-1.1.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -176,7 +176,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/autocfg-1.5.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/autocfg-1.5.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -204,7 +204,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/base64-0.22.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/base64-0.22.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -232,7 +232,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.13.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -260,7 +260,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/block-buffer-0.10.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/block-buffer-0.10.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -277,10 +277,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-bridge@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-bridge@0.1.7",
       "name": "browser-cdp-bridge",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-bridge@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-bridge@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -299,10 +299,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-cli@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-cli@0.1.7",
       "name": "browser-cdp-cli",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-cli@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-cli@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -321,10 +321,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-core@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-core@0.1.7",
       "name": "browser-cdp-core",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-core@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-core@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -343,10 +343,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-direct@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-direct@0.1.7",
       "name": "browser-cdp-direct",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-direct@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-direct@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -365,10 +365,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-extension@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-extension@0.1.7",
       "name": "browser-cdp-extension",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-extension@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-extension@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -387,10 +387,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-mcp@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-mcp@0.1.7",
       "name": "browser-cdp-mcp",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-mcp@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-mcp@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -409,10 +409,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-policy@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-policy@0.1.7",
       "name": "browser-cdp-policy",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-policy@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-policy@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -431,10 +431,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-protocol@0.1.6",
+      "bom-ref": "pkg:cargo/browser-cdp-protocol@0.1.7",
       "name": "browser-cdp-protocol",
-      "version": "0.1.6",
-      "purl": "pkg:cargo/browser-cdp-protocol@0.1.6",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/browser-cdp-protocol@0.1.7",
       "properties": [
         {
           "name": "cargo:source",
@@ -464,7 +464,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bumpalo-3.20.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bumpalo-3.20.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -492,7 +492,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bytes-1.12.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bytes-1.12.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -520,7 +520,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cc-1.4.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cc-1.4.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -548,7 +548,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cfg-if-1.0.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -576,7 +576,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide_cdp-0.9.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide_cdp-0.9.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -604,7 +604,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide_pdl-0.9.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide_pdl-0.9.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -632,7 +632,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide_types-0.9.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide_types-0.9.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -660,7 +660,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide-0.9.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chromiumoxide-0.9.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -688,7 +688,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-0.4.45/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-0.4.45/Cargo.toml"
         }
       ],
       "licenses": [
@@ -716,7 +716,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/core-foundation-sys-0.8.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/core-foundation-sys-0.8.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -744,7 +744,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cpufeatures-0.2.17/Cargo.toml"
         }
       ],
       "licenses": [
@@ -772,7 +772,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.1.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.1.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -800,7 +800,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/data-encoding-2.11.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/data-encoding-2.11.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -828,7 +828,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/digest-0.10.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -856,7 +856,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/displaydoc-0.2.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/displaydoc-0.2.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -884,7 +884,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dunce-1.0.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dunce-1.0.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -912,7 +912,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.18.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/either-1.18.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -940,7 +940,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/errno-0.3.14/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/errno-0.3.14/Cargo.toml"
         }
       ],
       "licenses": [
@@ -968,7 +968,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrand-2.5.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fastrand-2.5.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -996,7 +996,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.11/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/find-msvc-tools-0.1.11/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1024,7 +1024,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fnv-1.0.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fnv-1.0.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1052,7 +1052,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1080,7 +1080,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fs2-0.4.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fs2-0.4.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1108,7 +1108,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-channel-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1136,7 +1136,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-core-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-core-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1164,7 +1164,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-executor-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-executor-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1192,7 +1192,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-io-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-io-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1220,7 +1220,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-macro-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1248,7 +1248,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-sink-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-sink-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1276,7 +1276,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-task-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-task-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1304,7 +1304,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-timer-3.0.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-timer-3.0.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1332,7 +1332,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-util-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1360,7 +1360,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-0.3.34/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-0.3.34/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1388,7 +1388,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1416,7 +1416,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.3.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1444,7 +1444,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.4.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/getrandom-0.4.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1472,7 +1472,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/heck-0.5.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/heck-0.5.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1500,7 +1500,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-body-util-0.1.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-body-util-0.1.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1528,7 +1528,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-body-1.1.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-body-1.1.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1556,7 +1556,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-1.5.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/http-1.5.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1584,7 +1584,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/httparse-1.10.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/httparse-1.10.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1612,7 +1612,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.20/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.20/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1640,7 +1640,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-1.11.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-1.11.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1668,7 +1668,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iana-time-zone-haiku-0.1.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iana-time-zone-haiku-0.1.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1696,7 +1696,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iana-time-zone-0.1.65/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iana-time-zone-0.1.65/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1724,7 +1724,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_collections-2.3.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_collections-2.3.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1752,7 +1752,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_locale_core-2.3.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_locale_core-2.3.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1780,7 +1780,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_normalizer_data-2.3.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_normalizer_data-2.3.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1808,7 +1808,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_normalizer-2.3.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_normalizer-2.3.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1836,7 +1836,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_properties_data-2.3.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_properties_data-2.3.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1864,7 +1864,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_properties-2.3.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_properties-2.3.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1892,7 +1892,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_provider-2.3.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/icu_provider-2.3.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1920,7 +1920,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/idna_adapter-1.2.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/idna_adapter-1.2.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1948,7 +1948,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/idna-1.1.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/idna-1.1.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -1976,7 +1976,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.12.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.12.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2004,7 +2004,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/itoa-1.0.18/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/itoa-1.0.18/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2032,7 +2032,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/js-sys-0.3.104/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/js-sys-0.3.104/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2060,7 +2060,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lazy_static-1.5.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lazy_static-1.5.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2088,7 +2088,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.189/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.189/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2116,7 +2116,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linux-raw-sys-0.12.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/linux-raw-sys-0.12.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2144,7 +2144,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/litemap-0.8.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2172,7 +2172,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.33/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/log-0.4.33/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2200,7 +2200,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/matchers-0.2.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/matchers-0.2.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2228,7 +2228,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/memchr-2.8.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/memchr-2.8.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2256,7 +2256,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.2.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mio-1.2.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2284,7 +2284,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/nu-ansi-term-0.50.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/nu-ansi-term-0.50.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2312,7 +2312,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-traits-0.2.19/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-traits-0.2.19/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2340,7 +2340,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/once_cell-1.21.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/once_cell-1.21.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2368,7 +2368,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/percent-encoding-2.3.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/percent-encoding-2.3.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2396,7 +2396,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pin-project-lite-0.2.17/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pin-project-lite-0.2.17/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2424,7 +2424,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2452,7 +2452,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ppv-lite86-0.2.21/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ppv-lite86-0.2.21/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2480,7 +2480,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/proc-macro2-1.0.107/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/proc-macro2-1.0.107/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2508,7 +2508,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quote-1.0.47/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quote-1.0.47/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2536,7 +2536,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-5.3.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2564,7 +2564,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/r-efi-6.0.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2592,7 +2592,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_chacha-0.9.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_chacha-0.9.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2620,7 +2620,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.9.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.9.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2648,7 +2648,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2676,7 +2676,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-automata-0.4.18/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-automata-0.4.18/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2704,7 +2704,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-syntax-0.8.11/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-syntax-0.8.11/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2732,7 +2732,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-1.13.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-1.13.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2760,7 +2760,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.13.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-0.13.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2788,7 +2788,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustix-1.1.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustix-1.1.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2816,7 +2816,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustversion-1.0.23/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustversion-1.0.23/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2844,7 +2844,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2872,7 +2872,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_derive-1.0.229/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_derive-1.0.229/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2900,7 +2900,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2928,7 +2928,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2956,7 +2956,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha1-0.10.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha1-0.10.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -2984,7 +2984,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3012,7 +3012,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sharded-slab-0.1.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sharded-slab-0.1.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3040,7 +3040,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shlex-2.0.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3068,7 +3068,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/signal-hook-registry-1.4.8/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/signal-hook-registry-1.4.8/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3096,7 +3096,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slab-0.4.12/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slab-0.4.12/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3124,7 +3124,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3152,7 +3152,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3180,7 +3180,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/stable_deref_trait-1.2.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/stable_deref_trait-1.2.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3208,7 +3208,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/syn-2.0.119/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/syn-2.0.119/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3236,7 +3236,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/syn-3.0.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/syn-3.0.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3264,7 +3264,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sync_wrapper-1.0.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sync_wrapper-1.0.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3292,7 +3292,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/synstructure-0.13.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/synstructure-0.13.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3320,7 +3320,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tempfile-3.27.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tempfile-3.27.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3348,7 +3348,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.20/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-impl-2.0.20/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3376,7 +3376,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.20/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.20/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3404,7 +3404,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thread_local-1.1.10/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thread_local-1.1.10/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3432,7 +3432,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tinystr-0.8.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tinystr-0.8.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3460,7 +3460,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-macros-2.7.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-macros-2.7.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3488,7 +3488,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3516,7 +3516,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.11/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.11/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3544,7 +3544,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-layer-0.3.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-layer-0.3.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3572,7 +3572,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-service-0.3.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-service-0.3.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3600,7 +3600,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-0.5.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-0.5.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3628,7 +3628,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-attributes-0.1.31/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-attributes-0.1.31/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3656,7 +3656,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-core-0.1.36/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-core-0.1.36/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3684,7 +3684,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-log-0.2.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-log-0.2.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3712,7 +3712,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-subscriber-0.3.23/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-subscriber-0.3.23/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3740,7 +3740,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-0.1.44/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-0.1.44/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3768,7 +3768,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/try-lock-0.2.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/try-lock-0.2.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3796,7 +3796,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tungstenite-0.28.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tungstenite-0.28.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3824,7 +3824,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typenum-1.20.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/typenum-1.20.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3852,7 +3852,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-ident-1.0.24/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-ident-1.0.24/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3880,7 +3880,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/url-2.5.8/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/url-2.5.8/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3908,7 +3908,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/utf-8-0.7.6/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/utf-8-0.7.6/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3936,7 +3936,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/utf8_iter-1.0.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/utf8_iter-1.0.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3964,7 +3964,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.24.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/uuid-1.24.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -3992,7 +3992,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/valuable-0.1.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/valuable-0.1.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4020,7 +4020,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/version_check-0.9.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/version_check-0.9.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4048,7 +4048,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/want-0.3.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/want-0.3.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4076,7 +4076,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasi-0.11.1+wasi-snapshot-preview1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasi-0.11.1+wasi-snapshot-preview1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4104,7 +4104,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasip2-1.0.4+wasi-0.2.12/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasip2-1.0.4+wasi-0.2.12/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4132,7 +4132,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-futures-0.4.77/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-futures-0.4.77/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4160,7 +4160,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-macro-support-0.2.127/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-macro-support-0.2.127/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4188,7 +4188,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-macro-0.2.127/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-macro-0.2.127/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4216,7 +4216,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-shared-0.2.127/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-shared-0.2.127/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4244,7 +4244,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-0.2.127/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-0.2.127/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4272,7 +4272,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/web-sys-0.3.104/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/web-sys-0.3.104/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4300,7 +4300,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/which-8.0.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/which-8.0.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4328,7 +4328,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-i686-pc-windows-gnu-0.4.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-i686-pc-windows-gnu-0.4.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4356,7 +4356,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-x86_64-pc-windows-gnu-0.4.0/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-x86_64-pc-windows-gnu-0.4.0/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4384,7 +4384,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-0.3.9/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-0.3.9/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4412,7 +4412,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-core-0.62.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-core-0.62.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4440,7 +4440,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-implement-0.60.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-implement-0.60.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4468,7 +4468,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-interface-0.59.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-interface-0.59.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4496,7 +4496,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-link-0.2.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-link-0.2.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4524,7 +4524,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-registry-0.6.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-registry-0.6.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4552,7 +4552,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.4.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-result-0.4.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4580,7 +4580,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-strings-0.5.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-strings-0.5.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4608,7 +4608,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-sys-0.61.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows-sys-0.61.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4636,7 +4636,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-0.57.1/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wit-bindgen-0.57.1/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4664,7 +4664,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4692,7 +4692,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoke-derive-0.8.2/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoke-derive-0.8.2/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4720,7 +4720,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoke-0.8.3/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoke-0.8.3/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4748,7 +4748,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.56/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.56/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4776,7 +4776,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-0.8.56/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-0.8.56/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4804,7 +4804,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerofrom-derive-0.1.7/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerofrom-derive-0.1.7/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4832,7 +4832,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerofrom-0.1.8/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerofrom-0.1.8/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4860,7 +4860,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerotrie-0.2.5/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerotrie-0.2.5/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4888,7 +4888,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerovec-derive-0.11.6/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerovec-derive-0.11.6/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4916,7 +4916,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerovec-0.11.8/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerovec-0.11.8/Cargo.toml"
         }
       ],
       "licenses": [
@@ -4944,7 +4944,7 @@
         },
         {
           "name": "cargo:manifest_path",
-          "value": "../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zmij-1.0.23/Cargo.toml"
+          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zmij-1.0.23/Cargo.toml"
         }
       ],
       "licenses": [
@@ -5018,7 +5018,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-bridge@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-bridge@0.1.7",
       "dependsOn": [
         "pkg:cargo/async-tungstenite@0.32.1",
         "pkg:cargo/futures@0.3.34",
@@ -5030,13 +5030,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-cli@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-cli@0.1.7",
       "dependsOn": [
-        "pkg:cargo/browser-cdp-bridge@0.1.6",
-        "pkg:cargo/browser-cdp-core@0.1.6",
-        "pkg:cargo/browser-cdp-direct@0.1.6",
-        "pkg:cargo/browser-cdp-extension@0.1.6",
-        "pkg:cargo/browser-cdp-mcp@0.1.6",
+        "pkg:cargo/browser-cdp-bridge@0.1.7",
+        "pkg:cargo/browser-cdp-core@0.1.7",
+        "pkg:cargo/browser-cdp-direct@0.1.7",
+        "pkg:cargo/browser-cdp-extension@0.1.7",
+        "pkg:cargo/browser-cdp-mcp@0.1.7",
         "pkg:cargo/fs2@0.4.3",
         "pkg:cargo/serde_json@1.0.151",
         "pkg:cargo/sha2@0.10.9",
@@ -5047,12 +5047,12 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-core@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-core@0.1.7",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/base64@0.22.1",
-        "pkg:cargo/browser-cdp-policy@0.1.6",
-        "pkg:cargo/browser-cdp-protocol@0.1.6",
+        "pkg:cargo/browser-cdp-policy@0.1.7",
+        "pkg:cargo/browser-cdp-protocol@0.1.7",
         "pkg:cargo/chrono@0.4.45",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
@@ -5063,13 +5063,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-direct@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-direct@0.1.7",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/base64@0.22.1",
-        "pkg:cargo/browser-cdp-core@0.1.6",
-        "pkg:cargo/browser-cdp-policy@0.1.6",
-        "pkg:cargo/browser-cdp-protocol@0.1.6",
+        "pkg:cargo/browser-cdp-core@0.1.7",
+        "pkg:cargo/browser-cdp-policy@0.1.7",
+        "pkg:cargo/browser-cdp-protocol@0.1.7",
         "pkg:cargo/chromiumoxide@0.9.1",
         "pkg:cargo/chromiumoxide_types@0.9.1",
         "pkg:cargo/futures@0.3.34",
@@ -5081,13 +5081,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-extension@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-extension@0.1.7",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/async-tungstenite@0.32.1",
-        "pkg:cargo/browser-cdp-core@0.1.6",
-        "pkg:cargo/browser-cdp-policy@0.1.6",
-        "pkg:cargo/browser-cdp-protocol@0.1.6",
+        "pkg:cargo/browser-cdp-core@0.1.7",
+        "pkg:cargo/browser-cdp-policy@0.1.7",
+        "pkg:cargo/browser-cdp-protocol@0.1.7",
         "pkg:cargo/futures@0.3.34",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
@@ -5098,18 +5098,18 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-mcp@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-mcp@0.1.7",
       "dependsOn": [
-        "pkg:cargo/browser-cdp-core@0.1.6",
-        "pkg:cargo/browser-cdp-policy@0.1.6",
-        "pkg:cargo/browser-cdp-protocol@0.1.6",
+        "pkg:cargo/browser-cdp-core@0.1.7",
+        "pkg:cargo/browser-cdp-policy@0.1.7",
+        "pkg:cargo/browser-cdp-protocol@0.1.7",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
         "pkg:cargo/tokio@1.53.1"
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-policy@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-policy@0.1.7",
       "dependsOn": [
         "pkg:cargo/regex@1.13.1",
         "pkg:cargo/serde@1.0.229",
@@ -5119,7 +5119,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-protocol@0.1.6",
+      "ref": "pkg:cargo/browser-cdp-protocol@0.1.7",
       "dependsOn": [
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151"

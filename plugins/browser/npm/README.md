@@ -4,7 +4,7 @@ Native Rust stdio MCP for isolated Chrome/Chromium automation and bounded raw Ch
 Protocol access. The npm package is a platform launcher only; it never downloads a browser or
 executable during installation.
 
-The current `0.1.2` milestone supports managed Chrome, bounded Console/Network/
+The current `0.1.7` milestone supports managed Chrome, bounded Console/Network/
 WebSocket observation, HAR export, safe request routes, dialog handling, grant-only uploads,
 artifact-confined downloads, raw CDP commands, and an authenticated Existing-Chrome backend. The
 Existing-Chrome path requires the Chatos Browser Bridge Chrome extension. The installed Browser MCP

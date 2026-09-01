@@ -149,7 +149,19 @@ build_plugin_artifact() {
   case "$plugin" in
     browser)
       echo "[INFO] building Browser CDP Plugin"
+      if [[ ! "${CHATOS_BROWSER_EXTENSION_ID:-}" =~ ^[a-p]{32}$ ]]; then
+        echo "[ERROR] Browser Plugin publishing requires the 32-character Chrome Web Store Extension ID in CHATOS_BROWSER_EXTENSION_ID" >&2
+        exit 1
+      fi
+      export CHATOS_BROWSER_EXTENSION_ID
       "$ROOT_DIR/plugins/browser/scripts/stage-local-npm.sh"
+      local browser_doctor configured_extension_id
+      browser_doctor="$($ROOT_DIR/plugins/browser/target/release/chatos-browser-cdp doctor)"
+      configured_extension_id="$(jq -r '.extension_id_configured // empty' <<< "$browser_doctor")"
+      if [[ "$configured_extension_id" != "$CHATOS_BROWSER_EXTENSION_ID" ]]; then
+        echo "[ERROR] Browser Plugin binary does not contain the requested Chrome Web Store Extension ID" >&2
+        exit 1
+      fi
       artifact_name="$(cd "$ROOT_DIR/plugins/browser/npm" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
       printf '%s\n' "$DEPLOY_TMP/$artifact_name"
       ;;
@@ -187,6 +199,10 @@ publish_plugin() {
   local plugin="$1"
   local token artifact analysis artifact_sha name version license publisher publisher_id publisher_name publisher_website
   local catalog_response catalog_id latest_release_id releases current_release current_version current_sha license_url
+  if [[ "$plugin" == "browser" && ! "${CHATOS_BROWSER_EXTENSION_ID:-}" =~ ^[a-p]{32}$ ]]; then
+    echo "[ERROR] Browser Plugin publishing requires the 32-character Chrome Web Store Extension ID in CHATOS_BROWSER_EXTENSION_ID" >&2
+    exit 1
+  fi
   token="$(plugin_admin_token)"
   artifact="$(build_plugin_artifact "$plugin" | tail -n 1)"
   [[ -f "$artifact" ]] || { echo "[ERROR] Plugin artifact was not created: $artifact" >&2; exit 1; }

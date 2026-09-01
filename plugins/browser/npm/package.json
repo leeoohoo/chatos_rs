@@ -1,6 +1,6 @@
 {
   "name": "chatos-browser-cdp",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Full Chrome DevTools Protocol browser control MCP for Chatos.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/chatos-ai/chatos-browser-cdp",
@@ -25,7 +25,9 @@
   "files": [
     "bin/",
     "chatos.plugin.json",
-    "dist/",
+    "dist/macos/",
+    "dist/linux/",
+    "dist/windows/",
     "skills/",
     "sbom.cdx.json",
     "THIRD_PARTY_NOTICES.md",
