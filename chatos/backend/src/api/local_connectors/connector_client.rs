@@ -75,6 +75,19 @@ pub(super) async fn connector_post_json_with_headers<T: DeserializeOwned, B: Ser
     body: &B,
     headers: &[(&str, String)],
 ) -> Result<T, (StatusCode, Json<Value>)> {
+    let timeout = connector_timeout(Config::get());
+    connector_post_json_with_headers_and_timeout(path, body, headers, timeout).await
+}
+
+pub(super) async fn connector_post_json_with_headers_and_timeout<
+    T: DeserializeOwned,
+    B: Serialize + ?Sized,
+>(
+    path: &str,
+    body: &B,
+    headers: &[(&str, String)],
+    timeout: Duration,
+) -> Result<T, (StatusCode, Json<Value>)> {
     let token = current_access_token()?;
     let cfg = Config::get();
     let mut request = cfg
@@ -82,7 +95,7 @@ pub(super) async fn connector_post_json_with_headers<T: DeserializeOwned, B: Ser
         .post(connector_url(cfg, path))
         .bearer_auth(token)
         .json(body)
-        .timeout(connector_timeout(cfg));
+        .timeout(timeout.max(connector_timeout(cfg)));
     for (key, value) in headers {
         request = request.header(*key, value.as_str());
     }

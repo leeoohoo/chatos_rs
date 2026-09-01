@@ -34,8 +34,8 @@ mod types;
 
 use connector_client::{
     connector_delete_json, connector_get_json, connector_post_json,
-    connector_post_json_with_headers, connector_post_json_with_timeout,
-    local_connector_mcp_relay_path,
+    connector_post_json_with_headers, connector_post_json_with_headers_and_timeout,
+    connector_post_json_with_timeout, local_connector_mcp_relay_path,
 };
 pub(crate) use connector_client::{local_connector_tls_connector, local_connector_websocket_url};
 use directory_payload::local_connector_directory_list_payload;
@@ -557,7 +557,7 @@ pub(crate) async fn import_local_project_to_harness(
     }
     let _prefer_https_git_url = access.git_ssh_url.as_deref().is_none_or(str::is_empty);
     let command = local_harness_import_command(push_url.as_str(), default_branch);
-    let value = call_local_mcp_tool(
+    let value = call_local_mcp_tool_with_timeout(
         device_id,
         workspace_id,
         relative_path,
@@ -569,6 +569,8 @@ pub(crate) async fn import_local_project_to_harness(
             "background": false,
             "timeout_ms": LOCAL_HARNESS_IMPORT_TIMEOUT_MS,
         }),
+        Duration::from_millis(LOCAL_HARNESS_IMPORT_TIMEOUT_MS)
+            .saturating_add(Duration::from_secs(30)),
     )
     .await
     .map_err(|err| {
@@ -632,9 +634,40 @@ rm -rf "$tmp"
 mkdir -p "$tmp"
 trap 'rm -rf "$tmp"' EXIT
 if command -v rsync >/dev/null 2>&1; then
-  rsync -a --delete --exclude='.git/' --exclude='.chatos/' ./ "$tmp/"
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git ls-files -co --exclude-standard -z -- . \
+      | while IFS= read -r -d '' file; do
+          if [ -e "$file" ] || [ -L "$file" ]; then
+            printf '%s\0' "$file"
+          fi
+        done \
+      | rsync -a --from0 --files-from=- --exclude='.git/' --exclude='.chatos/' ./ "$tmp/"
+  else
+    rsync -a --delete \
+      --exclude='.git/' --exclude='.chatos/' \
+      --exclude='target/' --exclude='node_modules/' --exclude='.build/' \
+      --exclude='DerivedData/' --exclude='.swiftpm/' --exclude='.gradle/' \
+      --exclude='build/' --exclude='dist/' --exclude='.next/' \
+      --exclude='.venv/' --exclude='venv/' --exclude='__pycache__/' \
+      ./ "$tmp/"
+  fi
 else
-  tar --exclude='./.git' --exclude='./.git/*' --exclude='*/.git' --exclude='*/.git/*' --exclude='./.chatos' --exclude='./.chatos/*' --exclude='*/.chatos' --exclude='*/.chatos/*' -cf - . | (cd "$tmp" && tar -xf -)
+  tar \
+    --exclude='./.git' --exclude='./.git/*' --exclude='*/.git' --exclude='*/.git/*' \
+    --exclude='./.chatos' --exclude='./.chatos/*' --exclude='*/.chatos' --exclude='*/.chatos/*' \
+    --exclude='./target' --exclude='*/target' \
+    --exclude='./node_modules' --exclude='*/node_modules' \
+    --exclude='./.build' --exclude='*/.build' \
+    --exclude='./DerivedData' --exclude='*/DerivedData' \
+    --exclude='./.swiftpm' --exclude='*/.swiftpm' \
+    --exclude='./.gradle' --exclude='*/.gradle' \
+    --exclude='./build' --exclude='*/build' \
+    --exclude='./dist' --exclude='*/dist' \
+    --exclude='./.next' --exclude='*/.next' \
+    --exclude='./.venv' --exclude='*/.venv' \
+    --exclude='./venv' --exclude='*/venv' \
+    --exclude='./__pycache__' --exclude='*/__pycache__' \
+    -cf - . | (cd "$tmp" && tar -xf -)
 fi
 cd "$tmp"
 git init -b {branch} >/dev/null 2>&1 || {{ git init >/dev/null && git symbolic-ref HEAD refs/heads/{branch}; }}
@@ -656,6 +689,48 @@ pub(crate) async fn call_local_mcp_tool(
     name: &str,
     arguments: Value,
 ) -> Result<Value, (StatusCode, Json<Value>)> {
+    call_local_mcp_tool_with_optional_timeout(
+        device_id,
+        workspace_id,
+        cwd,
+        enabled_builtin_kinds,
+        name,
+        arguments,
+        None,
+    )
+    .await
+}
+
+async fn call_local_mcp_tool_with_timeout(
+    device_id: &str,
+    workspace_id: &str,
+    cwd: Option<&str>,
+    enabled_builtin_kinds: &[&str],
+    name: &str,
+    arguments: Value,
+    timeout: Duration,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    call_local_mcp_tool_with_optional_timeout(
+        device_id,
+        workspace_id,
+        cwd,
+        enabled_builtin_kinds,
+        name,
+        arguments,
+        Some(timeout),
+    )
+    .await
+}
+
+async fn call_local_mcp_tool_with_optional_timeout(
+    device_id: &str,
+    workspace_id: &str,
+    cwd: Option<&str>,
+    enabled_builtin_kinds: &[&str],
+    name: &str,
+    arguments: Value,
+    timeout: Option<Duration>,
+) -> Result<Value, (StatusCode, Json<Value>)> {
     if enabled_builtin_kinds.is_empty() {
         return Err(error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -664,20 +739,30 @@ pub(crate) async fn call_local_mcp_tool(
     }
     let path = local_connector_mcp_relay_path(device_id, workspace_id, cwd);
     let enabled_builtin_kinds = enabled_builtin_kinds.join(",");
-    let response = connector_post_json_with_headers::<Value, _>(
-        path.as_str(),
-        &McpToolCallRequest {
-            jsonrpc: "2.0",
-            id: "chatos-local-fs",
-            method: "tools/call",
-            params: McpToolCallParams { name, arguments },
-        },
-        &[(
-            LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
-            enabled_builtin_kinds,
-        )],
-    )
-    .await?;
+    let request = McpToolCallRequest {
+        jsonrpc: "2.0",
+        id: "chatos-local-fs",
+        method: "tools/call",
+        params: McpToolCallParams { name, arguments },
+    };
+    let headers = [(
+        LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+        enabled_builtin_kinds,
+    )];
+    let response = match timeout {
+        Some(timeout) => {
+            connector_post_json_with_headers_and_timeout::<Value, _>(
+                path.as_str(),
+                &request,
+                &headers,
+                timeout,
+            )
+            .await?
+        }
+        None => {
+            connector_post_json_with_headers::<Value, _>(path.as_str(), &request, &headers).await?
+        }
+    };
     extract_mcp_tool_result(response)
 }
 
@@ -996,5 +1081,103 @@ fn error(status: StatusCode, payload: impl Into<Value>) -> (StatusCode, Json<Val
     match payload {
         Value::String(message) => (status, Json(json!({ "error": message }))),
         other => (status, Json(other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_harness_import_command;
+    use std::fs;
+    use std::process::Command;
+
+    #[test]
+    fn harness_import_honors_gitignore_and_pushes_source_files() {
+        let root = std::env::temp_dir().join(format!(
+            "chatos-harness-import-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let source = root.join("source");
+        let remote = root.join("remote.git");
+        fs::create_dir_all(source.join("target")).expect("create test source");
+        fs::write(source.join(".gitignore"), "/target\n").expect("write gitignore");
+        fs::write(source.join("main.rs"), "fn main() {}\n").expect("write source file");
+        fs::write(source.join("deleted.rs"), "removed before import\n")
+            .expect("write deleted source file");
+        fs::write(source.join("target/large-artifact"), "ignored\n")
+            .expect("write ignored artifact");
+
+        assert!(Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(&source)
+            .status()
+            .expect("initialize source repository")
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "--", "."])
+            .current_dir(&source)
+            .status()
+            .expect("stage source repository")
+            .success());
+        fs::remove_file(source.join("deleted.rs")).expect("remove staged source file");
+        assert!(Command::new("git")
+            .args([
+                "init",
+                "-q",
+                "--bare",
+                remote.to_str().expect("remote path"),
+            ])
+            .status()
+            .expect("initialize bare remote")
+            .success());
+
+        let script = local_harness_import_command(remote.to_str().expect("remote path"), "main");
+        let output = Command::new("/bin/zsh")
+            .args(["-lc", script.as_str()])
+            .current_dir(&source)
+            .output()
+            .expect("run Harness import command");
+        assert!(
+            output.status.success(),
+            "Harness import failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(Command::new("git")
+            .args([
+                "--git-dir",
+                remote.to_str().expect("remote path"),
+                "show",
+                "main:main.rs",
+            ])
+            .output()
+            .expect("read imported source")
+            .status
+            .success());
+        assert!(!Command::new("git")
+            .args([
+                "--git-dir",
+                remote.to_str().expect("remote path"),
+                "cat-file",
+                "-e",
+                "main:target/large-artifact",
+            ])
+            .output()
+            .expect("check ignored artifact")
+            .status
+            .success());
+        assert!(!Command::new("git")
+            .args([
+                "--git-dir",
+                remote.to_str().expect("remote path"),
+                "cat-file",
+                "-e",
+                "main:deleted.rs",
+            ])
+            .output()
+            .expect("check deleted source")
+            .status
+            .success());
+
+        fs::remove_dir_all(root).expect("remove test repositories");
     }
 }
