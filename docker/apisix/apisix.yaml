@@ -247,6 +247,34 @@ routes:
         uri: https://admin.jgoool.com/task-runner
         ret_code: 302
 
+  - id: official-website-robots
+    priority: 900
+    hosts:
+      - jgoool.com
+      - www.jgoool.com
+      - official.jgoool.com
+    uri: /robots.txt
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-backend:39250": 1
+
+  - id: official-website-sitemap
+    priority: 900
+    hosts:
+      - jgoool.com
+      - www.jgoool.com
+      - official.jgoool.com
+    uri: /sitemap.xml
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-backend:39250": 1
+
   - id: official-website-frontend
     priority: 700
     hosts:
