@@ -35,6 +35,7 @@ struct NativeInstalledPluginRecord: Codable, Sendable, Equatable {
     var artifactSHA256: String
     var installationPath: String
     var installedAt: String
+    var pluginKey: String? = nil
 }
 
 struct NativeConnectorStateStore: Sendable {

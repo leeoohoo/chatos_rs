@@ -10,6 +10,7 @@ DEPLOY_SERVER="${CHATOS_DEPLOY_SERVER:-root@8.155.171.124}"
 DEPLOY_BRANCH="${CHATOS_DEPLOY_BRANCH:-3.0.0}"
 REMOTE_SOURCE_REPO="${CHATOS_DEPLOY_SOURCE_REPO:-/opt/chatos_rs}"
 REMOTE_DEPLOY_ROOT="${CHATOS_DEPLOY_ROOT:-/opt/chatos-deploy}"
+DEPLOY_SERVICES_CSV="${CHATOS_DEPLOY_SERVICES:-}"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -25,15 +26,40 @@ need_cmd cargo
 
 cd "$ROOT_DIR"
 
+if [[ -n "$DEPLOY_SERVICES_CSV" ]]; then
+  IFS=',' read -r -a requested_services <<< "$DEPLOY_SERVICES_CSV"
+  available_services="$(./docker/deploy.sh build-services)"
+  normalized_services=()
+  for service in "${requested_services[@]}"; do
+    service="$(printf '%s' "$service" | xargs)"
+    [[ -n "$service" ]] || continue
+    if ! grep -Fxq "$service" <<< "$available_services"; then
+      echo "[ERROR] service is not independently buildable: $service" >&2
+      echo "Available services:" >&2
+      printf '%s\n' "$available_services" >&2
+      exit 2
+    fi
+    normalized_services+=("$service")
+  done
+  if [[ ${#normalized_services[@]} -eq 0 ]]; then
+    echo "[ERROR] CHATOS_DEPLOY_SERVICES did not contain a valid service" >&2
+    exit 2
+  fi
+  DEPLOY_SERVICES_CSV="$(IFS=,; printf '%s' "${normalized_services[*]}")"
+  echo "[INFO] selected production services: $DEPLOY_SERVICES_CSV"
+else
+  echo "[INFO] selected production scope: all cloud services"
+fi
+
 current_branch="$(git branch --show-current)"
 if [[ "$current_branch" != "$DEPLOY_BRANCH" ]]; then
   echo "[ERROR] production deploy must run from branch $DEPLOY_BRANCH; current branch is $current_branch" >&2
   exit 1
 fi
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "[ERROR] working tree is not clean; commit and push the release first" >&2
-  git status --short >&2
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "[ERROR] tracked files are not clean; commit and push the release first" >&2
+  git status --short --untracked-files=no >&2
   exit 1
 fi
 
@@ -59,7 +85,8 @@ ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
   "$release_tag" \
   "$DEPLOY_BRANCH" \
   "$REMOTE_SOURCE_REPO" \
-  "$REMOTE_DEPLOY_ROOT" <<'REMOTE_SCRIPT'
+  "$REMOTE_DEPLOY_ROOT" \
+  "$DEPLOY_SERVICES_CSV" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 release_commit="$1"
@@ -67,12 +94,69 @@ release_tag="$2"
 deploy_branch="$3"
 source_repo="$4"
 deploy_root="$5"
+deploy_services_csv="$6"
 release_dir="$deploy_root/releases/$release_tag"
 current_link="$deploy_root/current"
 previous_release=""
 nginx_target="/etc/nginx/sites-available/chatos.conf"
 nginx_backup=""
 switched=0
+status_file="$deploy_root/deploy-status"
+
+write_deploy_status() {
+  local status="$1"
+  local stage="$2"
+  local message="$3"
+  local temporary_status="$deploy_root/.deploy-status.tmp"
+  mkdir -p "$deploy_root"
+  {
+    printf 'status=%s\n' "$status"
+    printf 'stage=%s\n' "$stage"
+    printf 'message=%s\n' "$message"
+    printf 'release=%s\n' "$release_tag"
+    printf 'commit=%s\n' "$release_commit"
+    printf 'services=%s\n' "${deploy_services_csv:-all}"
+    printf 'updated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$temporary_status"
+  mv -f "$temporary_status" "$status_file"
+}
+
+service_is_selected() {
+  local requested="$1"
+  local selected
+  for selected in "${deploy_services[@]}"; do
+    if [[ "$selected" == "$requested" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolve_service_image() {
+  local target_release="$1"
+  local service="$2"
+  (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      config --format json
+  ) | python3 -c '
+import json, sys
+service = sys.argv[1]
+document = json.load(sys.stdin)
+try:
+    print(document["services"][service]["image"])
+except KeyError as exc:
+    raise SystemExit(f"missing image for service {service}: {exc}")
+' "$service"
+}
+
+deploy_services=()
+if [[ -n "$deploy_services_csv" ]]; then
+  IFS=',' read -r -a deploy_services <<< "$deploy_services_csv"
+fi
 
 ensure_admin_certificate() {
   local certificate=/etc/letsencrypt/live/jgoool.com/fullchain.pem
@@ -155,6 +239,7 @@ rollback() {
   fi
 
   echo "[ERROR] deployment failed; restoring the previous release" >&2
+  write_deploy_status failed rollback "Deployment failed; restoring the previous release"
   if (( switched == 1 )) && [[ -n "$previous_release" && -d "$previous_release" ]]; then
     ln -sfn "$previous_release" "$deploy_root/current.rollback"
     mv -Tf "$deploy_root/current.rollback" "$current_link"
@@ -167,6 +252,8 @@ rollback() {
   exit "$exit_code"
 }
 trap rollback EXIT
+
+write_deploy_status running prepare "Validating server and preparing the release"
 
 for command_name in git docker curl nginx systemctl python3 certbot openssl; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -199,6 +286,7 @@ if [[ ! -d "$previous_release/docker/secrets" ]]; then
 fi
 
 echo "[INFO] fetching origin/$deploy_branch on the server"
+write_deploy_status running fetch "Fetching the requested Git commit"
 git -C "$source_repo" fetch --quiet origin "$deploy_branch"
 server_origin_commit="$(git -C "$source_repo" rev-parse "origin/$deploy_branch")"
 if [[ "$server_origin_commit" != "$release_commit" ]]; then
@@ -220,6 +308,7 @@ fi
 ensure_admin_certificate
 
 echo "[INFO] validating copied production secrets and mTLS material"
+write_deploy_status running validate "Validating production configuration and mTLS material"
 (
   cd "$release_dir"
   ./docker/deploy.sh validate-runtime-material
@@ -264,9 +353,26 @@ path.chmod(0o600)
 PY
 
 echo "[INFO] building release images while the current release stays online"
+write_deploy_status running build "Building selected production images"
 (
   cd "$release_dir"
-  ./docker/deploy.sh build
+  if [[ ${#deploy_services[@]} -eq 0 ]]; then
+    ./docker/deploy.sh build
+  else
+    all_build_services="$(./docker/deploy.sh build-services)"
+    while IFS= read -r service; do
+      [[ -n "$service" ]] || continue
+      if service_is_selected "$service"; then
+        continue
+      fi
+      old_image="$(resolve_service_image "$previous_release" "$service")"
+      new_image="$(resolve_service_image "$release_dir" "$service")"
+      echo "[INFO] carrying forward image for unchanged service: $service"
+      docker image inspect "$old_image" >/dev/null
+      docker tag "$old_image" "$new_image"
+    done <<< "$all_build_services"
+    ./docker/deploy.sh build "${deploy_services[@]}"
+  fi
 )
 
 nginx_backup="$deploy_root/backups/chatos-nginx-$release_tag.conf"
@@ -278,6 +384,7 @@ mv -Tf "$deploy_root/current.next" "$current_link"
 switched=1
 
 echo "[INFO] switching containers to the new release"
+write_deploy_status running switch "Switching containers to the new release"
 start_release_with_retries "$release_dir"
 
 install -m 0644 "$release_dir/docker/nginx/jgoool-https.conf" "$nginx_target"
@@ -285,6 +392,7 @@ nginx -t
 systemctl reload nginx
 
 deadline=$((SECONDS + 300))
+write_deploy_status running health "Waiting for service health checks"
 while true; do
   health_state="$(
     docker ps \
@@ -352,7 +460,11 @@ do
 done
 
 echo "[OK] production release is healthy: $release_tag"
+if [[ ${#deploy_services[@]} -gt 0 ]]; then
+  echo "[OK] updated services: ${deploy_services[*]}"
+fi
 echo "[OK] active release: $(readlink -f "$current_link")"
+write_deploy_status complete healthy "Production release is healthy"
 trap - EXIT
 REMOTE_SCRIPT
 

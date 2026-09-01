@@ -24,6 +24,7 @@ pub const PLUGIN_AUDIT_SUBMIT_PUBLISHER: &str = "publisher.submit";
 pub const PLUGIN_AUDIT_REVIEW_PUBLISHER: &str = "publisher.review";
 pub const PLUGIN_AUDIT_RESOLVE_INSTALL_SOURCE: &str = "install_source.resolve";
 pub const PLUGIN_AUDIT_PUBLISH_CATALOG: &str = "catalog.publish";
+pub const PLUGIN_AUDIT_REVIEW_CATALOG_LICENSE: &str = "catalog.license_review";
 pub const PLUGIN_AUDIT_PUBLISH_RELEASE: &str = "release.publish";
 pub const PLUGIN_AUDIT_REVOKE_RELEASE: &str = "release.revoke";
 pub const PLUGIN_AUDIT_SYNC_INSTALLATION: &str = "installation.sync";
@@ -166,6 +167,15 @@ pub struct PluginCatalogListItem {
     pub catalog: PluginCatalogRecord,
     #[serde(default)]
     pub runtime_targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCatalogLicenseReviewPayload {
+    pub license_id: String,
+    #[serde(default)]
+    pub license_url: Option<String>,
+    #[serde(default)]
+    pub redistributable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

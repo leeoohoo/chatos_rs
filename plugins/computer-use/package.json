@@ -2,7 +2,7 @@
   "name": "open-computer-use",
   "version": "0.8.11",
   "description": "Visual-first macOS Computer Use MCP server for ChatOS.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "bin": {
     "open-computer-use": "bin/open-computer-use"
   },
@@ -16,6 +16,7 @@
     "chatos.plugin.json",
     "dist/Visual Computer Use.app/",
     "skills/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ]
 }

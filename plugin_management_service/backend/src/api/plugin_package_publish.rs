@@ -231,6 +231,14 @@ pub(super) async fn publish_uploaded_plugin(
             catalog.publisher = plugin_publisher.clone();
             catalog.interface = stored.normalized_manifest.interface.clone();
             catalog.keywords = stored.normalized_manifest.keywords.clone();
+            catalog.visibility = request.visibility;
+            catalog.featured = request.featured;
+            catalog.license = PluginLicenseMetadata {
+                license_id: request.license_id,
+                license_url,
+                redistributable: request.redistributable,
+                reviewed_at: request.redistributable.then(now_rfc3339),
+            };
             catalog.updated_at = now_rfc3339();
             state
                 .store

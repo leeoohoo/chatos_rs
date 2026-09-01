@@ -27,7 +27,8 @@ struct NativeConnectorStateStoreTests {
                 version: "1.2.3",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: "/tmp/plugin-a/1.2.3",
-                installedAt: "2026-08-25T00:00:00Z"
+                installedAt: "2026-08-25T00:00:00Z",
+                pluginKey: "plugin-a@official"
             ),
         ]
         state.pluginPreferences = ["plugin-a": false]
@@ -48,6 +49,7 @@ struct NativeConnectorStateStoreTests {
         #expect(restored.commandApprovalModelConfigID == "approval-model")
         #expect(restored.commandApprovalThinkingLevel == "high")
         #expect(restored.installedPluginRecords?["plugin-a"]?.version == "1.2.3")
+        #expect(restored.installedPluginRecords?["plugin-a"]?.pluginKey == "plugin-a@official")
         #expect(restored.pluginPreferences["plugin-a"] == false)
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
     }
@@ -97,5 +99,73 @@ struct NativeConnectorStateStoreTests {
         #expect(state.installedPluginRecords?["current-plugin-id"]?.releaseID == "current-release-id")
         #expect(state.pluginPreferences["old-plugin-id"] == nil)
         #expect(state.pluginPreferences["current-plugin-id"] == false)
+    }
+
+    @Test
+    func stablePluginKeySelectsTheCorrectCatalogEntryWhenArtifactsCollide() throws {
+        var state = NativeConnectorPersistentState.empty
+        state.installedPluginIDs = ["old-computer-use-id"]
+        state.installedPluginRecords = [
+            "old-computer-use-id": .init(
+                pluginID: "old-computer-use-id",
+                releaseID: "old-release-id",
+                version: "0.8.11",
+                artifactSHA256: String(repeating: "c", count: 64),
+                installationPath: "/tmp/computer-use/0.8.11",
+                installedAt: "2026-08-25T00:00:00Z",
+                pluginKey: "open-computer-use@chatos-marketplace"
+            ),
+        ]
+        let sources = [
+            GatewayPluginSourceDTO(
+                catalog: GatewayPluginCatalogDTO(
+                    id: "unrelated-plugin-id",
+                    displayName: "Unrelated",
+                    name: "unrelated",
+                    description: nil,
+                    publisher: nil,
+                    interface: nil,
+                    pluginKey: "unrelated@chatos-marketplace"
+                ),
+                release: GatewayPluginReleaseDTO(
+                    id: "unrelated-release-id",
+                    version: "0.8.11",
+                    artifactSHA256: String(repeating: "c", count: 64),
+                    npmPackage: nil
+                ),
+                preference: nil
+            ),
+            GatewayPluginSourceDTO(
+                catalog: GatewayPluginCatalogDTO(
+                    id: "current-computer-use-id",
+                    displayName: "Computer Use",
+                    name: "open-computer-use",
+                    description: nil,
+                    publisher: nil,
+                    interface: nil,
+                    pluginKey: "open-computer-use@chatos-marketplace"
+                ),
+                release: GatewayPluginReleaseDTO(
+                    id: "current-release-id",
+                    version: "0.8.11",
+                    artifactSHA256: String(repeating: "c", count: 64),
+                    npmPackage: nil
+                ),
+                preference: nil
+            ),
+        ]
+
+        let changed = NativeLocalConnectorService.reconcileInstalledPluginIdentities(
+            state: &state,
+            sources: sources
+        )
+
+        #expect(changed)
+        #expect(state.installedPluginIDs == ["current-computer-use-id"])
+        #expect(state.installedPluginRecords?["current-computer-use-id"]?.releaseID == "current-release-id")
+        #expect(
+            state.installedPluginRecords?["current-computer-use-id"]?.pluginKey
+                == "open-computer-use@chatos-marketplace"
+        )
     }
 }

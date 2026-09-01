@@ -135,6 +135,9 @@ extension NativeLocalConnectorService {
     ) -> Bool {
         guard var records = state.installedPluginRecords, !records.isEmpty else { return false }
         let currentIDs = Set(sources.map(\.catalog.id))
+        let sourcesByPluginKey = Dictionary(grouping: sources) {
+            $0.catalog.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
         var sourcesByArtifact: [String: [GatewayPluginSourceDTO]] = [:]
         for source in sources {
             guard let artifact = source.release.artifactSHA256?
@@ -147,12 +150,29 @@ extension NativeLocalConnectorService {
         var changed = false
 
         for (storedID, record) in records.sorted(by: { $0.key < $1.key }) {
-            guard !currentIDs.contains(storedID) else { continue }
+            if currentIDs.contains(storedID) {
+                guard let source = sources.first(where: { $0.catalog.id == storedID }),
+                      record.pluginKey != source.catalog.pluginKey else {
+                    continue
+                }
+                var enriched = record
+                enriched.pluginKey = source.catalog.pluginKey
+                records[storedID] = enriched
+                changed = true
+                continue
+            }
             let artifact = record.artifactSHA256.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pluginKey = record.pluginKey?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let matches = !pluginKey.isEmpty
+                ? sourcesByPluginKey[pluginKey]
+                : sourcesByArtifact[artifact]
             guard !artifact.isEmpty,
-                  let matches = sourcesByArtifact[artifact],
+                  let matches,
                   matches.count == 1,
                   let source = matches.first,
+                  source.release.artifactSHA256?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == artifact,
                   source.release.version?.trimmingCharacters(in: .whitespacesAndNewlines)
                     == record.version.trimmingCharacters(in: .whitespacesAndNewlines) else {
                 continue
@@ -161,6 +181,7 @@ extension NativeLocalConnectorService {
             let currentID = source.catalog.id
             var migrated = record
             migrated.pluginID = currentID
+            migrated.pluginKey = source.catalog.pluginKey
             migrated.releaseID = source.release.id
             records[storedID] = nil
             records[currentID] = migrated

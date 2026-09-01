@@ -589,8 +589,10 @@ struct GatewayPluginCatalogDTO: Decodable, Sendable {
     var description: String?
     var publisher: GatewayPluginPublisherDTO?
     var interface: GatewayPluginInterfaceDTO?
+    var pluginKey: String? = nil
     enum CodingKeys: String, CodingKey {
         case id, name, description, publisher, interface
+        case pluginKey = "plugin_key"
         case displayName = "display_name"
     }
 }

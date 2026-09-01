@@ -91,7 +91,8 @@ struct NativePluginInstaller: Sendable {
             version: version,
             artifactSHA256: artifactSHA256.lowercased(),
             installationPath: finalURL.path,
-            installedAt: ISO8601DateFormatter().string(from: Date())
+            installedAt: ISO8601DateFormatter().string(from: Date()),
+            pluginKey: source.catalog.pluginKey
         )
     }
 

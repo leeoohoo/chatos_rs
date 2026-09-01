@@ -99,7 +99,8 @@ use plugin_releases::{list_plugin_releases, revoke_plugin_release};
 use plugin_support::*;
 use plugins::{
     get_plugin_catalog_entry, list_admin_plugins, list_plugin_catalog,
-    update_user_plugin_preference, update_user_plugin_preference_internal,
+    review_plugin_catalog_license, update_user_plugin_preference,
+    update_user_plugin_preference_internal,
 };
 use queue_operations::replay_catalog_sync_dead_letter;
 use resource_policy::*;
@@ -322,6 +323,10 @@ pub fn build_public_router(state: AppState) -> Router {
             patch(review_admin_plugin_publisher),
         )
         .route("/api/admin/plugins", get(list_admin_plugins))
+        .route(
+            "/api/admin/plugins/{plugin_id}/license",
+            patch(review_plugin_catalog_license),
+        )
         .route(
             "/api/admin/plugin-package/analyze",
             post(analyze_plugin_package).layer(DefaultBodyLimit::max(
