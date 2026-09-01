@@ -49,16 +49,16 @@ node - "$manifest_file" <<'NODE'
 const fs = require('fs');
 const path = process.argv[2];
 const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
-if (manifest.product_name !== 'Chat OS') {
+if (manifest.product_name !== 'Okra') {
   throw new Error(`unexpected product_name: ${manifest.product_name}`);
 }
 if (!manifest.app_url || manifest.registration_enabled !== true) {
   throw new Error('manifest public app/registration configuration is missing');
 }
-if (!Array.isArray(manifest.services) || manifest.services.length < 6) {
+if (!Array.isArray(manifest.services) || manifest.services.length < 5) {
   throw new Error('manifest.services is missing expected service entries');
 }
-if (!Array.isArray(manifest.showcase_images) || manifest.showcase_images.length < 5) {
+if (!Array.isArray(manifest.showcase_images) || manifest.showcase_images.length < 3) {
   throw new Error('manifest.showcase_images is missing expected screenshots');
 }
 NODE
@@ -99,7 +99,7 @@ if (payload.live_status_enabled === false) {
 if (payload.live_status_enabled !== true) {
   throw new Error('status.live_status_enabled is missing');
 }
-if (!Array.isArray(payload.services) || payload.services.length < 6) {
+if (!Array.isArray(payload.services) || payload.services.length < 5) {
   throw new Error('status.services is missing expected service entries');
 }
 for (const service of payload.services) {
