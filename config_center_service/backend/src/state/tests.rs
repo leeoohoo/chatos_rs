@@ -2046,6 +2046,14 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
         Some(&json!("change_me_user_service_task_runner_secret"))
     );
     assert_eq!(
+        values.get(USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        values.get(USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY),
+        Some(&json!("http://harness:3000"))
+    );
+    assert_eq!(
         values.get(USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY),
         Some(&json!("admin"))
     );
