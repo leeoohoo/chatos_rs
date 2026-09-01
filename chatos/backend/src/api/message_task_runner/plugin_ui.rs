@@ -357,8 +357,14 @@ where
         config.local_connector_service_request_timeout_ms,
     );
     let prepared = prepared?;
-    let request = config
-        .local_connector_http_client
+    let client = if prepared.timeout
+        > Duration::from_millis(config.local_connector_service_request_timeout_ms.max(300) as u64)
+    {
+        &config.local_connector_long_running_http_client
+    } else {
+        &config.local_connector_http_client
+    };
+    let request = client
         .post(prepared.url)
         .query(&[("workspace_id", prepared.workspace_id.as_str())])
         .header("x-local-connector-caller", "chatos-backend")

@@ -58,6 +58,7 @@ pub struct Config {
     pub mcp_result_queue_prefix: String,
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
+    pub local_connector_long_running_http_client: reqwest::Client,
     pub local_connector_mtls_ca_cert_path: PathBuf,
     pub local_connector_mtls_client_identity_path: PathBuf,
     pub local_connector_internal_api_secret: Option<String>,
@@ -226,6 +227,12 @@ impl Config {
             local_connector_mtls_ca_cert_path.as_path(),
             local_connector_mtls_client_identity_path.as_path(),
         )?;
+        let local_connector_long_running_http_client =
+            chatos_service_runtime::build_mtls_http_client(
+                chatos_service_runtime::HttpClientTimeouts::new(Duration::from_secs(2 * 60 * 60)),
+                local_connector_mtls_ca_cert_path.as_path(),
+                local_connector_mtls_client_identity_path.as_path(),
+            )?;
         let plugin_ui_parent_origin = normalize_plugin_ui_origin(
             "CHATOS_PLUGIN_UI_PARENT_ORIGIN",
             optional_config_center_text("CHATOS_PLUGIN_UI_PARENT_ORIGIN"),
@@ -357,6 +364,7 @@ impl Config {
             mcp_result_queue_prefix,
             local_connector_service_base_url,
             local_connector_http_client,
+            local_connector_long_running_http_client,
             local_connector_mtls_ca_cert_path,
             local_connector_mtls_client_identity_path,
             local_connector_internal_api_secret,
