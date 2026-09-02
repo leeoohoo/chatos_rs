@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
-    STATE_FILE_NAME, platform_data_dir,
+    platform_data_dir, resolve_active_bridge_state,
     server::BridgeStateFile,
     wire::{CONTROL_SUBPROTOCOL, PROTOCOL_VERSION, WireError, WireMessage},
 };
@@ -22,9 +22,10 @@ const NATIVE_MESSAGE_LIMIT: usize = 1024 * 1024;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn run_native_host(origin: String) -> Result<(), String> {
-    let state_path = env::var_os("CHATOS_BROWSER_BRIDGE_STATE")
-        .map(Into::into)
-        .unwrap_or_else(|| platform_data_dir().join(STATE_FILE_NAME));
+    let state_path = match env::var_os("CHATOS_BROWSER_BRIDGE_STATE") {
+        Some(path) => path.into(),
+        None => resolve_active_bridge_state(platform_data_dir().as_path()).await?,
+    };
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     loop {

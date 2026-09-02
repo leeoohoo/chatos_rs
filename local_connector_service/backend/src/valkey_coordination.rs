@@ -16,9 +16,26 @@ pub struct DevicePresence {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RelaySessionIdentity {
+    pub owner_user_id: String,
+    pub device_id: String,
+    pub session_id: String,
+}
+
+impl DevicePresence {
+    pub fn relay_identity(&self) -> RelaySessionIdentity {
+        RelaySessionIdentity {
+            owner_user_id: self.owner_user_id.clone(),
+            device_id: self.device_id.clone(),
+            session_id: self.session_id.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RelayCorrelation {
     pub requester_instance_id: String,
-    pub device_id: String,
+    pub source: RelaySessionIdentity,
 }
 
 #[derive(Clone)]
@@ -275,6 +292,54 @@ impl ValkeyCoordinator {
             .map_err(|error| format!("load Local Connector terminal subscribers failed: {error}"))
     }
 
+    pub async fn register_terminal_session_binding(
+        &self,
+        terminal_session_id: &str,
+        source: &RelaySessionIdentity,
+    ) -> Result<bool, String> {
+        let value = serde_json::to_string(source).map_err(|error| error.to_string())?;
+        let ttl = self
+            .terminal_subscriber_ttl
+            .as_secs()
+            .saturating_mul(2)
+            .max(1);
+        let script = redis::Script::new(
+            "local current = redis.call('GET', KEYS[1]); if current and current ~= ARGV[1] then return 0 end; redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); return 1",
+        );
+        let mut connection = self.connection.clone();
+        let registered: i64 = script
+            .key(self.terminal_session_binding_key(terminal_session_id))
+            .arg(value)
+            .arg(ttl)
+            .invoke_async(&mut connection)
+            .await
+            .map_err(|error| {
+                format!("register Local Connector terminal session binding failed: {error}")
+            })?;
+        Ok(registered == 1)
+    }
+
+    pub async fn terminal_session_binding(
+        &self,
+        terminal_session_id: &str,
+    ) -> Result<Option<RelaySessionIdentity>, String> {
+        let mut connection = self.connection.clone();
+        let value: Option<String> = redis::cmd("GET")
+            .arg(self.terminal_session_binding_key(terminal_session_id))
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| {
+                format!("load Local Connector terminal session binding failed: {error}")
+            })?;
+        value
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    format!("parse Local Connector terminal session binding failed: {error}")
+                })
+            })
+            .transpose()
+    }
+
     async fn compare_and_expire_or_delete(
         &self,
         presence: &DevicePresence,
@@ -324,6 +389,15 @@ impl ValkeyCoordinator {
             hex::encode(digest)
         )
     }
+
+    fn terminal_session_binding_key(&self, terminal_session_id: &str) -> String {
+        let digest = Sha256::digest(terminal_session_id.as_bytes());
+        format!(
+            "{}:terminal-session-binding:{}",
+            self.key_prefix,
+            hex::encode(digest)
+        )
+    }
 }
 
 fn unix_timestamp_seconds() -> u64 {
@@ -354,10 +428,17 @@ mod tests {
     fn relay_correlation_contains_only_request_routing_metadata() {
         let correlation = RelayCorrelation {
             requester_instance_id: "local-connector-2".to_string(),
-            device_id: "device-1".to_string(),
+            source: super::RelaySessionIdentity {
+                owner_user_id: "owner-1".to_string(),
+                device_id: "device-1".to_string(),
+                session_id: "session-1".to_string(),
+            },
         };
         let value = serde_json::to_value(&correlation).expect("serialize correlation");
         assert_eq!(value["requester_instance_id"], "local-connector-2");
+        assert_eq!(value["source"]["owner_user_id"], "owner-1");
+        assert_eq!(value["source"]["device_id"], "device-1");
+        assert_eq!(value["source"]["session_id"], "session-1");
         assert!(value.get("response").is_none());
     }
 }

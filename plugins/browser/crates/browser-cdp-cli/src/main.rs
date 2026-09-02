@@ -7,8 +7,9 @@ use std::{
 };
 
 use browser_cdp_bridge::{
-    BridgeReady, BridgeServer, BridgeServerConfig, install_native_host, platform_data_dir,
-    run_native_host, uninstall_native_host,
+    BridgeReady, BridgeServer, BridgeServerConfig, install_active_bridge_locator,
+    install_native_host, platform_data_dir, remove_active_bridge_locator_if_owned, run_native_host,
+    uninstall_native_host,
 };
 use browser_cdp_core::{BrowserBackendFactory, BrowserRuntime};
 use browser_cdp_direct::DirectBackendFactory;
@@ -67,6 +68,7 @@ async fn run_mcp() -> i32 {
 
     let data_dir = env_path("CHATOS_PLUGIN_DATA_DIR", "chatos-browser-cdp/data");
     let artifact_dir = env_path("CHATOS_PLUGIN_ARTIFACT_DIR", "chatos-browser-cdp/artifacts");
+    let bridge_data_dir = data_dir.join("browser-bridge");
     let mut factories: Vec<Arc<dyn BrowserBackendFactory>> =
         vec![Arc::new(DirectBackendFactory::new(data_dir))];
     let mut managed_bridge = None;
@@ -76,7 +78,7 @@ async fn run_mcp() -> i32 {
         );
         factories.push(Arc::new(ExtensionBackendFactory::from_environment()));
     } else if let Some(extension_id) = configured_extension_id() {
-        match ManagedBridgeRuntime::start(extension_id).await {
+        match ManagedBridgeRuntime::start(extension_id, bridge_data_dir).await {
             Ok(bridge) => {
                 factories.push(Arc::new(bridge.extension_factory()));
                 managed_bridge = Some(bridge);
@@ -124,15 +126,21 @@ struct ManagedBridgeRuntime {
     shutdown: Option<oneshot::Sender<()>>,
     task: JoinHandle<Result<(), String>>,
     _lease: File,
+    locator_file: PathBuf,
 }
 
 impl ManagedBridgeRuntime {
-    async fn start(extension_id: String) -> Result<Self, String> {
-        let bridge_dir = platform_data_dir();
+    async fn start(extension_id: String, bridge_dir: PathBuf) -> Result<Self, String> {
+        let locator_dir = platform_data_dir();
+        tokio::fs::create_dir_all(&locator_dir)
+            .await
+            .map_err(|error| {
+                format!("could not create Browser Bridge locator directory: {error}")
+            })?;
         tokio::fs::create_dir_all(&bridge_dir)
             .await
             .map_err(|error| format!("could not create Browser Bridge directory: {error}"))?;
-        let lease_path = bridge_dir.join("bridge.lock");
+        let lease_path = locator_dir.join("bridge.lock");
         let lease = OpenOptions::new()
             .create(true)
             .read(true)
@@ -147,6 +155,7 @@ impl ManagedBridgeRuntime {
         install_native_host(&executable, &extension_id).await?;
         let (server, ready) =
             BridgeServer::bind(BridgeServerConfig::development(bridge_dir, extension_id)).await?;
+        let locator_file = install_active_bridge_locator(&locator_dir, &ready.state_file).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let task = tokio::spawn(server.serve_until(async {
             let _ = shutdown_rx.await;
@@ -156,6 +165,7 @@ impl ManagedBridgeRuntime {
             shutdown: Some(shutdown_tx),
             task,
             _lease: lease,
+            locator_file,
         })
     }
 
@@ -177,6 +187,7 @@ impl ManagedBridgeRuntime {
         {
             task.abort();
         }
+        remove_active_bridge_locator_if_owned(&self.locator_file, &self.ready.state_file).await;
         remove_if_owned(&self.ready.state_file).await;
         remove_if_owned(&self.ready.mcp_credential_file).await;
     }

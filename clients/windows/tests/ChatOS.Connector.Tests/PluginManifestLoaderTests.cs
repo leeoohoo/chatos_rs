@@ -73,6 +73,19 @@ public sealed class PluginManifestLoaderTests : IDisposable
         Assert.NotEqual(
             first.Environment["CHATOS_PLUGIN_CACHE_DIR"],
             second.Environment["CHATOS_PLUGIN_CACHE_DIR"]);
+        foreach (var key in new[]
+                 {
+                     "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
+                     "CHATOS_PLUGIN_ARTIFACT_DIR",
+                     "CHATOS_PLUGIN_FILE_GRANT_DIR",
+                 })
+        {
+            Assert.NotEqual(first.Environment[key], second.Environment[key]);
+            Assert.Contains(
+                Path.Combine("users", string.Empty),
+                first.Environment[key],
+                StringComparison.OrdinalIgnoreCase);
+        }
         Assert.Contains(
             Path.Combine("data", "users"),
             first.Environment["CHATOS_PLUGIN_DATA_DIR"],

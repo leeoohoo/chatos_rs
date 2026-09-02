@@ -9,15 +9,61 @@ use super::{
     default_body, ConnectorRelay, InboundRelayResponse, InboundTerminalEvent,
     InterInstanceRelayMessage, RelayResponse, TerminalRelayEvent, TerminalRelaySubscription,
 };
+use crate::valkey_coordination::RelaySessionIdentity;
 
 impl ConnectorRelay {
+    pub async fn subscribe_terminal_session_for(
+        &self,
+        terminal_session_id: &str,
+        owner_user_id: &str,
+        device_id: &str,
+    ) -> Result<TerminalRelaySubscription, String> {
+        let source = self
+            .relay_session_identity(owner_user_id, device_id)
+            .await
+            .map_err(|error| error.message())?;
+        self.subscribe_terminal_session_with_source(terminal_session_id, source)
+            .await
+    }
+
+    #[cfg(test)]
     pub async fn subscribe_terminal_session(
         &self,
         terminal_session_id: &str,
     ) -> Result<TerminalRelaySubscription, String> {
+        let source = {
+            let inner = self.inner.lock().await;
+            inner
+                .sessions
+                .iter()
+                .next()
+                .map(|(device_id, session)| session.relay_identity(device_id))
+                .unwrap_or_else(|| RelaySessionIdentity {
+                    owner_user_id: "owner-1".to_string(),
+                    device_id: "device-1".to_string(),
+                    session_id: "session-1".to_string(),
+                })
+        };
+        self.subscribe_terminal_session_with_source(terminal_session_id, source)
+            .await
+    }
+
+    async fn subscribe_terminal_session_with_source(
+        &self,
+        terminal_session_id: &str,
+        source: RelaySessionIdentity,
+    ) -> Result<TerminalRelaySubscription, String> {
         let subscription_id = Uuid::new_v4().to_string();
         let events = {
             let mut inner = self.inner.lock().await;
+            if let Some(existing) = inner.terminal_sources.get(terminal_session_id) {
+                if existing != &source {
+                    return Err(
+                        "Local Connector terminal session belongs to another connector session"
+                            .to_string(),
+                    );
+                }
+            }
             let limits = self.runtime_config().limits;
             let current_subscriber_count = inner
                 .terminal_subscriptions
@@ -64,9 +110,27 @@ impl ConnectorRelay {
                 .entry(terminal_session_id.to_string())
                 .or_default()
                 .insert(subscription_id.clone());
+            inner
+                .terminal_sources
+                .insert(terminal_session_id.to_string(), source.clone());
             events
         };
         if let Some(distributed) = self.distributed.as_ref() {
+            let binding_registered = distributed
+                .coordinator
+                .register_terminal_session_binding(terminal_session_id, &source)
+                .await?;
+            if !binding_registered {
+                self.remove_local_terminal_subscription(
+                    terminal_session_id,
+                    subscription_id.as_str(),
+                )
+                .await;
+                return Err(
+                    "Local Connector terminal session is already bound to another connector session"
+                        .to_string(),
+                );
+            }
             if let Err(error) = distributed
                 .coordinator
                 .register_terminal_subscriber(terminal_session_id, distributed.instance_id.as_str())
@@ -102,6 +166,21 @@ impl ConnectorRelay {
             return Ok(false);
         }
         if let Some(distributed) = self.distributed.as_ref() {
+            let source = {
+                let inner = self.inner.lock().await;
+                inner.terminal_sources.get(terminal_session_id).cloned()
+            }
+            .ok_or_else(|| "Local Connector terminal session binding is missing".to_string())?;
+            if !distributed
+                .coordinator
+                .register_terminal_session_binding(terminal_session_id, &source)
+                .await?
+            {
+                return Err(
+                    "Local Connector terminal session binding was replaced by another connector session"
+                        .to_string(),
+                );
+            }
             distributed
                 .coordinator
                 .register_terminal_subscriber(terminal_session_id, distributed.instance_id.as_str())
@@ -144,7 +223,11 @@ impl ConnectorRelay {
         Ok(())
     }
 
-    pub async fn handle_inbound_text(&self, text: &str) -> Result<bool, String> {
+    pub async fn handle_inbound_text_from(
+        &self,
+        source: RelaySessionIdentity,
+        text: &str,
+    ) -> Result<bool, String> {
         let value = match serde_json::from_str::<Value>(text) {
             Ok(value) => value,
             Err(_) => return Ok(false),
@@ -163,7 +246,7 @@ impl ConnectorRelay {
         ) {
             let event: InboundTerminalEvent =
                 serde_json::from_value(value).map_err(|err| err.to_string())?;
-            return self.publish_terminal_event(event).await;
+            return self.publish_terminal_event(event, &source).await;
         }
         if !matches!(
             message_type,
@@ -202,10 +285,48 @@ impl ConnectorRelay {
             headers: inbound.headers.unwrap_or_default(),
             body: inbound.body.unwrap_or_else(default_body),
         };
-        if self.complete_response(response.clone()).await {
+        if self
+            .complete_response_from_source(response.clone(), &source)
+            .await?
+        {
             return Ok(true);
         }
-        self.route_remote_response(response).await
+        self.route_remote_response(response, &source).await
+    }
+
+    #[cfg(test)]
+    pub async fn handle_inbound_text(&self, text: &str) -> Result<bool, String> {
+        let value = serde_json::from_str::<Value>(text).ok();
+        let terminal_session_id = value
+            .as_ref()
+            .and_then(|value| value.get("terminal_session_id"))
+            .and_then(Value::as_str);
+        let request_id = value
+            .as_ref()
+            .and_then(|value| value.get("request_id"))
+            .and_then(Value::as_str);
+        let source = {
+            let inner = self.inner.lock().await;
+            terminal_session_id
+                .and_then(|id| inner.terminal_sources.get(id).cloned())
+                .or_else(|| {
+                    request_id
+                        .and_then(|id| inner.pending.get(id).map(|pending| pending.source.clone()))
+                })
+                .or_else(|| {
+                    inner
+                        .sessions
+                        .iter()
+                        .next()
+                        .map(|(device_id, session)| session.relay_identity(device_id))
+                })
+                .unwrap_or_else(|| RelaySessionIdentity {
+                    owner_user_id: "owner-1".to_string(),
+                    device_id: "device-1".to_string(),
+                    session_id: "session-1".to_string(),
+                })
+        };
+        self.handle_inbound_text_from(source, text).await
     }
 
     async fn remove_local_terminal_subscription(
@@ -222,12 +343,49 @@ impl ConnectorRelay {
         }
         inner.terminal_subscriptions.remove(terminal_session_id);
         inner.terminal_events.remove(terminal_session_id);
+        inner.terminal_sources.remove(terminal_session_id);
         true
     }
 
-    async fn publish_terminal_event(&self, inbound: InboundTerminalEvent) -> Result<bool, String> {
+    async fn publish_terminal_event(
+        &self,
+        inbound: InboundTerminalEvent,
+        source: &RelaySessionIdentity,
+    ) -> Result<bool, String> {
         let original_message_type = inbound.message_type.clone();
         let terminal_session_id = inbound.terminal_session_id.clone();
+        let local_source = {
+            let inner = self.inner.lock().await;
+            inner
+                .terminal_sources
+                .get(terminal_session_id.as_str())
+                .cloned()
+        };
+        if let Some(expected) = local_source.as_ref() {
+            if expected != source {
+                return Err(
+                    "Local Connector terminal event source does not match the subscribed session"
+                        .to_string(),
+                );
+            }
+        }
+        if let Some(distributed) = self.distributed.as_ref() {
+            let expected = distributed
+                .coordinator
+                .terminal_session_binding(terminal_session_id.as_str())
+                .await?
+                .ok_or_else(|| {
+                    "Local Connector distributed terminal session binding is missing".to_string()
+                })?;
+            if &expected != source {
+                return Err(
+                    "Local Connector terminal event source does not match the distributed session"
+                        .to_string(),
+                );
+            }
+        } else if local_source.is_none() {
+            return Ok(false);
+        }
         let body = inbound.body.unwrap_or_else(|| {
             let mut body = serde_json::Map::new();
             if let Some(data) = inbound.data {

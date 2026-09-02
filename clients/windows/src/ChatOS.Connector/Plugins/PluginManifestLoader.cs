@@ -144,7 +144,15 @@ internal sealed class PluginManifestLoader
         var pluginHash = Sha256(record.PluginId);
         var releaseHash = Sha256(record.ReleaseId);
         var sessionHash = Sha256(adapterSessionId);
-        var visualPath = Path.Combine(_runtimeRoot, "visual-sessions", pluginHash, releaseHash, sessionHash);
+        var userHash = Sha256(ownerUserId);
+        var visualPath = Path.Combine(
+            _runtimeRoot,
+            "visual-sessions",
+            "users",
+            userHash,
+            pluginHash,
+            releaseHash,
+            sessionHash);
         var context = ResolveRuntimeContext(
             manifest,
             componentKey,
@@ -156,8 +164,8 @@ internal sealed class PluginManifestLoader
             projectId);
         var dataPath = context.DataPath;
         var cachePath = context.CachePath;
-        var artifactPath = Path.Combine(_runtimeRoot, "artifacts", sessionHash);
-        var grantPath = Path.Combine(_runtimeRoot, "file-grants", sessionHash);
+        var artifactPath = Path.Combine(_runtimeRoot, "artifacts", "users", userHash, sessionHash);
+        var grantPath = Path.Combine(_runtimeRoot, "file-grants", "users", userHash, sessionHash);
         foreach (var path in new[] { visualPath, dataPath, cachePath, artifactPath, grantPath })
         {
             Directory.CreateDirectory(path);

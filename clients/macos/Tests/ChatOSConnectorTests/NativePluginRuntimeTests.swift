@@ -652,12 +652,45 @@ struct NativePluginRuntimeTests {
             permissionSnapshot: ["process.spawn"],
             runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
         )
+        let otherUserLaunch = try NativePluginManifestLoader.prepare(
+            record: .init(
+                pluginID: "plugin-1",
+                releaseID: "release-1",
+                version: "0.3.42",
+                artifactSHA256: String(repeating: "a", count: 64),
+                installationPath: installation.path,
+                installedAt: "2026-08-26T00:00:00Z"
+            ),
+            componentKey: "computer-use",
+            serverKey: nil,
+            adapterSessionID: "adapter-1",
+            ownerUserID: "user-2",
+            deviceID: "device-1",
+            workspaceRoot: root,
+            permissionSnapshot: ["process.spawn"],
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
 
         #expect(launch.executableURL == launcher.standardizedFileURL)
         #expect(launch.arguments == ["mcp"])
         #expect(launch.environment["CHATOS_WORKSPACE"] == root.path)
+        for key in [
+            "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
+            "CHATOS_PLUGIN_ARTIFACT_DIR",
+            "CHATOS_PLUGIN_FILE_GRANT_DIR",
+        ] {
+            #expect(launch.environment[key] != otherUserLaunch.environment[key])
+            #expect(launch.environment[key]?.contains("/users/") == true)
+        }
 #if os(macOS)
-        #expect(launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"]?.hasSuffix("/Open Computer Use/runtime") == true)
+        let managedAppRoot = launch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"]
+        #expect(managedAppRoot?.contains("/data/users/") == true)
+        #expect(managedAppRoot?.hasSuffix("/managed-app") == true)
+        #expect(launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"] == managedAppRoot)
+        #expect(
+            managedAppRoot
+                != otherUserLaunch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"]
+        )
 #endif
     }
 

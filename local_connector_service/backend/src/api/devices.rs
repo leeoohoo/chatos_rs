@@ -475,7 +475,18 @@ async fn handle_connector_socket(
                         }
                     }
                 } else {
-                    match state.relay.handle_inbound_text(text.as_str()).await {
+                    match state
+                        .relay
+                        .handle_inbound_text_from(
+                            crate::valkey_coordination::RelaySessionIdentity {
+                                owner_user_id: session.owner_user_id.clone(),
+                                device_id: device_id.clone(),
+                                session_id: session.id.clone(),
+                            },
+                            text.as_str(),
+                        )
+                        .await
+                    {
                         Ok(true) => {}
                         Ok(false) => {
                             let _ = send_outbound_json(
