@@ -7,6 +7,7 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
     private var previousApplication: NSRunningApplication?
     private weak var previousKeyWindow: NSWindow?
     private let panel: GlobalCommandPanel
+    private var shouldFocusFirstTextInput = false
 
     init(size: NSSize) {
         panel = GlobalCommandPanel(
@@ -69,7 +70,8 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
         isPresented ? closeAndRestorePreviousApplication() : present()
     }
 
-    func present() {
+    func present(focusingFirstTextInput: Bool = false) {
+        shouldFocusFirstTextInput = focusingFirstTextInput
         if NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             != Bundle.main.bundleIdentifier {
             previousApplication = NSWorkspace.shared.frontmostApplication
@@ -79,18 +81,29 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
             previousKeyWindow = NSApp.keyWindow === panel ? nil : NSApp.keyWindow
         }
         positionOnMouseScreen()
-        // A non-activating panel can be ordered above another application but it
-        // cannot reliably accept keyboard input there. Activate ChatOS for the
-        // lifetime of the command panel, then restore the original application
-        // when the user submits or dismisses it.
+        panel.contentView?.layoutSubtreeIfNeeded()
+        if focusingFirstTextInput {
+            focusFirstTextInputIfAvailable()
+        }
+        // Activate ChatOS for the lifetime of the command panel, then restore the
+        // original application when the user submits or dismisses it.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        if focusingFirstTextInput {
+            focusFirstTextInputIfAvailable()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.panel.isVisible, self.shouldFocusFirstTextInput else { return }
+                self.panel.contentView?.layoutSubtreeIfNeeded()
+                self.focusFirstTextInputIfAvailable()
+            }
+        }
     }
 
     func closeAndRestorePreviousApplication(afterRestoring completion: (() -> Void)? = nil) {
         let application = previousApplication
         let keyWindow = previousKeyWindow
         panel.orderOut(nil)
+        shouldFocusFirstTextInput = false
         previousApplication = nil
         previousKeyWindow = nil
 
@@ -108,16 +121,48 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
 
     func closeWithoutRestoringPreviousApplication() {
         panel.orderOut(nil)
+        shouldFocusFirstTextInput = false
         previousApplication = nil
         previousKeyWindow = nil
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard panel.isVisible, shouldFocusFirstTextInput else { return }
+        panel.contentView?.layoutSubtreeIfNeeded()
+        focusFirstTextInputIfAvailable()
     }
 
     func windowDidResignKey(_ notification: Notification) {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
+        shouldFocusFirstTextInput = false
         previousApplication = nil
         previousKeyWindow = nil
         onPanelDismiss?()
+    }
+
+    @discardableResult
+    func focusFirstTextInputIfAvailable() -> Bool {
+        guard let contentView = panel.contentView,
+              let field = searchField(in: contentView) else {
+            return false
+        }
+        panel.initialFirstResponder = field
+        guard panel.isKeyWindow else { return true }
+        return panel.makeFirstResponder(field)
+    }
+
+    private func searchField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField,
+           field.identifier == GlobalCommandSearchField.focusIdentifier {
+            return field
+        }
+        for subview in view.subviews {
+            if let field = searchField(in: subview) {
+                return field
+            }
+        }
+        return nil
     }
 
     private func positionOnMouseScreen() {

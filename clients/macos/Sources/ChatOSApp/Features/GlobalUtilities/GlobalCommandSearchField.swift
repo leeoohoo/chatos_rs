@@ -3,6 +3,8 @@ import SwiftUI
 
 @MainActor
 struct GlobalCommandSearchField: NSViewRepresentable {
+    static let focusIdentifier = NSUserInterfaceItemIdentifier("ChatOS.GlobalCommandSearchField")
+
     @Binding var text: String
     let placeholder: String
     let fontSize: CGFloat
@@ -16,6 +18,7 @@ struct GlobalCommandSearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField()
+        field.identifier = Self.focusIdentifier
         field.delegate = context.coordinator
         field.isBordered = false
         field.drawsBackground = false

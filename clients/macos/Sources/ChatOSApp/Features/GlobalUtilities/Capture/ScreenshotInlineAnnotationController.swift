@@ -293,19 +293,7 @@ final class ScreenshotInlineAnnotationController {
     }
 
     private func configureOverlayPanel(_ panel: NSPanel, levelOffset: Int) {
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.isReleasedWhenClosed = false
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + levelOffset)
-        panel.collectionBehavior = [
-            .canJoinAllSpaces,
-            .fullScreenAuxiliary,
-            .ignoresCycle,
-        ]
-        panel.animationBehavior = .none
-        panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = false
+        configureScreenshotOverlayPanel(panel, levelOffset: levelOffset)
     }
 
     private func toolbarOrigin(for size: NSSize) -> NSPoint {

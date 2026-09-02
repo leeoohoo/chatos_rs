@@ -142,6 +142,7 @@ struct PluginDTO: Decodable, Sendable {
     var updateAvailable: Bool
     var installAvailable: Bool
     var preference: PluginPreferenceDTO?
+    var hasUI: Bool?
     enum CodingKeys: String, CodingKey {
         case description, category, publisher, installation, preference
         case pluginID = "plugin_id"
@@ -149,13 +150,15 @@ struct PluginDTO: Decodable, Sendable {
         case latestVersion = "latest_version"
         case updateAvailable = "update_available"
         case installAvailable = "install_available"
+        case hasUI = "has_ui"
     }
     var domainModel: LocalConnectorPlugin {
         .init(
             pluginID: pluginID, displayName: displayName, description: description,
             category: category, publisher: publisher, latestVersion: latestVersion,
             installed: installation != nil, updateAvailable: updateAvailable,
-            installAvailable: installAvailable, enabled: preference?.enabled ?? true
+            installAvailable: installAvailable, enabled: preference?.enabled ?? true,
+            hasUI: hasUI
         )
     }
 }

@@ -44,6 +44,30 @@ struct ScreenSelection {
     let captureRegion: NativeScreenCaptureRegion
 }
 
+/// Applies the common behavior for windows that must stay above every normal
+/// application window during an active screenshot workflow.
+///
+/// `NSPanel.isFloatingPanel` mutates the panel level to `.floating`, so the
+/// screenshot level must deliberately be assigned *after* that property.
+@MainActor
+func configureScreenshotOverlayPanel(_ panel: NSPanel, levelOffset: Int = 0) {
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.isReleasedWhenClosed = false
+    panel.collectionBehavior = [
+        .canJoinAllSpaces,
+        .fullScreenAuxiliary,
+        .ignoresCycle,
+    ]
+    panel.animationBehavior = .none
+    panel.isFloatingPanel = true
+    panel.hidesOnDeactivate = false
+    panel.becomesKeyOnlyIfNeeded = false
+    panel.level = NSWindow.Level(
+        rawValue: NSWindow.Level.screenSaver.rawValue + levelOffset
+    )
+}
+
 @MainActor
 final class ScreenSelectionOverlayController {
     var onComplete: ((ScreenSelection) -> Void)?
@@ -57,8 +81,6 @@ final class ScreenSelectionOverlayController {
     private var escapeHotKeyMonitor: ScreenshotEscapeHotKeyMonitor?
     private var isFinishing = false
     private let isEnglish: Bool
-    private var windowCandidates: [ScreenshotWindowCandidate] = []
-    private var initialWindowRect: NSRect?
 
     init(isEnglish: Bool) {
         self.isEnglish = isEnglish
@@ -67,7 +89,6 @@ final class ScreenSelectionOverlayController {
     func present() {
         guard windows.isEmpty else { return }
         isFinishing = false
-        windowCandidates = ScreenshotWindowCandidate.visibleWindows()
 
         for screen in NSScreen.screens {
             let window = ScreenSelectionWindow(
@@ -89,28 +110,9 @@ final class ScreenSelectionOverlayController {
             view.onSelectionCompleted = { [weak self] view, point in
                 self?.completeSelection(in: view, at: point)
             }
-            view.onPointerMoved = { [weak self] view, point in
-                self?.updateHoveredWindow(in: view, at: point)
-            }
-            view.onPointerExited = { view in
-                view.updateHoveredWindow(nil)
-            }
-
             window.contentView = view
-            window.isOpaque = false
-            window.backgroundColor = .clear
+            configureScreenshotOverlayPanel(window)
             window.hasShadow = false
-            window.level = .screenSaver
-            window.collectionBehavior = [
-                .canJoinAllSpaces,
-                .fullScreenAuxiliary,
-                .ignoresCycle,
-            ]
-            window.isReleasedWhenClosed = false
-            window.animationBehavior = .none
-            window.isFloatingPanel = true
-            window.hidesOnDeactivate = false
-            window.becomesKeyOnlyIfNeeded = false
             window.onCancel = { [weak self] in self?.cancel() }
             windows.append(window)
             views.append(view)
@@ -145,20 +147,13 @@ final class ScreenSelectionOverlayController {
         guard !isFinishing else { return }
         activeView = view
         dragOrigin = point
-        initialWindowRect = view.hoveredWindowRect
         views.forEach {
-            $0.updateSelection($0 === view ? initialWindowRect : nil, active: $0 === view)
+            $0.updateSelection(nil, active: $0 === view)
         }
     }
 
     private func changeSelection(in view: ScreenSelectionOverlayView, to point: NSPoint) {
         guard view === activeView, let dragOrigin else { return }
-        if hypot(point.x - dragOrigin.x, point.y - dragOrigin.y) < 4,
-           let initialWindowRect {
-            view.updateSelection(initialWindowRect, active: true)
-            return
-        }
-        initialWindowRect = nil
         view.updateSelection(normalizedRect(from: dragOrigin, to: point), active: true)
     }
 
@@ -169,20 +164,22 @@ final class ScreenSelectionOverlayController {
               let window = view.window,
               let screen = window.screen else { return }
 
-        let draggedRect = normalizedRect(from: dragOrigin, to: point)
-        let localRect = (
-            draggedRect.width < 4 && draggedRect.height < 4
-                ? initialWindowRect ?? draggedRect
-                : draggedRect
-        ).integral
+        let localRect = normalizedRect(from: dragOrigin, to: point).integral
         guard localRect.width >= 4, localRect.height >= 4 else {
             self.dragOrigin = nil
-            initialWindowRect = nil
             activeView = nil
             view.updateSelection(nil, active: false)
             return
         }
 
+        finishSelection(localRect: localRect, window: window, screen: screen)
+    }
+
+    private func finishSelection(
+        localRect: NSRect,
+        window: NSWindow,
+        screen: NSScreen
+    ) {
         let globalRect = window.convertToScreen(localRect)
         guard let displayID = screen.deviceDescription[
             NSDeviceDescriptionKey("NSScreenNumber")
@@ -235,25 +232,7 @@ final class ScreenSelectionOverlayController {
         views.removeAll()
         activeView = nil
         dragOrigin = nil
-        initialWindowRect = nil
-        windowCandidates.removeAll()
         NSCursor.pop()
-    }
-
-    private func updateHoveredWindow(in view: ScreenSelectionOverlayView, at point: NSPoint) {
-        guard !isFinishing, activeView == nil, let window = view.window else { return }
-        let globalPoint = window.convertToScreen(NSRect(origin: point, size: .zero)).origin
-        let candidate = windowCandidates.first { $0.rect.contains(globalPoint) }
-        guard let candidate else {
-            view.updateHoveredWindow(nil)
-            return
-        }
-        let clipped = candidate.rect.intersection(window.frame)
-        guard !clipped.isNull, !clipped.isEmpty else {
-            view.updateHoveredWindow(nil)
-            return
-        }
-        view.updateHoveredWindow(window.convertFromScreen(clipped))
     }
 
     private func normalizedRect(from start: NSPoint, to end: NSPoint) -> NSRect {
@@ -338,41 +317,6 @@ final class ScreenshotEscapeHotKeyMonitor {
         if let observer {
             NotificationCenter.default.removeObserver(observer)
             self.observer = nil
-        }
-    }
-}
-
-private struct ScreenshotWindowCandidate {
-    let rect: CGRect
-
-    static func visibleWindows() -> [ScreenshotWindowCandidate] {
-        guard let windowInfo = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[CFString: Any]],
-        let mainScreen = NSScreen.screens.first else {
-            return []
-        }
-
-        let currentPID = getpid()
-        return windowInfo.compactMap { info in
-            guard (info[kCGWindowOwnerPID] as? NSNumber)?.int32Value != currentPID,
-                  (info[kCGWindowLayer] as? NSNumber)?.intValue == 0,
-                  ((info[kCGWindowAlpha] as? NSNumber)?.doubleValue ?? 1) > 0.01,
-                  let bounds = info[kCGWindowBounds] as? [String: Any],
-                  let quartzRect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
-                  quartzRect.width >= 40,
-                  quartzRect.height >= 30 else {
-                return nil
-            }
-
-            let appKitRect = CGRect(
-                x: quartzRect.minX,
-                y: mainScreen.frame.maxY - quartzRect.maxY,
-                width: quartzRect.width,
-                height: quartzRect.height
-            )
-            return ScreenshotWindowCandidate(rect: appKitRect)
         }
     }
 }

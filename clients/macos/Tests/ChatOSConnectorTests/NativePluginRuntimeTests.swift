@@ -5,6 +5,89 @@ import Testing
 
 @Suite("Native Plugin Runtime")
 struct NativePluginRuntimeTests {
+    @Test("local HTTP Plugin applications launch from package.json.bin and become reachable")
+    func localHTTPPluginApplicationLaunches() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let binDirectory = installation.appendingPathComponent("bin", isDirectory: true)
+        let uiDirectory = installation.appendingPathComponent("ui", isDirectory: true)
+        let runtimeRoot = root.appendingPathComponent("runtime", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: uiDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data(#"{"name":"demo-app","version":"1.0.0","bin":{"demo-app":"bin/demo-app"}}"#.utf8)
+            .write(to: installation.appendingPathComponent("package.json"))
+        try Data("<html><body>Plugin application ready</body></html>".utf8)
+            .write(to: uiDirectory.appendingPathComponent("index.html"))
+        let launcher = binDirectory.appendingPathComponent("demo-app")
+        let script = #"""
+        #!/bin/sh
+        exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end("Plugin application ready")}).listen(port,"127.0.0.1")'
+        """#
+        try Data(script.utf8).write(to: launcher)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
+
+        let manifestData = Data(#"""
+        {
+          "schemaVersion": 3,
+          "name": "demo-app",
+          "version": "1.0.0",
+          "description": "Demo application",
+          "ui": [{
+            "componentKey": "workbench",
+            "source": "./ui/index.html",
+            "title": "Demo",
+            "surface": "workbench",
+            "runtime": {
+              "type": "local_http",
+              "bin": "demo-app",
+              "healthPath": "/",
+              "launchTimeoutMs": 5000
+            }
+          }],
+          "permissions": [{
+            "permission": "process.spawn",
+            "required": true,
+            "components": ["workbench"]
+          }]
+        }
+        """#.utf8)
+        let manifest = try JSONDecoder().decode(NativePluginManifest.self, from: manifestData)
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-demo",
+            releaseID: "release-demo",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: installation.path,
+            installedAt: "2026-09-02T00:00:00Z"
+        )
+        let application = LocalConnectorPluginApplication(
+            pluginID: record.pluginID,
+            componentKey: "workbench",
+            displayName: "Demo",
+            description: "Demo application",
+            requiresLocalRuntime: true
+        )
+        let runtime = NativePluginApplicationRuntime()
+        defer { Task { await runtime.stopAll() } }
+
+        let launch = try await runtime.launch(
+            record: record,
+            manifest: manifest,
+            contribution: manifest.ui[0],
+            runtimeRootURL: runtimeRoot,
+            application: application
+        )
+        let body = try await URLSession.shared.data(from: launch.url).0
+        #expect(String(decoding: body, as: UTF8.self) == "Plugin application ready")
+        #expect(FileManager.default.fileExists(
+            atPath: runtimeRoot.appendingPathComponent("data", isDirectory: true).path
+        ))
+        await runtime.stopAll()
+    }
+
     @Test("plugin project root resolves the current project beneath a broad connector workspace")
     func pluginProjectRootUsesCurrentProjectInsteadOfConnectorRoot() throws {
         let root = FileManager.default.temporaryDirectory

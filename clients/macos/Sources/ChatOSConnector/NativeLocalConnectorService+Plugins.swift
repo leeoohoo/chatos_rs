@@ -2,6 +2,59 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    public func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] {
+        let records = state.installedPluginRecords ?? [:]
+        return try records.values
+            .filter { state.pluginPreferences[$0.pluginID] ?? true }
+            .flatMap { record -> [LocalConnectorPluginApplication] in
+                let manifest = try installedPluginManifest(record: record)
+                return manifest.ui.compactMap { contribution in
+                    guard contribution.surface == "workbench" else { return nil }
+                    return pluginApplication(
+                        record: record,
+                        manifest: manifest,
+                        contribution: contribution
+                    )
+                }
+            }
+            .sorted {
+                if $0.displayName != $1.displayName {
+                    return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+                }
+                return $0.id < $1.id
+            }
+    }
+
+    public func launchPluginApplication(
+        pluginID: String,
+        componentKey: String
+    ) async throws -> LocalConnectorPluginApplicationLaunch {
+        guard state.pluginPreferences[pluginID] ?? true else {
+            throw NativeConnectorError.pluginInstallation("Plugin 已停用")
+        }
+        guard let record = state.installedPluginRecords?[pluginID] else {
+            throw NativeConnectorError.pluginInstallation("Plugin 尚未安装")
+        }
+        let manifest = try installedPluginManifest(record: record)
+        guard let contribution = manifest.ui.first(where: {
+            $0.componentKey == componentKey && $0.surface == "workbench"
+        }) else {
+            throw NativeConnectorError.pluginInstallation("Plugin 没有这个应用页面")
+        }
+        let application = pluginApplication(
+            record: record,
+            manifest: manifest,
+            contribution: contribution
+        )
+        return try await pluginApplicationRuntime.launch(
+            record: record,
+            manifest: manifest,
+            contribution: contribution,
+            runtimeRootURL: pluginRuntimeRootURL,
+            application: application
+        )
+    }
+
     public func fetchPlugins() async throws -> [LocalConnectorPlugin] {
         let token = try requireAccessToken()
         let sources = try await gateway.pluginSources(token: token)
@@ -43,6 +96,7 @@ extension NativeLocalConnectorService {
                 installAvailable: source.release.artifactSHA256 != nil
                     && source.release.npmPackage != nil,
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
+                hasUI: source.catalog.hasUI ?? installedManifest.map { !$0.ui.isEmpty },
                 permissions: permissions
             )
         }
@@ -65,6 +119,7 @@ extension NativeLocalConnectorService {
     }
 
     public func uninstallPlugin(id: String) async throws {
+        await pluginApplicationRuntime.stop(pluginID: id)
         try pluginInstaller.uninstall(pluginID: id)
         state.installedPluginIDs.remove(id)
         state.installedPluginRecords?[id] = nil
@@ -82,6 +137,9 @@ extension NativeLocalConnectorService {
             enabled: enabled
         )
         state.pluginPreferences[id] = enabled
+        if !enabled {
+            await pluginApplicationRuntime.stop(pluginID: id)
+        }
         try stateStore.save(state)
         try? await publishPluginInstallationStatus()
     }
@@ -122,6 +180,41 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.pluginInstallation("Plugin 权限清单与安装记录不一致")
         }
         return manifest
+    }
+
+    private func pluginApplication(
+        record: NativeInstalledPluginRecord,
+        manifest: NativePluginManifest,
+        contribution: NativePluginManifest.UIContribution
+    ) -> LocalConnectorPluginApplication {
+        let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+            .standardizedFileURL
+        let iconPath = manifest.interface?.logo?.path
+        let iconURL = iconPath.flatMap { path -> URL? in
+            let normalized = path.hasPrefix("./") ? String(path.dropFirst(2)) : path
+            guard !normalized.isEmpty,
+                  !normalized.hasPrefix("/"),
+                  !normalized.split(separator: "/").contains("..") else { return nil }
+            let url = installationURL.appendingPathComponent(normalized).standardizedFileURL
+            guard url.path.hasPrefix(installationURL.path + "/"),
+                  FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+        let contributionTitle = contribution.title?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let interfaceTitle = manifest.interface?.displayName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return .init(
+            pluginID: record.pluginID,
+            componentKey: contribution.componentKey,
+            displayName: contributionTitle.flatMap { $0.isEmpty ? nil : $0 }
+                ?? interfaceTitle.flatMap { $0.isEmpty ? nil : $0 }
+                ?? manifest.name,
+            description: manifest.description,
+            brandColor: manifest.interface?.brandColor,
+            iconURL: iconURL,
+            requiresLocalRuntime: contribution.runtime != nil
+        )
     }
 
     @discardableResult

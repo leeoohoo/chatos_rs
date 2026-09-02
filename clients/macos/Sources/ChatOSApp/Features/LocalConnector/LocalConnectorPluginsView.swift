@@ -98,6 +98,14 @@ struct LocalConnectorPluginsView: View {
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
+                    if plugin.hasUI == true {
+                        Label(model.localized("应用", english: "App"), systemImage: "macwindow")
+                            .appFont(.caption2.weight(.semibold))
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(.blue.opacity(0.12), in: Capsule())
+                    }
                     if plugin.installed, !plugin.permissions.isEmpty {
                         permissionHealthBadge(plugin.permissions)
                     }

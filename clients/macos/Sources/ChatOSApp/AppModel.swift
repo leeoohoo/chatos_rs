@@ -55,6 +55,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var workspaceProjects: [WorkspaceProject] = []
     @Published private(set) var workspaceContacts: [WorkspaceContact] = []
     @Published private(set) var remoteConnections: [RemoteConnection] = []
+    @Published private(set) var pluginApplications: [LocalConnectorPluginApplication] = []
+    @Published private(set) var isPluginApplicationsLoading = false
+    @Published private(set) var pluginApplicationsError: String?
     @Published private(set) var isRemoteConnectionsLoading = false
     @Published private(set) var remoteConnectionsError: String?
     @Published private(set) var isWorkspaceLoading = false
@@ -109,6 +112,7 @@ final class AppModel: ObservableObject {
     private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
     private var conversationCache: [String: ConversationSessionViewModel] = [:]
     private var workspaceLoadGeneration: Int64 = 0
+    private var pluginApplicationsLoadGeneration: Int64 = 0
     private var visualSessionExpansion: [String: Bool] = [:]
     private var visualSessionSelection: [String: String] = [:]
     private var visualSessionMonitorTask: Task<Void, Never>?
@@ -216,6 +220,16 @@ final class AppModel: ObservableObject {
             .filter { $0 }
             .sink { [weak self] _ in
                 self?.refreshWorkspace()
+            }
+            .store(in: &cancellables)
+        localConnectorControl.$plugins
+            .map { plugins in
+                plugins.map { "\($0.pluginID):\($0.installed):\($0.enabled):\($0.latestVersion)" }
+                    .sorted()
+            }
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.refreshPluginApplications()
             }
             .store(in: &cancellables)
         $selection
@@ -613,7 +627,51 @@ final class AppModel: ObservableObject {
     func refreshAllResources() {
         refreshWorkspace()
         refreshRemoteConnections()
+        refreshPluginApplications()
         localConnectorControl.refreshStatus()
+    }
+
+    func refreshPluginApplications() {
+        pluginApplicationsLoadGeneration += 1
+        let generation = pluginApplicationsLoadGeneration
+        isPluginApplicationsLoading = true
+        pluginApplicationsError = nil
+        let service = localConnectorService
+        Task { [weak self] in
+            do {
+                let applications = try await service.fetchPluginApplications()
+                guard let self, generation == pluginApplicationsLoadGeneration else { return }
+                pluginApplications = applications
+                reconcilePluginApplicationSelection()
+            } catch {
+                guard let self, generation == pluginApplicationsLoadGeneration else { return }
+                pluginApplicationsError = error.localizedDescription
+            }
+            guard let self, generation == pluginApplicationsLoadGeneration else { return }
+            isPluginApplicationsLoading = false
+        }
+    }
+
+    func pluginApplication(pluginID: String, componentKey: String) -> LocalConnectorPluginApplication? {
+        pluginApplications.first {
+            $0.pluginID == pluginID && $0.componentKey == componentKey
+        }
+    }
+
+    func launchPluginApplication(
+        _ application: LocalConnectorPluginApplication
+    ) async throws -> LocalConnectorPluginApplicationLaunch {
+        try await localConnectorService.launchPluginApplication(
+            pluginID: application.pluginID,
+            componentKey: application.componentKey
+        )
+    }
+
+    private func reconcilePluginApplicationSelection() {
+        guard case let .pluginApplication(pluginID, componentKey) = selection else { return }
+        if pluginApplication(pluginID: pluginID, componentKey: componentKey) == nil {
+            selection = .applications
+        }
     }
 
     private func recoverLocalConnector(forceReconnect: Bool) {
@@ -644,6 +702,7 @@ final class AppModel: ObservableObject {
             localConnectorControl.activate(pairIfNeeded: true)
             refreshWorkspace()
             refreshRemoteConnections()
+            refreshPluginApplications()
         case .signedOut:
             authenticatedUserID = nil
             languagePreferencesSaveTask?.cancel()
@@ -657,6 +716,10 @@ final class AppModel: ObservableObject {
             workspaceProjects = []
             workspaceContacts = []
             remoteConnections = []
+            pluginApplicationsLoadGeneration += 1
+            pluginApplications = []
+            isPluginApplicationsLoading = false
+            pluginApplicationsError = nil
             conversationCache = [:]
             projectConversation = nil
             contactConversation = nil

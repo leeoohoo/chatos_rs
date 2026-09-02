@@ -59,6 +59,13 @@ final class ClipboardHistoryCoordinator {
             viewModel: viewModel,
             isEnglish: model?.interfaceLanguage == .english
         ))
-        panelController.present()
+        panelController.present(focusingFirstTextInput: true)
+    }
+
+    @discardableResult
+    func dismissIfPresented() -> Bool {
+        guard panelController.isPresented else { return false }
+        panelController.closeAndRestorePreviousApplication()
+        return true
     }
 }

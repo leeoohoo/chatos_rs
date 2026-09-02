@@ -4,6 +4,8 @@ enum SidebarSelection: Hashable {
     case contact(String)
     case project(String)
     case localConnector
+    case applications
+    case pluginApplication(String, String)
     case terminal(String)
     case remote(String)
 }

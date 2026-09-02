@@ -34,26 +34,45 @@ final class QuickSearchCoordinator {
             isEnglish: model?.interfaceLanguage == .english,
             shortcutLabel: shortcutLabelProvider?() ?? "⌘ Space"
         ))
-        panelController.present()
+        panelController.present(focusingFirstTextInput: true)
+    }
+
+    @discardableResult
+    func dismissIfPresented() -> Bool {
+        guard panelController.isPresented else { return false }
+        panelController.closeAndRestorePreviousApplication()
+        return true
     }
 
     private func execute(_ action: QuickSearchAction) {
-        panelController.closeWithoutRestoringPreviousApplication()
         switch action {
         case let .openProject(projectID):
+            panelController.closeWithoutRestoringPreviousApplication()
             model?.openGlobalSearchProject(projectID)
         case let .openContact(contactID):
+            panelController.closeWithoutRestoringPreviousApplication()
             model?.openGlobalSearchContact(contactID)
         case let .openApplication(url):
+            panelController.closeWithoutRestoringPreviousApplication()
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = true
             NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         case let .openFile(url):
+            panelController.closeWithoutRestoringPreviousApplication()
             NSWorkspace.shared.open(url)
         case let .revealFile(url):
+            panelController.closeWithoutRestoringPreviousApplication()
             NSWorkspace.shared.activateFileViewerSelecting([url])
         case let .builtIn(action):
-            onBuiltInAction?(action)
+            switch action {
+            case .screenshot, .screenRecording, .clipboardHistory:
+                panelController.closeAndRestorePreviousApplication { [weak self] in
+                    self?.onBuiltInAction?(action)
+                }
+            case .openSettings, .openRuntimePermissions:
+                panelController.closeWithoutRestoringPreviousApplication()
+                onBuiltInAction?(action)
+            }
         }
     }
 }

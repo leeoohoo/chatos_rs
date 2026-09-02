@@ -52,6 +52,21 @@ struct ResourceSidebar: View {
             }
 
             Section {
+                resourceRow(
+                    title: model.localized("应用", english: "Applications"),
+                    subtitle: model.pluginApplications.isEmpty
+                        ? model.localized("已安装插件应用", english: "Installed plugin apps")
+                        : model.localized(
+                            "\(model.pluginApplications.count) 个可用",
+                            english: "\(model.pluginApplications.count) available"
+                        ),
+                    systemImage: "square.grid.2x2.fill",
+                    tint: .accentColor
+                )
+                .tag(SidebarSelection.applications)
+            }
+
+            Section {
                 ForEach(model.terminals) { terminal in
                     resourceRow(
                         title: terminal.title,

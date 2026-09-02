@@ -32,7 +32,7 @@ final class GlobalUtilityCoordinator {
             guard let self else { return }
             switch action {
             case .screenshot:
-                self.screenshotCoordinator.start()
+                self.startScreenshotAfterDismissingCommandPanels()
             case .screenRecording:
                 self.perform(.screenRecording)
             case .clipboardHistory:
@@ -72,16 +72,39 @@ final class GlobalUtilityCoordinator {
         hasStarted = false
     }
 
+    func trigger(_ action: GlobalUtilityAction) {
+        perform(action)
+    }
+
     private func perform(_ action: GlobalUtilityAction) {
         switch action {
         case .screenshot:
-            screenshotCoordinator.start()
+            startScreenshotAfterDismissingCommandPanels()
         case .quickSearch:
             quickSearchCoordinator.toggle()
         case .clipboardHistory:
             clipboardCoordinator.toggle()
         case .screenRecording:
             screenRecordingCoordinator.toggle()
+        }
+    }
+
+    private func startScreenshotAfterDismissingCommandPanels() {
+        let dismissedQuickSearch = quickSearchCoordinator.dismissIfPresented()
+        let dismissedClipboard = clipboardCoordinator.dismissIfPresented()
+        let dismissedRecordingPicker = screenRecordingCoordinator.dismissPickerIfPresented()
+        let dismissedPanel = dismissedQuickSearch || dismissedClipboard || dismissedRecordingPicker
+
+        guard dismissedPanel else {
+            screenshotCoordinator.start()
+            return
+        }
+
+        // Restoring the previously active application is asynchronous at the
+        // WindowServer boundary. Let it become frontmost before creating the
+        // screen-selection windows so no command panel can remain above them.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.screenshotCoordinator.start()
         }
     }
 }
