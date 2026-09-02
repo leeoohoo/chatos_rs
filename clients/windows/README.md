@@ -75,10 +75,16 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ## 一键生成 EXE 安装包
 
-在仓库根目录双击或从终端运行：
+如果只复制或压缩了 `clients/windows` 目录，可以直接双击：
 
 ```text
-scripts\package-windows-client.cmd
+.\scripts\package-client.cmd
+```
+
+也可以在完整仓库根目录运行：
+
+```text
+.\scripts\package-windows-client.cmd
 ```
 
 脚本默认根据当前 Windows 电脑自动选择 x64 或 ARM64，执行 Release 测试、自包含发布，并在缺少时通过 `winget` 安装 Inno Setup 6，最终生成：
@@ -93,13 +99,13 @@ clients\windows\BundleArtifacts\installer-x64\ChatOS-Setup-x64.exe
 
 ```powershell
 # Windows on ARM
-scripts\package-windows-client.cmd -Platform ARM64
+.\scripts\package-client.cmd -Platform ARM64
 
 # 快速重新打包，跳过自动化测试
-scripts\package-windows-client.cmd -SkipTests
+.\scripts\package-client.cmd -SkipTests
 
 # 连接指定测试环境
-scripts\package-windows-client.cmd `
+.\scripts\package-client.cmd `
   -ApiBaseUrl "http://127.0.0.1:9080/api/chatos" `
   -LocalConnectorCloudBaseUrl "http://127.0.0.1:39230"
 ```
