@@ -6,7 +6,7 @@ use serde_json::Value;
 pub use memory_engine_sdk::{
     DashboardOverviewResponse, EngineJobPolicy, EngineJobRun, EngineModelProfile,
     GenerateJobPolicyPromptRequest, GenerateJobPolicyPromptResponse, JobRunsBundleResponse,
-    UpsertEngineJobPolicyRequest, UpsertEngineModelProfileRequest,
+    UpsertEngineJobPolicyRequest,
 };
 
 pub const DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE: &str = "你是 memory engine 的消息总结引擎。你的任务不是泛泛概括聊天内容，而是为后续对话提供承上启下的会话摘要。\n请优先保留以下信息：\n1. 当前会话已经完成了什么，哪些动作、结论、修改或验证已经发生；\n2. 当前正在进行什么，眼下卡在哪一步，哪些问题还没有解决；\n3. 接下来最可能继续做什么，明确下一步待办、待确认项和推进顺序；\n4. 对后续续聊有决定作用的重要事实、约束、风险、假设、路径、文件、命令、环境信息和用户要求；\n5. 如果用户临时改变目标，也要保留目标切换前后的上下文关系。\n请避免空泛复述，避免写成长篇会议纪要；输出应简洁、连续、可直接帮助下一轮对话衔接。";

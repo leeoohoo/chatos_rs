@@ -528,10 +528,6 @@ pub(super) const MEMORY_ENGINE_RUNTIME_CONFIG_KEYS: &[&str] = &[
     MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY,
     MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY,
@@ -831,7 +827,6 @@ pub(super) fn user_service_runtime_default_values(
             [
                 USER_SERVICE_PORT_CONFIG_KEY,
                 USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-                USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
                 USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
                 USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
                 USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -1060,16 +1055,7 @@ pub(super) fn ensure_user_service_runtime_values(
 ) -> Vec<String> {
     let mut changed_keys = Vec::new();
     for (key, fallback) in defaults {
-        if key == USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY {
-            let uses_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !uses_https {
-                values.insert(key.clone(), fallback.clone());
-                changed_keys.push(key.clone());
-            }
-        } else if !values.contains_key(key) {
+        if !values.contains_key(key) {
             values.insert(key.clone(), fallback.clone());
             changed_keys.push(key.clone());
         }

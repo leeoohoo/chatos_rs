@@ -5,7 +5,6 @@ use axum::extract::{Query, State};
 use axum::{Extension, Json};
 
 use crate::auth::CurrentPrincipal;
-use crate::integrations::sync_model_settings;
 use crate::models::{
     UpdateUserModelSettingsRequest, UserModelConfigRecord, UserModelSettingsRecord,
     DEFAULT_MODEL_REQUEST_MAX_RETRIES, MAX_MODEL_REQUEST_MAX_RETRIES,
@@ -138,11 +137,7 @@ pub(in crate::api) async fn put_model_settings(
         .save_user_model_settings(&settings)
         .await
         .map_err(internal_error)?;
-    let sync_warnings = sync_model_settings(&state, &saved).await;
-    Ok(Json(model_settings_public_value(
-        saved,
-        Some(sync_warnings),
-    )))
+    Ok(Json(model_settings_public_value(saved, None)))
 }
 
 fn resolve_model_request_max_retries(input: Option<i64>, current: i64) -> Result<i64, String> {
@@ -217,10 +212,8 @@ async fn validate_settings_model_config(
             "{field_name} requires a concrete model name"
         )));
     }
-    if !model_config.enabled_for_tasks() {
-        return Err(bad_request(format!(
-            "{field_name} is disabled for Task Runner usage"
-        )));
+    if !model_config.enabled {
+        return Err(bad_request(format!("{field_name} is disabled")));
     }
     Ok(Some(model_config))
 }

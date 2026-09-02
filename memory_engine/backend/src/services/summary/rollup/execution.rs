@@ -252,7 +252,7 @@ pub(crate) async fn run_prepared_thread_rollup(
             match build_rollup_summary_text(
                 config,
                 db,
-                Some(tenant_id),
+                tenant_id,
                 thread.title.as_deref(),
                 summarizable.as_slice(),
                 &settings,

@@ -272,10 +272,6 @@ x-config-center-mtls-user-service-secrets: &config-center-mtls-user-service-secr
     target: task_runner_mtls_ca
   - source: task_runner_mtls_user_service_identity
     target: task_runner_mtls_client_identity
-  - source: memory_engine_mtls_ca
-    target: memory_engine_mtls_ca
-  - source: memory_engine_mtls_user_service_identity
-    target: memory_engine_mtls_client_identity
   - source: user_service_mtls_ca
     target: user_service_mtls_ca
   - source: user_service_mtls_server_cert
@@ -576,10 +572,7 @@ services:
       USER_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
       USER_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME: ${CHATOS_ADMIN_DISPLAY_NAME:-System Admin}
-      USER_SERVICE_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
-      MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
-      MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
       USER_SERVICE_TASK_RUNNER_BASE_URL: https://task-runner-backend:39092
       USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_user_service_task_runner_secret}
       TASK_RUNNER_MTLS_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
@@ -641,8 +634,6 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
       MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MEMORY_ENGINE_PORT:-7081}:7081"
     healthcheck:
@@ -683,8 +674,6 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
       MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
 
   project-management-backend:
     <<: *rust-service
@@ -1399,8 +1388,6 @@ secrets:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/chatos-backend.identity.pem
   memory_engine_mtls_task_runner_identity:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/task-runner.identity.pem
-  memory_engine_mtls_user_service_identity:
-    file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/user-service.identity.pem
   project_service_mtls_ca:
     file: ${PROJECT_SERVICE_MTLS_DIR:-./secrets/project-service-mtls}/ca.crt
   project_service_mtls_server_cert:

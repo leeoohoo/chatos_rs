@@ -139,7 +139,6 @@ function buildMenuItems(superAdmin: boolean, t: ReturnType<typeof useAdminI18n>[
       ...(superAdmin ? [{ key: '/memory/dashboard', label: t('nav.overview') }] : []),
       { key: '/memory/data', label: t('nav.memoryData') },
       ...(superAdmin ? [{ key: '/memory/sources', label: t('nav.sources') }] : []),
-      { key: '/memory/models', label: t('nav.models') },
       ...(superAdmin ? [{ key: '/memory/policies', label: t('nav.policies') }] : []),
       { key: '/memory/runs', label: t('nav.runs') },
     ] },

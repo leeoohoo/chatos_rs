@@ -31,7 +31,7 @@ pub use self::models::{
     SdkUpsertSubjectMemoryScopeRequest, SdkUpsertThreadRequest, SdkUpsertThreadSnapshotRequest,
     SystemListSummariesByThreadLabelRequest, SystemQuerySubjectMemoriesRequest,
     SystemUpsertSubjectMemoryScopeRequest, ThreadRecordsPageResponse, ThreadSnapshotLookupResponse,
-    TurnProcessRecordsResponse, TurnRecordSlice, UpsertEngineJobPolicyRequest,
-    UpsertEngineModelProfileRequest, UpsertRecordInput, UpsertSourceRequest,
-    UpsertSubjectMemoryScopeRequest, UpsertThreadSnapshotRequest, MEMORY_POLICY_CONFIG_PREFIX,
+    TurnProcessRecordsResponse, TurnRecordSlice, UpsertEngineJobPolicyRequest, UpsertRecordInput,
+    UpsertSourceRequest, UpsertSubjectMemoryScopeRequest, UpsertThreadSnapshotRequest,
+    MEMORY_POLICY_CONFIG_PREFIX,
 };

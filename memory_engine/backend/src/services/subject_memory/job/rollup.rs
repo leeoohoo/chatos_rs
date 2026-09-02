@@ -97,7 +97,7 @@ pub(crate) async fn process_rollup_selection(
         match build_subject_memory_rollup(
             config,
             db,
-            Some(req.tenant_id.as_str()),
+            req.tenant_id.as_str(),
             settings.prompt_title.as_str(),
             summarizable.as_slice(),
             settings.token_limit,

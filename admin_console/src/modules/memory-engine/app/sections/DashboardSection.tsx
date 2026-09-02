@@ -21,19 +21,16 @@ export function DashboardSection(props: DashboardSectionProps) {
           <Col xs={12} lg={4}>
             <Statistic title="接入系统" value={dashboardStats.sources} />
           </Col>
-          <Col xs={12} lg={4}>
-            <Statistic title="模型配置" value={dashboardStats.models} />
-          </Col>
-          <Col xs={12} lg={4}>
+          <Col xs={12} lg={5}>
             <Statistic title="任务策略" value={dashboardStats.policies} />
           </Col>
-          <Col xs={12} lg={4}>
+          <Col xs={12} lg={5}>
             <Statistic title="运行中" value={dashboardStats.running} />
           </Col>
-          <Col xs={12} lg={4}>
+          <Col xs={12} lg={5}>
             <Statistic title="已完成" value={dashboardStats.done} />
           </Col>
-          <Col xs={12} lg={4}>
+          <Col xs={12} lg={5}>
             <Statistic title="失败" value={dashboardStats.failed} />
           </Col>
         </Row>

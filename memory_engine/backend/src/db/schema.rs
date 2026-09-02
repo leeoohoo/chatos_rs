@@ -25,18 +25,6 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
 }
 
 async fn ensure_control_plane_indexes(db: &Db) -> Result<(), String> {
-    ensure_unique_index(db.collection("engine_model_profiles"), doc! {"id": 1}).await?;
-    ensure_index(
-        db.collection("engine_model_profiles"),
-        doc! {"enabled": 1, "updated_at": -1},
-    )
-    .await?;
-    ensure_index(
-        db.collection("engine_model_profiles"),
-        doc! {"owner_user_id": 1, "is_default": -1, "enabled": -1, "updated_at": -1},
-    )
-    .await?;
-
     ensure_unique_index(db.collection("engine_job_policies"), doc! {"job_type": 1}).await?;
     ensure_index(
         db.collection("engine_job_policies"),

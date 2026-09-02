@@ -44,8 +44,6 @@ pub const USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY: &str =
     "user_service.login.failure_window_seconds";
 pub const USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY: &str =
     "user_service.login.lockout_seconds";
-pub const USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
-    "user_service.downstream.memory_engine_base_url";
 pub const USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str =
     "user_service.downstream.task_runner_base_url";
 pub const USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =

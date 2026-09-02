@@ -943,33 +943,6 @@ impl AppState {
             }
         }
 
-        for mut draft in self.store.list_drafts().await? {
-            let Some(value) = draft
-                .changes
-                .get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
-            else {
-                continue;
-            };
-            if value
-                .as_str()
-                .is_some_and(|value| value.trim().starts_with("https://"))
-            {
-                continue;
-            }
-            let replacement = defaults
-                .get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
-                .cloned()
-                .ok_or_else(|| "User Service Memory Engine HTTPS default is missing".to_string())?;
-            draft.changes.insert(
-                USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
-                replacement,
-            );
-            draft.validation_status = "pending".to_string();
-            draft.validation_errors.clear();
-            draft.updated_at = Utc::now().to_rfc3339();
-            self.store.save_draft(&draft).await?;
-        }
-
         self.republish_active_releases_to_consul(
             &definitions,
             "add User Service runtime configuration",
@@ -978,7 +951,6 @@ impl AppState {
 
         tracing::info!(
             internal_mtls_port_key = USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-            memory_engine_base_url_key = USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             task_runner_base_url_key = USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             harness_enabled_key = USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
             "User Service runtime configuration is present in configuration center releases and snapshots"

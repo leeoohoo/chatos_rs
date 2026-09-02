@@ -4,34 +4,16 @@
 import type {
   EngineJobPolicy,
   EngineJobRun,
-  EngineModelProfile,
   EngineSource,
   ThreadQuery,
   UpsertEngineJobPolicyPayload,
-  UpsertEngineModelProfilePayload,
   UpsertEngineSourcePayload,
 } from '../types';
 
-export type TabKey = 'dashboard' | 'data' | 'sources' | 'models' | 'policies' | 'runs';
-
-export type ModelFormValues = {
-  name: string;
-  provider: string;
-  model: string;
-  base_url?: string;
-  api_key?: string;
-  supports_images: boolean;
-  supports_reasoning: boolean;
-  supports_responses: boolean;
-  temperature?: number | null;
-  thinking_level?: string;
-  is_default: boolean;
-  enabled: boolean;
-};
+export type TabKey = 'dashboard' | 'data' | 'sources' | 'policies' | 'runs';
 
 export type PolicyFormValues = {
   enabled: boolean;
-  model_profile_id?: string;
   summary_prompt?: string;
   summary_prompt_zh?: string;
   summary_prompt_en?: string;
@@ -99,7 +81,6 @@ export type ToolSection = {
 
 export type DashboardStats = {
   sources: number;
-  models: number;
   policies: number;
   running: number;
   done: number;
@@ -112,8 +93,6 @@ export type SourcePayloadResult = {
   sourceId: string;
   payload: UpsertEngineSourcePayload;
 };
-
-export type ModelOptions = Array<{ label: string; value: string }>;
 
 export type ThreadNameLookup = Record<string, string>;
 
@@ -128,14 +107,11 @@ export type PolicyPromptGenerator = (
   userInput: string,
 ) => Promise<{ prompt_zh: string; prompt_en: string }>;
 
-export type BuildModelPayload = UpsertEngineModelProfilePayload;
 export type BuildPolicyPayload = UpsertEngineJobPolicyPayload;
 
 export type ThreadRunLookupInput = Pick<
   EngineJobRun,
   'thread_id' | 'tenant_id' | 'source_id'
 >;
-
-export type ThreadNameInput = Pick<EngineModelProfile, never> | null;
 
 export type ThreadDisplayInput = Pick<EngineSource, never> | null;

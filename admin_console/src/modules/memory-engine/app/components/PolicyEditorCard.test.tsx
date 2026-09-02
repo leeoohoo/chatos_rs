@@ -10,7 +10,6 @@ import { PolicyEditorCard } from './PolicyEditorCard';
 const basePolicy = {
   job_type: 'summary',
   enabled: true,
-  model_profile_id: null,
   summary_prompt: null,
   summary_prompt_zh: null,
   summary_prompt_en: null,

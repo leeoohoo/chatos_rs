@@ -13,26 +13,19 @@ export function useCatalogResources(
   const state = useCatalogState();
   const loaders = useCatalogLoaders({
     setSources: state.setSources,
-    setModelProfiles: state.setModelProfiles,
     setJobPolicies: state.setJobPolicies,
     setSourcesLoading: state.setSourcesLoading,
-    setModelsLoading: state.setModelsLoading,
     setPoliciesLoading: state.setPoliciesLoading,
   });
   const actions = useCatalogActions(
     message,
     {
       editingSource: state.editingSource,
-      editingModel: state.editingModel,
       sourceForm: state.sourceForm,
-      modelForm: state.modelForm,
       setRotatedSecret: state.setRotatedSecret,
       setSourceSubmitting: state.setSourceSubmitting,
-      setModelSubmitting: state.setModelSubmitting,
       setSourceModalOpen: state.setSourceModalOpen,
-      setModelModalOpen: state.setModelModalOpen,
       setEditingSource: state.setEditingSource,
-      setEditingModel: state.setEditingModel,
       setSavingPolicyJobType: state.setSavingPolicyJobType,
       setGeneratingPolicyJobType: state.setGeneratingPolicyJobType,
     },

@@ -12,7 +12,6 @@ import { useCatalogLoaders } from './useCatalogLoaders';
 vi.mock('../../../api', () => ({
   api: {
     listSources: vi.fn(),
-    listModelProfiles: vi.fn(),
     listJobPolicies: vi.fn(),
   },
 }));
@@ -47,10 +46,8 @@ describe('useCatalogLoaders', () => {
     const { result } = renderHook(() =>
       useCatalogLoaders({
         setSources,
-        setModelProfiles: vi.fn(),
         setJobPolicies: vi.fn(),
         setSourcesLoading,
-        setModelsLoading: vi.fn(),
         setPoliciesLoading: vi.fn(),
       }),
     );

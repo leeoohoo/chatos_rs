@@ -412,7 +412,6 @@ impl AppState {
             CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
         ] {
             let is_https = values
                 .get(key)

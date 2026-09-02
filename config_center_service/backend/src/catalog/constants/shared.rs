@@ -17,6 +17,10 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "mcp_management.runtime.sandbox_image_tool_timeout_ms",
     "mcp_management.runtime.sandbox_tool_timeout_ms",
     "memory_engine.security.project_service_internal_api_secret",
+    "memory_engine.ai.openai_api_key",
+    "memory_engine.ai.openai_base_url",
+    "memory_engine.ai.openai_model",
+    "memory_engine.ai.openai_temperature",
     "plugin_management.oauth.flow_ttl_seconds",
     "plugin_management.oauth.frontend_origin",
     "plugin_management.oauth.max_response_bytes",
@@ -80,6 +84,7 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "task_runner.sandbox.enabled",
     "task_runner.sandbox.lease_ttl_seconds",
     "task_runner.sandbox.manager_base_url",
+    "user_service.downstream.memory_engine_base_url",
 ];
 pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";
 pub const PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY: &str =

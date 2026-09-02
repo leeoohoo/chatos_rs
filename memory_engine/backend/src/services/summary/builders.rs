@@ -17,7 +17,7 @@ use super::{RollupSettings, SummaryJobSettings};
 pub(crate) async fn build_summary_text(
     config: &AppConfig,
     db: &Db,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
     title: Option<&str>,
     records: &[EngineRecord],
     settings: &SummaryJobSettings,
@@ -70,7 +70,7 @@ pub(crate) async fn build_summary_text(
 pub(crate) async fn build_repair_summary_text(
     config: &AppConfig,
     db: &Db,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
     title: Option<&str>,
     records: &[EngineRecord],
     settings: &SummaryJobSettings,
@@ -128,7 +128,7 @@ pub(crate) async fn build_repair_summary_text(
 pub(crate) async fn build_rollup_summary_text(
     config: &AppConfig,
     db: &Db,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
     title: Option<&str>,
     items: &[String],
     settings: &RollupSettings,

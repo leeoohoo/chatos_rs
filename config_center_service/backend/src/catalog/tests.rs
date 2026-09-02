@@ -1784,30 +1784,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             false,
         ),
         (
-            MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_API_KEY",
-            "string",
-            true,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_BASE_URL",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_MODEL",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_TEMPERATURE",
-            "string",
-            false,
-        ),
-        (
             MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY,
             "MEMORY_ENGINE_WORKER_ENABLED",
             "boolean",
@@ -2029,12 +2005,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
 fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
     let definitions = builtin_definitions();
     for (key, env_alias, expected_value_type, expect_nullable) in [
-        (
-            USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            "USER_SERVICE_MEMORY_ENGINE_BASE_URL",
-            "string",
-            false,
-        ),
         (
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             "USER_SERVICE_TASK_RUNNER_BASE_URL",

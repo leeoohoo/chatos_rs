@@ -83,10 +83,6 @@ pub const MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "memory_engine.downstream.user_service_request_timeout_ms";
 pub const MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY: &str =
     "memory_engine.ai.request_timeout_secs";
-pub const MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY: &str = "memory_engine.ai.openai_api_key";
-pub const MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY: &str = "memory_engine.ai.openai_base_url";
-pub const MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY: &str = "memory_engine.ai.openai_model";
-pub const MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY: &str = "memory_engine.ai.openai_temperature";
 pub const MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY: &str = "memory_engine.worker.enabled";
 pub const MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY: &str =
     "memory_engine.worker.interval_secs";

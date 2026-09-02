@@ -13,6 +13,7 @@ pub(super) const USER_SERVICE_TOKEN_AUDIENCE: &str = "user-service";
 pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
 pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const TASK_RUNNER_CALLER: &str = "task-runner";
+pub(super) const MEMORY_ENGINE_CALLER: &str = "memory-engine";
 pub(super) const HARNESS_REPO_WRITE_SCOPE: &str = "harness.repo.write";
 pub(super) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
 pub(super) const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
@@ -73,6 +74,15 @@ pub(super) fn require_user_model_internal_request(
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| forbidden("chatos user API secret is not configured"))?;
             verify_internal_request(headers, expected, CHATOS_CALLER, required_scope)
+        }
+        Some(MEMORY_ENGINE_CALLER) => {
+            let expected = config
+                .memory_engine_internal_api_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| forbidden("memory engine user API secret is not configured"))?;
+            verify_internal_request(headers, expected, MEMORY_ENGINE_CALLER, required_scope)
         }
         Some(_) => Err(forbidden("user service internal caller is not allowed")),
         None => Err(unauthorized(

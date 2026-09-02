@@ -20,65 +20,11 @@ describe('adminApi', () => {
     vi.clearAllMocks();
   });
 
-  it('normalizes model profiles with backend-compatible defaults', async () => {
-    vi.mocked(client.get).mockResolvedValueOnce({
-      data: {
-        items: [
-          {
-            id: 'model-1',
-            name: 'Model A',
-            provider: 'openai',
-            model: 'gpt-test',
-            created_at: '2026-05-21T00:00:00Z',
-            updated_at: '2026-05-21T00:00:00Z',
-          },
-        ],
-      },
-    } as never);
-
-    await expect(adminApi.listModelProfiles()).resolves.toEqual([
-      {
-        id: 'model-1',
-        owner_user_id: null,
-        owner_username: null,
-        name: 'Model A',
-        provider: 'openai',
-        model: 'gpt-test',
-        base_url: null,
-        api_key: null,
-        supports_images: false,
-        supports_reasoning: false,
-        supports_responses: false,
-        temperature: null,
-        thinking_level: null,
-        is_default: false,
-        enabled: true,
-        created_at: '2026-05-21T00:00:00Z',
-        updated_at: '2026-05-21T00:00:00Z',
-      },
-    ]);
-  });
-
-  it('encodes dynamic model and policy identifiers in admin paths', async () => {
+  it('encodes dynamic policy identifiers in admin paths', async () => {
     vi.mocked(client.put).mockResolvedValue({ data: {} } as never);
-    vi.mocked(client.delete).mockResolvedValue({} as never);
-
-    await adminApi.updateModelProfile('model/1', {
-      name: 'Model A',
-      provider: 'openai',
-      model: 'gpt-test',
-    });
-    await adminApi.deleteModelProfile('model/1');
     await adminApi.updateJobPolicy('summary/rollup', {});
 
-    expect(client.put).toHaveBeenNthCalledWith(
-      1,
-      '/admin/model-profiles/model%2F1',
-      expect.any(Object),
-    );
-    expect(client.delete).toHaveBeenCalledWith('/admin/model-profiles/model%2F1');
-    expect(client.put).toHaveBeenNthCalledWith(
-      2,
+    expect(client.put).toHaveBeenCalledWith(
       '/admin/job-policies/summary%2Frollup',
       {},
     );
@@ -133,7 +79,6 @@ describe('adminApi', () => {
       {
         job_type: 'thread_summary',
         enabled: true,
-        model_profile_id: null,
         summary_prompt: null,
         summary_prompt_zh: null,
         summary_prompt_en: null,

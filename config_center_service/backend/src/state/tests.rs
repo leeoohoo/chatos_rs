@@ -35,9 +35,7 @@ use crate::catalog::{
     LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY, LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY, MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
     MEMORY_ENGINE_HOST_CONFIG_KEY, MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY,
-    MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY, MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY, MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY, MEMORY_ENGINE_PORT_CONFIG_KEY,
+    MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY, MEMORY_ENGINE_PORT_CONFIG_KEY,
     MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
     MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
     MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
@@ -143,7 +141,6 @@ use crate::catalog::{
     USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY,
     USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY,
     USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS_CONFIG_KEY,
-    USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
@@ -1274,10 +1271,6 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
         Some(&json!(60))
     );
     assert_eq!(
-        values.get(MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY),
-        Some(&Value::Null)
-    );
-    assert_eq!(
         values.get(MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY),
         Some(&json!(true))
     );
@@ -1321,7 +1314,6 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY.to_string()));
     assert!(
         changed_keys.contains(&MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY_CONFIG_KEY.to_string())
     );
@@ -1412,22 +1404,6 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
         (
             MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY.to_string(),
             json!(60),
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY.to_string(),
-            Value::Null,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://api.openai.com/v1"),
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY.to_string(),
-            json!("gpt-4o-mini"),
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY.to_string(),
-            json!("0.2"),
         ),
         (
             MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY.to_string(),
@@ -1599,19 +1575,6 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("MEMORY_ENGINE_AI_TIMEOUT_SECS"),
         Some(&"60".to_string())
-    );
-    assert!(!snapshot.env.contains_key("MEMORY_ENGINE_OPENAI_API_KEY"));
-    assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_OPENAI_BASE_URL"),
-        Some(&"https://api.openai.com/v1".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_OPENAI_MODEL"),
-        Some(&"gpt-4o-mini".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_OPENAI_TEMPERATURE"),
-        Some(&"0.2".to_string())
     );
     assert_eq!(
         snapshot.env.get("MEMORY_ENGINE_WORKER_ENABLED"),
@@ -2016,7 +1979,7 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
 
     let changed_keys = ensure_user_service_runtime_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 27);
+    assert_eq!(defaults.len(), 26);
     for key in defaults.keys() {
         assert!(
             values.contains_key(key),
@@ -2030,12 +1993,6 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
     assert_eq!(
         values.get(USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY),
         Some(&json!(39192))
-    );
-    assert_eq!(
-        values.get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY),
-        Some(&json!(
-            "https://memory-engine-backend:7083/api/memory-engine/v1"
-        ))
     );
     assert_eq!(
         values.get(USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY),
@@ -2085,17 +2042,13 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
 }
 
 #[test]
-fn user_service_runtime_snapshot_projects_internal_memory_engine_url() {
+fn user_service_runtime_snapshot_projects_internal_task_runner_url() {
     let definitions = builtin_definitions();
     let values = BTreeMap::from([
         (USER_SERVICE_PORT_CONFIG_KEY.to_string(), json!(39190)),
         (
             USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
             json!(39192),
-        ),
-        (
-            USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://memory-engine-backend:7083/api/memory-engine/v1"),
         ),
         (
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string(),
@@ -2205,10 +2158,6 @@ fn user_service_runtime_snapshot_projects_internal_memory_engine_url() {
     assert_eq!(
         snapshot.env.get("USER_SERVICE_INTERNAL_MTLS_PORT"),
         Some(&"39192".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("USER_SERVICE_MEMORY_ENGINE_BASE_URL"),
-        Some(&"https://memory-engine-backend:7083/api/memory-engine/v1".to_string())
     );
     assert_eq!(
         snapshot.env.get("USER_SERVICE_TASK_RUNNER_BASE_URL"),

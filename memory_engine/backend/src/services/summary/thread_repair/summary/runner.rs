@@ -162,7 +162,7 @@ pub(crate) async fn run_thread_repair_summary_job(
         let summary_build = match build_repair_summary_text(
             config,
             db,
-            Some(tenant_id),
+            tenant_id,
             prep.thread.title.as_deref(),
             prep.selection.selected.as_slice(),
             &prep.settings,

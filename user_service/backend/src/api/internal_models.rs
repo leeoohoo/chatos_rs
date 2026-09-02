@@ -361,6 +361,16 @@ pub async fn get_user_model_runtime_config(
         if !is_supported_provider(model_config.provider.as_str()) {
             return Err(not_found("model config not found"));
         }
+        let providers = state
+            .store
+            .list_user_model_providers(Some(user_id.as_str()))
+            .await
+            .map_err(internal_error)?;
+        if !model_config_has_backing_provider(&model_config, providers.as_slice()) {
+            return Err(bad_request(
+                "model config is not backed by an active model provider",
+            ));
+        }
         if !model_config.enabled {
             return Err(bad_request("model config is disabled"));
         }

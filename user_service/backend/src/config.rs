@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
 use std::time::Duration;
 
 use chatos_service_runtime::{
@@ -27,10 +26,7 @@ pub struct AppConfig {
     pub super_admin_username: String,
     pub super_admin_password: String,
     pub super_admin_display_name: String,
-    pub memory_engine_base_url: Option<String>,
-    pub memory_engine_operator_token: Option<String>,
-    pub memory_engine_mtls_ca_cert_path: Option<PathBuf>,
-    pub memory_engine_mtls_client_identity_path: Option<PathBuf>,
+    pub memory_engine_internal_api_secret: Option<String>,
     pub task_runner_internal_api_secret: Option<String>,
     pub downstream_request_timeout_ms: i64,
     pub harness_provisioning_enabled: bool,
@@ -116,17 +112,8 @@ impl AppConfig {
             super_admin_display_name: require_config_center_text(
                 "USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME",
             )?,
-            memory_engine_base_url: Some(require_config_center_text(
-                "USER_SERVICE_MEMORY_ENGINE_BASE_URL",
-            )?),
-            memory_engine_operator_token: Some(require_config_center_secret(
+            memory_engine_internal_api_secret: Some(require_config_center_secret(
                 "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            )?),
-            memory_engine_mtls_ca_cert_path: Some(required_bootstrap_path(
-                "MEMORY_ENGINE_MTLS_CA_CERT_PATH",
-            )?),
-            memory_engine_mtls_client_identity_path: Some(required_bootstrap_path(
-                "MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH",
             )?),
             task_runner_internal_api_secret: optional_config_center_text(
                 "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
@@ -197,27 +184,12 @@ impl AppConfig {
         )?;
         validate_production_secret(
             "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
-            config.memory_engine_operator_token.as_deref(),
+            config.memory_engine_internal_api_secret.as_deref(),
             &[
                 DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
                 "change_me_user_service_memory_engine_secret",
             ],
         )?;
-        if let Some(base_url) = config.memory_engine_base_url.as_deref() {
-            let parsed = reqwest::Url::parse(base_url)
-                .map_err(|err| format!("USER_SERVICE_MEMORY_ENGINE_BASE_URL is invalid: {err}"))?;
-            if parsed.scheme() != "https" {
-                return Err("USER_SERVICE_MEMORY_ENGINE_BASE_URL must use https".to_string());
-            }
-            if config.memory_engine_mtls_ca_cert_path.is_none()
-                || config.memory_engine_mtls_client_identity_path.is_none()
-            {
-                return Err(
-                    "Memory Engine mTLS CA and client identity paths are required when USER_SERVICE_MEMORY_ENGINE_BASE_URL is configured"
-                        .to_string(),
-                );
-            }
-        }
         validate_production_secret(
             "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
             config.user_service_internal_api_secret.as_deref(),
@@ -255,15 +227,6 @@ impl AppConfig {
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
-}
-
-fn optional_bootstrap_path(key: &str) -> Option<PathBuf> {
-    read_env(key).map(PathBuf::from)
-}
-
-fn required_bootstrap_path(key: &str) -> Result<PathBuf, String> {
-    optional_bootstrap_path(key)
-        .ok_or_else(|| format!("{key} is required as deployment Secret material"))
 }
 
 fn validate_login_throttle_config(config: &AppConfig) -> Result<(), String> {

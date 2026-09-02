@@ -39,7 +39,7 @@ export function PoliciesSectionContainer(props: PoliciesSectionContainerProps) {
   return (
     <PoliciesSection
       policies={catalog.jobPolicies}
-      loading={catalog.modelsLoading || catalog.policiesLoading}
+      loading={catalog.policiesLoading}
       selectedKey={catalog.selectedPolicyViewKey}
       onSelect={catalog.setSelectedPolicyViewKey}
       onReload={() => void loadPoliciesPage()}

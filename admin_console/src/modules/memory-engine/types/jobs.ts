@@ -4,7 +4,6 @@
 export interface EngineJobPolicy {
   job_type: string;
   enabled: boolean;
-  model_profile_id?: string | null;
   summary_prompt?: string | null;
   summary_prompt_zh?: string | null;
   summary_prompt_en?: string | null;
@@ -25,7 +24,6 @@ export interface EngineJobPolicy {
 
 export interface UpsertEngineJobPolicyPayload {
   enabled?: boolean;
-  model_profile_id?: string | null;
   summary_prompt?: string | null;
   summary_prompt_zh?: string | null;
   summary_prompt_en?: string | null;
@@ -92,7 +90,6 @@ export interface JobRunsBundle {
 
 export interface DashboardOverview {
   source_count: number;
-  model_count: number;
   policy_count: number;
   job_stats: Record<string, Record<string, number>>;
 }

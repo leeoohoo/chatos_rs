@@ -48,7 +48,7 @@ impl CloudAgentProfile for MemoryCloudAgentProfile {
             &self.state.config,
             &self.state.pool,
             run.model_config_ref.as_str(),
-            Some(run.owner_user_id.as_str()),
+            run.owner_user_id.as_str(),
         )
         .await?;
         let (_, model_attempt) = cloud_agent_trigger_execution_identity(trigger);

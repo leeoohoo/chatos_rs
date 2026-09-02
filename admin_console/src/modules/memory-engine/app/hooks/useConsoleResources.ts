@@ -9,7 +9,6 @@ import type { DashboardStats } from '../types';
 
 const EMPTY_DASHBOARD_STATS: DashboardStats = {
   sources: 0,
-  models: 0,
   policies: 0,
   running: 0,
   done: 0,
@@ -52,7 +51,6 @@ export function useConsoleResources(enabled = true) {
       }
       setDashboardStats({
         sources: overview.source_count,
-        models: overview.model_count,
         policies: overview.policy_count,
         ...summarizeJobStats(overview.job_stats),
       });

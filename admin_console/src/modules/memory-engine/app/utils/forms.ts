@@ -3,38 +3,16 @@
 
 import type {
   EngineJobPolicy,
-  EngineModelProfile,
   EngineSource,
   UpsertEngineJobPolicyPayload,
-  UpsertEngineModelProfilePayload,
 } from '../../types';
 import type {
-  ModelFormValues,
   PolicyFormValues,
   SourceFormValues,
   SourcePayloadResult,
 } from '../types';
 
 import { numberOrNull, textOrUndefined } from './common';
-
-export function buildModelPayload(
-  values: ModelFormValues,
-): UpsertEngineModelProfilePayload {
-  return {
-    name: values.name.trim(),
-    provider: values.provider.trim(),
-    model: values.model.trim(),
-    base_url: textOrUndefined(values.base_url) ?? null,
-    api_key: textOrUndefined(values.api_key),
-    supports_images: values.supports_images,
-    supports_reasoning: values.supports_reasoning,
-    supports_responses: values.supports_responses,
-    temperature: numberOrNull(values.temperature),
-    thinking_level: textOrUndefined(values.thinking_level) ?? null,
-    is_default: values.is_default,
-    enabled: values.enabled,
-  };
-}
 
 export function buildPolicyPayload(
   values: PolicyFormValues,
@@ -57,7 +35,6 @@ export function buildPolicyPayload(
 
   return {
     enabled: values.enabled,
-    model_profile_id: textOrUndefined(values.model_profile_id) ?? null,
     summary_prompt: summaryPrompt ?? null,
     summary_prompt_zh: summaryPromptZh,
     summary_prompt_en: summaryPromptEn,
@@ -91,29 +68,9 @@ export function buildSourcePayload(values: SourceFormValues): SourcePayloadResul
   };
 }
 
-export function modelFormInitialValues(
-  model?: EngineModelProfile | null,
-): ModelFormValues {
-  return {
-    name: model?.name ?? '',
-    provider: model?.provider ?? '',
-    model: model?.model ?? '',
-    base_url: model?.base_url ?? '',
-    api_key: '',
-    supports_images: model?.supports_images ?? false,
-    supports_reasoning: model?.supports_reasoning ?? false,
-    supports_responses: model?.supports_responses ?? false,
-    temperature: model?.temperature ?? null,
-    thinking_level: model?.thinking_level ?? '',
-    is_default: model?.is_default ?? false,
-    enabled: model?.enabled ?? true,
-  };
-}
-
 export function policyFormInitialValues(policy: EngineJobPolicy): PolicyFormValues {
   return {
     enabled: policy.enabled,
-    model_profile_id: policy.model_profile_id ?? undefined,
     summary_prompt: policy.summary_prompt ?? '',
     summary_prompt_zh: policy.summary_prompt_zh ?? policy.summary_prompt ?? '',
     summary_prompt_en: policy.summary_prompt_en ?? '',

@@ -5,10 +5,9 @@ use mongodb::bson::{Bson, Document};
 
 use crate::db::Db;
 use crate::models::{
-    now_rfc3339, EngineJobPolicy, EngineJobRun, EngineModelProfile,
-    DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE, DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE_EN,
-    DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE, DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE_EN,
-    DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE,
+    now_rfc3339, EngineJobPolicy, EngineJobRun, DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE,
+    DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE,
+    DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE,
     DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE,
     DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE,
     DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE_EN, PROMPT_LANGUAGE_EN, PROMPT_LANGUAGE_ZH,
@@ -20,10 +19,6 @@ pub(crate) const JOB_TYPE_SUMMARY: &str = "summary";
 pub(crate) const JOB_TYPE_ROLLUP: &str = "rollup";
 pub(crate) const JOB_TYPE_SUBJECT_MEMORY: &str = "subject_memory";
 pub(crate) const JOB_TYPE_THREAD_REPAIR: &str = "thread_repair";
-
-pub(crate) fn model_profile_collection(db: &Db) -> mongodb::Collection<EngineModelProfile> {
-    db.collection::<EngineModelProfile>("engine_model_profiles")
-}
 
 pub(crate) fn job_policy_collection(db: &Db) -> mongodb::Collection<EngineJobPolicy> {
     db.collection::<EngineJobPolicy>("engine_job_policies")
@@ -55,7 +50,6 @@ pub fn default_summary_job_policy() -> EngineJobPolicy {
     EngineJobPolicy {
         job_type: JOB_TYPE_SUMMARY.to_string(),
         enabled: true,
-        model_profile_id: None,
         summary_prompt: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
         summary_prompt_zh: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
         summary_prompt_en: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN.to_string()),
@@ -79,7 +73,6 @@ pub fn default_rollup_job_policy() -> EngineJobPolicy {
     EngineJobPolicy {
         job_type: JOB_TYPE_ROLLUP.to_string(),
         enabled: true,
-        model_profile_id: None,
         summary_prompt: Some(DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE.to_string()),
         summary_prompt_zh: Some(DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE.to_string()),
         summary_prompt_en: Some(DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE_EN.to_string()),
@@ -103,7 +96,6 @@ pub fn default_subject_memory_job_policy() -> EngineJobPolicy {
     EngineJobPolicy {
         job_type: JOB_TYPE_SUBJECT_MEMORY.to_string(),
         enabled: true,
-        model_profile_id: None,
         summary_prompt: Some(DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE.to_string()),
         summary_prompt_zh: Some(DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE.to_string()),
         summary_prompt_en: Some(DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE_EN.to_string()),
@@ -127,7 +119,6 @@ pub fn default_thread_repair_job_policy() -> EngineJobPolicy {
     EngineJobPolicy {
         job_type: JOB_TYPE_THREAD_REPAIR.to_string(),
         enabled: true,
-        model_profile_id: None,
         summary_prompt: Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE.to_string()),
         summary_prompt_zh: Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE.to_string()),
         summary_prompt_en: Some(DEFAULT_ENGINE_THREAD_REPAIR_PROMPT_TEMPLATE_EN.to_string()),
@@ -156,7 +147,6 @@ pub(crate) fn default_job_policy(job_type: &str) -> EngineJobPolicy {
         other => EngineJobPolicy {
             job_type: other.to_string(),
             enabled: true,
-            model_profile_id: None,
             summary_prompt: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
             summary_prompt_zh: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE.to_string()),
             summary_prompt_en: Some(DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE_EN.to_string()),
@@ -331,13 +321,11 @@ mod tests {
     fn normalize_thread_repair_preserves_model_limits() {
         let mut policy = default_thread_repair_job_policy();
         policy.job_type = JOB_TYPE_THREAD_REPAIR.to_string();
-        policy.model_profile_id = Some("model-a".to_string());
         policy.token_limit = Some(4096);
         policy.target_summary_tokens = Some(512);
 
         normalize_job_policy(&mut policy);
 
-        assert_eq!(policy.model_profile_id.as_deref(), Some("model-a"));
         assert_eq!(policy.token_limit, Some(4096));
         assert_eq!(policy.target_summary_tokens, None);
     }

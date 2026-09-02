@@ -3,7 +3,6 @@
 
 mod harness;
 mod http;
-mod model_sync;
 
 pub use harness::{
     create_harness_project_repo, ensure_harness_user_public_register_on_login,
@@ -11,4 +10,3 @@ pub use harness::{
     provision_harness_user_public_register_result, HarnessApiAccessResponse,
     HarnessProjectRepoCreateRequest, HarnessProjectRepoResponse,
 };
-pub use model_sync::{sync_model_config_delete, sync_model_config_upsert, sync_model_settings};

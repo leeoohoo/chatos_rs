@@ -86,7 +86,6 @@ fn classify_resource(path: &str) -> ClassifiedResource<'_> {
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
     let resource_type = match segments.as_slice() {
-        ["admin", "model-profiles", ..] => "memory_model_profile",
         ["admin", "sources", ..] | ["sources", ..] => "memory_source",
         ["admin", "job-policies", ..] => "memory_job_policy",
         ["admin", "job-runs", ..] => "memory_job_run",
@@ -203,9 +202,6 @@ mod tests {
             ),
             "replay"
         );
-
-        let model = classify_resource("/api/memory-engine/v1/admin/model-profiles/model-1");
-        assert_eq!(model.resource_type, "memory_model_profile");
 
         let subject_memory =
             classify_resource("/api/memory-engine/v1/subjects/user-1/memories/profile");

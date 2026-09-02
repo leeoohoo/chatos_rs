@@ -80,9 +80,6 @@ pub async fn upsert_job_policy(
     if let Some(value) = req.enabled {
         current.enabled = value;
     }
-    if let Some(value) = req.model_profile_id {
-        current.model_profile_id = value.filter(|v| !v.trim().is_empty());
-    }
     if let Some(value) = req.summary_prompt {
         let normalized = normalize_prompt_update(value);
         current.summary_prompt = normalized.clone();

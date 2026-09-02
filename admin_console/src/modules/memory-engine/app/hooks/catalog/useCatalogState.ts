@@ -4,15 +4,9 @@
 import { Form } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 
-import type {
-  EngineJobPolicy,
-  EngineModelProfile,
-  EngineSource,
-  RotateSourceSecretResponse,
-} from '../../../types';
+import type { EngineJobPolicy, EngineSource, RotateSourceSecretResponse } from '../../../types';
 import type {
   JobTypeKey,
-  ModelFormValues,
   PolicyMap,
   PolicyViewKey,
   SourceFormValues,
@@ -29,25 +23,19 @@ const POLICY_VIEW_KEYS: PolicyViewKey[] = [
 
 export function useCatalogState(): CatalogState & CatalogForms {
   const [sourcesLoading, setSourcesLoading] = useState(false);
-  const [modelsLoading, setModelsLoading] = useState(false);
   const [policiesLoading, setPoliciesLoading] = useState(false);
   const [sourceSubmitting, setSourceSubmitting] = useState(false);
-  const [modelSubmitting, setModelSubmitting] = useState(false);
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
-  const [modelModalOpen, setModelModalOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<EngineSource | null>(null);
-  const [editingModel, setEditingModel] = useState<EngineModelProfile | null>(null);
   const [rotatedSecret, setRotatedSecret] = useState<RotateSourceSecretResponse | null>(null);
   const [savingPolicyJobType, setSavingPolicyJobType] = useState<string | null>(null);
   const [generatingPolicyJobType, setGeneratingPolicyJobType] = useState<string | null>(null);
   const [sources, setSources] = useState<EngineSource[]>([]);
-  const [modelProfiles, setModelProfiles] = useState<EngineModelProfile[]>([]);
   const [jobPolicies, setJobPolicies] = useState<EngineJobPolicy[]>([]);
   const [selectedPolicyViewKey, setSelectedPolicyViewKey] =
     useState<PolicyViewKey>('summary');
 
   const [sourceForm] = Form.useForm<SourceFormValues>();
-  const [modelForm] = Form.useForm<ModelFormValues>();
 
   const policyMap = useMemo(
     () =>
@@ -80,45 +68,28 @@ export function useCatalogState(): CatalogState & CatalogForms {
     }
   }, [policyMap, selectedPolicyViewKey]);
 
-  const modelOptions = modelProfiles.map((profile) => ({
-    label: `${profile.name} (${profile.model})`,
-    value: profile.id,
-  }));
-
   return {
     sourcesLoading,
-    modelsLoading,
     policiesLoading,
     sourceSubmitting,
-    modelSubmitting,
     sourceModalOpen,
-    modelModalOpen,
     editingSource,
-    editingModel,
     rotatedSecret,
     savingPolicyJobType,
     generatingPolicyJobType,
     sources,
-    modelProfiles,
     jobPolicies,
     selectedPolicyViewKey,
     sourceForm,
-    modelForm,
     policyMap,
-    modelOptions,
     setSourcesLoading,
-    setModelsLoading,
     setPoliciesLoading,
     setSourceSubmitting,
-    setModelSubmitting,
     setSourceModalOpen,
-    setModelModalOpen,
     setEditingSource,
-    setEditingModel,
     setSavingPolicyJobType,
     setGeneratingPolicyJobType,
     setSources,
-    setModelProfiles,
     setJobPolicies,
     setSelectedPolicyViewKey,
     setRotatedSecret,

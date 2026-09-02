@@ -11,7 +11,7 @@ use crate::services::ai_pipeline::SummaryBuildResult;
 pub(crate) async fn build_subject_memory_from_summaries(
     config: &AppConfig,
     db: &Db,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
     prompt_title: &str,
     items: &[String],
     token_limit: i64,
@@ -48,7 +48,7 @@ pub(crate) async fn build_subject_memory_from_summaries(
 pub(crate) async fn build_subject_memory_rollup(
     config: &AppConfig,
     db: &Db,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
     prompt_title: &str,
     items: &[String],
     token_limit: i64,

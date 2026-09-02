@@ -38,7 +38,6 @@ describe('useConsoleResources', () => {
     const getDashboardOverview = vi.mocked(api.getDashboardOverview);
     getDashboardOverview.mockResolvedValue({
       source_count: 5,
-      model_count: 3,
       policy_count: 4,
       job_stats: {
         summary: { done: 2, running: 1 },
@@ -56,7 +55,6 @@ describe('useConsoleResources', () => {
     expect(getDashboardOverview).toHaveBeenCalledTimes(1);
     expect(result.current.dashboardStats).toEqual({
       sources: 5,
-      models: 3,
       policies: 4,
       running: 1,
       done: 2,
@@ -73,13 +71,11 @@ describe('useConsoleResources', () => {
     getDashboardOverview
       .mockResolvedValueOnce({
         source_count: 1,
-        model_count: 1,
         policy_count: 1,
         job_stats: {},
       })
       .mockResolvedValueOnce({
         source_count: 2,
-        model_count: 4,
         policy_count: 1,
         job_stats: {
           summary: { running: 3, done: 5 },
@@ -101,7 +97,6 @@ describe('useConsoleResources', () => {
     expect(result.current.initialized).toBe(true);
     expect(result.current.dashboardStats).toEqual({
       sources: 2,
-      models: 4,
       policies: 1,
       running: 3,
       done: 5,
@@ -114,13 +109,11 @@ describe('useConsoleResources', () => {
 
     let resolveInitial: ((value: {
       source_count: number;
-      model_count: number;
       policy_count: number;
       job_stats: Record<string, Record<string, number>>;
     }) => void) | null = null;
     let resolveRefresh: ((value: {
       source_count: number;
-      model_count: number;
       policy_count: number;
       job_stats: Record<string, Record<string, number>>;
     }) => void) | null = null;
@@ -149,7 +142,6 @@ describe('useConsoleResources', () => {
       const refreshPromise = result.current.loadDashboardOverview();
       resolveRefresh?.({
         source_count: 9,
-        model_count: 6,
         policy_count: 5,
         job_stats: {
           summary: { running: 2, done: 4 },
@@ -161,7 +153,6 @@ describe('useConsoleResources', () => {
     await waitFor(() => {
       expect(result.current.dashboardStats).toEqual({
         sources: 9,
-        models: 6,
         policies: 5,
         running: 2,
         done: 4,
@@ -172,7 +163,6 @@ describe('useConsoleResources', () => {
     await act(async () => {
       resolveInitial?.({
         source_count: 1,
-        model_count: 1,
         policy_count: 1,
         job_stats: {
           summary: { running: 1 },
@@ -183,7 +173,6 @@ describe('useConsoleResources', () => {
 
     expect(result.current.dashboardStats).toEqual({
       sources: 9,
-      models: 6,
       policies: 5,
       running: 2,
       done: 4,

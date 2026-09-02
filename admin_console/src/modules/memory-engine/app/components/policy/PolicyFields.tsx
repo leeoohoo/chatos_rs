@@ -28,7 +28,7 @@ export function PolicyFields({ policy, meta }: PolicyFieldsProps) {
               last-known-good，离线时继续使用最近一次有效配置。
             </Text>
             <Text>
-              模型供应商、模型名、Base URL 和 API Key 仍在“模型配置”中维护，本页和配置中心都不重复保存模型信息。
+              模型供应商、模型目录、凭据和记忆总结默认模型均由 User Service 统一管理；Memory Engine 会按当前任务的用户身份在运行时读取，不再保存或同步第二份模型配置。
             </Text>
             <Button href={configCenterUrl} target="_blank" rel="noreferrer" size="small">
               打开配置中心

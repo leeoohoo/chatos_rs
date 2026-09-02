@@ -121,7 +121,9 @@ impl AiClient {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                AiGenerateTextError::Fatal("missing MEMORY_ENGINE_OPENAI_API_KEY".to_string())
+                AiGenerateTextError::Fatal(
+                    "User Service runtime model is missing api_key".to_string(),
+                )
             })?;
         let started_at = Instant::now();
         let requested_max_tokens = max_tokens.map(|value| value.clamp(128, 4000));

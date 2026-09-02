@@ -8,16 +8,14 @@ import type { CatalogState } from './types';
 
 type CatalogLoadingControls = Pick<
   CatalogState,
-  'setSources' | 'setModelProfiles' | 'setJobPolicies'
+  'setSources' | 'setJobPolicies'
 > & {
   setSourcesLoading: (value: boolean) => void;
-  setModelsLoading: (value: boolean) => void;
   setPoliciesLoading: (value: boolean) => void;
 };
 
 export function useCatalogLoaders(controls: CatalogLoadingControls) {
   const sourcesRequestIdRef = useRef(0);
-  const modelsRequestIdRef = useRef(0);
   const policiesRequestIdRef = useRef(0);
 
   const loadSources = async () => {
@@ -34,24 +32,6 @@ export function useCatalogLoaders(controls: CatalogLoadingControls) {
     } finally {
       if (sourcesRequestIdRef.current === requestId) {
         controls.setSourcesLoading(false);
-      }
-    }
-  };
-
-  const loadModels = async () => {
-    const requestId = modelsRequestIdRef.current + 1;
-    modelsRequestIdRef.current = requestId;
-    controls.setModelsLoading(true);
-    try {
-      const models = await api.listModelProfiles();
-      if (modelsRequestIdRef.current !== requestId) {
-        return [];
-      }
-      controls.setModelProfiles(models);
-      return models;
-    } finally {
-      if (modelsRequestIdRef.current === requestId) {
-        controls.setModelsLoading(false);
       }
     }
   };
@@ -76,7 +56,6 @@ export function useCatalogLoaders(controls: CatalogLoadingControls) {
 
   return {
     loadSources,
-    loadModels,
     loadPolicies,
   };
 }

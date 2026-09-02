@@ -4,7 +4,6 @@
 import type {
   DashboardOverview,
   EngineJobPolicy,
-  EngineModelProfile,
   EngineSource,
   GenerateJobPolicyPromptPayload,
   GenerateJobPolicyPromptResult,
@@ -12,33 +11,10 @@ import type {
   JobRunQuery,
   RotateSourceSecretResponse,
   UpsertEngineJobPolicyPayload,
-  UpsertEngineModelProfilePayload,
   UpsertEngineSourcePayload,
 } from '../types';
 
 import { client } from './client';
-
-function normalizeModelProfile(data: Partial<EngineModelProfile>): EngineModelProfile {
-  return {
-    id: data.id ?? '',
-    owner_user_id: data.owner_user_id ?? null,
-    owner_username: data.owner_username ?? null,
-    name: data.name ?? '',
-    provider: data.provider ?? '',
-    model: data.model ?? '',
-    base_url: data.base_url ?? null,
-    api_key: data.api_key ?? null,
-    supports_images: data.supports_images ?? false,
-    supports_reasoning: data.supports_reasoning ?? false,
-    supports_responses: data.supports_responses ?? false,
-    temperature: data.temperature ?? null,
-    thinking_level: data.thinking_level ?? null,
-    is_default: data.is_default ?? false,
-    enabled: data.enabled ?? true,
-    created_at: data.created_at ?? '',
-    updated_at: data.updated_at ?? '',
-  };
-}
 
 function normalizeSource(data: Partial<EngineSource>): EngineSource {
   return {
@@ -62,7 +38,6 @@ function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
   return {
     job_type: data.job_type ?? '',
     enabled: data.enabled ?? true,
-    model_profile_id: data.model_profile_id ?? null,
     summary_prompt: data.summary_prompt ?? null,
     summary_prompt_zh: data.summary_prompt_zh ?? data.summary_prompt ?? null,
     summary_prompt_en: data.summary_prompt_en ?? null,
@@ -84,33 +59,6 @@ function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
 }
 
 export const adminApi = {
-  async listModelProfiles(): Promise<EngineModelProfile[]> {
-    const { data } = await client.get('/admin/model-profiles');
-    return (data.items ?? []).map((item: Partial<EngineModelProfile>) =>
-      normalizeModelProfile(item),
-    );
-  },
-
-  async createModelProfile(payload: UpsertEngineModelProfilePayload): Promise<EngineModelProfile> {
-    const { data } = await client.post('/admin/model-profiles', payload);
-    return normalizeModelProfile(data);
-  },
-
-  async updateModelProfile(
-    modelId: string,
-    payload: UpsertEngineModelProfilePayload,
-  ): Promise<EngineModelProfile> {
-    const { data } = await client.put(
-      `/admin/model-profiles/${encodeURIComponent(modelId)}`,
-      payload,
-    );
-    return normalizeModelProfile(data);
-  },
-
-  async deleteModelProfile(modelId: string): Promise<void> {
-    await client.delete(`/admin/model-profiles/${encodeURIComponent(modelId)}`);
-  },
-
   async listSources(): Promise<EngineSource[]> {
     const { data } = await client.get('/admin/sources', {
       params: { limit: 500 },
@@ -177,7 +125,6 @@ export const adminApi = {
     const { data } = await client.get('/admin/dashboard/overview');
     return {
       source_count: Number(data.source_count ?? 0),
-      model_count: Number(data.model_count ?? 0),
       policy_count: Number(data.policy_count ?? 0),
       job_stats: data.job_stats ?? {},
     };
