@@ -176,7 +176,6 @@ struct McpManagementBinding {
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
     contact_agent_id: Option<String>,
-    default_remote_connection_id: Option<String>,
 }
 
 async fn mcp_management_entrypoint(
@@ -319,10 +318,6 @@ fn mcp_management_binding_from_headers(
         source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
         source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
         contact_agent_id: header_text(headers, "x-mcp-management-contact-agent-id"),
-        default_remote_connection_id: header_text(
-            headers,
-            "x-mcp-management-default-remote-connection-id",
-        ),
     })
 }
 

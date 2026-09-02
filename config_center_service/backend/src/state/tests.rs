@@ -1979,7 +1979,7 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
 
     let changed_keys = ensure_user_service_runtime_values(&mut values, &defaults);
 
-    assert_eq!(defaults.len(), 26);
+    assert_eq!(defaults.len(), USER_SERVICE_RUNTIME_CONFIG_KEYS.len());
     for key in defaults.keys() {
         assert!(
             values.contains_key(key),

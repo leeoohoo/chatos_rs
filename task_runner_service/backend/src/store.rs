@@ -323,6 +323,7 @@ pub(crate) struct UserServiceModelSource {
 
 #[derive(Clone)]
 pub(crate) enum AppStore {
+    #[cfg_attr(not(test), allow(dead_code))]
     InMemory(InMemoryStore),
     Mongo(MongoStore),
 }

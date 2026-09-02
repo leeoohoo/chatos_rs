@@ -823,37 +823,7 @@ pub(super) fn user_service_runtime_default_values(
             definition.scope == "service"
                 && definition.service_name.as_deref() == Some("user-service")
         })
-        .filter(|definition| {
-            [
-                USER_SERVICE_PORT_CONFIG_KEY,
-                USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-                USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY,
-                USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
-                USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
-                USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
-                USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY,
-                USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS_CONFIG_KEY,
-                USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS_CONFIG_KEY,
-                USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY,
-                USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY,
-                USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
-                USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
-                USER_SERVICE_HARNESS_SYNTHETIC_EMAIL_DOMAIN_CONFIG_KEY,
-                USER_SERVICE_HARNESS_SPACE_PREFIX_CONFIG_KEY,
-                USER_SERVICE_HARNESS_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX_CONFIG_KEY,
-            ]
-            .contains(&definition.key.as_str())
-        })
+        .filter(|definition| USER_SERVICE_RUNTIME_CONFIG_KEYS.contains(&definition.key.as_str()))
         .map(|definition| (definition.key.clone(), definition.default_value.clone()))
         .collect()
 }

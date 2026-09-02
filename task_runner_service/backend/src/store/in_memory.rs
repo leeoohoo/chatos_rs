@@ -10,6 +10,7 @@ mod tasks;
 mod users;
 
 impl InMemoryStore {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(run_event_sender: broadcast::Sender<TaskRunEventRecord>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(StoreData::default())),

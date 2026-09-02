@@ -172,6 +172,5 @@ fn binding() -> McpManagementBinding {
         source_session_id: Some("conversation-1".to_string()),
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),
-        default_remote_connection_id: None,
     }
 }

@@ -8,11 +8,13 @@ use std::time::Instant;
 use chatos_agent::ChatosAgentProfile;
 use chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS;
 #[cfg(test)]
+use chatos_ai_runtime::SaveRecordInput;
+#[cfg(test)]
 use chatos_ai_runtime::{
     AiResponse, RuntimeFinalResponseAction, RuntimeFinalResponseContext, RuntimeIterationContext,
     RuntimeLifecycleHook,
 };
-use chatos_ai_runtime::{RuntimeCallbacks, RuntimeRecordOptions, SaveRecordInput};
+use chatos_ai_runtime::{RuntimeCallbacks, RuntimeRecordOptions};
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -69,6 +71,7 @@ pub(super) fn merge_user_record_metadata(
     }
 }
 
+#[cfg(test)]
 pub(super) fn build_chatos_user_record(
     conversation_id: &str,
     turn_id: Option<String>,

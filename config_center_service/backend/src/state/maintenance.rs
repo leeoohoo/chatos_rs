@@ -884,7 +884,7 @@ impl AppState {
     pub(super) async fn migrate_user_service_runtime_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = user_service_runtime_default_values(&definitions);
-        if defaults.len() != 27 {
+        if defaults.len() != USER_SERVICE_RUNTIME_CONFIG_KEYS.len() {
             return Err(
                 "user service runtime configuration definitions are incomplete".to_string(),
             );
