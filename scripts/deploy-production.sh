@@ -88,7 +88,7 @@ fi
 
 release_tag="$(date +%Y%m%d-%H%M%S)-${release_commit:0:8}"
 remote_deploy_services_arg="${DEPLOY_SERVICES_CSV:-__CHATOS_ALL_SERVICES__}"
-echo "[INFO] deploying $release_commit as $release_tag to $DEPLOY_SERVER"
+echo "[INFO] starting background deployment of $release_commit as $release_tag on $DEPLOY_SERVER"
 
 if ! ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
   "$release_commit" \
@@ -99,6 +99,8 @@ if ! ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
   "$remote_deploy_services_arg" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
+run_deployment() {
+set -euo pipefail
 release_commit="$1"
 release_tag="$2"
 deploy_branch="$3"
@@ -117,6 +119,19 @@ nginx_target="/etc/nginx/sites-available/chatos.conf"
 nginx_backup=""
 switched=0
 status_file="$deploy_root/deploy-status"
+pid_file="$deploy_root/deploy.pid"
+job_pid="${CHATOS_DEPLOY_JOB_PID:-}"
+log_file="$deploy_root/deploy-logs/$release_tag.log"
+
+clear_deploy_pid() {
+  local recorded_pid=""
+  if [[ -f "$pid_file" ]]; then
+    read -r recorded_pid < "$pid_file" || true
+  fi
+  if [[ -n "$job_pid" && "$recorded_pid" == "$job_pid" ]]; then
+    rm -f -- "$pid_file"
+  fi
+}
 
 write_deploy_status() {
   local status="$1"
@@ -131,6 +146,8 @@ write_deploy_status() {
     printf 'release=%s\n' "$release_tag"
     printf 'commit=%s\n' "$release_commit"
     printf 'services=%s\n' "${deploy_services_csv:-all}"
+    printf 'pid=%s\n' "${job_pid:-unknown}"
+    printf 'log=%s\n' "$log_file"
     printf 'updated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$temporary_status"
   mv -f "$temporary_status" "$status_file"
@@ -324,8 +341,14 @@ rollback() {
     install -m 0644 "$nginx_backup" "$nginx_target"
     nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
   fi
+  clear_deploy_pid
   exit "$exit_code"
 }
+cancel_deployment() {
+  echo "[WARN] deployment was superseded by a newer deployment request" >&2
+  exit 143
+}
+trap cancel_deployment TERM INT
 trap rollback EXIT
 
 write_deploy_status running prepare "Validating server and preparing the release"
@@ -579,12 +602,118 @@ if [[ ${#deploy_services[@]} -gt 0 ]]; then
 fi
 echo "[OK] active release: $(readlink -f "$current_link")"
 write_deploy_status complete healthy "Production release is healthy"
+clear_deploy_pid
 trap - EXIT
+}
+
+release_commit="$1"
+release_tag="$2"
+deploy_root="$5"
+deploy_services_arg="$6"
+status_file="$deploy_root/deploy-status"
+pid_file="$deploy_root/deploy.pid"
+log_dir="$deploy_root/deploy-logs"
+log_file="$log_dir/$release_tag.log"
+active_pid=""
+
+mkdir -p "$deploy_root" "$log_dir"
+for command_name in flock nohup setsid; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "[ERROR] server is missing command: $command_name" >&2
+    exit 1
+  fi
+done
+exec 9> "$deploy_root/deploy.lock"
+if ! flock -n 9; then
+  if [[ -f "$pid_file" ]]; then
+    read -r active_pid < "$pid_file" || true
+  fi
+  if [[ ! "$active_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$active_pid" 2>/dev/null; then
+    echo "[ERROR] deployment lock is held but the active deployment PID is unavailable" >&2
+    exit 1
+  fi
+  echo "[INFO] stopping previous deployment with PID $active_pid"
+  kill -TERM -- "-$active_pid" 2>/dev/null || kill -TERM "$active_pid" 2>/dev/null || true
+  lock_acquired=0
+  for _ in {1..120}; do
+    if flock -n 9; then
+      lock_acquired=1
+      break
+    fi
+    sleep 1
+  done
+  if (( lock_acquired == 0 )); then
+    echo "[WARN] previous deployment did not stop cleanly; forcing its process group to exit" >&2
+    kill -KILL -- "-$active_pid" 2>/dev/null || kill -KILL "$active_pid" 2>/dev/null || true
+    for _ in {1..10}; do
+      if flock -n 9; then
+        lock_acquired=1
+        break
+      fi
+      sleep 1
+    done
+  fi
+  if (( lock_acquired == 0 )); then
+    echo "[ERROR] previous deployment did not release the deployment lock" >&2
+    exit 1
+  fi
+  echo "[OK] previous deployment stopped; starting the new deployment"
+fi
+rm -f -- "$pid_file"
+
+: > "$log_file"
+ln -sfn "deploy-logs/$release_tag.log" "$deploy_root/deploy.log.next"
+mv -Tf "$deploy_root/deploy.log.next" "$deploy_root/deploy.log"
+temporary_status="$deploy_root/.deploy-status.tmp"
+{
+  printf 'status=queued\n'
+  printf 'stage=queued\n'
+  printf 'message=Background deployment queued\n'
+  printf 'release=%s\n' "$release_tag"
+  printf 'commit=%s\n' "$release_commit"
+  if [[ "$deploy_services_arg" == "__CHATOS_ALL_SERVICES__" ]]; then
+    printf 'services=all\n'
+  else
+    printf 'services=%s\n' "$deploy_services_arg"
+  fi
+  printf 'pid=pending\n'
+  printf 'log=%s\n' "$log_file"
+  printf 'updated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "$temporary_status"
+mv -f "$temporary_status" "$status_file"
+
+export -f run_deployment
+nohup setsid bash -c '
+  trap "" HUP
+  CHATOS_DEPLOY_JOB_PID="$BASHPID"
+  run_deployment "$@"
+' bash "$@" 9>&9 </dev/null >> "$log_file" 2>&1 &
+deployment_pid=$!
+printf '%s\n' "$deployment_pid" > "$pid_file"
+disown "$deployment_pid" 2>/dev/null || true
+exec 9>&-
+
+sleep 1
+if ! kill -0 "$deployment_pid" 2>/dev/null; then
+  deployment_status="$(awk -F= '$1 == "status" { print $2; exit }' "$status_file" 2>/dev/null || true)"
+  if [[ "$deployment_status" != "complete" ]]; then
+    echo "[ERROR] background deployment exited during startup" >&2
+    tail -n 40 "$log_file" >&2 || true
+    exit 1
+  fi
+fi
+
+echo "[OK] background deployment started"
+echo "release=$release_tag"
+echo "pid=$deployment_pid"
+echo "log=$log_file"
 REMOTE_SCRIPT
 then
-  echo "[ERROR] remote deployment failed before completion: $release_tag" >&2
+  echo "[ERROR] failed to start remote background deployment: $release_tag" >&2
   echo "[INFO] inspect the server state with: ./scripts/deploy-online.sh status" >&2
   exit 1
 fi
 
-echo "[OK] deployed $release_tag"
+echo "[OK] deployment is running in the server background: $release_tag"
+echo "[INFO] follow progress with: ./scripts/deploy-online.sh logs"
+echo "[INFO] inspect status with: ./scripts/deploy-online.sh status"

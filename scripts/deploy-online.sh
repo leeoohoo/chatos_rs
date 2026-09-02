@@ -58,7 +58,10 @@ Usage:
   scripts/deploy-online.sh client mac
   scripts/deploy-online.sh client windows
   scripts/deploy-online.sh status
-  scripts/deploy-online.sh logs [SERVICE]
+  scripts/deploy-online.sh logs                 # follow deployment progress
+  scripts/deploy-online.sh logs deploy          # follow deployment progress
+  scripts/deploy-online.sh logs SERVICE         # follow one service's container logs
+  scripts/deploy-online.sh logs services        # follow all container logs
   scripts/deploy-online.sh list
 
 Environment:
@@ -94,6 +97,16 @@ if [[ -f "$deploy_root/deploy-status" ]]; then
 else
   echo "status=unknown"
 fi
+if [[ -f "$deploy_root/deploy.pid" ]]; then
+  read -r deploy_pid < "$deploy_root/deploy.pid" || true
+  if [[ "$deploy_pid" =~ ^[0-9]+$ ]] && kill -0 "$deploy_pid" 2>/dev/null; then
+    echo "process=running"
+  else
+    echo "process=not-running"
+  fi
+else
+  echo "process=not-running"
+fi
 echo
 echo "== Active release =="
 readlink -f "$deploy_root/current" || true
@@ -109,12 +122,36 @@ REMOTE
 }
 
 show_logs() {
-  local service="${1:-}"
-  if [[ -n "$service" ]]; then
-    ssh -t "$DEPLOY_SERVER" "cd '$REMOTE_DEPLOY_ROOT/current' && ./docker/deploy.sh logs '$service'"
-  else
-    ssh -t "$DEPLOY_SERVER" "cd '$REMOTE_DEPLOY_ROOT/current' && ./docker/deploy.sh logs"
-  fi
+  local target="${1:-deploy}"
+  case "$target" in
+    deploy)
+      ssh -tt "$DEPLOY_SERVER" bash -s -- "$REMOTE_DEPLOY_ROOT" <<'REMOTE'
+set -euo pipefail
+deploy_root="$1"
+status_file="$deploy_root/deploy-status"
+log_file=""
+if [[ -f "$status_file" ]]; then
+  log_file="$(awk -F= '$1 == "log" { sub(/^[^=]*=/, ""); print; exit }' "$status_file")"
+fi
+if [[ -z "$log_file" && -e "$deploy_root/deploy.log" ]]; then
+  log_file="$deploy_root/deploy.log"
+fi
+if [[ -z "$log_file" || ! -f "$log_file" ]]; then
+  echo "[ERROR] no deployment log is available" >&2
+  exit 1
+fi
+echo "[INFO] following deployment log: $log_file"
+echo "[INFO] press Ctrl-C to stop following; the server deployment will continue"
+exec tail -n 200 -F "$log_file"
+REMOTE
+      ;;
+    services)
+      ssh -t "$DEPLOY_SERVER" "cd '$REMOTE_DEPLOY_ROOT/current' && ./docker/deploy.sh logs"
+      ;;
+    *)
+      ssh -t "$DEPLOY_SERVER" "cd '$REMOTE_DEPLOY_ROOT/current' && ./docker/deploy.sh logs '$target'"
+      ;;
+  esac
 }
 
 ensure_plugin_admin_password() {
@@ -364,7 +401,7 @@ ChatOS online deployment
  9) Deploy Document Tools
  10) Deploy Diagram Studio
  11) Show deployment status
- 12) Follow service logs
+ 12) Follow deployment logs
 EOF
   read -r -p "Select: " selection
   case "$selection" in
