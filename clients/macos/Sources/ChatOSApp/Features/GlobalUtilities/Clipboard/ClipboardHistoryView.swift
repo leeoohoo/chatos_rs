@@ -86,8 +86,10 @@ struct ClipboardHistoryView: View {
                             .id(entry.id)
                             .contentShape(Rectangle())
                             .onAppear { viewModel.loadThumbnailIfNeeded(for: entry) }
-                            .onTapGesture { viewModel.select(index) }
-                            .onTapGesture(count: 2) { viewModel.restore(entry) }
+                            .onTapGesture {
+                                viewModel.select(index)
+                                viewModel.restore(entry)
+                            }
                         }
                     }
                     .padding(8)
@@ -102,7 +104,15 @@ struct ClipboardHistoryView: View {
 
     private var footer: some View {
         HStack(spacing: 16) {
-            Text(isEnglish ? "Stored only on this Mac" : "仅保存在这台 Mac 上")
+            if let noticeMessage = viewModel.noticeMessage {
+                Text(isEnglish
+                    ? "Copied. Grant Accessibility access, then choose it again to paste automatically."
+                    : noticeMessage)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+            } else {
+                Text(isEnglish ? "Stored only on this Mac" : "仅保存在这台 Mac 上")
+            }
             Spacer()
             if viewModel.filteredEntries.isEmpty {
                 hint("esc", isEnglish ? "Close" : "关闭")
@@ -111,7 +121,7 @@ struct ClipboardHistoryView: View {
                     .onTapGesture(perform: viewModel.togglePinSelected)
                 hint("⌫", isEnglish ? "Delete" : "删除")
                     .onTapGesture(perform: viewModel.deleteSelected)
-                hint("↩", isEnglish ? "Restore" : "恢复")
+                hint("↩", isEnglish ? "Paste" : "粘贴")
             }
         }
         .font(.system(size: 11, weight: .medium))

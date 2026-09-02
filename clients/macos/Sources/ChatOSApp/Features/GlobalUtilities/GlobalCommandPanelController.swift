@@ -5,6 +5,7 @@ import SwiftUI
 class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
     var onPanelDismiss: (() -> Void)?
     private var previousApplication: NSRunningApplication?
+    private weak var previousKeyWindow: NSWindow?
     private let panel: GlobalCommandPanel
 
     init(size: NSSize) {
@@ -21,8 +22,11 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
-        panel.hidesOnDeactivate = true
-        panel.level = .floating
+        // Global utility panels are intentionally shown while another app remains
+        // active. Hiding on deactivation makes them visible only over Finder/the
+        // desktop, and the floating level is not reliable over another process.
+        panel.hidesOnDeactivate = false
+        panel.level = .popUpMenu
         panel.animationBehavior = .utilityWindow
         panel.collectionBehavior = [
             .canJoinAllSpaces,
@@ -69,27 +73,50 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
         if NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             != Bundle.main.bundleIdentifier {
             previousApplication = NSWorkspace.shared.frontmostApplication
+            previousKeyWindow = nil
+        } else {
+            previousApplication = nil
+            previousKeyWindow = NSApp.keyWindow === panel ? nil : NSApp.keyWindow
         }
         positionOnMouseScreen()
+        // A non-activating panel can be ordered above another application but it
+        // cannot reliably accept keyboard input there. Activate ChatOS for the
+        // lifetime of the command panel, then restore the original application
+        // when the user submits or dismisses it.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func closeAndRestorePreviousApplication() {
+    func closeAndRestorePreviousApplication(afterRestoring completion: (() -> Void)? = nil) {
+        let application = previousApplication
+        let keyWindow = previousKeyWindow
         panel.orderOut(nil)
-        previousApplication?.activate()
         previousApplication = nil
+        previousKeyWindow = nil
+
+        if let application, !application.isTerminated, !application.isActive {
+            application.activate()
+        } else if application == nil {
+            keyWindow?.makeKey()
+        }
+
+        guard let completion else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            completion()
+        }
     }
 
     func closeWithoutRestoringPreviousApplication() {
         panel.orderOut(nil)
         previousApplication = nil
+        previousKeyWindow = nil
     }
 
     func windowDidResignKey(_ notification: Notification) {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
         previousApplication = nil
+        previousKeyWindow = nil
         onPanelDismiss?()
     }
 

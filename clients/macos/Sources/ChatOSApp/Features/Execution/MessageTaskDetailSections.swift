@@ -10,11 +10,13 @@ struct MessageTaskDetailSections: View {
         modelOutputSection
 
         if let summary = distinctResultSummary {
-            TaskDetailTextCard(
-                title: "执行结果摘要",
-                text: summary,
-                allowsTextSelection: allowsTextSelection
-            )
+            TaskDetailDisclosureSection(title: "执行结果摘要") {
+                TaskDetailMarkdownText(
+                    text: summary,
+                    allowsTextSelection: allowsTextSelection
+                )
+            }
+            .id("result-summary-\(task.id)")
         }
 
         TaskDetailDisclosureSection(title: "任务内容", defaultExpanded: true) {

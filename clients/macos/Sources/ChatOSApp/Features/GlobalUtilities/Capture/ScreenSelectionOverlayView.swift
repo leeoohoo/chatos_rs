@@ -5,15 +5,19 @@ final class ScreenSelectionOverlayView: NSView {
     var onSelectionBegan: ((ScreenSelectionOverlayView, NSPoint) -> Void)?
     var onSelectionChanged: ((ScreenSelectionOverlayView, NSPoint) -> Void)?
     var onSelectionCompleted: ((ScreenSelectionOverlayView, NSPoint) -> Void)?
+    var onPointerMoved: ((ScreenSelectionOverlayView, NSPoint) -> Void)?
+    var onPointerExited: ((ScreenSelectionOverlayView) -> Void)?
 
     private(set) var selectionRect: NSRect?
+    private(set) var hoveredWindowRect: NSRect?
     private(set) var isActiveSelection = false
     private let instructionText: String
+    private var trackingArea: NSTrackingArea?
 
     init(isEnglish: Bool) {
         instructionText = isEnglish
-            ? "Drag to select a screenshot area  ·  Esc to cancel"
-            : "拖动选择截图区域  ·  Esc 取消"
+            ? "Hover and click a window, or drag to select an area  ·  Esc to cancel"
+            : "悬停并点击窗口，或拖动选择区域  ·  Esc 取消"
         super.init(frame: .zero)
     }
 
@@ -27,6 +31,21 @@ final class ScreenSelectionOverlayView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.acceptsMouseMovedEvents = true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -49,36 +68,58 @@ final class ScreenSelectionOverlayView: NSView {
         onSelectionCompleted?(self, clampedPoint(convert(event.locationInWindow, from: nil)))
     }
 
+    override func mouseMoved(with event: NSEvent) {
+        guard !isActiveSelection else { return }
+        onPointerMoved?(self, clampedPoint(convert(event.locationInWindow, from: nil)))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard !isActiveSelection else { return }
+        onPointerExited?(self)
+    }
+
     func updateSelection(_ rect: NSRect?, active: Bool) {
         selectionRect = rect
         isActiveSelection = active
+        if active {
+            hoveredWindowRect = nil
+        }
+        needsDisplay = true
+    }
+
+    func updateHoveredWindow(_ rect: NSRect?) {
+        guard !isActiveSelection else { return }
+        hoveredWindowRect = rect
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
+        let activeRect = isActiveSelection ? selectionRect : hoveredWindowRect
         let mask = NSBezierPath(rect: bounds)
-        if isActiveSelection, let selectionRect, !selectionRect.isEmpty {
-            mask.appendRect(selectionRect)
+        if let activeRect, !activeRect.isEmpty {
+            mask.appendRect(activeRect)
             mask.windingRule = .evenOdd
         }
         NSColor.black.withAlphaComponent(0.42).setFill()
         mask.fill()
 
-        guard isActiveSelection,
-              let selectionRect,
-              selectionRect.width > 0,
-              selectionRect.height > 0 else {
+        guard let activeRect,
+              activeRect.width > 0,
+              activeRect.height > 0 else {
             drawInstruction()
             return
         }
 
         NSColor.controlAccentColor.setStroke()
-        let border = NSBezierPath(rect: selectionRect.insetBy(dx: 0.5, dy: 0.5))
+        let border = NSBezierPath(rect: activeRect.insetBy(dx: 0.5, dy: 0.5))
         border.lineWidth = 2
+        if !isActiveSelection {
+            border.setLineDash([6, 4], count: 2, phase: 0)
+        }
         border.stroke()
-        drawDimensions(for: selectionRect)
+        drawDimensions(for: activeRect)
     }
 
     private func drawInstruction() {

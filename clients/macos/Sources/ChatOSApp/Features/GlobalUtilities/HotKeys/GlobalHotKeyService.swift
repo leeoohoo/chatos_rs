@@ -9,6 +9,8 @@ private extension Notification.Name {
     )
 }
 
+private let chatOSGlobalHotKeySignature: OSType = 0x4348_4F53
+
 private let chatOSGlobalHotKeyHandler: EventHandlerUPP = { _, eventRef, _ in
     guard let eventRef else { return OSStatus(eventNotHandledErr) }
     var hotKeyID = EventHotKeyID()
@@ -22,12 +24,19 @@ private let chatOSGlobalHotKeyHandler: EventHandlerUPP = { _, eventRef, _ in
         &hotKeyID
     )
     guard status == noErr else { return status }
+    guard hotKeyID.signature == chatOSGlobalHotKeySignature else {
+        return OSStatus(eventNotHandledErr)
+    }
     let identifier = hotKeyID.id
+    let eventKind = GetEventKind(eventRef)
     DispatchQueue.main.async {
         NotificationCenter.default.post(
             name: .chatOSGlobalHotKeyPressed,
             object: nil,
-            userInfo: ["identifier": identifier]
+            userInfo: [
+                "identifier": identifier,
+                "isPressed": eventKind == UInt32(kEventHotKeyPressed),
+            ]
         )
     }
     return noErr
@@ -43,8 +52,7 @@ final class GlobalHotKeyService: ObservableObject {
     private var handlerRef: EventHandlerRef?
     private var registrations: [GlobalUtilityAction: EventHotKeyRef] = [:]
     private var observer: AnyCancellable?
-    private var lastInvocation: (action: GlobalUtilityAction, time: ContinuousClock.Instant)?
-    private let clock = ContinuousClock()
+    private var pressGate = GlobalHotKeyPressGate()
 
     init() {
         installHandler()
@@ -52,8 +60,9 @@ final class GlobalHotKeyService: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let identifier = notification.userInfo?["identifier"] as? UInt32,
+                      let isPressed = notification.userInfo?["isPressed"] as? Bool,
                       let action = GlobalUtilityAction(hotKeyIdentifier: identifier) else { return }
-                self?.handle(action)
+                self?.handle(action, isPressed: isPressed)
             }
     }
 
@@ -108,18 +117,26 @@ final class GlobalHotKeyService: ObservableObject {
 
     private func installHandler() {
         guard handlerRef == nil else { return }
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            chatOSGlobalHotKeyHandler,
-            1,
-            &eventType,
-            nil,
-            &handlerRef
-        )
+        var eventTypes = [
+            EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyPressed)
+            ),
+            EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyReleased)
+            ),
+        ]
+        _ = eventTypes.withUnsafeMutableBufferPointer { buffer in
+            InstallEventHandler(
+                GetApplicationEventTarget(),
+                chatOSGlobalHotKeyHandler,
+                buffer.count,
+                buffer.baseAddress,
+                nil,
+                &handlerRef
+            )
+        }
     }
 
     private func register(
@@ -129,7 +146,7 @@ final class GlobalHotKeyService: ObservableObject {
         guard hotKey.isValid else { return OSStatus(eventHotKeyInvalidErr) }
         var registration: EventHotKeyRef?
         let identifier = EventHotKeyID(
-            signature: 0x4348_4F53,
+            signature: chatOSGlobalHotKeySignature,
             id: action.hotKeyIdentifier
         )
         let status = RegisterEventHotKey(
@@ -151,17 +168,35 @@ final class GlobalHotKeyService: ObservableObject {
             UnregisterEventHotKey(registration)
         }
         registrations.removeAll()
+        pressGate.reset()
     }
 
-    private func handle(_ action: GlobalUtilityAction) {
-        let now = clock.now
-        if let lastInvocation,
-           lastInvocation.action == action,
-           lastInvocation.time.duration(to: now) < .milliseconds(220) {
-            return
-        }
-        lastInvocation = (action, now)
+    private func handle(_ action: GlobalUtilityAction, isPressed: Bool) {
+        guard pressGate.shouldTrigger(action, isPressed: isPressed) else { return }
         onAction?(action)
+    }
+}
+
+struct GlobalHotKeyPressGate {
+    private static let debounceInterval: TimeInterval = 0.35
+    private var lastTriggerTimes: [GlobalUtilityAction: TimeInterval] = [:]
+
+    mutating func shouldTrigger(
+        _ action: GlobalUtilityAction,
+        isPressed: Bool,
+        now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> Bool {
+        guard isPressed else { return false }
+        if let previous = lastTriggerTimes[action],
+           now - previous < Self.debounceInterval {
+            return false
+        }
+        lastTriggerTimes[action] = now
+        return true
+    }
+
+    mutating func reset() {
+        lastTriggerTimes.removeAll()
     }
 }
 

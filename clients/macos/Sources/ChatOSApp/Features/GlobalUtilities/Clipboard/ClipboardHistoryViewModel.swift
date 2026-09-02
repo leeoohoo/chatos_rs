@@ -4,6 +4,14 @@ import Foundation
 import ImageIO
 import SwiftUI
 
+private enum ClipboardHistoryPasteError: LocalizedError {
+    case writeFailed
+
+    var errorDescription: String? {
+        "无法把所选内容写入系统剪贴板。"
+    }
+}
+
 @MainActor
 final class ClipboardHistoryViewModel: ObservableObject {
     @Published var query = ""
@@ -11,6 +19,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
     @Published private(set) var selectedIndex = 0
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var noticeMessage: String?
     @Published private(set) var imageThumbnails: [UUID: NSImage] = [:]
 
     var onRestoreSucceeded: (() -> Void)?
@@ -37,6 +46,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
         query = ""
         selectedIndex = 0
         errorMessage = nil
+        noticeMessage = nil
         refresh()
     }
 
@@ -178,6 +188,10 @@ final class ClipboardHistoryViewModel: ObservableObject {
         onCancel?()
     }
 
+    func showAutomaticPastePermissionNotice() {
+        noticeMessage = "已复制到剪贴板；授权 ChatOS 使用辅助功能后，再选择一次即可自动粘贴。"
+    }
+
     func sourceName(for entry: ClipboardHistoryEntry) -> String? {
         guard let bundleID = entry.sourceApplicationBundleID,
               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
@@ -192,21 +206,24 @@ final class ClipboardHistoryViewModel: ObservableObject {
     ) throws {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        switch payload {
+        let wrotePayload = switch payload {
         case let .text(value):
             pasteboard.setString(value, forType: .string)
         case let .url(value):
             pasteboard.setString(value.absoluteString, forType: .URL)
-            pasteboard.setString(value.absoluteString, forType: .string)
+                && pasteboard.setString(value.absoluteString, forType: .string)
         case let .files(values):
             pasteboard.writeObjects(values as [NSURL])
         case let .image(data, pasteboardType):
             pasteboard.setData(data, forType: NSPasteboard.PasteboardType(pasteboardType))
         }
-        pasteboard.setString(
+        let wroteMarker = pasteboard.setString(
             entryID.uuidString,
             forType: ClipboardHistoryMonitor.restoredMarkerType
         )
+        guard wrotePayload, wroteMarker else {
+            throw ClipboardHistoryPasteError.writeFailed
+        }
     }
 
     private func pruneThumbnailCache(validEntries: [ClipboardHistoryEntry]) {
