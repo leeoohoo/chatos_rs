@@ -41,9 +41,7 @@ actor NativePluginStdioClient {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        var environment = ProcessInfo.processInfo.environment
-        environment.merge(launch.environment, uniquingKeysWith: { _, runtime in runtime })
-        process.environment = environment
+        process.environment = NativePluginProcessEnvironment.make(overrides: launch.environment)
         self.process = process
         self.input = inputPipe.fileHandleForWriting
         self.output = outputPipe.fileHandleForReading

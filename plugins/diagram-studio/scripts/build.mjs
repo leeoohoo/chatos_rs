@@ -36,5 +36,10 @@ await Promise.all([
     ...common,
     entryPoints: ['src/plantuml.ts'],
     outfile: 'dist/plantuml.test.mjs'
+  }),
+  build({
+    ...common,
+    entryPoints: ['src/layers.ts'],
+    outfile: 'dist/layers.test.mjs'
   })
 ]);

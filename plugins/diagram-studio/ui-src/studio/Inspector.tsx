@@ -1,31 +1,36 @@
 import type { DiagramEdge, DiagramNode, DiagramNodeCategory, DiagramNodeIcon, DiagramNodeShape } from '../../src/schema';
+import type { NodeLayerAction } from '../../src/layers';
 import { Icon } from './Icons';
 
 const strokeColors = ['#1D2430', '#4E7CC7', '#7967D8', '#4B9B72', '#C98145', '#B9658D', '#438FA6', '#667085'];
-const fillColors = ['#FFFFFF', '#E8F1FF', '#EEEAFE', '#E8F6ED', '#FFF0E4', '#FBEAF2', '#E8F5F7', '#EEF1F5'];
+const fillColors = ['transparent', '#FFFFFF', '#E8F1FF', '#EEEAFE', '#E8F6ED', '#FFF0E4', '#FBEAF2', '#E8F5F7', '#EEF1F5'];
 
 export function Inspector({
   node,
+  selectedNodeCount,
   edge,
   onUpdateNode,
   onUpdateEdge,
+  onChangeNodeLayer,
   onDelete,
   onClose
 }: {
   node?: DiagramNode;
+  selectedNodeCount: number;
   edge?: DiagramEdge;
   onUpdateNode: (node: DiagramNode) => void;
   onUpdateEdge: (edge: DiagramEdge) => void;
+  onChangeNodeLayer: (action: NodeLayerAction) => void;
   onDelete: () => void;
   onClose: () => void;
 }) {
   return (
     <aside className="studio-inspector">
       <header className="inspector-header">
-        <strong>{node ? '节点检查器' : edge ? '连线检查器' : '检查器'}</strong>
+        <strong>{selectedNodeCount > 1 ? '批量选择' : node ? '节点检查器' : edge ? '连线检查器' : '检查器'}</strong>
         <button className="icon-button subtle" onClick={onClose} aria-label="关闭检查器"><Icon name="close" /></button>
       </header>
-      {!node && !edge && (
+      {selectedNodeCount === 0 && !edge && (
         <div className="empty-inspector">
           <div className="empty-glyph"><Icon name="inspector" /></div>
           <strong>选择一个对象</strong>
@@ -70,8 +75,22 @@ export function Inspector({
             {node.data.shape !== 'text' && <ColorPicker label="边框颜色" value={node.data.borderColor ?? node.data.color} colors={strokeColors} onChange={(borderColor) => onUpdateNode({ ...node, data: { ...node.data, borderColor } })} />}
             {node.data.icon && <ColorPicker label="图标颜色" value={node.data.color} colors={strokeColors} onChange={(color) => onUpdateNode({ ...node, data: { ...node.data, color } })} />}
           </FormSection>
+          <FormSection title="层级">
+            <LayerControls onChange={onChangeNodeLayer} />
+          </FormSection>
           <FormSection title="源码依据">
             <label>路径或说明<textarea rows={4} placeholder="例如 services/api/src/main.rs:42" value={(node.data.sourceReferences ?? []).join('\n')} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, sourceReferences: event.target.value.split('\n').map((value) => value.trim()).filter(Boolean) } })} /></label>
+          </FormSection>
+        </div>
+      )}
+      {selectedNodeCount > 1 && (
+        <div className="inspector-form">
+          <div className="multi-selection-summary">
+            <span>{selectedNodeCount}</span>
+            <div><strong>个节点已选择</strong><p>拖动任意已选节点可整体移动，Delete 可统一删除。</p></div>
+          </div>
+          <FormSection title="批量层级">
+            <LayerControls onChange={onChangeNodeLayer} />
           </FormSection>
         </div>
       )}
@@ -102,13 +121,22 @@ export function Inspector({
           </FormSection>
         </div>
       )}
-      {(node || edge) && <div className="inspector-footer"><button className="destructive-button" onClick={onDelete}><Icon name="trash" />删除所选对象</button></div>}
+      {(selectedNodeCount > 0 || edge) && <div className="inspector-footer"><button className="destructive-button" onClick={onDelete}><Icon name="trash" />{selectedNodeCount > 1 ? `删除 ${selectedNodeCount} 个节点` : '删除所选对象'}</button></div>}
     </aside>
   );
 }
 
 function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
   return <section className="form-section"><div className="section-label">{title}</div>{children}</section>;
+}
+
+function LayerControls({ onChange }: { onChange: (action: NodeLayerAction) => void }) {
+  return <div className="layer-control-grid" role="group" aria-label="节点层级">
+    <button onClick={() => onChange('front')}>置于顶层</button>
+    <button onClick={() => onChange('forward')}>上移一层</button>
+    <button onClick={() => onChange('backward')}>下移一层</button>
+    <button onClick={() => onChange('back')}>置于底层</button>
+  </div>;
 }
 
 function LineStylePicker({
@@ -146,14 +174,22 @@ function ColorPicker({
   colors: string[];
   onChange: (value: string) => void;
 }) {
-  const pickerValue = /^#[0-9a-f]{6}$/i.test(value ?? '') ? value! : colors[0];
+  const pickerValue = /^#[0-9a-f]{6}$/i.test(value ?? '')
+    ? value!
+    : colors.find((color) => /^#[0-9a-f]{6}$/i.test(color)) ?? '#FFFFFF';
   return <div className="color-picker-field">
     <div className="color-picker-heading"><span className="field-label">{label}</span><label className="custom-color-button" title={`自定义${label}`}>
       <input type="color" value={pickerValue} onChange={(event) => onChange(event.target.value.toUpperCase())} aria-label={`自定义${label}`} />
       <span>自定义</span>
     </label></div>
     <div className="color-grid">
-      {colors.map((color) => <button key={color} className={`color-swatch ${value?.toUpperCase() === color ? 'selected' : ''}`} style={{ background: color }} onClick={() => onChange(color)} aria-label={`${label} ${color}`} />)}
+      {colors.map((color) => <button
+        key={color}
+        className={`color-swatch ${color === 'transparent' ? 'transparent' : ''} ${value?.toLowerCase() === color.toLowerCase() ? 'selected' : ''}`}
+        style={color === 'transparent' ? undefined : { background: color }}
+        onClick={() => onChange(color)}
+        aria-label={`${label} ${color === 'transparent' ? '透明' : color}`}
+      />)}
     </div>
   </div>;
 }

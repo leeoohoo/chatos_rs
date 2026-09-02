@@ -136,7 +136,7 @@ function NodeSurface({ data, shape }: { data: DiagramNodeData; shape: DiagramNod
   const strokeDasharray = borderStyle === 'dashed' ? '10 7' : borderStyle === 'dotted' ? '1 7' : undefined;
   const common = {
     className: 'node-surface-path',
-    fill: data.fillColor ?? 'var(--node-default-fill)',
+    fill: data.fillColor ?? 'transparent',
     stroke: borderStyle === 'none' ? 'none' : data.borderColor ?? data.color ?? '#4E7CC7',
     strokeWidth: Math.max(1.5, data.borderWidth ?? 2),
     strokeDasharray,

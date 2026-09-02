@@ -8,6 +8,7 @@ import {
   MarkerType,
   MiniMap,
   ReactFlow,
+  SelectionMode,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
@@ -20,6 +21,7 @@ import {
 import { toPng, toSvg } from 'html-to-image';
 import type { DiagramDocument, DiagramEdge, DiagramKind, DiagramNode, DiagramProject, DiagramProjectSummary } from '../../src/schema';
 import { layoutDiagram } from '../../src/layout';
+import { nextNodeZIndex, reorderNodeLayers, type NodeLayerAction } from '../../src/layers';
 import { detectPlantUmlDiagramKind, diagramToPlantUml, plantUmlToDiagram } from '../../src/plantuml';
 import {
   parseSequenceActivationHandle,
@@ -76,7 +78,7 @@ export function DiagramStudioApp() {
   const [plantUmlVisible, setPlantUmlVisible] = useState(false);
   const [plantUmlSource, setPlantUmlSource] = useState('');
   const [plantUmlError, setPlantUmlError] = useState<string>();
-  const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedEdgeId, setSelectedEdgeId] = useState<string>();
   const [sequenceMessagePreset, setSequenceMessagePreset] = useState<SequenceMessagePreset>('call');
   const [toast, setToast] = useState<string>();
@@ -114,7 +116,7 @@ export function DiagramStudioApp() {
         event.preventDefault(); undo();
       } else if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
         event.preventDefault(); redo();
-      } else if ((event.key === 'Backspace' || event.key === 'Delete') && (selectedNodeId || selectedEdgeId)) {
+      } else if ((event.key === 'Backspace' || event.key === 'Delete') && (selectedNodeIds.size > 0 || selectedEdgeId)) {
         event.preventDefault(); deleteSelection();
       }
     };
@@ -262,7 +264,7 @@ export function DiagramStudioApp() {
     setDirty(false);
     setPast([]);
     setFuture([]);
-    setSelectedNodeId(undefined);
+    setSelectedNodeIds(new Set());
     setSelectedEdgeId(undefined);
   }
 
@@ -293,7 +295,7 @@ export function DiagramStudioApp() {
     setDirty(false);
     setPast([]);
     setFuture([]);
-    setSelectedNodeId(undefined);
+    setSelectedNodeIds(new Set());
     setSelectedEdgeId(undefined);
     setLibraryVisible(false);
     setExportVisible(false);
@@ -329,6 +331,18 @@ export function DiagramStudioApp() {
 
   function onNodesChange(changes: NodeChange[]) {
     if (!document) return;
+    const selectionChanges = changes.filter((change): change is Extract<NodeChange, { type: 'select' }> => change.type === 'select');
+    if (selectionChanges.length > 0) {
+      setSelectedNodeIds((current) => {
+        const next = new Set(current);
+        for (const change of selectionChanges) {
+          if (change.selected) next.add(change.id);
+          else next.delete(change.id);
+        }
+        return next;
+      });
+      if (selectionChanges.some((change) => change.selected)) setSelectedEdgeId(undefined);
+    }
     const resizeChanges = changes.filter((change): change is Extract<NodeChange, { type: 'dimensions' }> =>
       change.type === 'dimensions' && change.resizing !== undefined
     );
@@ -356,6 +370,16 @@ export function DiagramStudioApp() {
 
   function onEdgesChange(changes: EdgeChange[]) {
     if (!document) return;
+    const selectionChanges = changes.filter((change): change is Extract<EdgeChange, { type: 'select' }> => change.type === 'select');
+    if (selectionChanges.length > 0) {
+      const selected = selectionChanges.find((change) => change.selected);
+      if (selected) {
+        setSelectedNodeIds(new Set());
+        setSelectedEdgeId(selected.id);
+      } else {
+        setSelectedEdgeId((current) => selectionChanges.some((change) => change.id === current) ? undefined : current);
+      }
+    }
     const structuralChanges = changes.filter((change) => change.type !== 'select');
     if (structuralChanges.length === 0) return;
     updateDocumentLive({ ...document, edges: applyEdgeChanges(structuralChanges, document.edges as never) as unknown as DiagramEdge[] });
@@ -484,6 +508,7 @@ export function DiagramStudioApp() {
       position,
       width: initialSize.width,
       height: initialSize.height,
+      zIndex: item.shape === 'lane' ? 0 : nextNodeZIndex(document.nodes),
       data: {
         label: item.label,
         category: item.category,
@@ -499,7 +524,7 @@ export function DiagramStudioApp() {
       }
     };
     commit({ ...document, nodes: [...document.nodes, newNode] });
-    setSelectedNodeId(newNode.id);
+    setSelectedNodeIds(new Set([newNode.id]));
     setSelectedEdgeId(undefined);
     setInspectorVisible(true);
   }
@@ -522,6 +547,16 @@ export function DiagramStudioApp() {
     commit({ ...document, nodes: document.nodes.map((node) => node.id === nextNode.id ? nextNode : node) });
   }
 
+  function changeNodeLayer(action: NodeLayerAction) {
+    if (!document || selectedNodeIds.size === 0) return;
+    const nextNodes = reorderNodeLayers(document.nodes, selectedNodeIds, action);
+    if (nextNodes === document.nodes) {
+      showToast(action === 'front' || action === 'forward' ? '已经在最上层' : '已经在最下层');
+      return;
+    }
+    commit({ ...document, nodes: nextNodes });
+  }
+
   function updateEdge(nextEdge: DiagramEdge) {
     if (!document) return;
     commit({ ...document, edges: document.edges.map((edge) => edge.id === nextEdge.id ? nextEdge : edge) });
@@ -529,8 +564,8 @@ export function DiagramStudioApp() {
 
   function deleteSelection() {
     if (!document) return;
-    if (selectedNodeId) {
-      const removedNodeIds = new Set([selectedNodeId]);
+    if (selectedNodeIds.size > 0) {
+      const removedNodeIds = new Set(selectedNodeIds);
       let foundChild = true;
       while (foundChild) {
         foundChild = false;
@@ -549,7 +584,7 @@ export function DiagramStudioApp() {
     } else if (selectedEdgeId) {
       commit({ ...document, edges: document.edges.filter((edge) => edge.id !== selectedEdgeId) });
     }
-    setSelectedNodeId(undefined);
+    setSelectedNodeIds(new Set());
     setSelectedEdgeId(undefined);
   }
 
@@ -569,7 +604,7 @@ export function DiagramStudioApp() {
     if (!document) return;
     if (!edgeMoveSnapshot.current) edgeMoveSnapshot.current = structuredClone(document);
     edgeMoveChanged.current = false;
-    setSelectedNodeId(undefined);
+    setSelectedNodeIds(new Set());
     setSelectedEdgeId(edgeId);
   }
 
@@ -603,16 +638,6 @@ export function DiagramStudioApp() {
     edgeMoveSnapshot.current = null;
     edgeMoveChanged.current = false;
   }
-
-  const selectNode = useCallback((_event: React.MouseEvent, node: { id: string }) => {
-    setSelectedNodeId((current) => current === node.id ? current : node.id);
-    setSelectedEdgeId(undefined);
-  }, []);
-
-  const selectEdge = useCallback((_event: React.MouseEvent, edge: { id: string }) => {
-    setSelectedNodeId(undefined);
-    setSelectedEdgeId((current) => current === edge.id ? current : edge.id);
-  }, []);
 
   function openPlantUmlEditor() {
     if (!document) return;
@@ -733,7 +758,8 @@ export function DiagramStudioApp() {
     showToast('已导入');
   }
 
-  const selectedNode = document?.nodes.find((node) => node.id === selectedNodeId);
+  const selectedNodes = document?.nodes.filter((node) => selectedNodeIds.has(node.id)) ?? [];
+  const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : undefined;
   const selectedEdge = document?.edges.find((edge) => edge.id === selectedEdgeId);
   const activeProjectDocuments = useMemo(() => {
     const ids = new Set(activeProject?.diagramIds ?? []);
@@ -741,12 +767,12 @@ export function DiagramStudioApp() {
   }, [activeProject?.diagramIds, documents]);
   const flowNodes = useMemo(() => document?.nodes.map((node) => ({
     ...node,
-    selected: node.id === selectedNodeId,
+    selected: selectedNodeIds.has(node.id),
     dragHandle: node.data.shape === 'activation' ? '.activation-drag-handle' : undefined,
     style: node.type === 'laneNode'
       ? { width: node.width ?? 1120, height: node.height ?? 180 }
       : { width: node.width ?? defaultNodeSize(node).width, height: node.height ?? defaultNodeSize(node).height }
-  })) ?? [], [document?.nodes, selectedNodeId]);
+  })) ?? [], [document?.nodes, selectedNodeIds]);
   const flowEdges = useMemo(() => document?.edges.map((edge) => {
     const isSequence = document.kind === 'sequence';
     const isReturnMessage = isSequence && (edge.data?.lineStyle === 'dashed' || edge.data?.dashed);
@@ -767,7 +793,7 @@ export function DiagramStudioApp() {
         onVerticalMove: moveSequenceEdge,
         onVerticalMoveEnd: finishSequenceEdgeMove,
         onSelect: (edgeId: string) => {
-          setSelectedNodeId(undefined);
+          setSelectedNodeIds(new Set());
           setSelectedEdgeId(edgeId);
         }
       } : edge.data,
@@ -952,11 +978,13 @@ export function DiagramStudioApp() {
           onConnect={onConnect}
           onNodeDragStart={onDragStart}
           onNodeDragStop={onDragStop}
-          onNodeClick={selectNode}
-          onEdgeClick={selectEdge}
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
           onDrop={onCanvasDrop}
-          onPaneClick={() => { setSelectedNodeId(undefined); setSelectedEdgeId(undefined); }}
+          onPaneClick={() => { setSelectedNodeIds(new Set()); setSelectedEdgeId(undefined); }}
+          selectionOnDrag
+          selectionMode={SelectionMode.Partial}
+          multiSelectionKeyCode="Shift"
+          panOnDrag={[1, 2]}
           minZoom={0.15}
           maxZoom={2.5}
           fitView
@@ -977,7 +1005,7 @@ export function DiagramStudioApp() {
         </ReactFlow>
       </main>
 
-      {inspectorVisible && <Inspector node={selectedNode} edge={selectedEdge} onUpdateNode={updateNode} onUpdateEdge={updateEdge} onDelete={deleteSelection} onClose={() => setInspectorVisible(false)} />}
+      {inspectorVisible && <Inspector node={selectedNode} selectedNodeCount={selectedNodes.length} edge={selectedEdge} onUpdateNode={updateNode} onUpdateEdge={updateEdge} onChangeNodeLayer={changeNodeLayer} onDelete={deleteSelection} onClose={() => setInspectorVisible(false)} />}
 
       {libraryVisible && <div className="library-popover popover-menu">
         <div className="popover-heading"><strong>{`${activeProject?.name ?? ''} · 图形`}</strong><button className="icon-button subtle" onClick={() => setLibraryVisible(false)}><Icon name="close" /></button></div>

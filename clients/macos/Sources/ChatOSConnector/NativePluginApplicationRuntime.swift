@@ -77,9 +77,7 @@ actor NativePluginApplicationRuntime {
         error.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
         process.standardOutput = output
         process.standardError = error
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = Self.runtimePath(environment["PATH"])
-        environment.merge([
+        let environment = NativePluginProcessEnvironment.make(overrides: [
             "CHATOS_PLUGIN_ROOT": installationURL.path,
             "CHATOS_PLUGIN_DATA_DIR": dataURL.path,
             "CHATOS_PLUGIN_CACHE_DIR": cacheURL.path,
@@ -87,7 +85,7 @@ actor NativePluginApplicationRuntime {
             "CHATOS_PLUGIN_APP_PORT": String(port),
             "CHATOS_PLUGIN_ID": record.pluginID,
             "CHATOS_PLUGIN_COMPONENT_KEY": contribution.componentKey,
-        ], uniquingKeysWith: { _, runtimeValue in runtimeValue })
+        ])
         process.environment = environment
 
         do {
@@ -282,11 +280,4 @@ actor NativePluginApplicationRuntime {
         return UInt16(bigEndian: address.sin_port)
     }
 
-    private static func runtimePath(_ existing: String?) -> String {
-        let preferred = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-        let current = existing?.split(separator: ":").map(String.init) ?? []
-        return Array(NSOrderedSet(array: preferred + current))
-            .compactMap { $0 as? String }
-            .joined(separator: ":")
-    }
 }

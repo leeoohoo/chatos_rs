@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-diagram-studio",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Create and edit architecture diagrams, flowcharts, swimlane diagrams, topology maps, and sequence diagrams with complete PlantUML interoperability.",
   "author": {
     "name": "Chatos"
@@ -9,7 +9,7 @@
   "license": "Apache-2.0",
   "keywords": ["architecture", "flowchart", "swimlane", "topology", "sequence", "plantuml", "diagram", "mcp"],
   "mcpServers": {
-    "diagram-studio": {
+    "diagram-mcp": {
       "type": "stdio",
       "bin": "chatos-diagram-studio",
       "args": ["mcp"],
@@ -87,13 +87,13 @@
       "permission": "process.spawn",
       "required": true,
       "reason": "Launch the installed Diagram Studio MCP and local application service.",
-      "components": ["diagram-studio", "diagram-workbench"]
+      "components": ["diagram-mcp", "diagram-workbench"]
     },
     {
       "permission": "artifact.create",
       "required": true,
       "reason": "Export diagram documents as JSON, SVG, PNG, and PlantUML deliverables.",
-      "components": ["diagram-studio", "diagram-workbench"]
+      "components": ["diagram-mcp", "diagram-workbench"]
     }
   ]
 }

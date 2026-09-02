@@ -1572,6 +1572,17 @@ struct NativePluginRuntimeTests {
         #expect(permissions[3].requestLabel == "去开启")
     }
 
+    @Test("plugin processes restore tool paths missing from GUI app launches")
+    func pluginProcessEnvironmentRestoresToolPaths() {
+        let environment = NativePluginProcessEnvironment.make(
+            base: ["PATH": "/usr/bin:/bin", "EXAMPLE": "base"],
+            overrides: ["EXAMPLE": "plugin"]
+        )
+
+        #expect(environment["EXAMPLE"] == "plugin")
+        #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+    }
+
     @Test("plugin capabilities are reported as available instead of ambiguous on-demand permissions")
     func pluginCapabilityStatusIsExplicit() throws {
         let root = FileManager.default.temporaryDirectory
