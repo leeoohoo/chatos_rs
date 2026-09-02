@@ -49,4 +49,5 @@ internal sealed record PluginRuntimeIdentity(
     string ArtifactSha256,
     string ComponentKey,
     string AdapterSessionId,
-    string? WorkspaceId);
+    string? WorkspaceId,
+    string? ProjectId = null);

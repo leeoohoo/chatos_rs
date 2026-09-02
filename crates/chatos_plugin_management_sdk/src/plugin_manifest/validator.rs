@@ -7,9 +7,12 @@ use std::fmt;
 use semver::{Version, VersionReq};
 
 use super::components::{
-    component_key_from_path, PluginMcpServer, PluginPathRef, PluginUiRuntime,
-    PLUGIN_AGENT_MAX_ITERATIONS, PLUGIN_COMMAND_MAX_ALLOWED_TOOLS,
-    PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE,
+    component_key_from_path, PluginMcpServer, PluginPathRef, PluginRuntimeContextScope,
+    PluginRuntimeContextStorageIsolation, PluginUiRuntime, PLUGIN_AGENT_MAX_ITERATIONS,
+    PLUGIN_COMMAND_MAX_ALLOWED_TOOLS, PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES,
+    PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID, PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ID,
+    PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ROOT, PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS,
+    PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE,
     PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST,
     PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE,
     PLUGIN_UI_BRIDGE_CAPABILITY_HOST_CONTEXT_READ, PLUGIN_UI_MAX_ARTIFACT_MIME_TYPES,
@@ -310,6 +313,7 @@ pub fn validate_plugin_manifest(
 
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
+    validate_runtime_context(manifest, &component_keys, &mut issues);
     validate_mcp_runtime_permissions(manifest, &mut issues);
     validate_ui_runtime_permissions(manifest, &mut issues);
 
@@ -332,6 +336,119 @@ pub fn validate_plugin_manifest(
         Ok(())
     } else {
         Err(PluginManifestValidationError { issues })
+    }
+}
+
+fn validate_runtime_context(
+    manifest: &PluginManifest,
+    component_keys: &HashSet<String>,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    let Some(context) = manifest.runtime_context.as_ref() else {
+        return;
+    };
+    if context.components.is_empty() {
+        issue(
+            issues,
+            "runtimeContext.components",
+            "at least one component is required",
+        );
+    }
+    if context.components.len() > PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS {
+        issue(
+            issues,
+            "runtimeContext.components",
+            format!("at most {PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS} components are allowed"),
+        );
+    }
+    let mut seen_components = HashSet::new();
+    for (index, component) in context.components.iter().enumerate() {
+        if !component_keys.contains(component) {
+            issue(
+                issues,
+                format!("runtimeContext.components[{index}]").as_str(),
+                "component is not declared by this plugin",
+            );
+        } else if !seen_components.insert(component.as_str()) {
+            issue(
+                issues,
+                format!("runtimeContext.components[{index}]").as_str(),
+                "duplicate component",
+            );
+        }
+    }
+
+    let allowed_fields = [
+        PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID,
+        PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ID,
+        PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ROOT,
+    ];
+    if context.required.len() + context.optional.len() > PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS {
+        issue(
+            issues,
+            "runtimeContext",
+            format!("at most {PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS} context fields are allowed"),
+        );
+    }
+    let mut seen_fields = HashSet::new();
+    for (field_name, fields) in [
+        ("runtimeContext.required", context.required.as_slice()),
+        ("runtimeContext.optional", context.optional.as_slice()),
+    ] {
+        for (index, field) in fields.iter().enumerate() {
+            if !allowed_fields.contains(&field.as_str()) {
+                issue(
+                    issues,
+                    format!("{field_name}[{index}]").as_str(),
+                    "unsupported runtime context field",
+                );
+            } else if !seen_fields.insert(field.as_str()) {
+                issue(
+                    issues,
+                    format!("{field_name}[{index}]").as_str(),
+                    "context field is duplicated or appears in both required and optional",
+                );
+            }
+        }
+    }
+
+    if context.scope == PluginRuntimeContextScope::Device
+        && seen_fields.iter().any(|field| {
+            field.starts_with("workspace.") || *field == PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID
+        })
+    {
+        issue(
+            issues,
+            "runtimeContext.scope",
+            "device scope cannot request project or workspace fields",
+        );
+    }
+    if context.scope == PluginRuntimeContextScope::Workspace
+        && seen_fields.contains(PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID)
+    {
+        issue(
+            issues,
+            "runtimeContext.scope",
+            "workspace scope cannot request project.id",
+        );
+    }
+    if context.storage_isolation == PluginRuntimeContextStorageIsolation::Project
+        && context.scope != PluginRuntimeContextScope::Project
+    {
+        issue(
+            issues,
+            "runtimeContext.storageIsolation",
+            "project storage isolation requires project scope",
+        );
+    }
+    if context.storage_isolation == PluginRuntimeContextStorageIsolation::Workspace
+        && context.scope == PluginRuntimeContextScope::Device
+    {
+        issue(
+            issues,
+            "runtimeContext.storageIsolation",
+            "workspace storage isolation requires workspace or project scope",
+        );
     }
 }
 

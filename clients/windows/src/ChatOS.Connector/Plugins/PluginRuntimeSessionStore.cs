@@ -56,7 +56,8 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
         string releaseId,
         string artifactSha256,
         string componentKey,
-        string? workspaceId)
+        string? workspaceId,
+        string? projectId = null)
     {
         if (!_sessions.TryGetValue(adapterSessionId, out var session))
         {
@@ -68,7 +69,8 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
             !string.Equals(identity.ReleaseId, releaseId, StringComparison.Ordinal) ||
             !string.Equals(identity.ArtifactSha256, artifactSha256, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(identity.ComponentKey, componentKey, StringComparison.Ordinal) ||
-            !string.Equals(identity.WorkspaceId, workspaceId, StringComparison.Ordinal))
+            !string.Equals(identity.WorkspaceId, workspaceId, StringComparison.Ordinal) ||
+            !string.Equals(identity.ProjectId, projectId, StringComparison.Ordinal))
         {
             throw new PluginRuntimeException("Plugin request does not match its prepared session.");
         }
@@ -196,14 +198,16 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
     public async Task<string> CancelAsync(
         string adapterSessionId,
         string? invocationId,
-        string? workspaceId)
+        string? workspaceId,
+        string? projectId = null)
     {
         if (!_sessions.TryGetValue(adapterSessionId, out var session))
         {
             return "invocation_not_found";
         }
 
-        if (!string.Equals(session.Identity.WorkspaceId, workspaceId, StringComparison.Ordinal))
+        if (!string.Equals(session.Identity.WorkspaceId, workspaceId, StringComparison.Ordinal) ||
+            !string.Equals(session.Identity.ProjectId, projectId, StringComparison.Ordinal))
         {
             throw new PluginRuntimeException("Plugin cancellation does not match the prepared workspace.");
         }

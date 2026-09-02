@@ -84,7 +84,22 @@ export class DiagramDocumentStore {
     return value;
   }
 
-  async createProject(name: string): Promise<DiagramProject> {
+  async listInProject(projectId: string): Promise<ReturnType<typeof diagramSummary>[]> {
+    const project = await this.readProject(projectId);
+    const documents = await Promise.all(project.diagramIds.map(async (documentId) => {
+      try {
+        return await this.read(documentId);
+      } catch {
+        return undefined;
+      }
+    }));
+    return documents
+      .filter((document): document is DiagramDocument => document !== undefined)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(diagramSummary);
+  }
+
+  async createProject(name: string, description?: string): Promise<DiagramProject> {
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length > 240) throw new Error('Project name must contain 1 to 240 characters.');
     const now = new Date().toISOString();
@@ -92,6 +107,7 @@ export class DiagramDocumentStore {
       schemaVersion: 1,
       projectId: `project-${randomUUID().slice(0, 8)}`,
       name: trimmedName,
+      description: description?.trim().slice(0, 4000) || undefined,
       createdAt: now,
       updatedAt: now,
       diagramIds: []
@@ -100,11 +116,45 @@ export class DiagramDocumentStore {
     return project;
   }
 
+  async updateProject(
+    projectId: string,
+    updates: { name?: string; description?: string }
+  ): Promise<DiagramProject> {
+    return this.withLock(async () => {
+      const current = await this.readProject(projectId);
+      const name = updates.name === undefined ? current.name : updates.name.trim();
+      if (!name || name.length > 240) throw new Error('Project name must contain 1 to 240 characters.');
+      const description = updates.description === undefined
+        ? current.description
+        : updates.description.trim().slice(0, 4000) || undefined;
+      const next: DiagramProject = {
+        ...current,
+        name,
+        description,
+        updatedAt: new Date().toISOString()
+      };
+      await this.atomicWriteProject(this.projectPath(projectId), next);
+      return next;
+    });
+  }
+
+  async deleteProject(projectId: string, deleteDocuments = false): Promise<void> {
+    await this.withLock(async () => {
+      const project = await this.readProject(projectId);
+      if (deleteDocuments) {
+        for (const documentId of project.diagramIds) {
+          await fs.unlink(this.documentPath(documentId)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+          });
+        }
+      }
+      await fs.unlink(this.projectPath(projectId));
+    });
+  }
+
   async createInProject(projectId: string, kind: DiagramKind, title?: string, blank = false): Promise<DiagramDocument> {
     const project = await this.readProject(projectId);
-    const document = blank
-      ? await this.writeNew(createBlankDiagram(kind, title?.trim() || '未命名图形'))
-      : await this.create(kind, title);
+    const document = await this.create(kind, title, blank);
     const nextProject: DiagramProject = {
       ...project,
       diagramIds: [...project.diagramIds, document.documentId],
@@ -112,6 +162,54 @@ export class DiagramDocumentStore {
     };
     await this.atomicWriteProject(this.projectPath(projectId), nextProject);
     return document;
+  }
+
+  async writeNewInProject(projectId: string, document: DiagramDocument): Promise<DiagramDocument> {
+    const project = await this.readProject(projectId);
+    const saved = await this.writeNew(document);
+    try {
+      const nextProject: DiagramProject = {
+        ...project,
+        diagramIds: [...project.diagramIds, saved.documentId],
+        updatedAt: new Date().toISOString()
+      };
+      await this.atomicWriteProject(this.projectPath(projectId), nextProject);
+      return saved;
+    } catch (error) {
+      await fs.unlink(this.documentPath(saved.documentId)).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async moveDocument(
+    documentId: string,
+    targetProjectId: string,
+    sourceProjectId?: string
+  ): Promise<{ sourceProject?: DiagramProject; targetProject: DiagramProject }> {
+    return this.withLock(async () => {
+      await this.read(documentId);
+      const target = await this.readProject(targetProjectId);
+      if (sourceProjectId === targetProjectId) {
+        return { targetProject: target };
+      }
+      const source = sourceProjectId ? await this.readProject(sourceProjectId) : undefined;
+      const now = new Date().toISOString();
+      const nextTarget: DiagramProject = {
+        ...target,
+        diagramIds: target.diagramIds.includes(documentId)
+          ? target.diagramIds
+          : [...target.diagramIds, documentId],
+        updatedAt: now
+      };
+      const nextSource = source ? {
+        ...source,
+        diagramIds: source.diagramIds.filter((id) => id !== documentId),
+        updatedAt: now
+      } : undefined;
+      if (nextSource) await this.atomicWriteProject(this.projectPath(nextSource.projectId), nextSource);
+      await this.atomicWriteProject(this.projectPath(nextTarget.projectId), nextTarget);
+      return { sourceProject: nextSource, targetProject: nextTarget };
+    });
   }
 
   async read(documentId: string): Promise<DiagramDocument> {
@@ -123,8 +221,10 @@ export class DiagramDocumentStore {
     return value;
   }
 
-  async create(kind: DiagramKind, title?: string): Promise<DiagramDocument> {
-    const document = createTemplate(kind);
+  async create(kind: DiagramKind, title?: string, blank = false): Promise<DiagramDocument> {
+    const document = blank
+      ? createBlankDiagram(kind, title?.trim() || '未命名图形')
+      : createTemplate(kind);
     document.documentId = `${kind}-${randomUUID().slice(0, 8)}`;
     if (title?.trim()) document.title = title.trim().slice(0, 240);
     return this.writeNew(document);
@@ -198,7 +298,21 @@ export class DiagramDocumentStore {
 
   async remove(documentId: string): Promise<void> {
     assertIdentifier(documentId, 'documentId');
-    await fs.unlink(this.documentPath(documentId));
+    await this.withLock(async () => {
+      await fs.unlink(this.documentPath(documentId));
+      const entries = await fs.readdir(this.rootDirectory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.project.json')) continue;
+        const projectId = entry.name.slice(0, -'.project.json'.length);
+        const project = await this.readProject(projectId);
+        if (!project.diagramIds.includes(documentId)) continue;
+        await this.atomicWriteProject(this.projectPath(projectId), {
+          ...project,
+          diagramIds: project.diagramIds.filter((id) => id !== documentId),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
   }
 
   private documentPath(documentId: string): string {

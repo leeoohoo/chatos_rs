@@ -117,6 +117,8 @@ public struct LocalConnectorPluginApplication: Codable, Identifiable, Sendable, 
     public var brandColor: String?
     public var iconURL: URL?
     public var requiresLocalRuntime: Bool
+    public var contextScope: String?
+    public var missingContext: String?
 
     public var id: String { "\(pluginID):\(componentKey)" }
 
@@ -127,7 +129,9 @@ public struct LocalConnectorPluginApplication: Codable, Identifiable, Sendable, 
         description: String,
         brandColor: String? = nil,
         iconURL: URL? = nil,
-        requiresLocalRuntime: Bool
+        requiresLocalRuntime: Bool,
+        contextScope: String? = nil,
+        missingContext: String? = nil
     ) {
         self.pluginID = pluginID
         self.componentKey = componentKey
@@ -136,16 +140,38 @@ public struct LocalConnectorPluginApplication: Codable, Identifiable, Sendable, 
         self.brandColor = brandColor
         self.iconURL = iconURL
         self.requiresLocalRuntime = requiresLocalRuntime
+        self.contextScope = contextScope
+        self.missingContext = missingContext
     }
+}
+
+public struct LocalConnectorPluginApplicationContext: Codable, Sendable, Equatable, Hashable {
+    public var projectID: String?
+    public var projectName: String?
+    public var projectRoot: String?
+
+    public init(projectID: String?, projectName: String?, projectRoot: String?) {
+        self.projectID = projectID
+        self.projectName = projectName
+        self.projectRoot = projectRoot
+    }
+
+    public static let device = Self(projectID: nil, projectName: nil, projectRoot: nil)
 }
 
 public struct LocalConnectorPluginApplicationLaunch: Codable, Sendable, Equatable {
     public var application: LocalConnectorPluginApplication
     public var url: URL
+    public var websiteDataStoreID: UUID?
 
-    public init(application: LocalConnectorPluginApplication, url: URL) {
+    public init(
+        application: LocalConnectorPluginApplication,
+        url: URL,
+        websiteDataStoreID: UUID? = nil
+    ) {
         self.application = application
         self.url = url
+        self.websiteDataStoreID = websiteDataStoreID
     }
 }
 

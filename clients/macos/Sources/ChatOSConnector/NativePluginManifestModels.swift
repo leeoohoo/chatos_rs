@@ -93,6 +93,39 @@ struct NativePluginManifest: Decodable, Sendable {
         private enum CodingKeys: String, CodingKey { case permission, required, reason, components }
     }
 
+    struct RuntimeContext: Decodable, Sendable {
+        var scope: String
+        var components: [String]
+        var required: [String]
+        var optional: [String]
+        var storageIsolation: String
+        var missingContext: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            scope = try container.decode(String.self, forKey: .scope)
+            components = try container.decodeIfPresent([String].self, forKey: .components) ?? []
+            required = try container.decodeIfPresent([String].self, forKey: .required) ?? []
+            optional = try container.decodeIfPresent([String].self, forKey: .optional) ?? []
+            storageIsolation = try container.decodeIfPresent(
+                String.self,
+                forKey: .storageIsolation
+            ) ?? "plugin"
+            missingContext = try container.decodeIfPresent(
+                String.self,
+                forKey: .missingContext
+            ) ?? "reject"
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case scope, components, required, optional, storageIsolation, missingContext
+        }
+
+        func applies(to componentKey: String) -> Bool {
+            components.contains(componentKey)
+        }
+    }
+
     var schemaVersion: Int
     var name: String
     var version: String
@@ -102,6 +135,7 @@ struct NativePluginManifest: Decodable, Sendable {
     var ui: [UIContribution]
     var interface: Interface?
     var permissions: [Permission]
+    var runtimeContext: RuntimeContext?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -114,9 +148,11 @@ struct NativePluginManifest: Decodable, Sendable {
         ui = try container.decodeIfPresent([UIContribution].self, forKey: .ui) ?? []
         interface = try container.decodeIfPresent(Interface.self, forKey: .interface)
         permissions = try container.decodeIfPresent([Permission].self, forKey: .permissions) ?? []
+        runtimeContext = try container.decodeIfPresent(RuntimeContext.self, forKey: .runtimeContext)
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, name, version, description, skills, mcpServers, ui, interface, permissions
+        case runtimeContext
     }
 }

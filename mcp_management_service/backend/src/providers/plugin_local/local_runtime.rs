@@ -136,6 +136,7 @@ impl PluginLocalProvider {
                 json!(immutable.tool_blocklist),
             ),
         ]);
+        body.insert("project_id".to_string(), json!(context.project_id));
         if let Some(server_key) = immutable.server_key.as_deref() {
             body.insert("server_key".to_string(), json!(server_key));
         }
@@ -171,6 +172,7 @@ impl PluginLocalProvider {
             run_id: runtime_session_id.to_string(),
             device_id: target.device_id,
             workspace_id: target.workspace_id,
+            project_id: context.project_id.clone(),
             adapter_session_id: prepared.adapter_session_id,
             operation: operation.to_string(),
             session_sha256: prepared.session_sha256,
@@ -261,6 +263,7 @@ impl PluginLocalProvider {
             "task_id": snapshot.task_id,
             "task_run_id": snapshot.run_id,
             "task_title": snapshot.task_title,
+            "project_id": snapshot.project_context.project_id,
         });
         let bytes = self
             .request(
@@ -327,6 +330,7 @@ impl PluginLocalProvider {
             "component_key": binding.runtime.component_key,
             "adapter_session_id": binding.adapter_session_id,
             "invocation_id": invocation_id,
+            "project_id": snapshot.project_context.project_id,
         });
         let bytes = self
             .request(
@@ -406,6 +410,7 @@ impl PluginLocalProvider {
                 "artifact_sha256": binding.runtime.artifact_sha256,
                 "component_key": binding.runtime.component_key,
                 "adapter_session_id": binding.adapter_session_id,
+                "project_id": binding.project_id,
             });
             if let Err(error) = self
                 .request(
@@ -442,6 +447,7 @@ fn validate_recovered_binding(
         || recovered.run_id != prepared.run_id
         || recovered.device_id != prepared.device_id
         || recovered.workspace_id != prepared.workspace_id
+        || recovered.project_id != prepared.project_id
         || recovered.operation != prepared.operation
         || recovered.snapshot_sha256 != prepared.snapshot_sha256
         || recovered.tool_snapshot_sha256 != prepared.tool_snapshot_sha256

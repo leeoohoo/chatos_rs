@@ -13,14 +13,16 @@ Use Diagram Studio when a user asks to visualize a software architecture, proces
 2. Use stable, descriptive node IDs such as `api-gateway`, `project-service`, or `postgres-primary`.
 3. Put source paths or concise evidence into each node's `data.sourceReferences` when the diagram is based on code.
 4. Read the current document and revision before editing it.
-5. Prefer `diagram_apply_patch` over complete replacement so unrelated user edits are preserved.
-6. If a revision conflict occurs, read the document again and rebase the intended change.
-7. Run `diagram_auto_layout` after adding or removing several nodes.
-8. Run `diagram_validate` before reporting that a project-derived diagram is complete.
-9. Use edge labels for protocols or semantics such as `HTTPS`, `MCP`, `SQL`, `Publish`, `Consume`, or `depends_on`.
-10. Do not invent code relationships. If a relationship is inferred rather than verified, state that in the node or edge description.
-11. For diagrams supplied as PlantUML, use `diagram_import_plantuml` so the visual editor and source share the same semantic model. Pass `kind` when the source is ambiguous.
-12. Preserve user-authored canvas layout and styling. Use focused document patches for visual changes; do not replace an existing diagram from generated PlantUML unless the user asks to apply source changes.
+5. Treat the ChatOS runtime scope as authoritative. Never accept or invent a ChatOS project ID in tool arguments; the host injects it outside the model-controlled MCP schema.
+6. List or create a Diagram Studio project before creating a diagram. Pass its `projectId` to document creation and PlantUML import tools.
+7. Prefer `diagram_apply_patch` over complete replacement so unrelated user edits are preserved.
+8. If a revision conflict occurs, read the document again and rebase the intended change.
+9. Run `diagram_auto_layout` after adding or removing several nodes.
+10. Run `diagram_validate` before reporting that a project-derived diagram is complete.
+11. Use edge labels for protocols or semantics such as `HTTPS`, `MCP`, `SQL`, `Publish`, `Consume`, or `depends_on`.
+12. Do not invent code relationships. If a relationship is inferred rather than verified, state that in the node or edge description.
+13. For diagrams supplied as PlantUML, use `diagram_import_plantuml` so the visual editor and source share the same semantic model. Pass `kind` when the source is ambiguous.
+14. Preserve user-authored canvas layout and styling. Use focused document patches for visual changes; do not replace an existing diagram from generated PlantUML unless the user asks to apply source changes.
 
 ## Diagram choice
 
@@ -33,12 +35,14 @@ Use Diagram Studio when a user asks to visualize a software architecture, proces
 ## Typical sequence
 
 1. Inspect the project or process description.
-2. Call `diagram_create_document` with the closest diagram kind.
-3. Read the created document.
-4. Patch nodes and edges with verified names and evidence.
-5. Auto-layout.
-6. Validate.
-7. Export JSON, SVG, or PlantUML as requested.
+2. Call `diagram_list_projects` in the current isolated runtime scope.
+3. Reuse the intended Diagram Studio project or call `diagram_create_project`.
+4. Call `diagram_create_document` with that `projectId` and the closest diagram kind.
+5. Read the created document.
+6. Patch nodes and edges with verified names and evidence.
+7. Auto-layout.
+8. Validate.
+9. Export JSON, SVG, or PlantUML as requested.
 
 ## PlantUML workflow
 

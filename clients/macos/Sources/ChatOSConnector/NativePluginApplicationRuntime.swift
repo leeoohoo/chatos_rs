@@ -18,12 +18,25 @@ actor NativePluginApplicationRuntime {
         manifest: NativePluginManifest,
         contribution: NativePluginManifest.UIContribution,
         runtimeRootURL: URL,
-        application: LocalConnectorPluginApplication
+        application: LocalConnectorPluginApplication,
+        hostContext: NativePluginHostContext
     ) async throws -> LocalConnectorPluginApplicationLaunch {
-        let key = application.id
+        let resolvedContext = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: contribution.componentKey,
+            runtimeRootURL: runtimeRootURL,
+            pluginID: record.pluginID,
+            host: hostContext
+        )
+        let key = "\(application.id):\(resolvedContext.scopeKey)"
+        let websiteDataStoreID = resolvedContext.websiteDataStoreID(applicationID: application.id)
         if let current = running[key], current.process.isRunning,
            await isHealthy(baseURL: current.baseURL, healthPath: current.healthPath) {
-            return .init(application: application, url: current.baseURL)
+            return .init(
+                application: application,
+                url: current.baseURL,
+                websiteDataStoreID: websiteDataStoreID
+            )
         }
         stop(key: key)
 
@@ -39,7 +52,11 @@ actor NativePluginApplicationRuntime {
                 installationURL: installationURL,
                 description: "Plugin UI"
             )
-            return .init(application: application, url: sourceURL)
+            return .init(
+                application: application,
+                url: sourceURL,
+                websiteDataStoreID: websiteDataStoreID
+            )
         }
         guard runtime.type == "local_http" else {
             throw NativeConnectorError.pluginInstallation("Plugin UI runtime 类型不受支持")
@@ -60,9 +77,8 @@ actor NativePluginApplicationRuntime {
         let healthPath = try validatedHealthPath(runtime.healthPath)
         let timeoutMilliseconds = min(120_000, max(100, runtime.launchTimeoutMs ?? 15_000))
 
-        let pluginHash = NativePluginManifestLoader.sha256(record.pluginID)
-        let dataURL = runtimeRootURL.appendingPathComponent("data/\(pluginHash)", isDirectory: true)
-        let cacheURL = runtimeRootURL.appendingPathComponent("cache/\(pluginHash)", isDirectory: true)
+        let dataURL = resolvedContext.dataURL
+        let cacheURL = resolvedContext.cacheURL
         for directory in [dataURL, cacheURL] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
@@ -77,7 +93,7 @@ actor NativePluginApplicationRuntime {
         error.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
         process.standardOutput = output
         process.standardError = error
-        let environment = NativePluginProcessEnvironment.make(overrides: [
+        var overrides = [
             "CHATOS_PLUGIN_ROOT": installationURL.path,
             "CHATOS_PLUGIN_DATA_DIR": dataURL.path,
             "CHATOS_PLUGIN_CACHE_DIR": cacheURL.path,
@@ -85,7 +101,9 @@ actor NativePluginApplicationRuntime {
             "CHATOS_PLUGIN_APP_PORT": String(port),
             "CHATOS_PLUGIN_ID": record.pluginID,
             "CHATOS_PLUGIN_COMPONENT_KEY": contribution.componentKey,
-        ])
+        ]
+        overrides.merge(resolvedContext.environment, uniquingKeysWith: { _, runtime in runtime })
+        let environment = NativePluginProcessEnvironment.make(overrides: overrides)
         process.environment = environment
 
         do {
@@ -113,7 +131,11 @@ actor NativePluginApplicationRuntime {
             stop(key: key)
             throw error
         }
-        return .init(application: application, url: baseURL)
+        return .init(
+            application: application,
+            url: baseURL,
+            websiteDataStoreID: websiteDataStoreID
+        )
     }
 
     func stop(pluginID: String) {

@@ -208,3 +208,49 @@ fn rejects_unsafe_or_unpermissioned_local_ui_runtime() {
     assert!(message.contains("safe absolute HTTP path"));
     assert!(message.contains("process.spawn"));
 }
+
+#[test]
+fn parses_and_validates_project_runtime_context() {
+    let mut raw = serde_json::from_str::<serde_json::Value>(
+        manifest_with_mcp(json!({"bin": "open-computer-use"})).as_str(),
+    )
+    .unwrap();
+    raw["runtimeContext"] = json!({
+        "scope": "project",
+        "components": ["computer-use"],
+        "required": [],
+        "optional": ["project.id", "workspace.id", "workspace.root"],
+        "storageIsolation": "project",
+        "missingContext": "device"
+    });
+    let manifest = parse_plugin_manifest(raw.to_string().as_str()).expect("runtime context");
+    let context = manifest.runtime_context.expect("runtime context");
+    assert_eq!(context.scope, PluginRuntimeContextScope::Project);
+    assert_eq!(
+        context.storage_isolation,
+        PluginRuntimeContextStorageIsolation::Project
+    );
+    assert_eq!(
+        context.missing_context,
+        PluginRuntimeContextMissingContext::Device
+    );
+}
+
+#[test]
+fn rejects_unknown_runtime_context_components_and_fields() {
+    let mut raw = serde_json::from_str::<serde_json::Value>(
+        manifest_with_mcp(json!({"bin": "open-computer-use"})).as_str(),
+    )
+    .unwrap();
+    raw["runtimeContext"] = json!({
+        "scope": "project",
+        "components": ["missing"],
+        "required": ["secret.token"],
+        "storageIsolation": "project",
+        "missingContext": "device"
+    });
+    let error = parse_plugin_manifest(raw.to_string().as_str()).expect_err("invalid context");
+    let message = error.to_string();
+    assert!(message.contains("component is not declared"));
+    assert!(message.contains("unsupported runtime context field"));
+}

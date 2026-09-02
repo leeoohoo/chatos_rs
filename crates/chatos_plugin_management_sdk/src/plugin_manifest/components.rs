@@ -28,6 +28,11 @@ pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ: &str = "artifact.read";
 pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD: &str = "artifact.download";
 pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE: &str = "artifact.create";
 pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE: &str = "artifact.update";
+pub const PLUGIN_RUNTIME_CONTEXT_MAX_COMPONENTS: usize = 64;
+pub const PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS: usize = 16;
+pub const PLUGIN_RUNTIME_CONTEXT_FIELD_PROJECT_ID: &str = "project.id";
+pub const PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ID: &str = "workspace.id";
+pub const PLUGIN_RUNTIME_CONTEXT_FIELD_WORKSPACE_ROOT: &str = "workspace.root";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -61,6 +66,53 @@ pub struct PluginAuthor {
     pub email: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginRuntimeContextScope {
+    Device,
+    Workspace,
+    Project,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginRuntimeContextStorageIsolation {
+    Plugin,
+    Workspace,
+    Project,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginRuntimeContextMissingContext {
+    Reject,
+    Device,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginRuntimeContext {
+    pub scope: PluginRuntimeContextScope,
+    #[serde(default)]
+    pub components: Vec<String>,
+    #[serde(default)]
+    pub required: Vec<String>,
+    #[serde(default)]
+    pub optional: Vec<String>,
+    #[serde(default = "default_runtime_context_storage_isolation")]
+    pub storage_isolation: PluginRuntimeContextStorageIsolation,
+    #[serde(default = "default_runtime_context_missing_context")]
+    pub missing_context: PluginRuntimeContextMissingContext,
+}
+
+const fn default_runtime_context_storage_isolation() -> PluginRuntimeContextStorageIsolation {
+    PluginRuntimeContextStorageIsolation::Plugin
+}
+
+const fn default_runtime_context_missing_context() -> PluginRuntimeContextMissingContext {
+    PluginRuntimeContextMissingContext::Reject
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

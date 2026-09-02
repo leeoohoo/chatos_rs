@@ -16,7 +16,11 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     env: {
       ...process.env,
       DIAGRAM_STUDIO_DATA_DIR: path.join(root, 'data'),
-      CHATOS_PLUGIN_ARTIFACT_DIR: artifacts
+      CHATOS_PLUGIN_ARTIFACT_DIR: artifacts,
+      CHATOS_CONTEXT_SCOPE: 'project',
+      CHATOS_PROJECT_ID: 'chatos-project-1',
+      CHATOS_PROJECT_NAME: 'ChatOS Project One',
+      CHATOS_WORKSPACE_ID: 'workspace-1'
     }
   });
   try {
@@ -24,6 +28,37 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     const tools = await client.listTools();
     assert.ok(tools.tools.some((tool) => tool.name === 'diagram_apply_patch'));
     assert.ok(tools.tools.some((tool) => tool.name === 'diagram_import_plantuml'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'diagram_create_project'));
+
+    const projectCreated = await client.callTool({
+      name: 'diagram_create_project',
+      arguments: { name: 'Architecture Project', description: 'Managed through MCP' }
+    });
+    const projectId = projectCreated.structuredContent.project.projectId;
+    assert.equal(projectCreated.structuredContent.scope.kind, 'project');
+    assert.equal(projectCreated.structuredContent.scope.chatosProjectId, 'chatos-project-1');
+    const targetProjectCreated = await client.callTool({
+      name: 'diagram_create_project',
+      arguments: { name: 'Target Project' }
+    });
+    const targetProjectId = targetProjectCreated.structuredContent.project.projectId;
+
+    const blankCreated = await client.callTool({
+      name: 'diagram_create_document',
+      arguments: {
+        kind: 'architecture',
+        title: 'Blank Architecture',
+        projectId,
+        blank: true
+      }
+    });
+    const blankDocumentId = blankCreated.structuredContent.document.documentId;
+    const blankDocument = await client.callTool({
+      name: 'diagram_get_document',
+      arguments: { documentId: blankDocumentId }
+    });
+    assert.deepEqual(blankDocument.structuredContent.document.nodes, []);
+    assert.deepEqual(blankDocument.structuredContent.document.edges, []);
 
     const created = await client.callTool({
       name: 'diagram_create_document',
@@ -65,7 +100,11 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
 
     const imported = await client.callTool({
       name: 'diagram_import_plantuml',
-      arguments: { source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\nAPI --> User: Response\n@enduml', title: 'Imported Sequence' }
+      arguments: {
+        source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\nAPI --> User: Response\n@enduml',
+        title: 'Imported Sequence',
+        projectId
+      }
     });
     assert.equal(imported.structuredContent.document.kind, 'sequence');
     const plantUmlExport = await client.callTool({
@@ -109,6 +148,67 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     });
     assert.equal(importedTopology.structuredContent.document.kind, 'topology');
     assert.equal(importedTopology.structuredContent.document.notation.dialect, 'deployment');
+
+    const projectDocuments = await client.callTool({
+      name: 'diagram_list_documents',
+      arguments: { projectId }
+    });
+    assert.equal(projectDocuments.structuredContent.documents.length, 2);
+
+    await client.callTool({
+      name: 'diagram_move_document',
+      arguments: {
+        documentId: blankDocumentId,
+        sourceProjectId: projectId,
+        targetProjectId
+      }
+    });
+    const sourceAfterMove = await client.callTool({
+      name: 'diagram_get_project',
+      arguments: { projectId }
+    });
+    const targetAfterMove = await client.callTool({
+      name: 'diagram_get_project',
+      arguments: { projectId: targetProjectId }
+    });
+    assert.deepEqual(sourceAfterMove.structuredContent.project.diagramIds, [
+      imported.structuredContent.document.documentId
+    ]);
+    assert.deepEqual(targetAfterMove.structuredContent.project.diagramIds, [blankDocumentId]);
+
+    const renamed = await client.callTool({
+      name: 'diagram_update_project',
+      arguments: { projectId: targetProjectId, name: 'Renamed Target' }
+    });
+    assert.equal(renamed.structuredContent.project.name, 'Renamed Target');
+
+    await client.callTool({
+      name: 'diagram_delete_document',
+      arguments: { documentId: imported.structuredContent.document.documentId }
+    });
+    const sourceAfterDelete = await client.callTool({
+      name: 'diagram_get_project',
+      arguments: { projectId }
+    });
+    assert.deepEqual(sourceAfterDelete.structuredContent.project.diagramIds, []);
+
+    await client.callTool({
+      name: 'diagram_delete_project',
+      arguments: { projectId: targetProjectId, deleteDocuments: false }
+    });
+    const retainedDocument = await client.callTool({
+      name: 'diagram_get_document',
+      arguments: { documentId: blankDocumentId }
+    });
+    assert.equal(retainedDocument.structuredContent.document.documentId, blankDocumentId);
+    await client.callTool({
+      name: 'diagram_delete_document',
+      arguments: { documentId: blankDocumentId }
+    });
+    await client.callTool({
+      name: 'diagram_delete_project',
+      arguments: { projectId, deleteDocuments: true }
+    });
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });

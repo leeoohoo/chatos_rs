@@ -203,6 +203,7 @@ async fn start_local_connector(
     expected_workspace_id: Option<&'static str>,
     expected_cwd: Option<&'static str>,
     expected_permission: &'static str,
+    expected_project_id: Option<&'static str>,
 ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     #[derive(Clone)]
     struct TestState {
@@ -211,6 +212,7 @@ async fn start_local_connector(
         expected_workspace_id: Option<&'static str>,
         expected_cwd: Option<&'static str>,
         expected_permission: &'static str,
+        expected_project_id: Option<&'static str>,
     }
 
     async fn handler(
@@ -252,6 +254,10 @@ async fn start_local_connector(
         )
         .unwrap();
         assert_eq!(claims.owner_user_id.as_deref(), Some("user-1"));
+        assert_eq!(
+            body.get("project_id").and_then(Value::as_str),
+            state.expected_project_id
+        );
         state.actions.lock().unwrap().push(action.clone());
         match action.as_str() {
             "prepare" => {
@@ -376,6 +382,7 @@ async fn start_local_connector(
             expected_workspace_id,
             expected_cwd,
             expected_permission,
+            expected_project_id,
         });
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -391,6 +398,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         Some("workspace-1"),
         Some("projects/space-station"),
         "workspace.read",
+        Some("project-1"),
     )
     .await;
     let provider = PluginLocalProvider::new(
@@ -683,7 +691,7 @@ fn only_definitely_unexecuted_adapter_failures_are_recoverable() {
 async fn device_only_plugin_prepare_uses_the_installation_device_without_workspace_query() {
     const SECRET: &str = "device-only-plugin-local-test-secret";
     let (base_url, actions, server) =
-        start_local_connector(SECRET, None, None, "network.domain:github.com").await;
+        start_local_connector(SECRET, None, None, "network.domain:github.com", None).await;
     let provider = PluginLocalProvider::new(
         reqwest::Client::new(),
         base_url,

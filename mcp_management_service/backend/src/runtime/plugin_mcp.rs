@@ -35,6 +35,8 @@ pub struct PluginLocalProviderBinding {
     pub device_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub adapter_session_id: String,
     pub operation: String,
     pub session_sha256: String,

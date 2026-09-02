@@ -137,6 +137,13 @@ struct PluginApplicationHostView: View {
     @State private var launch: LocalConnectorPluginApplicationLaunch?
     @State private var errorMessage: String?
     @State private var reloadToken = 0
+    @State private var contextChosen = false
+    @State private var selectedProjectID: String?
+    @State private var launchContext: LocalConnectorPluginApplicationContext?
+
+    private var requiresContextSelection: Bool {
+        application.contextScope == "project" || application.contextScope == "workspace"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -152,6 +159,22 @@ struct PluginApplicationHostView: View {
                 PluginApplicationIcon(application: application, size: 30)
                 Text(application.displayName)
                     .font(.system(size: 14, weight: .semibold))
+                if contextChosen, requiresContextSelection {
+                    Text(selectedProjectName ?? model.localized("公共项目", english: "Shared Project"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.quaternary, in: Capsule())
+                    Button(model.localized("切换", english: "Switch")) {
+                        launch = nil
+                        errorMessage = nil
+                        launchContext = nil
+                        contextChosen = false
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11))
+                }
                 Spacer()
                 if launch != nil {
                     Button {
@@ -169,8 +192,14 @@ struct PluginApplicationHostView: View {
             .overlay(alignment: .bottom) { Divider() }
 
             Group {
-                if let launch {
-                    RestrictedPluginWebView(url: launch.url, reloadToken: reloadToken)
+                if requiresContextSelection && !contextChosen {
+                    contextPicker
+                } else if let launch {
+                    RestrictedPluginWebView(
+                        url: launch.url,
+                        websiteDataStoreID: launch.websiteDataStoreID,
+                        reloadToken: reloadToken
+                    )
                 } else if let errorMessage {
                     ContentUnavailableView {
                         Label(
@@ -181,7 +210,7 @@ struct PluginApplicationHostView: View {
                         Text(errorMessage)
                     } actions: {
                         Button(model.localized("重试", english: "Try Again")) {
-                            start()
+                            start(context: launchContext)
                         }
                         Button(model.localized("返回应用列表", english: "Back to Applications")) {
                             model.selection = .applications
@@ -199,15 +228,106 @@ struct PluginApplicationHostView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task(id: application.id) { start() }
+        .task(id: application.id) {
+            if !requiresContextSelection {
+                contextChosen = true
+                start(context: nil)
+            }
+        }
     }
 
-    private func start() {
+    private var selectedProjectName: String? {
+        guard let selectedProjectID else { return nil }
+        return model.workspaceProjects.first(where: { $0.id == selectedProjectID })?.name
+    }
+
+    private var contextPicker: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.localized("选择应用项目", english: "Choose Application Project"))
+                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                Text(model.localized(
+                    "插件会为每个 ChatOS 用户和项目使用独立的数据目录。",
+                    english: "The plugin uses a separate data directory for every ChatOS user and project."
+                ))
+                .foregroundStyle(.secondary)
+            }
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    if application.missingContext == "device" {
+                        contextButton(
+                            title: model.localized("公共项目", english: "Shared Project"),
+                            subtitle: model.localized(
+                                "用于没有关联 ChatOS 项目的图形和数据",
+                                english: "For diagrams and data not tied to a ChatOS project"
+                            ),
+                            systemImage: "person.crop.square"
+                        ) {
+                            selectedProjectID = nil
+                            let context = LocalConnectorPluginApplicationContext.device
+                            launchContext = context
+                            contextChosen = true
+                            start(context: context)
+                        }
+                    }
+                    ForEach(model.workspaceProjects) { project in
+                        contextButton(
+                            title: project.name,
+                            subtitle: project.displayRootPath ?? project.rootPath
+                                ?? model.localized("ChatOS 项目", english: "ChatOS project"),
+                            systemImage: "folder"
+                        ) {
+                            selectedProjectID = project.id
+                            let context = LocalConnectorPluginApplicationContext(
+                                projectID: project.id,
+                                projectName: project.name,
+                                projectRoot: project.rootPath
+                            )
+                            launchContext = context
+                            contextChosen = true
+                            start(context: context)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 680, maxHeight: 640, alignment: .leading)
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func contextButton(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 42, height: 42)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 14, weight: .semibold))
+                    Text(subtitle).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+            }
+            .padding(13)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08)) }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func start(context: LocalConnectorPluginApplicationContext? = nil) {
         launch = nil
         errorMessage = nil
         Task {
             do {
-                launch = try await model.launchPluginApplication(application)
+                launch = try await model.launchPluginApplication(application, context: context)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -244,13 +364,15 @@ private struct PluginApplicationIcon: View {
 
 private struct RestrictedPluginWebView: NSViewRepresentable {
     var url: URL
+    var websiteDataStoreID: UUID?
     var reloadToken: Int
 
     func makeCoordinator() -> Coordinator { Coordinator(allowedURL: url) }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = websiteDataStoreID.map(WKWebsiteDataStore.init(forIdentifier:))
+            ?? .nonPersistent()
         configuration.preferences.isElementFullscreenEnabled = true
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator

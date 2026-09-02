@@ -1,6 +1,6 @@
 {
   "name": "@chatos/diagram-studio",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Apple-inspired workbench for technical diagrams with PlantUML Sequence, Activity, Component, and Deployment interoperability.",
   "license": "Apache-2.0",
   "type": "module",

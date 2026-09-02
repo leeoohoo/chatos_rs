@@ -80,10 +80,14 @@ extension NativeLocalConnectorService {
         let componentKey = try body.requireString("component_key")
         let serverKey = body["server_key"]?.jsonString
         let permissionSnapshot = Set(try body.requireStringArray("permission_snapshot"))
+        let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
         let allowlist = Set(try body.optionalStringArray("tool_allowlist"))
         let blocklist = Set(try body.optionalStringArray("tool_blocklist"))
         try scope.validate(permissionSnapshot: permissionSnapshot)
         let projectRoot = try scope.projectRoot(for: request)
+        guard let ownerUserID = state.user?.id, let deviceID = state.deviceID else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Relay 的设备身份已失效")
+        }
         guard state.pluginPreferences[pluginID] ?? true,
               let record = state.installedPluginRecords?[pluginID],
               record.releaseID == releaseID,
@@ -113,7 +117,11 @@ extension NativeLocalConnectorService {
             componentKey: componentKey,
             serverKey: serverKey,
             adapterSessionID: adapterSessionID,
+            ownerUserID: ownerUserID,
+            deviceID: deviceID,
+            workspaceID: scope.workspaceID,
             workspaceRoot: projectRoot,
+            projectID: projectID,
             permissionSnapshot: permissionSnapshot,
             runtimeRootURL: pluginRuntimeRootURL
         )
@@ -156,6 +164,7 @@ extension NativeLocalConnectorService {
                 artifactSHA256: record.artifactSHA256,
                 componentKey: launch.componentKey,
                 adapterSessionID: adapterSessionID,
+                projectID: projectID,
                 requiresExclusiveExecution: launch.server.requiresExclusiveExecution
             )
             await pluginRuntimeStore.insert(
@@ -220,6 +229,7 @@ extension NativeLocalConnectorService {
         let invocationID = try body.requireString("invocation_id")
         let operation = try body.requireString("operation")
         let toolName = try body.requireString("tool_name")
+        let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
         guard operation == "mcp_tools_call" else {
             throw NativePluginRuntimeError.invalidRequest("不支持这个 Plugin 操作")
         }
@@ -229,7 +239,8 @@ extension NativeLocalConnectorService {
             releaseID: releaseID,
             artifactSHA256: artifactSHA256,
             componentKey: componentKey,
-            workspaceID: scope.workspaceID
+            workspaceID: scope.workspaceID,
+            projectID: projectID
         )
         if let conversationID = body["conversation_id"]?.jsonString?.nonEmptyTrimmed {
             await pluginRuntimeStore.bindOwner(
@@ -342,9 +353,11 @@ extension NativeLocalConnectorService {
         let runID = try body.requireString("run_id")
         let adapterSessionID = try body.requireString("adapter_session_id")
         let invocationID = body["invocation_id"]?.jsonString?.nonEmptyTrimmed
+        let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
         try await pluginRuntimeStore.validateScopeIfPresent(
             adapterSessionID: adapterSessionID,
-            workspaceID: scope.workspaceID
+            workspaceID: scope.workspaceID,
+            projectID: projectID
         )
         let status = await pluginRuntimeStore.cancel(
             adapterSessionID: adapterSessionID,

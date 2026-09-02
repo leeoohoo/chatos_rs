@@ -659,11 +659,13 @@ final class AppModel: ObservableObject {
     }
 
     func launchPluginApplication(
-        _ application: LocalConnectorPluginApplication
+        _ application: LocalConnectorPluginApplication,
+        context: LocalConnectorPluginApplicationContext? = nil
     ) async throws -> LocalConnectorPluginApplicationLaunch {
         try await localConnectorService.launchPluginApplication(
             pluginID: application.pluginID,
-            componentKey: application.componentKey
+            componentKey: application.componentKey,
+            context: context
         )
     }
 

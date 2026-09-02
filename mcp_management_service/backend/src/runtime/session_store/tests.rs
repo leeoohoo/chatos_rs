@@ -105,6 +105,7 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
                 run_id: session_id.to_string(),
                 device_id: "device-private-1".to_string(),
                 workspace_id: Some("workspace-private-1".to_string()),
+                project_id: Some("project-private-1".to_string()),
                 adapter_session_id: "adapter-private-1".to_string(),
                 operation: "mcp_tools_call".to_string(),
                 session_sha256: "d".repeat(64),

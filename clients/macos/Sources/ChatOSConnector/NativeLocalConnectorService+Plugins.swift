@@ -29,6 +29,18 @@ extension NativeLocalConnectorService {
         pluginID: String,
         componentKey: String
     ) async throws -> LocalConnectorPluginApplicationLaunch {
+        try await launchPluginApplication(
+            pluginID: pluginID,
+            componentKey: componentKey,
+            context: nil
+        )
+    }
+
+    public func launchPluginApplication(
+        pluginID: String,
+        componentKey: String,
+        context: LocalConnectorPluginApplicationContext?
+    ) async throws -> LocalConnectorPluginApplicationLaunch {
         guard state.pluginPreferences[pluginID] ?? true else {
             throw NativeConnectorError.pluginInstallation("Plugin 已停用")
         }
@@ -46,12 +58,29 @@ extension NativeLocalConnectorService {
             manifest: manifest,
             contribution: contribution
         )
+        let resolvedPath: NativeResolvedProjectPath?
+        if let root = context?.projectRoot?.pluginContextValue {
+            resolvedPath = try resolveProjectPath(root)
+        } else {
+            resolvedPath = nil
+        }
+        guard let ownerUserID = state.user?.id, let deviceID = state.deviceID else {
+            throw NativeConnectorError.notPaired
+        }
         return try await pluginApplicationRuntime.launch(
             record: record,
             manifest: manifest,
             contribution: contribution,
             runtimeRootURL: pluginRuntimeRootURL,
-            application: application
+            application: application,
+            hostContext: .init(
+                ownerUserID: ownerUserID,
+                deviceID: deviceID,
+                workspaceID: resolvedPath?.workspace.id,
+                workspaceRoot: resolvedPath?.absoluteURL,
+                projectID: context?.projectID?.pluginContextValue,
+                projectName: context?.projectName?.pluginContextValue
+            )
         )
     }
 
@@ -213,7 +242,13 @@ extension NativeLocalConnectorService {
             description: manifest.description,
             brandColor: manifest.interface?.brandColor,
             iconURL: iconURL,
-            requiresLocalRuntime: contribution.runtime != nil
+            requiresLocalRuntime: contribution.runtime != nil,
+            contextScope: manifest.runtimeContext?.applies(to: contribution.componentKey) == true
+                ? manifest.runtimeContext?.scope
+                : nil,
+            missingContext: manifest.runtimeContext?.applies(to: contribution.componentKey) == true
+                ? manifest.runtimeContext?.missingContext
+                : nil
         )
     }
 
