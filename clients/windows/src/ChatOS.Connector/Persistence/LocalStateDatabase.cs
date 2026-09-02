@@ -11,11 +11,16 @@ public sealed class LocalStateDatabase
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "ChatOS",
             "WindowsClient",
-            "chatos-client.db"))
+            "chatos-client.db"), pooling: true)
     {
     }
 
     internal LocalStateDatabase(string databasePath)
+        : this(databasePath, pooling: false)
+    {
+    }
+
+    private LocalStateDatabase(string databasePath, bool pooling)
     {
         var stateDirectory = Path.GetDirectoryName(databasePath)
             ?? throw new ArgumentException("Database path must include a directory.", nameof(databasePath));
@@ -25,6 +30,7 @@ public sealed class LocalStateDatabase
             DataSource = databasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared,
+            Pooling = pooling,
         }.ToString();
     }
 
