@@ -4,252 +4,149 @@ English · [简体中文](./README.zh-CN.md)
 
 > Bring AI into your project—and get things done.
 
-Okra is the product name of Chat OS and an AI work partner built for real projects.
+Okra is the product built by this repository. The codebase and protocols still use the ChatOS name in many places.
 
-It does more than answer questions. Okra can discuss requirements with you, understand project context, break down work, read code, use tools, run tasks, and turn important information into reusable project memory.
+Okra is a native desktop AI workspace for long-running project collaboration. It connects conversation, plans, background tasks, project memory, local files, Git, terminals, MCP tools, plugins, and human approvals in one reviewable workflow.
 
-Ask simple questions directly, or hand complex work to background tasks. You can return at any time to review progress, tool output, code changes, and final results without explaining the entire project again.
+## What the project is today
 
-## What Okra Can Do
+- **Native desktop clients:** independent SwiftUI and WinUI applications for macOS and Windows. The retired Electron client is no longer the product runtime.
+- **Cloud orchestration:** conversations, tasks, requirements, agents, configuration, plugin metadata, and memory are managed by server-side services.
+- **Device-side execution:** every project binds an explicitly authorized local workspace. Files, Git, commands, local MCP servers, plugin applications, and device permissions execute through the Local Connector built into the native client.
+- **Observable background work:** complex requests can become resumable tasks with progress, logs, tool calls, approvals, retries, and final results.
+- **Long-term project context:** conversation summaries, project facts, and role-specific memory can be reused across sessions.
+- **Extensible local capabilities:** the plugin platform supports MCP servers, skills, managed artifacts, and sandboxed local application surfaces.
 
-### Turn rough ideas into executable plans
+Okra does not silently move a device-scoped operation to a server filesystem or another machine. If the bound Local Connector is offline, the operation waits or fails explicitly.
 
-Start with a plain-language request and work with Okra to clarify the goal, constraints, and acceptance criteria.
+## Architecture
 
-A project plan can bring together:
+```mermaid
+flowchart LR
+    U[User] --> C[Native macOS / Windows client]
+    C --> G[APISIX API gateway]
+    G --> S[Cloud business services]
+    S --> T[Task Runner and workers]
+    S --> M[Memory Engine]
+    S --> P[Project / Plugin / MCP management]
+    T --> L[Local Connector service]
+    P --> L
+    L --> N[Native Local Connector]
+    N --> W[Authorized workspace]
+    N --> X[Git / terminal / local MCP / plugin apps]
+    S --> H[Harness repository and integration plane]
+```
 
-- Product requirements and business goals
-- Technical proposals and project documentation
-- Tasks that can be executed directly
-- Dependencies between tasks
-- Current progress, failure reasons, and follow-up work
+The boundary is intentional:
 
-A plan is not a disposable chat response. Once confirmed, its related tasks can move directly into execution.
+- Cloud services are authoritative for account and project business data.
+- The native client is authoritative for local credentials, workspace authorization, and device capabilities.
+- Local Connector uses outbound connectivity and exposes only the workspace and capabilities the user authorized.
+- Harness manages repositories, synchronization, CI, and integrations; it is not a fallback project filesystem or command executor.
 
-### Let AI work inside a real project
+## Product areas
 
-Okra works in the right engineering environment, so you do not have to keep copying code and commands into a chat window.
+### Conversation, planning, and tasks
 
-Depending on the project type, it can use:
-
-- Project files and full-text search
-- Git status, branches, diffs, commits, and synchronization
-- Terminals and long-running commands
-- Marketplace-installed MCP plugins, code maintenance, and other engineering tools
-- Project languages, toolchains, and environment variables
-- An isolated cloud environment or a local directory you have authorized
-
-Every operation stays connected to the current project and leaves a process you can review later.
-
-### Hand complex work to background tasks
-
-When a request requires many steps, Okra can send it to the task system instead of making you stay in the chat window.
-
-You can see:
-
-- What is being worked on now
-- Which tasks are completed, running, blocked, or failed
-- Which tools the AI used
-- Commands, runtime logs, and code changes
-- Whether Okra needs more information or your confirmation
-- Success, stop, failure, and retry results
-
-Task lifecycles are managed in the cloud and can continue after you leave the page. Tasks that need local files, commands, plugins, MCP servers, or permission-controlled device capabilities require the desktop client and Local Connector to remain online.
-
-### Remember the project, not just one conversation
-
-Okra continuously organizes project context, important decisions, conversation summaries, and role-specific memory so long-term collaboration is not limited to a single chat.
-
-This lets you:
-
-- Continue previous work in a new conversation
-- Let the AI remember project conventions and personal preferences
-- Review the summary accumulated in the current conversation
-- Recall important information from related conversations
-- Explicitly forget a Recall that is no longer useful in the current project
-
-Memory is not an endless pile of chat history. Okra uses summaries and layered organization to keep the information that is most useful for future work.
-
-### Create AI partners for different projects
-
-Different projects benefit from different ways of working. You can create several agents with clear responsibilities, then choose one as the current contact for each project. Chat, project context, and background tasks will use that contact by default.
-
-For example:
-
-- A product partner focused on requirement clarification
-- A development partner familiar with a specific technology stack
-- An engineering partner focused on testing, debugging, or code review
-- A project partner responsible for maintaining documentation and task status
-
-Each agent can have its own role, boundaries, model, skills, and tool capabilities. You can switch the project's contact when it has no task currently running.
-
-## Where Okra Fits
-
-### Start a new project from scratch
-
-Tell Okra what you want to build. It can help shape the requirements, technical approach, task dependencies, and acceptance criteria before moving through the implementation plan.
-
-### Take over or maintain an existing codebase
-
-Import a Git project or authorize a local directory. Okra can read the project structure before working on features, refactoring, tests, dependency upgrades, or bug fixes.
-
-### Move long-running, complex work forward
-
-Hand multi-step work to the task system and review execution status, failure reports, retries, and final deliverables in one place instead of relying on an untraceable long conversation.
-
-### Maintain a long-term personal project
-
-Let project context, past decisions, pending work, and conversation memory accumulate over time. Return days or weeks later and continue from the context already available.
-
-### Choose the right role for each project
-
-Create product, development, testing, or research contacts, then choose the most appropriate one for an ongoing project.
-
-## Get Started in Three Steps
-
-### 1. Create a project
-
-Install the desktop client, register a Local Connector workspace, and create the project from an authorized directory. Every project uses this workspace for files, Git, search, and commands.
-
-### 2. Tell Okra what you want to accomplish
-
-Describe the goal directly, and add any constraints, source material, or acceptance criteria you already have.
-
-For more complex work, enter Plan mode so Okra can organize requirements, documents, tasks, and dependencies before execution begins.
-
-### 3. Follow the process and keep collaborating
-
-While a task is running, you can review progress, send additional guidance, answer Okra's questions, stop the task, or retry after a failure.
-
-When the work is complete, the result, project changes, and suggested next steps return to the same conversation and project context.
-
-## Projects and Workspaces
-
-Okra has one project model. Every project binds an authorized Local Connector workspace; there is no cloud/local project type switch.
-
-- Project, session, message, task, requirement, memory, and Agent lifecycles are orchestrated by server-side services.
-- Project files, Git, search, commands, local Skills/Plugins/MCP servers, permission relay operations, and approvals execute through Local Connector Client.
-- Harness can manage repository assets, branches, synchronization, CI, and integrations, but it is never used as the MCP project file or command provider.
-- If Local Connector is unavailable, workspace operations fail or wait explicitly. They do not fall back to a server filesystem, Harness, or another execution host.
-
-### Projects and privacy
-
-Keep in mind:
-
-- Okra Cloud stores only logical workspace and device routing identifiers, not the absolute path of your local workspace.
-- Cloud services are the single source of truth for business data; the client does not keep a second copy of sessions, tasks, or memory.
-- Content needed for AI inference may still be sent to the model provider you choose. Review that provider's data policy as well.
-- Control information such as your account, agent capabilities, model catalog, and system policies may synchronize with your account.
-- Terminal, file, and Git operations are restricted to the authorized workspace boundary.
-
-## What You Will Find in Okra
-
-### Conversation space
-
-Work continuously with the project contact and review AI responses, reasoning stages, tool activity, task status, and message history.
-
-### Project plans
-
-Review requirements, technical documents, project tasks, dependencies, and execution status in one place, then launch related work directly from a requirement.
+Okra supports direct conversation and structured project work. Requirements can be refined into plans and dependency-aware tasks, then executed through a background task lifecycle. Users can inspect intermediate output, provide additional guidance, approve sensitive actions, stop work, and retry failures.
 
 ### Project workspace
 
-Browse and search files, inspect Git changes, edit project content, configure how the project runs, and start or inspect project instances.
+The native clients provide project browsing, full-text search, file viewing and editing, Git state and diffs, terminals, run configurations, logs, and project-scoped resource creation. Workspace operations remain inside the authorized local boundary.
 
-### Task center
+### Agents and memory
 
-Review background tasks, run history, human confirmations, tool status, successful results, and failure reasons.
+Projects can use different AI contacts with their own role, model, skills, and tool capabilities. The memory system maintains conversation summaries and reusable project context instead of relying on one unbounded chat transcript.
 
-### Memory view
+### Native desktop capabilities
 
-Review conversation summaries and recallable memory, run retrospectives, and manage automatic summaries and Recalls for projects.
+The macOS client includes project workspaces, task views, plugin applications, a local connector control surface, an optional desktop pet, and local-only global utilities such as quick search, clipboard history, screenshots, long screenshots, and screen recording.
 
-### Agents and capabilities
+The Windows client follows the same product protocols and visual language with its own WinUI implementation, native Local Connector, packaging flow, and Network Guard. Platform-specific parity is tracked explicitly because the clients do not share UI source code.
 
-Create agents, choose models, enable the tools and skills they need, and set default models and reasoning levels for different kinds of work.
+See [clients/README.md](./clients/README.md), [clients/macos/README.md](./clients/macos/README.md), and [clients/windows/README.md](./clients/windows/README.md).
 
-## Before You Begin
+## First-party plugins
 
-### Creating a project
+| Plugin | Purpose |
+| --- | --- |
+| [Browser](./plugins/browser/README.md) | CDP-based browser automation for managed Chromium or explicitly shared Chrome tabs. |
+| [Computer Use](./plugins/computer-use/README.md) | Visual-first native computer control using real screenshots and platform input APIs. |
+| [Document Tools](./plugins/document/README.md) | Workspace-bounded Word, Excel, PowerPoint, and PDF inspection, rendering, creation, and editing. |
+| [Diagram Studio](./plugins/diagram-studio/README.md) | AI-editable visual diagrams with a local workbench and PlantUML interoperability. |
 
-1. Download and install the Okra desktop connector from the Okra website.
-2. Sign in with your Okra cloud account.
-3. Add and authorize a local workspace.
-4. Configure the local tools, Skills, Plugins, MCP servers, permission controls, and approval permissions you need.
-5. Create the project from that workspace in the desktop client.
-6. Add a project contact, then start a conversation or plan.
+Plugins can combine MCP servers, skills, permission declarations, managed artifacts, and local application surfaces. Runtime data is isolated by user and project where the plugin contract requests it.
 
-The ChatOS application UI is native desktop software. Browser-based administration pages do not grant access to directories on your computer; workspace operations require the desktop client and its Local Connector to be online.
+## Repository map
 
-## Frequently Asked Questions
+| Path | Responsibility |
+| --- | --- |
+| `clients/macos` | Swift 6.2 / SwiftUI native client and macOS Local Connector. |
+| `clients/windows` | .NET 8 / WinUI 3 native client, Windows Local Connector, Network Guard, and installer. |
+| `chatos/backend` | Main ChatOS API and conversation orchestration service. |
+| `task_runner_service/backend` | Background task API, workers, scheduler, and tool runtime. |
+| `project_management_service/backend` | Projects, requirements, plans, execution context, and Harness integration. |
+| `memory_engine/backend` | Conversation summaries and layered project/subject memory. |
+| `mcp_management_service/backend` | MCP capability materialization, routing, and runtime sessions. |
+| `plugin_management_service/backend` | Plugin catalog, releases, packages, and runtime capability metadata. |
+| `local_connector_service/backend` | Cloud routing and coordination for native Local Connectors. |
+| `user_service/backend` | Accounts, authentication, model providers, and user settings. |
+| `config_center_service/backend` | Dynamic service configuration and release publication. |
+| `plugins` | First-party plugins and their packaging metadata. |
+| `crates` | Shared Rust protocols, SDKs, runtimes, auth, sandbox, and observability libraries. |
+| `admin_console` | React administration console. |
+| `official_website_service` | Product website, registration, and client release distribution. |
+| `docker` | Compose topology, deployment scripts, gateway, and observability configuration. |
 
-### How is Okra different from a typical AI chat tool?
+The root Rust workspace is defined in [Cargo.toml](./Cargo.toml). Memory Engine remains a separate Rust workspace and is built explicitly by the Makefile.
 
-Typical chat tools primarily generate responses. Okra is designed for continuous project collaboration: it can connect to project environments, use tools, manage plans and tasks, report progress, and reuse project context accumulated during earlier conversations.
+## Run the cloud stack
 
-### Do I have to upload my code to the cloud?
+### Prerequisites
 
-No. Project code remains in the directory authorized through Local Connector. Content needed for AI inference may still be sent to the model provider you configured.
+- Docker Engine and Docker Compose v2
+- Bash and OpenSSL
+- `make` (recommended)
 
-### Can I use my own model service?
-
-Yes. Okra supports OpenAI-compatible model services and lets you select different models for general chat, project planning, memory summaries, and task execution.
-
-### Can I intervene while the AI is working?
-
-Yes. You can review tool activity, respond to confirmation requests, send additional guidance, stop the current run, and retry after a failure.
-
-### Will a task continue after I close the page?
-
-Task orchestration and business state continue on the server. When the next step needs project files, commands, or another device capability, the desktop client and Local Connector must be online.
-
-### Can a project fall back to a cloud workspace when my device is offline?
-
-No. Project workspace access only uses the bound Local Connector. MCP Management never silently switches to Harness, a server filesystem, another execution host, or another device.
-
-## Current Product Status
-
-Okra is evolving quickly. Current limitations include:
-
-- Project workspace access requires the desktop client and an online Local Connector.
-- Projects do not yet support chat attachments or image/file attachments in additional guidance sent while a task is running.
-- Business history is stored by server-side services. Version 3.0.0 does not import historical sessions, tasks, or memory from the retired Electron client's SQLite database.
-- Available desktop platforms, versions, and registration rules depend on the Okra deployment you use.
-
-## Technical and Self-Hosting Reference
-
-The following section is for maintainers who deploy, debug, or extend Okra. Regular users do not need it.
-
-<details>
-<summary>Expand architecture notes and development commands</summary>
-
-### Execution architecture
-
-Okra uses one cloud business orchestration plane plus device-side capability executors:
-
-- Project, conversation, task, requirement, memory, and Agent lifecycle data is authoritative in cloud services.
-- Local Connector Core only executes capabilities that must run on the user's device, including workspace files, Git, commands, local Skill/Plugin/MCP components, permission-controlled task leases, and approvals.
-- MCP Management routes project files, Git, search, and commands only to the bound Local Connector. Harness remains a repository and integration control plane.
-- Local Connector unavailability fails explicitly; it never moves a device-scoped operation to another execution host silently.
-
-### Start the self-hosted cloud stack
-
-Docker Engine and Docker Compose v2 are required:
+### Prebuilt images
 
 ```bash
 cp docker/bootstrap.conf.example docker/bootstrap.conf
+# Replace development credentials before using a shared or production environment.
 make docker-up
 ```
 
-The official website is available at <http://localhost:39251>, and the unified API gateway at <http://localhost:9080>. The ChatOS application itself runs in the native clients. Business configuration is published through Configuration Center. `docker/bootstrap.conf` contains only the infrastructure and credentials required before Configuration Center can be reached and must not be committed.
+The default deployment pulls prebuilt images. After startup:
 
-Build images from the current source:
+- Product website: <http://localhost:39251>
+- Unified API gateway: <http://localhost:9080>
+- Harness: <http://localhost:3000>
+- Grafana: <http://localhost:3001>
+
+Useful operations:
+
+```bash
+make docker-ps
+make docker-logs
+make docker-fast
+make docker-down
+```
+
+`make docker-reset` also removes Compose volumes, including persistent databases. Use it only when a full local reset is intended.
+
+### Build the stack from source
 
 ```bash
 make dev
 ```
 
-Host-side development mode:
+To rebuild only selected Compose services:
+
+```bash
+make docker-rebuild SERVICES="chatos-backend task-runner-backend"
+```
+
+For faster host-side backend and administration frontend development:
 
 ```bash
 make local-dev
@@ -258,63 +155,90 @@ make local-dev-logs SERVICE=chatos-backend
 make local-dev-stop
 ```
 
-### Native desktop clients
+Detailed deployment guidance is in [INSTALL_GUIDE.zh-CN.md](./INSTALL_GUIDE.zh-CN.md).
 
-Build and test the macOS client on macOS 14 or later:
+## Run native clients
+
+### macOS
+
+Requires macOS 14+ and Swift 6.2+:
 
 ```bash
-make build-macos-client
+swift run --package-path clients/macos ChatOSSwift
 make test-macos-client
 clients/macos/scripts/package-debug-app.sh
 ```
 
-Build and test the Windows client on Windows 11 with .NET 8 and the WinUI workload:
+Source runs default to the local gateway at `http://127.0.0.1:9080/api/chatos`. Use `CHATOS_API_BASE_URL` and `CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL` to target another environment.
+
+### Windows
+
+Requires Windows, .NET 8, and the Windows App SDK / WinUI workload for development:
 
 ```powershell
-dotnet build clients/windows/ChatOS.Win.sln --configuration Release
-dotnet test clients/windows/ChatOS.Win.sln --configuration Release
-clients\windows\build\package.ps1 -Platform x64
+./clients/windows/build/bootstrap.ps1
+./clients/windows/build/test.ps1
+./clients/windows/build/build.ps1
 ```
 
-### First-party plugins
+To build the self-contained installer on Windows:
 
-The three first-party plugin source trees live with the clients and server:
+```powershell
+./clients/windows/scripts/package-client.ps1
+```
 
-- `plugins/browser`: Browser CDP plugin and Chrome bridge extension.
-- `plugins/computer-use`: native macOS and Windows Computer Use implementations.
-- `plugins/document`: workspace-bounded Office and PDF tools.
+The packaging script can bootstrap missing local tooling and produces a self-contained installer under `clients/windows/BundleArtifacts/`.
 
-Use `make build-plugins` and `make test-plugins` on a supported native development host. Generated packages, downloaded dependencies, and vendor executables are intentionally not committed.
+## Build and verify
 
-### Build and test
+The repository pins Rust `1.94.0` with Clippy and rustfmt.
 
 ```bash
-make build
-make smoke
-make test
+make build          # Rust services plus administration/website frontends
+make smoke          # repository policies, scripts, and Compose validation
+make verify-fast    # quality policies and Rust lint
+make test           # smoke checks and core service tests
+make verify         # full Rust and frontend verification
 ```
 
-The main services can also be tested independently:
+Native clients and plugins have platform-specific targets:
 
 ```bash
-cargo test -p chat_app_server_rs
-cargo test -p task_runner_service_backend
-cd memory_engine/backend && cargo test
+make test-macos-client
+make test-browser-plugin
+make test-document-plugin
+npm --prefix plugins/diagram-studio test
 ```
 
-### Architecture sources of truth
+`make test-plugins` runs the Browser, Computer Use, and Document plugin suites together. Diagram Studio has its own npm test target. Run only the targets supported by the current host; Windows client and Windows Computer Use validation must run on Windows.
 
-- Deployment boundaries and ports: `docker/compose.yml`
-- Rust workspace: `Cargo.toml`
-- macOS native client and Local Connector: `clients/macos/Sources/`
-- Windows native client and Local Connector: `clients/windows/src/`
-- First-party plugins: `plugins/browser/`, `plugins/computer-use/`, and `plugins/document/`
-- Cloud execution boundary: `chatos/backend/src/core/project_execution.rs`
-- Cloud Task Runner: `task_runner_service/backend/src/services/`
-- Development and deployment commands: `Makefile`, `docker/deploy.sh`, and `scripts/local-dev-stack.sh`
+## Configuration and security notes
 
-</details>
+- `docker/bootstrap.conf` contains only infrastructure bootstrap values needed before Configuration Center is available. Do not commit it.
+- Business settings, model configuration, service policies, and releases are published through Configuration Center.
+- The root [.env.example](./.env.example) is for host-side Local Connector settings, not cloud service configuration.
+- Production deployments must replace all sample credentials and provision service-specific mTLS material outside Git.
+- Project file, terminal, Git, plugin, and device operations are constrained by workspace authorization and permission policy.
+- Content required for model inference may be sent to the model provider configured by the user or deployment.
+
+## Current status
+
+Okra is under active development. Keep these constraints in mind:
+
+- A project workspace requires its bound native Local Connector to be online for local operations.
+- macOS and Windows share protocols and product intent, but platform-specific features can land at different times.
+- Existing-Chrome Browser Bridge distribution still depends on its published Chrome Web Store identity; managed-browser mode is independently usable.
+- Historical data from the retired Electron client is not automatically treated as the authoritative state of the current cloud-native product.
+
+## More documentation
+
+- [Installation and deployment guide](./INSTALL_GUIDE.zh-CN.md)
+- [Native client architecture and plans](./clients/macos/docs/README.md)
+- [Windows client implementation and acceptance docs](./clients/windows/docs/01-windows-client-implementation-plan.md)
+- [Plugin overview](./plugins/README.md)
+- [SDK usage](./SDK_USAGE.md)
+- [Third-party notices](./THIRD_PARTY_NOTICES.md)
 
 ## License
 
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE). See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for third-party notices.
+The main repository is licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Some first-party plugins and third-party components use their own licenses; see their directories and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
