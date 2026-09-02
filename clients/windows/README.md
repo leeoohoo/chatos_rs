@@ -87,7 +87,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\package-windows-client.cmd
 ```
 
-脚本默认根据当前 Windows 电脑自动选择 x64 或 ARM64，执行 Release 测试、自包含发布，并在缺少时通过 `winget` 安装 Inno Setup 6，最终生成：
+脚本默认根据当前 Windows 电脑自动选择 x64 或 ARM64，执行 Release 测试和自包含发布。缺少 .NET 8 SDK 时会自动安装到当前用户目录；缺少 Inno Setup 6 时会优先使用 `winget`，Windows Server 没有 `winget` 时会自动下载官方安装程序，最终生成：
 
 ```text
 clients\windows\BundleArtifacts\installer-x64\ChatOS-Setup-x64.exe

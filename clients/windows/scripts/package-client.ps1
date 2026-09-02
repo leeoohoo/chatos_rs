@@ -25,7 +25,7 @@ else {
     $IsWindows
 }
 if (-not $isWindowsPlatform) {
-    throw "ChatOS Windows packaging must run on Windows 10/11."
+    throw "ChatOS Windows packaging must run on Windows 10/11 or Windows Server 2022."
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -34,13 +34,87 @@ if ([string]::IsNullOrWhiteSpace($Platform)) {
     $Platform = if ($osArchitecture -eq "Arm64") { "ARM64" } else { "x64" }
 }
 
-$dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
-if (-not $dotnetCommand) {
-    throw ".NET 8 SDK is required. Install it from https://dotnet.microsoft.com/download/dotnet/8.0"
+function Save-RemoteFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    if ([Net.ServicePointManager]::SecurityProtocol -band [Net.SecurityProtocolType]::Tls12) {
+        # TLS 1.2 is already enabled.
+    }
+    else {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    }
+    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination
 }
-$sdkVersions = @(dotnet --list-sdks)
+
+$toolCacheRoot = Join-Path $env:LOCALAPPDATA "ChatOS\build-tools"
+$userDotnetRoot = Join-Path $toolCacheRoot "dotnet"
+
+function Find-DotnetExecutable {
+    $candidates = @(
+        (Join-Path $userDotnetRoot "dotnet.exe"),
+        (Join-Path $env:ProgramFiles "dotnet\dotnet.exe"),
+        (Join-Path $env:LOCALAPPDATA "Microsoft\dotnet\dotnet.exe")
+    )
+    $candidate = $candidates | Where-Object { Test-Path $_ -PathType Leaf } | Select-Object -First 1
+    if ($candidate) { return $candidate }
+
+    $command = Get-Command dotnet.exe -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+    return $null
+}
+
+function Install-DotnetSdk {
+    if ($SkipToolInstall) {
+        throw ".NET 8 SDK is required. Rerun without -SkipToolInstall to install it automatically."
+    }
+
+    $null = New-Item -ItemType Directory -Path $toolCacheRoot -Force
+    $dotnetInstaller = Join-Path ([IO.Path]::GetTempPath()) "chatos-dotnet-install.ps1"
+    Write-Host "Downloading the Microsoft .NET 8 SDK installer..."
+    Save-RemoteFile -Uri "https://dot.net/v1/dotnet-install.ps1" -Destination $dotnetInstaller
+    Write-Host "Installing .NET 8 SDK for the current user..."
+    $global:LASTEXITCODE = 0
+    & $dotnetInstaller -Channel "8.0" -InstallDir $userDotnetRoot -NoPath
+    if ($LASTEXITCODE -ne 0) {
+        throw ".NET 8 SDK installation failed with exit code $LASTEXITCODE."
+    }
+}
+
+$dotnetExecutable = Find-DotnetExecutable
+if (-not $dotnetExecutable) {
+    Install-DotnetSdk
+    $dotnetExecutable = Find-DotnetExecutable
+}
+if (-not $dotnetExecutable) {
+    throw ".NET 8 SDK installation completed but dotnet.exe was not found."
+}
+$dotnetDirectory = Split-Path -Parent $dotnetExecutable
+$env:DOTNET_ROOT = $dotnetDirectory
+$env:PATH = "$dotnetDirectory;$env:PATH"
+$sdkVersions = @(& $dotnetExecutable --list-sdks)
 if (-not ($sdkVersions | Where-Object { $_ -match '^8\.' })) {
-    throw ".NET 8 SDK is required. Installed SDKs: $($sdkVersions -join ', ')"
+    if ($SkipToolInstall) {
+        throw ".NET 8 SDK is required. Installed SDKs: $($sdkVersions -join ', ')"
+    }
+    Install-DotnetSdk
+    $dotnetExecutable = Find-DotnetExecutable
+    if (-not $dotnetExecutable) {
+        throw ".NET 8 SDK installation completed but dotnet.exe was not found."
+    }
+    $dotnetDirectory = Split-Path -Parent $dotnetExecutable
+    $env:DOTNET_ROOT = $dotnetDirectory
+    $env:PATH = "$dotnetDirectory;$env:PATH"
+    $sdkVersions = @(& $dotnetExecutable --list-sdks)
+    if (-not ($sdkVersions | Where-Object { $_ -match '^8\.' })) {
+        throw ".NET 8 SDK installation did not provide an 8.x SDK. Installed SDKs: $($sdkVersions -join ', ')"
+    }
 }
 
 $runtimeIdentifier = if ($Platform -eq "ARM64") { "win-arm64" } else { "win-x64" }
@@ -67,16 +141,32 @@ function Find-InnoSetupCompiler {
 $innoCompiler = Find-InnoSetupCompiler
 if (-not $innoCompiler -and -not $SkipToolInstall) {
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if (-not $winget) {
-        throw "Inno Setup 6 is required to create the EXE installer, and winget is unavailable. Install Inno Setup 6 from https://jrsoftware.org/isdl.php"
+    if ($winget) {
+        Write-Host "Installing Inno Setup 6 with winget..."
+        & $winget.Source install --id JRSoftware.InnoSetup --exact --silent `
+            --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "winget could not install Inno Setup; using the official installer instead."
+        }
+        $innoCompiler = Find-InnoSetupCompiler
     }
-    Write-Host "Installing Inno Setup 6 for EXE packaging..."
-    winget install --id JRSoftware.InnoSetup --exact --silent `
-        --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) {
-        throw "Inno Setup installation failed with exit code $LASTEXITCODE."
+
+    if (-not $innoCompiler) {
+        $innoInstaller = Join-Path ([IO.Path]::GetTempPath()) "chatos-inno-setup.exe"
+        Write-Host "Downloading the official Inno Setup 6 installer..."
+        Save-RemoteFile `
+            -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" `
+            -Destination $innoInstaller
+        $innoInstallProcess = Start-Process `
+            -FilePath $innoInstaller `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER" `
+            -Wait `
+            -PassThru
+        if ($innoInstallProcess.ExitCode -ne 0) {
+            throw "Inno Setup installation failed with exit code $($innoInstallProcess.ExitCode)."
+        }
+        $innoCompiler = Find-InnoSetupCompiler
     }
-    $innoCompiler = Find-InnoSetupCompiler
 }
 if (-not $innoCompiler) {
     throw "Inno Setup 6 was not found. Install it or rerun without -SkipToolInstall."
@@ -104,7 +194,7 @@ try {
     $null = New-Item -ItemType Directory -Path $installerRoot -Force
 
     Write-Host "Publishing ChatOS Windows Release/$Platform..."
-    dotnet publish $desktopProject `
+    & $dotnetExecutable publish $desktopProject `
         -c Release `
         -p:Platform=$Platform `
         -p:RuntimeIdentifier=$runtimeIdentifier `
