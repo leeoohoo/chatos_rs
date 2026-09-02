@@ -155,8 +155,9 @@ build_plugin_artifact() {
       fi
       export CHATOS_BROWSER_EXTENSION_ID
       "$ROOT_DIR/plugins/browser/scripts/stage-local-npm.sh"
-      local browser_doctor configured_extension_id
-      browser_doctor="$($ROOT_DIR/plugins/browser/target/release/chatos-browser-cdp doctor)"
+      local browser_target_dir browser_doctor configured_extension_id
+      browser_target_dir="$(cd "$ROOT_DIR/plugins/browser" && cargo metadata --format-version 1 --no-deps | jq -er '.target_directory')"
+      browser_doctor="$("$browser_target_dir/release/chatos-browser-cdp" doctor)"
       configured_extension_id="$(jq -r '.extension_id_configured // empty' <<< "$browser_doctor")"
       if [[ "$configured_extension_id" != "$CHATOS_BROWSER_EXTENSION_ID" ]]; then
         echo "[ERROR] Browser Plugin binary does not contain the requested Chrome Web Store Extension ID" >&2
