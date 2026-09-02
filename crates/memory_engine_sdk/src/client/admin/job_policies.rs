@@ -54,7 +54,6 @@ mod tests {
                 {
                     "job_type": "summary",
                     "enabled": true,
-                    "model_profile_id": "model-1",
                     "summary_prompt": null,
                     "rollup_summary_prompt": null,
                     "token_limit": 1200,

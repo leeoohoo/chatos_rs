@@ -22,7 +22,7 @@ pub(super) fn local_runtime_context(
 ) -> crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext {
     crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext {
         owner_user_id: "owner-1".to_string(),
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         workspace_id: Some("workspace-1".to_string()),
         device_id: Some("device-1".to_string()),
         runtime_provider: "local_connector".to_string(),
@@ -93,7 +93,7 @@ pub(super) fn task() -> TaskRecord {
         memory_thread_id: "thread-1".to_string(),
         tenant_id: "tenant-1".to_string(),
         subject_id: "owner-1".to_string(),
-        project_id: "public".to_string(),
+        project_id: None,
         task_profile: "default".to_string(),
         creator_user_id: Some("owner-1".to_string()),
         creator_username: None,
@@ -110,6 +110,7 @@ pub(super) fn task() -> TaskRecord {
         source_session_id: None,
         source_turn_id: None,
         source_user_message_id: None,
+        remote_connection_id: None,
         prerequisite_task_ids: Vec::new(),
         task_tool_state: TaskToolState::default(),
         plugin_config: Default::default(),

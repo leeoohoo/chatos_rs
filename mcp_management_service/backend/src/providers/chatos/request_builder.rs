@@ -38,8 +38,10 @@ impl ChatosProvider {
                 "x-mcp-management-session-expires-at-unix",
                 binding.expires_at_unix.to_string(),
             )
-            .header("x-mcp-management-project-id", binding.project_id)
             .timeout(timeout);
+        if let Some(project_id) = binding.project_id {
+            request = request.header("x-mcp-management-project-id", project_id);
+        }
         for (header, value) in [
             ("x-mcp-management-run-id", binding.run_id),
             ("x-mcp-management-turn-id", binding.turn_id),
@@ -55,6 +57,10 @@ impl ChatosProvider {
             (
                 "x-mcp-management-default-model-config-id",
                 binding.default_model_config_id,
+            ),
+            (
+                "x-mcp-management-default-remote-connection-id",
+                binding.default_remote_connection_id,
             ),
             (
                 "x-mcp-management-contact-agent-id",

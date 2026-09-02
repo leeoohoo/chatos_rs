@@ -20,6 +20,7 @@ struct PromptGenerationEnvelope {
 pub async fn generate_job_policy_prompt(
     state: &AppState,
     job_type: &str,
+    owner_user_id: &str,
     req: &GenerateJobPolicyPromptRequest,
 ) -> Result<GenerateJobPolicyPromptResponse, String> {
     let prompt_field = normalize_prompt_field(req.prompt_field.as_str())?;
@@ -31,7 +32,8 @@ pub async fn generate_job_policy_prompt(
     let policy =
         crate::repositories::control_plane::get_effective_job_policy(&state.pool, job_type).await?;
     let ai_client =
-        control_plane::build_ai_client_for_job(&state.config, &state.pool, job_type, None).await?;
+        control_plane::build_ai_client_for_job(&state.config, &state.pool, job_type, owner_user_id)
+            .await?;
     let guidance = build_prompt_generation_input(&policy, prompt_field, user_input);
     let raw = ai_client
         .generate_text(

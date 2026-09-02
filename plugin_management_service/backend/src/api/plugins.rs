@@ -85,6 +85,57 @@ pub(super) async fn get_plugin_catalog_entry(
     Ok(Json(plugin))
 }
 
+pub(super) async fn review_plugin_catalog_license(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(plugin_id): Path<String>,
+    Json(mut payload): Json<PluginCatalogLicenseReviewPayload>,
+) -> Result<Json<PluginCatalogRecord>, ApiError> {
+    ensure_super_admin(&user)?;
+    payload.license_id = required_text(Some(payload.license_id.as_str()), "license_id")?;
+    payload.license_url = normalize_https_url(payload.license_url.as_deref(), "license_url")?;
+    let mut plugin = state
+        .store
+        .get_plugin_catalog_entry(plugin_id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Plugin not found"))?;
+    let now = now_rfc3339();
+    plugin.license = PluginLicenseMetadata {
+        license_id: payload.license_id,
+        license_url: payload.license_url,
+        redistributable: payload.redistributable,
+        reviewed_at: payload.redistributable.then(|| now.clone()),
+    };
+    plugin.updated_at = now;
+    state
+        .store
+        .replace_plugin_catalog_entry(&plugin)
+        .await
+        .map_err(ApiError::internal)?;
+    let audit = plugin_audit_record(
+        PLUGIN_AUDIT_REVIEW_CATALOG_LICENSE,
+        user.user_id.as_str(),
+        None,
+        plugin.id.as_str(),
+        (!plugin.latest_release_id.is_empty()).then_some(plugin.latest_release_id.as_str()),
+        "success",
+        BTreeMap::from([
+            ("license_id".to_string(), json!(plugin.license.license_id)),
+            (
+                "redistributable".to_string(),
+                json!(plugin.license.redistributable),
+            ),
+        ]),
+    );
+    state
+        .store
+        .insert_plugin_audit(&audit)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(plugin))
+}
+
 pub(super) async fn publish_plugin_catalog_entry(
     state: &AppState,
     user: &CurrentUser,
@@ -131,6 +182,7 @@ pub(super) async fn publish_plugin_catalog_entry(
         visibility: payload.visibility,
         featured: payload.featured,
         enabled: payload.enabled,
+        has_ui: payload.has_ui,
         latest_release_id: String::new(),
         license: payload.license,
         created_at: now.clone(),
@@ -500,6 +552,7 @@ mod tests {
             visibility: PLUGIN_VISIBILITY_PUBLIC.to_string(),
             featured: false,
             enabled: true,
+            has_ui: false,
             license: PluginLicenseMetadata {
                 license_id: "MIT".to_string(),
                 license_url: None,

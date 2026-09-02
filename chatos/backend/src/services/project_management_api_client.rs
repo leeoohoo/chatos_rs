@@ -26,6 +26,7 @@ pub struct ProjectServiceProjectRecord {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
+    pub repository_mode: Option<String>,
     pub cloud_import_source: Option<String>,
     pub import_status: Option<String>,
     pub source_git_url: Option<String>,
@@ -72,6 +73,7 @@ pub struct CreateProjectServiceProjectRequest {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
+    pub repository_mode: Option<String>,
     pub description: Option<String>,
 }
 

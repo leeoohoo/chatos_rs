@@ -9,9 +9,25 @@ pub(super) fn validate_npm_bin(
     args: &[String],
     issues: &mut Vec<PluginManifestValidationIssue>,
 ) {
-    let field = format!("mcpServers[{index}].bin");
+    validate_package_executable(
+        format!("mcpServers[{index}]").as_str(),
+        "MCP",
+        bin,
+        args,
+        issues,
+    );
+}
+
+pub(super) fn validate_package_executable(
+    field: &str,
+    runtime_label: &str,
+    bin: &str,
+    args: &[String],
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    let bin_field = format!("{field}.bin");
     if bin.trim().is_empty() {
-        issue(issues, field.as_str(), "bin cannot be empty");
+        issue(issues, bin_field.as_str(), "bin cannot be empty");
         return;
     }
     if bin.contains('/')
@@ -21,7 +37,7 @@ pub(super) fn validate_npm_bin(
     {
         issue(
             issues,
-            field.as_str(),
+            bin_field.as_str(),
             "bin must be a package.json executable name",
         );
     }
@@ -31,8 +47,8 @@ pub(super) fn validate_npm_bin(
     {
         issue(
             issues,
-            format!("mcpServers[{index}].args").as_str(),
-            "MCP arguments must be bounded text without NUL bytes",
+            format!("{field}.args").as_str(),
+            format!("{runtime_label} arguments must be bounded text without NUL bytes"),
         );
     }
 }

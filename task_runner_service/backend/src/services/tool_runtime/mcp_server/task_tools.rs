@@ -40,6 +40,7 @@ impl TaskRunnerMcpService {
                         keyword: args.keyword,
                         tag: args.tag,
                         model_config_id: args.model_config_id,
+                        project_scope: Some(request_context.project_scope_filter()),
                         project_id: request_context.project_scope_id(),
                         task_profile: Some(request_context.requested_task_profile().to_string()),
                         creator_user_id: task_creator_filter(current_user)?,

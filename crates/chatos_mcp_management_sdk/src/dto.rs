@@ -63,12 +63,20 @@ impl RuntimeWorkspaceRouteTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectExecutionContext {
-    pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub owner_user_id: String,
     #[serde(default)]
     pub workspace_provider: WorkspaceProviderKind,
     pub workspace: Option<WorkspaceExecutionTarget>,
     pub revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeRemoteConnectionRouteTarget {
+    pub remote_connection_id: String,
+    pub device_id: String,
+    pub workspace_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -194,7 +202,8 @@ pub struct CreateRuntimeSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_role: Option<String>,
     pub agent_key: String,
-    pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     #[serde(default)]
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,6 +218,8 @@ pub struct CreateRuntimeSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_agent_id: Option<String>,
     pub default_model_config_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_remote_connection_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_max_chars: Option<usize>,
     #[serde(default)]
@@ -349,7 +360,8 @@ pub struct RuntimeSessionRoutesResponse {
     pub tenant_id: String,
     pub owner_user_id: String,
     pub agent_key: String,
-    pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub device_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,

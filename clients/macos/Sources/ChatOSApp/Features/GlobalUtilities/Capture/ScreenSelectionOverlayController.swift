@@ -1,11 +1,71 @@
 import AppKit
+@preconcurrency import Carbon
 import ChatOSConnector
 import CoreGraphics
+
+private extension Notification.Name {
+    static let chatOSScreenSelectionEscapePressed = Notification.Name(
+        "com.chatos.screen-selection-escape-pressed"
+    )
+}
+
+private let screenshotEscapeSignature: OSType = 0x4345_5343
+private let screenshotEscapeIdentifier: UInt32 = 1
+
+private let screenSelectionEscapeHandler: EventHandlerUPP = { _, eventRef, _ in
+    guard let eventRef else { return OSStatus(eventNotHandledErr) }
+    var hotKeyID = EventHotKeyID()
+    let status = GetEventParameter(
+        eventRef,
+        EventParamName(kEventParamDirectObject),
+        EventParamType(typeEventHotKeyID),
+        nil,
+        MemoryLayout<EventHotKeyID>.size,
+        nil,
+        &hotKeyID
+    )
+    guard status == noErr,
+          hotKeyID.signature == screenshotEscapeSignature,
+          hotKeyID.id == screenshotEscapeIdentifier else {
+        return OSStatus(eventNotHandledErr)
+    }
+    DispatchQueue.main.async {
+        NotificationCenter.default.post(
+            name: .chatOSScreenSelectionEscapePressed,
+            object: nil
+        )
+    }
+    return noErr
+}
 
 struct ScreenSelection {
     let screen: NSScreen
     let globalRect: CGRect
     let captureRegion: NativeScreenCaptureRegion
+}
+
+/// Applies the common behavior for windows that must stay above every normal
+/// application window during an active screenshot workflow.
+///
+/// `NSPanel.isFloatingPanel` mutates the panel level to `.floating`, so the
+/// screenshot level must deliberately be assigned *after* that property.
+@MainActor
+func configureScreenshotOverlayPanel(_ panel: NSPanel, levelOffset: Int = 0) {
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.isReleasedWhenClosed = false
+    panel.collectionBehavior = [
+        .canJoinAllSpaces,
+        .fullScreenAuxiliary,
+        .ignoresCycle,
+    ]
+    panel.animationBehavior = .none
+    panel.isFloatingPanel = true
+    panel.hidesOnDeactivate = false
+    panel.becomesKeyOnlyIfNeeded = false
+    panel.level = NSWindow.Level(
+        rawValue: NSWindow.Level.screenSaver.rawValue + levelOffset
+    )
 }
 
 @MainActor
@@ -18,6 +78,7 @@ final class ScreenSelectionOverlayController {
     private weak var activeView: ScreenSelectionOverlayView?
     private var dragOrigin: NSPoint?
     private var keyMonitor: Any?
+    private var escapeHotKeyMonitor: ScreenshotEscapeHotKeyMonitor?
     private var isFinishing = false
     private let isEnglish: Bool
 
@@ -49,22 +110,9 @@ final class ScreenSelectionOverlayController {
             view.onSelectionCompleted = { [weak self] view, point in
                 self?.completeSelection(in: view, at: point)
             }
-
             window.contentView = view
-            window.isOpaque = false
-            window.backgroundColor = .clear
+            configureScreenshotOverlayPanel(window)
             window.hasShadow = false
-            window.level = .screenSaver
-            window.collectionBehavior = [
-                .canJoinAllSpaces,
-                .fullScreenAuxiliary,
-                .ignoresCycle,
-            ]
-            window.isReleasedWhenClosed = false
-            window.animationBehavior = .none
-            window.isFloatingPanel = true
-            window.hidesOnDeactivate = false
-            window.becomesKeyOnlyIfNeeded = false
             window.onCancel = { [weak self] in self?.cancel() }
             windows.append(window)
             views.append(view)
@@ -75,6 +123,11 @@ final class ScreenSelectionOverlayController {
             self?.cancel()
             return nil
         }
+        let escapeHotKeyMonitor = ScreenshotEscapeHotKeyMonitor { [weak self] in
+            self?.cancel()
+        }
+        escapeHotKeyMonitor.start()
+        self.escapeHotKeyMonitor = escapeHotKeyMonitor
 
         windows.forEach { $0.orderFrontRegardless() }
         let mouse = NSEvent.mouseLocation
@@ -94,7 +147,9 @@ final class ScreenSelectionOverlayController {
         guard !isFinishing else { return }
         activeView = view
         dragOrigin = point
-        views.forEach { $0.updateSelection(nil, active: $0 === view) }
+        views.forEach {
+            $0.updateSelection(nil, active: $0 === view)
+        }
     }
 
     private func changeSelection(in view: ScreenSelectionOverlayView, to point: NSPoint) {
@@ -112,10 +167,19 @@ final class ScreenSelectionOverlayController {
         let localRect = normalizedRect(from: dragOrigin, to: point).integral
         guard localRect.width >= 4, localRect.height >= 4 else {
             self.dragOrigin = nil
-            view.updateSelection(nil, active: true)
+            activeView = nil
+            view.updateSelection(nil, active: false)
             return
         }
 
+        finishSelection(localRect: localRect, window: window, screen: screen)
+    }
+
+    private func finishSelection(
+        localRect: NSRect,
+        window: NSWindow,
+        screen: NSScreen
+    ) {
         let globalRect = window.convertToScreen(localRect)
         guard let displayID = screen.deviceDescription[
             NSDeviceDescriptionKey("NSScreenNumber")
@@ -131,13 +195,17 @@ final class ScreenSelectionOverlayController {
             height: globalRect.height
         )
         let scale = screen.backingScaleFactor
+        let selectionOverlayWindowIDs = windows.compactMap { window in
+            window.windowNumber > 0 ? CGWindowID(window.windowNumber) : nil
+        }
         let captureRegion = NativeScreenCaptureRegion(
             displayID: CGDirectDisplayID(displayID.uint32Value),
             sourceRect: sourceRect,
             outputSize: CGSize(
                 width: globalRect.width * scale,
                 height: globalRect.height * scale
-            )
+            ),
+            excludedWindowIDs: selectionOverlayWindowIDs
         )
         let result = ScreenSelection(
             screen: screen,
@@ -157,6 +225,8 @@ final class ScreenSelectionOverlayController {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
         }
+        escapeHotKeyMonitor?.stop()
+        escapeHotKeyMonitor = nil
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
         views.removeAll()
@@ -172,6 +242,82 @@ final class ScreenSelectionOverlayController {
             width: abs(end.x - start.x),
             height: abs(end.y - start.y)
         )
+    }
+}
+
+@MainActor
+final class ScreenshotEscapeHotKeyMonitor {
+    private let onEscape: () -> Void
+    private var handlerRef: EventHandlerRef?
+    private var hotKeyRef: EventHotKeyRef?
+    private var observer: NSObjectProtocol?
+
+    init(onEscape: @escaping () -> Void) {
+        self.onEscape = onEscape
+    }
+
+    func start() {
+        guard handlerRef == nil, hotKeyRef == nil else { return }
+        observer = NotificationCenter.default.addObserver(
+            forName: .chatOSScreenSelectionEscapePressed,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.onEscape()
+            }
+        }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            screenSelectionEscapeHandler,
+            1,
+            &eventType,
+            nil,
+            &handlerRef
+        )
+        guard installStatus == noErr else {
+            stop()
+            return
+        }
+
+        var registration: EventHotKeyRef?
+        let identifier = EventHotKeyID(
+            signature: screenshotEscapeSignature,
+            id: screenshotEscapeIdentifier
+        )
+        let registerStatus = RegisterEventHotKey(
+            UInt32(kVK_Escape),
+            0,
+            identifier,
+            GetApplicationEventTarget(),
+            0,
+            &registration
+        )
+        guard registerStatus == noErr, let registration else {
+            stop()
+            return
+        }
+        hotKeyRef = registration
+    }
+
+    func stop() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+        if let handlerRef {
+            RemoveEventHandler(handlerRef)
+            self.handlerRef = nil
+        }
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+            self.observer = nil
+        }
     }
 }
 

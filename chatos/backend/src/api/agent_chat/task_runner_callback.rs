@@ -176,13 +176,8 @@ async fn task_runner_callback_authorized(
             Json(json!({ "accepted": false, "error": "missing owner_user_id" })),
         );
     };
-    let Some(project_id) = normalize_callback_value(payload.project_id.as_deref()) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "accepted": false, "error": "missing project_id" })),
-        );
-    };
-    if !callback_matches_session_scope(&session, owner_user_id.as_str(), project_id.as_str()) {
+    let project_id = normalize_callback_value(payload.project_id.as_deref());
+    if !callback_matches_session_scope(&session, owner_user_id.as_str(), project_id.as_deref()) {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
@@ -456,7 +451,7 @@ async fn task_runner_callback_authorized(
 fn callback_matches_session_scope(
     session: &Session,
     owner_user_id: &str,
-    project_id: &str,
+    project_id: Option<&str>,
 ) -> bool {
     let session_owner_user_id = session
         .user_id
@@ -465,7 +460,7 @@ fn callback_matches_session_scope(
     let session_project_id =
         resolve_session_project_scope(session.project_id.as_deref(), session.metadata.as_ref());
     session_owner_user_id.as_deref() == Some(owner_user_id.trim())
-        && session_project_id == project_id.trim()
+        && session_project_id.as_deref() == project_id
 }
 
 async fn handle_task_runner_ask_user_prompt_callback(
@@ -743,17 +738,17 @@ mod tests {
         assert!(callback_matches_session_scope(
             &session,
             "owner-1",
-            "project-1"
+            Some("project-1")
         ));
         assert!(!callback_matches_session_scope(
             &session,
             "owner-2",
-            "project-1"
+            Some("project-1")
         ));
         assert!(!callback_matches_session_scope(
             &session,
             "owner-1",
-            "project-2"
+            Some("project-2")
         ));
     }
 

@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+import type { CatalogActions } from '../types';
+
+import { buildCatalogModalActions } from './modal';
+import { buildCatalogPolicyActions } from './policy';
+import { buildCatalogSourceActions } from './source';
+import type { CatalogActionsContext } from './types';
+
+export function buildCatalogActions(context: CatalogActionsContext): CatalogActions {
+  const modal = buildCatalogModalActions(context.controls);
+  const source = buildCatalogSourceActions(context, modal.closeSourceModal);
+  const policy = buildCatalogPolicyActions(context);
+
+  return {
+    ...modal,
+    ...source,
+    ...policy,
+  };
+}

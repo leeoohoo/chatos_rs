@@ -173,12 +173,7 @@ service_bins = {
     "chat_app_server_rs",
 }
 frontend_markers = (
-    "/config_center_service/frontend/",
-    "/user_service/frontend/",
-    "/memory_engine/frontend/",
-    "/project_management_service/frontend/",
-    "/plugin_management_service/frontend/",
-    "/task_runner_service/frontend/",
+    "/admin_console/",
 )
 current = os.getpid()
 parent = os.getppid()

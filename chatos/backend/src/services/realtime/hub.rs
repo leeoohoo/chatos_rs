@@ -112,7 +112,7 @@ pub fn publish_review_repair_started_pending(
         conversation_id,
         ReviewRepairRealtimePayload {
             conversation_id: conversation_id.to_string(),
-            project_id: scope_req.project_id.clone().unwrap_or_default(),
+            project_id: scope_req.project_id.clone(),
             contact_id: scope_req.contact_id.clone(),
             agent_id: scope_req.agent_id.clone(),
             running: true,
@@ -171,7 +171,7 @@ pub fn publish_review_repair_completed(
 pub fn publish_conversation_summaries_updated(
     user_id: &str,
     conversation_id: &str,
-    project_id: &str,
+    project_id: Option<&str>,
     contact_id: Option<&str>,
     agent_id: Option<&str>,
     items: Vec<SessionSummaryV2>,
@@ -182,11 +182,11 @@ pub fn publish_conversation_summaries_updated(
         event: "conversation.summaries.updated",
         user_id: user_id.to_string(),
         conversation_id: Some(conversation_id.to_string()),
-        project_id: Some(project_id.to_string()),
+        project_id: project_id.map(ToOwned::to_owned),
         payload: RealtimeEventPayload::ConversationSummariesUpdated(
             ConversationSummariesUpdatedRealtimePayload {
                 conversation_id: conversation_id.to_string(),
-                project_id: project_id.to_string(),
+                project_id: project_id.map(ToOwned::to_owned),
                 contact_id: contact_id.map(|value| value.to_string()),
                 agent_id: agent_id.map(|value| value.to_string()),
                 total: items.len(),
@@ -212,7 +212,7 @@ pub fn publish_review_repair_failed(
         conversation_id,
         ReviewRepairRealtimePayload {
             conversation_id: conversation_id.to_string(),
-            project_id: scope_req.project_id.clone().unwrap_or_default(),
+            project_id: scope_req.project_id.clone(),
             contact_id: scope_req.contact_id.clone(),
             agent_id: scope_req.agent_id.clone(),
             running: false,
@@ -660,7 +660,7 @@ fn publish_review_repair_event(
         event,
         user_id: user_id.to_string(),
         conversation_id: Some(conversation_id.to_string()),
-        project_id: Some(payload.project_id.clone()),
+        project_id: payload.project_id.clone(),
         payload: RealtimeEventPayload::ReviewRepair(payload),
         ts: now_rfc3339(),
     });

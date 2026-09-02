@@ -54,7 +54,7 @@ pub(super) async fn list_task_capability_catalog(
             Some(&user),
             Some(owner_user_id),
             agent_key,
-            project_id.as_str(),
+            project_id.as_deref(),
             Some(task_profile.as_str()),
             None,
         )
@@ -228,7 +228,7 @@ struct McpManagementBinding {
     agent_key: chatos_plugin_management_sdk::SystemAgentKey,
     session_id: String,
     session_expires_at_unix: i64,
-    project_id: String,
+    project_id: Option<String>,
     run_id: Option<String>,
     turn_id: Option<String>,
     task_id: Option<String>,
@@ -236,6 +236,7 @@ struct McpManagementBinding {
     source_user_message_id: Option<String>,
     contact_agent_id: Option<String>,
     default_model_config_id: Option<String>,
+    default_remote_connection_id: Option<String>,
     task_profile: Option<String>,
     expected_project_task_ids: std::collections::BTreeSet<String>,
 }
@@ -425,11 +426,12 @@ async fn dispatch_bound_task_runner_tool(
         );
     };
     let request_context = McpRequestContext {
-        project_id: Some(binding.project_id.clone()),
+        project_id: binding.project_id.clone(),
         source_session_id: binding.source_session_id.clone(),
         source_turn_id: binding.turn_id.clone(),
         source_user_message_id: binding.source_user_message_id.clone(),
         default_model_config_id: binding.default_model_config_id.clone(),
+        remote_connection_id: binding.default_remote_connection_id.clone(),
         workspace_dir: None,
         tool_profile: Some(tool_profile.to_string()),
         task_profile: binding.task_profile.clone(),

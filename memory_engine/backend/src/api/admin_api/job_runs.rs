@@ -135,7 +135,6 @@ pub async fn dashboard_overview(
     auth: MemoryAuthContext,
 ) -> Result<Json<DashboardOverviewResponse>, (axum::http::StatusCode, String)> {
     let tenant_id = auth.resolve_tenant_scope(None)?;
-    let owner_user_id = auth.resolve_owner_scope(None)?;
     let source_count = match tenant_id.as_deref() {
         Some(tenant_id) => {
             sources::list_sources(&state.pool, Some(tenant_id), None, None, None, 10_000, 0)
@@ -143,15 +142,6 @@ pub async fn dashboard_overview(
                 .map(|items| items.len() as i64)
         }
         None => sources::count_sources(&state.pool).await,
-    }
-    .map_err(internal_error)?;
-    let model_count = match owner_user_id.as_deref() {
-        Some(owner_user_id) => {
-            control_plane::list_model_profiles_by_owner(&state.pool, owner_user_id)
-                .await
-                .map(|items| items.len() as i64)
-        }
-        None => control_plane::count_model_profiles(&state.pool).await,
     }
     .map_err(internal_error)?;
     let policy_count = if auth.is_super_admin_or_operator() {
@@ -167,7 +157,6 @@ pub async fn dashboard_overview(
 
     Ok(Json(DashboardOverviewResponse {
         source_count,
-        model_count,
         policy_count,
         job_stats,
     }))

@@ -159,9 +159,12 @@ impl TaskRunnerProvider {
                 "x-mcp-management-session-expires-at-unix",
                 snapshot.expires_at_unix.to_string(),
             )
-            .header("x-mcp-management-project-id", snapshot.project_id.as_str())
-            .header("x-chatos-project-id", snapshot.project_id.as_str())
             .timeout(Duration::from_secs(5));
+        if let Some(project_id) = snapshot.project_id.as_deref() {
+            request = request
+                .header("x-mcp-management-project-id", project_id)
+                .header("x-chatos-project-id", project_id);
+        }
         for (header, value) in [
             (
                 "x-mcp-management-owner-role",

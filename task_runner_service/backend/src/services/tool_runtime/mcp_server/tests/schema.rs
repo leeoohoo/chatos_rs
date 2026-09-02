@@ -3,8 +3,7 @@
 
 use super::*;
 use crate::mcp_server::support::{
-    create_model_config_schema, create_project_execution_tasks_schema,
-    create_tasks_with_prerequisites_schema, update_model_config_schema,
+    create_project_execution_tasks_schema, create_tasks_with_prerequisites_schema,
     validate_create_project_execution_tasks_arguments,
 };
 use crate::mcp_server::PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE;
@@ -35,38 +34,11 @@ fn create_task_schema_hides_memory_scope_fields() {
         .and_then(|value| value.get("description"))
         .and_then(serde_json::Value::as_str)
         .expect("plugin_hints description");
-    assert!(plugin_hint_description.contains("native desktop applications"));
-    assert!(plugin_hint_description.contains("Browser CDP only for websites"));
-    assert!(plugin_hint_description.contains("Feishu/Lark"));
+    assert!(plugin_hint_description.contains("No Task Plugins are selectable"));
     assert!(!properties.contains_key("selected_skill_ids"));
     assert!(!properties.contains_key("plugin_device_id"));
     assert!(!properties.contains_key("plugin_workspace_id"));
     assert!(!properties.contains_key("selected_plugins"));
-}
-
-#[test]
-fn model_config_thinking_level_schema_is_enum_choice() {
-    let create_schema = create_model_config_schema();
-    let update_schema = update_model_config_schema();
-
-    for schema in [create_schema, update_schema] {
-        let thinking_level = schema
-            .pointer("/properties/thinking_level")
-            .and_then(|value| value.as_object())
-            .expect("thinking_level schema");
-        let values = thinking_level
-            .get("enum")
-            .and_then(|value| value.as_array())
-            .expect("thinking_level enum");
-
-        assert_eq!(
-            thinking_level.get("type").and_then(|value| value.as_str()),
-            Some("string")
-        );
-        assert!(values.iter().any(|value| value.as_str() == Some("low")));
-        assert!(values.iter().any(|value| value.as_str() == Some("xhigh")));
-        assert!(values.iter().any(|value| value.as_str() == Some("auto")));
-    }
 }
 
 #[test]
@@ -519,6 +491,35 @@ fn task_creation_schema_exposes_agent_bound_mcp_choices() {
         tools[0].pointer("/inputSchema/properties/plugin_hints/items/properties/plugin_key/enum/0"),
         Some(&json!("open-computer-use"))
     );
+    let plugin_hint_description = tools[0]
+        .pointer("/inputSchema/properties/plugin_hints/description")
+        .and_then(Value::as_str)
+        .expect("plugin_hints description");
+    assert!(plugin_hint_description.contains("native desktop applications"));
+    assert!(plugin_hint_description.contains("Browser CDP only for websites"));
+    assert!(plugin_hint_description.contains("Feishu/Lark"));
+}
+
+#[test]
+fn task_creation_schema_forbids_unadvertised_capability_ids() {
+    let mut tools = vec![json!({
+        "name": "create_task",
+        "inputSchema": create_task_schema(),
+    })];
+    super::super::support::enrich_tool_schemas_with_task_mcp_choices(&mut tools, &[], &[], &[]);
+
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/enabled_builtin_kinds/maxItems"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/external_mcp_config_ids/maxItems"),
+        Some(&json!(0))
+    );
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/plugin_hints/maxItems"),
+        Some(&json!(0))
+    );
 }
 
 #[test]
@@ -815,16 +816,9 @@ fn mcp_request_context_infers_async_planner_from_chatos_message_context() {
 }
 
 #[test]
-fn mcp_request_context_normalizes_legacy_public_project_scope() {
-    let context = McpRequestContext {
-        project_id: Some("0".to_string()),
-        ..McpRequestContext::default()
-    };
-
-    assert_eq!(
-        context.project_scope_id().as_deref(),
-        Some(PUBLIC_PROJECT_ID)
-    );
+fn mcp_request_context_keeps_user_conversation_scope_projectless() {
+    let context = McpRequestContext::default();
+    assert_eq!(context.project_scope_id(), None);
 }
 
 #[test]

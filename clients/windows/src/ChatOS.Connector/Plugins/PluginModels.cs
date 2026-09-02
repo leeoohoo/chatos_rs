@@ -72,6 +72,32 @@ internal sealed record PluginManifest
 
     [JsonPropertyName("interface")]
     public PluginInterface? Interface { get; init; }
+
+    [JsonPropertyName("runtimeContext")]
+    public PluginRuntimeContext? RuntimeContext { get; init; }
+}
+
+internal sealed record PluginRuntimeContext
+{
+    [JsonPropertyName("scope")]
+    public string Scope { get; init; } = "device";
+
+    [JsonPropertyName("components")]
+    public IReadOnlyList<string> Components { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("required")]
+    public IReadOnlyList<string> Required { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("optional")]
+    public IReadOnlyList<string> Optional { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("storageIsolation")]
+    public string StorageIsolation { get; init; } = "plugin";
+
+    [JsonPropertyName("missingContext")]
+    public string MissingContext { get; init; } = "reject";
+
+    public bool AppliesTo(string componentKey) => Components.Contains(componentKey, StringComparer.Ordinal);
 }
 
 internal sealed record PluginPathReference

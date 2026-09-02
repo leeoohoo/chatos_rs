@@ -54,17 +54,3 @@ pub fn routes() -> Router<Arc<AppState>> {
             post(sources_api::admin_rotate_source_secret),
         )
 }
-
-pub fn model_profile_routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route(
-            "/api/memory-engine/v1/admin/model-profiles",
-            get(admin_api::list_model_profiles).post(admin_api::create_model_profile),
-        )
-        .route(
-            "/api/memory-engine/v1/admin/model-profiles/{model_id}",
-            get(admin_api::get_model_profile)
-                .put(admin_api::update_model_profile)
-                .delete(admin_api::delete_model_profile),
-        )
-}

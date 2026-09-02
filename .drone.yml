@@ -170,7 +170,7 @@ steps:
 ---
 kind: pipeline
 type: docker
-name: frontend-user-service
+name: frontend-admin-console
 
 clone:
   git:
@@ -181,85 +181,10 @@ steps:
   - name: npm-check
     image: node:24-bookworm
     commands:
-      - cd user_service/frontend
+      - cd admin_console
       - npm ci --legacy-peer-deps
       - npm run type-check
-      - npm run build
-
----
-kind: pipeline
-type: docker
-name: frontend-memory-engine
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: npm-check
-    image: node:24-bookworm
-    commands:
-      - cd memory_engine/frontend
-      - npm ci --legacy-peer-deps
-      - npm run type-check
-      - npm run build
-
----
-kind: pipeline
-type: docker
-name: frontend-project-management
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: npm-check
-    image: node:24-bookworm
-    commands:
-      - cd project_management_service/frontend
-      - npm ci --legacy-peer-deps
-      - npm run type-check
-      - npm run build
-
----
-kind: pipeline
-type: docker
-name: frontend-plugin-management
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: npm-check
-    image: node:24-bookworm
-    commands:
-      - cd plugin_management_service/frontend
-      - npm ci --legacy-peer-deps
-      - npm run type-check
-      - npm run build
-
----
-kind: pipeline
-type: docker
-name: frontend-task-runner
-
-clone:
-  git:
-    image: drone/git:local
-    pull: if-not-exists
-
-steps:
-  - name: npm-check
-    image: node:24-bookworm
-    commands:
-      - cd task_runner_service/frontend
-      - npm ci --legacy-peer-deps
-      - npm run type-check
+      - npm test
       - npm run build
 
 ---

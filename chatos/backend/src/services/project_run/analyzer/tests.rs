@@ -16,6 +16,7 @@ fn local_connector_project() -> Project {
         "vrad-backend".to_string(),
         "local://connector/device/workspace/zj/ewo/vrad-backend".to_string(),
         None,
+        "managed".to_string(),
         None,
         Some("user_1".to_string()),
     )

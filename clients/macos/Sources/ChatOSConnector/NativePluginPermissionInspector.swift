@@ -130,6 +130,7 @@ enum NativePluginPermissionInspector {
         process.executableURL = launcher
         process.arguments = [command]
         process.currentDirectoryURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+        process.environment = NativePluginProcessEnvironment.make()
         let output = Pipe()
         let errors = Pipe()
         process.standardOutput = output

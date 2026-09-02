@@ -60,6 +60,18 @@ struct RootView: View {
                 ContactConversationView(contactID: contactID)
             case .localConnector:
                 LocalConnectorControlCenterView(viewModel: model.localConnectorControl)
+            case .applications:
+                PluginApplicationsView()
+            case let .pluginApplication(pluginID, componentKey):
+                if let application = model.pluginApplication(
+                    pluginID: pluginID,
+                    componentKey: componentKey
+                ) {
+                    PluginApplicationHostView(application: application)
+                        .id(application.id)
+                } else {
+                    PluginApplicationsView()
+                }
             case .terminal:
                 TerminalWorkspaceView()
             case let .remote(remoteID):

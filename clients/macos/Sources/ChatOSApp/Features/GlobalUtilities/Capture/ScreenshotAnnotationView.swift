@@ -3,18 +3,41 @@ import CoreGraphics
 
 enum ScreenshotAnnotationTool: Int {
     case pen
+    case line
     case rectangle
     case ellipse
     case arrow
+    case highlight
+    case mosaic
     case text
+    case number
+
+    static func shortcut(_ value: String) -> ScreenshotAnnotationTool? {
+        switch value.lowercased() {
+        case "1", "p": .pen
+        case "2", "l": .line
+        case "3", "r": .rectangle
+        case "4", "o": .ellipse
+        case "5", "a": .arrow
+        case "6", "h": .highlight
+        case "7", "m": .mosaic
+        case "8", "t": .text
+        case "9", "n": .number
+        default: nil
+        }
+    }
 }
 
 private enum ScreenshotAnnotation {
     case pen(points: [CGPoint], color: NSColor, lineWidth: CGFloat)
+    case line(start: CGPoint, end: CGPoint, color: NSColor, lineWidth: CGFloat)
     case rectangle(rect: CGRect, color: NSColor, lineWidth: CGFloat)
     case ellipse(rect: CGRect, color: NSColor, lineWidth: CGFloat)
     case arrow(start: CGPoint, end: CGPoint, color: NSColor, lineWidth: CGFloat)
+    case highlight(rect: CGRect, color: NSColor)
+    case mosaic(rect: CGRect)
     case text(origin: CGPoint, value: String, color: NSColor, fontSize: CGFloat)
+    case number(center: CGPoint, value: Int, color: NSColor, diameter: CGFloat)
 }
 
 @MainActor
@@ -27,11 +50,14 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
         }
     }
     var annotationColor: NSColor = .systemRed
+    var lineWidthScale: CGFloat = 1
     var onAnnotationsChanged: (() -> Void)?
 
     private let sourceImage: CGImage
     private let displayImage: NSImage
+    private let mosaicImage: NSImage
     private var annotations: [ScreenshotAnnotation] = []
+    private var redoAnnotations: [ScreenshotAnnotation] = []
     private var workingAnnotation: ScreenshotAnnotation?
     private var dragOrigin: CGPoint?
     private weak var activeTextField: NSTextField?
@@ -43,6 +69,7 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
             cgImage: image,
             size: NSSize(width: image.width, height: image.height)
         )
+        mosaicImage = Self.makeMosaicImage(from: image)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -55,6 +82,10 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
 
     var canUndo: Bool {
         !annotations.isEmpty
+    }
+
+    var canRedo: Bool {
+        !redoAnnotations.isEmpty
     }
 
     var hasAnnotations: Bool {
@@ -109,29 +140,55 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
             workingAnnotation = .pen(
                 points: [point],
                 color: annotationColor,
-                lineWidth: defaultLineWidth
+                lineWidth: activeLineWidth
+            )
+        case .line:
+            workingAnnotation = .line(
+                start: point,
+                end: point,
+                color: annotationColor,
+                lineWidth: activeLineWidth
             )
         case .rectangle:
             workingAnnotation = .rectangle(
                 rect: CGRect(origin: point, size: .zero),
                 color: annotationColor,
-                lineWidth: defaultLineWidth
+                lineWidth: activeLineWidth
             )
         case .ellipse:
             workingAnnotation = .ellipse(
                 rect: CGRect(origin: point, size: .zero),
                 color: annotationColor,
-                lineWidth: defaultLineWidth
+                lineWidth: activeLineWidth
             )
         case .arrow:
             workingAnnotation = .arrow(
                 start: point,
                 end: point,
                 color: annotationColor,
-                lineWidth: defaultLineWidth
+                lineWidth: activeLineWidth
             )
+        case .highlight:
+            workingAnnotation = .highlight(
+                rect: CGRect(origin: point, size: .zero),
+                color: annotationColor
+            )
+        case .mosaic:
+            workingAnnotation = .mosaic(rect: CGRect(origin: point, size: .zero))
         case .text:
             break
+        case .number:
+            annotations.append(.number(
+                center: point,
+                value: nextNumber,
+                color: annotationColor,
+                diameter: defaultNumberDiameter * lineWidthScale
+            ))
+            redoAnnotations.removeAll()
+            dragOrigin = nil
+            workingAnnotation = nil
+            needsDisplay = true
+            onAnnotationsChanged?()
         }
         needsDisplay = true
     }
@@ -146,6 +203,13 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
                 updated.append(point)
             }
             workingAnnotation = .pen(points: updated, color: color, lineWidth: lineWidth)
+        case let .line(start, _, color, lineWidth):
+            workingAnnotation = .line(
+                start: start,
+                end: point,
+                color: color,
+                lineWidth: lineWidth
+            )
         case let .rectangle(_, color, lineWidth):
             workingAnnotation = .rectangle(
                 rect: normalizedRect(from: dragOrigin, to: point),
@@ -165,7 +229,16 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
                 color: color,
                 lineWidth: lineWidth
             )
-        case .text:
+        case let .highlight(_, color):
+            workingAnnotation = .highlight(
+                rect: normalizedRect(from: dragOrigin, to: point),
+                color: color
+            )
+        case .mosaic:
+            workingAnnotation = .mosaic(
+                rect: normalizedRect(from: dragOrigin, to: point)
+            )
+        case .text, .number:
             break
         case nil:
             break
@@ -181,17 +254,22 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
         switch self.workingAnnotation ?? workingAnnotation {
         case let .pen(points, _, _):
             shouldKeep = !points.isEmpty
+        case let .line(start, end, _, _):
+            shouldKeep = hypot(end.x - start.x, end.y - start.y) >= 4
         case let .rectangle(rect, _, _):
             shouldKeep = rect.width >= 2 && rect.height >= 2
         case let .ellipse(rect, _, _):
             shouldKeep = rect.width >= 2 && rect.height >= 2
         case let .arrow(start, end, _, _):
             shouldKeep = hypot(end.x - start.x, end.y - start.y) >= 4
-        case .text:
+        case let .highlight(rect, _), let .mosaic(rect):
+            shouldKeep = rect.width >= 2 && rect.height >= 2
+        case .text, .number:
             shouldKeep = false
         }
         if shouldKeep, let completed = self.workingAnnotation {
             annotations.append(completed)
+            redoAnnotations.removeAll()
         }
         self.workingAnnotation = nil
         dragOrigin = nil
@@ -205,7 +283,14 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
             return
         }
         guard !annotations.isEmpty else { return }
-        annotations.removeLast()
+        redoAnnotations.append(annotations.removeLast())
+        needsDisplay = true
+        onAnnotationsChanged?()
+    }
+
+    func redo() {
+        guard let annotation = redoAnnotations.popLast() else { return }
+        annotations.append(annotation)
         needsDisplay = true
         onAnnotationsChanged?()
     }
@@ -216,6 +301,7 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
         }
         cancelActiveTextEditing(notify: false)
         annotations.removeAll()
+        redoAnnotations.removeAll()
         workingAnnotation = nil
         dragOrigin = nil
         needsDisplay = true
@@ -257,6 +343,22 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
 
     private var defaultLineWidth: CGFloat {
         max(3, CGFloat(sourceImage.width) / 360)
+    }
+
+    private var activeLineWidth: CGFloat {
+        defaultLineWidth * min(max(lineWidthScale, 0.5), 3)
+    }
+
+    private var defaultNumberDiameter: CGFloat {
+        max(32, CGFloat(sourceImage.width) / 28)
+    }
+
+    private var nextNumber: Int {
+        let used = annotations.compactMap { annotation -> Int? in
+            guard case let .number(_, value, _, _) = annotation else { return nil }
+            return value
+        }
+        return (used.max() ?? 0) + 1
     }
 
     private var defaultTextFontSize: CGFloat {
@@ -318,6 +420,14 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
                 path.lineJoinStyle = .round
                 path.stroke()
             }
+        case let .line(start, end, color, lineWidth):
+            let path = NSBezierPath()
+            path.move(to: viewPoint(from: start, in: frame))
+            path.line(to: viewPoint(from: end, in: frame))
+            path.lineWidth = max(1.5, lineWidth * scale)
+            path.lineCapStyle = .round
+            color.setStroke()
+            path.stroke()
         case let .rectangle(rect, color, lineWidth):
             let start = viewPoint(from: rect.origin, in: frame)
             let end = viewPoint(
@@ -347,6 +457,35 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
                 color: color,
                 lineWidth: max(1.5, lineWidth * scale)
             )
+        case let .highlight(rect, color):
+            let start = viewPoint(from: rect.origin, in: frame)
+            let end = viewPoint(
+                from: CGPoint(x: rect.maxX, y: rect.maxY),
+                in: frame
+            )
+            color.withAlphaComponent(0.28).setFill()
+            NSBezierPath(
+                roundedRect: normalizedRect(from: start, to: end),
+                xRadius: 4,
+                yRadius: 4
+            ).fill()
+        case let .mosaic(rect):
+            let start = viewPoint(from: rect.origin, in: frame)
+            let end = viewPoint(
+                from: CGPoint(x: rect.maxX, y: rect.maxY),
+                in: frame
+            )
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: normalizedRect(from: start, to: end)).addClip()
+            mosaicImage.draw(
+                in: frame,
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1,
+                respectFlipped: true,
+                hints: [.interpolation: NSImageInterpolation.none]
+            )
+            NSGraphicsContext.restoreGraphicsState()
         case let .text(origin, value, color, fontSize):
             let point = viewPoint(from: origin, in: frame)
             value.draw(
@@ -358,6 +497,30 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
                     ),
                     .foregroundColor: color,
                 ]
+            )
+        case let .number(center, value, color, diameter):
+            let point = viewPoint(from: center, in: frame)
+            let renderedDiameter = max(22, diameter * scale)
+            let circleRect = NSRect(
+                x: point.x - renderedDiameter / 2,
+                y: point.y - renderedDiameter / 2,
+                width: renderedDiameter,
+                height: renderedDiameter
+            )
+            color.setFill()
+            NSBezierPath(ovalIn: circleRect).fill()
+            let text = String(value)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(
+                    ofSize: max(12, renderedDiameter * 0.5),
+                    weight: .bold
+                ),
+                .foregroundColor: NSColor.white,
+            ]
+            let size = text.size(withAttributes: attributes)
+            text.draw(
+                at: NSPoint(x: circleRect.midX - size.width / 2, y: circleRect.midY - size.height / 2),
+                withAttributes: attributes
             )
         }
     }
@@ -473,6 +636,7 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
                 color: color,
                 fontSize: defaultTextFontSize
             ))
+            redoAnnotations.removeAll()
         }
         needsDisplay = true
         onAnnotationsChanged?()
@@ -495,6 +659,32 @@ final class ScreenshotAnnotationView: NSView, NSTextFieldDelegate {
             y: min(start.y, end.y),
             width: abs(end.x - start.x),
             height: abs(end.y - start.y)
+        )
+    }
+
+    private static func makeMosaicImage(from image: CGImage) -> NSImage {
+        let blockSize = max(10, image.width / 180)
+        let width = max(1, image.width / blockSize)
+        let height = max(1, image.height / blockSize)
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        }
+        context.interpolationQuality = .low
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let reduced = context.makeImage() else {
+            return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        }
+        return NSImage(
+            cgImage: reduced,
+            size: NSSize(width: image.width, height: image.height)
         )
     }
 }

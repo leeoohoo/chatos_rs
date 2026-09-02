@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::models::project::{normalize_project_id, ProjectService, PUBLIC_PROJECT_ID};
+use crate::core::chat_runtime::normalize_project_id;
+use crate::models::project::ProjectService;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ResolvedProjectRuntime {
@@ -29,7 +30,7 @@ pub(crate) async fn resolve_project_runtime_context(
     project_id: Option<String>,
     project_root: Option<String>,
 ) -> ResolvedProjectRuntime {
-    let mut resolved_project_id = normalize_optional_string(project_id);
+    let mut resolved_project_id = normalize_project_id(project_id.as_deref());
     let mut resolved_project_root = normalize_optional_string(project_root);
 
     let Some(project_id) = resolved_project_id.clone() else {
@@ -39,15 +40,7 @@ pub(crate) async fn resolve_project_runtime_context(
             ..ResolvedProjectRuntime::default()
         };
     };
-    let project_id = normalize_project_id(project_id.as_str());
-    if project_id == PUBLIC_PROJECT_ID {
-        resolved_project_id = Some(PUBLIC_PROJECT_ID.to_string());
-        return ResolvedProjectRuntime {
-            project_id: resolved_project_id,
-            project_root: resolved_project_root,
-            ..ResolvedProjectRuntime::default()
-        };
-    }
+    let project_id = project_id.trim().to_string();
     resolved_project_id = Some(project_id.clone());
 
     let project = match ProjectService::get_by_id(project_id.as_str()).await {

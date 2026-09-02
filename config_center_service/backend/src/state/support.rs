@@ -528,10 +528,6 @@ pub(super) const MEMORY_ENGINE_RUNTIME_CONFIG_KEYS: &[&str] = &[
     MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY,
-    MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY,
     MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY,
@@ -827,38 +823,7 @@ pub(super) fn user_service_runtime_default_values(
             definition.scope == "service"
                 && definition.service_name.as_deref() == Some("user-service")
         })
-        .filter(|definition| {
-            [
-                USER_SERVICE_PORT_CONFIG_KEY,
-                USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-                USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-                USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY,
-                USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
-                USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
-                USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
-                USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY,
-                USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-                USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT_CONFIG_KEY,
-                USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS_CONFIG_KEY,
-                USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS_CONFIG_KEY,
-                USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY,
-                USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY,
-                USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
-                USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
-                USER_SERVICE_HARNESS_SYNTHETIC_EMAIL_DOMAIN_CONFIG_KEY,
-                USER_SERVICE_HARNESS_SPACE_PREFIX_CONFIG_KEY,
-                USER_SERVICE_HARNESS_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX_CONFIG_KEY,
-            ]
-            .contains(&definition.key.as_str())
-        })
+        .filter(|definition| USER_SERVICE_RUNTIME_CONFIG_KEYS.contains(&definition.key.as_str()))
         .map(|definition| (definition.key.clone(), definition.default_value.clone()))
         .collect()
 }
@@ -883,6 +848,7 @@ pub(super) fn chatos_service_default_values(
                 CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY,
                 CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY,
                 CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
+                CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
                 CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
                 CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
                 CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -1059,16 +1025,7 @@ pub(super) fn ensure_user_service_runtime_values(
 ) -> Vec<String> {
     let mut changed_keys = Vec::new();
     for (key, fallback) in defaults {
-        if key == USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY {
-            let uses_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !uses_https {
-                values.insert(key.clone(), fallback.clone());
-                changed_keys.push(key.clone());
-            }
-        } else if !values.contains_key(key) {
+        if !values.contains_key(key) {
             values.insert(key.clone(), fallback.clone());
             changed_keys.push(key.clone());
         }
@@ -1084,6 +1041,15 @@ pub(super) fn ensure_chatos_runtime_values(
     for (key, fallback) in defaults {
         if key == CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY {
             if ensure_root_vhost_rabbitmq_url(values, key, fallback) {
+                changed_keys.push(key.clone());
+            }
+        } else if key == CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY {
+            if ensure_service_url_value(
+                values,
+                key,
+                fallback,
+                &["https://127.0.0.1:39192", "https://localhost:39192"],
+            ) {
                 changed_keys.push(key.clone());
             }
         } else if [
@@ -1102,6 +1068,26 @@ pub(super) fn ensure_chatos_runtime_values(
         }
     }
     changed_keys
+}
+
+pub(super) fn ensure_service_url_value(
+    values: &mut BTreeMap<String, Value>,
+    key: &str,
+    fallback: &Value,
+    legacy_values: &[&str],
+) -> bool {
+    let current = values.get(key).and_then(Value::as_str).map(str::trim);
+    let is_valid = current.is_some_and(|value| {
+        value.starts_with("https://")
+            && !legacy_values
+                .iter()
+                .any(|legacy| value.eq_ignore_ascii_case(legacy))
+    });
+    if is_valid {
+        return false;
+    }
+    values.insert(key.to_string(), fallback.clone());
+    true
 }
 
 pub(super) fn ensure_https_url_value(
@@ -1126,6 +1112,15 @@ pub(super) fn migrate_https_url_draft(
     fallback: &Value,
 ) -> bool {
     values.contains_key(key) && ensure_https_url_value(values, key, fallback)
+}
+
+pub(super) fn migrate_service_url_draft(
+    values: &mut BTreeMap<String, Value>,
+    key: &str,
+    fallback: &Value,
+    legacy_values: &[&str],
+) -> bool {
+    values.contains_key(key) && ensure_service_url_value(values, key, fallback, legacy_values)
 }
 
 pub(super) fn ensure_changed_key(keys: &mut Vec<String>, key: &str) {

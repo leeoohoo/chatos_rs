@@ -40,6 +40,16 @@ public protocol LocalConnectorControlServicing: Sendable {
         networkAccess: String?
     ) async throws -> LocalConnectorSandboxSettings
     func fetchPlugins() async throws -> [LocalConnectorPlugin]
+    func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication]
+    func launchPluginApplication(
+        pluginID: String,
+        componentKey: String
+    ) async throws -> LocalConnectorPluginApplicationLaunch
+    func launchPluginApplication(
+        pluginID: String,
+        componentKey: String,
+        context: LocalConnectorPluginApplicationContext?
+    ) async throws -> LocalConnectorPluginApplicationLaunch
     func installPlugin(id: String) async throws
     func uninstallPlugin(id: String) async throws
     func updatePluginEnabled(id: String, enabled: Bool) async throws
@@ -47,6 +57,23 @@ public protocol LocalConnectorControlServicing: Sendable {
 }
 
 public extension LocalConnectorControlServicing {
+    func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] { [] }
+
+    func launchPluginApplication(
+        pluginID: String,
+        componentKey: String
+    ) async throws -> LocalConnectorPluginApplicationLaunch {
+        throw URLError(.unsupportedURL)
+    }
+
+    func launchPluginApplication(
+        pluginID: String,
+        componentKey: String,
+        context: LocalConnectorPluginApplicationContext?
+    ) async throws -> LocalConnectorPluginApplicationLaunch {
+        try await launchPluginApplication(pluginID: pluginID, componentKey: componentKey)
+    }
+
     func fetchModelProviders() async throws -> [LocalConnectorModelProvider] { [] }
     func createModelProvider(_ draft: LocalConnectorModelProviderDraft) async throws {}
     func updateModelProvider(id: String, draft: LocalConnectorModelProviderDraft) async throws {}

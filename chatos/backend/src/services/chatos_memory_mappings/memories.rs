@@ -4,7 +4,6 @@
 use serde_json::Value;
 
 use crate::models::memory_mapping_types::{MemoryAgentRecallDto, MemoryProjectMemoryDto};
-use crate::models::project::{normalize_project_id, PUBLIC_PROJECT_ID};
 use crate::repositories::chatos_memory_mappings as mappings_repo;
 use crate::services::chatos_memory_engine;
 
@@ -19,11 +18,14 @@ pub async fn list_contact_project_memories(
     let contact = mappings_repo::get_contact_by_id(contact_id)
         .await?
         .ok_or_else(|| "contact not found".to_string())?;
-    let project_id = normalize_project_id(project_id);
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        return Err("project_id is required".to_string());
+    }
     chatos_memory_engine::list_contact_project_memories(
         contact.user_id.as_str(),
         contact.id.as_str(),
-        project_id.as_str(),
+        project_id,
         limit,
         offset,
     )
@@ -48,7 +50,8 @@ pub async fn list_contact_project_memories_by_contact(
     .await?;
     let mut project_ids = links
         .into_iter()
-        .map(|item| normalize_project_id(item.project_id.as_str()))
+        .map(|item| item.project_id.trim().to_string())
+        .filter(|project_id| !project_id.is_empty())
         .collect::<Vec<_>>();
     project_ids.sort();
     project_ids.dedup();
@@ -131,7 +134,7 @@ pub async fn list_contact_projects(
                 .unwrap_or_else(|| "active".to_string()),
             "is_virtual": project
                 .map(|item| item.is_virtual)
-                .unwrap_or_else(|| if project_id == PUBLIC_PROJECT_ID { 1 } else { 0 }),
+                .unwrap_or(0),
             "has_memory": latest_memory.is_some(),
             "memory_version": latest_memory.map(|item| item.memory_version).unwrap_or(0),
             "last_source_at": latest_memory.and_then(|item| item.last_source_at.clone()),

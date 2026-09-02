@@ -19,6 +19,20 @@ struct ChatOSApp: App {
         }
         .defaultSize(width: 1_440, height: 900)
         .windowStyle(.titleBar)
+        .commands {
+            CommandMenu(model.localized("全局工具", english: "Global Utilities")) {
+                Button(model.localized("区域截图", english: "Region Screenshot")) {
+                    model.globalUtilityCoordinator.trigger(.screenshot)
+                }
+                Divider()
+                Button(model.localized("剪贴板历史", english: "Clipboard History")) {
+                    model.globalUtilityCoordinator.trigger(.clipboardHistory)
+                }
+                Button(model.localized("快速搜索", english: "Quick Search")) {
+                    model.globalUtilityCoordinator.trigger(.quickSearch)
+                }
+            }
+        }
 
         Settings {
             SettingsView()

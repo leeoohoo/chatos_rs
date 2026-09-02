@@ -384,10 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_nature_selects_distinct_task_runner_agents() {
-        let mut planning = sample_task(
-            crate::models::TASK_PROFILE_CHATOS_PLAN,
-            crate::models::PUBLIC_PROJECT_ID,
-        );
+        let mut planning = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, None);
         planning.mcp_config.requires_execution = false;
         let mut executing = planning.clone();
         executing.mcp_config.requires_execution = true;
@@ -437,7 +434,7 @@ mod tests {
     #[test]
     fn run_memory_scope_keeps_current_run_history_with_compact_memory_recall() {
         let service = test_run_service(test_config());
-        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, Some("project-1"));
         let mut run = sample_run(&task);
         run.input_snapshot = json!({ "retry_of_run_id": "run-old" });
 
@@ -454,7 +451,7 @@ mod tests {
     #[test]
     fn compose_and_record_scopes_use_the_same_run_thread() {
         let service = test_run_service(test_config());
-        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, Some("project-1"));
         let run = sample_run(&task);
         let compose_scope = build_memory_scope(&service, &task, &run);
         let record_scope = build_memory_record_scope(&task, &run);
@@ -466,7 +463,7 @@ mod tests {
     #[test]
     fn different_runs_do_not_share_memory_threads() {
         let service = test_run_service(test_config());
-        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, "project-1");
+        let task = sample_task(crate::models::TASK_PROFILE_DEFAULT, Some("project-1"));
         let mut first = sample_run(&task);
         first.id = "run-1".to_string();
         first.memory_thread_id = crate::models::task_run_memory_thread_id(
@@ -544,7 +541,7 @@ mod tests {
         )
     }
 
-    fn sample_task(task_profile: &str, project_id: &str) -> TaskRecord {
+    fn sample_task(task_profile: &str, project_id: Option<&str>) -> TaskRecord {
         let now = now_rfc3339();
         TaskRecord {
             id: "task-1".to_string(),
@@ -559,7 +556,7 @@ mod tests {
             memory_thread_id: "memory-1".to_string(),
             tenant_id: "tenant".to_string(),
             subject_id: "subject".to_string(),
-            project_id: project_id.to_string(),
+            project_id: project_id.map(ToOwned::to_owned),
             task_profile: task_profile.to_string(),
             creator_user_id: None,
             creator_username: None,
@@ -576,6 +573,7 @@ mod tests {
             source_session_id: None,
             source_turn_id: None,
             source_user_message_id: None,
+            remote_connection_id: None,
             prerequisite_task_ids: Vec::new(),
             task_tool_state: Default::default(),
             plugin_config: Default::default(),

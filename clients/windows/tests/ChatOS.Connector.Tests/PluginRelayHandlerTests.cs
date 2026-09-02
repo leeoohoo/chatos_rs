@@ -47,6 +47,7 @@ public sealed class PluginRelayHandlerTests : IDisposable
                 release_id = "release-1",
                 artifact_sha256 = new string('a', 64),
                 component_key = "main",
+                project_id = "project-1",
                 permission_snapshot = new[] { "process.spawn", "workspace.read" },
                 tool_allowlist = new[] { "echo" },
                 tool_blocklist = Array.Empty<string>(),
@@ -57,6 +58,24 @@ public sealed class PluginRelayHandlerTests : IDisposable
         Assert.Equal("echo", prepared.Body.GetProperty("mcp").GetProperty("tools")[0]
             .GetProperty("name").GetString());
         Assert.True(client.Started);
+
+        await Assert.ThrowsAsync<RelayRequestException>(() => handler.HandleAsync(Request(
+            "plugin_execute_request",
+            "request-mismatched-project",
+            "workspace-1",
+            new
+            {
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "main",
+                adapter_session_id = adapterSessionId,
+                invocation_id = "invocation-mismatched-project",
+                operation = "mcp_tools_call",
+                tool_name = "echo",
+                arguments = new { value = "wrong" },
+                project_id = "project-2",
+            }), CancellationToken.None));
 
         var executed = await handler.HandleAsync(Request(
             "plugin_execute_request",
@@ -73,6 +92,7 @@ public sealed class PluginRelayHandlerTests : IDisposable
                 operation = "mcp_tools_call",
                 tool_name = "echo",
                 arguments = new { value = "hello" },
+                project_id = "project-1",
             }), CancellationToken.None);
 
         Assert.Equal("hello", executed.Body.GetProperty("result").GetProperty("echo").GetString());
@@ -86,6 +106,7 @@ public sealed class PluginRelayHandlerTests : IDisposable
             {
                 run_id = "run-1",
                 adapter_session_id = adapterSessionId,
+                project_id = "project-1",
             }), CancellationToken.None);
 
         Assert.Equal("cancelled", cancelled.Body.GetProperty("status").GetString());

@@ -131,12 +131,12 @@ impl TaskService {
             return Err("前置任务数量不能超过 50 个".to_string());
         }
         let target_project_id = match expected_project_id {
-            Some(project_id) => Some(normalize_project_id(Some(project_id.to_string()))),
+            Some(project_id) => normalize_project_id(Some(project_id.to_string())),
             None => self
                 .store
                 .get_task(task_id)
                 .await?
-                .map(|task| normalize_project_id(Some(task.project_id))),
+                .and_then(|task| normalize_project_id(task.project_id)),
         };
         for prerequisite_task_id in prerequisite_task_ids {
             if prerequisite_task_id == task_id {
@@ -153,9 +153,8 @@ impl TaskService {
                 ));
             }
             if let Some(target_project_id) = target_project_id.as_deref() {
-                let prerequisite_project_id =
-                    normalize_project_id(Some(prerequisite.project_id.clone()));
-                if prerequisite_project_id != target_project_id {
+                let prerequisite_project_id = normalize_project_id(prerequisite.project_id.clone());
+                if prerequisite_project_id.as_deref() != Some(target_project_id) {
                     return Err(format!("前置任务必须属于同一项目: {prerequisite_task_id}"));
                 }
             }

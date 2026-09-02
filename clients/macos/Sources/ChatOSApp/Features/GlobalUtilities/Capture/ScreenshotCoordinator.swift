@@ -5,6 +5,8 @@ import Foundation
 
 @MainActor
 final class ScreenshotCoordinator {
+    private static let workflowGate = ScreenshotWorkflowGate()
+
     private weak var model: AppModel?
     private let captureService = NativeScreenCaptureService()
     private let toastController = CaptureResultToastController()
@@ -22,10 +24,7 @@ final class ScreenshotCoordinator {
     }
 
     func start() {
-        if isRunning {
-            cancelCurrentWorkflow()
-            return
-        }
+        guard Self.workflowGate.acquire(self) else { return }
 
         if NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             != Bundle.main.bundleIdentifier {
@@ -33,6 +32,7 @@ final class ScreenshotCoordinator {
         }
 
         guard ensureScreenCapturePermission() else {
+            Self.workflowGate.release(self)
             restorePreviousApplication()
             return
         }
@@ -77,12 +77,22 @@ final class ScreenshotCoordinator {
         captureTask = Task { [weak self] in
             guard let self else { return }
             do {
+                // orderOut() updates AppKit immediately, but WindowServer can
+                // retain the previous composited frame briefly. Capturing on
+                // the next compositor beat prevents the selection mask from
+                // being baked into the screenshot preview.
+                try await Task.sleep(for: .milliseconds(120))
+                try Task.checkCancellation()
+                let excludedWindowIDs = Array(Set(
+                    selection.captureRegion.excludedWindowIDs
+                        + ScreenshotWindowExclusion.visibleOverlayWindowIDs()
+                ))
                 let image = try await self.captureService.capture(
                     region: NativeScreenCaptureRegion(
                         displayID: selection.captureRegion.displayID,
                         sourceRect: selection.captureRegion.sourceRect,
                         outputSize: selection.captureRegion.outputSize,
-                        excludedWindowIDs: ScreenshotWindowExclusion.visibleOverlayWindowIDs()
+                        excludedWindowIDs: excludedWindowIDs
                     )
                 )
                 try Task.checkCancellation()
@@ -282,6 +292,7 @@ final class ScreenshotCoordinator {
         captureTask = nil
         selectedScreen = nil
         isRunning = false
+        Self.workflowGate.release(self)
         restorePreviousApplication()
     }
 
@@ -299,5 +310,21 @@ final class ScreenshotCoordinator {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         return "ChatOS Screenshot \(formatter.string(from: Date())).png"
+    }
+}
+
+@MainActor
+final class ScreenshotWorkflowGate {
+    private weak var owner: AnyObject?
+
+    func acquire(_ candidate: AnyObject) -> Bool {
+        guard owner == nil else { return false }
+        owner = candidate
+        return true
+    }
+
+    func release(_ candidate: AnyObject) {
+        guard owner === candidate else { return }
+        owner = nil
     }
 }

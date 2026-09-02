@@ -101,14 +101,8 @@ final class LongScreenshotCaptureController {
             defer: false,
             screen: selection.screen
         )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
+        configureScreenshotOverlayPanel(panel, levelOffset: 2)
         panel.hasShadow = true
-        panel.isReleasedWhenClosed = false
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 2)
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = false
         panel.contentView = makeControlView(size: size)
         panel.orderFrontRegardless()
         controlPanel = panel

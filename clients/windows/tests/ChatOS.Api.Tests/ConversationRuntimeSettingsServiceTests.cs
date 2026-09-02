@@ -16,6 +16,8 @@ public sealed class ConversationRuntimeSettingsServiceTests
             return StubHttpMessageHandler.Json("""
                 [
                   {"id":"task-model","name":"Task","model_name":"gpt-task","enabled":true,"task_enabled":true},
+                  {"id":"task-model","name":"Task","model_name":"gpt-task","enabled":true,"task_enabled":true},
+                  {"id":"stale-task-duplicate","name":"Task","model_name":"gpt-task","enabled":true,"task_enabled":true},
                   {"id":"chat-model","name":"Chat","model_name":"gpt-chat","enabled":true,"task_enabled":false}
                 ]
                 """);

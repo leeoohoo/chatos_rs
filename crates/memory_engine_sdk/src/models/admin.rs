@@ -47,30 +47,10 @@ pub struct EngineModelProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertEngineModelProfileRequest {
-    pub id: Option<String>,
-    pub name: String,
-    pub provider: String,
-    #[serde(alias = "model_name")]
-    pub model: String,
-    pub base_url: Option<Option<String>>,
-    pub api_key: Option<Option<String>>,
-    pub supports_images: Option<bool>,
-    pub supports_reasoning: Option<bool>,
-    pub supports_responses: Option<bool>,
-    pub temperature: Option<f64>,
-    pub thinking_level: Option<String>,
-    pub model_request_max_retries: Option<usize>,
-    pub is_default: Option<bool>,
-    pub enabled: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineJobPolicy {
     pub job_type: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    pub model_profile_id: Option<String>,
     pub summary_prompt: Option<String>,
     #[serde(default)]
     pub summary_prompt_zh: Option<String>,
@@ -98,7 +78,6 @@ pub struct EngineJobPolicy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpsertEngineJobPolicyRequest {
     pub enabled: Option<bool>,
-    pub model_profile_id: Option<Option<String>>,
     pub summary_prompt: Option<Option<String>>,
     pub summary_prompt_zh: Option<Option<String>>,
     pub summary_prompt_en: Option<Option<String>>,
@@ -219,7 +198,6 @@ pub struct JobRunsBundleResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardOverviewResponse {
     pub source_count: i64,
-    pub model_count: i64,
     pub policy_count: i64,
     pub job_stats: Value,
 }
@@ -289,7 +267,6 @@ mod tests {
     fn engine_job_policy_defaults_enabled_to_true() {
         let policy: EngineJobPolicy = serde_json::from_value(serde_json::json!({
             "job_type": "thread_summary",
-            "model_profile_id": null,
             "summary_prompt": null,
             "rollup_summary_prompt": null,
             "token_limit": null,
@@ -310,7 +287,6 @@ mod tests {
     fn dashboard_overview_response_keeps_job_stats_payload() {
         let overview: DashboardOverviewResponse = serde_json::from_value(serde_json::json!({
             "source_count": 2,
-            "model_count": 3,
             "policy_count": 4,
             "job_stats": {
                 "summary": {

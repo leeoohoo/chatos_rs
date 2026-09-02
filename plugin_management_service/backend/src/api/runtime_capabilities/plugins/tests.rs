@@ -230,6 +230,7 @@ fn plugin_records() -> PluginRecords {
         visibility: PLUGIN_VISIBILITY_PUBLIC.to_string(),
         featured: false,
         enabled: true,
+        has_ui: false,
         latest_release_id: "release-1".to_string(),
         license: PluginLicenseMetadata {
             license_id: "MIT".to_string(),

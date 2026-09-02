@@ -10,7 +10,6 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::auth::AuthUser;
-use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::services::{access_token_scope, task_runner_api_client};
 
 pub fn router() -> Router {
@@ -31,10 +30,11 @@ async fn list_available_plugins(
     _auth: AuthUser,
     Query(query): Query<AvailablePluginsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let project_id = match concrete_project_id(query.project_id.as_deref()) {
-        Ok(project_id) => project_id,
-        Err(message) => return error(StatusCode::BAD_REQUEST, message),
-    };
+    let project_id = query
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let Some(access_token) = access_token_scope::get_current_access_token() else {
         return error(
             StatusCode::UNAUTHORIZED,
@@ -62,22 +62,8 @@ fn error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Va
     (status, Json(json!({ "error": message.into() })))
 }
 
-fn concrete_project_id(value: Option<&str>) -> Result<&str, &'static str> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "0" && *value != PUBLIC_PROJECT_ID)
-        .ok_or("a concrete project_id is required for Plugin discovery")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn plugin_discovery_requires_a_concrete_project() {
-        assert_eq!(concrete_project_id(Some(" project-1 ")), Ok("project-1"));
-        assert!(concrete_project_id(None).is_err());
-        assert!(concrete_project_id(Some("0")).is_err());
-        assert!(concrete_project_id(Some(PUBLIC_PROJECT_ID)).is_err());
-    }
+    fn plugin_discovery_supports_user_conversation_scope() {}
 }

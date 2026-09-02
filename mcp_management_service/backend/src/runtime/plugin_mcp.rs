@@ -35,6 +35,8 @@ pub struct PluginLocalProviderBinding {
     pub device_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub adapter_session_id: String,
     pub operation: String,
     pub session_sha256: String,
@@ -192,7 +194,7 @@ mod tests {
 
     fn device_only_context() -> ProjectExecutionContext {
         ProjectExecutionContext {
-            project_id: "public".to_string(),
+            project_id: None,
             owner_user_id: "owner-1".to_string(),
             workspace_provider: WorkspaceProviderKind::None,
             workspace: None,
@@ -202,7 +204,7 @@ mod tests {
 
     fn project_context(device_id: &str) -> ProjectExecutionContext {
         ProjectExecutionContext {
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             owner_user_id: "owner-1".to_string(),
             workspace_provider: WorkspaceProviderKind::LocalConnector,
             workspace: Some(WorkspaceExecutionTarget {

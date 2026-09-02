@@ -3,6 +3,7 @@
 
 use axum::extract::Path;
 use axum::http::HeaderMap;
+use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::{
@@ -48,6 +49,73 @@ pub fn router() -> Router {
             "/internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}",
             post(mcp_management_ask_user_prompt),
         )
+        .route(
+            "/internal/mcp-management/remote-connections/{connection_id}/route",
+            post(mcp_management_remote_connection_route),
+        )
+}
+
+async fn mcp_management_remote_connection_route(
+    Path(connection_id): Path<String>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    if let Err(message) = require_mcp_management_request(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": message})),
+        );
+    }
+    let Some(owner_user_id) = header_text(&headers, "x-mcp-management-owner-user-id") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "x-mcp-management-owner-user-id is required"})),
+        );
+    };
+    let connection = match crate::models::remote_connection::RemoteConnectionService::get_by_id(
+        connection_id.trim(),
+    )
+    .await
+    {
+        Ok(Some(connection)) => connection,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "remote connection was not found"})),
+            )
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": error})),
+            )
+        }
+    };
+    if connection.user_id.as_deref().map(str::trim) != Some(owner_user_id.as_str()) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(
+                serde_json::json!({"error": "remote connection does not belong to the represented user"}),
+            ),
+        );
+    }
+    if connection.local_connector_device_id.trim().is_empty()
+        || connection.local_connector_workspace_id.trim().is_empty()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(
+                serde_json::json!({"error": "remote connection is not bound to a Local Connector client"}),
+            ),
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "remote_connection_id": connection.id,
+            "device_id": connection.local_connector_device_id,
+            "workspace_id": connection.local_connector_workspace_id,
+        })),
+    )
 }
 
 async fn mcp_management_ask_user_start(
@@ -103,7 +171,7 @@ struct McpManagementBinding {
     agent_key: SystemAgentKey,
     session_id: String,
     session_expires_at_unix: i64,
-    project_id: String,
+    project_id: Option<String>,
     turn_id: Option<String>,
     source_session_id: Option<String>,
     source_user_message_id: Option<String>,
@@ -245,7 +313,7 @@ fn mcp_management_binding_from_headers(
             .map_err(|_| {
                 "x-mcp-management-session-expires-at-unix must be an integer".to_string()
             })?,
-        project_id: required("x-mcp-management-project-id")?,
+        project_id: header_text(headers, "x-mcp-management-project-id"),
         turn_id: header_text(headers, "x-mcp-management-turn-id"),
         source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
         source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),

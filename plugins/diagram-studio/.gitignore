@@ -1,0 +1,6 @@
+node_modules/
+dist/
+ui/
+.diagram-studio-data/
+exports/
+*.tgz

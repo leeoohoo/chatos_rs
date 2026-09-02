@@ -9,7 +9,7 @@ SHELL := /bin/bash
 .PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
 .PHONY: test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
 .PHONY: test-macos-client test-windows-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
-.PHONY: type-check-user-service-frontend
+.PHONY: type-check-admin-console
 
 help:
 	@echo "Chat OS tasks:"
@@ -105,12 +105,7 @@ build-rust:
 	@cd memory_engine/backend && cargo build
 
 build-frontends:
-	@cd config_center_service/frontend && npm run build
-	@cd user_service/frontend && npm run build
-	@cd task_runner_service/frontend && npm run build
-	@cd memory_engine/frontend && npm run build
-	@cd project_management_service/frontend && npm run build
-	@cd plugin_management_service/frontend && npm run build
+	@cd admin_console && npm run build
 	@cd official_website_service/frontend && npm run build
 
 build-macos-client:
@@ -168,8 +163,6 @@ test-chat-app-server:
 
 test-user-service:
 	@cd user_service/backend && cargo test -q
-	@cd user_service/frontend && npm run type-check
-	@cd user_service/frontend && npm run build
 
 test-task-runner-service:
 	@cargo test -p task_runner_service_backend -q
@@ -211,5 +204,5 @@ code-size-report:
 hotspot-line-warnings:
 	@bash scripts/check-hotspot-line-budgets.sh --warn-planned
 
-type-check-user-service-frontend:
-	@cd user_service/frontend && npm run type-check
+type-check-admin-console:
+	@cd admin_console && npm run type-check

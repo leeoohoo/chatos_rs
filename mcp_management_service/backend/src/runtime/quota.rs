@@ -199,8 +199,10 @@ impl RuntimeInvocationQuota {
         let mut scopes = vec![
             self.scope("tenant", record.tenant_id.as_str(), self.limits.tenant)?,
             self.scope("user", record.owner_user_id.as_str(), self.limits.user)?,
-            self.scope("project", record.project_id.as_str(), self.limits.project)?,
         ];
+        if let Some(project_id) = record.project_id.as_deref() {
+            scopes.push(self.scope("project", project_id, self.limits.project)?);
+        }
         if let Some(device_id) = record.device_id.as_deref() {
             scopes.push(self.scope("device", device_id, self.limits.device)?);
         }
@@ -294,7 +296,7 @@ mod tests {
             caller_service: "task-runner".to_string(),
             tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             device_id: Some("device-1".to_string()),
             resource_id: "mcp-1".to_string(),
             exposed_tool_name: "demo".to_string(),

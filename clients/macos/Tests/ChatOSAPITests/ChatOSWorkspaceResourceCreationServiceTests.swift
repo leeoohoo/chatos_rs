@@ -17,7 +17,9 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
             name: "Swift App",
             deviceID: "device-1",
             workspaceID: "workspace-1",
-            relativePath: "projects/swift-app"
+            relativePath: "projects/swift-app",
+            repositoryMode: .managed,
+            gitURL: nil
         ))
         try await service.bindContact(projectID: project.id, contactID: "contact-default")
         let conversationID = try await service.ensureConversation(
@@ -44,6 +46,8 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
             "/api/chatos/conversations",
         ])
         XCTAssertEqual(requests.map(\.method), ["POST", "POST", "GET", "GET", "POST"])
+        XCTAssertEqual(requests.first?.timeoutInterval, 2 * 60 * 60)
+        XCTAssertNil(requests[1].timeoutInterval)
 
         let projectBody = try XCTUnwrap(requests.first?.body)
         let projectJSON = try XCTUnwrap(
@@ -53,6 +57,8 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
         XCTAssertEqual(projectJSON["device_id"] as? String, "device-1")
         XCTAssertEqual(projectJSON["workspace_id"] as? String, "workspace-1")
         XCTAssertEqual(projectJSON["relative_path"] as? String, "projects/swift-app")
+        XCTAssertEqual(projectJSON["repository_mode"] as? String, "managed")
+        XCTAssertNil(projectJSON["git_url"])
 
         let contactBody = try XCTUnwrap(requests[1].body)
         let contactJSON = try XCTUnwrap(
@@ -77,6 +83,33 @@ final class ChatOSWorkspaceResourceCreationServiceTests: XCTestCase {
             "local://connector/device-1/workspace-1/projects/swift-app"
         )
     }
+
+    func testExternalGitProjectSendsRemoteWithoutHarnessTimeout() async throws {
+        let transport = ResourceCreationTransport()
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            accessToken: "token",
+            transport: transport
+        )
+        let service = ChatOSWorkspaceResourceCreationService(client: client)
+
+        _ = try await service.createLocalProject(.init(
+            name: "Existing Git",
+            deviceID: "device-1",
+            workspaceID: "workspace-1",
+            relativePath: "projects/existing",
+            repositoryMode: .external,
+            gitURL: "git@github.com:example/existing.git"
+        ))
+
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertNil(request.timeoutInterval)
+        let body = try XCTUnwrap(request.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["repository_mode"] as? String, "external")
+        XCTAssertEqual(json["git_url"] as? String, "git@github.com:example/existing.git")
+    }
 }
 
 private actor ResourceCreationTransport: HTTPTransport {
@@ -84,6 +117,7 @@ private actor ResourceCreationTransport: HTTPTransport {
         var path: String
         var method: String
         var body: Data?
+        var timeoutInterval: TimeInterval?
     }
 
     private var requests: [RecordedRequest] = []
@@ -92,7 +126,8 @@ private actor ResourceCreationTransport: HTTPTransport {
         requests.append(.init(
             path: request.url.path(percentEncoded: true),
             method: request.method,
-            body: request.body
+            body: request.body,
+            timeoutInterval: request.timeoutInterval
         ))
         switch (request.method, request.url.path(percentEncoded: true)) {
         case ("POST", "/api/chatos/local-connectors/projects"):

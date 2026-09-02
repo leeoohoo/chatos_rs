@@ -9,7 +9,7 @@ impl TaskService {
         current_user: Option<&CurrentUser>,
         owner_user_id: Option<&str>,
         agent_key: SystemAgentKey,
-        project_id: &str,
+        project_id: Option<&str>,
         task_profile: Option<&str>,
         schedule_mode: Option<&str>,
     ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
@@ -63,7 +63,7 @@ impl RunService {
             owner_user_id,
             None,
             agent_key,
-            task.project_id.as_str(),
+            task.project_id.as_deref(),
             Some(task.task_profile.as_str()),
             Some(task.schedule.mode.mode_key()),
         )
@@ -77,7 +77,7 @@ async fn resolve_policy(
     owner_user_id: &str,
     access_token: Option<&str>,
     agent_key: SystemAgentKey,
-    project_id: &str,
+    project_id: Option<&str>,
     task_profile: Option<&str>,
     schedule_mode: Option<&str>,
 ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
@@ -90,7 +90,7 @@ async fn resolve_policy(
         .await?;
     tracing::debug!(
         owner_user_id = runtime_context.owner_user_id.as_str(),
-        project_id = runtime_context.project_id.as_str(),
+        project_id = runtime_context.project_id.as_deref().unwrap_or(""),
         runtime_provider = runtime_context.runtime_provider.as_str(),
         device_id = runtime_context.device_id.as_deref().unwrap_or(""),
         workspace_id = runtime_context.workspace_id.as_deref().unwrap_or(""),

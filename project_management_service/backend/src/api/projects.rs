@@ -10,8 +10,8 @@ use super::access::{ensure_project_writable, require_project_access};
 use super::ApiError;
 use crate::auth::{AccessToken, CurrentUser};
 use crate::models::{
-    now_rfc3339, CreateProjectRequest, ProjectProfileRecord, ProjectRecord, ProjectStatus,
-    UpdateProjectRequest, UpsertProjectProfileRequest,
+    now_rfc3339, CreateProjectRequest, ProjectProfileRecord, ProjectRecord, ProjectRepositoryMode,
+    ProjectStatus, UpdateProjectRequest, UpsertProjectProfileRequest,
 };
 use crate::services::harness_repo::ensure_harness_repo_for_project;
 use crate::state::AppState;
@@ -45,9 +45,11 @@ pub(in crate::api) async fn create_project(
         .create_project(input, &user)
         .await
         .map_err(ApiError::bad_request)?;
-    ensure_harness_repo_for_project(&state, access_token.0.as_str(), &mut project)
-        .await
-        .map_err(ApiError::bad_gateway)?;
+    if project.repository_mode == ProjectRepositoryMode::Managed {
+        ensure_harness_repo_for_project(&state, access_token.0.as_str(), &mut project)
+            .await
+            .map_err(ApiError::bad_gateway)?;
+    }
     Ok((StatusCode::CREATED, Json(project)))
 }
 

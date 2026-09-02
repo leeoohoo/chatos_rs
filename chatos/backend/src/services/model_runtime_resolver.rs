@@ -96,6 +96,35 @@ fn from_user_service_model_config(
     }
 }
 
+fn from_internal_user_service_model_runtime(
+    record: user_service_api_client::UserServiceInternalModelRuntimeRecord,
+) -> AiModelConfig {
+    AiModelConfig {
+        id: record.id,
+        user_id: Some(record.owner_user_id),
+        name: record.name,
+        provider: record.provider,
+        prompt_vendor: record.prompt_vendor,
+        model: record.model,
+        thinking_level: record.thinking_level,
+        task_usage_scenario: None,
+        task_thinking_level: None,
+        temperature: record.temperature,
+        max_output_tokens: record.max_output_tokens,
+        api_key: Some(record.api_key),
+        has_api_key: true,
+        base_url: Some(record.base_url),
+        enabled: true,
+        task_enabled: true,
+        supports_images: record.supports_images,
+        supports_reasoning: record.supports_reasoning,
+        supports_responses: record.supports_responses,
+        sync_warnings: Vec::new(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
+}
+
 async fn get_user_service_model_config_by_id(
     cfg: &Config,
     model_id: &str,
@@ -103,20 +132,36 @@ async fn get_user_service_model_config_by_id(
 ) -> Result<AiModelConfig, String> {
     let base_url = configured_user_service_base_url(cfg)
         .ok_or_else(|| "user_service is not configured".to_string())?;
-    let access_token = access_token_scope::get_current_access_token()
-        .ok_or_else(|| "current user access token is required".to_string())?;
-    let profile = user_service_api_client::get_model_config(
-        base_url.as_str(),
-        access_token.as_str(),
+    if let Some(access_token) = access_token_scope::get_current_access_token() {
+        let profile = user_service_api_client::get_model_config(
+            base_url.as_str(),
+            access_token.as_str(),
+            model_id,
+            true,
+            cfg.user_service_request_timeout_ms,
+        )
+        .await?;
+        if profile.owner_user_id != user_id {
+            return Err(format!("forbidden model config access: {model_id}"));
+        }
+        return Ok(from_user_service_model_config(profile));
+    }
+
+    let internal_secret = cfg
+        .user_service_internal_api_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "chatos user service internal secret is required".to_string())?;
+    let profile = user_service_api_client::get_internal_model_runtime_config(
+        &cfg.user_service_internal_http_client,
+        cfg.user_service_internal_base_url.as_str(),
+        internal_secret,
+        user_id,
         model_id,
-        true,
-        cfg.user_service_request_timeout_ms,
     )
     .await?;
-    if profile.owner_user_id != user_id {
-        return Err(format!("forbidden model config access: {model_id}"));
-    }
-    Ok(from_user_service_model_config(profile))
+    Ok(from_internal_user_service_model_runtime(profile))
 }
 
 async fn list_user_service_model_configs(

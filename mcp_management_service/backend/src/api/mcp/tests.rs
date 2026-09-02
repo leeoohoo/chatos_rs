@@ -30,7 +30,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             .as_str()
             .to_string(),
         task_profile: Some("default".to_string()),
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         device_id: Some("device-1".to_string()),
         run_id: Some("run-1".to_string()),
         execution_group_id: Some("group-1".to_string()),
@@ -42,11 +42,13 @@ fn snapshot() -> RuntimeSessionSnapshot {
         source_user_message_id: Some("source-message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
+        default_remote_connection_id: None,
+        remote_connection_route: None,
         tool_result_max_chars: Some(40_000),
         expected_project_task_ids: vec!["project-task-1".to_string()],
         workspace_route: None,
         project_context: ProjectExecutionContext {
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             owner_user_id: "user-1".to_string(),
             workspace_provider: WorkspaceProviderKind::LocalConnector,
             workspace: Some(WorkspaceExecutionTarget {
@@ -154,6 +156,7 @@ fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGra
         source_user_message_id: snapshot.source_user_message_id.clone(),
         contact_agent_id: snapshot.contact_agent_id.clone(),
         default_model_config_id: snapshot.default_model_config_id.clone(),
+        default_remote_connection_id: snapshot.default_remote_connection_id.clone(),
         expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
         policy_revision: snapshot.policy_revision.clone(),
         route_revision: snapshot.route_revision.clone(),
@@ -173,7 +176,7 @@ async fn persist_runtime_session(state: &AppState, snapshot: &RuntimeSessionSnap
             .runtime_execution_scopes
             .attach_session(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 snapshot.execution_scope_provider(),
                 snapshot.session_id.as_str(),
@@ -1138,7 +1141,7 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     assert!(!grant_matches_snapshot(&wrong_task_profile, &snapshot));
 
     let mut wrong_project = claims.clone();
-    wrong_project.project_id = "another-project".to_string();
+    wrong_project.project_id = Some("another-project".to_string());
     assert!(!grant_matches_snapshot(&wrong_project, &snapshot));
 
     let mut wrong_device = claims.clone();

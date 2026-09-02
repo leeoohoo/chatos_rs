@@ -19,7 +19,12 @@ enum NativePluginManifestLoader {
         componentKey requestedComponentKey: String,
         serverKey: String?,
         adapterSessionID: String,
+        ownerUserID: String,
+        deviceID: String,
+        workspaceID: String? = nil,
         workspaceRoot: URL?,
+        projectID: String? = nil,
+        projectName: String? = nil,
         permissionSnapshot: Set<String>,
         runtimeRootURL: URL
     ) throws -> NativePreparedPluginLaunch {
@@ -78,8 +83,22 @@ enum NativePluginManifestLoader {
             .appendingPathComponent(pluginHash, isDirectory: true)
             .appendingPathComponent(releaseHash, isDirectory: true)
             .appendingPathComponent(sessionHash, isDirectory: true)
-        let dataURL = runtimeRootURL.appendingPathComponent("data/\(pluginHash)", isDirectory: true)
-        let cacheURL = runtimeRootURL.appendingPathComponent("cache/\(pluginHash)", isDirectory: true)
+        let runtimeContext = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: componentKey,
+            runtimeRootURL: runtimeRootURL,
+            pluginID: record.pluginID,
+            host: .init(
+                ownerUserID: ownerUserID,
+                deviceID: deviceID,
+                workspaceID: workspaceID,
+                workspaceRoot: workspaceRoot,
+                projectID: projectID,
+                projectName: projectName
+            )
+        )
+        let dataURL = runtimeContext.dataURL
+        let cacheURL = runtimeContext.cacheURL
         let artifactURL = runtimeRootURL.appendingPathComponent("artifacts/\(sessionHash)", isDirectory: true)
         let grantURL = runtimeRootURL.appendingPathComponent("file-grants/\(sessionHash)", isDirectory: true)
         for directory in [visualSessionURL, dataURL, cacheURL, artifactURL, grantURL] {
@@ -109,11 +128,7 @@ enum NativePluginManifestLoader {
             "CHATOS_PLUGIN_ID": record.pluginID,
             "CHATOS_PLUGIN_COMPONENT_KEY": componentKey,
         ], uniquingKeysWith: { _, runtime in runtime })
-        if let workspaceRoot {
-            environment["CHATOS_WORKSPACE"] = workspaceRoot.path
-        } else {
-            environment.removeValue(forKey: "CHATOS_WORKSPACE")
-        }
+        environment.merge(runtimeContext.environment, uniquingKeysWith: { _, runtime in runtime })
 #if os(macOS)
         if manifest.name == "open-computer-use", server.bin == "open-computer-use",
            let applicationSupportURL = FileManager.default.urls(

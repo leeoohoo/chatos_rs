@@ -7,6 +7,7 @@ namespace ChatOS.Api.Http;
 
 public sealed class ChatOSApiClient
 {
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(60);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -30,6 +31,13 @@ public sealed class ChatOSApiClient
         CancellationToken cancellationToken = default) =>
         SendAsync<T>(HttpMethod.Post, path, body, cancellationToken);
 
+    public Task<T> PostAsync<T>(
+        string path,
+        object? body,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<T>(HttpMethod.Post, path, body, cancellationToken, timeout);
+
     public Task<T> PutAsync<T>(
         string path,
         object? body = null,
@@ -45,45 +53,38 @@ public sealed class ChatOSApiClient
         HttpMethod method,
         string path,
         object? body,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? timeout = null)
     {
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout ?? DefaultRequestTimeout);
+        var requestCancellationToken = timeoutSource.Token;
         using var request = new HttpRequestMessage(method, NormalizePath(path));
-        var token = await _tokenStore.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(token))
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        }
-
-        request.Headers.TryAddWithoutValidation("X-ChatOS-Client", "windows-native");
-        request.Headers.TryAddWithoutValidation("X-Correlation-ID", Guid.NewGuid().ToString("N"));
-        if (body is not null)
-        {
-            request.Content = JsonContent.Create(body, body.GetType(), options: JsonOptions);
-        }
-
-        HttpResponseMessage response;
         try
         {
-            response = await _httpClient.SendAsync(
+            var token = await _tokenStore.GetAccessTokenAsync(requestCancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            }
+
+            request.Headers.TryAddWithoutValidation("X-ChatOS-Client", "windows-native");
+            request.Headers.TryAddWithoutValidation("X-Correlation-ID", Guid.NewGuid().ToString("N"));
+            if (body is not null)
+            {
+                request.Content = JsonContent.Create(body, body.GetType(), options: JsonOptions);
+            }
+
+            using var response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new ChatOSApiException("ChatOS request timed out.");
-        }
-        catch (HttpRequestException exception)
-        {
-            throw new ChatOSApiException("Unable to connect to the ChatOS gateway.", innerException: exception);
-        }
-
-        using (response)
-        {
-            var payload = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                requestCancellationToken).ConfigureAwait(false);
+            var payload = await response.Content
+                .ReadAsStringAsync(requestCancellationToken)
+                .ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
-                await _tokenStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+                await _tokenStore.ClearAsync(requestCancellationToken).ConfigureAwait(false);
             }
 
             if (!response.IsSuccessStatusCode)
@@ -112,6 +113,14 @@ public sealed class ChatOSApiClient
                     payload,
                     exception);
             }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ChatOSApiException("ChatOS request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new ChatOSApiException("Unable to connect to the ChatOS gateway.", innerException: exception);
         }
     }
 

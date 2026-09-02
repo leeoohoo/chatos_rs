@@ -4,6 +4,7 @@
 use memory_engine_sdk::{EngineSubjectMemory, EngineThreadSnapshot, ThreadSnapshotLookupResponse};
 use serde_json::Value;
 
+use crate::core::chat_runtime::normalize_project_id;
 use crate::models::memory_mapping_types::{MemoryAgentRecallDto, MemoryProjectMemoryDto};
 use crate::models::memory_runtime_types::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotDto,
@@ -11,7 +12,6 @@ use crate::models::memory_runtime_types::{
     TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
 };
 use crate::models::message::Message;
-use crate::models::project::PUBLIC_PROJECT_ID;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 
@@ -84,15 +84,7 @@ pub(super) fn engine_thread_to_session(item: memory_engine_sdk::EngineThread) ->
         .and_then(|value| value.get("legacy_session_mapping"))
         .and_then(|value| value.get("project_id"))
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            if value == "0" {
-                PUBLIC_PROJECT_ID.to_string()
-            } else {
-                value.to_string()
-            }
-        });
+        .and_then(|value| normalize_project_id(Some(value)));
 
     Session {
         id: item.id.clone(),
@@ -119,7 +111,7 @@ pub(super) fn engine_thread_to_session(item: memory_engine_sdk::EngineThread) ->
 
 pub(super) fn engine_subject_memory_to_project_memory(
     item: EngineSubjectMemory,
-) -> MemoryProjectMemoryDto {
+) -> Option<MemoryProjectMemoryDto> {
     let mapping = item
         .metadata
         .as_ref()
@@ -138,17 +130,9 @@ pub(super) fn engine_subject_memory_to_project_memory(
         .and_then(|value| value.get("project_id"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
-        .or_else(|| project_id_from_subject_id(item.subject_id.as_str()))
-        .map(|value| {
-            if value == "0" {
-                PUBLIC_PROJECT_ID.to_string()
-            } else {
-                value
-            }
-        })
-        .unwrap_or_else(|| PUBLIC_PROJECT_ID.to_string());
+        .or_else(|| project_id_from_subject_id(item.subject_id.as_str()))?;
 
-    MemoryProjectMemoryDto {
+    Some(MemoryProjectMemoryDto {
         id: item.id,
         user_id: item.tenant_id,
         contact_id,
@@ -158,7 +142,7 @@ pub(super) fn engine_subject_memory_to_project_memory(
         memory_version: 1,
         last_source_at: item.last_seen_at,
         updated_at: item.updated_at,
-    }
+    })
 }
 
 pub(super) fn engine_subject_memory_to_agent_recall(
@@ -321,4 +305,39 @@ fn extract_selection_from_engine_metadata(
         });
 
     (selected_model_id, selected_agent_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::engine_thread_to_session;
+
+    #[test]
+    fn engine_global_thread_does_not_restore_legacy_project_sentinel() {
+        let thread = serde_json::from_value(serde_json::json!({
+            "id": "thread-1",
+            "tenant_id": "tenant-1",
+            "source_id": "chatos",
+            "subject_id": "session:thread-1",
+            "thread_type": "chat",
+            "external_thread_id": "thread-1",
+            "title": "叽咕狸",
+            "labels": ["contact:contact-1", "project:-1"],
+            "metadata": {
+                "legacy_session_mapping": {
+                    "project_id": "-1",
+                    "contact_id": "contact-1",
+                    "agent_id": "agent-1"
+                }
+            },
+            "status": "active",
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z",
+            "archived_at": null
+        }))
+        .expect("engine thread");
+
+        let session = engine_thread_to_session(thread);
+
+        assert_eq!(session.project_id, None);
+    }
 }

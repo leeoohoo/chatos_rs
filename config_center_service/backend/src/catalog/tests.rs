@@ -4,6 +4,19 @@
 use super::*;
 
 #[test]
+fn catalog_does_not_reintroduce_retired_configuration() {
+    let definitions = builtin_definitions();
+    let retired = RETIRED_CONFIG_KEYS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(retired.len(), RETIRED_CONFIG_KEYS.len());
+    assert!(definitions
+        .iter()
+        .all(|definition| !retired.contains(definition.key.as_str())));
+}
+
+#[test]
 fn catalog_exposes_shared_and_task_runner_iteration_limits() {
     let definitions = builtin_definitions();
     let iteration_definitions = definitions
@@ -1610,6 +1623,12 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             json!("change_me_mcp_management_task_runner_secret"),
         ),
         (
+            CHATOS_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
+            "chatos-backend",
+            "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
+            json!("change_me_chatos_user_service_secret"),
+        ),
+        (
             CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
             "chatos-backend",
             "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
@@ -1694,6 +1713,12 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             json!("change_me_project_service_user_service_secret"),
         ),
         (
+            USER_SERVICE_CHATOS_INTERNAL_SECRET_CONFIG_KEY,
+            "user-service",
+            "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
+            json!("change_me_chatos_user_service_secret"),
+        ),
+        (
             USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "user-service",
             "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
@@ -1756,30 +1781,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
             "MEMORY_ENGINE_AI_TIMEOUT_SECS",
             "integer",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_API_KEY_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_API_KEY",
-            "string",
-            true,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_BASE_URL_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_BASE_URL",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_MODEL_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_MODEL",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_OPENAI_TEMPERATURE_CONFIG_KEY,
-            "MEMORY_ENGINE_OPENAI_TEMPERATURE",
-            "string",
             false,
         ),
         (
@@ -2004,12 +2005,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
 fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
     let definitions = builtin_definitions();
     for (key, env_alias, expected_value_type, expect_nullable) in [
-        (
-            USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            "USER_SERVICE_MEMORY_ENGINE_BASE_URL",
-            "string",
-            false,
-        ),
         (
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             "USER_SERVICE_TASK_RUNNER_BASE_URL",

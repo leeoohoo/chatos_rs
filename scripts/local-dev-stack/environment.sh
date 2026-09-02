@@ -75,6 +75,7 @@ export_local_env() {
   export USER_SERVICE_MTLS_SERVER_KEY_PATH="${USER_SERVICE_MTLS_SERVER_KEY_PATH:-$USER_SERVICE_MTLS_DIR/server.key}"
   export USER_SERVICE_MTLS_CLIENT_CA_CERT_PATH="${USER_SERVICE_MTLS_CLIENT_CA_CERT_PATH:-$USER_SERVICE_MTLS_DIR/ca.crt}"
   export USER_SERVICE_MTLS_CA_CERT_PATH="${USER_SERVICE_MTLS_CA_CERT_PATH:-$USER_SERVICE_MTLS_DIR/ca.crt}"
+  export USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH="${USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH:-$USER_SERVICE_MTLS_DIR/chatos-backend.identity.pem}"
   export MEMORY_ENGINE_MTLS_DIR="${MEMORY_ENGINE_MTLS_DIR:-$STATE_DIR/memory-engine-mtls}"
   export MEMORY_ENGINE_MTLS_CA_CERT_PATH="${MEMORY_ENGINE_MTLS_CA_CERT_PATH:-$MEMORY_ENGINE_MTLS_DIR/ca.crt}"
   export CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET="${CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET:-change_me_config_center_chatos_backend_signing_secret}"
@@ -124,6 +125,7 @@ export_local_env() {
   export AUTH_JWT_SECRET="${AUTH_JWT_SECRET:-dev-only-change-me-please}"
   export USER_SERVICE_JWT_SECRET="${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}"
   export PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET="${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}"
+  export CHATOS_USER_SERVICE_INTERNAL_API_SECRET="${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}"
   export PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET="${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}"
   export CHATOS_TASK_RUNNER_INTERNAL_API_SECRET="${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}"
   export PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}"
@@ -204,7 +206,6 @@ export_local_env() {
   export MEMORY_ENGINE_BASE_URL="http://127.0.0.1:${MEMORY_ENGINE_PORT}/api/memory-engine/v1"
   export MEMORY_ENGINE_INTERNAL_BASE_URL="https://127.0.0.1:${MEMORY_ENGINE_INTERNAL_MTLS_PORT}/api/memory-engine/v1"
   export CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
-  export USER_SERVICE_MEMORY_ENGINE_BASE_URL="$CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL"
   export CHATOS_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
   export TASK_RUNNER_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
   export CHATOS_TASK_RUNNER_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
@@ -246,6 +247,7 @@ export_local_env() {
   export TASK_RUNNER_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
   export TASK_RUNNER_CHATOS_CALLBACK_URL="https://127.0.0.1:${CHATOS_INTERNAL_MTLS_PORT}/api/agent/chat/task-runner/callback"
   export CHATOS_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
+  export CHATOS_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
   export CHATOS_PROJECT_SERVICE_BASE_URL="http://127.0.0.1:${PROJECT_SERVICE_PORT}"
   export CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${PROJECT_SERVICE_INTERNAL_MTLS_PORT}"
   export CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET="$CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET"
@@ -344,7 +346,7 @@ local_connector_identity_path() {
 user_service_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    project-service|task-runner)
+    chatos-backend|project-service|task-runner)
       printf '%s/%s.identity.pem' "$USER_SERVICE_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -388,6 +390,7 @@ prepare_local_dev_apisix_config() {
     -e "s/\"local-connector-service-backend:39230\"/\"${host_address}:39230\"/g" \
     -e "s/\"task-runner-backend:39090\"/\"${host_address}:39090\"/g" \
     -e "s/\"memory-engine-backend:7081\"/\"${host_address}:7081\"/g" \
+    -e "s/\"admin-console-frontend:80\"/\"${host_address}:39200\"/g" \
     -e "s/\"official-website-frontend:80\"/\"${host_address}:39251\"/g" \
     "$source_config" >"$target_config"
 }

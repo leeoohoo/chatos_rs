@@ -11,7 +11,7 @@ mod chat_runtime_project;
 pub use self::chat_runtime_contact::{compose_contact_system_prompt, ContactSkillPromptMode};
 pub use self::chat_runtime_metadata::{
     contact_agent_id_from_metadata, contact_id_from_metadata, metadata_string, normalize_id,
-    project_id_from_metadata, ChatRuntimeMetadata,
+    normalize_project_id, project_id_from_metadata, ChatRuntimeMetadata,
 };
 pub(crate) use self::chat_runtime_project::resolve_project_runtime_context;
 
@@ -238,6 +238,22 @@ mod tests {
         assert_eq!(runtime.contact_id.as_deref(), Some("contact_1"));
         assert_eq!(runtime.project_id.as_deref(), Some("project_1"));
         assert_eq!(runtime.remote_connection_id.as_deref(), Some("conn_1"));
+    }
+
+    #[test]
+    fn legacy_global_project_sentinels_are_never_runtime_project_ids() {
+        for sentinel in ["-1", "0"] {
+            let metadata = json!({
+                "legacy_session_mapping": {
+                    "project_id": sentinel,
+                    "contact_id": "contact_1",
+                    "agent_id": "agent_1"
+                }
+            });
+
+            let runtime = ChatRuntimeMetadata::from_metadata(Some(&metadata));
+            assert_eq!(runtime.project_id, None);
+        }
     }
 
     #[test]

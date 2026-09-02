@@ -205,9 +205,7 @@ impl TaskRunnerMcpService {
         let owner_user_id = current_user
             .effective_owner_user_id()
             .ok_or_else(|| "current Agent is missing owner scope".to_string())?;
-        let project_id = request_context
-            .project_scope_id()
-            .unwrap_or_else(|| crate::models::PUBLIC_PROJECT_ID.to_string());
+        let project_id = request_context.project_scope_id();
         let targets = [
             (crate::models::TASK_PROFILE_DEFAULT, true, "execution task"),
             (
@@ -233,7 +231,7 @@ impl TaskRunnerMcpService {
                     Some(current_user),
                     Some(owner_user_id),
                     agent_key,
-                    project_id.as_str(),
+                    project_id.as_deref(),
                     Some(task_profile),
                     None,
                 )

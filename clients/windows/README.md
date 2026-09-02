@@ -73,6 +73,50 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 只有明确希望同时清除 SQLite 设置、缓存和登录状态时才使用 `-RemoveUserData`。
 
+## 一键生成 EXE 安装包
+
+如果只复制或压缩了 `clients/windows` 目录，可以直接双击：
+
+```text
+.\scripts\package-client.cmd
+```
+
+也可以在完整仓库根目录运行：
+
+```text
+.\scripts\package-windows-client.cmd
+```
+
+脚本默认根据当前 Windows 电脑自动选择 x64 或 ARM64，执行 Release 测试和自包含发布。缺少 .NET 8 SDK 时会自动安装到当前用户目录；缺少 Inno Setup 6 时会优先使用 `winget`，Windows Server 没有 `winget` 时会自动下载官方安装程序，最终生成：
+
+```text
+clients\windows\BundleArtifacts\installer-x64\ChatOS-Setup-x64.exe
+```
+
+直接双击这个 EXE 即可安装。安装程序支持覆盖升级、开始菜单、桌面快捷方式、卸载入口和安装完成后启动。客户端默认连接线上 ChatOS 网关和 Local Connector，不要求使用者另外安装 .NET Runtime。
+
+常用参数：
+
+```powershell
+# Windows on ARM
+.\scripts\package-client.cmd -Platform ARM64
+
+# 快速重新打包，跳过自动化测试
+.\scripts\package-client.cmd -SkipTests
+
+# 连接指定测试环境
+.\scripts\package-client.cmd `
+  -ApiBaseUrl "http://127.0.0.1:9080/api/chatos" `
+  -LocalConnectorCloudBaseUrl "http://127.0.0.1:39230"
+```
+
+也可以直接执行 PowerShell 脚本：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+./clients/windows/scripts/package-client.ps1
+```
+
 ## 从源码直接启动
 
 将项目复制或拉取到 Windows 11 电脑后，在 PowerShell 中运行：

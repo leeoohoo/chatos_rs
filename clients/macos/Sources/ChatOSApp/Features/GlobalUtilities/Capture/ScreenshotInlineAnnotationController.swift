@@ -14,8 +14,11 @@ final class ScreenshotInlineAnnotationController {
     private var canvasWindow: NSPanel?
     private var toolbarWindow: NSPanel?
     private var keyMonitor: Any?
+    private var escapeHotKeyMonitor: ScreenshotEscapeHotKeyMonitor?
     private var hasFinished = false
+    private weak var toolControl: NSSegmentedControl?
     private weak var undoButton: NSButton?
+    private weak var redoButton: NSButton?
     private weak var clearButton: NSButton?
     private weak var longCaptureButton: NSButton?
 
@@ -46,7 +49,10 @@ final class ScreenshotInlineAnnotationController {
                 defer: false,
                 screen: screen
             )
-            let view = ScreenshotBackdropView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            let view = ScreenshotBackdropView(
+                frame: NSRect(origin: .zero, size: screen.frame.size),
+                clearRect: localClearRect(on: screen)
+            )
             view.autoresizingMask = [.width, .height]
             view.onCancel = { [weak self] in self?.cancel() }
             panel.contentView = view
@@ -54,6 +60,17 @@ final class ScreenshotInlineAnnotationController {
             panel.orderFrontRegardless()
             backdropWindows.append(panel)
         }
+    }
+
+    private func localClearRect(on screen: NSScreen) -> NSRect? {
+        let intersection = selection.globalRect.intersection(screen.frame)
+        guard !intersection.isNull, !intersection.isEmpty else { return nil }
+        return NSRect(
+            x: intersection.minX - screen.frame.minX,
+            y: intersection.minY - screen.frame.minY,
+            width: intersection.width,
+            height: intersection.height
+        )
     }
 
     private func presentCanvas() {
@@ -69,6 +86,7 @@ final class ScreenshotInlineAnnotationController {
         annotationView.onAnnotationsChanged = { [weak self] in
             guard let self else { return }
             self.undoButton?.isEnabled = self.annotationView.canUndo
+            self.redoButton?.isEnabled = self.annotationView.canRedo
             self.clearButton?.isEnabled = self.annotationView.hasAnnotations
             self.longCaptureButton?.isEnabled = !self.annotationView.hasAnnotations
         }
@@ -81,7 +99,7 @@ final class ScreenshotInlineAnnotationController {
     }
 
     private func presentToolbar() {
-        let toolbarSize = NSSize(width: 570, height: 48)
+        let toolbarSize = NSSize(width: 780, height: 52)
         let panel = ScreenshotOverlayPanel(
             contentRect: NSRect(origin: toolbarOrigin(for: toolbarSize), size: toolbarSize),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -108,28 +126,37 @@ final class ScreenshotInlineAnnotationController {
         material.layer?.masksToBounds = true
 
         let tools = NSSegmentedControl(
-            labels: ["", "", "", "", ""],
+            labels: Array(repeating: "", count: 9),
             trackingMode: .selectOne,
             target: self,
             action: #selector(toolChanged(_:))
         )
         tools.selectedSegment = 0
         tools.setImage(symbol("pencil.tip", description: localized("画笔", "Pen")), forSegment: 0)
-        tools.setImage(symbol("rectangle", description: localized("矩形", "Rectangle")), forSegment: 1)
-        tools.setImage(symbol("circle", description: localized("圆形或椭圆", "Circle or ellipse")), forSegment: 2)
-        tools.setImage(symbol("arrow.up.right", description: localized("箭头", "Arrow")), forSegment: 3)
-        tools.setImage(symbol("textformat", description: localized("文字", "Text")), forSegment: 4)
+        tools.setImage(symbol("line.diagonal", description: localized("直线", "Line")), forSegment: 1)
+        tools.setImage(symbol("rectangle", description: localized("矩形", "Rectangle")), forSegment: 2)
+        tools.setImage(symbol("circle", description: localized("圆形或椭圆", "Circle or ellipse")), forSegment: 3)
+        tools.setImage(symbol("arrow.up.right", description: localized("箭头", "Arrow")), forSegment: 4)
+        tools.setImage(symbol("highlighter", description: localized("高亮", "Highlight")), forSegment: 5)
+        tools.setImage(symbol("square.grid.3x3", description: localized("马赛克", "Mosaic")), forSegment: 6)
+        tools.setImage(symbol("textformat", description: localized("文字", "Text")), forSegment: 7)
+        tools.setImage(symbol("1.circle", description: localized("序号", "Number")), forSegment: 8)
         let toolTips = [
-            localized("画笔", "Pen"),
-            localized("矩形", "Rectangle"),
-            localized("圆形或椭圆", "Circle or ellipse"),
-            localized("箭头", "Arrow"),
-            localized("文字", "Text"),
+            localized("画笔 (P / 1)", "Pen (P / 1)"),
+            localized("直线 (L / 2)", "Line (L / 2)"),
+            localized("矩形 (R / 3)", "Rectangle (R / 3)"),
+            localized("椭圆 (O / 4)", "Ellipse (O / 4)"),
+            localized("箭头 (A / 5)", "Arrow (A / 5)"),
+            localized("高亮 (H / 6)", "Highlight (H / 6)"),
+            localized("马赛克 (M / 7)", "Mosaic (M / 7)"),
+            localized("文字 (T / 8)", "Text (T / 8)"),
+            localized("序号 (N / 9)", "Number (N / 9)"),
         ]
-        for index in 0..<5 {
-            tools.setWidth(38, forSegment: index)
+        for index in 0..<9 {
+            tools.setWidth(32, forSegment: index)
             tools.setToolTip(toolTips[index], forSegment: index)
         }
+        toolControl = tools
 
         let colorWell = NSColorWell()
         colorWell.color = .systemRed
@@ -137,6 +164,16 @@ final class ScreenshotInlineAnnotationController {
         colorWell.target = self
         colorWell.action = #selector(colorChanged(_:))
         colorWell.toolTip = localized("标注颜色", "Annotation color")
+
+        let lineWidth = NSSlider(
+            value: 1,
+            minValue: 0.5,
+            maxValue: 3,
+            target: self,
+            action: #selector(lineWidthChanged(_:))
+        )
+        lineWidth.frame.size.width = 74
+        lineWidth.toolTip = localized("线条粗细", "Line width")
 
         let longCapture = iconButton(
             "arrow.down.to.line",
@@ -152,6 +189,14 @@ final class ScreenshotInlineAnnotationController {
         )
         undo.isEnabled = false
         undoButton = undo
+
+        let redo = iconButton(
+            "arrow.uturn.forward",
+            help: localized("重做", "Redo"),
+            action: #selector(redoAnnotation)
+        )
+        redo.isEnabled = false
+        redoButton = redo
 
         let clear = iconButton(
             "trash",
@@ -184,8 +229,10 @@ final class ScreenshotInlineAnnotationController {
         let stack = NSStackView(views: [
             tools,
             colorWell,
+            lineWidth,
             longCapture,
             undo,
+            redo,
             clear,
             divider,
             cancel,
@@ -201,11 +248,18 @@ final class ScreenshotInlineAnnotationController {
             stack.centerXAnchor.constraint(equalTo: material.centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: material.centerYAnchor),
             divider.heightAnchor.constraint(equalToConstant: 24),
+            lineWidth.widthAnchor.constraint(equalToConstant: 74),
         ])
         return material
     }
 
     private func installKeyMonitor() {
+        let escapeHotKeyMonitor = ScreenshotEscapeHotKeyMonitor { [weak self] in
+            self?.cancel()
+        }
+        escapeHotKeyMonitor.start()
+        self.escapeHotKeyMonitor = escapeHotKeyMonitor
+
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if self.annotationView.isEditingText {
@@ -220,7 +274,18 @@ final class ScreenshotInlineAnnotationController {
                 return nil
             }
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "z" {
-                self.annotationView.undo()
+                if event.modifierFlags.contains(.shift) {
+                    self.annotationView.redo()
+                } else {
+                    self.annotationView.undo()
+                }
+                return nil
+            }
+            let blockedModifiers: NSEvent.ModifierFlags = [.command, .control, .option]
+            if event.modifierFlags.intersection(blockedModifiers).isEmpty,
+               let value = event.charactersIgnoringModifiers,
+               let tool = ScreenshotAnnotationTool.shortcut(value) {
+                self.selectTool(tool)
                 return nil
             }
             return event
@@ -228,19 +293,7 @@ final class ScreenshotInlineAnnotationController {
     }
 
     private func configureOverlayPanel(_ panel: NSPanel, levelOffset: Int) {
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.isReleasedWhenClosed = false
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + levelOffset)
-        panel.collectionBehavior = [
-            .canJoinAllSpaces,
-            .fullScreenAuxiliary,
-            .ignoresCycle,
-        ]
-        panel.animationBehavior = .none
-        panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = false
+        configureScreenshotOverlayPanel(panel, levelOffset: levelOffset)
     }
 
     private func toolbarOrigin(for size: NSSize) -> NSPoint {
@@ -261,16 +314,23 @@ final class ScreenshotInlineAnnotationController {
     }
 
     @objc private func toolChanged(_ sender: NSSegmentedControl) {
-        annotationView.tool = ScreenshotAnnotationTool(rawValue: sender.selectedSegment) ?? .pen
-        annotationView.window?.invalidateCursorRects(for: annotationView)
+        selectTool(ScreenshotAnnotationTool(rawValue: sender.selectedSegment) ?? .pen)
     }
 
     @objc private func colorChanged(_ sender: NSColorWell) {
         annotationView.annotationColor = sender.color
     }
 
+    @objc private func lineWidthChanged(_ sender: NSSlider) {
+        annotationView.lineWidthScale = CGFloat(sender.doubleValue)
+    }
+
     @objc private func undoAnnotation() {
         annotationView.undo()
+    }
+
+    @objc private func redoAnnotation() {
+        annotationView.redo()
     }
 
     @objc private func clearAnnotations() {
@@ -322,12 +382,20 @@ final class ScreenshotInlineAnnotationController {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
         }
+        escapeHotKeyMonitor?.stop()
+        escapeHotKeyMonitor = nil
         toolbarWindow?.orderOut(nil)
         canvasWindow?.orderOut(nil)
         backdropWindows.forEach { $0.orderOut(nil) }
         toolbarWindow = nil
         canvasWindow = nil
         backdropWindows.removeAll()
+    }
+
+    private func selectTool(_ tool: ScreenshotAnnotationTool) {
+        annotationView.tool = tool
+        toolControl?.selectedSegment = tool.rawValue
+        annotationView.window?.invalidateCursorRects(for: annotationView)
     }
 
     private func iconButton(_ symbolName: String, help: String, action: Selector) -> NSButton {
@@ -363,10 +431,26 @@ private final class ScreenshotOverlayPanel: NSPanel {
 
 private final class ScreenshotBackdropView: NSView {
     var onCancel: (() -> Void)?
+    private let clearRect: NSRect?
+
+    init(frame: NSRect, clearRect: NSRect?) {
+        self.clearRect = clearRect
+        super.init(frame: frame)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
 
     override func draw(_ dirtyRect: NSRect) {
+        let mask = NSBezierPath(rect: bounds)
+        if let clearRect, !clearRect.isEmpty {
+            mask.appendRect(clearRect)
+            mask.windingRule = .evenOdd
+        }
         NSColor.black.withAlphaComponent(0.38).setFill()
-        bounds.fill()
+        mask.fill()
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using ChatOS.Api.Http;
 using ChatOS.Api.Workspace;
 using ChatOS.Core.Domain;
 
@@ -7,6 +8,73 @@ namespace ChatOS.Api.Tests;
 
 public sealed class WorkspaceResourceCreationServiceTests
 {
+    [Fact]
+    public async Task ExternalProjectRequiresGitRemoteBeforeSendingRequest()
+    {
+        var requestCount = 0;
+        var store = new MemoryTokenStore();
+        var client = ApiTestClient.Create(store, _ =>
+        {
+            requestCount++;
+            return StubHttpMessageHandler.Json("{}");
+        });
+        var service = new WorkspaceResourceCreationService(client);
+
+        var error = await Assert.ThrowsAsync<ChatOSApiException>(() =>
+            service.CreateLocalProjectAsync(new LocalProjectCreationDraft(
+                "Project",
+                "device-1",
+                "workspace-1",
+                "repo",
+                LocalProjectRepositoryMode.External,
+                "  ")));
+
+        Assert.Contains("remote URL", error.Message);
+        Assert.Equal(0, requestCount);
+    }
+
+    [Theory]
+    [InlineData(LocalProjectRepositoryMode.Managed, "managed", null)]
+    [InlineData(LocalProjectRepositoryMode.External, "external", "git@github.com:owner/repo.git")]
+    public async Task CreateLocalProjectSendsExplicitRepositoryMode(
+        LocalProjectRepositoryMode mode,
+        string expectedMode,
+        string? gitUrl)
+    {
+        string? requestBody = null;
+        var store = new MemoryTokenStore();
+        store.Seed("valid");
+        var client = ApiTestClient.Create(store, request =>
+        {
+            requestBody = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            return StubHttpMessageHandler.Json(
+                "{\"id\":\"project-1\",\"name\":\"Project\"}",
+                HttpStatusCode.Created);
+        });
+        var service = new WorkspaceResourceCreationService(client);
+
+        var project = await service.CreateLocalProjectAsync(new LocalProjectCreationDraft(
+            "Project",
+            "device-1",
+            "workspace-1",
+            "repo",
+            mode,
+            gitUrl));
+
+        Assert.Equal("project-1", project.Id);
+        using var document = JsonDocument.Parse(requestBody!);
+        var root = document.RootElement;
+        Assert.Equal(expectedMode, root.GetProperty("repository_mode").GetString());
+        if (gitUrl is null)
+        {
+            Assert.Equal(JsonValueKind.Null, root.GetProperty("git_url").ValueKind);
+        }
+        else
+        {
+            Assert.Equal(gitUrl, root.GetProperty("git_url").GetString());
+        }
+    }
+
     [Fact]
     public async Task EnsureConversationBindsContactAndCreatesMetadataWithoutSentinelIds()
     {

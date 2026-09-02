@@ -8,7 +8,7 @@ use serde::Deserialize;
 use super::components::{
     component_key_from_path, PluginAgent, PluginApp, PluginAuthor, PluginCommand,
     PluginDependencySpec, PluginHook, PluginInterfaceMetadata, PluginMcpServer, PluginPathRef,
-    PluginPermissionRequirement, PluginUiContribution,
+    PluginPermissionRequirement, PluginRuntimeContext, PluginUiContribution,
 };
 use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION};
 use super::paths::normalize_plugin_relative_path;
@@ -50,6 +50,8 @@ struct RawPluginManifest {
     dependencies: PluginDependencySpec,
     #[serde(default)]
     permissions: Vec<PermissionInput>,
+    #[serde(default)]
+    runtime_context: Option<PluginRuntimeContext>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,9 +168,17 @@ pub fn parse_plugin_manifest(raw: &str) -> Result<PluginManifest, PluginManifest
         interface: normalize_interface(raw.interface)?,
         dependencies: raw.dependencies,
         permissions: normalize_permissions(raw.permissions),
+        runtime_context: raw.runtime_context.map(normalize_runtime_context),
     };
     validate_plugin_manifest(&manifest)?;
     Ok(manifest)
+}
+
+fn normalize_runtime_context(mut context: PluginRuntimeContext) -> PluginRuntimeContext {
+    context.components = normalize_strings(context.components);
+    context.required = normalize_strings(context.required);
+    context.optional = normalize_strings(context.optional);
+    context
 }
 
 fn normalize_author(mut author: PluginAuthor) -> PluginAuthor {
@@ -486,6 +496,16 @@ fn normalize_ui(input: Option<UiInput>) -> Result<Vec<PluginUiContribution>, Plu
                         .map(|value| value.to_ascii_lowercase())
                         .collect(),
                 );
+                if let Some(runtime) = &mut item.runtime {
+                    match runtime {
+                        super::components::PluginUiRuntime::LocalHttp {
+                            bin, health_path, ..
+                        } => {
+                            *bin = bin.trim().to_string();
+                            *health_path = normalize_optional(health_path.take());
+                        }
+                    }
+                }
                 Ok(item)
             })
             .collect(),
@@ -508,6 +528,7 @@ fn normalize_ui_paths(
                 assets: Vec::new(),
                 bridge_capabilities: Vec::new(),
                 artifact_mime_types: Vec::new(),
+                runtime: None,
             })
         })
         .collect()

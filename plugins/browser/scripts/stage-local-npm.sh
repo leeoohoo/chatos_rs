@@ -20,6 +20,13 @@ case "$build_profile" in
     ;;
 esac
 
+cargo_target_dir=$(cargo metadata --format-version 1 --no-deps | jq -er '.target_directory')
+source_binary="$cargo_target_dir/$cargo_profile_dir/chatos-browser-cdp"
+if [ ! -f "$source_binary" ]; then
+  echo "Built Browser CDP binary was not found: $source_binary" >&2
+  exit 1
+fi
+
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) destination="npm/dist/macos/arm64/chatos-browser-cdp" ;;
   Darwin-x86_64) destination="npm/dist/macos/x64/chatos-browser-cdp" ;;
@@ -32,7 +39,7 @@ case "$(uname -s)-$(uname -m)" in
 esac
 
 mkdir -p "$(dirname "$destination")"
-cp "target/$cargo_profile_dir/chatos-browser-cdp" "$destination"
+cp "$source_binary" "$destination"
 chmod +x "$destination"
 
 case "$(uname -s)" in

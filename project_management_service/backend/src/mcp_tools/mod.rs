@@ -481,6 +481,7 @@ mod tests {
                     name: "Project".to_string(),
                     root_path: None,
                     git_url: None,
+                    repository_mode: Some(crate::models::ProjectRepositoryMode::Managed),
                     description: None,
                     cloud_import_source: None,
                     import_status: None,

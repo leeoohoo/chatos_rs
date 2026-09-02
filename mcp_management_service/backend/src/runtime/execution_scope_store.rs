@@ -58,7 +58,9 @@ struct RuntimeExecutionScopeDocument {
     #[serde(rename = "_id")]
     id: String,
     owner_user_id: String,
-    project_id: String,
+    scope_kind: String,
+    #[serde(default)]
+    project_id: Option<String>,
     run_id: String,
     provider: String,
     generation: i64,
@@ -147,7 +149,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn attach_session(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
         session_id: &str,
@@ -172,7 +174,8 @@ impl RuntimeExecutionScopeStore {
                         .or_insert_with(|| RuntimeExecutionScopeDocument {
                             id,
                             owner_user_id: owner_user_id.to_string(),
-                            project_id: project_id.to_string(),
+                            scope_kind: execution_scope_kind(project_id).to_string(),
+                            project_id: project_id.map(ToOwned::to_owned),
                             run_id: run_id.to_string(),
                             provider: provider.as_str().to_string(),
                             generation: 1,
@@ -201,6 +204,9 @@ impl RuntimeExecutionScopeStore {
                 Ok(scope.generation)
             }
             RuntimeExecutionScopeStoreBackend::Mongo(collection) => {
+                let project_id_bson = project_id
+                    .map(|value| mongodb::bson::Bson::String(value.to_string()))
+                    .unwrap_or(mongodb::bson::Bson::Null);
                 if collection
                     .find_one(doc! { "_id": id.as_str(), "status": "terminal" }, None)
                     .await
@@ -218,7 +224,8 @@ impl RuntimeExecutionScopeStore {
                         doc! {
                             "$setOnInsert": {
                                 "owner_user_id": owner_user_id,
-                                "project_id": project_id,
+                                "scope_kind": execution_scope_kind(project_id),
+                                "project_id": project_id_bson,
                                 "run_id": run_id,
                                 "provider": provider.as_str(),
                                 "generation": 1_i64,
@@ -257,7 +264,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn detach_session(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
         session_id: &str,
@@ -320,7 +327,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn ensure_accepting_invocations(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
     ) -> Result<(), RuntimeExecutionScopeStoreError> {
@@ -344,7 +351,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn enqueue_invocation(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
         invocation_id: &str,
@@ -466,7 +473,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn enqueue_invocation_batch(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
         batch_id: &str,
@@ -623,7 +630,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn try_acquire_invocation_turn(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
         invocation_id: &str,
@@ -707,7 +714,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn release_invocation_turn(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
         invocation_id: &str,
@@ -726,7 +733,7 @@ impl RuntimeExecutionScopeStore {
     pub async fn release_invocation_turn_and_next(
         &self,
         owner_user_id: &str,
-        project_id: &str,
+        project_id: Option<&str>,
         run_id: &str,
         provider: WorkspaceProviderKind,
         invocation_id: &str,
@@ -815,14 +822,18 @@ fn existing_batch_sequences(
 
 fn scope_id(
     owner_user_id: &str,
-    project_id: &str,
+    project_id: Option<&str>,
     run_id: &str,
     provider: WorkspaceProviderKind,
 ) -> String {
+    let scope_identity = match project_id {
+        Some(project_id) => format!("project:{}", project_id.trim()),
+        None => "user_conversation".to_string(),
+    };
     let identity = format!(
         "{}\u{1f}{}\u{1f}{}\u{1f}{}",
         owner_user_id.trim(),
-        project_id.trim(),
+        scope_identity,
         run_id.trim(),
         provider.as_str()
     );
@@ -830,6 +841,14 @@ fn scope_id(
         "execution_scope_{}",
         hex::encode(Sha256::digest(identity.as_bytes()))
     )
+}
+
+fn execution_scope_kind(project_id: Option<&str>) -> &'static str {
+    if project_id.is_some() {
+        "project"
+    } else {
+        "user_conversation"
+    }
 }
 
 fn store_error(error: mongodb::error::Error) -> RuntimeExecutionScopeStoreError {
@@ -860,7 +879,7 @@ mod tests {
         let first_generation = store
             .attach_session(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "session-1",
@@ -871,7 +890,7 @@ mod tests {
         let renewed_generation = store
             .attach_session(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "session-1",
@@ -902,7 +921,7 @@ mod tests {
             store
                 .attach_session(
                     "user-1",
-                    "project-1",
+                    Some("project-1"),
                     "run-1",
                     WorkspaceProviderKind::LocalConnector,
                     session_id,
@@ -915,7 +934,7 @@ mod tests {
         assert!(!store
             .detach_session(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "session-1",
@@ -925,7 +944,7 @@ mod tests {
         assert!(store
             .detach_session(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "session-2",
@@ -940,7 +959,7 @@ mod tests {
         store
             .attach_session(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "session-1",
@@ -951,7 +970,7 @@ mod tests {
         store
             .enqueue_invocation_batch(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "batch-1",
@@ -967,7 +986,7 @@ mod tests {
             store
                 .try_acquire_invocation_turn(
                     "user-1",
-                    "project-1",
+                    Some("project-1"),
                     "run-1",
                     WorkspaceProviderKind::LocalConnector,
                     "invocation-2",
@@ -980,7 +999,7 @@ mod tests {
             store
                 .try_acquire_invocation_turn(
                     "user-1",
-                    "project-1",
+                    Some("project-1"),
                     "run-1",
                     WorkspaceProviderKind::LocalConnector,
                     "invocation-1",
@@ -993,7 +1012,7 @@ mod tests {
             store
                 .try_acquire_invocation_turn(
                     "user-1",
-                    "project-1",
+                    Some("project-1"),
                     "run-1",
                     WorkspaceProviderKind::LocalConnector,
                     "invocation-2",
@@ -1005,7 +1024,7 @@ mod tests {
         store
             .release_invocation_turn(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "invocation-1",
@@ -1016,7 +1035,7 @@ mod tests {
             store
                 .try_acquire_invocation_turn(
                     "user-1",
-                    "project-1",
+                    Some("project-1"),
                     "run-1",
                     WorkspaceProviderKind::LocalConnector,
                     "invocation-2",
@@ -1033,7 +1052,7 @@ mod tests {
         store
             .attach_session(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "session-1",
@@ -1048,7 +1067,7 @@ mod tests {
         let first = store
             .enqueue_invocation_batch(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "batch-1",
@@ -1059,7 +1078,7 @@ mod tests {
         let replay = store
             .enqueue_invocation_batch(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "batch-1",
@@ -1078,7 +1097,7 @@ mod tests {
         store
             .attach_session(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "session-1",
@@ -1090,7 +1109,7 @@ mod tests {
         store
             .enqueue_invocation_batch(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "batch-1",
@@ -1102,7 +1121,7 @@ mod tests {
         let error = store
             .enqueue_invocation_batch(
                 "user-1",
-                "project-1",
+                Some("project-1"),
                 "run-1",
                 WorkspaceProviderKind::LocalConnector,
                 "batch-2",
@@ -1120,7 +1139,7 @@ mod tests {
             store
                 .attach_session(
                     "user-1",
-                    "project-1",
+                    Some("project-1"),
                     run_id,
                     WorkspaceProviderKind::LocalConnector,
                     format!("session-{run_id}").as_str(),
@@ -1131,7 +1150,7 @@ mod tests {
             store
                 .enqueue_invocation(
                     "user-1",
-                    "project-1",
+                    Some("project-1"),
                     run_id,
                     WorkspaceProviderKind::LocalConnector,
                     format!("invocation-{run_id}").as_str(),
@@ -1144,7 +1163,7 @@ mod tests {
                 store
                     .try_acquire_invocation_turn(
                         "user-1",
-                        "project-1",
+                        Some("project-1"),
                         run_id,
                         WorkspaceProviderKind::LocalConnector,
                         format!("invocation-{run_id}").as_str(),

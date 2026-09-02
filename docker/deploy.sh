@@ -25,12 +25,7 @@ LOCAL_BUILD_SERVICES=(
   task-runner-backend
   chatos-backend
   official-website-backend
-  configuration-center-frontend
-  user-service-frontend
-  memory-engine-frontend
-  project-management-frontend
-  plugin-management-frontend
-  task-runner-frontend
+  admin-console-frontend
   official-website-frontend
 )
 
@@ -652,7 +647,12 @@ ensure_user_service_mtls_material() {
     resolved_dir="$SCRIPT_DIR/$configured_dir"
   fi
 
-  for required_file in ca.crt server.crt server.key project-service.identity.pem; do
+  for required_file in \
+    ca.crt server.crt server.key \
+    chatos-backend.identity.pem \
+    project-service.identity.pem \
+    task-runner.identity.pem
+  do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
       failures=1
       break
@@ -677,15 +677,34 @@ ensure_user_service_mtls_material() {
     echo "[ERROR] User Service server key is unreadable" >&2
     return 1
   fi
-  if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/project-service.identity.pem" >/dev/null; then
-    echo "[ERROR] User Service Project Service client certificate is invalid" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/project-service.identity.pem" -noout >/dev/null 2>&1; then
-    echo "[ERROR] User Service Project Service identity has no readable private key" >&2
-    return 1
-  fi
+  for required_file in \
+    chatos-backend.identity.pem \
+    project-service.identity.pem \
+    task-runner.identity.pem
+  do
+    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
+      "$resolved_dir/$required_file" >/dev/null; then
+      echo "[ERROR] User Service client certificate is invalid: $required_file" >&2
+      return 1
+    fi
+    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
+      echo "[ERROR] User Service client identity has no readable private key: $required_file" >&2
+      return 1
+    fi
+  done
+}
+
+validate_runtime_material() {
+  validate_production_secrets
+  ensure_config_center_mtls_material
+  ensure_mcp_management_mtls_material
+  ensure_task_runner_mtls_material
+  ensure_project_service_mtls_material
+  ensure_chatos_mtls_material
+  ensure_local_connector_mtls_material
+  ensure_user_service_mtls_material
+  ensure_plugin_management_mtls_material
+  ensure_memory_engine_mtls_material
 }
 
 ensure_plugin_management_mtls_material() {
@@ -811,40 +830,27 @@ ensure_memory_engine_mtls_material() {
 }
 
 print_urls() {
-  local main_backend_port user_service_frontend_port
-  local memory_engine_frontend_port task_runner_frontend_port project_service_frontend_port
-  local plugin_management_frontend_port local_connector_service_port
-  local official_website_frontend_port config_center_frontend_port mcp_management_port
+  local main_backend_port local_connector_service_port mcp_management_port gateway_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
   harness_port="$(env_value HARNESS_PORT 3000)"
   harness_ssh_host="$(env_value HARNESS_SSH_PUBLIC_HOST "$(env_value HARNESS_SSH_HOST localhost)")"
   harness_ssh_port="$(env_value HARNESS_SSH_PORT 3022)"
-  user_service_frontend_port="$(env_value USER_SERVICE_FRONTEND_PORT 39191)"
-  memory_engine_frontend_port="$(env_value MEMORY_ENGINE_FRONTEND_PORT 4178)"
-  task_runner_frontend_port="$(env_value TASK_RUNNER_FRONTEND_PORT 39091)"
-  project_service_frontend_port="$(env_value PROJECT_SERVICE_FRONTEND_PORT 39211)"
-  plugin_management_frontend_port="$(env_value PLUGIN_MANAGEMENT_FRONTEND_PORT 39261)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
   mcp_management_port="$(env_value MCP_MANAGEMENT_PORT 39280)"
-  official_website_frontend_port="$(env_value OFFICIAL_WEBSITE_FRONTEND_PORT 39251)"
-  config_center_frontend_port="$(env_value CONFIG_CENTER_FRONTEND_PORT 39271)"
+  gateway_port="$(env_value APISIX_GATEWAY_PORT 9080)"
   cat <<EOF
 
 [OK] Chat OS Docker stack is running.
 
-Official website:         http://localhost:${official_website_frontend_port}
+Gateway:                  http://localhost:${gateway_port}
+Official website:         https://jgoool.com
+Unified admin console:    https://admin.jgoool.com
 Main backend:             http://localhost:${main_backend_port}
 Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}
 Harness SSH:              ssh://git@${harness_ssh_host}:${harness_ssh_port}
-User Service:             http://localhost:${user_service_frontend_port}
-Memory Engine:            http://localhost:${memory_engine_frontend_port}
-Task Runner:              http://localhost:${task_runner_frontend_port}
-Project Management:       http://localhost:${project_service_frontend_port}
-Plugin Management:        http://localhost:${plugin_management_frontend_port}
-Configuration Center:     http://localhost:${config_center_frontend_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
 MCP Management Service:   http://localhost:${mcp_management_port}
 
@@ -1006,21 +1012,18 @@ if [[ "$ACTION" == "validate-plugin-ui-origin" ]]; then
   exit 2
 fi
 
+if [[ "$ACTION" == "validate-runtime-material" ]]; then
+  validate_runtime_material
+  echo "[OK] Runtime secrets and mTLS material are valid."
+  exit 0
+fi
+
 ensure_docker_ready
 cd "$ROOT_DIR"
 
 case "$ACTION" in
   up|start|restart|fast|quick|up-fast|up-quick|restart-fast|restart-quick|dev|local|build-up|restart-dev|restart-local|rebuild)
-    validate_production_secrets
-    ensure_config_center_mtls_material
-    ensure_mcp_management_mtls_material
-    ensure_task_runner_mtls_material
-    ensure_project_service_mtls_material
-    ensure_chatos_mtls_material
-    ensure_local_connector_mtls_material
-    ensure_user_service_mtls_material
-    ensure_plugin_management_mtls_material
-    ensure_memory_engine_mtls_material
+    validate_runtime_material
     ensure_cloud_network
     ;;
 esac
@@ -1091,7 +1094,7 @@ case "$ACTION" in
     print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin] [service...]" >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin|validate-runtime-material] [service...]" >&2
     echo "  up/restart pull prebuilt images by default." >&2
     echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
     echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
@@ -1100,6 +1103,7 @@ case "$ACTION" in
     echo "  service names can be listed with: $0 services" >&2
     echo "  buildable service names can be listed with: $0 build-services" >&2
     echo "  Plugin UI origins can be checked without Docker using: $0 validate-plugin-ui-origin" >&2
+    echo "  Runtime secrets and mTLS material can be checked without Docker using: $0 validate-runtime-material" >&2
     exit 2
     ;;
 esac

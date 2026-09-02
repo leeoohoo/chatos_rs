@@ -38,9 +38,12 @@ impl TaskRunnerProvider {
                 "x-mcp-management-session-expires-at-unix",
                 binding.expires_at_unix.to_string(),
             )
-            .header("x-mcp-management-project-id", binding.project_id)
-            .header("x-chatos-project-id", binding.project_id)
             .timeout(timeout);
+        if let Some(project_id) = binding.project_id {
+            request = request
+                .header("x-mcp-management-project-id", project_id)
+                .header("x-chatos-project-id", project_id);
+        }
         if let Some(owner_role) = binding.owner_role {
             request = request.header("x-mcp-management-owner-role", owner_role);
         }
@@ -63,6 +66,10 @@ impl TaskRunnerProvider {
             (
                 "x-mcp-management-default-model-config-id",
                 binding.default_model_config_id,
+            ),
+            (
+                "x-mcp-management-default-remote-connection-id",
+                binding.default_remote_connection_id,
             ),
             ("x-mcp-management-task-profile", binding.task_profile),
         ] {

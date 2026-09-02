@@ -15,7 +15,7 @@ pub use self::admin::{
     DashboardOverviewResponse, EngineJobPolicy, EngineJobRun, EngineModelProfile, EngineSource,
     GenerateJobPolicyPromptRequest, GenerateJobPolicyPromptResponse, JobRunsBundleResponse,
     ListJobRunsRequest, ListSourcesRequest, RotateSourceSecretResponse, SdkAuthStatusResponse,
-    UpsertEngineJobPolicyRequest, UpsertEngineModelProfileRequest, UpsertSourceRequest,
+    UpsertEngineJobPolicyRequest, UpsertSourceRequest,
 };
 pub use self::common::{default_active, default_idle, default_pending, ListResponse};
 pub use self::context::{

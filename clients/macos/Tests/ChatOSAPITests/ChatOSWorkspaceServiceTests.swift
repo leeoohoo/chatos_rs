@@ -20,6 +20,7 @@ final class ChatOSWorkspaceServiceTests: XCTestCase {
         XCTAssertEqual(conversation.contactID, "contact-1")
         XCTAssertEqual(conversation.contactAgentID, "agent-1")
         XCTAssertEqual(conversation.messageCount, 12)
+        XCTAssertNil(snapshot.conversations.last?.projectID)
 
         let paths = await transport.requestPaths()
         XCTAssertEqual(
@@ -84,7 +85,7 @@ private actor WorkspaceTransport: HTTPTransport {
         case "/api/chatos/contacts":
             body = #"[{"id":"contact-1","agent_id":"agent-1","agent_name_snapshot":"叽咕狸","status":"active"}]"#
         case "/api/chatos/conversations":
-            body = #"[{"id":"conversation-1","title":"真实会话","project_id":"project-1","message_count":12,"updated_at":"2026-08-24T05:30:00Z","archived":false,"status":"active","metadata":{"chat_runtime":{"project_id":"project-1","contact_agent_id":"agent-1"},"contact":{"contact_id":"contact-1","agent_id":"agent-1"}}}]"#
+            body = #"[{"id":"conversation-1","title":"真实会话","project_id":"project-1","message_count":12,"updated_at":"2026-08-24T05:30:00Z","archived":false,"status":"active","metadata":{"chat_runtime":{"project_id":"project-1","contact_agent_id":"agent-1"},"contact":{"contact_id":"contact-1","agent_id":"agent-1"}}},{"id":"conversation-global","title":"叽咕狸","project_id":"-1","message_count":1,"metadata":{"legacy_session_mapping":{"project_id":"-1"},"source_metadata":{"contact":{"contact_id":"contact-1","agent_id":"agent-1"}}}}]"#
         default:
             return HTTPResponse(statusCode: 404, headers: [:], body: Data())
         }

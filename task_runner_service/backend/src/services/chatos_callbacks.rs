@@ -24,7 +24,7 @@ struct ChatosTaskCallbackPayload {
     event: String,
     task_id: String,
     owner_user_id: Option<String>,
-    project_id: String,
+    project_id: Option<String>,
     run_id: Option<String>,
     status: String,
     task_title: String,

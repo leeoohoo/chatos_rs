@@ -4,7 +4,6 @@
 use axum::Json;
 use tracing::{info, warn};
 
-use crate::integrations::{sync_model_config_delete, sync_model_config_upsert};
 use crate::models::{
     UpdateUserModelProviderRequest, UserModelConfigRecord, UserModelProviderRecord,
 };
@@ -75,7 +74,6 @@ pub(super) async fn sync_imported_models_from_provider_state(
         .list_user_model_configs(Some(provider_record.owner_user_id.as_str()))
         .await
         .map_err(internal_error)?;
-    let mut sync_warnings = Vec::new();
     let now = now_rfc3339();
 
     for mut model in owner_models {
@@ -107,15 +105,14 @@ pub(super) async fn sync_imported_models_from_provider_state(
 
         model.updated_at = now.clone();
 
-        let saved = state
+        state
             .store
             .save_user_model_config(&model)
             .await
             .map_err(internal_error)?;
-        sync_warnings.extend(sync_model_config_upsert(state, &saved).await);
     }
 
-    Ok(sync_warnings)
+    Ok(Vec::new())
 }
 
 fn apply_provider_managed_fields(
@@ -319,12 +316,9 @@ pub(super) async fn refresh_provider_models_from_record(
             provider: provider_record.provider.clone(),
             prompt_vendor: provider_record.prompt_vendor.clone(),
             model: model.clone(),
-            thinking_level: existing
-                .and_then(|item| item.thinking_level.clone()),
-            task_usage_scenario: existing
-                .and_then(|item| item.task_usage_scenario.clone()),
-            task_thinking_level: existing
-                .and_then(|item| item.task_thinking_level.clone()),
+            thinking_level: existing.and_then(|item| item.thinking_level.clone()),
+            task_usage_scenario: existing.and_then(|item| item.task_usage_scenario.clone()),
+            task_thinking_level: existing.and_then(|item| item.task_thinking_level.clone()),
             temperature: existing.and_then(|item| item.temperature),
             max_output_tokens: existing.and_then(|item| item.max_output_tokens),
             api_key: provider_record.api_key.clone(),
@@ -343,12 +337,11 @@ pub(super) async fn refresh_provider_models_from_record(
                 .unwrap_or_else(|| now.clone()),
             updated_at: now.clone(),
         };
-        let saved = state
+        state
             .store
             .save_user_model_config(&record)
             .await
             .map_err(internal_error)?;
-        sync_warnings.extend(sync_model_config_upsert(state, &saved).await);
         retained_ids.insert(target_id);
     }
 
@@ -363,7 +356,6 @@ pub(super) async fn refresh_provider_models_from_record(
             .await
             .map_err(internal_error)?
         {
-            sync_warnings.extend(sync_model_config_delete(state, stale.id.as_str()).await);
             stale_deleted_count += 1;
         }
     }
@@ -391,9 +383,7 @@ pub(super) async fn refresh_provider_models_from_record(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_provider_managed_fields, canonical_existing_model, imported_model_enabled,
-    };
+    use super::{apply_provider_managed_fields, canonical_existing_model, imported_model_enabled};
     use crate::models::{UserModelConfigRecord, UserModelProviderRecord};
 
     fn model(enabled: bool) -> UserModelConfigRecord {
@@ -477,7 +467,10 @@ mod tests {
         assert_eq!(model.name, "Renamed Provider");
         assert_eq!(model.provider, "glm");
         assert_eq!(model.prompt_vendor.as_deref(), Some("glm"));
-        assert_eq!(model.base_url.as_deref(), Some("https://new.example.com/v1"));
+        assert_eq!(
+            model.base_url.as_deref(),
+            Some("https://new.example.com/v1")
+        );
         assert!(model.supports_images);
         assert!(model.supports_reasoning);
         assert!(model.supports_responses);
@@ -493,8 +486,8 @@ mod tests {
         duplicate.created_at = "2026-08-02T00:00:00Z".to_string();
 
         let candidates = vec![duplicate, oldest];
-        let selected = canonical_existing_model(candidates.as_slice(), "gpt-5.5")
-            .expect("canonical model");
+        let selected =
+            canonical_existing_model(candidates.as_slice(), "gpt-5.5").expect("canonical model");
 
         assert_eq!(selected.id, "original-id");
     }

@@ -82,10 +82,10 @@ pub async fn get_task_runner_task(
 pub async fn list_task_runner_available_plugins(
     base_url: &str,
     access_token: &str,
-    project_id: &str,
+    project_id: Option<&str>,
     plan_mode: bool,
 ) -> Result<Value, String> {
-    let query = vec![
+    let mut query = vec![
         (
             "task_profile",
             if plan_mode {
@@ -98,8 +98,10 @@ pub async fn list_task_runner_available_plugins(
             "requires_execution",
             if plan_mode { "false" } else { "true" },
         ),
-        ("project_id", project_id),
     ];
+    if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
+        query.push(("project_id", project_id));
+    }
     let request = task_runner_request(
         base_url,
         access_token,

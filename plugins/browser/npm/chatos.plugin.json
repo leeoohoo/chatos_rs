@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-browser-cdp",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Operate managed Chromium sessions or an explicitly connected Chrome browser through the Chrome DevTools Protocol.",
   "author": {
     "name": "Chatos",

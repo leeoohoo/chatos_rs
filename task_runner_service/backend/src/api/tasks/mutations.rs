@@ -31,7 +31,13 @@ fn task_source_context_from_headers(
         .or_else(|| header_text(headers, "x-chatos-source-user-message-id"));
     let source_turn_id = header_text(headers, "x-chatos-turn-id")
         .or_else(|| header_text(headers, "x-chatos-source-turn-id"));
-    if source_session_id.is_none() && source_user_message_id.is_none() && source_turn_id.is_none() {
+    let remote_connection_id = header_text(headers, "x-chatos-remote-connection-id")
+        .or_else(|| header_text(headers, "x-chatos-default-remote-connection-id"));
+    if source_session_id.is_none()
+        && source_user_message_id.is_none()
+        && source_turn_id.is_none()
+        && remote_connection_id.is_none()
+    {
         return None;
     }
     Some(TaskSourceContext {
@@ -39,6 +45,7 @@ fn task_source_context_from_headers(
         source_session_id,
         source_user_message_id,
         source_turn_id,
+        remote_connection_id,
         ..TaskSourceContext::default()
     })
 }

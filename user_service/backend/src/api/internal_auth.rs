@@ -11,7 +11,9 @@ use super::{error, forbidden};
 
 pub(super) const USER_SERVICE_TOKEN_AUDIENCE: &str = "user-service";
 pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
+pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const TASK_RUNNER_CALLER: &str = "task-runner";
+pub(super) const MEMORY_ENGINE_CALLER: &str = "memory-engine";
 pub(super) const HARNESS_REPO_WRITE_SCOPE: &str = "harness.repo.write";
 pub(super) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
 pub(super) const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
@@ -49,6 +51,46 @@ pub(super) fn require_project_service_internal_request(
     verify_project_service_internal_request(headers, expected, required_scope)
 }
 
+pub(super) fn require_user_model_internal_request(
+    config: &AppConfig,
+    headers: &HeaderMap,
+    required_scope: &str,
+) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
+    match header_text(headers, "x-user-service-caller") {
+        Some(PROJECT_SERVICE_CALLER) => {
+            let expected = config
+                .user_service_internal_api_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| forbidden("project service user API secret is not configured"))?;
+            verify_internal_request(headers, expected, PROJECT_SERVICE_CALLER, required_scope)
+        }
+        Some(CHATOS_CALLER) => {
+            let expected = config
+                .chatos_internal_api_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| forbidden("chatos user API secret is not configured"))?;
+            verify_internal_request(headers, expected, CHATOS_CALLER, required_scope)
+        }
+        Some(MEMORY_ENGINE_CALLER) => {
+            let expected = config
+                .memory_engine_internal_api_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| forbidden("memory engine user API secret is not configured"))?;
+            verify_internal_request(headers, expected, MEMORY_ENGINE_CALLER, required_scope)
+        }
+        Some(_) => Err(forbidden("user service internal caller is not allowed")),
+        None => Err(unauthorized(
+            "signed user service internal API token is required",
+        )),
+    }
+}
+
 pub(super) fn require_task_runner_internal_request(
     config: &AppConfig,
     headers: &HeaderMap,
@@ -60,12 +102,7 @@ pub(super) fn require_task_runner_internal_request(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| forbidden("task runner user API secret is not configured"))?;
-    verify_internal_request(
-        headers,
-        expected,
-        TASK_RUNNER_CALLER,
-        required_scope,
-    )
+    verify_internal_request(headers, expected, TASK_RUNNER_CALLER, required_scope)
 }
 
 fn verify_project_service_internal_request(
@@ -73,12 +110,7 @@ fn verify_project_service_internal_request(
     expected: &str,
     required_scope: &str,
 ) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
-    verify_internal_request(
-        headers,
-        expected,
-        PROJECT_SERVICE_CALLER,
-        required_scope,
-    )
+    verify_internal_request(headers, expected, PROJECT_SERVICE_CALLER, required_scope)
 }
 
 fn verify_internal_request(
@@ -211,6 +243,48 @@ mod tests {
         )
         .expect_err("scope mismatch must fail");
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn signed_model_runtime_token_accepts_only_chatos_caller_and_scope() {
+        let secret = "a-long-chatos-user-service-secret";
+        let token = chatos_service_runtime::issue_internal_service_token(
+            secret,
+            CHATOS_CALLER,
+            USER_SERVICE_TOKEN_AUDIENCE,
+            MODEL_RUNTIME_READ_SCOPE,
+            60,
+        )
+        .expect("issue token");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-user-service-caller",
+            HeaderValue::from_static(CHATOS_CALLER),
+        );
+        headers.insert(
+            "x-user-service-internal-token",
+            HeaderValue::from_str(token.as_str()).expect("token header"),
+        );
+
+        let identity =
+            verify_internal_request(&headers, secret, CHATOS_CALLER, MODEL_RUNTIME_READ_SCOPE)
+                .expect("matching ChatOS model runtime request");
+        assert_eq!(identity.caller_service, CHATOS_CALLER);
+        assert_eq!(identity.scope, MODEL_RUNTIME_READ_SCOPE);
+
+        let wrong_scope =
+            verify_internal_request(&headers, secret, CHATOS_CALLER, MODEL_SETTINGS_READ_SCOPE)
+                .expect_err("scope mismatch must fail");
+        assert_eq!(wrong_scope.0, StatusCode::UNAUTHORIZED);
+
+        let wrong_caller = verify_internal_request(
+            &headers,
+            secret,
+            PROJECT_SERVICE_CALLER,
+            MODEL_RUNTIME_READ_SCOPE,
+        )
+        .expect_err("caller mismatch must fail");
+        assert_eq!(wrong_caller.0, StatusCode::FORBIDDEN);
     }
 
     #[test]

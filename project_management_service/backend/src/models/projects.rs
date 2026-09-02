@@ -95,6 +95,31 @@ impl DbStatus for ProjectImportStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum ProjectRepositoryMode {
+    #[default]
+    Managed,
+    External,
+}
+
+impl DbStatus for ProjectRepositoryMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Managed => "managed",
+            Self::External => "external",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        match value.trim() {
+            "external" => Self::External,
+            _ => Self::Managed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRecord {
     pub id: String,
@@ -110,6 +135,8 @@ pub struct ProjectRecord {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
+    #[serde(default)]
+    pub repository_mode: ProjectRepositoryMode,
     #[serde(default)]
     pub cloud_import_source: CloudImportSource,
     #[serde(default)]
@@ -152,6 +179,8 @@ pub struct CreateProjectRequest {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
+    #[serde(default)]
+    pub repository_mode: Option<ProjectRepositoryMode>,
     pub description: Option<String>,
     #[serde(default)]
     pub cloud_import_source: Option<CloudImportSource>,
@@ -170,6 +199,8 @@ pub struct ImportProjectRequest {
     pub name: String,
     pub root_path: Option<String>,
     pub git_url: Option<String>,
+    #[serde(default)]
+    pub repository_mode: Option<ProjectRepositoryMode>,
     pub description: Option<String>,
     #[serde(default)]
     pub cloud_import_source: Option<CloudImportSource>,

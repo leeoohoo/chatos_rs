@@ -8,101 +8,66 @@ use crate::ai::AiClient;
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{EngineJobPolicy, EngineModelProfile};
-use crate::repositories::control_plane;
 use crate::services::summary::RollupSettings;
 use chatos_agent::MemoryEngineAgent;
 
-use super::model_runtime_resolver::resolve_model_runtime_for_profile;
+use super::model_runtime_resolver::{
+    resolve_memory_summary_model_runtime, resolve_model_runtime_by_id,
+};
 
 pub struct ManagedMemoryAgentRuntime {
     pub ai: AiClient,
     pub prompt: String,
-    pub model_profile_id: String,
+    pub model_config_id: String,
     pub prompt_revision: i64,
     pub prompt_checksum: String,
 }
 
 pub async fn get_effective_model_profile_for_job(
-    db: &Db,
+    config: &AppConfig,
     _job_type: &str,
-    owner_user_id: Option<&str>,
-) -> Result<Option<EngineModelProfile>, String> {
-    control_plane::get_active_model_profile(db, owner_user_id).await
+    owner_user_id: &str,
+) -> Result<EngineModelProfile, String> {
+    resolve_memory_summary_model_runtime(config, owner_user_id).await
 }
 
 pub async fn build_ai_client_for_job(
     config: &AppConfig,
-    db: &Db,
+    _db: &Db,
     job_type: &str,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
 ) -> Result<AiClient, String> {
-    let profile = get_effective_model_profile_for_job(db, job_type, owner_user_id).await?;
-    let runtime_profile = match profile.as_ref() {
-        Some(profile) => {
-            Some(resolve_model_runtime_for_profile(config, profile, owner_user_id).await?)
-        }
-        None => None,
-    };
-    AiClient::new_with_profile(config, runtime_profile.as_ref())
+    let profile = get_effective_model_profile_for_job(config, job_type, owner_user_id).await?;
+    AiClient::new_with_profile(config, Some(&profile))
 }
 
 pub(crate) async fn build_ai_client_for_profile_id(
     config: &AppConfig,
-    db: &Db,
+    _db: &Db,
     profile_id: &str,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
 ) -> Result<AiClient, String> {
     if profile_id == "memory_engine_default" {
-        return AiClient::new_with_profile(config, None);
+        return Err("legacy Memory Engine default model is no longer supported".to_string());
     }
-    let profile = control_plane::get_model_profile_by_id(db, profile_id)
-        .await?
-        .ok_or_else(|| format!("Memory Engine model profile not found: {profile_id}"))?;
-    if !profile.enabled {
-        return Err(format!(
-            "Memory Engine model profile is disabled: {profile_id}"
-        ));
-    }
-    if let Some(owner_user_id) = owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if profile
-            .owner_user_id
-            .as_deref()
-            .is_some_and(|owner| owner != owner_user_id)
-        {
-            return Err("Memory Engine model profile owner changed during run".to_string());
-        }
-    }
-    let runtime_profile =
-        resolve_model_runtime_for_profile(config, &profile, owner_user_id).await?;
-    AiClient::new_with_profile(config, Some(&runtime_profile))
+    let profile = resolve_model_runtime_by_id(config, owner_user_id, profile_id).await?;
+    AiClient::new_with_profile(config, Some(&profile))
 }
 
 pub async fn build_managed_memory_agent_runtime(
     config: &AppConfig,
-    db: &Db,
+    _db: &Db,
     agent: &MemoryEngineAgent,
-    owner_user_id: Option<&str>,
+    owner_user_id: &str,
 ) -> Result<ManagedMemoryAgentRuntime, String> {
-    let profile = get_effective_model_profile_for_job(db, agent.job_type(), owner_user_id).await?;
-    let model_provider = profile
-        .as_ref()
-        .map(|profile| profile.provider.trim())
-        .filter(|provider| !provider.is_empty())
-        .unwrap_or("openai");
+    let profile =
+        get_effective_model_profile_for_job(config, agent.job_type(), owner_user_id).await?;
+    let model_provider = profile.provider.trim();
     let prompt = agent
         .resolve_prompt(model_provider)
         .await
         .map_err(|error| error.to_string())?;
-    let runtime_profile = match profile.as_ref() {
-        Some(profile) => {
-            Some(resolve_model_runtime_for_profile(config, profile, owner_user_id).await?)
-        }
-        None => None,
-    };
-    let ai = AiClient::new_with_profile(config, runtime_profile.as_ref())?;
+    let ai = AiClient::new_with_profile(config, Some(&profile))?;
     info!(
         agent_key = prompt.agent_key.as_str(),
         vendor = prompt.vendor.as_str(),
@@ -113,10 +78,7 @@ pub async fn build_managed_memory_agent_runtime(
     Ok(ManagedMemoryAgentRuntime {
         ai,
         prompt: prompt.content,
-        model_profile_id: profile
-            .as_ref()
-            .map(|profile| profile.id.clone())
-            .unwrap_or_else(|| "memory_engine_default".to_string()),
+        model_config_id: profile.id,
         prompt_revision: prompt.revision,
         prompt_checksum: prompt.checksum,
     })
@@ -156,7 +118,6 @@ pub fn policy_meta(policy: &EngineJobPolicy) -> serde_json::Value {
     json!({
         "policy_job_type": policy.job_type,
         "policy_enabled": policy.enabled,
-        "policy_model_profile_id": policy.model_profile_id,
         "policy_token_limit": policy.token_limit,
         "policy_target_summary_tokens": policy.target_summary_tokens,
         "policy_interval_seconds": policy.interval_seconds,

@@ -75,6 +75,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var updateAvailable: Bool
     public var installAvailable: Bool
     public var enabled: Bool
+    public var hasUI: Bool?
     public var permissions: [LocalConnectorPluginPermission]
 
     public var id: String { pluginID }
@@ -90,6 +91,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         updateAvailable: Bool,
         installAvailable: Bool,
         enabled: Bool,
+        hasUI: Bool? = nil,
         permissions: [LocalConnectorPluginPermission] = []
     ) {
         self.pluginID = pluginID
@@ -102,7 +104,74 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         self.updateAvailable = updateAvailable
         self.installAvailable = installAvailable
         self.enabled = enabled
+        self.hasUI = hasUI
         self.permissions = permissions
+    }
+}
+
+public struct LocalConnectorPluginApplication: Codable, Identifiable, Sendable, Equatable {
+    public var pluginID: String
+    public var componentKey: String
+    public var displayName: String
+    public var description: String
+    public var brandColor: String?
+    public var iconURL: URL?
+    public var requiresLocalRuntime: Bool
+    public var contextScope: String?
+    public var missingContext: String?
+
+    public var id: String { "\(pluginID):\(componentKey)" }
+
+    public init(
+        pluginID: String,
+        componentKey: String,
+        displayName: String,
+        description: String,
+        brandColor: String? = nil,
+        iconURL: URL? = nil,
+        requiresLocalRuntime: Bool,
+        contextScope: String? = nil,
+        missingContext: String? = nil
+    ) {
+        self.pluginID = pluginID
+        self.componentKey = componentKey
+        self.displayName = displayName
+        self.description = description
+        self.brandColor = brandColor
+        self.iconURL = iconURL
+        self.requiresLocalRuntime = requiresLocalRuntime
+        self.contextScope = contextScope
+        self.missingContext = missingContext
+    }
+}
+
+public struct LocalConnectorPluginApplicationContext: Codable, Sendable, Equatable, Hashable {
+    public var projectID: String?
+    public var projectName: String?
+    public var projectRoot: String?
+
+    public init(projectID: String?, projectName: String?, projectRoot: String?) {
+        self.projectID = projectID
+        self.projectName = projectName
+        self.projectRoot = projectRoot
+    }
+
+    public static let device = Self(projectID: nil, projectName: nil, projectRoot: nil)
+}
+
+public struct LocalConnectorPluginApplicationLaunch: Codable, Sendable, Equatable {
+    public var application: LocalConnectorPluginApplication
+    public var url: URL
+    public var websiteDataStoreID: UUID?
+
+    public init(
+        application: LocalConnectorPluginApplication,
+        url: URL,
+        websiteDataStoreID: UUID? = nil
+    ) {
+        self.application = application
+        self.url = url
+        self.websiteDataStoreID = websiteDataStoreID
     }
 }
 

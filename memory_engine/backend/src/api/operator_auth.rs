@@ -25,11 +25,7 @@ pub async fn require_operator_auth(
         &state.config,
         request.headers(),
         OPERATOR_SCOPE,
-        &[
-            "chatos-backend",
-            "task-runner",
-            "configuration-center",
-        ],
+        &["chatos-backend", "task-runner", "configuration-center"],
     )?
     .ok_or_else(|| {
         (

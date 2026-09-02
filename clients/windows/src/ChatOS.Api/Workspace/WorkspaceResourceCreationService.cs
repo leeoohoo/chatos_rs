@@ -8,6 +8,7 @@ namespace ChatOS.Api.Workspace;
 
 public sealed class WorkspaceResourceCreationService : IWorkspaceResourceCreationService
 {
+    private static readonly TimeSpan HarnessImportTimeout = TimeSpan.FromHours(2);
     private readonly ChatOSApiClient _client;
 
     public WorkspaceResourceCreationService(ChatOSApiClient client)
@@ -19,14 +20,31 @@ public sealed class WorkspaceResourceCreationService : IWorkspaceResourceCreatio
         LocalProjectCreationDraft draft,
         CancellationToken cancellationToken = default)
     {
-        var created = await _client.PostAsync<CreatedWorkspaceProjectDto>(
-            "local-connectors/projects",
-            new CreateLocalProjectRequestDto(
-                draft.Name,
-                draft.DeviceId,
-                draft.WorkspaceId,
-                draft.RelativePath),
-            cancellationToken).ConfigureAwait(false);
+        var gitUrl = draft.RepositoryMode == LocalProjectRepositoryMode.External
+            ? draft.GitUrl.TrimmedOrNull()
+            : null;
+        if (draft.RepositoryMode == LocalProjectRepositoryMode.External && gitUrl is null)
+        {
+            throw new ChatOSApiException(
+                "Using an existing Git repository requires a configured remote URL.");
+        }
+        var request = new CreateLocalProjectRequestDto(
+            draft.Name,
+            draft.DeviceId,
+            draft.WorkspaceId,
+            draft.RelativePath,
+            draft.RepositoryMode == LocalProjectRepositoryMode.Managed ? "managed" : "external",
+            gitUrl);
+        var created = draft.RepositoryMode == LocalProjectRepositoryMode.Managed
+            ? await _client.PostAsync<CreatedWorkspaceProjectDto>(
+                "local-connectors/projects",
+                request,
+                HarnessImportTimeout,
+                cancellationToken).ConfigureAwait(false)
+            : await _client.PostAsync<CreatedWorkspaceProjectDto>(
+                "local-connectors/projects",
+                request,
+                cancellationToken).ConfigureAwait(false);
         return created.ToDomain();
     }
 
@@ -90,7 +108,9 @@ internal sealed record CreateLocalProjectRequestDto(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("device_id")] string DeviceId,
     [property: JsonPropertyName("workspace_id")] string WorkspaceId,
-    [property: JsonPropertyName("relative_path")] string? RelativePath);
+    [property: JsonPropertyName("relative_path")] string? RelativePath,
+    [property: JsonPropertyName("repository_mode")] string RepositoryMode,
+    [property: JsonPropertyName("git_url")] string? GitUrl);
 
 internal sealed record BindProjectContactRequestDto(
     [property: JsonPropertyName("contact_id")] string ContactId);

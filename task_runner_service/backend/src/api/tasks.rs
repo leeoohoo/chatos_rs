@@ -29,6 +29,7 @@ pub(super) struct TaskListQuery {
     keyword: Option<String>,
     tag: Option<String>,
     model_config_id: Option<String>,
+    project_scope: Option<TaskProjectScopeFilter>,
     project_id: Option<String>,
     scheduled_only: Option<bool>,
     parent_task_id: Option<String>,
@@ -45,6 +46,7 @@ impl TaskListQuery {
             keyword: self.keyword,
             tag: self.tag,
             model_config_id: self.model_config_id,
+            project_scope: self.project_scope,
             project_id: self.project_id,
             creator_user_id: None,
             scheduled_only: self.scheduled_only,
@@ -63,6 +65,7 @@ pub(super) struct TaskSummaryQuery {
     ids: Option<String>,
     keyword: Option<String>,
     status: Option<TaskStatus>,
+    project_scope: Option<TaskProjectScopeFilter>,
     project_id: Option<String>,
     limit: Option<usize>,
 }

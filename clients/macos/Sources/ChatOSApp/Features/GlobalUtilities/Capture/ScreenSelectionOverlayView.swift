@@ -12,7 +12,7 @@ final class ScreenSelectionOverlayView: NSView {
 
     init(isEnglish: Bool) {
         instructionText = isEnglish
-            ? "Drag to select a screenshot area  ·  Esc to cancel"
+            ? "Drag to select an area  ·  Esc to cancel"
             : "拖动选择截图区域  ·  Esc 取消"
         super.init(frame: .zero)
     }
@@ -23,11 +23,6 @@ final class ScreenSelectionOverlayView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.acceptsMouseMovedEvents = true
-    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -59,15 +54,14 @@ final class ScreenSelectionOverlayView: NSView {
         super.draw(dirtyRect)
 
         let mask = NSBezierPath(rect: bounds)
-        if isActiveSelection, let selectionRect, !selectionRect.isEmpty {
+        if let selectionRect, !selectionRect.isEmpty {
             mask.appendRect(selectionRect)
             mask.windingRule = .evenOdd
         }
         NSColor.black.withAlphaComponent(0.42).setFill()
         mask.fill()
 
-        guard isActiveSelection,
-              let selectionRect,
+        guard let selectionRect,
               selectionRect.width > 0,
               selectionRect.height > 0 else {
             drawInstruction()

@@ -41,7 +41,7 @@ struct TaskPluginCommand {
 }
 
 pub(super) async fn resolve_task_plugin_catalog_prompt(
-    project_id: &str,
+    project_id: Option<&str>,
     plan_mode: bool,
     preferred_plugin_keys: &[String],
     locale: InternalContextLocale,

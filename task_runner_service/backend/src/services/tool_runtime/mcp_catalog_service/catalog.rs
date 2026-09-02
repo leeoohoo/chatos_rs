@@ -29,7 +29,6 @@ impl McpCatalogService {
             .collect::<Vec<_>>();
         Ok(configurable_builtin_kinds()
             .into_iter()
-            .filter(|kind| *kind != chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController)
             .map(|kind| {
                 let server = kind.server_with_options(&server_options);
                 let guide = mcp_builtin_kind_guide(kind);
@@ -44,6 +43,38 @@ impl McpCatalogService {
                     .iter()
                     .map(|value| (*value).to_string())
                     .collect::<Vec<_>>();
+                if kind == chatos_mcp_runtime::BuiltinMcpKind::RemoteConnectionController {
+                    let available_tool_names = chatos_mcp::system_mcp_static_tools(
+                        chatos_plugin_management_sdk::SystemMcpKey::RemoteConnectionController,
+                    )
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|tool| {
+                        tool.get("name")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                    })
+                    .collect::<Vec<_>>();
+                    return McpCatalogEntry {
+                        kind: kind.kind_name().to_string(),
+                        server_name: kind.server_name().to_string(),
+                        config_id: kind.config_id().map(ToOwned::to_owned),
+                        command: kind.command().map(ToOwned::to_owned),
+                        description,
+                        use_cases,
+                        capabilities,
+                        implemented: true,
+                        runtime_default: runtime_defaults
+                            .iter()
+                            .any(|value| value == kind.kind_name()),
+                        default_allow_writes: kind.default_allow_writes(),
+                        available_tool_names,
+                        unavailable_tools: Vec::new(),
+                        message: Some(
+                            "由 MCP Management 路由到 ChatOS 的远程连接服务。".to_string(),
+                        ),
+                    };
+                }
                 match build_task_runner_builtin_provider(
                     &server,
                     self.task_service.clone(),

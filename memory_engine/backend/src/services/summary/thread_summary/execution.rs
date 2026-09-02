@@ -545,7 +545,7 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         let summary_build = match build_summary_text(
             config,
             db,
-            Some(tenant_id),
+            tenant_id,
             thread.title.as_deref(),
             selection.selected.as_slice(),
             &settings,

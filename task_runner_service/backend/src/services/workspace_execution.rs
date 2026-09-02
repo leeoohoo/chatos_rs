@@ -569,9 +569,12 @@ pub(crate) async fn load_task_run_workspace_changes(
         execution.route.as_ref(),
         Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
     ) {
+        let project_id = task.project_id.clone().ok_or_else(|| {
+            "workspace change inspection requires a concrete project scope".to_string()
+        })?;
         return Ok(
             super::project_management_api_client::GetRunWorkspaceChangesResponse {
-                project_id: task.project_id.clone(),
+                project_id,
                 run_id: run.id.clone(),
                 branch_ref: format!(
                     "local-run:{}",
@@ -1038,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn public_chat_tasks_drop_workspace_tools_but_keep_remote_capabilities() {
+    fn user_conversation_tasks_drop_workspace_tools_but_keep_remote_capabilities() {
         let config = TaskMcpConfig {
             enabled: true,
             enabled_builtin_kinds: vec![
@@ -1049,11 +1052,7 @@ mod tests {
             ..TaskMcpConfig::default()
         };
 
-        let scope = crate::models::resolve_task_execution_scope(
-            crate::models::PUBLIC_PROJECT_ID,
-            "tenant-1",
-            "user-1",
-        );
+        let scope = crate::models::resolve_task_execution_scope(None, "tenant-1", "user-1");
         let snapshot = effective_task_tool_snapshot_for_scope(&config, &scope);
 
         assert!(!snapshot.workspace_read);
@@ -1075,7 +1074,8 @@ mod tests {
             ..TaskMcpConfig::default()
         };
 
-        let scope = crate::models::resolve_task_execution_scope("project-1", "tenant-1", "user-1");
+        let scope =
+            crate::models::resolve_task_execution_scope(Some("project-1"), "tenant-1", "user-1");
         let snapshot = effective_task_tool_snapshot_for_scope(&config, &scope);
 
         assert!(snapshot.workspace_read);

@@ -137,14 +137,14 @@ async fn list_tasks_uses_passthrough_project_context_filter() {
         )
         .await
         .expect("create project task");
-    let public_task = task_service
+    let user_conversation_task = task_service
         .create_task(
-            test_create_task_request("public task"),
+            test_create_task_request("user conversation task"),
             Some(&current_user),
             None,
         )
         .await
-        .expect("create public task");
+        .expect("create user conversation task");
 
     let project_result = mcp_service
         .call_tool(
@@ -161,20 +161,19 @@ async fn list_tasks_uses_passthrough_project_context_filter() {
     let project_task_ids = structured_task_ids(&project_result);
     assert_eq!(project_task_ids, vec![project_task.id.clone()]);
 
-    let public_result = mcp_service
+    let user_conversation_result = mcp_service
         .call_tool(
             "list_tasks",
             json!({}),
             &current_user,
             &McpRequestContext {
-                project_id: Some(PUBLIC_PROJECT_ID.to_string()),
                 ..McpRequestContext::default()
             },
         )
         .await
-        .expect("list public tasks");
-    let public_task_ids = structured_task_ids(&public_result);
-    assert_eq!(public_task_ids, vec![public_task.id]);
+        .expect("list user conversation tasks");
+    let user_conversation_task_ids = structured_task_ids(&user_conversation_result);
+    assert_eq!(user_conversation_task_ids, vec![user_conversation_task.id]);
 }
 
 #[tokio::test]
@@ -539,8 +538,14 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
         implement_task.default_model_config_id.as_deref(),
         Some("model-1")
     );
-    assert_eq!(prepare_task.project_id, project.id);
-    assert_eq!(implement_task.project_id, project.id);
+    assert_eq!(
+        prepare_task.project_id.as_deref(),
+        Some(project.id.as_str())
+    );
+    assert_eq!(
+        implement_task.project_id.as_deref(),
+        Some(project.id.as_str())
+    );
     assert_eq!(prepare_task.task_profile, TASK_PROFILE_DEFAULT);
     assert!(prepare_task.mcp_config.requires_execution);
     assert_eq!(implement_task.task_profile, TASK_PROFILE_DEFAULT);

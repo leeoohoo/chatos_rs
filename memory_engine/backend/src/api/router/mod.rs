@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::{middleware, Router};
 
-use crate::api::{memory_auth, model_profile_auth, operator_auth};
+use crate::api::{memory_auth, operator_auth};
 use crate::state::AppState;
 
 mod admin;
@@ -23,12 +23,6 @@ pub fn build_public_router(state: Arc<AppState>) -> Router {
 
     common_layers(
         Router::new()
-            .merge(
-                admin::model_profile_routes().route_layer(middleware::from_fn_with_state(
-                    protected_state.clone(),
-                    model_profile_auth::require_user_memory_auth,
-                )),
-            )
             .merge(admin::routes().route_layer(middleware::from_fn_with_state(
                 protected_state.clone(),
                 memory_auth::require_user_memory_auth,
@@ -49,12 +43,6 @@ pub fn build_internal_router(state: Arc<AppState>) -> Router {
     let protected_state = state.clone();
     common_layers(
         Router::new()
-            .merge(
-                admin::model_profile_routes().route_layer(middleware::from_fn_with_state(
-                    protected_state.clone(),
-                    model_profile_auth::require_model_profile_internal_auth,
-                )),
-            )
             .merge(admin::routes().route_layer(middleware::from_fn_with_state(
                 protected_state.clone(),
                 memory_auth::require_memory_auth,
@@ -87,7 +75,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{build_internal_router, build_public_router};
-    use crate::api::internal_auth::{DATA_SCOPE, MODEL_PROFILE_SYNC_SCOPE, TOKEN_AUDIENCE};
+    use crate::api::internal_auth::{DATA_SCOPE, OPERATOR_SCOPE, TOKEN_AUDIENCE};
     use crate::config::AppConfig;
     use crate::pressure::{
         MemoryEnginePressurePolicy, MemoryEnginePressureState, PlatformPressureLevel,
@@ -151,8 +139,7 @@ mod tests {
     #[tokio::test]
     async fn internal_data_route_requires_allowed_caller_and_data_scope() {
         let router = build_internal_router(test_state().await);
-        let wrong_scope =
-            service_token(TASK_RUNNER_SECRET, "task-runner", MODEL_PROFILE_SYNC_SCOPE);
+        let wrong_scope = service_token(TASK_RUNNER_SECRET, "task-runner", OPERATOR_SCOPE);
         let wrong_scope_response = router
             .clone()
             .oneshot(thread_upsert_request("task-runner", wrong_scope))
@@ -166,69 +153,6 @@ mod tests {
             .await
             .expect("valid identity response");
         assert_eq!(valid_response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn public_model_profile_route_rejects_internal_service_headers() {
-        let token = service_token(
-            USER_SERVICE_SECRET,
-            "user-service",
-            MODEL_PROFILE_SYNC_SCOPE,
-        );
-        let response = build_public_router(test_state().await)
-            .oneshot(
-                Request::get("/api/memory-engine/v1/admin/model-profiles")
-                    .header("x-memory-caller", "user-service")
-                    .header("x-memory-internal-token", token)
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("router response");
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn internal_model_profile_route_requires_user_service_sync_scope() {
-        let state = test_state().await;
-        let router = build_internal_router(state);
-
-        let wrong_scope = service_token(USER_SERVICE_SECRET, "user-service", DATA_SCOPE);
-        let wrong_scope_response = router
-            .clone()
-            .oneshot(model_profile_create_request("user-service", wrong_scope))
-            .await
-            .expect("wrong scope response");
-        assert_eq!(wrong_scope_response.status(), StatusCode::UNAUTHORIZED);
-
-        let wrong_caller =
-            service_token(TASK_RUNNER_SECRET, "task-runner", MODEL_PROFILE_SYNC_SCOPE);
-        let wrong_caller_response = router
-            .clone()
-            .oneshot(model_profile_create_request("task-runner", wrong_caller))
-            .await
-            .expect("wrong caller response");
-        assert_eq!(wrong_caller_response.status(), StatusCode::FORBIDDEN);
-
-        let valid = service_token(
-            USER_SERVICE_SECRET,
-            "user-service",
-            MODEL_PROFILE_SYNC_SCOPE,
-        );
-        let valid_response = router
-            .oneshot(model_profile_create_request("user-service", valid))
-            .await
-            .expect("valid identity response");
-        assert_eq!(valid_response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    fn model_profile_create_request(caller: &str, token: String) -> Request<Body> {
-        Request::post("/api/memory-engine/v1/admin/model-profiles")
-            .header("x-memory-caller", caller)
-            .header("x-memory-internal-token", token)
-            .header("content-type", "application/json")
-            .body(Body::empty())
-            .expect("request")
     }
 
     fn thread_upsert_request(caller: &str, token: String) -> Request<Body> {
@@ -287,10 +211,6 @@ mod tests {
             mongodb_uri: "mongodb://127.0.0.1:27017/test".to_string(),
             mongodb_database: "test".to_string(),
             ai_request_timeout_secs: 5,
-            openai_api_key: None,
-            openai_base_url: "https://api.openai.com/v1".to_string(),
-            openai_model: "test".to_string(),
-            openai_temperature: 0.0,
             api_enabled: true,
             worker_enabled: false,
             worker_interval_secs: 30,

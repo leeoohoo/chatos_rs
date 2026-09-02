@@ -7,7 +7,6 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::services::{access_token_scope, project_management_api_client};
 
-pub const PUBLIC_PROJECT_ID: &str = "-1";
 pub const HARNESS_PROJECT_ROOT_PREFIX: &str = "harness://project/";
 
 pub fn harness_project_root_path(project_id: &str) -> String {
@@ -28,6 +27,7 @@ pub struct Project {
     pub name: String,
     pub root_path: String,
     pub git_url: Option<String>,
+    pub repository_mode: Option<String>,
     pub cloud_import_source: Option<String>,
     pub import_status: Option<String>,
     pub source_git_url: Option<String>,
@@ -52,6 +52,7 @@ impl Project {
         name: String,
         root_path: String,
         git_url: Option<String>,
+        repository_mode: String,
         description: Option<String>,
         user_id: Option<String>,
     ) -> Project {
@@ -61,6 +62,7 @@ impl Project {
             name,
             root_path,
             git_url,
+            repository_mode: Some(repository_mode),
             cloud_import_source: Some("none".to_string()),
             import_status: Some("none".to_string()),
             source_git_url: None,
@@ -95,6 +97,7 @@ impl ProjectService {
                 name: data.name,
                 root_path: normalize_optional_text(Some(data.root_path)),
                 git_url: normalize_optional_text(data.git_url),
+                repository_mode: normalize_optional_text(data.repository_mode),
                 description: normalize_optional_text(data.description),
             },
         )
@@ -103,7 +106,7 @@ impl ProjectService {
     }
 
     pub async fn get_by_id(id: &str) -> Result<Option<Project>, String> {
-        let id = normalize_project_id(id);
+        let id = normalize_project_id(id)?;
         let cfg = Config::try_get()?;
         let record = if let Some(access_token) = access_token_scope::get_current_access_token() {
             project_management_api_client::get_project_service_project(
@@ -147,7 +150,6 @@ impl ProjectService {
         let user_id = user_id.and_then(|value| normalize_optional_text(Some(value)));
         Ok(records
             .into_iter()
-            .filter(|record| record.id != PUBLIC_PROJECT_ID)
             .filter(|record| {
                 user_id
                     .as_deref()
@@ -166,7 +168,7 @@ impl ProjectService {
     ) -> Result<(), String> {
         let cfg = Config::try_get()?;
         let access_token = current_access_token_required()?;
-        let id = normalize_project_id(id);
+        let id = normalize_project_id(id)?;
         project_management_api_client::update_project_service_project(
             cfg.project_service_base_url.as_str(),
             access_token.as_str(),
@@ -185,7 +187,7 @@ impl ProjectService {
     pub async fn delete(id: &str) -> Result<(), String> {
         let cfg = Config::try_get()?;
         let access_token = current_access_token_required()?;
-        let id = normalize_project_id(id);
+        let id = normalize_project_id(id)?;
         project_management_api_client::archive_project_service_project(
             cfg.project_service_base_url.as_str(),
             access_token.as_str(),
@@ -211,6 +213,7 @@ fn project_from_project_service(
         name: record.name,
         root_path,
         git_url: record.git_url,
+        repository_mode: record.repository_mode,
         cloud_import_source: record.cloud_import_source,
         import_status: record.import_status,
         source_git_url: record.source_git_url,
@@ -246,12 +249,12 @@ fn sync_secret(cfg: &Config) -> Result<Option<String>, String> {
         .map(ToOwned::to_owned))
 }
 
-pub fn normalize_project_id(id: &str) -> String {
-    let trimmed = id.trim();
-    if trimmed.is_empty() || trimmed == "0" {
-        PUBLIC_PROJECT_ID.to_string()
+fn normalize_project_id(id: &str) -> Result<String, String> {
+    let id = id.trim();
+    if id.is_empty() {
+        Err("project_id is required".to_string())
     } else {
-        trimmed.to_string()
+        Ok(id.to_string())
     }
 }
 
@@ -273,6 +276,7 @@ mod tests {
             name: "Project".to_string(),
             root_path: root_path.map(ToOwned::to_owned),
             git_url: None,
+            repository_mode: None,
             cloud_import_source: None,
             import_status: None,
             source_git_url: None,

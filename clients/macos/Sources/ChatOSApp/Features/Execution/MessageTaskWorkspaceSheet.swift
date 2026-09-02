@@ -130,8 +130,9 @@ struct MessageTaskWorkspaceSheet: View {
     @ViewBuilder
     private var graphContent: some View {
         Group {
-            if viewModel.isLoading && viewModel.graph == nil {
-                ProgressView("正在加载真实任务图…")
+            if (viewModel.isLoading && viewModel.graph == nil)
+                || viewModel.isAwaitingInitialGraph {
+                ProgressView("正在同步真实任务图…")
             } else if let error = viewModel.errorMessage, viewModel.graph == nil {
                 ContentUnavailableView {
                     Label("任务图加载失败", systemImage: "exclamationmark.triangle")

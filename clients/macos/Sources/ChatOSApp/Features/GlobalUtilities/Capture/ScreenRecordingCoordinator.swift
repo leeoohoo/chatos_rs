@@ -56,6 +56,14 @@ final class ScreenRecordingCoordinator {
         }
     }
 
+    @discardableResult
+    func dismissPickerIfPresented() -> Bool {
+        guard state == .selecting else { return false }
+        pickerPanel.closeAndRestorePreviousApplication()
+        state = .idle
+        return true
+    }
+
     private func presentTargetPicker() {
         guard ensureScreenCapturePermission() else { return }
         state = .selecting

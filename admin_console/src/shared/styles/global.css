@@ -1,0 +1,27 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  color: #1f2329;
+  background: #f4f6f8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-width: 1180px; min-height: 100%; margin: 0; }
+body { min-height: 100vh; }
+
+.admin-fullscreen,
+.admin-login-shell { min-height: 100vh; }
+.admin-login-shell { padding: 24px; background: radial-gradient(circle at top, #e8f2ff 0, #f4f6f8 48%, #eef1f5 100%); }
+.admin-login-card { width: min(460px, 100%); border: 1px solid rgba(22, 119, 255, 0.12); box-shadow: 0 24px 72px rgba(15, 23, 42, 0.12); }
+.admin-shell { min-height: 100vh; }
+.admin-sider { position: sticky !important; top: 0; height: 100vh; border-right: 1px solid #e9edf2; overflow: auto; }
+.admin-brand { height: 72px; padding: 16px 20px; display: flex; align-items: center; gap: 12px; color: #1677ff; font-size: 22px; }
+.admin-brand div { display: flex; flex-direction: column; min-width: 0; }
+.admin-brand strong { color: #111827; font-size: 18px; line-height: 22px; }
+.admin-brand span { color: #8b95a5; font-size: 12px; line-height: 18px; }
+.admin-menu { border-inline-end: 0 !important; padding-bottom: 24px; }
+.admin-header { position: sticky; top: 0; z-index: 20; height: 64px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e9edf2; }
+.admin-content { min-height: calc(100vh - 64px); padding: 24px; background: #f4f6f8; }
+.admin-module-page { width: 100%; }
+.admin-module-page > .ant-space { width: 100%; }

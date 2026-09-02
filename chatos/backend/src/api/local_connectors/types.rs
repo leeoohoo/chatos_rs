@@ -43,6 +43,7 @@ pub(super) struct CreateLocalConnectorProjectRequest {
     pub(super) workspace_id: Option<String>,
     pub(super) relative_path: Option<String>,
     pub(super) git_url: Option<String>,
+    pub(super) repository_mode: Option<String>,
     pub(super) description: Option<String>,
     pub(super) user_id: Option<String>,
 }

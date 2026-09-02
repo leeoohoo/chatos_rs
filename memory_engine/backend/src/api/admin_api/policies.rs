@@ -63,8 +63,14 @@ pub async fn generate_job_policy_prompt(
     Json(req): Json<GenerateJobPolicyPromptRequest>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     auth.require_super_admin_or_operator()?;
-    policy_prompt::generate_job_policy_prompt(state.as_ref(), job_type.as_str(), &req)
-        .await
-        .map(|item| Json(json!(item)))
-        .map_err(internal_error)
+    let owner_user_id = auth.runtime_owner_user_id()?;
+    policy_prompt::generate_job_policy_prompt(
+        state.as_ref(),
+        job_type.as_str(),
+        owner_user_id.as_str(),
+        &req,
+    )
+    .await
+    .map(|item| Json(json!(item)))
+    .map_err(internal_error)
 }

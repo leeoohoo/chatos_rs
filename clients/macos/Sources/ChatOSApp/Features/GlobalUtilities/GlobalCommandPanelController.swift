@@ -5,7 +5,9 @@ import SwiftUI
 class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
     var onPanelDismiss: (() -> Void)?
     private var previousApplication: NSRunningApplication?
+    private weak var previousKeyWindow: NSWindow?
     private let panel: GlobalCommandPanel
+    private var shouldFocusFirstTextInput = false
 
     init(size: NSSize) {
         panel = GlobalCommandPanel(
@@ -21,8 +23,11 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
-        panel.hidesOnDeactivate = true
-        panel.level = .floating
+        // Global utility panels are intentionally shown while another app remains
+        // active. Hiding on deactivation makes them visible only over Finder/the
+        // desktop, and the floating level is not reliable over another process.
+        panel.hidesOnDeactivate = false
+        panel.level = .popUpMenu
         panel.animationBehavior = .utilityWindow
         panel.collectionBehavior = [
             .canJoinAllSpaces,
@@ -65,32 +70,99 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
         isPresented ? closeAndRestorePreviousApplication() : present()
     }
 
-    func present() {
+    func present(focusingFirstTextInput: Bool = false) {
+        shouldFocusFirstTextInput = focusingFirstTextInput
         if NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             != Bundle.main.bundleIdentifier {
             previousApplication = NSWorkspace.shared.frontmostApplication
+            previousKeyWindow = nil
+        } else {
+            previousApplication = nil
+            previousKeyWindow = NSApp.keyWindow === panel ? nil : NSApp.keyWindow
         }
         positionOnMouseScreen()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        if focusingFirstTextInput {
+            focusFirstTextInputIfAvailable()
+        }
+        // Activate ChatOS for the lifetime of the command panel, then restore the
+        // original application when the user submits or dismisses it.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        if focusingFirstTextInput {
+            focusFirstTextInputIfAvailable()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.panel.isVisible, self.shouldFocusFirstTextInput else { return }
+                self.panel.contentView?.layoutSubtreeIfNeeded()
+                self.focusFirstTextInputIfAvailable()
+            }
+        }
     }
 
-    func closeAndRestorePreviousApplication() {
+    func closeAndRestorePreviousApplication(afterRestoring completion: (() -> Void)? = nil) {
+        let application = previousApplication
+        let keyWindow = previousKeyWindow
         panel.orderOut(nil)
-        previousApplication?.activate()
+        shouldFocusFirstTextInput = false
         previousApplication = nil
+        previousKeyWindow = nil
+
+        if let application, !application.isTerminated, !application.isActive {
+            application.activate()
+        } else if application == nil {
+            keyWindow?.makeKey()
+        }
+
+        guard let completion else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            completion()
+        }
     }
 
     func closeWithoutRestoringPreviousApplication() {
         panel.orderOut(nil)
+        shouldFocusFirstTextInput = false
         previousApplication = nil
+        previousKeyWindow = nil
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard panel.isVisible, shouldFocusFirstTextInput else { return }
+        panel.contentView?.layoutSubtreeIfNeeded()
+        focusFirstTextInputIfAvailable()
     }
 
     func windowDidResignKey(_ notification: Notification) {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
+        shouldFocusFirstTextInput = false
         previousApplication = nil
+        previousKeyWindow = nil
         onPanelDismiss?()
+    }
+
+    @discardableResult
+    func focusFirstTextInputIfAvailable() -> Bool {
+        guard let contentView = panel.contentView,
+              let field = searchField(in: contentView) else {
+            return false
+        }
+        panel.initialFirstResponder = field
+        guard panel.isKeyWindow else { return true }
+        return panel.makeFirstResponder(field)
+    }
+
+    private func searchField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField,
+           field.identifier == GlobalCommandSearchField.focusIdentifier {
+            return field
+        }
+        for subview in view.subviews {
+            if let field = searchField(in: subview) {
+                return field
+            }
+        }
+        return nil
     }
 
     private func positionOnMouseScreen() {

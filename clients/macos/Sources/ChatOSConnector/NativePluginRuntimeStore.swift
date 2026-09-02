@@ -10,6 +10,7 @@ actor NativePluginRuntimeStore {
         var artifactSHA256: String
         var componentKey: String
         var adapterSessionID: String
+        var projectID: String? = nil
         var requiresExclusiveExecution = false
     }
 
@@ -102,7 +103,8 @@ actor NativePluginRuntimeStore {
         releaseID: String,
         artifactSHA256: String,
         componentKey: String,
-        workspaceID: String?
+        workspaceID: String?,
+        projectID: String? = nil
     ) throws -> Identity {
         guard let session = sessions[adapterSessionID] else {
             throw NativePluginRuntimeError.sessionNotFound
@@ -112,7 +114,8 @@ actor NativePluginRuntimeStore {
               identity.releaseID == releaseID,
               identity.artifactSHA256 == artifactSHA256,
               identity.componentKey == componentKey,
-              session.workspaceID == workspaceID else {
+              session.workspaceID == workspaceID,
+              identity.projectID == projectID else {
             throw NativePluginRuntimeError.invalidRequest("Plugin 请求与已准备会话不匹配")
         }
         return identity
@@ -120,10 +123,12 @@ actor NativePluginRuntimeStore {
 
     func validateScopeIfPresent(
         adapterSessionID: String,
-        workspaceID: String?
+        workspaceID: String?,
+        projectID: String? = nil
     ) throws {
         guard let session = sessions[adapterSessionID] else { return }
-        guard session.workspaceID == workspaceID else {
+        guard session.workspaceID == workspaceID,
+              session.identity.projectID == projectID else {
             throw NativePluginRuntimeError.invalidRequest("Plugin 请求与已准备会话不匹配")
         }
     }

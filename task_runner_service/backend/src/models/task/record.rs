@@ -17,8 +17,8 @@ pub struct TaskRecord {
     pub memory_thread_id: String,
     pub tenant_id: String,
     pub subject_id: String,
-    #[serde(default = "default_task_project_id")]
-    pub project_id: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
     #[serde(default = "default_task_profile")]
     pub task_profile: String,
     #[serde(default)]
@@ -50,6 +50,8 @@ pub struct TaskRecord {
     #[serde(default)]
     pub source_user_message_id: Option<String>,
     #[serde(default)]
+    pub remote_connection_id: Option<String>,
+    #[serde(default)]
     pub prerequisite_task_ids: Vec<String>,
     #[serde(default)]
     pub task_tool_state: TaskToolState,
@@ -71,7 +73,7 @@ impl TaskRecord {
             .or(self.creator_user_id.as_deref())
             .unwrap_or(self.subject_id.as_str());
         crate::models::resolve_task_execution_scope(
-            self.project_id.as_str(),
+            self.project_id.as_deref(),
             self.tenant_id.as_str(),
             owner_user_id,
         )
@@ -102,10 +104,6 @@ pub struct TaskSelectedPluginSnapshot {
     pub reason: Option<String>,
 }
 
-fn default_task_project_id() -> String {
-    crate::models::PUBLIC_PROJECT_ID.to_string()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskPrerequisiteRecord {
     pub task_id: String,
@@ -128,8 +126,8 @@ pub struct TaskSummaryRecord {
     pub title: String,
     pub status: TaskStatus,
     pub default_model_config_id: Option<String>,
-    #[serde(default = "default_task_project_id")]
-    pub project_id: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub creator_user_id: Option<String>,
     pub creator_username: Option<String>,
     pub creator_display_name: Option<String>,

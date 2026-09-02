@@ -6,10 +6,13 @@ use serde_json::{json, Value};
 use crate::core::auth::AuthUser;
 use crate::models::ai_model_config::AiModelConfig;
 use crate::services::user_service_api_client;
-use crate::utils::model_config::{normalize_provider, normalize_thinking_level};
+use crate::utils::model_config::normalize_provider;
+#[cfg(test)]
+use crate::utils::model_config::normalize_thinking_level;
 
 use super::super::AiModelConfigRequest;
 
+#[cfg(test)]
 fn normalize_provider_input(provider: Option<String>) -> Result<String, String> {
     let raw = provider.unwrap_or_else(|| "gpt".to_string());
     let provider = normalize_provider(&raw);
@@ -20,6 +23,7 @@ fn normalize_provider_input(provider: Option<String>) -> Result<String, String> 
     }
 }
 
+#[cfg(test)]
 fn normalize_thinking_level_input(
     provider: &str,
     level: Option<String>,
@@ -253,6 +257,7 @@ pub(super) fn model_provider_response_value(
     value
 }
 
+#[cfg(test)]
 pub(super) fn build_model_config(
     user_id: String,
     id: String,

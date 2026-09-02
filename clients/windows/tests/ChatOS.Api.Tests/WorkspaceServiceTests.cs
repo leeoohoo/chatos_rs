@@ -29,6 +29,7 @@ public sealed class WorkspaceServiceTests
                   {
                     "id":"c2",
                     "title":"叽咕狸",
+                    "project_id":"-1",
                     "metadata":"{\"source_metadata\":{\"contact\":{\"contact_id\":\"contact-1\",\"agent_id\":\"jiguli\"}}}"
                   }
                 ]

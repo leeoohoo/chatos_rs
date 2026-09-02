@@ -19,7 +19,7 @@ use crate::core::auth::AuthUser;
 use crate::core::validation::normalize_non_empty;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::modules::conversation_runtime::guidance;
-use crate::services::{project_management_api_client, user_service_api_client};
+use crate::services::{access_token_scope, project_management_api_client, user_service_api_client};
 use crate::utils::abort_registry;
 
 use super::super::requirement_execution::{
@@ -347,7 +347,7 @@ pub(super) async fn execute_requirement_inner(
             "replacement_work_items": replacement_work_items,
         })),
     };
-    tokio::spawn(async move {
+    access_token_scope::spawn_with_access_token(Some(access_token), async move {
         run_chat_usecase(planner_input).await;
     });
 

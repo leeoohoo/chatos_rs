@@ -17,7 +17,7 @@ impl ChatosProvider {
         _runtime_session_id: &str,
         _owner_user_id: &str,
         _agent_key: SystemAgentKey,
-        _project_id: &str,
+        _project_id: Option<&str>,
         _run_id: Option<&str>,
         _source_session_id: Option<&str>,
         _expires_at_unix: i64,

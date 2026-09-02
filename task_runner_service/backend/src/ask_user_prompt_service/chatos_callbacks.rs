@@ -25,7 +25,7 @@ struct ChatosAskUserPromptCallbackPayload {
     status: String,
     task_title: String,
     task_status: String,
-    project_id: String,
+    project_id: Option<String>,
     source_session_id: Option<String>,
     source_turn_id: Option<String>,
     source_user_message_id: Option<String>,

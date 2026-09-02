@@ -64,6 +64,12 @@ impl MongoStore {
         let now = now_rfc3339();
         let root_path = normalized_optional(input.root_path);
         let git_url = normalize_git_url(input.git_url)?;
+        let repository_mode = input
+            .repository_mode
+            .ok_or_else(|| "repository_mode is required; choose managed or external".to_string())?;
+        if repository_mode == ProjectRepositoryMode::External && git_url.is_none() {
+            return Err("external repository mode requires git_url".to_string());
+        }
         let source_git_url = normalize_git_url(input.source_git_url)?;
         let project = ProjectRecord {
             id: Uuid::new_v4().to_string(),
@@ -79,6 +85,7 @@ impl MongoStore {
             name: input.name.trim().to_string(),
             root_path,
             git_url,
+            repository_mode,
             cloud_import_source: input.cloud_import_source.unwrap_or_default(),
             import_status: input.import_status.unwrap_or_default(),
             source_git_url,
@@ -88,7 +95,8 @@ impl MongoStore {
             harness_git_url: None,
             harness_git_ssh_url: None,
             harness_default_branch: None,
-            harness_provision_status: Some("pending".to_string()),
+            harness_provision_status: (repository_mode == ProjectRepositoryMode::Managed)
+                .then(|| "pending".to_string()),
             harness_provision_error: None,
             harness_provisioned_at: None,
             import_error: None,
@@ -115,6 +123,10 @@ impl MongoStore {
         let status = input.status.unwrap_or(ProjectStatus::Active);
         let root_path = normalized_optional(input.root_path);
         let git_url = normalize_git_url(input.git_url)?;
+        let repository_mode = input.repository_mode.unwrap_or_default();
+        if repository_mode == ProjectRepositoryMode::External && git_url.is_none() {
+            return Err("external repository mode requires git_url".to_string());
+        }
         let source_git_url = normalize_git_url(input.source_git_url)?;
         let harness_git_url = normalize_git_url(input.harness_git_url)?;
         let project = ProjectRecord {
@@ -128,6 +140,7 @@ impl MongoStore {
             name: input.name.trim().to_string(),
             root_path,
             git_url,
+            repository_mode,
             cloud_import_source: input.cloud_import_source.unwrap_or_default(),
             import_status: input.import_status.unwrap_or_default(),
             source_git_url,

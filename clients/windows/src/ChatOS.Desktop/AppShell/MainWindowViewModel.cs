@@ -293,8 +293,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         foreach (var contact in snapshot.Contacts)
         {
             var conversation = activeConversations.FirstOrDefault(value =>
-                string.Equals(value.ContactId, contact.Id, StringComparison.Ordinal) ||
-                string.Equals(value.ContactAgentId, contact.AgentId, StringComparison.Ordinal));
+                value.ProjectId is null &&
+                (string.Equals(value.ContactId, contact.Id, StringComparison.Ordinal) ||
+                 string.Equals(value.ContactAgentId, contact.AgentId, StringComparison.Ordinal)));
             Contacts.Add(new ShellResourceViewModel(
                 contact.Id,
                 WorkspaceResourceKind.Contact,

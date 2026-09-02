@@ -70,7 +70,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             .as_str()
             .to_string(),
         task_profile: Some("default".to_string()),
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         device_id: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: Some("group-1".to_string()),
@@ -82,6 +82,8 @@ fn snapshot() -> RuntimeSessionSnapshot {
         source_user_message_id: None,
         contact_agent_id: None,
         default_model_config_id: None,
+        default_remote_connection_id: None,
+        remote_connection_route: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
@@ -89,7 +91,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             owned_paths: vec!["README.md".to_string()],
         }),
         project_context: ProjectExecutionContext {
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             owner_user_id: "user-1".to_string(),
             workspace_provider: WorkspaceProviderKind::LocalConnector,
             workspace: Some(WorkspaceExecutionTarget {

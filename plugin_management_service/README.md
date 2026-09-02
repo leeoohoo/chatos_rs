@@ -28,17 +28,17 @@ cargo run -p plugin_management_service_backend
 curl http://127.0.0.1:39260/api/health
 ```
 
-## 启动前端
+## 启动统一管理端
 
 ```bash
-cd plugin_management_service/frontend
+cd admin_console
 npm install
 npm run dev
 ```
 
-默认地址：`http://127.0.0.1:39261`
+默认地址：`http://127.0.0.1:39200/plugins`
 
-Vite 会把 `/api` 代理到 `http://127.0.0.1:39260`。
+Vite 会把 `/api/admin/plugin-management` 交给本地 APISIX，再转发到 `http://127.0.0.1:39260`。
 
 ## 鉴权
 
@@ -137,7 +137,7 @@ Seed 会补齐缺失资源，保留管理员对 MCP 启用状态和绑定模式�
 cargo test -p plugin_management_service_backend
 cargo check -p plugin_management_service_backend
 
-cd plugin_management_service/frontend
+cd admin_console
 npm run type-check
 npm run build
 ```

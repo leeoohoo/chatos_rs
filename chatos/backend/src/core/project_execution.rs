@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
-use crate::models::project::{Project, PUBLIC_PROJECT_ID};
+use crate::models::project::Project;
 use crate::models::session::Session;
 use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
 
@@ -43,16 +43,17 @@ pub async fn ensure_cloud_session_execution(
     _headers: &HeaderMap,
 ) -> Result<(), (StatusCode, Json<Value>)> {
     let mut project_ids = BTreeSet::new();
-    let session_project_id =
-        resolve_session_project_scope(session.project_id.as_deref(), session.metadata.as_ref());
-    if session_project_id != PUBLIC_PROJECT_ID {
+    if let Some(session_project_id) =
+        resolve_session_project_scope(session.project_id.as_deref(), session.metadata.as_ref())
+    {
         project_ids.insert(session_project_id);
     }
-    if let Some(project_id) = requested_project_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "0" && *value != PUBLIC_PROJECT_ID)
+    if let Some(project_id) =
+        crate::modules::conversation_runtime::session_scope::normalize_project_scope(
+            requested_project_id,
+        )
     {
-        project_ids.insert(project_id.to_string());
+        project_ids.insert(project_id);
     }
 
     for project_id in project_ids {
@@ -78,6 +79,7 @@ mod tests {
             "Project".to_string(),
             "/workspace/project".to_string(),
             None,
+            "managed".to_string(),
             None,
             Some("user-1".to_string()),
         )

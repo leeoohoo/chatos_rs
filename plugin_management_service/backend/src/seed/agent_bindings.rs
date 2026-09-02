@@ -116,12 +116,6 @@ pub(super) async fn seed_agent_bindings(
         )
         .await?;
     }
-    remove_seed_binding_for_all_system_scopes(
-        store,
-        TASK_RUNNER_RUN_AGENT_KEY,
-        builtin_resource_id(BuiltinMcpKind::RemoteConnectionController).as_str(),
-    )
-    .await?;
     for agent_key in [TASK_RUNNER_RUN_AGENT_KEY] {
         for (kind, priority) in task_runner_run_phase_optional_builtin_kinds() {
             let resource_id = builtin_resource_id(kind);
@@ -149,18 +143,6 @@ pub(super) async fn seed_agent_bindings(
             priority,
         )
         .await?;
-    }
-    Ok(())
-}
-
-async fn remove_seed_binding_for_all_system_scopes(
-    store: &AppStore,
-    agent_key: &str,
-    resource_id: &str,
-) -> Result<(), String> {
-    for scope in [BINDING_SCOPE_SYSTEM_REQUIRED, BINDING_SCOPE_GLOBAL_DEFAULT] {
-        let id = format!("{agent_key}__{scope}__{resource_id}");
-        store.delete_binding(id.as_str()).await?;
     }
     Ok(())
 }
@@ -380,8 +362,9 @@ pub(super) fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpK
         (CodeMaintainerRead, 100),
         (CodeMaintainerWrite, 110),
         (TerminalController, 120),
-        (ProjectManagement, 130),
-        (Notepad, 140),
+        (RemoteConnectionController, 130),
+        (ProjectManagement, 140),
+        (Notepad, 150),
     ]
 }
 

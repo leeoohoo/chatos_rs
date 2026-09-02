@@ -80,32 +80,10 @@ jobs:
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=official_website_service_backend
               BIN_NAME=official_website_service_backend
-          - image: chatos-rs-configuration-center-frontend
+          - image: chatos-rs-admin-console-frontend
             dockerfile: docker/Dockerfile.frontend
             build_args: |
-              APP_DIR=config_center_service/frontend
-          - image: chatos-rs-user-service-frontend
-            dockerfile: docker/Dockerfile.frontend
-            build_args: |
-              APP_DIR=user_service/frontend
-          - image: chatos-rs-memory-engine-frontend
-            dockerfile: docker/Dockerfile.frontend
-            build_args: |
-              APP_DIR=memory_engine/frontend
-              VITE_MEMORY_ENGINE_API_BASE=/api/memory-engine/v1
-              VITE_USER_SERVICE_API_BASE=/user-service
-          - image: chatos-rs-project-management-frontend
-            dockerfile: docker/Dockerfile.frontend
-            build_args: |
-              APP_DIR=project_management_service/frontend
-          - image: chatos-rs-plugin-management-frontend
-            dockerfile: docker/Dockerfile.frontend
-            build_args: |
-              APP_DIR=plugin_management_service/frontend
-          - image: chatos-rs-task-runner-frontend
-            dockerfile: docker/Dockerfile.frontend
-            build_args: |
-              APP_DIR=task_runner_service/frontend
+              APP_DIR=admin_console
           - image: chatos-rs-official-website-frontend
             dockerfile: docker/Dockerfile.frontend
             build_args: |

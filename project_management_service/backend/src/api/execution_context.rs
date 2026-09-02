@@ -71,7 +71,7 @@ fn build_execution_context(
         .flatten();
     let revision = execution_context_revision(project, workspace_provider, workspace.as_ref());
     ProjectExecutionContext {
-        project_id: project.id.clone(),
+        project_id: Some(project.id.clone()),
         owner_user_id: owner_user_id.to_string(),
         workspace_provider,
         workspace,
@@ -140,6 +140,7 @@ mod tests {
             name: "Project".to_string(),
             root_path: Some("local://connector/device-1/workspace-1".to_string()),
             git_url: None,
+            repository_mode: crate::models::ProjectRepositoryMode::Managed,
             cloud_import_source: crate::models::CloudImportSource::Empty,
             import_status: crate::models::ProjectImportStatus::Ready,
             source_git_url: None,
@@ -194,6 +195,7 @@ mod tests {
             context.workspace_provider,
             WorkspaceProviderKind::LocalConnector
         );
+        assert_eq!(context.project_id.as_deref(), Some("project-1"));
         assert_eq!(
             context
                 .workspace

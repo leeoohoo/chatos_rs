@@ -5,7 +5,6 @@ use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
 
 use crate::auth::CurrentPrincipal;
-use crate::integrations::sync_model_config_delete;
 use crate::models::{
     CreateUserModelProviderRequest, UpdateUserModelProviderRequest, UserModelProviderRecord,
 };
@@ -250,14 +249,6 @@ pub(in crate::api) async fn delete_model_provider(
         ) || model.model.trim().is_empty()
         {
             continue;
-        }
-        let sync_warnings = sync_model_config_delete(&state, model.id.as_str()).await;
-        if !sync_warnings.is_empty() {
-            return Err(internal_error(format!(
-                "model provider downstream cleanup failed for {}: {}",
-                model.id,
-                sync_warnings.join("; ")
-            )));
         }
         state
             .store

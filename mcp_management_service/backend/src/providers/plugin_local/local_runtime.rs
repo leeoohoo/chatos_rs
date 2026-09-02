@@ -19,6 +19,77 @@ use crate::runtime::{
 };
 
 impl PluginLocalProvider {
+    fn recovered_binding_key(
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+    ) -> String {
+        format!("{}\n{}", snapshot.session_id, route.resource_id)
+    }
+
+    async fn effective_binding(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        prepared: &PluginLocalProviderBinding,
+    ) -> PluginLocalProviderBinding {
+        self.recovered_bindings
+            .read()
+            .await
+            .get(Self::recovered_binding_key(snapshot, route).as_str())
+            .cloned()
+            .unwrap_or_else(|| prepared.clone())
+    }
+
+    async fn recover_binding(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        route: &ResolvedMcpRoute,
+        failed_binding: &PluginLocalProviderBinding,
+    ) -> Result<PluginLocalProviderBinding, ProviderCallError> {
+        let _guard = self.recovery_lock.lock().await;
+        let prepared = snapshot
+            .plugin_local_bindings
+            .get(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable("Plugin Local runtime binding is missing")
+            })?;
+        let current = self.effective_binding(snapshot, route, prepared).await;
+        if current.adapter_session_id != failed_binding.adapter_session_id {
+            return Ok(current);
+        }
+        let immutable = snapshot
+            .plugin_mcp_bindings
+            .get(route.resource_id.as_str())
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "immutable Plugin MCP runtime binding is missing",
+                )
+            })?;
+        let recovered = self
+            .prepare_route(
+                immutable,
+                route,
+                &snapshot.project_context,
+                snapshot.session_id.as_str(),
+                snapshot.owner_user_id.as_str(),
+                snapshot.expires_at_unix,
+            )
+            .await?;
+        validate_recovered_binding(prepared, &recovered)?;
+        self.recovered_bindings.write().await.insert(
+            Self::recovered_binding_key(snapshot, route),
+            recovered.clone(),
+        );
+        tracing::info!(
+            session_id = snapshot.session_id.as_str(),
+            resource_id = route.resource_id.as_str(),
+            previous_adapter_session_id = failed_binding.adapter_session_id.as_str(),
+            adapter_session_id = recovered.adapter_session_id.as_str(),
+            "recovered Plugin Local runtime binding"
+        );
+        Ok(recovered)
+    }
+
     pub(super) async fn prepare_route(
         &self,
         immutable: &PluginMcpRuntimeBinding,
@@ -65,6 +136,7 @@ impl PluginLocalProvider {
                 json!(immutable.tool_blocklist),
             ),
         ]);
+        body.insert("project_id".to_string(), json!(context.project_id));
         if let Some(server_key) = immutable.server_key.as_deref() {
             body.insert("server_key".to_string(), json!(server_key));
         }
@@ -100,6 +172,7 @@ impl PluginLocalProvider {
             run_id: runtime_session_id.to_string(),
             device_id: target.device_id,
             workspace_id: target.workspace_id,
+            project_id: context.project_id.clone(),
             adapter_session_id: prepared.adapter_session_id,
             operation: operation.to_string(),
             session_sha256: prepared.session_sha256,
@@ -121,19 +194,57 @@ impl PluginLocalProvider {
         arguments: Value,
         invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
-        let binding = snapshot
+        let prepared_binding = snapshot
             .plugin_local_bindings
             .get(route.resource_id.as_str())
             .ok_or_else(|| {
                 ProviderCallError::provider_unavailable("Plugin Local runtime binding is missing")
             })?;
-        validate_bound_route(snapshot, route, binding)?;
-        if !binding.publishes_tool(original_tool_name) {
+        validate_bound_route(snapshot, route, prepared_binding)?;
+        if !prepared_binding.publishes_tool(original_tool_name) {
             return Err(ProviderCallError {
                 code: MCP_ERROR_AUTH_REQUIRED,
                 message: "tool is not published by the immutable Plugin MCP snapshot".to_string(),
             });
         }
+        let binding = self
+            .effective_binding(snapshot, route, prepared_binding)
+            .await;
+        validate_bound_route(snapshot, route, &binding)?;
+        let first = self
+            .execute_tool_with_binding(
+                snapshot,
+                &binding,
+                original_tool_name,
+                arguments.clone(),
+                invocation_id,
+            )
+            .await;
+        match first {
+            Ok(outcome) => Ok(outcome),
+            Err(error) if is_recoverable_adapter_session_error(&error) => {
+                let recovered = self.recover_binding(snapshot, route, &binding).await?;
+                self.execute_tool_with_binding(
+                    snapshot,
+                    &recovered,
+                    original_tool_name,
+                    arguments,
+                    invocation_id,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn execute_tool_with_binding(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        binding: &PluginLocalProviderBinding,
+        original_tool_name: &str,
+        arguments: Value,
+        invocation_id: &str,
+    ) -> Result<ProviderCallOutcome, ProviderCallError> {
         let body = json!({
             "run_id": binding.run_id,
             "plugin_id": binding.runtime.plugin_id,
@@ -152,6 +263,7 @@ impl PluginLocalProvider {
             "task_id": snapshot.task_id,
             "task_run_id": snapshot.run_id,
             "task_title": snapshot.task_title,
+            "project_id": snapshot.project_context.project_id,
         });
         let bytes = self
             .request(
@@ -199,13 +311,17 @@ impl PluginLocalProvider {
         route: &ResolvedMcpRoute,
         invocation_id: &str,
     ) -> Result<ProviderCancelOutcome, ProviderCallError> {
-        let binding = snapshot
+        let prepared_binding = snapshot
             .plugin_local_bindings
             .get(route.resource_id.as_str())
             .ok_or_else(|| {
                 ProviderCallError::provider_unavailable("Plugin Local runtime binding is missing")
             })?;
-        validate_bound_route(snapshot, route, binding)?;
+        validate_bound_route(snapshot, route, prepared_binding)?;
+        let binding = self
+            .effective_binding(snapshot, route, prepared_binding)
+            .await;
+        validate_bound_route(snapshot, route, &binding)?;
         let body = json!({
             "run_id": binding.run_id,
             "plugin_id": binding.runtime.plugin_id,
@@ -214,6 +330,7 @@ impl PluginLocalProvider {
             "component_key": binding.runtime.component_key,
             "adapter_session_id": binding.adapter_session_id,
             "invocation_id": invocation_id,
+            "project_id": snapshot.project_context.project_id,
         });
         let bytes = self
             .request(
@@ -255,10 +372,26 @@ impl PluginLocalProvider {
     }
 
     pub(in crate::providers) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
+        let mut effective = snapshot.plugin_local_bindings.clone();
+        let prefix = format!("{}\n", snapshot.session_id);
+        let recovered = {
+            let mut bindings = self.recovered_bindings.write().await;
+            let keys = bindings
+                .keys()
+                .filter(|key| key.starts_with(prefix.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| bindings.remove(key.as_str()))
+                .collect::<Vec<_>>()
+        };
+        for binding in recovered {
+            effective.insert(binding.runtime.resource_id.clone(), binding);
+        }
         self.close_bindings(
             snapshot.owner_user_id.as_str(),
             snapshot.session_id.as_str(),
-            &snapshot.plugin_local_bindings,
+            &effective,
         )
         .await;
     }
@@ -277,6 +410,7 @@ impl PluginLocalProvider {
                 "artifact_sha256": binding.runtime.artifact_sha256,
                 "component_key": binding.runtime.component_key,
                 "adapter_session_id": binding.adapter_session_id,
+                "project_id": binding.project_id,
             });
             if let Err(error) = self
                 .request(
@@ -298,4 +432,33 @@ impl PluginLocalProvider {
             }
         }
     }
+}
+
+pub(super) fn is_recoverable_adapter_session_error(error: &ProviderCallError) -> bool {
+    error.message.contains("Plugin 本机会话不存在或已经结束")
+        || error.message.contains("no active control subscriber")
+}
+
+fn validate_recovered_binding(
+    prepared: &PluginLocalProviderBinding,
+    recovered: &PluginLocalProviderBinding,
+) -> Result<(), ProviderCallError> {
+    if recovered.runtime != prepared.runtime
+        || recovered.run_id != prepared.run_id
+        || recovered.device_id != prepared.device_id
+        || recovered.workspace_id != prepared.workspace_id
+        || recovered.project_id != prepared.project_id
+        || recovered.operation != prepared.operation
+        || recovered.snapshot_sha256 != prepared.snapshot_sha256
+        || recovered.tool_snapshot_sha256 != prepared.tool_snapshot_sha256
+        || recovered.server_instructions_sha256 != prepared.server_instructions_sha256
+        || recovered.server_instructions != prepared.server_instructions
+        || recovered.tools != prepared.tools
+        || recovered.oauth_connection_id != prepared.oauth_connection_id
+    {
+        return Err(ProviderCallError::invalid_response(
+            "recovered Plugin Local binding changed its immutable MCP snapshot",
+        ));
+    }
+    Ok(())
 }

@@ -44,12 +44,7 @@ DOCKER_APP_SERVICES=(
   task-runner-scheduler
   chatos-backend
   official-website-backend
-  configuration-center-frontend
-  user-service-frontend
-  memory-engine-frontend
-  project-management-frontend
-  plugin-management-frontend
-  task-runner-frontend
+  admin-console-frontend
   official-website-frontend
 )
 
@@ -70,12 +65,7 @@ BACKEND_SERVICES=(
 )
 
 FRONTEND_SERVICES=(
-  "configuration-center-frontend|config_center_service/frontend|39271"
-  "user-service-frontend|user_service/frontend|39191"
-  "memory-engine-frontend|memory_engine/frontend|4178"
-  "project-management-frontend|project_management_service/frontend|39211"
-  "plugin-management-frontend|plugin_management_service/frontend|39261"
-  "task-runner-frontend|task_runner_service/frontend|39091"
+  "admin-console-frontend|admin_console|39200"
   "official-website-frontend|official_website_service/frontend|39251"
 )
 

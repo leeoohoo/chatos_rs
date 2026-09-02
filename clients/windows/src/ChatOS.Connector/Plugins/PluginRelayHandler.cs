@@ -85,6 +85,7 @@ internal sealed class PluginRelayHandler(
             .ToHashSet(StringComparer.Ordinal);
         var allowlist = StringArray(body, "tool_allowlist", required: false).ToHashSet(StringComparer.Ordinal);
         var blocklist = StringArray(body, "tool_blocklist", required: false).ToHashSet(StringComparer.Ordinal);
+        var projectId = OptionalString(body, "project_id");
         var scope = ResolveScope(request, permissionSnapshot);
 
         var enabled = (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
@@ -109,6 +110,8 @@ internal sealed class PluginRelayHandler(
                 ?? throw new PluginRuntimeException("Plugin Connector owner is unavailable."),
             runtime.Snapshot.State?.DeviceId
                 ?? throw new PluginRuntimeException("Plugin Connector device is unavailable."),
+            scope.WorkspaceId,
+            projectId,
             cancellationToken).ConfigureAwait(false);
         var client = clientFactory.Create(launch);
         try
@@ -169,7 +172,8 @@ internal sealed class PluginRelayHandler(
                 record.ArtifactSha256,
                 launch.ComponentKey,
                 adapterSessionId,
-                scope.WorkspaceId);
+                scope.WorkspaceId,
+                projectId);
             await sessions.InsertAsync(
                 identity,
                 client,
@@ -234,6 +238,7 @@ internal sealed class PluginRelayHandler(
         var invocationId = RequiredString(body, "invocation_id");
         var operation = RequiredString(body, "operation");
         var toolName = RequiredString(body, "tool_name");
+        var projectId = OptionalString(body, "project_id");
         if (operation != "mcp_tools_call")
         {
             throw new PluginRuntimeException("Plugin operation is not supported.");
@@ -246,7 +251,8 @@ internal sealed class PluginRelayHandler(
             releaseId,
             artifactSha256,
             componentKey,
-            scope.WorkspaceId);
+            scope.WorkspaceId,
+            projectId);
         if (OptionalString(body, "conversation_id") is { } conversationId)
         {
             sessions.BindVisualOwner(adapterSessionId, new PluginVisualSessionOwner(
@@ -333,8 +339,13 @@ internal sealed class PluginRelayHandler(
         var runId = RequiredString(body, "run_id");
         var adapterSessionId = RequiredString(body, "adapter_session_id");
         var invocationId = OptionalString(body, "invocation_id");
+        var projectId = OptionalString(body, "project_id");
         var scope = ResolveScope(request, null);
-        var status = await sessions.CancelAsync(adapterSessionId, invocationId, scope.WorkspaceId)
+        var status = await sessions.CancelAsync(
+                adapterSessionId,
+                invocationId,
+                scope.WorkspaceId,
+                projectId)
             .ConfigureAwait(false);
         return RelayHandlerResult.Ok(JsonSerializer.SerializeToElement(new
         {

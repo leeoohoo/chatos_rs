@@ -177,9 +177,6 @@ fn project_visible_to_user(
     project: &TaskProjectRecord,
     current_user: &CurrentUser,
 ) -> Result<bool, ApiError> {
-    if project.id == PUBLIC_PROJECT_ID {
-        return Ok(true);
-    }
     owned_resource_visible_to_user(project.owner_user_id.as_deref(), current_user)
 }
 

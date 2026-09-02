@@ -46,8 +46,7 @@ pub(super) async fn connector_post_json_with_timeout<T: DeserializeOwned, B: Ser
 ) -> Result<T, (StatusCode, Json<Value>)> {
     let token = current_access_token()?;
     let cfg = Config::get();
-    let request = cfg
-        .local_connector_http_client
+    let request = connector_client_for_timeout(cfg, timeout)
         .post(connector_url(cfg, path))
         .bearer_auth(token)
         .json(body)
@@ -75,14 +74,26 @@ pub(super) async fn connector_post_json_with_headers<T: DeserializeOwned, B: Ser
     body: &B,
     headers: &[(&str, String)],
 ) -> Result<T, (StatusCode, Json<Value>)> {
+    let timeout = connector_timeout(Config::get());
+    connector_post_json_with_headers_and_timeout(path, body, headers, timeout).await
+}
+
+pub(super) async fn connector_post_json_with_headers_and_timeout<
+    T: DeserializeOwned,
+    B: Serialize + ?Sized,
+>(
+    path: &str,
+    body: &B,
+    headers: &[(&str, String)],
+    timeout: Duration,
+) -> Result<T, (StatusCode, Json<Value>)> {
     let token = current_access_token()?;
     let cfg = Config::get();
-    let mut request = cfg
-        .local_connector_http_client
+    let mut request = connector_client_for_timeout(cfg, timeout)
         .post(connector_url(cfg, path))
         .bearer_auth(token)
         .json(body)
-        .timeout(connector_timeout(cfg));
+        .timeout(timeout.max(connector_timeout(cfg)));
     for (key, value) in headers {
         request = request.header(*key, value.as_str());
     }
@@ -221,6 +232,14 @@ pub(super) fn local_connector_mcp_relay_path(
 
 fn connector_timeout(cfg: &Config) -> Duration {
     Duration::from_millis(cfg.local_connector_service_request_timeout_ms.max(300) as u64)
+}
+
+fn connector_client_for_timeout(cfg: &Config, timeout: Duration) -> &reqwest::Client {
+    if timeout > connector_timeout(cfg) {
+        &cfg.local_connector_long_running_http_client
+    } else {
+        &cfg.local_connector_http_client
+    }
 }
 
 fn connector_unavailable(detail: String) -> (StatusCode, Json<Value>) {

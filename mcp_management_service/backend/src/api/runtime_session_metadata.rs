@@ -193,6 +193,7 @@ mod tests {
             run_id: "run-1".to_string(),
             device_id: "device-1".to_string(),
             workspace_id: Some("workspace-1".to_string()),
+            project_id: Some("project-1".to_string()),
             adapter_session_id: "adapter-1".to_string(),
             operation: "mcp_tools_call".to_string(),
             session_sha256: "d".repeat(64),

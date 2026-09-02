@@ -38,8 +38,7 @@ use super::runtime_session_metadata::{
 mod routing;
 use routing::*;
 
-const PUBLIC_PROJECT_ID: &str = "-1";
-const PUBLIC_PROJECT_CONTEXT_REVISION: &str = "public-chat-context-v1";
+const USER_CONVERSATION_CONTEXT_REVISION: &str = "user-conversation-context-v1";
 
 pub(super) async fn resolve_runtime_session(
     State(state): State<AppState>,
@@ -51,6 +50,7 @@ pub(super) async fn resolve_runtime_session(
     let trace_id = identity.require_signed_trace_id()?.to_string();
     let caller_service = identity.caller.clone();
     validate_session_request(&request)?;
+    request.project_id = normalized(request.project_id.clone());
     request.workspace_route = normalize_runtime_workspace_route(request.workspace_route.clone())?;
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
     let contact_agent_id = normalized(request.contact_agent_id.clone());
@@ -64,14 +64,26 @@ pub(super) async fn resolve_runtime_session(
         .clone()
         .map(|items| normalized_unique_items(items, "requested_mcp_ids", 200))
         .transpose()?;
-    let project_context = if request.project_id.trim() == PUBLIC_PROJECT_ID {
-        public_chat_execution_context(request.owner_user_id.as_str())
-    } else {
-        state
+    let remote_connection_route = match normalized(request.default_remote_connection_id.clone()) {
+        Some(remote_connection_id) => Some(
+            state
+                .providers
+                .resolve_remote_connection_route(
+                    request.owner_user_id.trim(),
+                    remote_connection_id.as_str(),
+                )
+                .await
+                .map_err(|error| ApiError::conflict(error.message))?,
+        ),
+        None => None,
+    };
+    let project_context = match request.project_id.as_deref() {
+        Some(project_id) => state
             .project_context_client
-            .resolve(request.project_id.as_str(), request.owner_user_id.as_str())
+            .resolve(project_id, request.owner_user_id.as_str())
             .await
-            .map_err(ApiError::bad_gateway)?
+            .map_err(ApiError::bad_gateway)?,
+        None => user_conversation_execution_context(request.owner_user_id.as_str()),
     };
     let execution_scope_run_id = normalized(request.run_id.clone());
     validate_context_overrides(&request, &project_context)?;
@@ -143,6 +155,10 @@ pub(super) async fn resolve_runtime_session(
         request.workspace_route.as_ref(),
         &project_context,
     );
+    bind_remote_connection_route(
+        route_response.routes.as_mut_slice(),
+        remote_connection_route.as_ref(),
+    );
     validate_runtime_workspace_route_binding(
         route_response.routes.as_slice(),
         request.workspace_route.as_ref(),
@@ -155,7 +171,7 @@ pub(super) async fn resolve_runtime_session(
             session_id.as_str(),
             request.owner_user_id.trim(),
             agent_key,
-            request.project_id.trim(),
+            request.project_id.as_deref(),
             request.run_id.as_deref(),
             request.source_session_id.as_deref(),
             expires_at_unix,
@@ -168,13 +184,14 @@ pub(super) async fn resolve_runtime_session(
             session_id.as_str(),
             request.owner_user_id.trim(),
             agent_key,
-            request.project_id.trim(),
+            request.project_id.as_deref(),
             request.run_id.as_deref(),
             request.turn_id.as_deref(),
             request.task_id.as_deref(),
             request.source_session_id.as_deref(),
             request.source_user_message_id.as_deref(),
             request.default_model_config_id.as_deref(),
+            request.default_remote_connection_id.as_deref(),
             request.task_profile.as_deref(),
             expected_project_task_ids.as_slice(),
             expires_at_unix,
@@ -319,7 +336,7 @@ pub(super) async fn resolve_runtime_session(
             owner_user_id: request.owner_user_id.trim().to_string(),
             agent_key: agent_key.as_str().to_string(),
             task_profile: normalized(request.task_profile.clone()),
-            project_id: request.project_id.trim().to_string(),
+            project_id: request.project_id.clone(),
             device_id: device_id.clone(),
             run_id: normalized(request.run_id.clone()),
             turn_id: normalized(request.turn_id.clone()),
@@ -328,6 +345,7 @@ pub(super) async fn resolve_runtime_session(
             source_user_message_id: normalized(request.source_user_message_id.clone()),
             contact_agent_id: contact_agent_id.clone(),
             default_model_config_id: normalized(request.default_model_config_id.clone()),
+            default_remote_connection_id: normalized(request.default_remote_connection_id.clone()),
             expected_project_task_ids: expected_project_task_ids.clone(),
             policy_revision: capabilities.policy_revision.clone(),
             route_revision: route_revision.clone(),
@@ -362,7 +380,7 @@ pub(super) async fn resolve_runtime_session(
             owner_role: normalized(request.owner_role),
             agent_key: agent_key.as_str().to_string(),
             task_profile: normalized(request.task_profile),
-            project_id: request.project_id.trim().to_string(),
+            project_id: request.project_id.clone(),
             device_id,
             run_id: normalized(request.run_id),
             execution_group_id: normalized(request.execution_group_id),
@@ -374,6 +392,8 @@ pub(super) async fn resolve_runtime_session(
             source_user_message_id: normalized(request.source_user_message_id),
             contact_agent_id,
             default_model_config_id: normalized(request.default_model_config_id),
+            default_remote_connection_id: normalized(request.default_remote_connection_id),
+            remote_connection_route,
             tool_result_max_chars: request.tool_result_max_chars,
             expected_project_task_ids,
             workspace_route: request.workspace_route,
@@ -400,7 +420,7 @@ pub(super) async fn resolve_runtime_session(
             trace_id,
             represented_user_id: Some(request.owner_user_id.trim().to_string()),
             tenant_id: Some(request.tenant_id.trim().to_string()),
-            project_id: Some(request.project_id.trim().to_string()),
+            project_id: request.project_id.clone(),
             resource_type: "mcp_runtime_session".to_string(),
             resource_id: session_id.clone(),
             resource_name: None,
@@ -414,7 +434,7 @@ pub(super) async fn resolve_runtime_session(
                 .runtime_execution_scopes
                 .attach_session(
                     request.owner_user_id.trim(),
-                    request.project_id.trim(),
+                    request.project_id.as_deref(),
                     run_id,
                     execution_scope_provider,
                     session_id.as_str(),
@@ -441,7 +461,7 @@ pub(super) async fn resolve_runtime_session(
                     .runtime_execution_scopes
                     .detach_session(
                         request.owner_user_id.trim(),
-                        request.project_id.trim(),
+                        request.project_id.as_deref(),
                         run_id,
                         execution_scope_provider,
                         session_id.as_str(),
@@ -496,13 +516,13 @@ pub(super) async fn resolve_runtime_session(
     result
 }
 
-fn public_chat_execution_context(owner_user_id: &str) -> ProjectExecutionContext {
+fn user_conversation_execution_context(owner_user_id: &str) -> ProjectExecutionContext {
     ProjectExecutionContext {
-        project_id: PUBLIC_PROJECT_ID.to_string(),
+        project_id: None,
         owner_user_id: owner_user_id.trim().to_string(),
         workspace_provider: WorkspaceProviderKind::None,
         workspace: None,
-        revision: PUBLIC_PROJECT_CONTEXT_REVISION.to_string(),
+        revision: USER_CONVERSATION_CONTEXT_REVISION.to_string(),
     }
 }
 
@@ -585,6 +605,7 @@ fn runtime_grant_claims(snapshot: &RuntimeSessionSnapshot) -> RuntimeGrantClaims
         source_user_message_id: snapshot.source_user_message_id.clone(),
         contact_agent_id: snapshot.contact_agent_id.clone(),
         default_model_config_id: snapshot.default_model_config_id.clone(),
+        default_remote_connection_id: snapshot.default_remote_connection_id.clone(),
         expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
         policy_revision: snapshot.policy_revision.clone(),
         route_revision: snapshot.route_revision.clone(),
@@ -655,7 +676,7 @@ pub(super) async fn close_runtime_session(
             .runtime_execution_scopes
             .detach_session(
                 snapshot.owner_user_id.as_str(),
-                snapshot.project_id.as_str(),
+                snapshot.project_id.as_deref(),
                 run_id,
                 provider,
                 snapshot.session_id.as_str(),
@@ -679,7 +700,7 @@ pub(super) async fn close_runtime_session(
                         .runtime_execution_scopes
                         .attach_session(
                             snapshot.owner_user_id.as_str(),
-                            snapshot.project_id.as_str(),
+                            snapshot.project_id.as_deref(),
                             run_id,
                             provider,
                             snapshot.session_id.as_str(),
@@ -714,7 +735,7 @@ pub(super) async fn close_runtime_session(
                     .runtime_execution_scopes
                     .attach_session(
                         snapshot.owner_user_id.as_str(),
-                        snapshot.project_id.as_str(),
+                        snapshot.project_id.as_deref(),
                         run_id,
                         provider,
                         snapshot.session_id.as_str(),
@@ -770,7 +791,7 @@ fn record_runtime_session_audit(
         trace_id,
         represented_user_id: Some(snapshot.owner_user_id.clone()),
         tenant_id: Some(snapshot.tenant_id.clone()),
-        project_id: Some(snapshot.project_id.clone()),
+        project_id: snapshot.project_id.clone(),
         resource_type: "mcp_runtime_session".to_string(),
         resource_id: snapshot.session_id.clone(),
         resource_name: None,
@@ -1049,7 +1070,6 @@ fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(),
         ("tenant_id", request.tenant_id.as_str()),
         ("owner_user_id", request.owner_user_id.as_str()),
         ("agent_key", request.agent_key.as_str()),
-        ("project_id", request.project_id.as_str()),
     ] {
         if value.trim().is_empty() {
             return Err(ApiError::bad_request(format!("{field} is required")));

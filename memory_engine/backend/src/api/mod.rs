@@ -14,7 +14,6 @@ mod internal_audit;
 mod internal_auth;
 mod jobs_api;
 mod memory_auth;
-mod model_profile_auth;
 mod operator_auth;
 mod queue_operations_api;
 mod records_api;

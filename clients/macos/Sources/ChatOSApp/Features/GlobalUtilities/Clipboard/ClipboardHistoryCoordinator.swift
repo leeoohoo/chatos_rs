@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSConnector
 import Combine
 import SwiftUI
 
@@ -22,8 +23,15 @@ final class ClipboardHistoryCoordinator {
         monitor.onEntryStored = { [weak viewModel] entry in
             viewModel?.entryWasStored(entry)
         }
-        viewModel.onRestoreSucceeded = { [weak panelController] in
-            panelController?.closeAndRestorePreviousApplication()
+        viewModel.onRestoreSucceeded = { [weak panelController, weak viewModel] in
+            guard NativePasteService.hasAccessibilityAccess else {
+                NativePasteService.requestAccessibilityAccess()
+                viewModel?.showAutomaticPastePermissionNotice()
+                return
+            }
+            panelController?.closeAndRestorePreviousApplication {
+                NativePasteService.postPasteShortcut()
+            }
         }
         viewModel.onCancel = { [weak panelController] in
             panelController?.closeAndRestorePreviousApplication()
@@ -51,6 +59,13 @@ final class ClipboardHistoryCoordinator {
             viewModel: viewModel,
             isEnglish: model?.interfaceLanguage == .english
         ))
-        panelController.present()
+        panelController.present(focusingFirstTextInput: true)
+    }
+
+    @discardableResult
+    func dismissIfPresented() -> Bool {
+        guard panelController.isPresented else { return false }
+        panelController.closeAndRestorePreviousApplication()
+        return true
     }
 }

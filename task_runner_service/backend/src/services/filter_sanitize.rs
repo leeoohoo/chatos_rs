@@ -12,8 +12,13 @@ pub(super) fn sanitize_task_list_filters(mut filters: TaskListFilters) -> TaskLi
     filters.keyword = normalized_optional(filters.keyword).map(|value| value.to_ascii_lowercase());
     filters.tag = normalized_optional(filters.tag);
     filters.model_config_id = normalized_optional(filters.model_config_id);
-    filters.project_id =
-        normalized_optional(filters.project_id).map(|value| normalize_project_id(Some(value)));
+    filters.project_id = normalize_project_id(normalized_optional(filters.project_id));
+    if filters.project_id.is_some() {
+        filters.project_scope = Some(crate::models::TaskProjectScopeFilter::Project);
+    } else if filters.project_scope == Some(crate::models::TaskProjectScopeFilter::UserConversation)
+    {
+        filters.project_id = None;
+    }
     filters.creator_user_id = normalized_optional(filters.creator_user_id);
     filters.parent_task_id = normalized_optional(filters.parent_task_id);
     filters.source_run_id = normalized_optional(filters.source_run_id);

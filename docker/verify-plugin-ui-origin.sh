@@ -93,7 +93,7 @@ require_block_text 'location ^~ /api/plugin-ui/workbench/ {'
 require_block_text 'limit_except GET {'
 require_block_text 'proxy_pass_request_body off;'
 require_block_text 'proxy_hide_header Access-Control-Allow-Origin;'
-require_block_text 'proxy_pass http://127.0.0.1:3997;'
+require_block_text 'proxy_pass http://127.0.0.1:9080;'
 require_block_text 'return 404;'
 
 proxy_pass_count="$(grep -c '^[[:space:]]*proxy_pass[[:space:]]' <<< "$resource_block")"

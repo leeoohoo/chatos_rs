@@ -38,6 +38,102 @@ public sealed class PluginManifestLoaderTests : IDisposable
     }
 
     [Fact]
+    public async Task AllPluginsUseDifferentDataDirectoriesForDifferentChatOsUsers()
+    {
+        var installation = CreateInstallation();
+        var loader = new PluginManifestLoader(Path.Combine(_directory, "runtime-users"));
+        var permissions = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "process.spawn",
+            "workspace.read",
+        };
+
+        var first = await loader.PrepareAsync(
+            Record(installation),
+            "main",
+            null,
+            "session-user-1",
+            null,
+            permissions,
+            "owner-1",
+            "device-1");
+        var second = await loader.PrepareAsync(
+            Record(installation),
+            "main",
+            null,
+            "session-user-2",
+            null,
+            permissions,
+            "owner-2",
+            "device-1");
+
+        Assert.NotEqual(
+            first.Environment["CHATOS_PLUGIN_DATA_DIR"],
+            second.Environment["CHATOS_PLUGIN_DATA_DIR"]);
+        Assert.NotEqual(
+            first.Environment["CHATOS_PLUGIN_CACHE_DIR"],
+            second.Environment["CHATOS_PLUGIN_CACHE_DIR"]);
+        Assert.Contains(
+            Path.Combine("data", "users"),
+            first.Environment["CHATOS_PLUGIN_DATA_DIR"],
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ProjectRuntimeContextSeparatesProjectsAndFallsBackToDevicePublicProject()
+    {
+        var installation = CreateInstallation();
+        await File.WriteAllTextAsync(
+            Path.Combine(installation, "chatos.plugin.json"),
+            """{"schemaVersion":3,"name":"test-plugin","version":"1.0.0","mcpServers":{"main":{"type":"stdio","bin":"test-plugin","args":["serve"]}},"permissions":[{"permission":"process.spawn","required":true,"components":["main"]}],"runtimeContext":{"scope":"project","components":["main"],"optional":["project.id","workspace.id","workspace.root"],"storageIsolation":"project","missingContext":"device"}}""");
+        var loader = new PluginManifestLoader(Path.Combine(_directory, "runtime-projects"));
+        var permissions = new HashSet<string>(StringComparer.Ordinal) { "process.spawn" };
+
+        var first = await loader.PrepareAsync(
+            Record(installation),
+            "main",
+            null,
+            "session-project-1",
+            null,
+            permissions,
+            "owner-1",
+            "device-1",
+            workspaceId: "workspace-1",
+            projectId: "project-1");
+        var second = await loader.PrepareAsync(
+            Record(installation),
+            "main",
+            null,
+            "session-project-2",
+            null,
+            permissions,
+            "owner-1",
+            "device-1",
+            workspaceId: "workspace-1",
+            projectId: "project-2");
+        var publicProject = await loader.PrepareAsync(
+            Record(installation),
+            "main",
+            null,
+            "session-public-project",
+            null,
+            permissions,
+            "owner-1",
+            "device-1");
+
+        Assert.NotEqual(
+            first.Environment["CHATOS_PLUGIN_DATA_DIR"],
+            second.Environment["CHATOS_PLUGIN_DATA_DIR"]);
+        Assert.NotEqual(
+            first.Environment["CHATOS_PLUGIN_DATA_DIR"],
+            publicProject.Environment["CHATOS_PLUGIN_DATA_DIR"]);
+        Assert.Equal("project", first.Environment["CHATOS_CONTEXT_SCOPE"]);
+        Assert.Equal("project-1", first.Environment["CHATOS_PROJECT_ID"]);
+        Assert.Equal("device", publicProject.Environment["CHATOS_CONTEXT_SCOPE"]);
+        Assert.False(publicProject.Environment.ContainsKey("CHATOS_PROJECT_ID"));
+    }
+
+    [Fact]
     public async Task RejectsMissingRequiredPermissionAndEscapingBin()
     {
         var installation = CreateInstallation();

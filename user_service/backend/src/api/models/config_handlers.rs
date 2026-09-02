@@ -5,7 +5,6 @@ use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
 
 use crate::auth::CurrentPrincipal;
-use crate::integrations::{sync_model_config_delete, sync_model_config_upsert};
 use crate::models::{
     CreateUserModelConfigRequest, UpdateUserModelConfigRequest, UserModelConfigRecord,
 };
@@ -87,8 +86,6 @@ pub(in crate::api) async fn create_model_config(
             "model is required; use /api/model-providers to save provider credentials and import models",
         ));
     };
-    let mut sync_warnings = Vec::new();
-
     let id = input.id.clone().unwrap_or_else(|| {
         model_config_id_for(
             owner_user_id.as_str(),
@@ -154,8 +151,7 @@ pub(in crate::api) async fn create_model_config(
         .save_user_model_config(&record)
         .await
         .map_err(internal_error)?;
-    sync_warnings.extend(sync_model_config_upsert(&state, &saved).await);
-    let value = model_config_public_value(saved, false, Some(sync_warnings));
+    let value = model_config_public_value(saved, false, None);
     Ok(Json(value))
 }
 
@@ -301,15 +297,15 @@ pub(in crate::api) async fn update_model_config(
         .save_user_model_config(&record)
         .await
         .map_err(internal_error)?;
-    let sync_warnings = if saved.model.trim().is_empty() {
+    let warnings = if saved.model.trim().is_empty() {
         vec!["model is empty; refresh provider models before it can be used".to_string()]
     } else {
-        sync_model_config_upsert(&state, &saved).await
+        Vec::new()
     };
     Ok(Json(model_config_public_value(
         saved,
         false,
-        Some(sync_warnings),
+        Some(warnings),
     )))
 }
 
@@ -348,13 +344,6 @@ pub(in crate::api) async fn delete_model_config(
     };
     ensure_model_access(&principal, &record)?;
 
-    let sync_warnings = sync_model_config_delete(&state, id.as_str()).await;
-    if !sync_warnings.is_empty() {
-        return Err(internal_error(format!(
-            "model config downstream cleanup failed: {}",
-            sync_warnings.join("; ")
-        )));
-    }
     let deleted = state
         .store
         .delete_user_model_config(id.as_str())

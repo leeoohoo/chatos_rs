@@ -29,7 +29,9 @@ public static class ServiceCollectionExtensions
                 ? options.BaseUrl
                 : $"{options.BaseUrl}/";
             client.BaseAddress = new Uri(baseUrl, UriKind.Absolute);
-            client.Timeout = TimeSpan.FromSeconds(60);
+            // Per-request deadlines are enforced by ChatOSApiClient so Harness imports can
+            // opt into a longer timeout without being preempted by HttpClient's global limit.
+            client.Timeout = Timeout.InfiniteTimeSpan;
         });
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();

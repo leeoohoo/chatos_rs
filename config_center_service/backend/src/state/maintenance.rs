@@ -102,6 +102,75 @@ impl AppState {
         Ok(())
     }
 
+    pub(super) async fn purge_retired_config_keys(&self) -> Result<(), String> {
+        for mut release in self.store.list_all_releases().await? {
+            let previous_values_len = release.values.len();
+            release
+                .values
+                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            let previous_changed_keys_len = release.changed_keys.len();
+            release
+                .changed_keys
+                .retain(|key| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            if release.values.len() != previous_values_len
+                || release.changed_keys.len() != previous_changed_keys_len
+            {
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        let definitions = self.store.list_definitions().await?;
+        for mut snapshot in self.store.list_all_snapshots().await? {
+            let previous_values_len = snapshot.values.len();
+            snapshot
+                .values
+                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            let previous_env = snapshot.env.clone();
+            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
+                definition.scope == "shared"
+                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
+            });
+            if snapshot.values.len() != previous_values_len || snapshot.env != previous_env {
+                snapshot.checksum = checksum(&json!({
+                    "values": snapshot.values,
+                    "env": snapshot.env,
+                }))?;
+                self.store.save_snapshot(&snapshot).await?;
+            }
+        }
+
+        for mut draft in self.store.list_drafts().await? {
+            let previous_len = draft.changes.len();
+            draft
+                .changes
+                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            if draft.changes.len() != previous_len {
+                draft.validation_status = "pending".to_string();
+                draft.validation_errors.clear();
+                draft.updated_at = Utc::now().to_rfc3339();
+                self.store.save_draft(&draft).await?;
+            }
+        }
+
+        for mut event in self.store.list_all_audit().await? {
+            let previous_len = event.changed_keys.len();
+            event
+                .changed_keys
+                .retain(|key| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            if event.changed_keys.len() != previous_len {
+                self.store.save_audit(&event).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(&definitions, "remove retired configuration")
+            .await?;
+        tracing::info!(
+            retired_key_count = RETIRED_CONFIG_KEYS.len(),
+            "retired configuration has been removed from configuration center"
+        );
+        Ok(())
+    }
+
     pub(super) async fn migrate_agent_max_iterations_config(&self) -> Result<(), String> {
         use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
 
@@ -815,7 +884,7 @@ impl AppState {
     pub(super) async fn migrate_user_service_runtime_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = user_service_runtime_default_values(&definitions);
-        if defaults.len() != 27 {
+        if defaults.len() != USER_SERVICE_RUNTIME_CONFIG_KEYS.len() {
             return Err(
                 "user service runtime configuration definitions are incomplete".to_string(),
             );
@@ -874,33 +943,6 @@ impl AppState {
             }
         }
 
-        for mut draft in self.store.list_drafts().await? {
-            let Some(value) = draft
-                .changes
-                .get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
-            else {
-                continue;
-            };
-            if value
-                .as_str()
-                .is_some_and(|value| value.trim().starts_with("https://"))
-            {
-                continue;
-            }
-            let replacement = defaults
-                .get(USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
-                .cloned()
-                .ok_or_else(|| "User Service Memory Engine HTTPS default is missing".to_string())?;
-            draft.changes.insert(
-                USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
-                replacement,
-            );
-            draft.validation_status = "pending".to_string();
-            draft.validation_errors.clear();
-            draft.updated_at = Utc::now().to_rfc3339();
-            self.store.save_draft(&draft).await?;
-        }
-
         self.republish_active_releases_to_consul(
             &definitions,
             "add User Service runtime configuration",
@@ -909,7 +951,6 @@ impl AppState {
 
         tracing::info!(
             internal_mtls_port_key = USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-            memory_engine_base_url_key = USER_SERVICE_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             task_runner_base_url_key = USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             harness_enabled_key = USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
             "User Service runtime configuration is present in configuration center releases and snapshots"
@@ -1178,6 +1219,15 @@ impl AppState {
                 &mut draft.changes,
                 CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
                 replacement,
+            ) | migrate_service_url_draft(
+                &mut draft.changes,
+                CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+                defaults
+                    .get(CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
+                    .ok_or_else(|| {
+                        "ChatOS User Service internal HTTPS default is missing".to_string()
+                    })?,
+                &["https://127.0.0.1:39192", "https://localhost:39192"],
             ) | migrate_https_url_draft(
                 &mut draft.changes,
                 CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
@@ -1200,6 +1250,7 @@ impl AppState {
 
         tracing::info!(
             user_service_base_url_key = CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            user_service_internal_base_url_key = CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
             project_service_base_url_key = CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
             task_runner_base_url_key = CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             memory_engine_base_url_key = CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,

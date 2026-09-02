@@ -27,6 +27,14 @@ pub(super) fn resolve_binding<'a>(
     if system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_none() {
         return resolve_user_mcp_binding(snapshot, route);
     }
+    if route.resource_id
+        == chatos_mcp::system_mcp_descriptor(
+            chatos_plugin_management_sdk::SystemMcpKey::RemoteConnectionController,
+        )
+        .resource_id
+    {
+        return resolve_remote_connection_binding(snapshot, route);
+    }
     if snapshot.project_context.workspace_provider != WorkspaceProviderKind::LocalConnector {
         return Err(ProviderCallError::provider_unavailable(
             "runtime session is not pinned to a Local Connector workspace",
@@ -102,6 +110,39 @@ pub(super) fn resolve_binding<'a>(
         relative_root,
         default_tool_root,
         owned_paths,
+        enabled_builtin_kinds: Some(enabled_builtin_kinds),
+        inline_http: None,
+        resource_id: None,
+    })
+}
+
+fn resolve_remote_connection_binding<'a>(
+    snapshot: &'a RuntimeSessionSnapshot,
+    route: &ResolvedMcpRoute,
+) -> Result<LocalConnectorBinding<'a>, ProviderCallError> {
+    let target = snapshot.remote_connection_route.as_ref().ok_or_else(|| {
+        ProviderCallError::provider_unavailable(
+            "Remote Connection route is missing its immutable Local Connector target",
+        )
+    })?;
+    let expected_provider_ref = format!(
+        "device:{}/workspace:{}",
+        target.device_id, target.workspace_id
+    );
+    if route.provider_ref.as_deref() != Some(expected_provider_ref.as_str()) {
+        return Err(ProviderCallError::provider_unavailable(
+            "Remote Connection route does not match its immutable Local Connector target",
+        ));
+    }
+    let enabled_builtin_kinds = builtin_kind_header_value([
+        chatos_plugin_management_sdk::SystemMcpKey::RemoteConnectionController.as_str(),
+    ]);
+    Ok(LocalConnectorBinding {
+        device_id: target.device_id.as_str(),
+        workspace_id: Some(target.workspace_id.as_str()),
+        relative_root: None,
+        default_tool_root: None,
+        owned_paths: &[],
         enabled_builtin_kinds: Some(enabled_builtin_kinds),
         inline_http: None,
         resource_id: None,

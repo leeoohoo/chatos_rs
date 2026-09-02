@@ -117,3 +117,140 @@ fn rejects_old_schema_versions() {
     raw["schemaVersion"] = json!(2);
     assert!(parse_plugin_manifest(raw.to_string().as_str()).is_err());
 }
+
+#[test]
+fn parses_workbench_ui_with_local_http_runtime() {
+    let raw = json!({
+        "schemaVersion": 3,
+        "name": "diagram-studio",
+        "version": "1.0.0",
+        "description": "Diagram workbench",
+        "author": {"name": "ChatOS"},
+        "ui": [{
+            "componentKey": "diagram-workbench",
+            "source": "./ui/index.html",
+            "surface": "workbench",
+            "runtime": {
+                "type": "local_http",
+                "bin": "diagram-studio",
+                "args": ["studio"],
+                "healthPath": "/api/health",
+                "launchTimeoutMs": 20000
+            }
+        }],
+        "interface": {
+            "displayName": "Diagram Studio",
+            "shortDescription": "Diagrams",
+            "longDescription": "Create editable technical diagrams.",
+            "developerName": "ChatOS",
+            "category": "Productivity"
+        },
+        "permissions": [{
+            "permission": "process.spawn",
+            "required": true,
+            "components": ["diagram-workbench"]
+        }]
+    });
+    let manifest = parse_plugin_manifest(raw.to_string().as_str()).expect("local UI runtime");
+    let runtime = manifest.ui[0].runtime.as_ref().expect("runtime");
+    assert_eq!(runtime.bin(), "diagram-studio");
+    assert_eq!(runtime.args(), &["studio"]);
+    assert_eq!(runtime.health_path(), "/api/health");
+    assert_eq!(runtime.launch_timeout_ms(), 20_000);
+
+    let descriptor = plugin_component_descriptors(&manifest)
+        .into_iter()
+        .find(|component| component.component_key == "diagram-workbench")
+        .expect("UI descriptor");
+    assert_eq!(descriptor.runtime_kind, "local_http_ui");
+    assert_eq!(
+        descriptor.metadata.get("runtime"),
+        Some(&json!({
+            "type": "local_http",
+            "bin": "diagram-studio",
+            "args": ["studio"],
+            "healthPath": "/api/health",
+            "launchTimeoutMs": 20000
+        }))
+    );
+}
+
+#[test]
+fn rejects_unsafe_or_unpermissioned_local_ui_runtime() {
+    let base = json!({
+        "schemaVersion": 3,
+        "name": "diagram-studio",
+        "version": "1.0.0",
+        "description": "Diagram workbench",
+        "author": {"name": "ChatOS"},
+        "ui": [{
+            "componentKey": "diagram-workbench",
+            "source": "./ui/index.html",
+            "surface": "detail_panel",
+            "runtime": {
+                "type": "local_http",
+                "bin": "../diagram-studio",
+                "healthPath": "/../health"
+            }
+        }],
+        "interface": {
+            "displayName": "Diagram Studio",
+            "shortDescription": "Diagrams",
+            "longDescription": "Create editable technical diagrams.",
+            "developerName": "ChatOS",
+            "category": "Productivity"
+        }
+    });
+    let error = parse_plugin_manifest(base.to_string().as_str()).expect_err("must reject");
+    let message = error.to_string();
+    assert!(message.contains("package.json executable name"));
+    assert!(message.contains("workbench surface"));
+    assert!(message.contains("safe absolute HTTP path"));
+    assert!(message.contains("process.spawn"));
+}
+
+#[test]
+fn parses_and_validates_project_runtime_context() {
+    let mut raw = serde_json::from_str::<serde_json::Value>(
+        manifest_with_mcp(json!({"bin": "open-computer-use"})).as_str(),
+    )
+    .unwrap();
+    raw["runtimeContext"] = json!({
+        "scope": "project",
+        "components": ["computer-use"],
+        "required": [],
+        "optional": ["project.id", "workspace.id", "workspace.root"],
+        "storageIsolation": "project",
+        "missingContext": "device"
+    });
+    let manifest = parse_plugin_manifest(raw.to_string().as_str()).expect("runtime context");
+    let context = manifest.runtime_context.expect("runtime context");
+    assert_eq!(context.scope, PluginRuntimeContextScope::Project);
+    assert_eq!(
+        context.storage_isolation,
+        PluginRuntimeContextStorageIsolation::Project
+    );
+    assert_eq!(
+        context.missing_context,
+        PluginRuntimeContextMissingContext::Device
+    );
+}
+
+#[test]
+fn rejects_unknown_runtime_context_components_and_fields() {
+    let mut raw = serde_json::from_str::<serde_json::Value>(
+        manifest_with_mcp(json!({"bin": "open-computer-use"})).as_str(),
+    )
+    .unwrap();
+    raw["runtimeContext"] = json!({
+        "scope": "project",
+        "components": ["missing"],
+        "required": ["secret.token"],
+        "storageIsolation": "project",
+        "missingContext": "device"
+    });
+    let error = parse_plugin_manifest(raw.to_string().as_str()).expect_err("invalid context");
+    let message = error.to_string();
+    assert!(message.contains("component is not declared"));
+    assert!(message.contains("unsupported runtime context field"));
+}

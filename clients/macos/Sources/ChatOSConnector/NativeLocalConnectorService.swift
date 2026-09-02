@@ -28,6 +28,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
+    let pluginApplicationRuntime = NativePluginApplicationRuntime()
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
@@ -125,6 +126,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             try? await gateway.disconnectDevice(token: token, id: deviceID)
         }
         await stopGatewayConnection()
+        await pluginApplicationRuntime.stopAll()
         try secretStore.delete(account: Self.accessTokenAccount)
         cachedAccessToken = nil
         hasLoadedAccessToken = true
@@ -142,6 +144,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         reconnectTask?.cancel()
         reconnectTask = nil
         await closeGatewayConnection(terminatePluginSessions: true)
+        await pluginApplicationRuntime.stopAll()
     }
 
     public func recoverGatewayConnection(forceReconnect: Bool = false) async {
@@ -575,9 +578,16 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         guard webSocket === socket else { return }
         Self.logger.error("网关长连接中断：\(error.localizedDescription, privacy: .public)")
         recordGatewayReconnectFailure()
-        await closeGatewayConnection(terminatePluginSessions: true)
+        // A transient gateway outage must not destroy prepared Plugin MCP
+        // processes. Their adapter session IDs remain valid locally and can be
+        // reused after the authenticated connector channel is re-established.
+        await closeGatewayConnection(
+            terminatePluginSessions: Self.transientGatewayFailureTerminatesPluginSessions
+        )
         scheduleGatewayReconnect()
     }
+
+    static let transientGatewayFailureTerminatesPluginSessions = false
 
     private func scheduleGatewayReconnect() {
         guard shouldMaintainGatewayConnection,
@@ -642,6 +652,15 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     func publishPluginInstallationStatus() async throws {
+        let token = try requireAccessToken()
+        let sources = try await gateway.pluginSources(token: token)
+        if reconcileInstalledPluginIdentities(with: sources.items) {
+            try stateStore.save(state)
+        }
+        try await sendPluginInstallationStatus()
+    }
+
+    func sendPluginInstallationStatus() async throws {
         guard let socket = webSocket,
               let ownerUserID = state.user?.id,
               let deviceID = state.deviceID else {

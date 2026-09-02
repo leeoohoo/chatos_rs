@@ -519,7 +519,7 @@ async fn retry_chatos_message_run(
                 .or(task.creator_user_id.as_deref()),
         );
         audit.tenant_id(Some(task.tenant_id.as_str()));
-        audit.project_id(Some(task.project_id.as_str()));
+        audit.project_id(task.project_id.as_deref());
         audit.resource_name(Some(task.title.as_str()));
     }
     require_retryable_message_run(&run.status)?;
@@ -576,7 +576,7 @@ async fn retry_chatos_message_run_integration(
                 .or(task.creator_user_id.as_deref()),
         );
         audit.tenant_id(Some(task.tenant_id.as_str()));
-        audit.project_id(Some(task.project_id.as_str()));
+        audit.project_id(task.project_id.as_deref());
         audit.resource_name(Some(task.title.as_str()));
     }
     let retried = state
@@ -626,7 +626,7 @@ async fn waive_chatos_message_run_integration(
                 .or(task.creator_user_id.as_deref()),
         );
         audit.tenant_id(Some(task.tenant_id.as_str()));
-        audit.project_id(Some(task.project_id.as_str()));
+        audit.project_id(task.project_id.as_deref());
         audit.resource_name(Some(task.title.as_str()));
     }
     let waived = state

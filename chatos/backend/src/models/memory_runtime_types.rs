@@ -17,7 +17,7 @@ pub struct ReviewRepairStatusDto {
     pub running_job_count: i64,
     pub pending_message_count: i64,
     pub scope_session_count: usize,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
     pub job_type: String,

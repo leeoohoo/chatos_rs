@@ -250,7 +250,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             .as_str()
             .to_string(),
         task_profile: None,
-        project_id: "project-1".to_string(),
+        project_id: Some("project-1".to_string()),
         device_id: None,
         run_id: None,
         execution_group_id: None,
@@ -262,11 +262,13 @@ fn snapshot() -> RuntimeSessionSnapshot {
         source_user_message_id: Some("message-1".to_string()),
         contact_agent_id: Some("contact-agent-1".to_string()),
         default_model_config_id: Some("model-1".to_string()),
+        default_remote_connection_id: None,
+        remote_connection_route: None,
         tool_result_max_chars: None,
         expected_project_task_ids: Vec::new(),
         workspace_route: None,
         project_context: ProjectExecutionContext {
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             owner_user_id: "user-1".to_string(),
             workspace_provider: WorkspaceProviderKind::None,
             workspace: None,

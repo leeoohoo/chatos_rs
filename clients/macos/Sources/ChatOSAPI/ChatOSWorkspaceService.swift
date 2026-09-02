@@ -107,9 +107,8 @@ private struct ConversationDTO: Decodable, Sendable {
         let runtime = source.object(at: "chat_runtime") ?? [:]
         let contact = source.object(at: "contact") ?? [:]
         let uiContact = source.object(at: "ui_contact") ?? [:]
-        let resolvedProjectID = projectID?.nonEmpty
-            ?? runtime.firstString("project_id", "projectId")
-            ?? "-1"
+        let resolvedProjectID = projectID?.projectScope
+            ?? runtime.firstString("project_id", "projectId")?.projectScope
         let resolvedContactID = contact.firstString("contact_id", "contactId")
             ?? uiContact.firstString("contact_id", "contactId")
         let resolvedAgentID = contact.firstString("agent_id", "agentId")
@@ -173,6 +172,11 @@ private extension String {
     var nonEmpty: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+
+    var projectScope: String? {
+        guard let value = nonEmpty, value != "-1", value != "0" else { return nil }
+        return value
     }
 }
 

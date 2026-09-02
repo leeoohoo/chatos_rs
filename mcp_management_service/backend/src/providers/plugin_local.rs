@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::runtime::PluginLocalProviderBinding;
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::sync::{Mutex, RwLock};
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
@@ -32,6 +35,8 @@ pub(super) struct PluginLocalProvider {
     internal_secret: Option<String>,
     request_timeout: Duration,
     response_limit_bytes: usize,
+    recovered_bindings: Arc<RwLock<HashMap<String, PluginLocalProviderBinding>>>,
+    recovery_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Deserialize)]

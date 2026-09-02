@@ -69,7 +69,7 @@ pub(crate) async fn process_level0_selection(
     let build = match build_subject_memory_from_summaries(
         config,
         db,
-        Some(req.tenant_id.as_str()),
+        req.tenant_id.as_str(),
         settings.prompt_title.as_str(),
         selected_texts.as_slice(),
         settings.token_limit,

@@ -17,7 +17,7 @@ use crate::services::task_manager::{TaskDraft, TaskRecord};
 #[derive(Debug, Clone, Serialize)]
 pub struct ReviewRepairRealtimePayload {
     pub conversation_id: String,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
     pub running: bool,
@@ -37,7 +37,7 @@ pub struct ReviewRepairRealtimePayload {
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversationSummariesUpdatedRealtimePayload {
     pub conversation_id: String,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
     pub items: Vec<SessionSummaryV2>,

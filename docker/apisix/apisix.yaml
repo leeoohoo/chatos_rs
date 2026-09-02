@@ -2,31 +2,342 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 routes:
-  # Public aliases must never become a tunnel into service-only endpoints.
-  - id: block-public-internal-api-aliases
+  # Never let a bare service-internal path fall through to a public website
+  # route. Service-specific internal APIs are blocked again on their aliased
+  # /api prefixes below, before any proxy rewrite is applied.
+  - id: block-direct-internal-root
     priority: 1000
-    uris:
-      - /api/chatos/internal/*
-      - /api/user/internal/*
-      - /api/project/internal/*
-      - /api/plugin/internal/*
-      - /api/mcp/internal/*
-      - /api/mcp/api/internal/*
+    uri: /internal
     plugins:
       request-id: &request_id
         header_name: X-Request-Id
         include_in_response: true
         algorithm: uuid
-      fault-injection:
+      fault-injection: &reject_not_found
         abort:
           http_status: 404
           body: '{"error":"route not found"}'
+
+  - id: block-direct-internal-paths
+    priority: 1000
+    uri: /internal/*
+    plugins:
+      request-id: *request_id
+      fault-injection: *reject_not_found
+
+  # The unified admin console is the only browser frontend for internal
+  # management. Service APIs retain independent upstreams and explicit path
+  # prefixes so backend boundaries remain unchanged. The blocker is attached
+  # to every matching service route because APISIX selects the most-specific
+  # URI before considering a generic route's priority.
+  - id: admin-user-service-api
+    priority: 800
+    hosts: &admin_hosts
+      - admin.jgoool.com
+    uri: /api/admin/user-service/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: &block_internal_api
+        block_rules:
+          - "^/api/(?:admin/(?:user-service|project-service|task-runner|plugin-management|memory-engine|config-center)/|(?:chatos|user|project|plugin|plugins|task|memory|local)/)(?:api/)?internal(?:/|\\?|$)"
+        rejected_code: 404
+      client-control: &admin_api_body_limit
+        max_body_size: 268435456
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/user-service/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: &admin_api_timeout
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "user-service-backend:39190": 1
+
+  - id: admin-project-service-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/project-service/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/project-service/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "project-management-backend:39210": 1
+
+  - id: admin-task-runner-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/task-runner/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/task-runner/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "task-runner-backend:39090": 1
+
+  - id: admin-plugin-management-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/plugin-management/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/plugin-management/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "plugin-management-backend:39260": 1
+
+  - id: admin-memory-engine-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/memory-engine/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/memory-engine/?(.*)"
+          - "/api/memory-engine/v1/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "memory-engine-backend:7081": 1
+
+  - id: admin-config-center-api
+    priority: 800
+    hosts: *admin_hosts
+    uri: /api/admin/config-center/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      client-control: *admin_api_body_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/admin/config-center/?(.*)"
+          - "/api/$1"
+    upstream:
+      type: roundrobin
+      timeout: *admin_api_timeout
+      nodes:
+        "configuration-center-backend:39270": 1
+
+  - id: admin-console-frontend
+    priority: 700
+    hosts:
+      - admin.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "admin-console-frontend:80": 1
+
+  - id: legacy-config-admin-redirect
+    priority: 700
+    hosts:
+      - config.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      redirect:
+        uri: https://admin.jgoool.com/config
+        ret_code: 302
+
+  - id: legacy-user-admin-redirect
+    priority: 700
+    hosts:
+      - user.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      redirect:
+        uri: https://admin.jgoool.com/users
+        ret_code: 302
+
+  - id: legacy-memory-admin-redirect
+    priority: 700
+    hosts:
+      - memory.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      redirect:
+        uri: https://admin.jgoool.com/memory
+        ret_code: 302
+
+  - id: legacy-project-admin-redirect
+    priority: 700
+    hosts:
+      - project.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      redirect:
+        uri: https://admin.jgoool.com/projects
+        ret_code: 302
+
+  # Plugin artifacts remain public download resources even though the legacy
+  # Plugin Management hostname redirects ordinary UI traffic to Admin Console.
+  - id: plugin-artifact-download
+    priority: 900
+    hosts:
+      - plugin.jgoool.com
+    uri: /api/plugin-artifacts/*
+    methods:
+      - GET
+      - HEAD
+    plugins:
+      request-id: *request_id
+      client-control:
+        max_body_size: 268435456
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 300
+        read: 600
+      nodes:
+        "plugin-management-backend:39260": 1
+
+  - id: legacy-plugin-admin-redirect
+    priority: 700
+    hosts:
+      - plugin.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      redirect:
+        uri: https://admin.jgoool.com/plugins
+        ret_code: 302
+
+  - id: legacy-task-admin-redirect
+    priority: 700
+    hosts:
+      - task.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      redirect:
+        uri: https://admin.jgoool.com/task-runner
+        ret_code: 302
+
+  - id: official-website-robots
+    priority: 900
+    hosts:
+      - jgoool.com
+      - www.jgoool.com
+      - official.jgoool.com
+    uri: /robots.txt
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-backend:39250": 1
+
+  - id: official-website-sitemap
+    priority: 900
+    hosts:
+      - jgoool.com
+      - www.jgoool.com
+      - official.jgoool.com
+    uri: /sitemap.xml
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-backend:39250": 1
+
+  - id: official-website-frontend
+    priority: 700
+    hosts:
+      - jgoool.com
+      - www.jgoool.com
+      - official.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      nodes:
+        "official-website-frontend:80": 1
+
+  # The native connector uses its historical public paths. Route the whole
+  # dedicated hostname to the connector instead of exposing port 39230.
+  - id: local-connector-public-host
+    priority: 700
+    hosts:
+      - connector.jgoool.com
+      - local-connector.jgoool.com
+    uri: /*
+    plugins:
+      request-id: *request_id
+      client-control:
+        max_body_size: 134217728
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "local-connector-service-backend:39230": 1
+
+  # Keep the Plugin UI resource origin isolated while making APISIX the only
+  # application listener used by the host Nginx reverse proxy.
+  - id: plugin-ui-resource-host
+    priority: 900
+    hosts:
+      - plugin-ui.jgoool.com
+    uri: /api/plugin-ui/workbench/*
+    methods:
+      - GET
+      - HEAD
+    plugins:
+      request-id: *request_id
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 30
+        read: 30
+      nodes:
+        "chatos-backend:3997": 1
 
   - id: chatos-api-alias
     priority: 520
     uri: /api/chatos/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: &api_cors
         allow_origins: "*"
         allow_methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -80,6 +391,7 @@ routes:
     uri: /api/user/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -101,6 +413,7 @@ routes:
     uri: /api/project/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -123,6 +436,7 @@ routes:
     uri: /api/plugins/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -141,6 +455,7 @@ routes:
     uri: /api/plugin/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -181,6 +496,7 @@ routes:
     uri: /api/local/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -203,6 +519,7 @@ routes:
     uri: /api/task/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit
@@ -224,6 +541,7 @@ routes:
     uri: /api/memory/*
     plugins:
       request-id: *request_id
+      uri-blocker: *block_internal_api
       cors: *api_cors
       client-control: *api_body_limit
       limit-req: *api_ip_rate_limit

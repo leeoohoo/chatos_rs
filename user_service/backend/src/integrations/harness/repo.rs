@@ -118,10 +118,10 @@ pub async fn create_harness_project_repo(
     {
         Ok(repo) => repo,
         Err(err) if err.is_already_exists() => {
-            let endpoint = format!(
-                "{base_url}/api/v1/repos/{}/{}",
-                urlencoding::encode(record.space_identifier.as_str()),
-                urlencoding::encode(repo_identifier.as_str())
+            let endpoint = harness_repo_api_url(
+                base_url.as_str(),
+                record.space_identifier.as_str(),
+                repo_identifier.as_str(),
             );
             harness_request_json::<HarnessRepositoryOutput, ()>(
                 state,
@@ -167,6 +167,14 @@ pub async fn create_harness_project_repo(
         push_username: record.harness_uid,
         push_token,
     })
+}
+
+fn harness_repo_api_url(base_url: &str, space_identifier: &str, repo_identifier: &str) -> String {
+    let repo_ref = format!("{space_identifier}/{repo_identifier}");
+    format!(
+        "{base_url}/api/v1/repos/{}",
+        urlencoding::encode(repo_ref.as_str())
+    )
 }
 
 pub async fn get_harness_api_access_for_user(
@@ -258,7 +266,7 @@ fn is_local_harness_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{rewrite_harness_local_url_host, HarnessCreateRepoRequest};
+    use super::{harness_repo_api_url, rewrite_harness_local_url_host, HarnessCreateRepoRequest};
 
     #[test]
     fn harness_repo_creation_initializes_main_with_readme() {
@@ -307,6 +315,18 @@ mod tests {
                 true,
             ),
             "https://git.example.com/u-leeoohoo/project.git"
+        );
+    }
+
+    #[test]
+    fn harness_existing_repo_lookup_encodes_the_complete_repo_ref() {
+        assert_eq!(
+            harness_repo_api_url(
+                "http://harness:3000",
+                "u-chatos-user",
+                "project-123456789abc",
+            ),
+            "http://harness:3000/api/v1/repos/u-chatos-user%2Fproject-123456789abc"
         );
     }
 }

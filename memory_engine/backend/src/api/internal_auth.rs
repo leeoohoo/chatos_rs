@@ -10,7 +10,6 @@ pub(crate) const DATA_SCOPE: &str = "memory.data";
 pub(crate) const OPERATOR_SCOPE: &str = "memory.operator";
 pub(crate) const SOURCE_SCOPE: &str = "memory.source";
 pub(crate) const ADMIN_SCOPE: &str = "memory.admin";
-pub(crate) const MODEL_PROFILE_SYNC_SCOPE: &str = "model-profile.sync";
 
 pub(crate) fn require_internal_request(
     config: &AppConfig,
@@ -70,9 +69,7 @@ pub(crate) fn require_internal_request(
 }
 
 pub(crate) fn scope_for_memory_path(path: &str) -> &'static str {
-    if path.contains("/admin/model-profiles") {
-        MODEL_PROFILE_SYNC_SCOPE
-    } else if path.contains("/admin/sources") {
+    if path.contains("/admin/sources") {
         SOURCE_SCOPE
     } else if path.contains("/admin/") {
         ADMIN_SCOPE
@@ -134,10 +131,6 @@ mod tests {
             mongodb_uri: "mongodb://127.0.0.1/test".to_string(),
             mongodb_database: "test".to_string(),
             ai_request_timeout_secs: 1,
-            openai_api_key: None,
-            openai_base_url: "http://127.0.0.1".to_string(),
-            openai_model: "test".to_string(),
-            openai_temperature: 0.0,
             api_enabled: true,
             worker_enabled: false,
             worker_interval_secs: 30,

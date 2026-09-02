@@ -449,7 +449,7 @@ async fn create_tasks_with_prerequisites_in_chatos_plan_profile_persist_plan_tas
             .expect("task");
         assert_eq!(task.task_profile, TASK_PROFILE_CHATOS_PLAN);
         assert!(!task.mcp_config.requires_execution);
-        assert_eq!(task.project_id, project.id);
+        assert_eq!(task.project_id.as_deref(), Some(project.id.as_str()));
         assert!(task.schedule.next_run_at.is_none());
     }
 }

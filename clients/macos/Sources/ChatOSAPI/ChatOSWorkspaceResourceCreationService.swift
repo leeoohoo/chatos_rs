@@ -2,6 +2,8 @@ import ChatOSCore
 import Foundation
 
 public struct ChatOSWorkspaceResourceCreationService: WorkspaceResourceCreating {
+    private static let harnessImportTimeout: TimeInterval = 2 * 60 * 60
+
     private let client: ChatOSAPIClient
 
     public init(client: ChatOSAPIClient) {
@@ -15,7 +17,10 @@ public struct ChatOSWorkspaceResourceCreationService: WorkspaceResourceCreating 
         let response: CreatedProjectDTO = try await client.request(
             "/local-connectors/projects",
             method: "POST",
-            body: body
+            body: body,
+            timeoutInterval: draft.repositoryMode == .managed
+                ? Self.harnessImportTimeout
+                : nil
         )
         return response.domainModel
     }

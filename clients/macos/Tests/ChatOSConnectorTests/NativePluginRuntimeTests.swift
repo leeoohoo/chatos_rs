@@ -5,6 +5,234 @@ import Testing
 
 @Suite("Native Plugin Runtime")
 struct NativePluginRuntimeTests {
+    @Test("local HTTP Plugin applications launch from package.json.bin and become reachable")
+    func localHTTPPluginApplicationLaunches() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let binDirectory = installation.appendingPathComponent("bin", isDirectory: true)
+        let uiDirectory = installation.appendingPathComponent("ui", isDirectory: true)
+        let runtimeRoot = root.appendingPathComponent("runtime", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: uiDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data(#"{"name":"demo-app","version":"1.0.0","bin":{"demo-app":"bin/demo-app"}}"#.utf8)
+            .write(to: installation.appendingPathComponent("package.json"))
+        try Data("<html><body>Plugin application ready</body></html>".utf8)
+            .write(to: uiDirectory.appendingPathComponent("index.html"))
+        let launcher = binDirectory.appendingPathComponent("demo-app")
+        let script = #"""
+        #!/bin/sh
+        exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end("Plugin application ready")}).listen(port,"127.0.0.1")'
+        """#
+        try Data(script.utf8).write(to: launcher)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
+
+        let manifestData = Data(#"""
+        {
+          "schemaVersion": 3,
+          "name": "demo-app",
+          "version": "1.0.0",
+          "description": "Demo application",
+          "ui": [{
+            "componentKey": "workbench",
+            "source": "./ui/index.html",
+            "title": "Demo",
+            "surface": "workbench",
+            "runtime": {
+              "type": "local_http",
+              "bin": "demo-app",
+              "healthPath": "/",
+              "launchTimeoutMs": 5000
+            }
+          }],
+          "permissions": [{
+            "permission": "process.spawn",
+            "required": true,
+            "components": ["workbench"]
+          }]
+        }
+        """#.utf8)
+        let manifest = try JSONDecoder().decode(NativePluginManifest.self, from: manifestData)
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-demo",
+            releaseID: "release-demo",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: installation.path,
+            installedAt: "2026-09-02T00:00:00Z"
+        )
+        let application = LocalConnectorPluginApplication(
+            pluginID: record.pluginID,
+            componentKey: "workbench",
+            displayName: "Demo",
+            description: "Demo application",
+            requiresLocalRuntime: true
+        )
+        let runtime = NativePluginApplicationRuntime()
+        defer { Task { await runtime.stopAll() } }
+
+        let launch = try await runtime.launch(
+            record: record,
+            manifest: manifest,
+            contribution: manifest.ui[0],
+            runtimeRootURL: runtimeRoot,
+            application: application,
+            hostContext: .init(
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                workspaceID: nil,
+                workspaceRoot: nil,
+                projectID: nil,
+                projectName: nil
+            )
+        )
+        let body = try await URLSession.shared.data(from: launch.url).0
+        #expect(String(decoding: body, as: UTF8.self) == "Plugin application ready")
+        #expect(FileManager.default.fileExists(
+            atPath: runtimeRoot.appendingPathComponent("data", isDirectory: true).path
+        ))
+        await runtime.stopAll()
+    }
+
+    @Test("all plugins use different data directories for different ChatOS users")
+    func allPluginsAreUserIsolatedWithoutRuntimeContext() throws {
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data(#"{"schemaVersion":3,"name":"fixture","version":"1.0.0"}"#.utf8)
+        )
+        let runtimeRoot = URL(fileURLWithPath: "/tmp/chatos-plugin-runtime-tests", isDirectory: true)
+        let first = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: "fixture",
+            runtimeRootURL: runtimeRoot,
+            pluginID: "plugin-1",
+            host: .init(
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                workspaceID: nil,
+                workspaceRoot: nil,
+                projectID: nil,
+                projectName: nil
+            )
+        )
+        let second = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: "fixture",
+            runtimeRootURL: runtimeRoot,
+            pluginID: "plugin-1",
+            host: .init(
+                ownerUserID: "user-2",
+                deviceID: "device-1",
+                workspaceID: nil,
+                workspaceRoot: nil,
+                projectID: nil,
+                projectName: nil
+            )
+        )
+
+        #expect(first.dataURL != second.dataURL)
+        #expect(first.cacheURL != second.cacheURL)
+        #expect(first.dataURL.path.contains("/data/users/"))
+        #expect(second.dataURL.path.contains("/data/users/"))
+        #expect(
+            first.websiteDataStoreID(applicationID: "plugin-1:fixture")
+                != second.websiteDataStoreID(applicationID: "plugin-1:fixture")
+        )
+    }
+
+    @Test("project plugins share one scope between MCP and UI and fall back to a device public project")
+    func projectRuntimeContextMatchesMCPAndUI() throws {
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data(#"""
+            {
+              "schemaVersion": 3,
+              "name": "fixture",
+              "version": "1.0.0",
+              "mcpServers": {"fixture-mcp": {"type": "stdio", "bin": "fixture"}},
+              "ui": [{"componentKey": "fixture-ui", "source": "./ui/index.html"}],
+              "runtimeContext": {
+                "scope": "project",
+                "components": ["fixture-mcp", "fixture-ui"],
+                "optional": ["project.id", "workspace.id", "workspace.root"],
+                "storageIsolation": "project",
+                "missingContext": "device"
+              }
+            }
+            """#.utf8)
+        )
+        let runtimeRoot = URL(fileURLWithPath: "/tmp/chatos-plugin-runtime-tests", isDirectory: true)
+        let projectHost = NativePluginHostContext(
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceID: "workspace-1",
+            workspaceRoot: URL(fileURLWithPath: "/tmp/workspace", isDirectory: true),
+            projectID: "project-1",
+            projectName: "Project One"
+        )
+        let mcp = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: "fixture-mcp",
+            runtimeRootURL: runtimeRoot,
+            pluginID: "plugin-1",
+            host: projectHost
+        )
+        let ui = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: "fixture-ui",
+            runtimeRootURL: runtimeRoot,
+            pluginID: "plugin-1",
+            host: projectHost
+        )
+        let otherProject = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: "fixture-mcp",
+            runtimeRootURL: runtimeRoot,
+            pluginID: "plugin-1",
+            host: .init(
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                workspaceID: "workspace-1",
+                workspaceRoot: projectHost.workspaceRoot,
+                projectID: "project-2",
+                projectName: "Project Two"
+            )
+        )
+        let publicProject = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: "fixture-mcp",
+            runtimeRootURL: runtimeRoot,
+            pluginID: "plugin-1",
+            host: .init(
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                workspaceID: nil,
+                workspaceRoot: nil,
+                projectID: nil,
+                projectName: nil
+            )
+        )
+
+        #expect(mcp.dataURL == ui.dataURL)
+        #expect(mcp.cacheURL == ui.cacheURL)
+        #expect(
+            mcp.websiteDataStoreID(applicationID: "plugin-1:fixture-ui")
+                == ui.websiteDataStoreID(applicationID: "plugin-1:fixture-ui")
+        )
+        #expect(mcp.dataURL != otherProject.dataURL)
+        #expect(
+            mcp.websiteDataStoreID(applicationID: "plugin-1:fixture-ui")
+                != otherProject.websiteDataStoreID(applicationID: "plugin-1:fixture-ui")
+        )
+        #expect(mcp.environment["CHATOS_CONTEXT_SCOPE"] == "project")
+        #expect(mcp.environment["CHATOS_PROJECT_ID"] == "project-1")
+        #expect(publicProject.environment["CHATOS_CONTEXT_SCOPE"] == "device")
+        #expect(publicProject.environment["CHATOS_PROJECT_ID"] == nil)
+        #expect(publicProject.dataURL != mcp.dataURL)
+    }
+
     @Test("plugin project root resolves the current project beneath a broad connector workspace")
     func pluginProjectRootUsesCurrentProjectInsteadOfConnectorRoot() throws {
         let root = FileManager.default.temporaryDirectory
@@ -418,6 +646,8 @@ struct NativePluginRuntimeTests {
             componentKey: "computer-use",
             serverKey: nil,
             adapterSessionID: "adapter-1",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
             workspaceRoot: root,
             permissionSnapshot: ["process.spawn"],
             runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
@@ -462,6 +692,8 @@ struct NativePluginRuntimeTests {
             componentKey: "fixture",
             serverKey: nil,
             adapterSessionID: "adapter-device-only",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
             workspaceRoot: nil,
             permissionSnapshot: ["process.spawn"],
             runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
@@ -604,6 +836,8 @@ struct NativePluginRuntimeTests {
             componentKey: "browser-cdp",
             serverKey: nil,
             adapterSessionID: UUID().uuidString.lowercased(),
+            ownerUserID: "user-1",
+            deviceID: "device-1",
             workspaceRoot: nil,
             permissionSnapshot: Set(manifest.permissions.map(\.permission)),
             runtimeRootURL: runtimeRoot
@@ -794,7 +1028,8 @@ struct NativePluginRuntimeTests {
             version: "1.0.0",
             artifactSHA256: String(repeating: "a", count: 64),
             componentKey: "browser-cdp",
-            adapterSessionID: "adapter-1"
+            adapterSessionID: "adapter-1",
+            projectID: "project-1"
         )
         await store.insert(
             identity: identity,
@@ -813,7 +1048,8 @@ struct NativePluginRuntimeTests {
             releaseID: identity.releaseID,
             artifactSHA256: identity.artifactSHA256,
             componentKey: identity.componentKey,
-            workspaceID: "workspace-1"
+            workspaceID: "workspace-1",
+            projectID: "project-1"
         )
         do {
             _ = try await store.validate(
@@ -822,7 +1058,8 @@ struct NativePluginRuntimeTests {
                 releaseID: identity.releaseID,
                 artifactSHA256: identity.artifactSHA256,
                 componentKey: identity.componentKey,
-                workspaceID: nil
+                workspaceID: nil,
+                projectID: "project-1"
             )
             Issue.record("project-scoped plugin session accepted a device-only execute scope")
         } catch is NativePluginRuntimeError {
@@ -831,11 +1068,26 @@ struct NativePluginRuntimeTests {
         do {
             try await store.validateScopeIfPresent(
                 adapterSessionID: identity.adapterSessionID,
-                workspaceID: nil
+                workspaceID: nil,
+                projectID: "project-1"
             )
             Issue.record("project-scoped plugin session accepted a device-only cancel scope")
         } catch is NativePluginRuntimeError {
             // Expected.
+        }
+        do {
+            _ = try await store.validate(
+                adapterSessionID: identity.adapterSessionID,
+                pluginID: identity.pluginID,
+                releaseID: identity.releaseID,
+                artifactSHA256: identity.artifactSHA256,
+                componentKey: identity.componentKey,
+                workspaceID: "workspace-1",
+                projectID: "project-2"
+            )
+            Issue.record("project-scoped plugin session accepted a different project id")
+        } catch is NativePluginRuntimeError {
+            // Expected: AI calls cannot switch a prepared session to another project.
         }
 
         _ = try await store.call(
@@ -1487,6 +1739,17 @@ struct NativePluginRuntimeTests {
         #expect(permissions[3].status == "action_required")
         #expect(permissions[3].canRequest)
         #expect(permissions[3].requestLabel == "去开启")
+    }
+
+    @Test("plugin processes restore tool paths missing from GUI app launches")
+    func pluginProcessEnvironmentRestoresToolPaths() {
+        let environment = NativePluginProcessEnvironment.make(
+            base: ["PATH": "/usr/bin:/bin", "EXAMPLE": "base"],
+            overrides: ["EXAMPLE": "plugin"]
+        )
+
+        #expect(environment["EXAMPLE"] == "plugin")
+        #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
     }
 
     @Test("plugin capabilities are reported as available instead of ambiguous on-demand permissions")

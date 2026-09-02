@@ -13,10 +13,6 @@ pub struct AppConfig {
     pub mongodb_uri: String,
     pub mongodb_database: String,
     pub ai_request_timeout_secs: u64,
-    pub openai_api_key: Option<String>,
-    pub openai_base_url: String,
-    pub openai_model: String,
-    pub openai_temperature: f64,
     pub api_enabled: bool,
     pub worker_enabled: bool,
     pub worker_interval_secs: u64,
@@ -65,10 +61,6 @@ impl AppConfig {
         let mongodb_uri = required_text("MEMORY_ENGINE_MONGODB_URI")?;
         let mongodb_database = required_text("MEMORY_ENGINE_MONGODB_DATABASE")?;
         let ai_request_timeout_secs = required_u64("MEMORY_ENGINE_AI_TIMEOUT_SECS")?.max(5);
-        let openai_api_key = optional_text("MEMORY_ENGINE_OPENAI_API_KEY");
-        let openai_base_url = required_text("MEMORY_ENGINE_OPENAI_BASE_URL")?;
-        let openai_model = required_text("MEMORY_ENGINE_OPENAI_MODEL")?;
-        let openai_temperature = required_f64("MEMORY_ENGINE_OPENAI_TEMPERATURE")?.clamp(0.0, 2.0);
         let api_enabled = required_runtime_bool("MEMORY_ENGINE_API_ENABLED")?;
         let worker_enabled = required_managed_bool("MEMORY_ENGINE_WORKER_ENABLED")?;
         let worker_interval_secs = required_u64("MEMORY_ENGINE_WORKER_INTERVAL_SECS")?.max(3);
@@ -140,10 +132,6 @@ impl AppConfig {
             mongodb_uri,
             mongodb_database,
             ai_request_timeout_secs,
-            openai_api_key,
-            openai_base_url,
-            openai_model,
-            openai_temperature,
             api_enabled,
             worker_enabled,
             worker_interval_secs,
@@ -283,17 +271,4 @@ fn required_i64(key: &str) -> Result<i64, String> {
 fn required_usize(key: &str) -> Result<usize, String> {
     let value = required_u64(key)?;
     usize::try_from(value).map_err(|_| format!("{key} is too large"))
-}
-
-fn required_f64(key: &str) -> Result<f64, String> {
-    let value = required_text(key)?;
-    value
-        .parse::<f64>()
-        .map_err(|err| format!("{key} must be a valid number: {err}"))
-}
-
-fn optional_text(key: &str) -> Option<String> {
-    env_text(key)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::models::project::PUBLIC_PROJECT_ID;
-
 pub(super) fn normalize_optional_text(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -11,6 +9,5 @@ pub(super) fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 }
 
 pub(super) fn is_concrete_project_id(project_id: &str) -> bool {
-    let normalized = project_id.trim();
-    !normalized.is_empty() && normalized != "0" && normalized != PUBLIC_PROJECT_ID
+    crate::core::chat_runtime::normalize_project_id(Some(project_id)).is_some()
 }

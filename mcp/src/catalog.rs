@@ -50,7 +50,6 @@ const CHATOS_HOST: &[SystemMcpHost] = &[SystemMcpHost::Chatos];
 const CHATOS_AND_LOCAL_HOSTS: &[SystemMcpHost] =
     &[SystemMcpHost::Chatos, SystemMcpHost::LocalConnector];
 const LOCAL_CONNECTOR_HOST: &[SystemMcpHost] = &[SystemMcpHost::LocalConnector];
-const NO_RUNTIME_HOSTS: &[SystemMcpHost] = &[];
 
 macro_rules! embedded_descriptor {
     ($key:ident, $resource_id:expr, $server_name:expr, $display_name:expr, $description:expr, $allow_writes:expr, $owner:expr, $hosts:expr, $kind:ident) => {
@@ -155,17 +154,20 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 14] = [
         CHATOS_TASK_LOCAL_HOSTS,
         AskUser
     ),
-    embedded_descriptor!(
-        RemoteConnectionController,
-        "builtin_remote_connection_controller",
-        "remote_connection_controller",
-        "Remote Connection Controller (Builtin)",
-        "Remote connection inspection and command tools.",
-        true,
-        "shared",
-        NO_RUNTIME_HOSTS,
-        RemoteConnectionController
-    ),
+    SystemMcpDescriptor {
+        key: SystemMcpKey::RemoteConnectionController,
+        resource_id: "builtin_remote_connection_controller",
+        server_name: "remote_connection_controller",
+        display_name: "Remote Connection Controller (Builtin)",
+        description: "Owner-scoped remote connection inspection, file, and command tools executed by Local Connector.",
+        allow_writes: true,
+        tags: &["system", "builtin", "remote_connection"],
+        category: Some("builtin"),
+        owner_service: "local_connector_client",
+        backend: SystemMcpBackend::HostAdapter,
+        implementation_hosts: LOCAL_CONNECTOR_HOST,
+        embedded_kind: Some(BuiltinMcpKind::RemoteConnectionController),
+    },
     embedded_descriptor!(
         MemorySkillReader,
         "system_builtin_memory_skill_reader",

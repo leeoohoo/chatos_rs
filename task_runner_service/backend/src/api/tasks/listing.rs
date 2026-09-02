@@ -34,9 +34,12 @@ pub(in crate::api) async fn list_task_summaries(
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<TaskSummaryQuery>,
 ) -> Result<Json<Vec<TaskSummaryRecord>>, ApiError> {
-    let project_id = query
-        .project_id
-        .map(|value| normalize_project_id(Some(value)));
+    let project_id = normalize_project_id(query.project_id);
+    let project_scope = if project_id.is_some() {
+        Some(TaskProjectScopeFilter::Project)
+    } else {
+        query.project_scope
+    };
     let summaries = if let Some(ids) = query.ids {
         let project_id_filter = project_id.as_deref();
         state
@@ -53,8 +56,13 @@ pub(in crate::api) async fn list_task_summaries(
                         )
                         .unwrap_or(false)
                     })
-                    .filter(|item| {
-                        project_id_filter.is_none_or(|project_id| item.project_id == project_id)
+                    .filter(|item| match project_scope {
+                        Some(TaskProjectScopeFilter::UserConversation) => item.project_id.is_none(),
+                        Some(TaskProjectScopeFilter::Project) => project_id_filter.map_or_else(
+                            || item.project_id.is_some(),
+                            |project_id| item.project_id.as_deref() == Some(project_id),
+                        ),
+                        None => true,
                     })
                     .collect::<Vec<_>>()
             })
@@ -65,6 +73,7 @@ pub(in crate::api) async fn list_task_summaries(
                 TaskListFilters {
                     status: query.status,
                     keyword: query.keyword,
+                    project_scope,
                     project_id,
                     limit: query.limit,
                     include_subtasks: Some(false),

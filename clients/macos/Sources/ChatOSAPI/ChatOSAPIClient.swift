@@ -60,7 +60,8 @@ public actor ChatOSAPIClient {
         _ endpoint: String,
         method: String = "GET",
         body: Data? = nil,
-        additionalHeaders: [String: String] = [:]
+        additionalHeaders: [String: String] = [:],
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> Response {
         guard let url = makeURL(endpoint: endpoint) else {
             throw ChatOSAPIError.invalidEndpoint
@@ -78,7 +79,13 @@ public actor ChatOSAPIClient {
         additionalHeaders.forEach { headers[$0] = $1 }
 
         let response = try await transport.send(
-            HTTPRequest(url: url, method: method, headers: headers, body: body)
+            HTTPRequest(
+                url: url,
+                method: method,
+                headers: headers,
+                body: body,
+                timeoutInterval: timeoutInterval
+            )
         )
         if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty {
             accessToken = refreshedToken

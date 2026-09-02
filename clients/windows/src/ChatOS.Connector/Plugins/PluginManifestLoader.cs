@@ -40,6 +40,8 @@ internal sealed class PluginManifestLoader
         IReadOnlySet<string> permissionSnapshot,
         string ownerUserId,
         string deviceId,
+        string? workspaceId = null,
+        string? projectId = null,
         CancellationToken cancellationToken = default)
     {
         var installationPath = Path.GetFullPath(record.InstallationPath);
@@ -143,8 +145,17 @@ internal sealed class PluginManifestLoader
         var releaseHash = Sha256(record.ReleaseId);
         var sessionHash = Sha256(adapterSessionId);
         var visualPath = Path.Combine(_runtimeRoot, "visual-sessions", pluginHash, releaseHash, sessionHash);
-        var dataPath = Path.Combine(_runtimeRoot, "data", pluginHash);
-        var cachePath = Path.Combine(_runtimeRoot, "cache", pluginHash);
+        var context = ResolveRuntimeContext(
+            manifest,
+            componentKey,
+            record.PluginId,
+            ownerUserId,
+            deviceId,
+            workspaceId,
+            workspaceRoot,
+            projectId);
+        var dataPath = context.DataPath;
+        var cachePath = context.CachePath;
         var artifactPath = Path.Combine(_runtimeRoot, "artifacts", sessionHash);
         var grantPath = Path.Combine(_runtimeRoot, "file-grants", sessionHash);
         foreach (var path in new[] { visualPath, dataPath, cachePath, artifactPath, grantPath })
@@ -173,13 +184,9 @@ internal sealed class PluginManifestLoader
             ["CHATOS_PLUGIN_ID"] = record.PluginId,
             ["CHATOS_PLUGIN_COMPONENT_KEY"] = componentKey,
         };
-        if (!string.IsNullOrWhiteSpace(workspaceRoot))
+        foreach (var (name, value) in context.Environment)
         {
-            environment["CHATOS_WORKSPACE"] = Path.GetFullPath(workspaceRoot);
-        }
-        else
-        {
-            environment.Remove("CHATOS_WORKSPACE");
+            environment[name] = value;
         }
 
         return new PreparedPluginLaunch(
@@ -198,6 +205,106 @@ internal sealed class PluginManifestLoader
             Transport: "stdio",
             CredentialBinding: credentialBinding);
     }
+
+    private RuntimeContextResolution ResolveRuntimeContext(
+        PluginManifest manifest,
+        string componentKey,
+        string pluginId,
+        string ownerUserId,
+        string deviceId,
+        string? workspaceId,
+        string? workspaceRoot,
+        string? projectId)
+    {
+        var pluginHash = Sha256(pluginId);
+        var userHash = Sha256(ownerUserId);
+        var userDataPath = Path.Combine(_runtimeRoot, "data", "users", userHash, pluginHash);
+        var userCachePath = Path.Combine(_runtimeRoot, "cache", "users", userHash, pluginHash);
+        var declaration = manifest.RuntimeContext;
+        if (declaration is null || !declaration.AppliesTo(componentKey))
+        {
+            var legacyEnvironment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(workspaceRoot))
+            {
+                legacyEnvironment["CHATOS_WORKSPACE"] = Path.GetFullPath(workspaceRoot);
+            }
+            return new RuntimeContextResolution(userDataPath, userCachePath, legacyEnvironment);
+        }
+
+        var requested = declaration.Required.Concat(declaration.Optional)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var field in declaration.Required)
+        {
+            var available = field switch
+            {
+                "project.id" => !string.IsNullOrWhiteSpace(projectId),
+                "workspace.id" => !string.IsNullOrWhiteSpace(workspaceId),
+                "workspace.root" => !string.IsNullOrWhiteSpace(workspaceRoot),
+                _ => false,
+            };
+            if (!available)
+            {
+                throw new PluginRuntimeException($"Plugin runtime is missing required context: {field}.");
+            }
+        }
+
+        var (scopeKind, scopeIdentity) = declaration.Scope switch
+        {
+            "device" => ("device", $"device:{deviceId}"),
+            "workspace" when !string.IsNullOrWhiteSpace(workspaceId) =>
+                ("workspace", $"workspace:{workspaceId!.Trim()}"),
+            "project" when !string.IsNullOrWhiteSpace(projectId) =>
+                ("project", $"project:{projectId!.Trim()}"),
+            _ when declaration.MissingContext == "device" => ("device", $"device:{deviceId}"),
+            _ => throw new PluginRuntimeException("Plugin requires project or workspace context."),
+        };
+        var storageKind = scopeKind;
+        var storageIdentity = scopeIdentity;
+        if (declaration.StorageIsolation == "workspace" && !string.IsNullOrWhiteSpace(workspaceId))
+        {
+            storageKind = "workspace";
+            storageIdentity = $"workspace:{workspaceId!.Trim()}";
+        }
+        else if (declaration.StorageIsolation == "project" && !string.IsNullOrWhiteSpace(projectId))
+        {
+            storageKind = "project";
+            storageIdentity = $"project:{projectId!.Trim()}";
+        }
+        else if (declaration.StorageIsolation != "plugin" && declaration.MissingContext == "device")
+        {
+            storageKind = "device";
+            storageIdentity = $"device:{deviceId}";
+        }
+        var dataPath = declaration.StorageIsolation == "plugin"
+            ? userDataPath
+            : Path.Combine(userDataPath, "scopes", storageKind, Sha256(storageIdentity));
+        var cachePath = declaration.StorageIsolation == "plugin"
+            ? userCachePath
+            : Path.Combine(userCachePath, "scopes", storageKind, Sha256(storageIdentity));
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CHATOS_CONTEXT_SCOPE"] = scopeKind,
+            ["CHATOS_CONTEXT_SCOPE_ID"] = Sha256(scopeIdentity),
+        };
+        if (requested.Contains("project.id") && !string.IsNullOrWhiteSpace(projectId))
+        {
+            environment["CHATOS_PROJECT_ID"] = projectId.Trim();
+        }
+        if (requested.Contains("workspace.id") && !string.IsNullOrWhiteSpace(workspaceId))
+        {
+            environment["CHATOS_WORKSPACE_ID"] = workspaceId.Trim();
+        }
+        if (requested.Contains("workspace.root") && !string.IsNullOrWhiteSpace(workspaceRoot))
+        {
+            environment["CHATOS_WORKSPACE"] = Path.GetFullPath(workspaceRoot);
+        }
+        return new RuntimeContextResolution(dataPath, cachePath, environment);
+    }
+
+    private sealed record RuntimeContextResolution(
+        string DataPath,
+        string CachePath,
+        IReadOnlyDictionary<string, string> Environment);
 
     private async Task<PreparedPluginLaunch> PrepareHttpAsync(
         PluginManifest manifest,
