@@ -253,7 +253,7 @@ button { color: inherit; }
 
 .diagram-node.diamond { width: 100%; height: 100%; padding: 0; border: 0; background: transparent; box-shadow: none; overflow: visible; }
 .diamond-surface { width: 62%; aspect-ratio: 1; max-height: 82%; margin: auto; position: relative; z-index: 1; transform: rotate(45deg); border-radius: 11px; background: transparent; border: 0; display: flex; align-items: center; justify-content: center; }
-.diamond-content { width: 102px; transform: rotate(-45deg); text-align: center; color: white; }
+.diamond-content { width: 102px; transform: rotate(-45deg); text-align: center; color: var(--text); }
 .diamond-content strong { font-size: var(--node-font-size, 14px); font-weight: var(--node-font-weight, 650); line-height: 1.2; }
 .diagram-node.diamond.selected { box-shadow: none; }
 .diagram-node.diamond.selected .node-surface-svg { filter: drop-shadow(0 0 3px var(--accent)); }
@@ -293,6 +293,10 @@ button { color: inherit; }
 .activation-height-handle.top::after { border-radius: 4px 4px 2px 2px; }
 .activation-height-handle.bottom::after { border-radius: 2px 2px 4px 4px; }
 .activation-height-handle:hover::after { background: color-mix(in srgb, var(--accent) 86%, white); box-shadow: 0 0 0 2px var(--accent-soft), 0 1px 3px rgba(35,47,70,.18); }
+.sequence-edge-drag-zone { fill: none; stroke: transparent; stroke-width: 18; pointer-events: stroke; cursor: ns-resize; }
+.sequence-edge-drag-zone.dragging { cursor: grabbing; }
+.sequence-edge-drag-indicator { fill: color-mix(in srgb, var(--accent) 72%, transparent); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.sequence-edge-drag-zone:hover + .sequence-edge-drag-indicator, .sequence-edge-drag-indicator.dragging { opacity: 1; }
 .sequence-fragment-node { width: 100%; height: 100%; position: relative; border: max(1.5px, var(--node-border-width)) var(--node-border-style) var(--node-border-color); background: color-mix(in srgb, var(--surface-solid) 38%, transparent); }
 .sequence-fragment-node > span { position: absolute; left: -1px; top: -1px; min-width: 68px; max-width: 55%; padding: 5px 14px 5px 8px; border-right: 1px solid var(--node-border-color); border-bottom: 1px solid var(--node-border-color); background: var(--surface-solid); font-size: var(--node-font-size, 13px); font-weight: 650; line-height: 1.2; clip-path: polygon(0 0,100% 0,86% 100%,0 100%); }
 .sequence-fragment-node.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -390,6 +394,20 @@ button { color: inherit; }
 .sheet-backdrop { position: fixed; inset: 52px 0 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 30px; background: rgba(17, 22, 32, .18); backdrop-filter: blur(2px); animation: sheet-fade-in .14s ease-out; }
 .new-diagram-sheet { width: min(620px, calc(100vw - 60px)); border: 1px solid var(--border); border-radius: 15px; background: var(--surface); box-shadow: 0 28px 80px rgba(20, 27, 41, .28), 0 3px 12px rgba(20, 27, 41, .13); backdrop-filter: blur(36px) saturate(1.25); overflow: hidden; animation: sheet-scale-in .18s ease-out; }
 .new-project-sheet { width: min(460px, calc(100vw - 60px)); border: 1px solid var(--border); border-radius: 15px; background: var(--surface); box-shadow: 0 28px 80px rgba(20, 27, 41, .28), 0 3px 12px rgba(20, 27, 41, .13); backdrop-filter: blur(36px) saturate(1.25); overflow: hidden; animation: sheet-scale-in .18s ease-out; }
+.plantuml-backdrop { padding: 24px; }
+.plantuml-sheet { width: min(920px, calc(100vw - 48px)); height: min(720px, calc(100vh - 100px)); display: grid; grid-template-rows: 65px minmax(0, 1fr) auto; border: 1px solid var(--border); border-radius: 15px; background: var(--surface); box-shadow: 0 28px 80px rgba(20, 27, 41, .32), 0 3px 12px rgba(20, 27, 41, .15); backdrop-filter: blur(36px) saturate(1.25); overflow: hidden; animation: sheet-scale-in .18s ease-out; }
+.plantuml-heading { min-height: 65px; }
+.plantuml-editor-body { min-height: 0; padding: 12px 14px 13px; display: grid; grid-template-rows: 30px minmax(0, 1fr) auto; background: color-mix(in srgb, var(--canvas) 72%, var(--surface-solid)); }
+.plantuml-editor-toolbar { display: flex; align-items: flex-start; justify-content: space-between; }
+.plantuml-editor-toolbar span { color: var(--tertiary); font-size: 9.5px; font-weight: 700; letter-spacing: .08em; }
+.plantuml-editor-toolbar button { height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, var(--surface-solid) 86%, transparent); color: var(--secondary); font-size: 9.5px; }
+.plantuml-editor-toolbar button:hover { background: var(--control-hover); color: var(--text); }
+.plantuml-editor-body textarea { width: 100%; height: 100%; min-height: 280px; resize: none; padding: 15px 17px; border: 1px solid var(--border); border-radius: 10px; outline: none; background: color-mix(in srgb, var(--surface-solid) 94%, transparent); color: var(--text); box-shadow: inset 0 1px 2px rgba(25,33,48,.04); font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace; font-size: 12.5px; line-height: 1.62; tab-size: 2; white-space: pre; overflow: auto; }
+.plantuml-editor-body textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), inset 0 1px 2px rgba(25,33,48,.04); }
+.plantuml-error { margin-top: 8px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--danger) 8%, transparent); color: var(--danger); font-size: 10.5px; line-height: 15px; }
+.plantuml-footer { min-height: 62px; padding: 11px 14px 12px 17px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-top: 1px solid var(--separator); }
+.plantuml-footer p { margin: 0; max-width: 570px; color: var(--secondary); font-size: 10px; line-height: 15px; }
+.plantuml-footer > div { display: flex; gap: 7px; flex: 0 0 auto; }
 .sheet-heading { min-height: 65px; padding: 12px 13px 11px 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--separator); }
 .sheet-heading strong, .sheet-heading span { display: block; }
 .sheet-heading strong { font-size: 15px; line-height: 21px; font-weight: 650; }

@@ -5,14 +5,23 @@ Diagram Studio is an Apple-inspired visual workbench and MCP server for:
 - software architecture diagrams;
 - flowcharts;
 - swimlane diagrams;
-- infrastructure and network topology maps.
+- infrastructure and network topology maps;
+- sequence diagrams;
+- bidirectional PlantUML source synchronization for all five diagram types.
 
 The same structured JSON document is designed for direct user editing and focused AI patch operations.
 
-The workbench includes four starter templates, a searchable drag-and-drop library of common shapes
+The workbench includes five diagram-specific component libraries, a searchable drag-and-drop library of common shapes
 and semantic application, data, infrastructure, and process icons, node and edge inspectors, automatic layout,
 independent text objects, eight-direction node resizing, editable node borders and edge line styles,
-undo/redo, revisioned persistence, and PNG/SVG/JSON export.
+undo/redo, revisioned persistence, direct vertical sequence-message movement, and PNG/SVG/JSON/PlantUML export.
+
+PlantUML supports bidirectional Sequence, Activity, Component, and Deployment diagrams. Sequence covers participants,
+messages, activations, and combined fragments; Activity covers actions, decisions, branches, terminal states,
+and partition-based swimlanes; Component covers actors, services, interfaces, databases, queues, and dependencies;
+Deployment covers nodes, clouds, storage, artifacts, databases, and infrastructure links. Diagram Studio embeds optional
+layout data in ordinary PlantUML comments so its own exports can restore canvas positions and styling,
+while other PlantUML tools continue to read the file normally.
 
 ## Run the visual workbench
 
@@ -41,7 +50,7 @@ npm run build
 node dist/mcp-server.mjs mcp
 ```
 
-The server publishes tools for listing, creating, reading, patching, laying out, validating, and exporting diagram documents.
+The server publishes tools for listing, creating, reading, patching, laying out, validating, importing PlantUML source for all five diagram types, and exporting diagram documents.
 
 ## Keyboard shortcuts
 

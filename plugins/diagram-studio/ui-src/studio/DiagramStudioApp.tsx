@@ -20,6 +20,7 @@ import {
 import { toPng, toSvg } from 'html-to-image';
 import type { DiagramDocument, DiagramEdge, DiagramKind, DiagramNode, DiagramProject, DiagramProjectSummary } from '../../src/schema';
 import { layoutDiagram } from '../../src/layout';
+import { detectPlantUmlDiagramKind, diagramToPlantUml, plantUmlToDiagram } from '../../src/plantuml';
 import {
   parseSequenceActivationHandle,
   parseSequenceSlot,
@@ -48,6 +49,8 @@ export function DiagramStudioApp() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const dragSnapshot = useRef<DiagramDocument | null>(null);
   const resizeSnapshot = useRef<DiagramDocument | null>(null);
+  const edgeMoveSnapshot = useRef<DiagramDocument | null>(null);
+  const edgeMoveChanged = useRef(false);
   const lastSequenceConnect = useRef<{ source: string; target: string; sourceSlot?: number; targetSlot?: number; at: number } | undefined>(undefined);
   const [repository, setRepository] = useState<Repository>();
   const [document, setDocument] = useState<DiagramDocument>();
@@ -70,6 +73,9 @@ export function DiagramStudioApp() {
   const [newDiagramName, setNewDiagramName] = useState('');
   const [homeConfirmVisible, setHomeConfirmVisible] = useState(false);
   const [exportVisible, setExportVisible] = useState(false);
+  const [plantUmlVisible, setPlantUmlVisible] = useState(false);
+  const [plantUmlSource, setPlantUmlSource] = useState('');
+  const [plantUmlError, setPlantUmlError] = useState<string>();
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const [selectedEdgeId, setSelectedEdgeId] = useState<string>();
   const [sequenceMessagePreset, setSequenceMessagePreset] = useState<SequenceMessagePreset>('call');
@@ -157,6 +163,21 @@ export function DiagramStudioApp() {
         ...document,
         edges: document.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
       };
+      if (supportsPlantUml(normalizedDocument.kind)) {
+        normalizedDocument.notation = {
+          format: 'plantuml',
+          dialect: normalizedDocument.kind === 'sequence'
+            ? 'sequence'
+            : normalizedDocument.kind === 'architecture'
+              ? 'component'
+              : normalizedDocument.kind === 'topology'
+                ? 'deployment'
+                : 'activity',
+          source: diagramToPlantUml(normalizedDocument),
+          opaqueBlocks: normalizedDocument.notation?.opaqueBlocks,
+          lastSyncedRevision: persistedRevision + 1
+        };
+      }
       const saved = await repository.save(normalizedDocument, persistedRevision);
       setDocument(saved);
       setPersistedRevision(saved.revision);
@@ -544,6 +565,45 @@ export function DiagramStudioApp() {
     setDirty(true);
   }
 
+  function beginSequenceEdgeMove(edgeId: string) {
+    if (!document) return;
+    if (!edgeMoveSnapshot.current) edgeMoveSnapshot.current = structuredClone(document);
+    edgeMoveChanged.current = false;
+    setSelectedNodeId(undefined);
+    setSelectedEdgeId(edgeId);
+  }
+
+  function moveSequenceEdge(edgeId: string, clientY: number) {
+    if (!document) return;
+    const edge = document.edges.find((candidate) => candidate.id === edgeId);
+    if (!edge) return;
+    const flowY = reactFlow.screenToFlowPosition({ x: 0, y: clientY }).y;
+    const sourceNode = document.nodes.find((node) => node.id === edge.source);
+    const targetNode = document.nodes.find((node) => node.id === edge.target);
+    if (!sourceNode || !targetNode) return;
+    const sourceHandle = closestSequenceHandleAtY(sourceNode, document.nodes, edge.sourceHandle, flowY);
+    const targetHandle = closestSequenceHandleAtY(targetNode, document.nodes, edge.targetHandle, flowY);
+    if (sourceHandle === edge.sourceHandle && targetHandle === edge.targetHandle) return;
+    edgeMoveChanged.current = true;
+    updateDocumentLive({
+      ...document,
+      edges: document.edges.map((candidate) => candidate.id === edgeId
+        ? { ...candidate, sourceHandle, targetHandle }
+        : candidate)
+    });
+  }
+
+  function finishSequenceEdgeMove() {
+    const snapshot = edgeMoveSnapshot.current;
+    if (snapshot && edgeMoveChanged.current) {
+      setPast((items) => [...items.slice(-39), snapshot]);
+      setFuture([]);
+      setDirty(true);
+    }
+    edgeMoveSnapshot.current = null;
+    edgeMoveChanged.current = false;
+  }
+
   const selectNode = useCallback((_event: React.MouseEvent, node: { id: string }) => {
     setSelectedNodeId((current) => current === node.id ? current : node.id);
     setSelectedEdgeId(undefined);
@@ -554,11 +614,54 @@ export function DiagramStudioApp() {
     setSelectedEdgeId((current) => current === edge.id ? current : edge.id);
   }, []);
 
-  async function exportDiagram(format: 'json' | 'svg' | 'png') {
+  function openPlantUmlEditor() {
+    if (!document) return;
+    if (!supportsPlantUml(document.kind)) {
+      showToast('当前图形类型尚未接入 PlantUML 双向编辑。');
+      return;
+    }
+    try {
+      setPlantUmlSource(diagramToPlantUml(document));
+      setPlantUmlError(undefined);
+      setPlantUmlVisible(true);
+      setExportVisible(false);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function applyPlantUmlSource() {
+    if (!document) return;
+    if (!supportsPlantUml(document.kind)) {
+      setPlantUmlError('当前图形类型尚未接入 PlantUML 双向转换。');
+      return;
+    }
+    try {
+      const next = plantUmlToDiagram(plantUmlSource, {
+        documentId: document.documentId,
+        title: document.title,
+        revision: document.revision,
+        createdAt: document.createdAt,
+        updatedAt: document.updatedAt,
+        kind: document.kind
+      });
+      commit(next);
+      setPlantUmlError(undefined);
+      setPlantUmlVisible(false);
+      window.setTimeout(() => reactFlow.fitView({ padding: 0.16, duration: 320 }), 60);
+      showToast('已将 PlantUML 应用到画布');
+    } catch (error) {
+      setPlantUmlError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function exportDiagram(format: 'json' | 'svg' | 'png' | 'puml') {
     if (!document) return;
     setExportVisible(false);
     try {
-      if (format === 'json') {
+      if (format === 'puml') {
+        downloadBlob(new Blob([diagramToPlantUml(document)], { type: 'text/vnd.plantuml;charset=utf-8' }), `${safeFileName(document.title)}.puml`);
+      } else if (format === 'json') {
         downloadBlob(new Blob([JSON.stringify(document, null, 2)], { type: 'application/vnd.chatos.diagram+json' }), `${safeFileName(document.title)}.diagram.json`);
       } else {
         const target = canvasRef.current?.querySelector('.react-flow') as HTMLElement | null;
@@ -568,7 +671,7 @@ export function DiagramStudioApp() {
           : await toSvg(target, { backgroundColor: resolvedCanvasColor(), cacheBust: true });
         downloadDataUrl(dataUrl, `${safeFileName(document.title)}.${format}`);
       }
-      showToast(`已导出 ${format.toUpperCase()}`);
+      showToast(format === 'puml' ? '已导出 PlantUML' : `已导出 ${format.toUpperCase()}`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
@@ -580,7 +683,29 @@ export function DiagramStudioApp() {
       return;
     }
     try {
-      const imported = JSON.parse(await file.text()) as DiagramDocument;
+      const text = await file.text();
+      const isPlantUml = /\.(puml|plantuml|pu)$/i.test(file.name) || /^\s*@startuml\b/im.test(text);
+      if (isPlantUml) {
+        const detectedKind = detectPlantUmlDiagramKind(text);
+        const fallbackTitle = file.name.replace(/\.(puml|plantuml|pu)$/i, '').trim() || `导入的${kindLabel(detectedKind)}`;
+        const seed = await repository.createInProject(activeProject.projectId, detectedKind, fallbackTitle);
+        const imported = plantUmlToDiagram(text, {
+          documentId: seed.documentId,
+          title: fallbackTitle,
+          revision: seed.revision,
+          createdAt: seed.createdAt,
+          updatedAt: seed.updatedAt,
+          kind: detectedKind
+        });
+        openResolvedDocument(imported);
+        setDirty(true);
+        await saveImported(repository, imported, seed.revision);
+        setActiveProject(await repository.readProject(activeProject.projectId));
+        await refreshProjects(repository);
+        window.setTimeout(() => reactFlow.fitView({ padding: 0.16, duration: 320 }), 60);
+        return;
+      }
+      const imported = JSON.parse(text) as DiagramDocument;
       if (!imported.kind || !Array.isArray(imported.nodes) || !Array.isArray(imported.edges)) throw new Error('文件不是有效的 Diagram Studio 文档。');
       const seed = await repository.createInProject(activeProject.projectId, imported.kind, imported.title);
       const next = {
@@ -636,6 +761,16 @@ export function DiagramStudioApp() {
     return {
       ...edge,
       type: isSequence ? 'sequenceMessage' : edge.type,
+      data: isSequence ? {
+        ...edge.data,
+        onVerticalMoveStart: beginSequenceEdgeMove,
+        onVerticalMove: moveSequenceEdge,
+        onVerticalMoveEnd: finishSequenceEdgeMove,
+        onSelect: (edgeId: string) => {
+          setSelectedNodeId(undefined);
+          setSelectedEdgeId(edgeId);
+        }
+      } : edge.data,
       selected: edge.id === selectedEdgeId,
       markerStart: edge.data?.startMarker === 'arrow' ? marker : undefined,
       markerEnd: edge.data?.endMarker === 'none' ? undefined : marker,
@@ -654,7 +789,7 @@ export function DiagramStudioApp() {
       labelStyle: { fill: '#465267', fontSize: edge.data?.fontSize ?? 13, fontWeight: 600 },
       labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.95 }
     };
-  }) ?? [], [document?.edges, document?.kind, selectedEdgeId]);
+  }) ?? [], [document?.edges, document?.kind, document?.nodes, selectedEdgeId]);
 
   const newProjectSheet = newProjectVisible && <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setNewProjectVisible(false); }}>
     <section className="new-project-sheet" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
@@ -783,12 +918,14 @@ export function DiagramStudioApp() {
           <button className="icon-button" disabled={future.length === 0} onClick={redo} aria-label="重做"><Icon name="redo" /></button>
           <div className="toolbar-separator" />
           <button className="toolbar-button" onClick={() => void autoLayout()}><Icon name="layout" />自动布局</button>
+          {supportsPlantUml(document.kind) && <button className={`toolbar-button ${plantUmlVisible ? 'active' : ''}`} onClick={openPlantUmlEditor}><Icon name="document" />PlantUML</button>}
           <button className="toolbar-button primary" disabled={!dirty || isSaving} onClick={() => void save()}><Icon name="save" />保存</button>
           <div className="export-anchor">
             <button className="toolbar-button" onClick={() => setExportVisible(!exportVisible)}><Icon name="export" />导出<Icon name="chevron" className="chevron" /></button>
             {exportVisible && <div className="popover-menu export-menu">
               <button onClick={() => void exportDiagram('png')}><strong>PNG 图像</strong><small>适合分享和文档</small></button>
               <button onClick={() => void exportDiagram('svg')}><strong>SVG 矢量图</strong><small>适合设计和印刷</small></button>
+              {supportsPlantUml(document.kind) && <button onClick={() => void exportDiagram('puml')}><strong>PlantUML 源码</strong><small>标准 .puml，可双向转换</small></button>}
               <button onClick={() => void exportDiagram('json')}><strong>Diagram JSON</strong><small>保留完整可编辑结构</small></button>
             </div>}
           </div>
@@ -847,12 +984,36 @@ export function DiagramStudioApp() {
           </button>)}
         </div>
         <div className="popover-footer">
-          <button onClick={() => importInputRef.current?.click()}><Icon name="folder" />导入 Diagram JSON</button>
-          <input ref={importInputRef} hidden type="file" accept=".json,.diagram.json,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importDiagram(file); event.currentTarget.value = ''; }} />
+          <button onClick={() => importInputRef.current?.click()}><Icon name="folder" />导入 JSON 或 PlantUML</button>
+          <input ref={importInputRef} hidden type="file" accept=".json,.diagram.json,.puml,.plantuml,.pu,application/json,text/plain,text/vnd.plantuml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importDiagram(file); event.currentTarget.value = ''; }} />
         </div>
       </div>}
 
       {newDiagramSheet}
+
+      {plantUmlVisible && <div className="sheet-backdrop plantuml-backdrop">
+        <section className="plantuml-sheet" role="dialog" aria-modal="true" aria-labelledby="plantuml-source-title">
+          <div className="sheet-heading plantuml-heading">
+            <div><strong id="plantuml-source-title">PlantUML 源码</strong><span>{plantUmlDescription(document.kind)}</span></div>
+            <button className="icon-button subtle" onClick={() => setPlantUmlVisible(false)} aria-label="关闭 PlantUML 源码"><Icon name="close" /></button>
+          </div>
+          <div className="plantuml-editor-body">
+            <div className="plantuml-editor-toolbar"><span>{`${plantUmlDialectLabel(document.kind)} · .PUML`}</span><button onClick={() => { setPlantUmlSource(diagramToPlantUml(document)); setPlantUmlError(undefined); }}>重新从画布生成</button></div>
+            <textarea
+              autoFocus
+              spellCheck={false}
+              value={plantUmlSource}
+              onChange={(event) => { setPlantUmlSource(event.target.value); setPlantUmlError(undefined); }}
+              aria-label="PlantUML 源码"
+            />
+            {plantUmlError && <div className="plantuml-error" role="alert">{plantUmlError}</div>}
+          </div>
+          <div className="plantuml-footer">
+            <p>{plantUmlEditorHint(document.kind)}</p>
+            <div><button className="toolbar-button" onClick={() => setPlantUmlVisible(false)}>取消</button><button className="toolbar-button primary" onClick={applyPlantUmlSource}>应用到画布</button></div>
+          </div>
+        </section>
+      </div>}
 
       {homeConfirmVisible && <div className="sheet-backdrop">
         <section className="confirm-sheet" role="alertdialog" aria-modal="true" aria-labelledby="home-confirm-title">
@@ -873,6 +1034,46 @@ export function DiagramStudioApp() {
 
 function kindLabel(kind: DiagramKind): string {
   return ({ architecture: '架构图', flowchart: '流程图', swimlane: '泳道图', topology: '拓扑图', sequence: '时序图' })[kind];
+}
+
+function supportsPlantUml(_kind: DiagramKind): boolean {
+  return true;
+}
+
+function plantUmlDialectLabel(kind: DiagramKind): string {
+  return kind === 'sequence'
+    ? 'SEQUENCE'
+    : kind === 'swimlane'
+      ? 'ACTIVITY · PARTITION'
+      : kind === 'architecture'
+        ? 'COMPONENT'
+        : kind === 'topology'
+          ? 'DEPLOYMENT'
+          : 'ACTIVITY';
+}
+
+function plantUmlDescription(kind: DiagramKind): string {
+  return kind === 'sequence'
+    ? '时序语义与当前画布双向转换'
+    : kind === 'swimlane'
+      ? 'Activity Partition 与泳道画布双向转换'
+      : kind === 'architecture'
+        ? 'Component Diagram 与架构画布双向转换'
+        : kind === 'topology'
+          ? 'Deployment Diagram 与拓扑画布双向转换'
+          : 'Activity Diagram 与流程画布双向转换';
+}
+
+function plantUmlEditorHint(kind: DiagramKind): string {
+  return kind === 'sequence'
+    ? '修改参与者、消息、激活和组合片段后应用。外部 PlantUML 没有布局信息时会自动排版。'
+    : kind === 'swimlane'
+      ? '修改泳道、活动和判断分支后应用。partition 或 |泳道| 语法会生成可拖拽的泳道结构。'
+      : kind === 'architecture'
+        ? '修改 actor、component、interface、database、queue 和依赖关系后应用。外部源码会转换成可拖拽的架构组件。'
+        : kind === 'topology'
+          ? '修改 node、cloud、database、storage、artifact 和网络关系后应用。外部源码会转换成可编辑的拓扑节点。'
+          : '修改活动、判断与分支后应用。start、if/else/endif 和 stop 会生成对应的可编辑流程组件。';
 }
 
 function kindIcon(kind: DiagramKind): 'architecture' | 'flowchart' | 'swimlane' | 'topology' | 'sequence' {
@@ -977,6 +1178,27 @@ function closestLifelineSlot(lifeline: DiagramNode, nodes: DiagramNode[], connec
   return Math.round((percentage - 12) * (sequenceLifelineSlotCount - 1) / 86);
 }
 
+function closestSequenceHandleAtY(
+  node: DiagramNode,
+  nodes: DiagramNode[],
+  currentHandle: string | undefined,
+  connectionY: number
+): string | undefined {
+  if (node.data.shape === 'lifeline') return `slot-${closestLifelineSlot(node, nodes, connectionY)}`;
+  if (node.data.shape === 'activation') {
+    const current = parseSequenceActivationHandle(currentHandle);
+    return closestActivationHandle(node, nodes, current?.side ?? 'left', connectionY);
+  }
+  return currentHandle;
+}
+
+type SequenceMessageRuntimeData = DiagramEdge['data'] & {
+  onVerticalMoveStart?: (edgeId: string) => void;
+  onVerticalMove?: (edgeId: string, clientY: number) => void;
+  onVerticalMoveEnd?: () => void;
+  onSelect?: (edgeId: string) => void;
+};
+
 function SequenceMessageEdge({
   id,
   sourceX,
@@ -990,24 +1212,74 @@ function SequenceMessageEdge({
   labelBgStyle,
   labelBgPadding,
   labelBgBorderRadius,
-  interactionWidth
+  interactionWidth,
+  data
 }: EdgeProps) {
   const edgePath = `M ${sourceX} ${sourceY} L ${targetX} ${sourceY}`;
-  return <BaseEdge
-    id={id}
-    path={edgePath}
-    labelX={(sourceX + targetX) / 2}
-    labelY={sourceY}
-    markerStart={markerStart}
-    markerEnd={markerEnd}
-    style={style}
-    label={label}
-    labelStyle={labelStyle}
-    labelBgStyle={labelBgStyle}
-    labelBgPadding={labelBgPadding}
-    labelBgBorderRadius={labelBgBorderRadius}
-    interactionWidth={interactionWidth}
-  />;
+  const labelX = (sourceX + targetX) / 2;
+  const runtime = data as SequenceMessageRuntimeData | undefined;
+  const runtimeRef = useRef(runtime);
+  const dragCleanupRef = useRef<(() => void) | undefined>(undefined);
+  const [dragging, setDragging] = useState(false);
+  runtimeRef.current = runtime;
+  useEffect(() => () => dragCleanupRef.current?.(), []);
+  return <>
+    <BaseEdge
+      id={id}
+      path={edgePath}
+      labelX={labelX}
+      labelY={sourceY}
+      markerStart={markerStart}
+      markerEnd={markerEnd}
+      style={style}
+      label={label}
+      labelStyle={labelStyle}
+      labelBgStyle={labelBgStyle}
+      labelBgPadding={labelBgPadding}
+      labelBgBorderRadius={labelBgBorderRadius}
+      interactionWidth={interactionWidth}
+    />
+    <path
+      className={`sequence-edge-drag-zone nodrag nopan ${dragging ? 'dragging' : ''}`}
+      d={edgePath}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        dragCleanupRef.current?.();
+        setDragging(true);
+        runtime?.onVerticalMoveStart?.(id);
+        const onMouseMove = (moveEvent: MouseEvent) => runtimeRef.current?.onVerticalMove?.(id, moveEvent.clientY);
+        const finish = () => {
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', finish);
+          dragCleanupRef.current = undefined;
+          setDragging(false);
+          runtimeRef.current?.onVerticalMoveEnd?.();
+        };
+        dragCleanupRef.current = () => {
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('mouseup', finish);
+        };
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', finish, { once: true });
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        runtime?.onSelect?.(id);
+      }}
+      aria-label="上下拖动消息线"
+      role="button"
+      tabIndex={0}
+    />
+    <rect
+      className={`sequence-edge-drag-indicator ${dragging ? 'dragging' : ''}`}
+      x={labelX - 14}
+      y={sourceY - 2}
+      width={28}
+      height={4}
+      rx={2}
+    />
+  </>;
 }
 
 function absoluteNodePosition(nodes: DiagramNode[], node: DiagramNode): { x: number; y: number } {

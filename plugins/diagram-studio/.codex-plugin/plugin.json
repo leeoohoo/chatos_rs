@@ -1,7 +1,7 @@
 {
   "name": "diagram-studio",
   "version": "0.1.0",
-  "description": "Create architecture diagrams, flowcharts, swimlanes, and topology maps with AI-editable structured documents.",
+  "description": "Create architecture, flowchart, swimlane, topology, and sequence diagrams with PlantUML interoperability.",
   "author": {
     "name": "Chatos"
   },
@@ -9,13 +9,14 @@
   "interface": {
     "displayName": "Diagram Studio",
     "shortDescription": "Draw and edit common technical diagrams.",
-    "longDescription": "Diagram Studio provides structured diagram tools and an Apple-inspired visual workbench for architecture, process, swimlane, and topology diagrams.",
+    "longDescription": "Diagram Studio provides structured diagram tools and an Apple-inspired visual workbench with bidirectional PlantUML support for architecture, flowchart, swimlane, topology, and sequence diagrams.",
     "developerName": "Chatos",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
     "defaultPrompt": [
       "Analyze this project and create an architecture diagram.",
       "Create a flowchart from this process description.",
+      "Create an editable sequence diagram from PlantUML source.",
       "Update the active diagram without replacing unrelated nodes."
     ],
     "brandColor": "#6E57D8",

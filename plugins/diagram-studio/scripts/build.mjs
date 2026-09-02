@@ -29,5 +29,10 @@ await Promise.all([
     ...common,
     entryPoints: ['src/document-store.ts'],
     outfile: 'dist/document-store.test.mjs'
+  }),
+  build({
+    ...common,
+    entryPoints: ['src/plantuml.ts'],
+    outfile: 'dist/plantuml.test.mjs'
   })
 ]);

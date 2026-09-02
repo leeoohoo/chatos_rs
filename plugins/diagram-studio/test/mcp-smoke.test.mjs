@@ -23,6 +23,7 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     await client.connect(transport);
     const tools = await client.listTools();
     assert.ok(tools.tools.some((tool) => tool.name === 'diagram_apply_patch'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'diagram_import_plantuml'));
 
     const created = await client.callTool({
       name: 'diagram_create_document',
@@ -61,6 +62,53 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     });
     assert.equal(exported.structuredContent.mimeType, 'image/svg+xml');
     assert.match(exported.structuredContent.sha256, /^[0-9a-f]{64}$/);
+
+    const imported = await client.callTool({
+      name: 'diagram_import_plantuml',
+      arguments: { source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\nAPI --> User: Response\n@enduml', title: 'Imported Sequence' }
+    });
+    assert.equal(imported.structuredContent.document.kind, 'sequence');
+    const plantUmlExport = await client.callTool({
+      name: 'diagram_export',
+      arguments: { documentId: imported.structuredContent.document.documentId, format: 'plantuml' }
+    });
+    assert.equal(plantUmlExport.structuredContent.mimeType, 'text/vnd.plantuml');
+    assert.match(plantUmlExport.structuredContent.relativePath, /\.puml$/);
+
+    const importedActivity = await client.callTool({
+      name: 'diagram_import_plantuml',
+      arguments: {
+        source: '@startuml\nstart\n:Check request;\nif (Valid?) then (yes)\n:Process;\nelse (no)\n:Reject;\nendif\nstop\n@enduml',
+        title: 'Imported Flow',
+        kind: 'flowchart'
+      }
+    });
+    assert.equal(importedActivity.structuredContent.document.kind, 'flowchart');
+    const activityExport = await client.callTool({
+      name: 'diagram_export',
+      arguments: { documentId: importedActivity.structuredContent.document.documentId, format: 'plantuml' }
+    });
+    assert.equal(activityExport.structuredContent.mimeType, 'text/vnd.plantuml');
+
+    const importedArchitecture = await client.callTool({
+      name: 'diagram_import_plantuml',
+      arguments: {
+        source: '@startuml\nactor User\ncomponent "Web App" as web\ndatabase DB\nUser --> web : HTTPS\nweb --> DB : SQL\n@enduml',
+        title: 'Imported Architecture'
+      }
+    });
+    assert.equal(importedArchitecture.structuredContent.document.kind, 'architecture');
+    assert.equal(importedArchitecture.structuredContent.document.notation.dialect, 'component');
+
+    const importedTopology = await client.callTool({
+      name: 'diagram_import_plantuml',
+      arguments: {
+        source: '@startuml\ncloud Internet\nnode "App Node" as app\ndatabase DB\nInternet --> app : HTTPS\napp --> DB : SQL\n@enduml',
+        title: 'Imported Topology'
+      }
+    });
+    assert.equal(importedTopology.structuredContent.document.kind, 'topology');
+    assert.equal(importedTopology.structuredContent.document.notation.dialect, 'deployment');
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });

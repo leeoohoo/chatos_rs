@@ -156,7 +156,7 @@ function NodeSurface({ data, shape }: { data: DiagramNodeData; shape: DiagramNod
 
 export function LaneNodeView({ data, selected }: NodeProps<DiagramNode>) {
   return (
-    <div className={`lane-node ${selected ? 'selected' : ''}`} style={{ background: data.color ?? '#EEF2F8' }}>
+    <div className={`lane-node ${selected ? 'selected' : ''}`} style={{ background: data.fillColor ?? data.color ?? '#EEF2F8' }}>
       <div className="lane-title">{data.label}</div>
     </div>
   );

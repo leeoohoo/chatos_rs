@@ -12,6 +12,7 @@ import {
   type DiagramKind,
   type DiagramPatchOperation
 } from './schema.js';
+import { plantUmlToDiagram } from './plantuml.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
 const SERVER_VERSION = '0.1.0';
@@ -42,6 +43,21 @@ const TOOL_DEFINITIONS = [
         title: { type: 'string', minLength: 1, maxLength: 240 }
       },
       required: ['kind'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'diagram_import_plantuml',
+    description: 'Create an editable Diagram Studio architecture, flowchart, swimlane, topology, or sequence diagram from PlantUML source.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: { type: 'string', minLength: 1, maxLength: 2_097_152 },
+        title: { type: 'string', minLength: 1, maxLength: 240 },
+        kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'] }
+      },
+      required: ['source'],
       additionalProperties: false
     },
     _meta: policy
@@ -129,12 +145,12 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'diagram_export',
-    description: 'Export a diagram as a managed structured JSON or SVG artifact.',
+    description: 'Export a diagram as managed structured JSON, SVG, or PlantUML source.',
     inputSchema: {
       type: 'object',
       properties: {
         documentId: { type: 'string', minLength: 1, maxLength: 128 },
-        format: { type: 'string', enum: ['json', 'svg'] }
+        format: { type: 'string', enum: ['json', 'svg', 'plantuml'] }
       },
       required: ['documentId', 'format'],
       additionalProperties: false
@@ -160,6 +176,18 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const kind = argumentsValue.kind as DiagramKind;
       const document = await store.create(kind, typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined);
       return { document: diagramSummary(document) };
+    }
+    case 'diagram_import_plantuml': {
+      const requestedKind = typeof argumentsValue.kind === 'string'
+        && ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'].includes(argumentsValue.kind)
+        ? argumentsValue.kind as DiagramKind
+        : undefined;
+      const document = plantUmlToDiagram(String(argumentsValue.source), {
+        title: typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined,
+        kind: requestedKind
+      });
+      const saved = await store.writeNew(document);
+      return { document: saved };
     }
     case 'diagram_get_document':
       return { document: await store.read(String(argumentsValue.documentId)) };
@@ -207,7 +235,8 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'diagram_export': {
       const document = await store.read(String(argumentsValue.documentId));
-      return await writeExportArtifact(document, argumentsValue.format === 'svg' ? 'svg' : 'json');
+      const format = argumentsValue.format === 'svg' ? 'svg' : argumentsValue.format === 'plantuml' ? 'plantuml' : 'json';
+      return await writeExportArtifact(document, format);
     }
     default:
       throw new Error(`Unknown Diagram Studio tool: ${name}`);

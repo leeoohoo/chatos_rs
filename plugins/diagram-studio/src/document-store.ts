@@ -18,6 +18,7 @@ import {
 import { createBlankDiagram, createTemplate } from './templates.js';
 import { layoutDiagram } from './layout.js';
 import { parseSequenceActivationHandle, parseSequenceSlot, sequenceActivationSlotPercentage, sequenceSlotPercentage } from './sequence.js';
+import { diagramToPlantUml } from './plantuml.js';
 
 export class RevisionConflictError extends Error {
   constructor(public readonly actualRevision: number) {
@@ -363,7 +364,7 @@ function svgHandlePoint(
 
 export async function writeExportArtifact(
   document: DiagramDocument,
-  format: 'json' | 'svg'
+  format: 'json' | 'svg' | 'plantuml'
 ): Promise<{ relativePath: string; mimeType: string; size: number; sha256: string }> {
   const artifactDirectory = path.resolve(
     process.env.CHATOS_PLUGIN_ARTIFACT_DIR
@@ -372,16 +373,18 @@ export async function writeExportArtifact(
   );
   await fs.mkdir(artifactDirectory, { recursive: true });
   const safeTitle = document.title.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, '-').replace(/^-+|-+$/g, '') || document.documentId;
-  const extension = format === 'json' ? 'diagram.json' : 'svg';
+  const extension = format === 'json' ? 'diagram.json' : format === 'plantuml' ? 'puml' : 'svg';
   const relativePath = `${safeTitle}-${document.documentId}.${extension}`;
   const body = format === 'json'
     ? `${JSON.stringify(document, null, 2)}\n`
-    : renderDiagramSvg(document);
+    : format === 'plantuml'
+      ? diagramToPlantUml(document)
+      : renderDiagramSvg(document);
   const bytes = Buffer.from(body, 'utf8');
   await fs.writeFile(path.join(artifactDirectory, relativePath), bytes, { mode: 0o600 });
   return {
     relativePath,
-    mimeType: format === 'json' ? 'application/vnd.chatos.diagram+json' : 'image/svg+xml',
+    mimeType: format === 'json' ? 'application/vnd.chatos.diagram+json' : format === 'plantuml' ? 'text/vnd.plantuml' : 'image/svg+xml',
     size: bytes.length,
     sha256: createHash('sha256').update(bytes).digest('hex')
   };

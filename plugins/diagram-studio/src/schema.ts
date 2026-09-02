@@ -85,6 +85,8 @@ export interface DiagramNodeData extends Record<string, unknown> {
   fontWeight?: number;
   sequenceOwnerId?: string;
   sequenceSlot?: number;
+  plantUmlId?: string;
+  plantUmlType?: string;
   sourceReferences?: string[];
 }
 
@@ -110,6 +112,7 @@ export interface DiagramEdgeData extends Record<string, unknown> {
   strokeWidth?: number;
   color?: string;
   fontSize?: number;
+  plantUmlId?: string;
 }
 
 export interface DiagramEdge {
@@ -130,6 +133,16 @@ export interface DiagramViewport {
   zoom: number;
 }
 
+export type PlantUmlDialect = 'sequence' | 'activity' | 'component' | 'deployment';
+
+export interface PlantUmlNotation {
+  format: 'plantuml';
+  dialect: PlantUmlDialect;
+  source?: string;
+  opaqueBlocks?: string[];
+  lastSyncedRevision?: number;
+}
+
 export interface DiagramDocument {
   schemaVersion: 1;
   documentId: string;
@@ -142,6 +155,7 @@ export interface DiagramDocument {
   nodes: DiagramNode[];
   edges: DiagramEdge[];
   viewport: DiagramViewport;
+  notation?: PlantUmlNotation;
   metadata?: Record<string, string>;
 }
 
@@ -209,6 +223,18 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
   }
   if (!Array.isArray(document.edges) || document.edges.length > 10000) {
     throw new Error('Diagram edges must be an array with at most 10000 items.');
+  }
+  if (document.notation) {
+    if (document.notation.format !== 'plantuml') throw new Error('Diagram notation format is invalid.');
+    if (!['sequence', 'activity', 'component', 'deployment'].includes(document.notation.dialect)) {
+      throw new Error('Diagram PlantUML dialect is invalid.');
+    }
+    if (document.notation.source !== undefined && (typeof document.notation.source !== 'string' || document.notation.source.length > 2 * 1024 * 1024)) {
+      throw new Error('Diagram PlantUML source is invalid or too large.');
+    }
+    if (document.notation.opaqueBlocks !== undefined && (!Array.isArray(document.notation.opaqueBlocks) || document.notation.opaqueBlocks.some((item) => typeof item !== 'string'))) {
+      throw new Error('Diagram PlantUML opaque blocks are invalid.');
+    }
   }
   const nodeIds = new Set<string>();
   for (const node of document.nodes) {

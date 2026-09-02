@@ -2,12 +2,12 @@
   "schemaVersion": 3,
   "name": "chatos-diagram-studio",
   "version": "0.1.0",
-  "description": "Create and edit architecture diagrams, flowcharts, swimlane diagrams, and topology maps with a structured AI-editable document model.",
+  "description": "Create and edit architecture diagrams, flowcharts, swimlane diagrams, topology maps, and sequence diagrams with complete PlantUML interoperability.",
   "author": {
     "name": "Chatos"
   },
   "license": "Apache-2.0",
-  "keywords": ["architecture", "flowchart", "swimlane", "topology", "diagram", "mcp"],
+  "keywords": ["architecture", "flowchart", "swimlane", "topology", "sequence", "plantuml", "diagram", "mcp"],
   "mcpServers": {
     "diagram-studio": {
       "type": "stdio",
@@ -37,6 +37,8 @@
       "artifactMimeTypes": [
         "application/vnd.chatos.diagram+json",
         "application/json",
+        "text/vnd.plantuml",
+        "text/plain",
         "image/svg+xml",
         "image/png"
       ]
@@ -44,8 +46,8 @@
   ],
   "interface": {
     "displayName": "Diagram Studio",
-    "shortDescription": "Architecture, flowchart, swimlane, and topology diagrams",
-    "longDescription": "A native-feeling visual workbench for creating structured diagrams by hand or through AI tools. Documents use stable nodes, edges, groups, revisions, and source references.",
+    "shortDescription": "Technical diagrams with PlantUML interoperability",
+    "longDescription": "A native-feeling visual workbench for creating structured diagrams by hand or through AI tools. Architecture, flowchart, swimlane, topology, and sequence diagrams support bidirectional PlantUML source while canvas layout and styling remain editable.",
     "developerName": "Chatos",
     "category": "Productivity",
     "capabilities": [
@@ -53,13 +55,17 @@
       "Flowcharts",
       "Swimlane diagrams",
       "Topology maps",
+      "Sequence diagrams",
+      "PlantUML Sequence, Activity, Component, and Deployment import and export",
       "AI-editable structured documents",
-      "SVG, PNG, and JSON export"
+      "SVG, PNG, JSON, and PlantUML export"
     ],
     "defaultPrompt": [
       "Analyze this project and create an architecture diagram.",
       "Turn this process description into a flowchart.",
-      "Create a swimlane diagram for this workflow."
+      "Create a swimlane diagram for this workflow.",
+      "Create an editable architecture or topology diagram from this PlantUML source.",
+      "Create an editable sequence diagram from this PlantUML source."
     ],
     "brandColor": "#6E57D8",
     "logo": "./assets/logo.svg",
@@ -79,7 +85,7 @@
     {
       "permission": "artifact.create",
       "required": true,
-      "reason": "Export diagram documents as JSON, SVG, and PNG deliverables.",
+      "reason": "Export diagram documents as JSON, SVG, PNG, and PlantUML deliverables.",
       "components": ["diagram-studio", "diagram-workbench"]
     }
   ]
