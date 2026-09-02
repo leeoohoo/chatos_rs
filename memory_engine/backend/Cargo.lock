@@ -2338,7 +2338,7 @@ dependencies = [
  "p256",
  "p384",
  "pem",
- "rand 0.8.7",
+ "rand 0.8.8",
  "rsa",
  "serde",
  "serde_json",
@@ -2560,7 +2560,7 @@ dependencies = [
  "hex",
  "lapin",
  "memory_engine_sdk",
- "mongodb 3.8.0",
+ "mongodb 3.8.2",
  "reqwest",
  "rustls 0.23.43",
  "rustls-pemfile 2.2.0",
@@ -2679,7 +2679,7 @@ dependencies = [
  "md-5 0.10.6",
  "pbkdf2 0.11.0",
  "percent-encoding",
- "rand 0.8.7",
+ "rand 0.8.8",
  "rustc_version_runtime 0.2.1",
  "rustls 0.21.12",
  "rustls-pemfile 1.0.4",
@@ -2705,9 +2705,9 @@ dependencies = [
 
 [[package]]
 name = "mongodb"
-version = "3.8.0"
+version = "3.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b814038f367d212f55de0a630cb35102a9b8ca23785a86955d62c0087c93846d"
+checksum = "d220eb9ba80bad420e1f9efc4e895fede7418f8779a8e38a3b750e57ff397720"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.0",
@@ -2751,9 +2751,9 @@ dependencies = [
 
 [[package]]
 name = "mongodb-internal-macros"
-version = "3.8.0"
+version = "3.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f736d2fbc56e0011a341fbb9172bd822fda75c5f93b82fae1c7aab1e2613c810"
+checksum = "e38ff3c46c59c2f4d9b26a86e6980dc23583e9d4b45aa579cef6584642093128"
 dependencies = [
  "macro_magic",
  "proc-macro2",
@@ -2824,7 +2824,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.7",
+ "rand 0.8.8",
  "smallvec",
  "zeroize",
 ]
@@ -3320,9 +3320,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.8.7"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
+checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -4648,7 +4648,7 @@ dependencies = [
  "ipnet",
  "lazy_static",
  "log",
- "rand 0.8.7",
+ "rand 0.8.8",
  "smallvec",
  "thiserror 1.0.69",
  "tinyvec",
