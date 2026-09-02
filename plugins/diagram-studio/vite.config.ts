@@ -6,6 +6,11 @@ export default defineConfig({
   plugins: [react()],
   root: path.resolve(import.meta.dirname, 'ui-src'),
   base: './',
+  resolve: {
+    alias: {
+      'elkjs/lib/elk.bundled.js': path.resolve(import.meta.dirname, 'ui-src/elk-browser.ts')
+    }
+  },
   server: {
     host: '127.0.0.1',
     port: 4177,

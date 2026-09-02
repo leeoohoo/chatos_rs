@@ -33,7 +33,15 @@ npm run studio
 
 Open `http://127.0.0.1:4178`.
 
-Documents are stored in `DIAGRAM_STUDIO_DATA_DIR`, then `CHATOS_PLUGIN_DATA_DIR`, falling back to `.diagram-studio-data` in the current directory.
+The installed executable exposes the same local application entry:
+
+```bash
+chatos-diagram-studio studio
+```
+
+`studio` starts both the loopback API and the packaged visual page. The page shows a green “本地服务” badge when projects and diagrams are being persisted by that backend. The MCP process and visual page share the same data directory.
+
+Documents are stored in `DIAGRAM_STUDIO_DATA_DIR`, then `CHATOS_PLUGIN_DATA_DIR`, falling back to `.diagram-studio-data` in the current directory. When launched by ChatOS, the generic Plugin application runtime supplies `CHATOS_PLUGIN_APP_HOST`, `CHATOS_PLUGIN_APP_PORT`, and `CHATOS_PLUGIN_DATA_DIR`; `DIAGRAM_STUDIO_HOST` and `DIAGRAM_STUDIO_PORT` remain development fallbacks.
 
 For UI-only development with browser-local storage:
 
@@ -42,6 +50,8 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:4177`.
+
+When the 4178 backend is running, the Vite development server proxies `/api` to it, so the same green “本地服务” badge confirms that development UI is also using backend persistence.
 
 ## MCP server
 

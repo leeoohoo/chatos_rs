@@ -16,7 +16,8 @@ use chatos_plugin_management_sdk::{
     normalized_plugin_manifest_sha256, parse_plugin_manifest, plugin_component_descriptors,
     plugin_release_signing_payload, PluginLicenseMetadata, PluginManifest, PluginMcpServer,
     PluginNpmPackage, PluginPublisher, PluginReleaseSignature, PluginReleaseVerificationContext,
-    SigningKeyRef, PLUGIN_SIGNATURE_ALGORITHM_ED25519, PLUGIN_SIGNING_KEY_USAGE_RELEASE,
+    PluginUiRuntime, SigningKeyRef, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
+    PLUGIN_SIGNING_KEY_USAGE_RELEASE,
 };
 use flate2::read::GzDecoder;
 use ring::rand::SystemRandom;
@@ -58,6 +59,7 @@ pub(super) struct PluginPackageAnalysis {
     package_version: String,
     npm_integrity: String,
     package_bins: Vec<String>,
+    has_ui: bool,
     manifest: PluginManifest,
     components: Vec<chatos_plugin_management_sdk::PluginComponentDescriptor>,
 }
@@ -233,6 +235,7 @@ pub(super) async fn publish_uploaded_plugin(
             catalog.keywords = stored.normalized_manifest.keywords.clone();
             catalog.visibility = request.visibility;
             catalog.featured = request.featured;
+            catalog.has_ui = !stored.normalized_manifest.ui.is_empty();
             catalog.license = PluginLicenseMetadata {
                 license_id: request.license_id,
                 license_url,
@@ -262,6 +265,7 @@ pub(super) async fn publish_uploaded_plugin(
                     visibility: request.visibility,
                     featured: request.featured,
                     enabled: true,
+                    has_ui: !stored.normalized_manifest.ui.is_empty(),
                     license: PluginLicenseMetadata {
                         license_id: request.license_id,
                         license_url,
@@ -401,6 +405,7 @@ fn persist_and_analyze_package(
         package_version: parsed.package_version,
         npm_integrity,
         package_bins: parsed.package_bins,
+        has_ui: !parsed.manifest.ui.is_empty(),
         components: plugin_component_descriptors(&parsed.manifest),
         manifest: parsed.manifest,
     })
@@ -516,21 +521,30 @@ fn parse_npm_package(
         ));
     }
     let package_bins = package_bins(&package.bin, package.name.as_str())?;
+    let mut required_bins = BTreeMap::new();
     for server in &manifest.mcp_servers {
         if let PluginMcpServer::Stdio { bin, .. } = server {
-            let package_bin = package_bins
-                .iter()
-                .find(|candidate| candidate.name == *bin)
-                .ok_or_else(|| {
-                    ApiError::bad_request(format!(
-                        "Plugin Manifest stdio bin {bin} is not declared by package.json.bin"
-                    ))
-                })?;
-            if !archived_files.contains(package_bin.archive_path.as_str()) {
-                return Err(ApiError::bad_request(format!(
-                    "package.json.bin entry {bin} points to a file missing from the npm package"
-                )));
-            }
+            required_bins.insert(bin.as_str(), "stdio");
+        }
+    }
+    for ui in &manifest.ui {
+        if let Some(PluginUiRuntime::LocalHttp { bin, .. }) = &ui.runtime {
+            required_bins.insert(bin.as_str(), "UI runtime");
+        }
+    }
+    for (bin, usage) in required_bins {
+        let package_bin = package_bins
+            .iter()
+            .find(|candidate| candidate.name == bin)
+            .ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "Plugin Manifest {usage} bin {bin} is not declared by package.json.bin"
+                ))
+            })?;
+        if !archived_files.contains(package_bin.archive_path.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "package.json.bin entry {bin} points to a file missing from the npm package"
+            )));
         }
     }
     Ok(ParsedPackage {
@@ -974,6 +988,60 @@ mod tests {
           "mcpServers":{"demo":{"type":"stdio","bin":"demo-mcp"}},
           "interface":{"displayName":"Demo MCP","shortDescription":"Demo","longDescription":"Demo MCP","developerName":"Demo","category":"Developer Tools"},
           "permissions":[{"permission":"process.spawn","required":true,"reason":"Start MCP","components":["demo"]}]
+        }"#;
+        let error = parse_npm_package(
+            package_fixture_with_bin_file(manifest, false).as_slice(),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("missing from the npm package"));
+    }
+
+    #[test]
+    fn uploaded_package_accepts_declared_local_ui_runtime_bin() {
+        let manifest = r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.0.0",
+          "description":"Demo UI",
+          "author":{"name":"Demo"},
+          "ui":[{"componentKey":"workbench","source":"./ui/index.html","surface":"workbench","runtime":{"type":"local_http","bin":"demo-mcp","args":["studio"]}}],
+          "interface":{"displayName":"Demo UI","shortDescription":"Demo","longDescription":"Demo UI","developerName":"Demo","category":"Developer Tools"},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start UI","components":["workbench"]}]
+        }"#;
+        let parsed = parse_npm_package(package_fixture(manifest).as_slice(), None).expect("parse");
+        assert_eq!(parsed.package_bins, vec!["demo-mcp"]);
+        assert_eq!(parsed.manifest.ui.len(), 1);
+    }
+
+    #[test]
+    fn uploaded_package_rejects_local_ui_runtime_bin_missing_from_package_json() {
+        let manifest = r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.0.0",
+          "description":"Demo UI",
+          "author":{"name":"Demo"},
+          "ui":[{"componentKey":"workbench","source":"./ui/index.html","surface":"workbench","runtime":{"type":"local_http","bin":"missing-bin"}}],
+          "interface":{"displayName":"Demo UI","shortDescription":"Demo","longDescription":"Demo UI","developerName":"Demo","category":"Developer Tools"},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start UI","components":["workbench"]}]
+        }"#;
+        let error = parse_npm_package(package_fixture(manifest).as_slice(), None).unwrap_err();
+        assert!(error.message.contains("UI runtime bin missing-bin"));
+        assert!(error.message.contains("not declared"));
+    }
+
+    #[test]
+    fn uploaded_package_rejects_local_ui_runtime_bin_file_missing_from_archive() {
+        let manifest = r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.0.0",
+          "description":"Demo UI",
+          "author":{"name":"Demo"},
+          "ui":[{"componentKey":"workbench","source":"./ui/index.html","surface":"workbench","runtime":{"type":"local_http","bin":"demo-mcp"}}],
+          "interface":{"displayName":"Demo UI","shortDescription":"Demo","longDescription":"Demo UI","developerName":"Demo","category":"Developer Tools"},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start UI","components":["workbench"]}]
         }"#;
         let error = parse_npm_package(
             package_fixture_with_bin_file(manifest, false).as_slice(),

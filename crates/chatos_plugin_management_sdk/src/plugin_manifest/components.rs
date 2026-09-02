@@ -18,6 +18,10 @@ pub const PLUGIN_UI_SURFACE_DETAIL_PANEL: &str = "detail_panel";
 pub const PLUGIN_UI_SURFACE_MESSAGE_PANEL: &str = "message_panel";
 pub const PLUGIN_UI_SURFACE_WORKBENCH: &str = "workbench";
 pub const PLUGIN_UI_SURFACE_ARTIFACT_VIEWER: &str = "artifact_viewer";
+pub const PLUGIN_UI_RUNTIME_DEFAULT_HEALTH_PATH: &str = "/api/health";
+pub const PLUGIN_UI_RUNTIME_DEFAULT_LAUNCH_TIMEOUT_MS: u64 = 15_000;
+pub const PLUGIN_UI_RUNTIME_MIN_LAUNCH_TIMEOUT_MS: u64 = 100;
+pub const PLUGIN_UI_RUNTIME_MAX_LAUNCH_TIMEOUT_MS: u64 = 120_000;
 pub const PLUGIN_UI_BRIDGE_CAPABILITY_HOST_CONTEXT_READ: &str = "host.context.read";
 pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST: &str = "artifact.list";
 pub const PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ: &str = "artifact.read";
@@ -219,6 +223,52 @@ pub struct PluginUiContribution {
     pub bridge_capabilities: Vec<String>,
     #[serde(default)]
     pub artifact_mime_types: Vec<String>,
+    #[serde(default)]
+    pub runtime: Option<PluginUiRuntime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PluginUiRuntime {
+    LocalHttp {
+        bin: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default, rename = "healthPath")]
+        health_path: Option<String>,
+        #[serde(default, rename = "launchTimeoutMs")]
+        launch_timeout_ms: Option<u64>,
+    },
+}
+
+impl PluginUiRuntime {
+    pub fn bin(&self) -> &str {
+        match self {
+            Self::LocalHttp { bin, .. } => bin,
+        }
+    }
+
+    pub fn args(&self) -> &[String] {
+        match self {
+            Self::LocalHttp { args, .. } => args,
+        }
+    }
+
+    pub fn health_path(&self) -> &str {
+        match self {
+            Self::LocalHttp { health_path, .. } => health_path
+                .as_deref()
+                .unwrap_or(PLUGIN_UI_RUNTIME_DEFAULT_HEALTH_PATH),
+        }
+    }
+
+    pub fn launch_timeout_ms(&self) -> u64 {
+        match self {
+            Self::LocalHttp {
+                launch_timeout_ms, ..
+            } => launch_timeout_ms.unwrap_or(PLUGIN_UI_RUNTIME_DEFAULT_LAUNCH_TIMEOUT_MS),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

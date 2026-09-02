@@ -14,6 +14,8 @@
     "assets/",
     "bin/",
     "dist/",
+    "!dist/*.test.mjs",
+    "!dist/test-helpers.mjs",
     "skills/",
     "ui/",
     ".codex-plugin/",
@@ -24,7 +26,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/build.mjs",
-    "studio": "node dist/studio-server.mjs",
+    "studio": "node bin/chatos-diagram-studio studio",
+    "studio:dev": "npm run build && npm run studio",
     "mcp": "node dist/mcp-server.mjs mcp",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",

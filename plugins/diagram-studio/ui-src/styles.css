@@ -69,6 +69,9 @@ button { color: inherit; }
 .home-brand strong { font-size: 13px; font-weight: 650; }
 .home-brand-icon { width: 27px; height: 27px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: white; background: linear-gradient(145deg, #7484e4, #5364c4); box-shadow: inset 0 0 0 .5px rgba(0,0,0,.16), 0 2px 5px rgba(55,67,130,.2); }
 .home-brand-icon svg { width: 16px; height: 16px; }
+.runtime-badge { height: 20px; margin-left: 3px; padding: 0 7px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 10px; color: var(--secondary); background: color-mix(in srgb, var(--surface-solid) 82%, transparent); font-size: 9.5px; font-weight: 600; white-space: nowrap; }
+.runtime-badge i { width: 6px; height: 6px; border-radius: 50%; background: #c18142; box-shadow: 0 0 0 2px color-mix(in srgb, #c18142 14%, transparent); }
+.runtime-badge.connected i { background: #42a66b; box-shadow: 0 0 0 2px color-mix(in srgb, #42a66b 14%, transparent); }
 .home-toolbar-actions { display: flex; align-items: center; gap: 7px; }
 .project-home { overflow: auto; padding: 52px max(34px, calc((100vw - 1120px) / 2)) 80px; }
 .home-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; padding-bottom: 34px; border-bottom: 1px solid var(--separator); }

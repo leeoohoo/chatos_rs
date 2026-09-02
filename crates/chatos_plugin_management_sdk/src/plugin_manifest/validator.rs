@@ -7,12 +7,14 @@ use std::fmt;
 use semver::{Version, VersionReq};
 
 use super::components::{
-    component_key_from_path, PluginMcpServer, PluginPathRef, PLUGIN_AGENT_MAX_ITERATIONS,
-    PLUGIN_COMMAND_MAX_ALLOWED_TOOLS, PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES,
-    PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD,
-    PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ,
-    PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE, PLUGIN_UI_BRIDGE_CAPABILITY_HOST_CONTEXT_READ,
-    PLUGIN_UI_MAX_ARTIFACT_MIME_TYPES, PLUGIN_UI_MAX_ASSETS, PLUGIN_UI_MAX_BRIDGE_CAPABILITIES,
+    component_key_from_path, PluginMcpServer, PluginPathRef, PluginUiRuntime,
+    PLUGIN_AGENT_MAX_ITERATIONS, PLUGIN_COMMAND_MAX_ALLOWED_TOOLS,
+    PLUGIN_COMMAND_MAX_TOOL_NAME_BYTES, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE,
+    PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST,
+    PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE,
+    PLUGIN_UI_BRIDGE_CAPABILITY_HOST_CONTEXT_READ, PLUGIN_UI_MAX_ARTIFACT_MIME_TYPES,
+    PLUGIN_UI_MAX_ASSETS, PLUGIN_UI_MAX_BRIDGE_CAPABILITIES,
+    PLUGIN_UI_RUNTIME_MAX_LAUNCH_TIMEOUT_MS, PLUGIN_UI_RUNTIME_MIN_LAUNCH_TIMEOUT_MS,
     PLUGIN_UI_SURFACE_ARTIFACT_VIEWER, PLUGIN_UI_SURFACE_DETAIL_PANEL,
     PLUGIN_UI_SURFACE_MESSAGE_PANEL, PLUGIN_UI_SURFACE_WORKBENCH,
 };
@@ -309,6 +311,7 @@ pub fn validate_plugin_manifest(
     validate_dependencies(manifest, &mut issues);
     validate_permissions(manifest, &component_keys, &mut issues);
     validate_mcp_runtime_permissions(manifest, &mut issues);
+    validate_ui_runtime_permissions(manifest, &mut issues);
 
     let component_count = manifest.skills.len()
         + manifest.mcp_servers.len()
@@ -372,6 +375,9 @@ fn validate_ui_contribution(
                 "Plugin UI surface must be detail_panel, message_panel, workbench, or artifact_viewer",
             );
         }
+    }
+    if let Some(runtime) = &ui.runtime {
+        validate_ui_runtime(index, ui.surface.as_deref(), runtime, issues);
     }
     if ui.assets.len() > PLUGIN_UI_MAX_ASSETS {
         issue(
@@ -487,6 +493,62 @@ fn validate_ui_contribution(
                 format!("ui[{index}].artifactMimeTypes[{mime_index}]").as_str(),
                 "duplicate Plugin UI artifact MIME type",
             );
+        }
+    }
+}
+
+fn validate_ui_runtime(
+    index: usize,
+    surface: Option<&str>,
+    runtime: &PluginUiRuntime,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    match runtime {
+        PluginUiRuntime::LocalHttp {
+            bin,
+            args,
+            health_path,
+            launch_timeout_ms,
+        } => {
+            validate_package_executable(
+                format!("ui[{index}].runtime").as_str(),
+                "Plugin UI runtime",
+                bin,
+                args,
+                issues,
+            );
+            if surface != Some(PLUGIN_UI_SURFACE_WORKBENCH) {
+                issue(
+                    issues,
+                    format!("ui[{index}].surface").as_str(),
+                    "local_http Plugin UI runtime requires the workbench surface",
+                );
+            }
+            if let Some(path) = health_path {
+                let valid = path.starts_with('/')
+                    && path.len() <= 2_048
+                    && !path.contains(['?', '#', '\0'])
+                    && !path.split('/').any(|segment| segment == "..");
+                if !valid {
+                    issue(
+                        issues,
+                        format!("ui[{index}].runtime.healthPath").as_str(),
+                        "healthPath must be a safe absolute HTTP path",
+                    );
+                }
+            }
+            if launch_timeout_ms.is_some_and(|timeout| {
+                !(PLUGIN_UI_RUNTIME_MIN_LAUNCH_TIMEOUT_MS..=PLUGIN_UI_RUNTIME_MAX_LAUNCH_TIMEOUT_MS)
+                    .contains(&timeout)
+            }) {
+                issue(
+                    issues,
+                    format!("ui[{index}].runtime.launchTimeoutMs").as_str(),
+                    format!(
+                        "launchTimeoutMs must be between {PLUGIN_UI_RUNTIME_MIN_LAUNCH_TIMEOUT_MS} and {PLUGIN_UI_RUNTIME_MAX_LAUNCH_TIMEOUT_MS}"
+                    ),
+                );
+            }
         }
     }
 }
@@ -697,6 +759,33 @@ fn validate_mcp_runtime_permissions(
                 issues,
                 format!("mcpServers[{index}]").as_str(),
                 "stdio MCP component requires a required process.spawn permission",
+            );
+        }
+    }
+}
+
+fn validate_ui_runtime_permissions(
+    manifest: &PluginManifest,
+    issues: &mut Vec<PluginManifestValidationIssue>,
+) {
+    for (index, ui) in manifest.ui.iter().enumerate() {
+        if ui.runtime.is_none() {
+            continue;
+        }
+        let declares_process_spawn = manifest.permissions.iter().any(|permission| {
+            permission.permission == "process.spawn"
+                && permission.required
+                && (permission.components.is_empty()
+                    || permission
+                        .components
+                        .iter()
+                        .any(|key| key == &ui.component_key))
+        });
+        if !declares_process_spawn {
+            issue(
+                issues,
+                format!("ui[{index}].runtime").as_str(),
+                "local Plugin UI runtime requires a required process.spawn permission",
             );
         }
     }

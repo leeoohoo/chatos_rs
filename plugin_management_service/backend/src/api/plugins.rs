@@ -182,6 +182,7 @@ pub(super) async fn publish_plugin_catalog_entry(
         visibility: payload.visibility,
         featured: payload.featured,
         enabled: payload.enabled,
+        has_ui: payload.has_ui,
         latest_release_id: String::new(),
         license: payload.license,
         created_at: now.clone(),
@@ -551,6 +552,7 @@ mod tests {
             visibility: PLUGIN_VISIBILITY_PUBLIC.to_string(),
             featured: false,
             enabled: true,
+            has_ui: false,
             license: PluginLicenseMetadata {
                 license_id: "MIT".to_string(),
                 license_url: None,

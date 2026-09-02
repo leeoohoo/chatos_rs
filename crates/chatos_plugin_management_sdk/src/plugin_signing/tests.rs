@@ -320,6 +320,7 @@ fn signed_catalog_fixture() -> SignedCatalogFixture {
         visibility: "public".to_string(),
         featured: false,
         enabled: true,
+        has_ui: false,
         latest_release_id: release.id.clone(),
         license: PluginLicenseMetadata {
             license_id: "MIT".to_string(),

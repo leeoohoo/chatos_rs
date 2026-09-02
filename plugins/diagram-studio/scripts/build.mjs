@@ -6,7 +6,9 @@ const common = {
   format: 'esm',
   target: 'node18',
   sourcemap: false,
-  packages: 'external'
+  banner: {
+    js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);'
+  }
 };
 
 await Promise.all([

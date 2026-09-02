@@ -5,8 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { DiagramDocumentStore, RevisionConflictError } from './document-store.js';
 import { assertDiagramDocument, type DiagramDocument, type DiagramKind } from './schema.js';
 
-const port = Number.parseInt(process.env.DIAGRAM_STUDIO_PORT ?? '4178', 10);
-const host = process.env.DIAGRAM_STUDIO_HOST ?? '127.0.0.1';
+const port = Number.parseInt(
+  process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.DIAGRAM_STUDIO_PORT ?? '4178',
+  10
+);
+const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.DIAGRAM_STUDIO_HOST ?? '127.0.0.1';
 const store = new DiagramDocumentStore();
 await store.initialize();
 

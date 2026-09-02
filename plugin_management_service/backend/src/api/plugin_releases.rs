@@ -167,6 +167,7 @@ pub(super) async fn publish_plugin_release_from_manifest(
         .map_err(ApiError::internal)?;
     if release_channel == "stable" {
         plugin.latest_release_id = release.id.clone();
+        plugin.has_ui = !release.normalized_manifest.ui.is_empty();
         plugin.updated_at = now_rfc3339();
         state
             .store
@@ -234,6 +235,8 @@ pub(super) async fn revoke_plugin_release(
         plugin.latest_release_id = latest_stable_release(&releases)
             .map(|item| item.id.clone())
             .unwrap_or_default();
+        plugin.has_ui = latest_stable_release(&releases)
+            .is_some_and(|item| !item.normalized_manifest.ui.is_empty());
         plugin.updated_at = now_rfc3339();
         state
             .store

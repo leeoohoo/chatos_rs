@@ -158,6 +158,8 @@ pub struct PluginCatalogPayload {
     pub featured: bool,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub has_ui: bool,
     pub license: PluginLicenseMetadata,
 }
 

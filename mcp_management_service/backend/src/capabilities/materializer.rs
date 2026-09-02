@@ -250,6 +250,7 @@ mod tests {
             visibility: "public".to_string(),
             featured: false,
             enabled: true,
+            has_ui: false,
             latest_release_id: "release-workspace-1".to_string(),
             license: PluginLicenseMetadata {
                 license_id: "MIT".to_string(),

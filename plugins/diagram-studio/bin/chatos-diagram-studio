@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 
-import('../dist/mcp-server.mjs').catch((error) => {
+const command = process.argv[2];
+const entry = command === 'studio' || command === 'serve'
+  ? '../dist/studio-server.mjs'
+  : '../dist/mcp-server.mjs';
+
+import(entry).catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`Failed to start Diagram Studio: ${message}\n`);
   process.exitCode = 1;

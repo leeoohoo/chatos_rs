@@ -221,6 +221,13 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
                 ),
             );
         }
+        if let Some(runtime) = &ui.runtime {
+            descriptor.runtime_kind = "local_http_ui".to_string();
+            descriptor.metadata.insert(
+                "runtime".to_string(),
+                serde_json::to_value(runtime).expect("Plugin UI runtime must serialize"),
+            );
+        }
         descriptors.push(descriptor);
     }
     descriptors

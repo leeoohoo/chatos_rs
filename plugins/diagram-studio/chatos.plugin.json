@@ -41,7 +41,14 @@
         "text/plain",
         "image/svg+xml",
         "image/png"
-      ]
+      ],
+      "runtime": {
+        "type": "local_http",
+        "bin": "chatos-diagram-studio",
+        "args": ["studio"],
+        "healthPath": "/api/health",
+        "launchTimeoutMs": 15000
+      }
     }
   ],
   "interface": {
@@ -79,8 +86,8 @@
     {
       "permission": "process.spawn",
       "required": true,
-      "reason": "Launch the installed Diagram Studio MCP executable.",
-      "components": ["diagram-studio"]
+      "reason": "Launch the installed Diagram Studio MCP and local application service.",
+      "components": ["diagram-studio", "diagram-workbench"]
     },
     {
       "permission": "artifact.create",

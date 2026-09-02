@@ -55,6 +55,7 @@ pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
         visibility: "public".to_string(),
         featured: true,
         enabled: true,
+        has_ui: false,
         latest_release_id: "release-browser-1".to_string(),
         license: PluginLicenseMetadata {
             license_id: "MIT".to_string(),

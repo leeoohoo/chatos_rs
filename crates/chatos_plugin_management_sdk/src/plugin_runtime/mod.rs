@@ -129,6 +129,8 @@ pub struct PluginCatalogRecord {
     pub visibility: String,
     pub featured: bool,
     pub enabled: bool,
+    #[serde(default)]
+    pub has_ui: bool,
     pub latest_release_id: String,
     pub license: PluginLicenseMetadata,
     pub created_at: String,

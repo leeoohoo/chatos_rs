@@ -78,6 +78,7 @@ jobs:
           for dir in \
             admin_console \
             official_website_service/frontend \
+            plugins/diagram-studio \
             plugins/document
           do
             echo "Auditing $dir"
@@ -345,6 +346,26 @@ jobs:
 
       - name: Verify Document plugin
         run: npm --prefix plugins/document test
+
+  diagram-studio-plugin:
+    name: Diagram Studio plugin (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: plugins/diagram-studio/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix plugins/diagram-studio ci
+
+      - name: Verify Diagram Studio plugin
+        run: npm --prefix plugins/diagram-studio run pack:verify
 
   service-frontends:
     name: ${{ matrix.directory }} (TypeScript)

@@ -831,11 +831,15 @@ export function DiagramStudioApp() {
 
   if (!isReady) return <div className="loading-screen"><div className="loading-spinner" /><span>正在准备 Diagram Studio…</span></div>;
 
+  const storageStatus = <span className={`runtime-badge ${repository?.mode === 'server' ? 'connected' : 'fallback'}`} title={repository?.mode === 'server' ? '项目和图形由本机 Diagram Studio 服务保存' : '当前未连接本地服务，数据仅保存在这个浏览器中'}>
+    <i />{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}
+  </span>;
+
   if (homeVisible) return (
     <div className="project-home-shell">
       <header className="home-toolbar">
         <div className="traffic-lights" aria-hidden="true"><i /><i /><i /></div>
-        <div className="home-brand"><span className="home-brand-icon"><Icon name="architecture" /></span><strong>Diagram Studio</strong></div>
+        <div className="home-brand"><span className="home-brand-icon"><Icon name="architecture" /></span><strong>Diagram Studio</strong>{storageStatus}</div>
         <div className="home-toolbar-actions">
           <button className="toolbar-button primary" onClick={openNewProjectSheet}><Icon name="plus" />新建项目</button>
         </div>
@@ -871,7 +875,7 @@ export function DiagramStudioApp() {
     <div className="project-home-shell">
       <header className="home-toolbar">
         <div className="traffic-lights" aria-hidden="true"><i /><i /><i /></div>
-        <div className="home-brand"><button className="icon-button" onClick={goHome} aria-label="返回用户项目列表"><Icon name="home" /></button><strong>{activeProject.name}</strong></div>
+        <div className="home-brand"><button className="icon-button" onClick={goHome} aria-label="返回用户项目列表"><Icon name="home" /></button><strong>{activeProject.name}</strong>{storageStatus}</div>
         <div className="home-toolbar-actions"><button className="toolbar-button primary" onClick={openNewDiagramSheet}><Icon name="plus" />新建图形</button></div>
       </header>
       <main className="project-home project-detail">
@@ -911,7 +915,7 @@ export function DiagramStudioApp() {
         </div>
         <div className="document-title-area">
           <div className="project-title-row"><span>{`项目：${activeProject?.name ?? ''}`}</span><i>/</i><input className="document-title" value={document.title} onChange={(event) => commit({ ...document, title: event.target.value })} aria-label="图形名称" /></div>
-          <span className={`save-state ${dirty ? 'dirty' : ''}`}>{isSaving ? '正在保存…' : dirty ? '未保存' : `已保存 · v${persistedRevision}`}</span>
+          <span className={`save-state ${dirty ? 'dirty' : ''}`}>{isSaving ? '正在保存…' : dirty ? '未保存' : `已保存 · v${persistedRevision}`} · {repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>
         </div>
         <div className="toolbar-trailing">
           <button className="icon-button" disabled={past.length === 0} onClick={undo} aria-label="撤销"><Icon name="undo" /></button>

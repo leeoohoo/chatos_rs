@@ -486,6 +486,16 @@ fn normalize_ui(input: Option<UiInput>) -> Result<Vec<PluginUiContribution>, Plu
                         .map(|value| value.to_ascii_lowercase())
                         .collect(),
                 );
+                if let Some(runtime) = &mut item.runtime {
+                    match runtime {
+                        super::components::PluginUiRuntime::LocalHttp {
+                            bin, health_path, ..
+                        } => {
+                            *bin = bin.trim().to_string();
+                            *health_path = normalize_optional(health_path.take());
+                        }
+                    }
+                }
                 Ok(item)
             })
             .collect(),
@@ -508,6 +518,7 @@ fn normalize_ui_paths(
                 assets: Vec::new(),
                 bridge_capabilities: Vec::new(),
                 artifact_mime_types: Vec::new(),
+                runtime: None,
             })
         })
         .collect()

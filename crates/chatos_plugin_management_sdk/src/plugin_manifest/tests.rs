@@ -117,3 +117,94 @@ fn rejects_old_schema_versions() {
     raw["schemaVersion"] = json!(2);
     assert!(parse_plugin_manifest(raw.to_string().as_str()).is_err());
 }
+
+#[test]
+fn parses_workbench_ui_with_local_http_runtime() {
+    let raw = json!({
+        "schemaVersion": 3,
+        "name": "diagram-studio",
+        "version": "1.0.0",
+        "description": "Diagram workbench",
+        "author": {"name": "ChatOS"},
+        "ui": [{
+            "componentKey": "diagram-workbench",
+            "source": "./ui/index.html",
+            "surface": "workbench",
+            "runtime": {
+                "type": "local_http",
+                "bin": "diagram-studio",
+                "args": ["studio"],
+                "healthPath": "/api/health",
+                "launchTimeoutMs": 20000
+            }
+        }],
+        "interface": {
+            "displayName": "Diagram Studio",
+            "shortDescription": "Diagrams",
+            "longDescription": "Create editable technical diagrams.",
+            "developerName": "ChatOS",
+            "category": "Productivity"
+        },
+        "permissions": [{
+            "permission": "process.spawn",
+            "required": true,
+            "components": ["diagram-workbench"]
+        }]
+    });
+    let manifest = parse_plugin_manifest(raw.to_string().as_str()).expect("local UI runtime");
+    let runtime = manifest.ui[0].runtime.as_ref().expect("runtime");
+    assert_eq!(runtime.bin(), "diagram-studio");
+    assert_eq!(runtime.args(), &["studio"]);
+    assert_eq!(runtime.health_path(), "/api/health");
+    assert_eq!(runtime.launch_timeout_ms(), 20_000);
+
+    let descriptor = plugin_component_descriptors(&manifest)
+        .into_iter()
+        .find(|component| component.component_key == "diagram-workbench")
+        .expect("UI descriptor");
+    assert_eq!(descriptor.runtime_kind, "local_http_ui");
+    assert_eq!(
+        descriptor.metadata.get("runtime"),
+        Some(&json!({
+            "type": "local_http",
+            "bin": "diagram-studio",
+            "args": ["studio"],
+            "healthPath": "/api/health",
+            "launchTimeoutMs": 20000
+        }))
+    );
+}
+
+#[test]
+fn rejects_unsafe_or_unpermissioned_local_ui_runtime() {
+    let base = json!({
+        "schemaVersion": 3,
+        "name": "diagram-studio",
+        "version": "1.0.0",
+        "description": "Diagram workbench",
+        "author": {"name": "ChatOS"},
+        "ui": [{
+            "componentKey": "diagram-workbench",
+            "source": "./ui/index.html",
+            "surface": "detail_panel",
+            "runtime": {
+                "type": "local_http",
+                "bin": "../diagram-studio",
+                "healthPath": "/../health"
+            }
+        }],
+        "interface": {
+            "displayName": "Diagram Studio",
+            "shortDescription": "Diagrams",
+            "longDescription": "Create editable technical diagrams.",
+            "developerName": "ChatOS",
+            "category": "Productivity"
+        }
+    });
+    let error = parse_plugin_manifest(base.to_string().as_str()).expect_err("must reject");
+    let message = error.to_string();
+    assert!(message.contains("package.json executable name"));
+    assert!(message.contains("workbench surface"));
+    assert!(message.contains("safe absolute HTTP path"));
+    assert!(message.contains("process.spawn"));
+}
