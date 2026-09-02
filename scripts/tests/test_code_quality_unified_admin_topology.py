@@ -72,6 +72,18 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn('retired_sandbox_mtls="$release_dir/docker/secrets/sandbox-manager-mtls"', deploy)
         self.assertIn('rm -rf -- "$retired_sandbox_mtls"', deploy)
 
+    def test_full_cloud_deploy_preserves_all_services_scope_across_ssh(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        self.assertIn(
+            'remote_deploy_services_arg="${DEPLOY_SERVICES_CSV:-__CHATOS_ALL_SERVICES__}"',
+            deploy,
+        )
+        self.assertIn(
+            'if [[ "$deploy_services_arg" == "__CHATOS_ALL_SERVICES__" ]]; then',
+            deploy,
+        )
+        self.assertIn("[ERROR] remote deployment failed before completion", deploy)
+
 
 if __name__ == "__main__":
     unittest.main()

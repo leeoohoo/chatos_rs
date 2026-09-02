@@ -87,15 +87,16 @@ else
 fi
 
 release_tag="$(date +%Y%m%d-%H%M%S)-${release_commit:0:8}"
+remote_deploy_services_arg="${DEPLOY_SERVICES_CSV:-__CHATOS_ALL_SERVICES__}"
 echo "[INFO] deploying $release_commit as $release_tag to $DEPLOY_SERVER"
 
-ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
+if ! ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
   "$release_commit" \
   "$release_tag" \
   "$DEPLOY_BRANCH" \
   "$REMOTE_SOURCE_REPO" \
   "$REMOTE_DEPLOY_ROOT" \
-  "$DEPLOY_SERVICES_CSV" <<'REMOTE_SCRIPT'
+  "$remote_deploy_services_arg" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 release_commit="$1"
@@ -103,7 +104,12 @@ release_tag="$2"
 deploy_branch="$3"
 source_repo="$4"
 deploy_root="$5"
-deploy_services_csv="$6"
+deploy_services_arg="$6"
+if [[ "$deploy_services_arg" == "__CHATOS_ALL_SERVICES__" ]]; then
+  deploy_services_csv=""
+else
+  deploy_services_csv="$deploy_services_arg"
+fi
 release_dir="$deploy_root/releases/$release_tag"
 current_link="$deploy_root/current"
 previous_release=""
@@ -575,5 +581,10 @@ echo "[OK] active release: $(readlink -f "$current_link")"
 write_deploy_status complete healthy "Production release is healthy"
 trap - EXIT
 REMOTE_SCRIPT
+then
+  echo "[ERROR] remote deployment failed before completion: $release_tag" >&2
+  echo "[INFO] inspect the server state with: ./scripts/deploy-online.sh status" >&2
+  exit 1
+fi
 
 echo "[OK] deployed $release_tag"
