@@ -400,7 +400,7 @@ dependencies = [
 name = "chatos_internal_auth"
 version = "0.1.0"
 dependencies = [
- "jsonwebtoken",
+ "jsonwebtoken 10.4.0",
  "serde",
  "uuid",
 ]
@@ -1524,6 +1524,30 @@ name = "jsonwebtoken"
 version = "10.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "hmac",
+ "js-sys",
+ "p256",
+ "p384",
+ "pem",
+ "rand 0.8.7",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "signature",
+ "simple_asn1",
+ "zeroize",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "11.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "881733cbc631fc9e472e24447ce32a64bedf2da498d6d8570b08edc87de71f65"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -3572,7 +3596,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
- "jsonwebtoken",
+ "jsonwebtoken 11.0.0",
  "lettre",
  "mongodb",
  "opentelemetry",
