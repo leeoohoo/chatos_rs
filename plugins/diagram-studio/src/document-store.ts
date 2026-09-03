@@ -26,6 +26,12 @@ export class RevisionConflictError extends Error {
   }
 }
 
+export interface DiagramWriteResult {
+  document: DiagramDocument;
+  created: boolean;
+  reused: boolean;
+}
+
 export function resolveDataDirectory(): string {
   return path.resolve(
     process.env.DIAGRAM_STUDIO_DATA_DIR
@@ -164,6 +170,66 @@ export class DiagramDocumentStore {
     return document;
   }
 
+  async createOrGetInProject(
+    projectId: string,
+    kind: DiagramKind,
+    title: string | undefined,
+    blank: boolean,
+    artifactKey: string,
+    idempotencyKey?: string
+  ): Promise<DiagramWriteResult> {
+    assertIdentifier(artifactKey, 'artifactKey');
+    if (idempotencyKey) assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = idempotencyKey ? await this.readReceipt(projectId, idempotencyKey) : undefined;
+      if (retried) return { document: retried, created: false, reused: true };
+      const project = await this.readProject(projectId);
+      const existing = await this.findByArtifactKey(project.diagramIds, artifactKey);
+      if (existing) {
+        if (existing.kind !== kind) {
+          throw new Error(`Diagram artifactKey ${artifactKey} already belongs to a ${existing.kind} diagram.`);
+        }
+        if (idempotencyKey) await this.writeReceipt(projectId, idempotencyKey, existing.documentId);
+        return { document: existing, created: false, reused: true };
+      }
+      const document = this.prepareDocument(kind, title, blank, artifactKey);
+      const saved = await this.writeNewUnlocked(document);
+      await this.atomicWriteProject(this.projectPath(projectId), {
+        ...project,
+        diagramIds: [...project.diagramIds, saved.documentId],
+        updatedAt: new Date().toISOString()
+      });
+      if (idempotencyKey) await this.writeReceipt(projectId, idempotencyKey, saved.documentId);
+      return { document: saved, created: true, reused: false };
+    });
+  }
+
+  async createOrGet(
+    kind: DiagramKind,
+    title: string | undefined,
+    blank: boolean,
+    artifactKey: string,
+    idempotencyKey?: string
+  ): Promise<DiagramWriteResult> {
+    assertIdentifier(artifactKey, 'artifactKey');
+    if (idempotencyKey) assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = idempotencyKey ? await this.readReceipt(undefined, idempotencyKey) : undefined;
+      if (retried) return { document: retried, created: false, reused: true };
+      const existing = await this.findByArtifactKey(undefined, artifactKey);
+      if (existing) {
+        if (existing.kind !== kind) {
+          throw new Error(`Diagram artifactKey ${artifactKey} already belongs to a ${existing.kind} diagram.`);
+        }
+        if (idempotencyKey) await this.writeReceipt(undefined, idempotencyKey, existing.documentId);
+        return { document: existing, created: false, reused: true };
+      }
+      const saved = await this.writeNewUnlocked(this.prepareDocument(kind, title, blank, artifactKey));
+      if (idempotencyKey) await this.writeReceipt(undefined, idempotencyKey, saved.documentId);
+      return { document: saved, created: true, reused: false };
+    });
+  }
+
   async writeNewInProject(projectId: string, document: DiagramDocument): Promise<DiagramDocument> {
     const project = await this.readProject(projectId);
     const saved = await this.writeNew(document);
@@ -179,6 +245,110 @@ export class DiagramDocumentStore {
       await fs.unlink(this.documentPath(saved.documentId)).catch(() => undefined);
       throw error;
     }
+  }
+
+  async upsertInProject(projectId: string, document: DiagramDocument, artifactKey: string, idempotencyKey?: string): Promise<DiagramWriteResult> {
+    assertIdentifier(artifactKey, 'artifactKey');
+    if (idempotencyKey) assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = idempotencyKey ? await this.readReceipt(projectId, idempotencyKey) : undefined;
+      if (retried) return { document: retried, created: false, reused: true };
+      const project = await this.readProject(projectId);
+      const existing = await this.findByArtifactKey(project.diagramIds, artifactKey);
+      if (!existing) {
+        const saved = await this.writeNewUnlocked({ ...structuredClone(document), artifactKey });
+        await this.atomicWriteProject(this.projectPath(projectId), {
+          ...project,
+          diagramIds: [...project.diagramIds, saved.documentId],
+          updatedAt: new Date().toISOString()
+        });
+        if (idempotencyKey) await this.writeReceipt(projectId, idempotencyKey, saved.documentId);
+        return { document: saved, created: true, reused: false };
+      }
+      const result = await this.replaceArtifactUnlocked(existing, document, artifactKey);
+      if (idempotencyKey) await this.writeReceipt(projectId, idempotencyKey, result.document.documentId);
+      return result;
+    });
+  }
+
+  async upsert(document: DiagramDocument, artifactKey: string, idempotencyKey?: string): Promise<DiagramWriteResult> {
+    assertIdentifier(artifactKey, 'artifactKey');
+    if (idempotencyKey) assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = idempotencyKey ? await this.readReceipt(undefined, idempotencyKey) : undefined;
+      if (retried) return { document: retried, created: false, reused: true };
+      const existing = await this.findByArtifactKey(undefined, artifactKey);
+      if (!existing) {
+        const saved = await this.writeNewUnlocked({ ...structuredClone(document), artifactKey });
+        if (idempotencyKey) await this.writeReceipt(undefined, idempotencyKey, saved.documentId);
+        return { document: saved, created: true, reused: false };
+      }
+      const result = await this.replaceArtifactUnlocked(existing, document, artifactKey);
+      if (idempotencyKey) await this.writeReceipt(undefined, idempotencyKey, result.document.documentId);
+      return result;
+    });
+  }
+
+  async createNewInProjectIdempotent(
+    projectId: string,
+    kind: DiagramKind,
+    title: string | undefined,
+    blank: boolean,
+    idempotencyKey: string
+  ): Promise<DiagramWriteResult> {
+    assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = await this.readReceipt(projectId, idempotencyKey);
+      if (retried) return { document: retried, created: false, reused: true };
+      const project = await this.readProject(projectId);
+      const saved = await this.writeNewUnlocked(this.prepareDocument(kind, title, blank));
+      await this.atomicWriteProject(this.projectPath(projectId), {
+        ...project,
+        diagramIds: [...project.diagramIds, saved.documentId],
+        updatedAt: new Date().toISOString()
+      });
+      await this.writeReceipt(projectId, idempotencyKey, saved.documentId);
+      return { document: saved, created: true, reused: false };
+    });
+  }
+
+  async createNewIdempotent(kind: DiagramKind, title: string | undefined, blank: boolean, idempotencyKey: string): Promise<DiagramWriteResult> {
+    assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = await this.readReceipt(undefined, idempotencyKey);
+      if (retried) return { document: retried, created: false, reused: true };
+      const saved = await this.writeNewUnlocked(this.prepareDocument(kind, title, blank));
+      await this.writeReceipt(undefined, idempotencyKey, saved.documentId);
+      return { document: saved, created: true, reused: false };
+    });
+  }
+
+  async writeNewInProjectIdempotent(projectId: string, document: DiagramDocument, idempotencyKey: string): Promise<DiagramWriteResult> {
+    assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = await this.readReceipt(projectId, idempotencyKey);
+      if (retried) return { document: retried, created: false, reused: true };
+      const project = await this.readProject(projectId);
+      const saved = await this.writeNewUnlocked(document);
+      await this.atomicWriteProject(this.projectPath(projectId), {
+        ...project,
+        diagramIds: [...project.diagramIds, saved.documentId],
+        updatedAt: new Date().toISOString()
+      });
+      await this.writeReceipt(projectId, idempotencyKey, saved.documentId);
+      return { document: saved, created: true, reused: false };
+    });
+  }
+
+  async writeNewIdempotent(document: DiagramDocument, idempotencyKey: string): Promise<DiagramWriteResult> {
+    assertIdentifier(idempotencyKey, 'idempotencyKey');
+    return this.withLock(async () => {
+      const retried = await this.readReceipt(undefined, idempotencyKey);
+      if (retried) return { document: retried, created: false, reused: true };
+      const saved = await this.writeNewUnlocked(document);
+      await this.writeReceipt(undefined, idempotencyKey, saved.documentId);
+      return { document: saved, created: true, reused: false };
+    });
   }
 
   async moveDocument(
@@ -222,22 +392,32 @@ export class DiagramDocumentStore {
   }
 
   async create(kind: DiagramKind, title?: string, blank = false): Promise<DiagramDocument> {
-    const document = blank
-      ? createBlankDiagram(kind, title?.trim() || '未命名图形')
-      : createTemplate(kind);
-    document.documentId = `${kind}-${randomUUID().slice(0, 8)}`;
-    if (title?.trim()) document.title = title.trim().slice(0, 240);
-    return this.writeNew(document);
+    return this.writeNew(this.prepareDocument(kind, title, blank));
   }
 
   async writeNew(document: DiagramDocument): Promise<DiagramDocument> {
     await this.initialize();
+    return this.writeNewUnlocked(document);
+  }
+
+  private prepareDocument(kind: DiagramKind, title?: string, blank = false, artifactKey?: string): DiagramDocument {
+    const document = blank
+      ? createBlankDiagram(kind, title?.trim() || '未命名图形')
+      : createTemplate(kind);
+    document.documentId = `${kind}-${randomUUID().slice(0, 8)}`;
+    document.artifactKey = artifactKey;
+    if (title?.trim()) document.title = title.trim().slice(0, 240);
+    return document;
+  }
+
+  private async writeNewUnlocked(document: DiagramDocument): Promise<DiagramDocument> {
     assertDiagramDocument(document);
     const now = new Date().toISOString();
     const next = structuredClone(document);
     next.revision = 1;
     next.createdAt = now;
     next.updatedAt = now;
+    if (next.notation) next.notation.lastSyncedRevision = next.revision;
     const destination = this.documentPath(next.documentId);
     try {
       await fs.access(destination);
@@ -247,6 +427,50 @@ export class DiagramDocumentStore {
     }
     await this.atomicWrite(destination, next);
     return next;
+  }
+
+  private async replaceArtifactUnlocked(
+    current: DiagramDocument,
+    incoming: DiagramDocument,
+    artifactKey: string
+  ): Promise<DiagramWriteResult> {
+    if (current.kind !== incoming.kind) {
+      throw new Error(`Diagram artifactKey ${artifactKey} already belongs to a ${current.kind} diagram.`);
+    }
+    const candidate: DiagramDocument = {
+      ...structuredClone(incoming),
+      documentId: current.documentId,
+      artifactKey,
+      revision: current.revision,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt
+    };
+    if (sameArtifactContent(current, candidate)) {
+      return { document: current, created: false, reused: true };
+    }
+    candidate.revision = current.revision + 1;
+    candidate.updatedAt = new Date().toISOString();
+    if (candidate.notation) candidate.notation.lastSyncedRevision = candidate.revision;
+    assertDiagramDocument(candidate);
+    await this.atomicWrite(this.documentPath(current.documentId), candidate);
+    return { document: candidate, created: false, reused: false };
+  }
+
+  private async findByArtifactKey(documentIds: string[] | undefined, artifactKey: string): Promise<DiagramDocument | undefined> {
+    const allowed = documentIds ? new Set(documentIds) : undefined;
+    const entries = await fs.readdir(this.rootDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.diagram.json')) continue;
+      const documentId = entry.name.slice(0, -'.diagram.json'.length);
+      if (allowed && !allowed.has(documentId)) continue;
+      try {
+        const document = await this.read(documentId);
+        if (document.artifactKey === artifactKey) return document;
+      } catch {
+        // Ignore malformed unrelated files while resolving a stable artifact.
+      }
+    }
+    return undefined;
   }
 
   async replace(document: DiagramDocument, expectedRevision: number): Promise<DiagramDocument> {
@@ -315,6 +539,32 @@ export class DiagramDocumentStore {
     });
   }
 
+  private receiptPath(projectId: string | undefined, idempotencyKey: string): string {
+    const scope = projectId ?? 'global';
+    const digest = createHash('sha256').update(`${scope}\u0000${idempotencyKey}`).digest('hex');
+    return path.join(this.rootDirectory, `${digest}.idempotency.json`);
+  }
+
+  private async readReceipt(projectId: string | undefined, idempotencyKey: string): Promise<DiagramDocument | undefined> {
+    try {
+      const body = await fs.readFile(this.receiptPath(projectId, idempotencyKey), 'utf8');
+      const receipt = JSON.parse(body) as { projectId?: string; idempotencyKey?: string; documentId?: string };
+      if (receipt.projectId !== projectId || receipt.idempotencyKey !== idempotencyKey || typeof receipt.documentId !== 'string') return undefined;
+      return await this.read(receipt.documentId);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      return undefined;
+    }
+  }
+
+  private async writeReceipt(projectId: string | undefined, idempotencyKey: string, documentId: string): Promise<void> {
+    const destination = this.receiptPath(projectId, idempotencyKey);
+    const body = `${JSON.stringify({ projectId, idempotencyKey, documentId }, null, 2)}\n`;
+    const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+    await fs.writeFile(temporary, body, { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(temporary, destination);
+  }
+
   private documentPath(documentId: string): string {
     assertIdentifier(documentId, 'documentId');
     return path.join(this.rootDirectory, `${documentId}.diagram.json`);
@@ -355,6 +605,26 @@ export class DiagramDocumentStore {
   }
 }
 
+function sameArtifactContent(left: DiagramDocument, right: DiagramDocument): boolean {
+  const notation = (document: DiagramDocument) => document.notation ? {
+    format: document.notation.format,
+    dialect: document.notation.dialect,
+    source: document.notation.source,
+    opaqueBlocks: document.notation.opaqueBlocks
+  } : undefined;
+  const comparable = (document: DiagramDocument) => ({
+    kind: document.kind,
+    title: document.title,
+    description: document.description,
+    nodes: document.nodes,
+    edges: document.edges,
+    viewport: document.viewport,
+    notation: notation(document),
+    metadata: document.metadata
+  });
+  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
+}
+
 function escapeXml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -377,8 +647,8 @@ export function renderDiagramSvg(document: DiagramDocument): string {
     const position = absolutePosition(document, node.id);
     const iconOnly = Boolean(node.data.icon && node.data.showLabel === false);
     const unlabeled = node.data.showLabel === false;
-    const width = node.width ?? (node.data.shape === 'lifeline' ? 160 : node.data.shape === 'activation' ? 14 : node.data.shape === 'fragment' ? 620 : node.data.shape === 'lane' ? 900 : iconOnly ? 58 : node.data.shape === 'text' ? 120 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 96 : unlabeled && node.data.shape === 'cylinder' ? 120 : unlabeled ? 132 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 138 : node.data.shape === 'cylinder' ? 164 : 168);
-    const height = node.height ?? (node.data.shape === 'lifeline' ? 560 : node.data.shape === 'activation' ? 120 : node.data.shape === 'fragment' ? 220 : node.data.shape === 'lane' ? 180 : iconOnly ? 58 : node.data.shape === 'text' ? 34 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 72 : unlabeled && node.data.shape === 'cylinder' ? 58 : unlabeled ? 56 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 100 : node.data.shape === 'cylinder' ? 82 : 68);
+    const width = node.width ?? (node.data.shape === 'lifeline' ? 160 : node.data.shape === 'activation' ? 14 : node.data.shape === 'fragment' ? 620 : node.data.shape === 'lane' ? 900 : node.data.shape === 'container' ? 300 : iconOnly ? 58 : node.data.shape === 'text' ? 120 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 96 : unlabeled && node.data.shape === 'cylinder' ? 120 : unlabeled ? 132 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 138 : node.data.shape === 'cylinder' ? 164 : 168);
+    const height = node.height ?? (node.data.shape === 'lifeline' ? 560 : node.data.shape === 'activation' ? 120 : node.data.shape === 'fragment' ? 220 : node.data.shape === 'lane' ? 180 : node.data.shape === 'container' ? 180 : iconOnly ? 58 : node.data.shape === 'text' ? 34 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 72 : unlabeled && node.data.shape === 'cylinder' ? 58 : unlabeled ? 56 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 100 : node.data.shape === 'cylinder' ? 82 : 68);
     return { node, x: position.x, y: position.y, width, height };
   });
   const minX = Math.min(0, ...positions.map((item) => item.x)) - 40;
@@ -434,6 +704,9 @@ export function renderDiagramSvg(document: DiagramDocument): string {
     }
     if (node.data.shape === 'lane') {
       return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="14" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"${borderDash}/><text x="${x + 18}" y="${y + 30}" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="14" font-weight="600" fill="#445066">${escapeXml(node.data.label)}</text></g>`;
+    }
+    if (node.data.shape === 'container') {
+      return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${Math.max(1.5, strokeWidth)}"${borderDash}/><rect x="${x + 12}" y="${y + 9}" width="${Math.min(width - 24, Math.max(90, node.data.label.length * 14 + 18))}" height="25" rx="6" fill="#F9FBFE"/><text x="${x + 20}" y="${y + 27}" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="13" font-weight="650" fill="${textColor}">${escapeXml(node.data.label)}</text></g>`;
     }
     if (node.data.shape === 'text') {
       return `<text x="${x + width / 2}" y="${y + height / 2 + fontSize * 0.35}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="#1D2430">${escapeXml(node.data.label)}</text>`;

@@ -62,6 +62,44 @@ api ..> events : Publish
   assert.ok(document.edges.some((edge) => edge.data.lineStyle === 'dashed'));
 });
 
+test('PlantUML packages become real architecture boundaries with contained components', () => {
+  const source = `@startuml
+title 分层架构
+actor "用户" as user
+package "客户端" as client {
+  component "桌面应用" as desktop
+}
+package "应用层" as application {
+  interface "API Gateway" as api
+  component "任务服务" as tasks
+}
+package "数据层" as data {
+  database "PostgreSQL" as db
+}
+user --> desktop : 使用
+desktop --> api : HTTPS
+api --> tasks : RPC
+tasks --> db : SQL
+@enduml`;
+  const ir = parsePlantUmlStructural(source);
+  assert.equal(ir.nodes.filter((node) => node.container).length, 3);
+  assert.equal(ir.nodes.find((node) => node.alias === 'desktop').parentAlias, 'client');
+  assert.equal(ir.nodes.find((node) => node.alias === 'tasks').parentAlias, 'application');
+
+  const document = plantUmlToDiagram(source, { documentId: 'grouped-architecture', kind: 'architecture' });
+  const containers = document.nodes.filter((node) => node.data.shape === 'container');
+  assert.equal(containers.length, 3);
+  assert.ok(containers.every((node) => node.type === 'laneNode' && (node.width ?? 0) >= 280));
+  const desktop = document.nodes.find((node) => node.data.plantUmlId === 'desktop');
+  const client = document.nodes.find((node) => node.data.plantUmlId === 'client');
+  assert.equal(desktop.parentId, client.id);
+  assert.equal(desktop.extent, 'parent');
+
+  const exported = diagramToPlantUml(document);
+  assert.match(exported, /package "客户端" as client \{/);
+  assert.match(exported, /\s+component "桌面应用" as desktop/);
+});
+
 test('topology diagrams round-trip through PlantUML Deployment Diagram with exact canvas state', () => {
   const original = createTemplate('topology');
   const source = diagramToPlantUml(original);

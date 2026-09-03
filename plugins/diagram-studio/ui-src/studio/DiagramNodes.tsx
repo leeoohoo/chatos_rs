@@ -37,8 +37,8 @@ export function DiagramNodeView({ data, selected }: NodeProps<DiagramNode>) {
     </> : null
     : <NodeResizer
     isVisible={Boolean(selected)}
-    minWidth={data.shape === 'lifeline' ? 120 : data.shape === 'fragment' ? 220 : data.shape === 'text' ? 60 : 44}
-    minHeight={data.shape === 'lifeline' ? 260 : data.shape === 'fragment' ? 100 : data.shape === 'text' ? 28 : 44}
+    minWidth={data.shape === 'lifeline' ? 120 : data.shape === 'container' ? 240 : data.shape === 'fragment' ? 220 : data.shape === 'text' ? 60 : 44}
+    minHeight={data.shape === 'lifeline' ? 260 : data.shape === 'container' ? 120 : data.shape === 'fragment' ? 100 : data.shape === 'text' ? 28 : 44}
     keepAspectRatio={data.shape === 'circle'}
     lineClassName="node-resizer-line"
     handleClassName="node-resizer-handle"
@@ -155,6 +155,14 @@ function NodeSurface({ data, shape }: { data: DiagramNodeData; shape: DiagramNod
 }
 
 export function LaneNodeView({ data, selected }: NodeProps<DiagramNode>) {
+  if (data.shape === 'container') {
+    return (
+      <div className={`architecture-container-node ${selected ? 'selected' : ''}`} style={{ '--node-border-color': data.borderColor ?? data.color ?? '#9AA4B2', '--node-fill': data.fillColor ?? 'transparent' } as React.CSSProperties}>
+        <NodeResizer isVisible={Boolean(selected)} minWidth={240} minHeight={120} lineClassName="node-resizer-line" handleClassName="node-resizer-handle" />
+        <div className="architecture-container-title">{data.label}</div>
+      </div>
+    );
+  }
   return (
     <div className={`lane-node ${selected ? 'selected' : ''}`} style={{ background: data.fillColor ?? data.color ?? '#EEF2F8' }}>
       <div className="lane-title">{data.label}</div>

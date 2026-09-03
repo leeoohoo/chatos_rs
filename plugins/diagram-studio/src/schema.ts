@@ -29,7 +29,8 @@ export type DiagramNodeShape =
   | 'lane'
   | 'lifeline'
   | 'activation'
-  | 'fragment';
+  | 'fragment'
+  | 'container';
 export type DiagramNodeIcon =
   | 'user'
   | 'terminal'
@@ -146,6 +147,7 @@ export interface PlantUmlNotation {
 export interface DiagramDocument {
   schemaVersion: 1;
   documentId: string;
+  artifactKey?: string;
   revision: number;
   kind: DiagramKind;
   title: string;
@@ -209,6 +211,10 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
   if (document.schemaVersion !== 1) throw new Error('Unsupported diagram schema version.');
   if (typeof document.documentId !== 'string') throw new Error('Diagram documentId is required.');
   assertIdentifier(document.documentId, 'documentId');
+  if (document.artifactKey !== undefined) {
+    if (typeof document.artifactKey !== 'string') throw new Error('Diagram artifactKey must be a string.');
+    assertIdentifier(document.artifactKey, 'artifactKey');
+  }
   if (!['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'].includes(document.kind ?? '')) {
     throw new Error('Diagram kind is invalid.');
   }
@@ -310,6 +316,7 @@ export function applyDiagramPatch(
 export function diagramSummary(document: DiagramDocument) {
   return {
     documentId: document.documentId,
+    artifactKey: document.artifactKey,
     revision: document.revision,
     kind: document.kind,
     title: document.title,

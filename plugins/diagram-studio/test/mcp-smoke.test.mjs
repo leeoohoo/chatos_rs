@@ -49,10 +49,23 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
         kind: 'architecture',
         title: 'Blank Architecture',
         projectId,
-        blank: true
+        blank: true,
+        artifactKey: 'blank-architecture'
       }
     });
     const blankDocumentId = blankCreated.structuredContent.document.documentId;
+    const blankRetried = await client.callTool({
+      name: 'diagram_create_document',
+      arguments: {
+        kind: 'architecture',
+        title: 'Blank Architecture',
+        projectId,
+        blank: true,
+        artifactKey: 'blank-architecture'
+      }
+    });
+    assert.equal(blankRetried.structuredContent.document.documentId, blankDocumentId);
+    assert.equal(blankRetried.structuredContent.reused, true);
     const blankDocument = await client.callTool({
       name: 'diagram_get_document',
       arguments: { documentId: blankDocumentId }
@@ -67,6 +80,21 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     const createdBody = created.structuredContent;
     const documentId = createdBody.document.documentId;
     assert.equal(createdBody.document.revision, 1);
+
+    const intentionalCopyOne = await client.callTool({
+      name: 'diagram_create_document',
+      arguments: { kind: 'architecture', title: 'Repeated Kind', blank: true, mode: 'create_new', idempotencyKey: 'copy-call-1' }
+    });
+    const intentionalCopyOneRetry = await client.callTool({
+      name: 'diagram_create_document',
+      arguments: { kind: 'architecture', title: 'Repeated Kind', blank: true, mode: 'create_new', idempotencyKey: 'copy-call-1' }
+    });
+    const intentionalCopyTwo = await client.callTool({
+      name: 'diagram_create_document',
+      arguments: { kind: 'architecture', title: 'Repeated Kind', blank: true, mode: 'create_new', idempotencyKey: 'copy-call-2' }
+    });
+    assert.equal(intentionalCopyOneRetry.structuredContent.document.documentId, intentionalCopyOne.structuredContent.document.documentId);
+    assert.notEqual(intentionalCopyTwo.structuredContent.document.documentId, intentionalCopyOne.structuredContent.document.documentId);
 
     const patched = await client.callTool({
       name: 'diagram_apply_patch',
@@ -103,7 +131,8 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
       arguments: {
         source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\nAPI --> User: Response\n@enduml',
         title: 'Imported Sequence',
-        projectId
+        projectId,
+        artifactKey: 'request-sequence'
       }
     });
     assert.equal(imported.structuredContent.document.kind, 'sequence');
@@ -113,6 +142,17 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     });
     assert.equal(plantUmlExport.structuredContent.mimeType, 'text/vnd.plantuml');
     assert.match(plantUmlExport.structuredContent.relativePath, /\.puml$/);
+    const importedRetry = await client.callTool({
+      name: 'diagram_import_plantuml',
+      arguments: {
+        source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\nAPI --> User: Response\n@enduml',
+        title: 'Imported Sequence',
+        projectId,
+        artifactKey: 'request-sequence'
+      }
+    });
+    assert.equal(importedRetry.structuredContent.document.documentId, imported.structuredContent.document.documentId);
+    assert.equal(importedRetry.structuredContent.reused, true);
 
     const importedActivity = await client.callTool({
       name: 'diagram_import_plantuml',

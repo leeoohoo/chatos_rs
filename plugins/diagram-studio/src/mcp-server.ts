@@ -15,7 +15,7 @@ import {
 import { plantUmlToDiagram } from './plantuml.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.1.4';
+const SERVER_VERSION = '0.1.5';
 const store = new DiagramDocumentStore();
 
 const policy = {
@@ -99,14 +99,17 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'diagram_create_document',
-    description: 'Create a diagram from a built-in architecture, flowchart, swimlane, topology, or sequence template.',
+    description: 'Create a diagram from a built-in template. idempotencyKey deduplicates one retried tool call; artifactKey with upsert updates one logical deliverable. Different keys or create_new may intentionally create similar diagrams.',
     inputSchema: {
       type: 'object',
       properties: {
         kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'] },
         title: { type: 'string', minLength: 1, maxLength: 240 },
         projectId: { type: 'string', minLength: 1, maxLength: 128 },
-        blank: { type: 'boolean', default: false }
+        blank: { type: 'boolean', default: false },
+        artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
+        idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
+        mode: { type: 'string', enum: ['upsert', 'create_new'], default: 'upsert' }
       },
       required: ['kind'],
       additionalProperties: false
@@ -115,14 +118,17 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'diagram_import_plantuml',
-    description: 'Create an editable Diagram Studio architecture, flowchart, swimlane, topology, or sequence diagram from PlantUML source.',
+    description: 'Create or update an editable Diagram Studio diagram from PlantUML. idempotencyKey deduplicates one retried call; artifactKey with upsert identifies the intended deliverable without preventing intentional copies.',
     inputSchema: {
       type: 'object',
       properties: {
         source: { type: 'string', minLength: 1, maxLength: 2_097_152 },
         title: { type: 'string', minLength: 1, maxLength: 240 },
         kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'] },
-        projectId: { type: 'string', minLength: 1, maxLength: 128 }
+        projectId: { type: 'string', minLength: 1, maxLength: 128 },
+        artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
+        idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
+        mode: { type: 'string', enum: ['upsert', 'create_new'], default: 'upsert' }
       },
       required: ['source'],
       additionalProperties: false
@@ -316,10 +322,25 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     case 'diagram_create_document': {
       const kind = argumentsValue.kind as DiagramKind;
       const title = typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined;
+      const artifactKey = typeof argumentsValue.artifactKey === 'string' ? argumentsValue.artifactKey : undefined;
+      const idempotencyKey = typeof argumentsValue.idempotencyKey === 'string' ? argumentsValue.idempotencyKey : undefined;
+      const useUpsert = artifactKey && argumentsValue.mode !== 'create_new';
+      if (useUpsert) {
+        const write = typeof argumentsValue.projectId === 'string'
+          ? await store.createOrGetInProject(argumentsValue.projectId, kind, title, argumentsValue.blank === true, artifactKey, idempotencyKey)
+          : await store.createOrGet(kind, title, argumentsValue.blank === true, artifactKey, idempotencyKey);
+        return { document: diagramSummary(write.document), created: write.created, reused: write.reused };
+      }
+      if (idempotencyKey) {
+        const write = typeof argumentsValue.projectId === 'string'
+          ? await store.createNewInProjectIdempotent(argumentsValue.projectId, kind, title, argumentsValue.blank === true, idempotencyKey)
+          : await store.createNewIdempotent(kind, title, argumentsValue.blank === true, idempotencyKey);
+        return { document: diagramSummary(write.document), created: write.created, reused: write.reused };
+      }
       const document = typeof argumentsValue.projectId === 'string'
         ? await store.createInProject(argumentsValue.projectId, kind, title, argumentsValue.blank === true)
         : await store.create(kind, title, argumentsValue.blank === true);
-      return { document: diagramSummary(document) };
+      return { document: diagramSummary(document), created: true, reused: false };
     }
     case 'diagram_import_plantuml': {
       const requestedKind = typeof argumentsValue.kind === 'string'
@@ -330,10 +351,25 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         title: typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined,
         kind: requestedKind
       });
+      const artifactKey = typeof argumentsValue.artifactKey === 'string' ? argumentsValue.artifactKey : undefined;
+      const idempotencyKey = typeof argumentsValue.idempotencyKey === 'string' ? argumentsValue.idempotencyKey : undefined;
+      const useUpsert = artifactKey && argumentsValue.mode !== 'create_new';
+      if (useUpsert) {
+        const write = typeof argumentsValue.projectId === 'string'
+          ? await store.upsertInProject(argumentsValue.projectId, document, artifactKey, idempotencyKey)
+          : await store.upsert(document, artifactKey, idempotencyKey);
+        return { document: write.document, created: write.created, reused: write.reused };
+      }
+      if (idempotencyKey) {
+        const write = typeof argumentsValue.projectId === 'string'
+          ? await store.writeNewInProjectIdempotent(argumentsValue.projectId, document, idempotencyKey)
+          : await store.writeNewIdempotent(document, idempotencyKey);
+        return { document: write.document, created: write.created, reused: write.reused };
+      }
       const saved = typeof argumentsValue.projectId === 'string'
         ? await store.writeNewInProject(argumentsValue.projectId, document)
         : await store.writeNew(document);
-      return { document: saved };
+      return { document: saved, created: true, reused: false };
     }
     case 'diagram_move_document': {
       const moved = await store.moveDocument(
@@ -381,12 +417,24 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const nodesWithoutSourceReferences = document.nodes
         .filter((node) => node.type !== 'laneNode' && (node.data.sourceReferences?.length ?? 0) === 0)
         .map((node) => node.id);
+      const architectureComponents = document.kind === 'architecture'
+        ? document.nodes.filter((node) => node.data.shape !== 'container')
+        : [];
+      const architectureContainers = document.kind === 'architecture'
+        ? document.nodes.filter((node) => node.data.shape === 'container')
+        : [];
       return {
         valid: true,
         document: diagramSummary(document),
         warnings: [
           ...(isolatedNodeIds.length > 0 ? [{ code: 'isolated_nodes', nodeIds: isolatedNodeIds }] : []),
-          ...(nodesWithoutSourceReferences.length > 0 ? [{ code: 'missing_source_references', nodeIds: nodesWithoutSourceReferences }] : [])
+          ...(nodesWithoutSourceReferences.length > 0 ? [{ code: 'missing_source_references', nodeIds: nodesWithoutSourceReferences }] : []),
+          ...(architectureComponents.length >= 8 && architectureContainers.length === 0
+            ? [{ code: 'flat_architecture', message: 'Architecture has many components but no package or system boundaries.' }]
+            : []),
+          ...(architectureComponents.length > 20
+            ? [{ code: 'architecture_too_dense', message: 'Create an overview and split implementation detail into separate diagrams.' }]
+            : [])
         ]
       };
     }

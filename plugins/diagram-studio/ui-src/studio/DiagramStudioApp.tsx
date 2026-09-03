@@ -988,10 +988,11 @@ export function DiagramStudioApp() {
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
           onDrop={onCanvasDrop}
           onPaneClick={() => { setSelectedNodeIds(new Set()); setSelectedEdgeId(undefined); }}
-          selectionOnDrag
+          selectionOnDrag={false}
           selectionMode={SelectionMode.Partial}
+          selectionKeyCode="Shift"
           multiSelectionKeyCode="Shift"
-          panOnDrag={[1, 2]}
+          panOnDrag={[0, 1, 2]}
           minZoom={0.15}
           maxZoom={2.5}
           fitView
@@ -1005,6 +1006,7 @@ export function DiagramStudioApp() {
           <MiniMap className="apple-minimap" pannable zoomable nodeColor={(node) => (node.data as unknown as DiagramNode['data'])?.color ?? '#7D8797'} />
           <Controls className="apple-controls" showInteractive={false} />
           <div className="canvas-status">
+            <span>拖动空白移动画布 · Shift 拖动框选</span><i />
             <span>{kindLabel(document.kind)}</span><i />
             <span>{document.nodes.filter((node) => node.type !== 'laneNode').length} 个节点</span><i />
             <span>{document.edges.length} 条连线</span>
@@ -1135,6 +1137,7 @@ function defaultNodeSize(node: DiagramNode): { width: number; height: number } {
   if (node.data.shape === 'lifeline') return { width: 160, height: 560 };
   if (node.data.shape === 'activation') return { width: 14, height: 120 };
   if (node.data.shape === 'fragment') return { width: 620, height: 220 };
+  if (node.data.shape === 'container') return { width: 300, height: 180 };
   if (node.data.shape === 'lane') return { width: 900, height: 180 };
   if (node.data.icon && node.data.showLabel === false) return { width: 58, height: 58 };
   if (node.data.shape === 'text') return { width: 120, height: 34 };
