@@ -1,0 +1,56 @@
+{
+  "name": "@chatos/web-design-studio",
+  "version": "0.8.0",
+  "description": "AI-editable visual website design workbench for ChatOS and Codex.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "chatos-web-design-studio": "bin/chatos-web-design-studio"
+  },
+  "files": [
+    "assets/",
+    "bin/",
+    "dist/",
+    "!dist/*.test.mjs",
+    "docs/",
+    "skills/",
+    "ui/",
+    ".codex-plugin/",
+    ".mcp.json",
+    "chatos.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/build.mjs",
+    "studio": "node bin/chatos-web-design-studio studio",
+    "studio:dev": "npm run build && npm run studio",
+    "mcp": "node dist/mcp-server.mjs mcp",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "pack:verify": "npm run test && npm pack --dry-run"
+  },
+  "dependencies": {
+    "@ant-design/icons": "6.3.4",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "antd": "6.2.2",
+    "express": "5.1.0",
+    "proper-lockfile": "4.1.2",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "24.5.2",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.4",
+    "esbuild": "0.25.10",
+    "typescript": "5.9.2",
+    "vite": "7.3.6"
+  }
+}

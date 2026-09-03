@@ -1,0 +1,5 @@
+node_modules/
+dist/
+ui/
+.web-design-studio-data/
+*.tgz

@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 3,
+  "name": "chatos-web-design-studio",
+  "version": "0.8.0",
+  "description": "Design and refine editable websites with an AI-aware visual canvas.",
+  "author": {
+    "name": "Chatos"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["website", "design", "ui", "canvas", "prototype", "ai", "mcp"],
+  "mcpServers": {
+    "web-design-mcp": {
+      "type": "stdio",
+      "bin": "chatos-web-design-studio",
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+  "skills": ["./skills/web-design-studio"],
+  "ui": [
+    {
+      "componentKey": "web-design-workbench",
+      "source": "./ui/index.html",
+      "title": "Web Design Studio",
+      "surface": "workbench",
+      "assets": ["./ui/assets/app.js", "./ui/assets/app.css"],
+      "bridgeCapabilities": [
+        "host.context.read",
+        "artifact.list",
+        "artifact.read",
+        "artifact.download",
+        "artifact.create",
+        "artifact.update"
+      ],
+      "artifactMimeTypes": [
+        "application/vnd.chatos.web-design+json",
+        "application/json",
+        "text/html",
+        "text/css",
+        "text/plain",
+        "image/png",
+        "image/svg+xml"
+      ],
+      "runtime": {
+        "type": "local_http",
+        "bin": "chatos-web-design-studio",
+        "args": ["studio"],
+        "healthPath": "/api/health",
+        "launchTimeoutMs": 15000
+      }
+    }
+  ],
+  "interface": {
+    "displayName": "Web Design Studio",
+    "shortDescription": "Design editable websites with AI",
+    "longDescription": "A visual website design workbench where users can drag, resize, style, annotate, and ask AI to update selected components through a shared structured design document.",
+    "developerName": "Chatos",
+    "category": "Creativity",
+    "capabilities": [
+      "Visual website canvas",
+      "Categorized searchable library with 20 production website components",
+      "Responsive finished sections for navigation, hero, features, pricing, FAQ, contact, and footer",
+      "Drag and resize components",
+      "Component-level annotations",
+      "Responsive desktop, tablet, and mobile layouts",
+      "Layer ordering, locking, visibility, alignment, undo, and redo",
+      "Hierarchical layers, multi-selection, grouping, snapping guides, and grouped dragging",
+      "Container Flex row, Flex column, and Grid auto layout",
+      "Multiple pages with page duplication and isolated component trees",
+      "Image asset import and reusable asset library",
+      "Component-tree copy and paste across pages",
+      "Standalone responsive HTML export",
+      "Reusable component library with cross-page instances",
+      "Reusable component instance synchronization with content, style, and frame overrides",
+      "Global color, radius, and typography design tokens",
+      "Multi-page route preview",
+      "Component click interactions for page navigation and external URLs",
+      "Single-file routed React component export",
+      "Single-file routed Vue component export",
+      "AI-editable structured documents",
+      "Revision-safe focused patches"
+    ],
+    "defaultPrompt": [
+      "Create an editable landing page for my product.",
+      "Apply the pending component notes to this design.",
+      "Improve the selected section while preserving the rest."
+    ],
+    "brandColor": "#007AFF",
+    "logo": "./assets/logo.svg",
+    "logoDark": "./assets/logo.svg"
+  },
+  "dependencies": {
+    "minimumHostVersion": ">=2.2.0",
+    "supportedPlatforms": ["macos", "windows", "linux"]
+  },
+  "runtimeContext": {
+    "scope": "project",
+    "components": ["web-design-mcp", "web-design-workbench"],
+    "required": [],
+    "optional": ["project.id", "workspace.id", "workspace.root"],
+    "storageIsolation": "project",
+    "missingContext": "device"
+  },
+  "permissions": [
+    {
+      "permission": "process.spawn",
+      "required": true,
+      "reason": "Launch the installed Web Design Studio MCP and local application service.",
+      "components": ["web-design-mcp", "web-design-workbench"]
+    },
+    {
+      "permission": "artifact.create",
+      "required": true,
+      "reason": "Export design documents and generated website files.",
+      "components": ["web-design-mcp", "web-design-workbench"]
+    }
+  ]
+}

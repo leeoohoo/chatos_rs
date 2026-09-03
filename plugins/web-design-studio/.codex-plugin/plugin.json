@@ -1,0 +1,29 @@
+{
+  "name": "web-design-studio",
+  "version": "0.8.0",
+  "description": "Design and refine editable websites with an AI-aware visual canvas.",
+  "author": {
+    "name": "Chatos"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["website", "design", "ui", "canvas", "prototype", "ai"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Web Design Studio",
+    "shortDescription": "Design editable websites with AI.",
+    "longDescription": "A product-ready visual website design workbench where users and AI share the same structured document. Build with a categorized component library and responsive finished sections, synchronize reusable instances, annotate precise layers, and export interactive HTML, React, or Vue.",
+    "developerName": "Chatos",
+    "category": "Creativity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Create an editable landing page for my product.",
+      "Apply the pending component notes to this design.",
+      "Improve the selected section while preserving the rest."
+    ],
+    "brandColor": "#007AFF",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg",
+    "logoDark": "./assets/logo.svg"
+  }
+}
