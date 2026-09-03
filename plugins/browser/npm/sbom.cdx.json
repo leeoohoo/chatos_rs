@@ -1,25 +1,25 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:59aec85f-b7f1-4525-bd33-79be82c909dd",
+  "serialNumber": "urn:uuid:32452d85-1175-46e5-acce-fb13a0d3da98",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-03T08:34:17.307Z",
+    "timestamp": "2026-09-03T10:09:24.389Z",
     "tools": {
       "components": [
         {
           "type": "application",
           "name": "browser-cdp-sbom-generator",
-          "version": "0.1.9"
+          "version": "0.1.10"
         }
       ]
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/chatos-browser-cdp@0.1.9",
+      "bom-ref": "pkg:npm/chatos-browser-cdp@0.1.10",
       "name": "chatos-browser-cdp",
-      "version": "0.1.9",
-      "purl": "pkg:npm/chatos-browser-cdp@0.1.9"
+      "version": "0.1.10",
+      "purl": "pkg:npm/chatos-browser-cdp@0.1.10"
     }
   },
   "components": [
@@ -277,10 +277,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-bridge@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-bridge@0.1.10",
       "name": "browser-cdp-bridge",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-bridge@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-bridge@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -299,10 +299,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-cli@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-cli@0.1.10",
       "name": "browser-cdp-cli",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-cli@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-cli@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -321,10 +321,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-core@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-core@0.1.10",
       "name": "browser-cdp-core",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-core@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-core@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -343,10 +343,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-direct@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-direct@0.1.10",
       "name": "browser-cdp-direct",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-direct@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-direct@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -365,10 +365,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-extension@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-extension@0.1.10",
       "name": "browser-cdp-extension",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-extension@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-extension@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -387,10 +387,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-mcp@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-mcp@0.1.10",
       "name": "browser-cdp-mcp",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-mcp@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-mcp@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -409,10 +409,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-policy@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-policy@0.1.10",
       "name": "browser-cdp-policy",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-policy@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-policy@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -431,10 +431,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-protocol@0.1.9",
+      "bom-ref": "pkg:cargo/browser-cdp-protocol@0.1.10",
       "name": "browser-cdp-protocol",
-      "version": "0.1.9",
-      "purl": "pkg:cargo/browser-cdp-protocol@0.1.9",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/browser-cdp-protocol@0.1.10",
       "properties": [
         {
           "name": "cargo:source",
@@ -5018,7 +5018,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-bridge@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-bridge@0.1.10",
       "dependsOn": [
         "pkg:cargo/async-tungstenite@0.32.1",
         "pkg:cargo/futures@0.3.34",
@@ -5030,13 +5030,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-cli@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-cli@0.1.10",
       "dependsOn": [
-        "pkg:cargo/browser-cdp-bridge@0.1.9",
-        "pkg:cargo/browser-cdp-core@0.1.9",
-        "pkg:cargo/browser-cdp-direct@0.1.9",
-        "pkg:cargo/browser-cdp-extension@0.1.9",
-        "pkg:cargo/browser-cdp-mcp@0.1.9",
+        "pkg:cargo/browser-cdp-bridge@0.1.10",
+        "pkg:cargo/browser-cdp-core@0.1.10",
+        "pkg:cargo/browser-cdp-direct@0.1.10",
+        "pkg:cargo/browser-cdp-extension@0.1.10",
+        "pkg:cargo/browser-cdp-mcp@0.1.10",
         "pkg:cargo/fs2@0.4.3",
         "pkg:cargo/serde_json@1.0.151",
         "pkg:cargo/sha2@0.10.9",
@@ -5047,12 +5047,12 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-core@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-core@0.1.10",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/base64@0.22.1",
-        "pkg:cargo/browser-cdp-policy@0.1.9",
-        "pkg:cargo/browser-cdp-protocol@0.1.9",
+        "pkg:cargo/browser-cdp-policy@0.1.10",
+        "pkg:cargo/browser-cdp-protocol@0.1.10",
         "pkg:cargo/chrono@0.4.45",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
@@ -5063,13 +5063,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-direct@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-direct@0.1.10",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/base64@0.22.1",
-        "pkg:cargo/browser-cdp-core@0.1.9",
-        "pkg:cargo/browser-cdp-policy@0.1.9",
-        "pkg:cargo/browser-cdp-protocol@0.1.9",
+        "pkg:cargo/browser-cdp-core@0.1.10",
+        "pkg:cargo/browser-cdp-policy@0.1.10",
+        "pkg:cargo/browser-cdp-protocol@0.1.10",
         "pkg:cargo/chromiumoxide@0.9.1",
         "pkg:cargo/chromiumoxide_types@0.9.1",
         "pkg:cargo/futures@0.3.34",
@@ -5081,13 +5081,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-extension@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-extension@0.1.10",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/async-tungstenite@0.32.1",
-        "pkg:cargo/browser-cdp-core@0.1.9",
-        "pkg:cargo/browser-cdp-policy@0.1.9",
-        "pkg:cargo/browser-cdp-protocol@0.1.9",
+        "pkg:cargo/browser-cdp-core@0.1.10",
+        "pkg:cargo/browser-cdp-policy@0.1.10",
+        "pkg:cargo/browser-cdp-protocol@0.1.10",
         "pkg:cargo/futures@0.3.34",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
@@ -5098,18 +5098,18 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-mcp@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-mcp@0.1.10",
       "dependsOn": [
-        "pkg:cargo/browser-cdp-core@0.1.9",
-        "pkg:cargo/browser-cdp-policy@0.1.9",
-        "pkg:cargo/browser-cdp-protocol@0.1.9",
+        "pkg:cargo/browser-cdp-core@0.1.10",
+        "pkg:cargo/browser-cdp-policy@0.1.10",
+        "pkg:cargo/browser-cdp-protocol@0.1.10",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
         "pkg:cargo/tokio@1.53.1"
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-policy@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-policy@0.1.10",
       "dependsOn": [
         "pkg:cargo/regex@1.13.1",
         "pkg:cargo/serde@1.0.229",
@@ -5119,7 +5119,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-protocol@0.1.9",
+      "ref": "pkg:cargo/browser-cdp-protocol@0.1.10",
       "dependsOn": [
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151"

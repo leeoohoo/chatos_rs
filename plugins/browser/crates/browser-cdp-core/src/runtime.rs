@@ -25,6 +25,8 @@ use crate::{BrowserBackend, BrowserBackendFactory};
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(15);
 const VIRTUAL_CURSOR_ID: &str = "__chatos_virtual_mouse__";
+const VIRTUAL_CURSOR_MOVE_MS: u64 = 280;
+const VIRTUAL_CURSOR_CLICK_HOLD_MS: u64 = 240;
 const SNAPSHOT_SCRIPT: &str = r#"(() => {
   const selectorFor = (el) => {
     if (el.id && CSS.escape) return `#${CSS.escape(el.id)}`;
@@ -529,6 +531,9 @@ impl BrowserRuntime {
             &virtual_cursor_pulse_script(),
         )
         .await;
+        // Keep the pressed cursor visible before mouseReleased triggers a
+        // navigation and destroys the current page overlay.
+        tokio::time::sleep(Duration::from_millis(VIRTUAL_CURSOR_CLICK_HOLD_MS)).await;
         backend
             .send_command(
                 Some(&backend_session_id),
@@ -1459,32 +1464,34 @@ fn virtual_cursor_move_script(selector: &str) -> String {
     Object.assign(host.style, {{
       position: 'fixed', left: '0', top: '0', width: '1px', height: '1px',
       pointerEvents: 'none', zIndex: '2147483647', opacity: '1',
-      willChange: 'transform', transition: 'transform 120ms cubic-bezier(.2,.8,.2,1)'
+      willChange: 'transform', transition: 'transform {move_ms}ms cubic-bezier(.2,.8,.2,1)'
     }});
     const root = host.attachShadow ? host.attachShadow({{mode:'open'}}) : host;
     root.innerHTML = `<style>
-      .pointer {{ position:absolute; left:-2px; top:-2px; width:26px; height:30px; filter:drop-shadow(0 1px 2px rgba(0,0,0,.45)); }}
-      .pulse {{ position:absolute; left:-12px; top:-12px; width:24px; height:24px; border:2px solid #1677ff; border-radius:999px; opacity:0; transform:scale(.35); }}
-      .pulse.active {{ animation:chatos-click 360ms ease-out; }}
+      .pointer {{ position:absolute; left:-3px; top:-3px; width:30px; height:36px; filter:drop-shadow(0 2px 4px rgba(0,0,0,.55)); }}
+      .pulse {{ position:absolute; left:-15px; top:-15px; width:30px; height:30px; border:3px solid #1677ff; border-radius:999px; opacity:0; transform:scale(.35); box-shadow:0 0 0 3px rgba(255,255,255,.9); }}
+      .pulse.active {{ animation:chatos-click 520ms ease-out; }}
       @keyframes chatos-click {{ 0% {{opacity:.95;transform:scale(.35)}} 100% {{opacity:0;transform:scale(1.65)}} }}
-    </style><svg class="pointer" viewBox="0 0 26 30" xmlns="http://www.w3.org/2000/svg"><path d="M2 2v21.1l5.7-5.1 4.1 9.1 4.2-1.9-4.1-8.9h8.2L2 2z" fill="#111827" stroke="white" stroke-width="1.8" stroke-linejoin="round"/></svg><span class="pulse"></span>`;
+    </style><svg class="pointer" viewBox="0 0 26 30" xmlns="http://www.w3.org/2000/svg"><path d="M2 2v21.1l5.7-5.1 4.1 9.1 4.2-1.9-4.1-8.9h8.2L2 2z" fill="#1677ff" stroke="white" stroke-width="2" stroke-linejoin="round"/></svg><span class="pulse"></span>`;
     (document.documentElement || document.body).appendChild(host);
     const startX = Math.max(0, innerWidth / 2);
     const startY = Math.max(0, innerHeight / 2);
     host.style.transition = 'none';
     host.style.transform = `translate3d(${{startX}}px, ${{startY}}px, 0)`;
     host.getBoundingClientRect();
-    host.style.transition = 'transform 120ms cubic-bezier(.2,.8,.2,1)';
+    host.style.transition = 'transform {move_ms}ms cubic-bezier(.2,.8,.2,1)';
   }}
   host.style.opacity = '1';
   host.style.transform = `translate3d(${{x}}px, ${{y}}px, 0)`;
   host.dataset.x = String(x);
   host.dataset.y = String(y);
-  await new Promise(resolve => setTimeout(resolve, 135));
+  await new Promise(resolve => setTimeout(resolve, {move_wait_ms}));
   return {{x, y}};
 }})()"##,
         selector = selector,
-        cursor_id = serde_json::to_string(VIRTUAL_CURSOR_ID).unwrap()
+        cursor_id = serde_json::to_string(VIRTUAL_CURSOR_ID).unwrap(),
+        move_ms = VIRTUAL_CURSOR_MOVE_MS,
+        move_wait_ms = VIRTUAL_CURSOR_MOVE_MS + 30,
     )
 }
 
@@ -1514,6 +1521,8 @@ mod virtual_cursor_tests {
         assert!(script.contains("document.querySelector(\"#submit\")"));
         assert!(script.contains(VIRTUAL_CURSOR_ID));
         assert!(script.contains("attachShadow"));
+        assert!(script.contains("transform 280ms"));
+        assert!(script.contains("animation:chatos-click 520ms"));
         assert!(script.contains("return {x, y}"));
     }
 

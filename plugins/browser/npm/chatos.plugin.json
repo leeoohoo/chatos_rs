@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-browser-cdp",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Control the user's paired Google Chrome automatically, with an isolated Chromium fallback before authorization, through the Chrome DevTools Protocol.",
   "author": {
     "name": "Chatos",
