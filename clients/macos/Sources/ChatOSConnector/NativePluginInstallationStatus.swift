@@ -111,7 +111,23 @@ enum NativePluginInstallationStatusBuilder {
                 lastCheckedAt: checkedAt
             )
         }
-        let componentStatuses = skillStatuses + mcpStatuses
+        let uiStatuses = manifest.ui
+            .sorted { $0.componentKey < $1.componentKey }
+            .map { contribution in
+                let error = uiContributionError(
+                    contribution,
+                    installationURL: installationURL,
+                    fileManager: fileManager
+                )
+                return GatewayPluginComponentStatus(
+                    componentKey: contribution.componentKey,
+                    kind: "ui_contribution",
+                    availabilityStatus: error == nil ? "ready" : "unavailable",
+                    lastError: error,
+                    lastCheckedAt: checkedAt
+                )
+            }
+        let componentStatuses = skillStatuses + mcpStatuses + uiStatuses
         guard !componentStatuses.isEmpty else {
             throw NativePluginRuntimeError.invalidManifest("Plugin 没有可运行的 MCP 组件")
         }
@@ -156,10 +172,22 @@ enum NativePluginInstallationStatusBuilder {
         fileManager: FileManager
     ) -> String? {
         guard server.type == "stdio" else { return "当前客户端只支持 stdio MCP 组件" }
-        guard safeExecutableName(server.bin) else { return "Plugin 可执行文件名无效" }
+        return executableError(
+            bin: server.bin,
+            installationURL: installationURL,
+            fileManager: fileManager
+        )
+    }
+
+    private static func executableError(
+        bin: String,
+        installationURL: URL,
+        fileManager: FileManager
+    ) -> String? {
+        guard safeExecutableName(bin) else { return "Plugin 可执行文件名无效" }
         let executableURL = installationURL
             .appendingPathComponent("bin", isDirectory: true)
-            .appendingPathComponent(server.bin, isDirectory: false)
+            .appendingPathComponent(bin, isDirectory: false)
             .standardizedFileURL
         guard executableURL.path.hasPrefix(installationURL.path + "/") else {
             return "Plugin 可执行文件越过安装目录"
@@ -178,6 +206,45 @@ enum NativePluginInstallationStatusBuilder {
             return "Plugin 可执行文件不可运行"
         }
         return nil
+    }
+
+    private static func uiContributionError(
+        _ contribution: NativePluginManifest.UIContribution,
+        installationURL: URL,
+        fileManager: FileManager
+    ) -> String? {
+        guard !contribution.componentKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "Plugin UI 组件标识无效"
+        }
+        guard let relativePath = normalizedRelativePath(contribution.source.path) else {
+            return "Plugin UI 入口路径无效"
+        }
+        let sourceURL = installationURL
+            .appendingPathComponent(relativePath, isDirectory: false)
+            .standardizedFileURL
+        guard sourceURL.path.hasPrefix(installationURL.path + "/") else {
+            return "Plugin UI 入口越过安装目录"
+        }
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            return "Plugin UI 入口不存在"
+        }
+        guard let values = try? sourceURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ]),
+            values.isRegularFile == true,
+            values.isSymbolicLink != true else {
+            return "Plugin UI 入口不可用"
+        }
+        guard let runtime = contribution.runtime else { return nil }
+        guard runtime.type == "local_http" else {
+            return "当前客户端不支持这个 Plugin UI 运行时"
+        }
+        return executableError(
+            bin: runtime.bin,
+            installationURL: installationURL,
+            fileManager: fileManager
+        )
     }
 
     private static func skillCollectionError(

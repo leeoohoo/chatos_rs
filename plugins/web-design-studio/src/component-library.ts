@@ -1,5 +1,5 @@
 import { breakpointFor, componentsForPage, resolveComponent } from './editor-model.js';
-import { pageIdForComponent, type WebComponentStyle, type WebComponentType, type WebDesignComponent, type WebDesignDevice, type WebDesignDocument } from './schema.js';
+import { pageIdForComponent, type WebComponentStyle, type WebComponentType, type WebDesignComponent, type WebDesignDevice, type WebDesignDocument, type WebDesignLibraryBinding } from './schema.js';
 import { componentDefaults } from './templates.js';
 
 export type WebDesignBlockPresetId = 'navbar' | 'hero' | 'features' | 'pricing' | 'faq' | 'contact' | 'footer';
@@ -51,6 +51,27 @@ type PresetPart = {
 
 const whiteSection: WebComponentStyle = { background: '#FFFFFF', borderColor: '#E5E5EA', borderWidth: 1, borderRadius: 24 };
 const darkHeading: WebComponentStyle = { color: '#1D1D1F', fontSize: 38, fontWeight: 800, textAlign: 'left' };
+const antdPlaceholderImage = 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=900&q=80';
+
+function antDesignBinding(part: PresetPart): WebDesignLibraryBinding | undefined {
+  const propsForContentList = () => part.content?.split('\n').filter(Boolean) ?? [];
+  switch (part.type) {
+    case 'heading': return { name: 'antd', version: '6.2.2', component: 'Typography', variant: 'title', props: { level: 2 } };
+    case 'text': return { name: 'antd', version: '6.2.2', component: 'Typography', variant: 'paragraph', props: {} };
+    case 'logo': return { name: 'antd', version: '6.2.2', component: 'Typography', variant: 'title', props: { level: 3 } };
+    case 'button': return { name: 'antd', version: '6.2.2', component: 'Button', variant: part.style?.background === '#FFFFFF' ? 'default' : 'primary', props: { type: part.style?.background === '#FFFFFF' ? 'default' : 'primary', size: 'large', danger: false } };
+    case 'link': return { name: 'antd', version: '6.2.2', component: 'Button', variant: 'link', props: { type: 'link' } };
+    case 'card': return { name: 'antd', version: '6.2.2', component: 'Card', variant: 'default', props: { bordered: true } };
+    case 'input': return { name: 'antd', version: '6.2.2', component: 'Input', variant: 'outlined', props: { variant: 'outlined', allowClear: true } };
+    case 'textarea': return { name: 'antd', version: '6.2.2', component: 'Input', variant: 'textarea', props: { variant: 'outlined', autoSize: { minRows: 4, maxRows: 8 } } };
+    case 'select': return { name: 'antd', version: '6.2.2', component: 'Select', variant: 'outlined', props: { variant: 'outlined', options: propsForContentList().map((label) => ({ label, value: label })) } };
+    case 'badge': return { name: 'antd', version: '6.2.2', component: 'Tag', variant: 'blue', props: { color: 'blue' } };
+    case 'avatar': return { name: 'antd', version: '6.2.2', component: 'Avatar', variant: 'circle', props: { shape: 'circle', size: 48 } };
+    case 'list': return { name: 'antd', version: '6.2.2', component: 'List', variant: 'default', props: { bordered: false, dataSource: propsForContentList() } };
+    case 'image': return { name: 'antd', version: '6.2.2', component: 'Image', variant: 'default', props: { src: antdPlaceholderImage, preview: false } };
+    default: return undefined;
+  }
+}
 
 function presetParts(id: WebDesignBlockPresetId): PresetPart[] {
   switch (id) {
@@ -149,6 +170,7 @@ export function createBlockPreset(document: WebDesignDocument, pageId: string, p
     component.zIndex = maxZ + index + 1;
     if (part.content !== undefined) component.content = part.content;
     if (part.style) component.style = { ...component.style, ...part.style };
+    component.library = antDesignBinding(part);
     component.responsive = {
       tablet: {
         x: Math.round(part.frame[0] * tabletScale),

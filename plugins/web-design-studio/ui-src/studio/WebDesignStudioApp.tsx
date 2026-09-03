@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   autoLayoutContainer,
   breakpointFor,
@@ -25,7 +25,9 @@ import { exportPageHtml } from '../../src/html-exporter';
 import { exportReactComponent } from '../../src/react-exporter';
 import { exportVueComponent } from '../../src/vue-exporter';
 import { createBlockPreset, createPageTemplate, WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES, type WebDesignBlockPresetId, type WebDesignPageTemplateId } from '../../src/component-library';
-import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_VERSION, createAntdComponent } from '../../src/antd-library';
+import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_COMPONENT_VARIANTS, ANTD_VERSION, applyAntdComponentVariant, createAntdComponent, variantsForAntdComponent } from '../../src/antd-library';
+import { editableSlotsForAntdComponent, isAntdContentContainer, type AntdEditableSlot } from '../../src/antd-slots';
+import { WEB_DESIGN_THEME_PRESETS, type WebDesignThemePreset } from '../../src/design-themes';
 import { componentDefaults } from '../../src/templates';
 import {
   pagesForDocument,
@@ -45,32 +47,112 @@ import { createRepository, type DesignRepository, type DesignSummary } from './r
 
 const AntdCanvasComponent = lazy(() => import('./AntdCanvasComponent').then((module) => ({ default: module.AntdCanvasComponent })));
 
-type PaletteCategory = '布局' | '内容' | '表单' | '展示';
+type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
 
-const palette: Array<{ type: WebComponentType; label: string; icon: string; category: PaletteCategory; keywords: string[] }> = [
-  { type: 'section', label: '区块', icon: '▱', category: '布局', keywords: ['section', '容器'] },
-  { type: 'card', label: '卡片', icon: '▤', category: '布局', keywords: ['card', '容器'] },
-  { type: 'divider', label: '分隔线', icon: '—', category: '布局', keywords: ['divider', '线'] },
-  { type: 'heading', label: '标题', icon: 'H', category: '内容', keywords: ['heading', '标题'] },
-  { type: 'text', label: '文本', icon: 'T', category: '内容', keywords: ['text', '段落'] },
-  { type: 'button', label: '按钮', icon: '▣', category: '内容', keywords: ['button', 'cta'] },
-  { type: 'link', label: '链接', icon: '↗', category: '内容', keywords: ['link', '链接'] },
-  { type: 'image', label: '图片', icon: '▧', category: '内容', keywords: ['image', '图片'] },
-  { type: 'video', label: '视频', icon: '▶', category: '内容', keywords: ['video', '视频'] },
-  { type: 'icon', label: '图标', icon: '✦', category: '内容', keywords: ['icon', '图标'] },
-  { type: 'logo', label: 'Logo', icon: '◆', category: '内容', keywords: ['logo', '品牌'] },
-  { type: 'input', label: '输入框', icon: '⌨', category: '表单', keywords: ['input', '输入'] },
-  { type: 'textarea', label: '多行输入', icon: '≣', category: '表单', keywords: ['textarea', '留言'] },
-  { type: 'select', label: '下拉选择', icon: '⌄', category: '表单', keywords: ['select', '下拉'] },
-  { type: 'checkbox', label: '复选框', icon: '☑', category: '表单', keywords: ['checkbox', '复选'] },
-  { type: 'switch', label: '开关', icon: '◉', category: '表单', keywords: ['switch', '开关'] },
-  { type: 'badge', label: '徽章', icon: '●', category: '展示', keywords: ['badge', '标签'] },
-  { type: 'avatar', label: '头像', icon: '◉', category: '展示', keywords: ['avatar', '头像'] },
-  { type: 'list', label: '列表', icon: '☷', category: '展示', keywords: ['list', '列表'] },
-  { type: 'table', label: '表格', icon: '▦', category: '展示', keywords: ['table', '表格', '数据'] }
+const palette: Array<{ id: BasicShapeId; type: WebComponentType; label: string; icon: string; keywords: string[] }> = [
+  { id: 'rectangle', type: 'section', label: '矩形', icon: '▭', keywords: ['rectangle', '矩形', '容器'] },
+  { id: 'ellipse', type: 'section', label: '圆形', icon: '○', keywords: ['ellipse', 'circle', '圆形'] },
+  { id: 'line', type: 'divider', label: '直线', icon: '—', keywords: ['line', 'divider', '直线'] }
 ];
 
-const paletteCategories: PaletteCategory[] = ['布局', '内容', '表单', '展示'];
+function basicShapeDefaults(shapeId: BasicShapeId, x: number, y: number): WebDesignComponent {
+  if (shapeId === 'line') {
+    const line = componentDefaults('divider', x, y);
+    line.id = `shape-line-${crypto.randomUUID().slice(0, 8)}`;
+    line.name = '直线';
+    line.width = 320;
+    line.style = { borderColor: '#8E8E93', borderWidth: 1 };
+    return line;
+  }
+  const shape = componentDefaults('section', x, y);
+  shape.id = `shape-${shapeId}-${crypto.randomUUID().slice(0, 8)}`;
+  shape.name = shapeId === 'ellipse' ? '圆形' : '矩形';
+  shape.width = shapeId === 'ellipse' ? 160 : 260;
+  shape.height = shapeId === 'ellipse' ? 160 : 160;
+  shape.style = { background: '#EAF3FF', borderColor: '#A8CCFF', borderWidth: 1, borderRadius: shapeId === 'ellipse' ? 999 : 16 };
+  return shape;
+}
+
+function contentContainerAncestor(document: WebDesignDocument, component: WebDesignComponent): WebDesignComponent | undefined {
+  const byId = new Map(document.components.map((candidate) => [candidate.id, candidate]));
+  let parent = component.parentId ? byId.get(component.parentId) : undefined;
+  while (parent) {
+    if (isAntdContentContainer(parent)) return parent;
+    parent = parent.parentId ? byId.get(parent.parentId) : undefined;
+  }
+  return undefined;
+}
+
+function slotIdForDescendant(document: WebDesignDocument, component: WebDesignComponent, containerId: string): string | undefined {
+  const byId = new Map(document.components.map((candidate) => [candidate.id, candidate]));
+  let current = component;
+  while (current.parentId && current.parentId !== containerId) {
+    const parent = byId.get(current.parentId);
+    if (!parent) return undefined;
+    current = parent;
+  }
+  return current.parentId === containerId ? (current.slot ?? 'content') : undefined;
+}
+
+function componentsInSlot(document: WebDesignDocument, containerId: string, slotId: string): WebDesignComponent[] {
+  return document.components.filter((component) => slotIdForDescendant(document, component, containerId) === slotId);
+}
+
+function visibleComponentsInSlot(document: WebDesignDocument, containerId: string, slotId: string): WebDesignComponent[] {
+  const byId = new Map(document.components.map((candidate) => [candidate.id, candidate]));
+  return componentsInSlot(document, containerId, slotId).filter((component) => {
+    let parent = component.parentId ? byId.get(component.parentId) : undefined;
+    while (parent && parent.id !== containerId) {
+      if (isAntdContentContainer(parent)) return false;
+      parent = parent.parentId ? byId.get(parent.parentId) : undefined;
+    }
+    return true;
+  });
+}
+
+function createSlotStarterComponents(
+  container: WebDesignComponent,
+  slot: AntdEditableSlot,
+  template: 'form' | 'details',
+  pageId: string,
+  device: WebDesignDevice
+): WebDesignComponent[] {
+  const containerFrame = resolveComponent(container, device);
+  const availableWidth = Math.max(220, slot.width - 24);
+  const rows = template === 'form'
+    ? [
+      { definition: 'Typography', variant: 'title', name: '表单标题', content: '完善信息', x: 12, y: 12, width: availableWidth, height: 44 },
+      { definition: 'Input', variant: 'outlined', name: '姓名输入', content: '请输入姓名', x: 12, y: 76, width: availableWidth, height: 40 },
+      { definition: 'Select', variant: 'outlined', name: '类型选择', content: '请选择类型', x: 12, y: 132, width: availableWidth, height: 40 },
+      { definition: 'Input', variant: 'textarea', name: '详细说明', content: '请输入详细说明', x: 12, y: 188, width: availableWidth, height: 96 },
+      { definition: 'Button', variant: 'primary', name: '提交按钮', content: '保存修改', x: 12, y: 304, width: 120, height: 40 }
+    ]
+    : [
+      { definition: 'Typography', variant: 'title', name: '详情标题', content: '产品详情', x: 12, y: 12, width: availableWidth, height: 44 },
+      { definition: 'Descriptions', variant: 'bordered', name: '详情信息', content: '', x: 12, y: 72, width: availableWidth, height: 170 },
+      { definition: 'Divider', variant: 'plain', name: '内容分隔线', content: '', x: 12, y: 258, width: availableWidth, height: 24 },
+      { definition: 'Button', variant: 'primary', name: '确认按钮', content: '确认', x: 12, y: 300, width: 100, height: 40 }
+    ];
+  return rows.map((row, index) => {
+    let child = createAntdComponent(row.definition, container.x + row.x, container.y + row.y);
+    child = applyAntdComponentVariant(child, row.variant);
+    child.name = row.name;
+    child.content = row.content;
+    child.pageId = pageId;
+    child.parentId = container.id;
+    child.slot = slot.id;
+    child.zIndex = index + 1;
+    child.width = row.width;
+    child.height = row.height;
+    if (device !== 'desktop') child = updateComponentFrame(child, device, {
+      x: containerFrame.x + row.x,
+      y: containerFrame.y + row.y,
+      width: row.width,
+      height: row.height
+    });
+    return child;
+  });
+}
 
 const deviceOptions: Array<{ device: WebDesignDevice; label: string; icon: string }> = [
   { device: 'desktop', label: '桌面', icon: '▰' },
@@ -86,11 +168,14 @@ type Interaction = {
   frame: ResolvedWebDesignComponent;
   selectedIds: string[];
   snapshot: WebDesignDocument;
+  scale: number;
+  scoped: boolean;
 };
 
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 type LibraryTab = 'components' | 'antd' | 'blocks' | 'layers';
+type EditingSlot = { componentId: string; slotId: string };
 
 export function WebDesignStudioApp() {
   const [repository, setRepository] = useState<DesignRepository>();
@@ -105,6 +190,7 @@ export function WebDesignStudioApp() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [interactionMode, setInteractionMode] = useState(false);
   const [device, setDevice] = useState<WebDesignDevice>('desktop');
   const [zoom, setZoom] = useState(0.82);
   const [past, setPast] = useState<WebDesignDocument[]>([]);
@@ -113,11 +199,17 @@ export function WebDesignStudioApp() {
   const [annotationText, setAnnotationText] = useState('');
   const [aiInstruction, setAiInstruction] = useState('');
   const [paletteQuery, setPaletteQuery] = useState('');
-  const [libraryTab, setLibraryTab] = useState<LibraryTab>('components');
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>('antd');
+  const [variantPickerId, setVariantPickerId] = useState<string>();
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [editingSlot, setEditingSlot] = useState<EditingSlot>();
   const interaction = useRef<Interaction | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
   const assetInput = useRef<HTMLInputElement | null>(null);
   const canvasScroll = useRef<HTMLDivElement | null>(null);
+  const previewZoom = useRef(zoom);
+  const interactionZoom = useRef(zoom);
 
   useEffect(() => { documentRef.current = document; }, [document]);
 
@@ -138,6 +230,21 @@ export function WebDesignStudioApp() {
   const tokens = useMemo(() => document ? tokensForDocument(document) : undefined, [document]);
   const currentPage = useMemo(() => pages.find((page) => page.id === pageId) ?? pages[0], [pages, pageId]);
   const pageComponents = useMemo(() => document && currentPage ? componentsForPage(document, currentPage.id) : [], [document, currentPage]);
+  const editingContainer = useMemo(() => editingSlot ? document?.components.find((component) => component.id === editingSlot.componentId) : undefined, [document, editingSlot]);
+  const editingSlotDefinition = useMemo(() => editingContainer && editingSlot
+    ? editableSlotsForAntdComponent(editingContainer).find((slot) => slot.id === editingSlot.slotId)
+    : undefined, [editingContainer, editingSlot]);
+  const editingSlotComponents = useMemo(() => document && editingSlot
+    ? componentsInSlot(document, editingSlot.componentId, editingSlot.slotId)
+    : [], [document, editingSlot]);
+  const editingVisibleComponents = useMemo(() => document && editingSlot
+    ? visibleComponentsInSlot(document, editingSlot.componentId, editingSlot.slotId)
+    : [], [document, editingSlot]);
+  const inspectedFrame = useMemo(() => {
+    if (!selectedFrame || !editingContainer || !editingSlot || !selected || slotIdForDescendant(document!, selected, editingContainer.id) !== editingSlot.slotId) return selectedFrame;
+    const containerFrame = resolveComponent(editingContainer, device);
+    return { ...selectedFrame, x: selectedFrame.x - containerFrame.x, y: selectedFrame.y - containerFrame.y };
+  }, [selectedFrame, editingContainer, editingSlot, selected, document, device]);
 
   useEffect(() => {
     void (async () => {
@@ -160,12 +267,14 @@ export function WebDesignStudioApp() {
     const onMove = (event: PointerEvent) => {
       const active = interaction.current;
       if (!active) return;
-      const dx = (event.clientX - active.pointerX) / zoom;
-      const dy = (event.clientY - active.pointerY) / zoom;
+      const dx = (event.clientX - active.pointerX) / active.scale;
+      const dy = (event.clientY - active.pointerY) / active.scale;
       if (active.kind === 'move') {
         const movingIds = selectedRootIds(active.snapshot, active.selectedIds).flatMap((id) => [id, ...descendantIds(active.snapshot, id)]);
         const candidate = { ...active.frame, x: active.frame.x + dx, y: active.frame.y + dy };
-        const snapped = snapComponentFrame(active.snapshot, active.componentId, device, candidate, movingIds);
+        const snapped = active.scoped
+          ? { frame: candidate, guides: {} as SnapGuides }
+          : snapComponentFrame(active.snapshot, active.componentId, device, candidate, movingIds);
         setSnapGuides(snapped.guides);
         changeLive(() => {
           const moved = moveComponentsWithDescendants(
@@ -211,7 +320,13 @@ export function WebDesignStudioApp() {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
       const command = event.metaKey || event.ctrlKey;
-      if (command && event.key.toLowerCase() === 's') {
+      if (event.key === 'Escape' && preview) {
+        event.preventDefault();
+        toggleFullPreview();
+      } else if (event.key === 'Escape' && interactionMode) {
+        event.preventDefault();
+        toggleInteractionMode();
+      } else if (command && event.key.toLowerCase() === 's') {
         event.preventDefault();
         void save();
       } else if (command && !event.shiftKey && event.key.toLowerCase() === 'z') {
@@ -242,7 +357,7 @@ export function WebDesignStudioApp() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedIds, past, future, dirty, saving, repository, persistedRevision, device, clipboard, pageId]);
+  }, [selectedIds, past, future, dirty, saving, repository, persistedRevision, device, clipboard, pageId, preview, interactionMode, zoom, breakpoint.width]);
 
   function showToast(message: string) {
     setToast(message);
@@ -264,6 +379,7 @@ export function WebDesignStudioApp() {
     setFuture([]);
     setDevice('desktop');
     setPageId(pagesForDocument(next)[0].id);
+    setEditingSlot(undefined);
   }
 
   function commit(updater: (current: WebDesignDocument) => WebDesignDocument) {
@@ -311,9 +427,9 @@ export function WebDesignStudioApp() {
     commit((current) => ({ ...current, components: current.components.map((component) => component.id === componentId ? updater(component) : component) }));
   }
 
-  async function save() {
+  async function save(force = false, silent = false) {
     const current = documentRef.current;
-    if (!repository || !current || saving || !dirty) return;
+    if (!repository || !current || saving || (!dirty && !force)) return;
     setSaving(true);
     try {
       const saved = await repository.save(current, persistedRevision);
@@ -321,7 +437,7 @@ export function WebDesignStudioApp() {
       setPersistedRevision(saved.revision);
       setDirty(false);
       setDocuments(await repository.list());
-      showToast('已保存');
+      if (!silent) showToast('已保存');
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -353,8 +469,8 @@ export function WebDesignStudioApp() {
     }
   }
 
-  function onPaletteDrag(event: DragEvent, type: WebComponentType) {
-    event.dataTransfer.setData('application/x-web-design-component', type);
+  function onPaletteDrag(event: DragEvent, shapeId: BasicShapeId) {
+    event.dataTransfer.setData('application/x-web-design-shape', shapeId);
     event.dataTransfer.effectAllowed = 'copy';
   }
 
@@ -363,43 +479,116 @@ export function WebDesignStudioApp() {
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  function addAntdComponent(definitionId: string, x: number, y: number) {
+  function addAntdComponent(definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot) {
     const current = documentRef.current;
     if (!current) return;
-    let component = createAntdComponent(definitionId, x, y);
+    const container = targetSlot ? current.components.find((candidate) => candidate.id === targetSlot.componentId) : undefined;
+    const containerFrame = container ? resolveComponent(container, device) : undefined;
+    const componentX = containerFrame ? containerFrame.x + x : x;
+    const componentY = containerFrame ? containerFrame.y + y : y;
+    let component = createAntdComponent(definitionId, componentX, componentY);
+    if (variantId) component = applyAntdComponentVariant(component, variantId);
     component.pageId = pageId;
-    if (device !== 'desktop') component = updateComponentFrame(component, device, { x, y });
-    component.zIndex = Math.max(1, ...componentsForPage(current, pageId).map((item) => item.zIndex)) + 1;
-    commit((active) => ({ ...active, components: [...active.components, component] }));
+    if (container && targetSlot) {
+      component.parentId = container.id;
+      component.slot = targetSlot.slotId;
+      component.zIndex = Math.max(0, ...current.components.filter((item) => item.parentId === container.id && item.slot === targetSlot.slotId).map((item) => item.zIndex)) + 1;
+    } else {
+      component.zIndex = Math.max(1, ...componentsForPage(current, pageId).filter((item) => !contentContainerAncestor(current, item)).map((item) => item.zIndex)) + 1;
+    }
+    if (device !== 'desktop') component = updateComponentFrame(component, device, { x: componentX, y: componentY });
+    const starterSlot = !container && (definitionId === 'Drawer' || definitionId === 'Modal') ? editableSlotsForAntdComponent(component)[0] : undefined;
+    const starter = starterSlot ? createSlotStarterComponents(component, starterSlot, 'form', pageId, device) : [];
+    commit((active) => ({ ...active, components: [...active.components, component, ...starter] }));
     setSelectedId(component.id);
     setSelectedIds([component.id]);
-    showToast(`已插入 Ant Design ${component.library?.component}`);
+    showToast(container ? `已添加到${editableSlotsForAntdComponent(container).find((slot) => slot.id === targetSlot?.slotId)?.label ?? '组件内容'}` : `已插入 Ant Design ${component.library?.component}`);
   }
 
-  function insertAntdComponent(definitionId: string) {
+  function insertAntdComponent(definitionId: string, variantId?: string) {
     const definition = ANTD_COMPONENTS.find((candidate) => candidate.id === definitionId);
     if (!definition) return;
-    addAntdComponent(definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80);
+    if (editingSlotDefinition) {
+      addAntdComponent(definitionId, Math.max(12, Math.round((editingSlotDefinition.width - definition.width) / 2)), 28, variantId);
+    } else {
+      addAntdComponent(definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80, variantId);
+    }
+    setVariantPickerId(undefined);
+  }
+
+  function editComponentSlot(component: WebDesignComponent, slotId: string) {
+    if (interactionMode) setInteractionMode(false);
+    setEditingSlot({ componentId: component.id, slotId });
+    const first = documentRef.current ? componentsInSlot(documentRef.current, component.id, slotId)[0] : undefined;
+    setSelectedId(first?.id);
+    setSelectedIds(first ? [first.id] : []);
+  }
+
+  function exitSlotEditor() {
+    const containerId = editingSlot?.componentId;
+    setEditingSlot(undefined);
+    setSelectedId(containerId);
+    setSelectedIds(containerId ? [containerId] : []);
+  }
+
+  function insertSlotTemplate(template: 'form' | 'details') {
+    const current = documentRef.current;
+    if (!current || !editingContainer || !editingSlotDefinition) return;
+    const existing = componentsInSlot(current, editingContainer.id, editingSlotDefinition.id);
+    if (existing.length > 0 && !window.confirm('当前内容区域已有组件，继续会在现有内容下方添加模板，是否继续？')) return;
+    const starter = createSlotStarterComponents(editingContainer, editingSlotDefinition, template, pageId, device);
+    const offsetY = existing.length === 0 ? 0 : Math.max(...existing.map((component) => resolveComponent(component, device).y - resolveComponent(editingContainer, device).y + resolveComponent(component, device).height)) + 24;
+    const adjusted = offsetY === 0 ? starter : starter.map((component) => {
+      const frame = resolveComponent(component, device);
+      return updateComponentFrame(component, device, { y: frame.y + offsetY });
+    });
+    const containerFrame = resolveComponent(editingContainer, device);
+    const contentBottom = Math.max(...adjusted.map((component) => {
+      const frame = resolveComponent(component, device);
+      return frame.y - containerFrame.y + frame.height;
+    }));
+    const shouldGrowContainer = !['Drawer', 'Modal', 'Popover'].includes(editingContainer.library?.component ?? '');
+    const grownContainer = shouldGrowContainer
+      ? updateComponentFrame(editingContainer, device, { height: Math.max(containerFrame.height, Math.ceil(contentBottom + 68)) })
+      : editingContainer;
+    commit((active) => ({
+      ...active,
+      components: [...active.components.map((component) => component.id === grownContainer.id ? grownContainer : component), ...adjusted]
+    }));
+    setSelectedId(adjusted[0]?.id);
+    setSelectedIds(adjusted[0] ? [adjusted[0].id] : []);
+    showToast(template === 'form' ? '已插入可编辑表单' : '已插入可编辑详情内容');
   }
 
   function onCanvasDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     const current = documentRef.current;
-    if (!current || preview) return;
+    if (!current || preview || interactionMode) return;
     const bounds = event.currentTarget.getBoundingClientRect();
-    const x = Math.round((event.clientX - bounds.left) / zoom);
-    const y = Math.round((event.clientY - bounds.top) / zoom);
+    const activeScale = editingSlot ? 1 : zoom;
+    const x = Math.round((event.clientX - bounds.left) / activeScale);
+    const y = Math.round((event.clientY - bounds.top) / activeScale);
     const antdDefinitionId = event.dataTransfer.getData('application/x-web-design-antd');
     if (antdDefinitionId && ANTD_COMPONENTS.some((item) => item.id === antdDefinitionId)) {
       addAntdComponent(antdDefinitionId, x, y);
       return;
     }
-    const type = event.dataTransfer.getData('application/x-web-design-component') as WebComponentType;
-    if (!palette.some((item) => item.type === type)) return;
-    let component = componentDefaults(type, x, y);
+    const shapeId = event.dataTransfer.getData('application/x-web-design-shape') as BasicShapeId;
+    if (!palette.some((item) => item.id === shapeId)) return;
+    let component = basicShapeDefaults(shapeId, x, y);
     component.pageId = pageId;
-    if (device !== 'desktop') component = updateComponentFrame(component, device, { x, y });
-    component.zIndex = Math.max(1, ...componentsForPage(current, pageId).map((item) => item.zIndex)) + 1;
+    if (editingSlot && editingContainer) {
+      const parentFrame = resolveComponent(editingContainer, device);
+      component.x = editingContainer.x + x;
+      component.y = editingContainer.y + y;
+      component.parentId = editingContainer.id;
+      component.slot = editingSlot.slotId;
+      component.zIndex = Math.max(0, ...current.components.filter((item) => item.parentId === editingContainer.id && item.slot === editingSlot.slotId).map((item) => item.zIndex)) + 1;
+      if (device !== 'desktop') component = updateComponentFrame(component, device, { x: parentFrame.x + x, y: parentFrame.y + y });
+    } else {
+      if (device !== 'desktop') component = updateComponentFrame(component, device, { x, y });
+      component.zIndex = Math.max(1, ...componentsForPage(current, pageId).filter((item) => !contentContainerAncestor(current, item)).map((item) => item.zIndex)) + 1;
+    }
     commit((active) => ({ ...active, components: [...active.components, component] }));
     setSelectedId(component.id);
     setSelectedIds([component.id]);
@@ -468,7 +657,7 @@ export function WebDesignStudioApp() {
   }
 
   function beginInteraction(event: ReactPointerEvent, component: WebDesignComponent, kind: Interaction['kind']) {
-    if (preview) return;
+    if (preview || interactionMode) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.shiftKey) {
@@ -494,6 +683,8 @@ export function WebDesignStudioApp() {
       frame: resolveComponent(component, device),
       selectedIds: nextSelectedIds,
       snapshot: structuredClone(current)
+      , scale: editingSlot ? 1 : zoom
+      , scoped: Boolean(editingSlot)
     };
   }
 
@@ -507,6 +698,18 @@ export function WebDesignStudioApp() {
     updateComponent(selected.id, (component) => setSymbolOverride(updateComponentFrame(component, device, changes), 'frame', true));
   }
 
+  function updateInspectedFrame(changes: Partial<Pick<ResolvedWebDesignComponent, 'x' | 'y' | 'width' | 'height' | 'hidden'>>) {
+    if (!editingContainer || !editingSlot || !selected || !documentRef.current || slotIdForDescendant(documentRef.current, selected, editingContainer.id) !== editingSlot.slotId) {
+      updateSelectedFrame(changes);
+      return;
+    }
+    const containerFrame = resolveComponent(editingContainer, device);
+    const translated = { ...changes };
+    if (changes.x !== undefined) translated.x = containerFrame.x + changes.x;
+    if (changes.y !== undefined) translated.y = containerFrame.y + changes.y;
+    updateSelectedFrame(translated);
+  }
+
   function updateSelectedStyle(changes: Partial<WebComponentStyle>) {
     if (!selected) return;
     updateComponent(selected.id, (component) => setSymbolOverride(updateComponentStyle(component, device, changes), 'style', true));
@@ -515,7 +718,7 @@ export function WebDesignStudioApp() {
   function deleteSelected() {
     const current = documentRef.current;
     if (selectedIds.length === 0 || !current) return;
-    const removed = new Set(selectedIds);
+    const removed = new Set(selectedIds.flatMap((id) => [id, ...descendantIds(current, id)]));
     commit((active) => ({
       ...active,
       components: active.components
@@ -524,6 +727,7 @@ export function WebDesignStudioApp() {
       requests: active.requests.filter((request) => !request.componentId || !removed.has(request.componentId))
     }));
     setSelectedId(undefined);
+    if (editingSlot && removed.has(editingSlot.componentId)) setEditingSlot(undefined);
     setSelectedIds([]);
   }
 
@@ -568,15 +772,17 @@ export function WebDesignStudioApp() {
   }
 
   function alignSelected(action: AlignAction) {
-    if (!selectedFrame) return;
+    if (!inspectedFrame) return;
+    const targetWidth = editingSlotDefinition?.width ?? breakpoint.width;
+    const targetHeight = editingSlotDefinition?.height ?? breakpoint.height;
     const changes: Partial<ResolvedWebDesignComponent> = {};
     if (action === 'left') changes.x = 0;
-    if (action === 'center') changes.x = Math.round((breakpoint.width - selectedFrame.width) / 2);
-    if (action === 'right') changes.x = breakpoint.width - selectedFrame.width;
+    if (action === 'center') changes.x = Math.round((targetWidth - inspectedFrame.width) / 2);
+    if (action === 'right') changes.x = targetWidth - inspectedFrame.width;
     if (action === 'top') changes.y = 0;
-    if (action === 'middle') changes.y = Math.round((breakpoint.height - selectedFrame.height) / 2);
-    if (action === 'bottom') changes.y = breakpoint.height - selectedFrame.height;
-    updateSelectedFrame(changes);
+    if (action === 'middle') changes.y = Math.round((targetHeight - inspectedFrame.height) / 2);
+    if (action === 'bottom') changes.y = targetHeight - inspectedFrame.height;
+    updateInspectedFrame(changes);
   }
 
   function nudgeSelected(dx: number, dy: number) {
@@ -624,7 +830,47 @@ export function WebDesignStudioApp() {
     window.setTimeout(() => scroller.scrollTo({ left: 0, top: 0, behavior: 'smooth' }), 0);
   }
 
+  function toggleFullPreview() {
+    if (preview) {
+      setPreview(false);
+      setZoom(previewZoom.current);
+      return;
+    }
+    previewZoom.current = interactionMode ? interactionZoom.current : zoom;
+    if (interactionMode) setInteractionMode(false);
+    setEditingSlot(undefined);
+    setSelectedId(undefined);
+    setSelectedIds([]);
+    setPreview(true);
+    window.setTimeout(() => {
+      const scroller = canvasScroll.current;
+      if (!scroller) return;
+      setZoom(Math.max(.25, Math.min(1.5, scroller.clientWidth / breakpoint.width)));
+      scroller.scrollTo({ left: 0, top: 0 });
+    }, 0);
+  }
+
+  function toggleInteractionMode() {
+    if (interactionMode) {
+      setInteractionMode(false);
+      setZoom(interactionZoom.current);
+      return;
+    }
+    interactionZoom.current = zoom;
+    setSelectedId(undefined);
+    setSelectedIds([]);
+    setInteractionMode(true);
+    window.setTimeout(() => fitCanvasWidth(), 0);
+  }
+
   function selectComponent(componentId: string, additive = false) {
+    const current = documentRef.current;
+    const component = current?.components.find((candidate) => candidate.id === componentId);
+    const container = current && component ? contentContainerAncestor(current, component) : undefined;
+    const slotId = current && component && container ? slotIdForDescendant(current, component, container.id) : undefined;
+    if (container && slotId && (editingSlot?.componentId !== container.id || editingSlot.slotId !== slotId)) {
+      setEditingSlot({ componentId: container.id, slotId });
+    }
     if (!additive) {
       setSelectedId(componentId);
       setSelectedIds([componentId]);
@@ -654,6 +900,7 @@ export function WebDesignStudioApp() {
     const tabletBounds = boundsFor('tablet');
     const mobileBounds = boundsFor('mobile');
     const parentIds = new Set(components.map((component) => component.parentId));
+    const slotIds = new Set(components.map((component) => component.slot));
     const group = componentDefaults('section', desktopBounds.x, desktopBounds.y);
     group.id = `group-${crypto.randomUUID().slice(0, 8)}`;
     group.name = '组件组合';
@@ -661,6 +908,7 @@ export function WebDesignStudioApp() {
     group.width = desktopBounds.width;
     group.height = desktopBounds.height;
     group.parentId = parentIds.size === 1 ? components[0].parentId : undefined;
+    group.slot = slotIds.size === 1 ? components[0].slot : undefined;
     group.zIndex = Math.max(0, Math.min(...components.map((component) => component.zIndex)) - 1);
     group.layout = { mode: 'free', gap: 16, padding, align: 'start' };
     group.responsive = { tablet: tabletBounds, mobile: mobileBounds };
@@ -682,7 +930,7 @@ export function WebDesignStudioApp() {
       ...active,
       components: active.components
         .filter((component) => component.id !== selected.id)
-        .map((component) => component.parentId === selected.id ? { ...component, parentId: selected.parentId } : component),
+        .map((component) => component.parentId === selected.id ? { ...component, parentId: selected.parentId, slot: selected.slot } : component),
       requests: active.requests.filter((request) => request.componentId !== selected.id)
     }));
     setSelectedId(childIds[0]);
@@ -788,6 +1036,11 @@ export function WebDesignStudioApp() {
     updateSelected({ library: { ...selected.library, props: { ...selected.library.props, [key]: value } } });
   }
 
+  function applySelectedAntdVariant(variantId: string) {
+    if (!selected?.library || selected.library.name !== 'antd') return;
+    updateComponent(selected.id, (component) => applyAntdComponentVariant(component, variantId));
+  }
+
   function detachSelectedSymbol() {
     if (!selected?.symbolInstanceId) return;
     commit((current) => detachSymbolInstance(current, selected.id));
@@ -796,6 +1049,16 @@ export function WebDesignStudioApp() {
 
   function updateTokens(updater: (tokens: WebDesignTokens) => WebDesignTokens) {
     commit((current) => ({ ...current, tokens: updater(structuredClone(tokensForDocument(current))) }));
+  }
+
+  function applyDesignTheme(preset: WebDesignThemePreset) {
+    commit((current) => ({
+      ...current,
+      viewport: { ...current.viewport, background: preset.canvasBackground },
+      tokens: structuredClone(preset.tokens)
+    }));
+    setThemePickerOpen(false);
+    showToast(`已应用 ${preset.name} 视觉风格`);
   }
 
   function updateTokenColor(key: keyof WebDesignTokens['colors'], value: string) {
@@ -812,6 +1075,7 @@ export function WebDesignStudioApp() {
 
   function switchPage(nextPageId: string) {
     setPageId(nextPageId);
+    setEditingSlot(undefined);
     setSelectedId(undefined);
     setSelectedIds([]);
   }
@@ -969,19 +1233,22 @@ export function WebDesignStudioApp() {
     setAnnotationText('');
   }
 
-  function addAiRequest() {
+  async function addAiRequest(instruction = aiInstruction) {
     const current = documentRef.current;
-    if (!current || !aiInstruction.trim()) return;
+    if (!current || !instruction.trim()) return;
+    const target = selected ?? editingContainer;
     const request = {
       id: `request-${crypto.randomUUID().slice(0, 8)}`,
-      componentId: selected?.id,
-      instruction: `[${device}] ${aiInstruction.trim()}`,
+      componentId: target?.id,
+      instruction: `[${device}][${editingSlotDefinition ? `内容区域:${editingSlotDefinition.label}` : target ? `组件:${target.name}` : `页面:${currentPage?.name ?? pageId}`}] ${instruction.trim()}`,
       status: 'pending' as const,
       createdAt: new Date().toISOString()
     };
     commit((active) => ({ ...active, requests: [...active.requests, request] }));
     setAiInstruction('');
-    showToast('AI 请求已加入文档；保存后 AI 可通过 MCP 处理');
+    setAiPanelOpen(false);
+    await save(true, true);
+    showToast(target ? '已提交组件修改任务' : '已提交整页设计任务');
   }
 
   if (!document) return <div className="loading-screen"><div className="loading-dot" />正在打开 Web Design Studio…</div>;
@@ -990,16 +1257,24 @@ export function WebDesignStudioApp() {
   const directChildCount = selected ? document.components.filter((component) => component.parentId === selected.id).length : 0;
   const canUngroup = Boolean(selected?.id.startsWith('group-') && directChildCount > 0);
   const selectedSymbol = selected?.symbolId ? document.symbols?.find((symbol) => symbol.id === selected.symbolId) : undefined;
+  const selectedAntdVariants = selected?.library?.name === 'antd' ? variantsForAntdComponent(selected.library.component) : [];
+  const selectedEditableSlots = selected ? editableSlotsForAntdComponent(selected) : [];
+  const aiTarget = selected ?? editingContainer;
   const normalizedPaletteQuery = paletteQuery.trim().toLowerCase();
   const filteredPalette = palette.filter((item) => !normalizedPaletteQuery
-    || `${item.label} ${item.type} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
+    || `${item.label} ${item.id} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const filteredPresets = WEB_DESIGN_BLOCK_PRESETS.filter((preset) => !normalizedPaletteQuery
     || `${preset.name} ${preset.description} ${preset.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const filteredAntdComponents = ANTD_COMPONENTS.filter((item) => !normalizedPaletteQuery
     || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
+  const variantPickerDefinition = variantPickerId ? ANTD_COMPONENTS.find((item) => item.id === variantPickerId) : undefined;
+  const variantPickerVariants = variantPickerDefinition ? variantsForAntdComponent(variantPickerDefinition.id) : [];
+  const aiQuickPrompts = aiTarget
+    ? ['让这个组件更精致、更有层次', '优化尺寸、间距和对齐', '给我 3 个更好看的视觉方案']
+    : ['设计一个像 Apple 官网一样克制高级的页面', '统一整页的字号、间距、圆角和色彩', '检查并修复页面中不协调的视觉细节'];
 
   return (
-    <div className="studio-shell">
+    <div className={`studio-shell ${preview ? 'preview-active' : ''}`}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">W</span><span>Web Design Studio</span></div>
         <select className="document-select" value={document.documentId} onChange={(event) => {
@@ -1010,48 +1285,43 @@ export function WebDesignStudioApp() {
           {documents.map((item) => <option key={item.documentId} value={item.documentId}>{item.title}</option>)}
         </select>
         <button className="quiet-button" onClick={() => void createNew()}>新建设计</button>
+        <button className="quiet-button style-trigger" onClick={() => setThemePickerOpen(true)}>设计风格</button>
         <div className="history-tools">
           <button title="撤销 ⌘Z" disabled={past.length === 0} onClick={undo}>↶</button>
           <button title="重做 ⇧⌘Z" disabled={future.length === 0} onClick={redo}>↷</button>
         </div>
         <div className="topbar-spacer" />
         <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>
-        <button className="quiet-button" onClick={exportCurrentPage}>导出 HTML</button>
-        <button className="quiet-button" onClick={exportReact}>导出 React</button>
-        <button className="quiet-button" onClick={exportVue}>导出 Vue</button>
+        <details className="delivery-menu"><summary>交付</summary><div><button onClick={exportCurrentPage}>HTML</button><button onClick={exportReact}>React</button><button onClick={exportVue}>Vue</button></div></details>
         <button className="quiet-button" onClick={() => void refresh()}>刷新</button>
-        <button className={`quiet-button ${preview ? 'active' : ''}`} onClick={() => { setPreview(!preview); setSelectedId(undefined); setSelectedIds([]); }}>{preview ? '退出预览' : '预览'}</button>
+        <button className={`quiet-button ${preview ? 'active' : ''}`} onClick={toggleFullPreview}>{preview ? '退出预览' : '全屏预览'}</button>
+        <button className="ai-design-trigger" onClick={() => setAiPanelOpen(true)}>✦ AI 设计</button>
         <button className="primary-button" disabled={!dirty || saving} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '已保存'}</button>
       </header>
 
       <main className={`workspace ${preview ? 'preview-mode' : ''}`}>
         {!preview && <aside className="palette-panel">
           <div className="library-tabs">
-            <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>组件</button>
             <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => setLibraryTab('antd')}>AntD</button>
+            <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>图形</button>
             <button className={libraryTab === 'blocks' ? 'active' : ''} onClick={() => setLibraryTab('blocks')}>区块</button>
             <button className={libraryTab === 'layers' ? 'active' : ''} onClick={() => setLibraryTab('layers')}>图层</button>
           </div>
           <div className="palette-panel-content">
-            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索基础组件…' : libraryTab === 'antd' ? '搜索 Ant Design 组件…' : '搜索成品区块…'} />}
+            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索基础图形…' : libraryTab === 'antd' ? '搜索 Ant Design 组件…' : '搜索成品区块…'} />}
 
             {libraryTab === 'components' && <>
-              <div className="panel-intro"><strong>基础组件</strong><span>拖入画布后可自由组合、批注和交给 AI 修改</span></div>
-              {paletteCategories.map((category) => {
-                const items = filteredPalette.filter((item) => item.category === category);
-                return items.length > 0 && <div key={category} className="palette-category"><div className="palette-category-title">{category}</div><div className="palette-grid">
-                  {items.map((item) => <div key={item.type} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.type)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}
-                </div></div>;
-              })}
+              <div className="panel-intro"><strong>基础图形</strong><span>只保留矩形、圆形和直线；产品组件统一使用成熟 UI 库</span></div>
+              <div className="palette-grid shapes-grid">{filteredPalette.map((item) => <div key={item.id} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.id)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}</div>
             </>}
 
             {libraryTab === 'antd' && <>
               <div className="antd-library-heading"><div className="antd-logo-mark">A</div><div><strong>Ant Design</strong><span>实际组件库 · v{ANTD_VERSION}</span></div></div>
-              <div className="panel-intro"><strong>Ant Design 组件总览</strong><span>点击或拖入画布，保留组件身份、属性和 React 导出信息</span></div>
+              <div className="panel-intro"><strong>Ant Design 组件总览</strong><span>点击先预览不同款式，拖拽则直接插入默认款</span></div>
               {ANTD_CATEGORIES.map((category) => {
                 const items = filteredAntdComponents.filter((item) => item.category === category);
                 return items.length > 0 && <div key={category} className="antd-category"><div className="antd-category-title">{category}</div><div className="antd-component-list">
-                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onAntdDrag(event, item.id)} onClick={() => insertAntdComponent(item.id)}><span className="antd-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><b>＋</b></button>)}
+                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onAntdDrag(event, item.id)} onClick={() => setVariantPickerId(item.id)}><span className="antd-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{(ANTD_COMPONENT_VARIANTS[item.id]?.length ?? 1) > 1 ? `${ANTD_COMPONENT_VARIANTS[item.id].length} 款` : '预览'}</em><b>›</b></button>)}
                 </div></div>;
               })}
             </>}
@@ -1103,15 +1373,26 @@ export function WebDesignStudioApp() {
         </aside>}
 
         <section className="canvas-stage">
-          <div className="canvas-toolbar device-toolbar">
-            <div className="device-switcher">
-              {deviceOptions.map((item) => <button key={item.device} className={device === item.device ? 'active' : ''} title={item.label} onClick={() => switchDevice(item.device)}>{item.icon}<span>{item.label}</span></button>)}
-            </div>
-            <span className="toolbar-divider" />
-            <button title="缩小" onClick={() => setZoom(Math.max(.25, zoom - .1))}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setZoom(Math.min(1.5, zoom + .1))}>＋</button>
-            <span className="toolbar-divider" />
-            <button className="fit-button" title="适应画布宽度" onClick={fitCanvasWidth}>适应</button><button className="fit-button" title="恢复 100%" onClick={() => setZoom(1)}>100%</button>
-          </div>
+          {!preview && <div className="canvas-toolbar device-toolbar">
+            {editingSlot && editingContainer && editingSlotDefinition ? <>
+              <button className="slot-editor-back" onClick={exitSlotEditor}>‹ 返回页面</button>
+              <span className="slot-editor-path"><b>{editingContainer.library?.component}</b><i>/</i>{editingSlotDefinition.label}</span>
+              <span className="toolbar-divider" />
+              <button className="fit-button" onClick={() => insertSlotTemplate('form')}>＋ 表单模板</button>
+              <button className="fit-button" onClick={() => insertSlotTemplate('details')}>＋ 详情模板</button>
+            </> : <>
+              <div className="device-switcher">
+                {deviceOptions.map((item) => <button key={item.device} className={device === item.device ? 'active' : ''} title={item.label} onClick={() => switchDevice(item.device)}>{item.icon}<span>{item.label}</span></button>)}
+              </div>
+              <span className="toolbar-divider" />
+              <button title="缩小" onClick={() => setZoom(Math.max(.25, zoom - .1))}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setZoom(Math.min(1.5, zoom + .1))}>＋</button>
+              <span className="toolbar-divider" />
+              <button className="fit-button" title="适应画布宽度" onClick={fitCanvasWidth}>适应</button><button className="fit-button" title="恢复 100%" onClick={() => setZoom(1)}>100%</button>
+              <span className="toolbar-divider" /><button className={`fit-button interaction-mode-button ${interactionMode ? 'active' : ''}`} title="操作输入框、选择器、抽屉、标签页等真实组件" onClick={toggleInteractionMode}>{interactionMode ? '退出交互' : '交互'}</button>
+            </>}
+          </div>}
+          {preview && <button className="exit-fullscreen-preview" onClick={toggleFullPreview}>退出预览 <span>Esc</span></button>}
+          {interactionMode && !preview && <div className="interaction-mode-banner"><span>●</span> 交互模式：可以输入、选择、展开和打开弹层；退出后继续拖动编辑</div>}
           {preview && pages.length > 1 && <nav className="route-preview-bar">{pages.map((page) => <button key={page.id} className={page.id === pageId ? 'active' : ''} onClick={() => switchPage(page.id)}><span>{page.name}</span><small>{page.slug}</small></button>)}</nav>}
           {selected && !preview && <div className="selection-toolbar">
             <button title="左对齐" onClick={() => alignSelected('left')}>⇤</button><button title="水平居中" onClick={() => alignSelected('center')}>↔</button><button title="右对齐" onClick={() => alignSelected('right')}>⇥</button>
@@ -1121,8 +1402,20 @@ export function WebDesignStudioApp() {
             {selectedIds.length > 1 && <><span /><button className="wide-tool" title="将选中组件组合" onClick={groupSelected}>组合</button></>}
             {canUngroup && <button className="wide-tool" title="取消当前容器组合" onClick={ungroupSelected}>取消组合</button>}
           </div>}
-          <div ref={canvasScroll} className="canvas-scroll">
-            <div className="canvas-scale" style={{ width: breakpoint.width * zoom, height: breakpoint.height * zoom }}>
+          <div ref={canvasScroll} className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : ''} ${editingSlot ? 'slot-editor-scroll' : ''}`}>
+            {editingSlot && editingContainer && editingSlotDefinition ? <div className="slot-editor-frame">
+              <div className="slot-editor-heading"><div><span>可编辑内容区域</span><strong>{editingSlotDefinition.label}</strong><small>{editingSlotDefinition.description}</small></div><em>{Math.round(editingSlotDefinition.width)} × {Math.round(editingSlotDefinition.height)}</em></div>
+              <div className="slot-design-canvas design-canvas" style={{ width: editingSlotDefinition.width, height: editingSlotDefinition.height }} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { setSelectedId(undefined); setSelectedIds([]); }}>
+                {editingSlotComponents.length === 0 && <div className="slot-empty-state"><span>＋</span><strong>从左侧拖入组件</strong><p>也可以先插入表单或详情模板，再逐项调整。</p><div><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('form')}>插入表单</button><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('details')}>插入详情</button></div></div>}
+                {editingVisibleComponents.sort((left, right) => left.zIndex - right.zIndex).map((component) => {
+                  const frame = resolveComponent(component, device);
+                  const containerFrame = resolveComponent(editingContainer, device);
+                  const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
+                  if (resolved.hidden) return null;
+                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                })}
+              </div>
+            </div> : <div className="canvas-scale" style={{ width: breakpoint.width * zoom, height: breakpoint.height * zoom }}>
               <div className={`design-canvas device-${device}`} style={{
                 width: breakpoint.width,
                 height: breakpoint.height,
@@ -1138,23 +1431,23 @@ export function WebDesignStudioApp() {
                 '--radius-small': `${tokens?.radii.small ?? 8}px`,
                 '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
                 '--radius-large': `${tokens?.radii.large ?? 28}px`
-              } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { setSelectedId(undefined); setSelectedIds([]); }}>
+              } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode) { setSelectedId(undefined); setSelectedIds([]); } }}>
                 {snapGuides.x !== undefined && <div className="snap-guide vertical" style={{ left: snapGuides.x }} />}
                 {snapGuides.y !== undefined && <div className="snap-guide horizontal" style={{ top: snapGuides.y }} />}
-                {[...pageComponents].sort((left, right) => left.zIndex - right.zIndex).map((component) => {
+                {[...pageComponents].filter((component) => !contentContainerAncestor(document, component)).sort((left, right) => left.zIndex - right.zIndex).map((component) => {
                   const resolved = resolveComponent(component, device);
                   if (resolved.hidden) return null;
-                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} preview={preview} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
                 })}
               </div>
-            </div>
+            </div>}
           </div>
         </section>
 
         {!preview && <aside className="inspector-panel">
-          {selected && selectedFrame ? <>
+          {selected && inspectedFrame ? <>
             <div className="inspector-heading"><div><span className="eyebrow">已选择 {selectedIds.length > 1 ? `${selectedIds.length} 项` : ''} · {device}</span><strong>{selected.name}</strong></div><button className="danger-link" onClick={deleteSelected}>删除</button></div>
-            <div className="inspector-actions"><button onClick={duplicateSelected}>复制 ⌘D</button><button className={selected.locked ? 'active' : ''} onClick={() => toggleLocked(selected)}>{selected.locked ? '解锁' : '锁定'}</button><button className={selectedFrame.hidden ? 'active' : ''} onClick={() => toggleHidden(selected)}>{selectedFrame.hidden ? '显示' : '隐藏'}</button></div>
+            <div className="inspector-actions"><button onClick={duplicateSelected}>复制 ⌘D</button><button className={selected.locked ? 'active' : ''} onClick={() => toggleLocked(selected)}>{selected.locked ? '解锁' : '锁定'}</button><button className={inspectedFrame.hidden ? 'active' : ''} onClick={() => toggleHidden(selected)}>{inspectedFrame.hidden ? '显示' : '隐藏'}</button></div>
             <button className="secondary-button save-symbol-button" onClick={saveSelectionAsSymbol}>保存到可复用组件库</button>
             {selectedSymbol && selected.symbolInstanceId && <div className="symbol-instance-panel">
               <div><span>实例来源</span><strong>{selectedSymbol.name}</strong></div>
@@ -1168,12 +1461,20 @@ export function WebDesignStudioApp() {
             {selected.library?.name === 'antd' && <div className="antd-inspector">
               <div className="panel-title section-title">Ant Design 组件</div>
               <div className="antd-binding-summary"><span>组件</span><strong>{selected.library.component}</strong><small>v{selected.library.version}</small></div>
+              {selectedEditableSlots.length > 0 && <div className="content-slots-panel">
+                <div className="content-slots-heading"><div><strong>内部内容</strong><span>像页面一样继续设计</span></div><em>{selectedEditableSlots.length} 个区域</em></div>
+                {selectedEditableSlots.map((slot) => {
+                  const count = componentsInSlot(document, selected.id, slot.id).length;
+                  return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : '空白'}</em><b>编辑 ›</b></button>;
+                })}
+              </div>}
+              <label className="field-label antd-variant-field">展现款式<select value={selected.library.variant ?? selectedAntdVariants[0]?.id} onChange={(event) => applySelectedAntdVariant(event.target.value)}>{selectedAntdVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
               {Object.entries(selected.library.props).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
                 ? <label key={key} className="antd-boolean-prop"><input type="checkbox" checked={value} onChange={(event) => updateSelectedLibraryProp(key, event.target.checked)} /><span>{key}</span></label>
                 : typeof value === 'number'
                   ? <NumberField key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />
                   : <label key={key} className="field-label">{key}<input value={String(value)} onChange={(event) => updateSelectedLibraryProp(key, event.target.value)} /></label>)}
-              {Object.values(selected.library.props).some((value) => value !== null && typeof value === 'object') && <details className="antd-advanced-props"><summary>查看结构化属性</summary><pre>{JSON.stringify(selected.library.props, null, 2)}</pre></details>}
+              {Object.entries(selected.library.props).some(([, value]) => value !== null && typeof value === 'object') && <div className="antd-data-editors"><div className="panel-title section-title">示例数据</div>{Object.entries(selected.library.props).filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
             </div>}
             <div className="panel-title section-title">预览交互</div>
             <label className="field-label">点击行为<select value={selected.interaction?.type ?? 'none'} onChange={(event) => {
@@ -1185,17 +1486,17 @@ export function WebDesignStudioApp() {
             {selected.interaction?.type === 'page' && <label className="field-label interaction-target">目标页面<select value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'page', target: event.target.value } })}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name} · {page.slug}</option>)}</select></label>}
             {selected.interaction?.type === 'url' && <label className="field-label interaction-target">目标 URL<input value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'url', target: event.target.value } })} placeholder="https://example.com" /></label>}
             <div className="size-row four">
-              <NumberField label="X" value={selectedFrame.x} onChange={(x) => updateSelectedFrame({ x })} disabled={selected.locked} />
-              <NumberField label="Y" value={selectedFrame.y} onChange={(y) => updateSelectedFrame({ y })} disabled={selected.locked} />
-              <NumberField label="W" value={selectedFrame.width} onChange={(width) => updateSelectedFrame({ width })} disabled={selected.locked} />
-              <NumberField label="H" value={selectedFrame.height} onChange={(height) => updateSelectedFrame({ height })} disabled={selected.locked} />
+              <NumberField label={editingSlot ? 'X · 内容' : 'X'} value={inspectedFrame.x} onChange={(x) => updateInspectedFrame({ x })} disabled={selected.locked} />
+              <NumberField label={editingSlot ? 'Y · 内容' : 'Y'} value={inspectedFrame.y} onChange={(y) => updateInspectedFrame({ y })} disabled={selected.locked} />
+              <NumberField label="W" value={inspectedFrame.width} onChange={(width) => updateInspectedFrame({ width })} disabled={selected.locked} />
+              <NumberField label="H" value={inspectedFrame.height} onChange={(height) => updateInspectedFrame({ height })} disabled={selected.locked} />
             </div>
             <div className="panel-title section-title">样式 · {device}</div>
-            <label className="field-label">背景<input value={selectedFrame.style.background ?? ''} onChange={(event) => updateSelectedStyle({ background: event.target.value })} /></label>
-            <label className="field-label">文字颜色<input value={selectedFrame.style.color ?? ''} onChange={(event) => updateSelectedStyle({ color: event.target.value })} /></label>
-            <div className="size-row"><NumberField label="字号" value={selectedFrame.style.fontSize ?? 16} onChange={(fontSize) => updateSelectedStyle({ fontSize })} /><NumberField label="圆角" value={selectedFrame.style.borderRadius ?? 0} onChange={(borderRadius) => updateSelectedStyle({ borderRadius })} /></div>
+            <label className="field-label">背景<input value={inspectedFrame.style.background ?? ''} onChange={(event) => updateSelectedStyle({ background: event.target.value })} /></label>
+            <label className="field-label">文字颜色<input value={inspectedFrame.style.color ?? ''} onChange={(event) => updateSelectedStyle({ color: event.target.value })} /></label>
+            <div className="size-row"><NumberField label="字号" value={inspectedFrame.style.fontSize ?? 16} onChange={(fontSize) => updateSelectedStyle({ fontSize })} /><NumberField label="圆角" value={inspectedFrame.style.borderRadius ?? 0} onChange={(borderRadius) => updateSelectedStyle({ borderRadius })} /></div>
             <div className="token-apply-row"><button onClick={() => applyColorToken('background', 'primary')}>主色背景</button><button onClick={() => applyColorToken('background', 'surface')}>表面背景</button><button onClick={() => applyColorToken('color', 'text')}>正文色</button><button onClick={() => applyRadiusToken('medium')}>中圆角</button></div>
-            {(selected.type === 'section' || directChildCount > 0) && <>
+            {(selected.type === 'section' || directChildCount > 0) && selectedEditableSlots.length === 0 && <>
               <div className="panel-title section-title">容器布局 · {directChildCount} 个子组件</div>
               <label className="field-label">布局方式<select value={selected.layout?.mode ?? 'free'} onChange={(event) => updateSelectedLayout({ mode: event.target.value as NonNullable<WebDesignComponent['layout']>['mode'] })}><option value="free">自由布局</option><option value="flex-row">Flex 横向</option><option value="flex-column">Flex 纵向</option><option value="grid">Grid 网格</option></select></label>
               <div className="size-row"><NumberField label="间距" value={selected.layout?.gap ?? 16} onChange={(gap) => updateSelectedLayout({ gap })} /><NumberField label="内边距" value={selected.layout?.padding ?? 16} onChange={(padding) => updateSelectedLayout({ padding })} /></div>
@@ -1207,10 +1508,31 @@ export function WebDesignStudioApp() {
             <div className="notes-list">{selected.annotations.length === 0 && <span className="empty-hint">还没有批注</span>}{selected.annotations.map((note) => <div key={note.id} className={`note-card ${note.status}`}><span>{note.text}</span><small>{note.status === 'open' ? '待处理' : '已完成'}</small></div>)}</div>
             <textarea className="composer" rows={3} placeholder="例如：这里的按钮再醒目一些" value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} /><button className="secondary-button" onClick={addAnnotation}>添加批注</button>
             <div className="panel-title section-title">与 AI 交互</div>
-            <textarea className="composer" rows={4} placeholder={`告诉 AI 如何修改当前${device === 'desktop' ? '桌面' : device === 'tablet' ? '平板' : '手机'}组件…`} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} /><button className="ai-button" onClick={addAiRequest}>提交给 AI</button>
+            <textarea className="composer" rows={4} placeholder={`告诉 AI 如何修改当前${device === 'desktop' ? '桌面' : device === 'tablet' ? '平板' : '手机'}组件…`} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} /><button className="ai-button" onClick={() => void addAiRequest()}>提交给 AI</button>
           </> : <div className="empty-inspector"><div className="empty-icon">↖</div><strong>选择一个组件</strong><p>在画布或图层中选择组件，然后编辑、对齐、锁定、批注或提交 AI 请求。</p></div>}
         </aside>}
       </main>
+      {variantPickerDefinition && <div className="studio-modal-backdrop" onPointerDown={() => setVariantPickerId(undefined)}>
+        <section className="studio-modal variant-picker" onPointerDown={(event) => event.stopPropagation()}>
+          <header><div><span className="eyebrow">Ant Design · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerId(undefined)}>×</button></header>
+          <div className="variant-preview-grid">{variantPickerVariants.map((variant) => {
+            const previewComponent = applyAntdComponentVariant(createAntdComponent(variantPickerDefinition.id, 0, 0), variant.id);
+            return <button key={variant.id} className="variant-preview-card" onClick={() => insertAntdComponent(variantPickerDefinition.id, variant.id)}><div className="variant-live-preview"><Suspense fallback={<span className="antd-loading-placeholder">加载组件…</span>}><AntdCanvasComponent component={previewComponent} preview={false} tokens={tokens} /></Suspense></div><span><strong>{variant.label}</strong><small>插入此款式</small></span></button>;
+          })}</div>
+        </section>
+      </div>}
+      {themePickerOpen && <div className="studio-modal-backdrop" onPointerDown={() => setThemePickerOpen(false)}>
+        <section className="studio-modal theme-picker" onPointerDown={(event) => event.stopPropagation()}>
+          <header><div><span className="eyebrow">Visual system</span><h2>选择整站设计风格</h2><p>一次统一颜色、字体、圆角、画布背景和 Ant Design 主题。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>
+          <div className="theme-preset-grid">{WEB_DESIGN_THEME_PRESETS.map((preset) => <button key={preset.id} onClick={() => applyDesignTheme(preset)}><div className="theme-preview" style={{ background: preset.canvasBackground }}><i style={{ background: preset.preview[1] }} /><b style={{ background: preset.preview[2] }} /><span style={{ color: preset.tokens.colors.text }}>Aa</span></div><strong>{preset.name}</strong><small>{preset.description}</small><div className="theme-swatches">{preset.preview.map((color) => <i key={color} style={{ background: color }} />)}</div></button>)}</div>
+        </section>
+      </div>}
+      {aiPanelOpen && <div className="ai-command-panel">
+        <div className="ai-command-heading"><div><span>✦ AI 设计助手</span><strong>{editingSlotDefinition ? `正在设计：${editingSlotDefinition.label}` : aiTarget ? `正在修改：${aiTarget.name}` : `正在设计：${currentPage?.name ?? '当前页面'}`}</strong></div><button onClick={() => setAiPanelOpen(false)}>×</button></div>
+        <div className="ai-quick-prompts">{aiQuickPrompts.map((prompt) => <button key={prompt} onClick={() => setAiInstruction(prompt)}>{prompt}</button>)}</div>
+        <textarea autoFocus rows={4} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void addAiRequest(); }} placeholder={aiTarget ? '描述你希望这个组件或内容区域如何变化，也可以要求 AI 直接添加表单、详情或操作组件…' : '描述网站目标、受众、内容和你喜欢的视觉感觉…'} />
+        <div className="ai-command-footer"><span>{editingSlotDefinition ? `仅修改 ${editingSlotDefinition.label}` : aiTarget ? '仅修改当前组件' : `作用于 ${device} · 当前页面`}</span><button disabled={!aiInstruction.trim()} onClick={() => void addAiRequest()}>提交设计任务 <b>⌘↵</b></button></div>
+      </div>}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
@@ -1220,10 +1542,27 @@ function NumberField({ label, value, onChange, disabled = false }: { label: stri
   return <label className="field-label">{label}<input type="number" disabled={disabled} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} /></label>;
 }
 
-function CanvasComponentContent({ component, preview }: { component: WebDesignComponent; preview: boolean }) {
-  if (component.library?.name === 'antd') return <div className={`antd-canvas-content ${preview ? 'preview' : ''}`}><Suspense fallback={<span className="antd-loading-placeholder">加载组件…</span>}><AntdCanvasComponent component={component} preview={preview} /></Suspense></div>;
+function JsonPropertyEditor({ label, value, onChange }: { label: string; value: WebDesignJsonValue; onChange: (value: WebDesignJsonValue) => void }) {
+  const serialized = JSON.stringify(value, null, 2);
+  const [draft, setDraft] = useState(serialized);
+  const [error, setError] = useState('');
+  useEffect(() => { setDraft(serialized); setError(''); }, [serialized]);
+  function apply() {
+    try {
+      const parsed = JSON.parse(draft) as WebDesignJsonValue;
+      onChange(parsed);
+      setError('');
+    } catch {
+      setError('JSON 格式不正确');
+    }
+  }
+  return <div className="json-prop-editor"><div><strong>{label}</strong><button onClick={apply}>应用数据</button></div><textarea rows={Math.min(10, Math.max(4, draft.split('\n').length))} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} />{error && <small>{error}</small>}</div>;
+}
+
+function CanvasComponentContent({ component, interactive, tokens, slotContent }: { component: WebDesignComponent; interactive: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
+  if (component.library?.name === 'antd') return <div className={`antd-canvas-content ${interactive ? 'preview' : ''}`}><Suspense fallback={<span className="antd-loading-placeholder">加载组件…</span>}><AntdCanvasComponent component={component} preview={interactive} tokens={tokens} slotContent={slotContent} /></Suspense></div>;
   if (component.type === 'image') return component.content ? <img src={component.content} alt={component.name} draggable={false} /> : <span className="image-placeholder">图片</span>;
-  if (component.type === 'video') return component.content ? <video src={component.content} controls={preview} muted /> : <span className="media-placeholder">▶<small>视频</small></span>;
+  if (component.type === 'video') return component.content ? <video src={component.content} controls={interactive} muted /> : <span className="media-placeholder">▶<small>视频</small></span>;
   if (component.type === 'input') return <span className="input-placeholder">{component.content}</span>;
   if (component.type === 'textarea') return <span className="input-placeholder textarea-placeholder">{component.content}</span>;
   if (component.type === 'select') return <span className="select-placeholder"><span>{component.content.split('\n')[0]}</span><b>⌄</b></span>;
@@ -1237,12 +1576,14 @@ function CanvasComponentContent({ component, preview }: { component: WebDesignCo
   return <span className="component-copy">{component.content}</span>;
 }
 
-function CanvasComponent({ component, resolved, selected, primary, preview, onPointerDown, onResizePointerDown, onPreviewActivate }: {
+function CanvasComponent({ component, resolved, selected, primary, interactive, tokens, slotContent, onPointerDown, onResizePointerDown, onPreviewActivate }: {
   component: WebDesignComponent;
   resolved: ResolvedWebDesignComponent;
   selected: boolean;
   primary: boolean;
-  preview: boolean;
+  interactive: boolean;
+  tokens?: WebDesignTokens;
+  slotContent?: Record<string, ReactNode>;
   onPointerDown: (event: ReactPointerEvent) => void;
   onResizePointerDown: (event: ReactPointerEvent) => void;
   onPreviewActivate: () => void;
@@ -1255,10 +1596,63 @@ function CanvasComponent({ component, resolved, selected, primary, preview, onPo
     textAlign: resolved.style.textAlign, opacity: resolved.style.opacity, boxShadow: resolved.style.shadow
   };
   return (
-    <div className={`canvas-component type-${component.type} ${component.library?.name === 'antd' ? 'library-antd' : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${preview && component.interaction ? 'interactive' : ''}`} style={style} onPointerDown={onPointerDown} onClick={(event) => { if (preview && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
-      <CanvasComponentContent component={component} preview={preview} />
-      {!preview && component.annotations.some((annotation) => annotation.status === 'open') && <span className="annotation-badge">{component.annotations.filter((annotation) => annotation.status === 'open').length}</span>}
-      {primary && !preview && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
+    <div className={`canvas-component type-${component.type} ${component.library?.name === 'antd' ? 'library-antd' : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} onPointerDown={onPointerDown} onClick={(event) => { if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
+      <CanvasComponentContent component={component} interactive={interactive} tokens={tokens} slotContent={slotContent} />
+      {!interactive && component.annotations.some((annotation) => annotation.status === 'open') && <span className="annotation-badge">{component.annotations.filter((annotation) => annotation.status === 'open').length}</span>}
+      {primary && !interactive && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
     </div>
   );
+}
+
+function runtimeSlotContentMap(
+  document: WebDesignDocument,
+  component: WebDesignComponent,
+  device: WebDesignDevice,
+  interactive: boolean,
+  tokens: WebDesignTokens | undefined,
+  onPreviewActivate: (component: WebDesignComponent) => void
+): Record<string, ReactNode> {
+  return Object.fromEntries(editableSlotsForAntdComponent(component)
+    .filter((slot) => componentsInSlot(document, component.id, slot.id).length > 0)
+    .map((slot) => [slot.id,
+      <RuntimeSlotContent key={slot.id} document={document} container={component} slot={slot} device={device} interactive={interactive} tokens={tokens} onPreviewActivate={onPreviewActivate} />
+    ]));
+}
+
+function RuntimeSlotContent({ document, container, slot, device, interactive, tokens, onPreviewActivate }: {
+  document: WebDesignDocument;
+  container: WebDesignComponent;
+  slot: AntdEditableSlot;
+  device: WebDesignDevice;
+  interactive: boolean;
+  tokens?: WebDesignTokens;
+  onPreviewActivate: (component: WebDesignComponent) => void;
+}) {
+  const containerFrame = resolveComponent(container, device);
+  const children = visibleComponentsInSlot(document, container.id, slot.id).sort((left, right) => left.zIndex - right.zIndex);
+  if (children.length === 0) return null;
+  const requiredHeight = Math.max(slot.height, ...children.map((child) => {
+    const frame = resolveComponent(child, device);
+    return frame.y - containerFrame.y + frame.height + 12;
+  }));
+  return <div className="runtime-slot-canvas" style={{ minHeight: requiredHeight }}>
+    {children.map((child) => {
+      const frame = resolveComponent(child, device);
+      if (frame.hidden) return null;
+      const localFrame = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
+      const style: CSSProperties = {
+        position: 'absolute', left: localFrame.x, top: localFrame.y, width: localFrame.width, height: localFrame.height, zIndex: child.zIndex,
+        background: localFrame.style.background, color: localFrame.style.color, borderColor: localFrame.style.borderColor,
+        borderWidth: localFrame.style.borderWidth, borderStyle: localFrame.style.borderWidth ? 'solid' : undefined,
+        borderRadius: localFrame.style.borderRadius, fontSize: localFrame.style.fontSize, fontWeight: localFrame.style.fontWeight,
+        textAlign: localFrame.style.textAlign, opacity: localFrame.style.opacity, boxShadow: localFrame.style.shadow
+      };
+      return <div key={child.id} className={`runtime-slot-component type-${child.type}`} style={style} onClick={(event) => {
+        if (interactive && child.interaction) {
+          event.stopPropagation();
+          onPreviewActivate(child);
+        }
+      }}><CanvasComponentContent component={child} interactive={interactive} tokens={tokens} slotContent={runtimeSlotContentMap(document, child, device, interactive, tokens, onPreviewActivate)} /></div>;
+    })}
+  </div>;
 }

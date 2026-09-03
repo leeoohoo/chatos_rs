@@ -11,8 +11,18 @@ export interface DiagramSummary {
   updatedAt: string;
 }
 
+export interface DiagramRuntimeContext {
+  kind: string;
+  shared: boolean;
+  chatosProjectId?: string;
+  chatosProjectName?: string;
+  workspaceId?: string;
+  defaultProjectId?: string;
+}
+
 interface Repository {
   mode: 'server' | 'local';
+  runtimeContext(): Promise<DiagramRuntimeContext>;
   list(): Promise<DiagramSummary[]>;
   listProjects(): Promise<DiagramProjectSummary[]>;
   readProject(projectId: string): Promise<DiagramProject>;
@@ -48,6 +58,10 @@ function summary(document: DiagramDocument): DiagramSummary {
 
 class LocalRepository implements Repository {
   readonly mode = 'local' as const;
+
+  async runtimeContext(): Promise<DiagramRuntimeContext> {
+    return { kind: 'device', shared: true };
+  }
 
   async list(): Promise<DiagramSummary[]> {
     const ids = JSON.parse(localStorage.getItem(localIndexKey) ?? '[]') as string[];
@@ -152,6 +166,12 @@ class LocalRepository implements Repository {
 
 class ServerRepository implements Repository {
   readonly mode = 'server' as const;
+
+  async runtimeContext(): Promise<DiagramRuntimeContext> {
+    const response = await fetch('/api/context', { cache: 'no-store' });
+    if (!response.ok) return { kind: 'device', shared: true };
+    return response.json() as Promise<DiagramRuntimeContext>;
+  }
 
   async list(): Promise<DiagramSummary[]> {
     const response = await fetch('/api/documents', { cache: 'no-store' });

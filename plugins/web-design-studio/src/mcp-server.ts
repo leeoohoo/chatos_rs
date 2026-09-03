@@ -6,6 +6,9 @@ import { breakpointFor, resolveComponent } from './editor-model.js';
 import { exportDocumentHtmlFiles } from './html-exporter.js';
 import { exportReactComponent } from './react-exporter.js';
 import { exportVueComponent } from './vue-exporter.js';
+import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_COMPONENT_VARIANTS, ANTD_VERSION, createAntdComponent } from './antd-library.js';
+import { editableSlotsForAntdComponent, isAntdContentContainer } from './antd-slots.js';
+import { WEB_DESIGN_THEME_PRESETS } from './design-themes.js';
 import {
   assertWebDesignDocument,
   designSummary,
@@ -14,7 +17,7 @@ import {
 } from './schema.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '0.8.0';
+const SERVER_VERSION = '0.9.0';
 const store = new WebDesignDocumentStore();
 
 const policy = {
@@ -52,6 +55,12 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false
     },
     _meta: policy
+  },
+  {
+    name: 'web_design_get_component_library',
+    description: 'Read available Ant Design components, variants, editable internal content slots, default sample data, insertion sizes, and curated whole-site visual themes before creating or restyling a design. Children placed in a slot use parentId plus slot.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 300_000 }
   },
   {
     name: 'web_design_replace_document',
@@ -276,6 +285,17 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'web_design_get_document':
       return { document: await store.read(String(argumentsValue.documentId)) };
+    case 'web_design_get_component_library':
+      return {
+        library: { name: 'antd', version: ANTD_VERSION },
+        categories: ANTD_CATEGORIES,
+        components: ANTD_COMPONENTS.map((component) => ({
+          ...component,
+          variants: ANTD_COMPONENT_VARIANTS[component.id] ?? [{ id: 'default', label: '默认款式', props: {} }],
+          editableSlots: editableSlotsForAntdComponent(createAntdComponent(component.id, 0, 0))
+        })),
+        themes: WEB_DESIGN_THEME_PRESETS
+      };
     case 'web_design_replace_document': {
       const document: unknown = argumentsValue.document;
       assertWebDesignDocument(document);
@@ -375,6 +395,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         if (!component.parentId) return [];
         const parent = byId.get(component.parentId);
         if (!parent) return [];
+        if (component.slot && isAntdContentContainer(parent)) return [];
         const childFrame = resolveComponent(component, device);
         const parentFrame = resolveComponent(parent, device);
         return !childFrame.hidden && !parentFrame.hidden && (
@@ -390,7 +411,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const unusualParents = document.components.flatMap((component) => {
         if (!component.parentId) return [];
         const parent = byId.get(component.parentId);
-        return parent && !['section', 'card'].includes(parent.type)
+        return parent && !['section', 'card'].includes(parent.type) && !isAntdContentContainer(parent)
           ? [{ componentId: component.id, parentId: parent.id, parentType: parent.type }]
           : [];
       });

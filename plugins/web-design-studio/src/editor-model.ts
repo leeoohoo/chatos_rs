@@ -53,6 +53,7 @@ export function createSymbolFromSelection(
     ...structuredClone(component),
     pageId: undefined,
     parentId: component.parentId && copiedIds.has(component.parentId) ? component.parentId : undefined,
+    slot: component.parentId && copiedIds.has(component.parentId) ? component.slot : undefined,
     symbolId: id,
     symbolInstanceId: undefined,
     symbolComponentId: undefined,
@@ -390,6 +391,7 @@ export function cloneComponentSubtrees(
       ? idMap.get(component.parentId)
       : pageIdForComponent(document, component) === targetPageId
         && targetDocument.components.some((candidate) => candidate.id === component.parentId) ? component.parentId : undefined;
+    if (!clone.parentId) clone.slot = undefined;
     if (component.symbolInstanceId) clone.symbolInstanceId = instanceIdMap.get(component.symbolInstanceId);
     clone.x += offset;
     clone.y += offset;

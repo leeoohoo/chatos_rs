@@ -1,6 +1,8 @@
 import { DEFAULT_WEB_DESIGN_BREAKPOINTS, DEFAULT_WEB_DESIGN_TOKENS, type WebComponentType, type WebDesignComponent, type WebDesignDocument } from './schema.js';
 import { scaleFrameForBreakpoint } from './editor-model.js';
 
+const antdPlaceholderImage = 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=900&q=80';
+
 function randomId(): string {
   return globalThis.crypto.randomUUID().slice(0, 8);
 }
@@ -93,6 +95,10 @@ export function createLandingPage(title = 'AI 产品落地页'): WebDesignDocume
   image.zIndex = 2;
 
   hero.layout = { mode: 'free', gap: 16, padding: 20, align: 'start' };
+  heading.library = { name: 'antd', version: '6.2.2', component: 'Typography', variant: 'title', props: { level: 1 } };
+  copy.library = { name: 'antd', version: '6.2.2', component: 'Typography', variant: 'paragraph', props: {} };
+  button.library = { name: 'antd', version: '6.2.2', component: 'Button', variant: 'primary', props: { type: 'primary', size: 'large', danger: false } };
+  image.library = { name: 'antd', version: '6.2.2', component: 'Image', variant: 'default', props: { src: antdPlaceholderImage, preview: false } };
   heading.parentId = hero.id;
   copy.parentId = hero.id;
   button.parentId = hero.id;
@@ -107,6 +113,9 @@ export function createLandingPage(title = 'AI 产品落地页'): WebDesignDocume
   const cardC = componentDefaults('card', 680, 630);
   cardC.id = 'feature-code';
   cardC.content = '结构化交付\n后续可导出网站实现代码。';
+  for (const [card, title] of [[cardA, 'AI 共同设计'], [cardB, '可视化调整'], [cardC, '结构化交付']] as const) {
+    card.library = { name: 'antd', version: '6.2.2', component: 'Card', variant: 'default', props: { title, bordered: true } };
+  }
 
   const components = [hero, heading, copy, button, image, cardA, cardB, cardC];
   for (const component of components) {

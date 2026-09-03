@@ -96,8 +96,15 @@ export function DiagramStudioApp() {
       const repo = await createRepository();
       setRepository(repo);
       const items = await repo.list();
+      const projectItems = await repo.listProjects();
       setDocuments(items);
-      setProjects(await repo.listProjects());
+      setProjects(projectItems);
+      const runtimeContext = await repo.runtimeContext();
+      if (runtimeContext.defaultProjectId) {
+        const project = await repo.readProject(runtimeContext.defaultProjectId);
+        setActiveProject(project);
+        setHomeVisible(false);
+      }
       setIsReady(true);
     })().catch((error) => {
       setIsReady(true);

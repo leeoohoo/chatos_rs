@@ -128,6 +128,40 @@ fn missing_component_status_fails_closed() {
 }
 
 #[test]
+fn missing_optional_ui_status_keeps_required_mcp_available() {
+    let mut records = plugin_records();
+    records.binding.resource_kind = RESOURCE_KIND_PLUGIN.to_string();
+    records.binding.component_allowlist.clear();
+    records.preference.enabled_components.clear();
+    let mut optional_ui = records.release.components[0].clone();
+    optional_ui.component_key = "workbench".to_string();
+    optional_ui.kind = PluginComponentKind::UiContribution;
+    optional_ui.required = false;
+    records.release.components.push(optional_ui);
+    let snapshots = component_snapshots(&records);
+    let resolved = resolve_plugin_records(
+        records.catalog,
+        Some(records.release),
+        records.binding,
+        Some(records.installation),
+        Some(records.preference),
+        snapshots,
+        Vec::new(),
+        Some("device-1"),
+    );
+
+    assert!(resolved.available);
+    assert_eq!(
+        resolved.status,
+        PluginAvailabilityStatus::PartiallyAvailable
+    );
+    assert_eq!(resolved.components.len(), 2);
+    assert!(resolved.components[0].available);
+    assert!(!resolved.components[1].available);
+    assert!(!resolved.components[1].component.required);
+}
+
+#[test]
 fn missing_immutable_component_snapshot_fails_closed() {
     let records = plugin_records();
     let resolved = resolve_plugin_records(

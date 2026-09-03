@@ -3,6 +3,7 @@ export type WebComponentType =
   | 'input' | 'textarea' | 'select' | 'checkbox' | 'switch' | 'divider' | 'badge' | 'avatar'
   | 'list' | 'table' | 'video';
 export type WebDesignDevice = 'desktop' | 'tablet' | 'mobile';
+export type WebDesignLibraryName = 'antd' | 'chakra' | 'shadcn';
 export type WebContainerLayoutMode = 'free' | 'flex-row' | 'flex-column' | 'grid';
 export type WebContainerAlign = 'start' | 'center' | 'end' | 'stretch';
 export type AnnotationStatus = 'open' | 'resolved';
@@ -71,9 +72,10 @@ export interface WebDesignInteraction {
 export type WebDesignJsonValue = string | number | boolean | null | WebDesignJsonValue[] | { [key: string]: WebDesignJsonValue };
 
 export interface WebDesignLibraryBinding {
-  name: 'antd';
+  name: WebDesignLibraryName;
   version: string;
   component: string;
+  variant?: string;
   props: Record<string, WebDesignJsonValue>;
 }
 
@@ -91,6 +93,7 @@ export interface WebDesignComponent {
   name: string;
   pageId?: string;
   parentId?: string;
+  slot?: string;
   symbolId?: string;
   symbolInstanceId?: string;
   symbolComponentId?: string;
@@ -187,7 +190,7 @@ export type WebDesignPatchOperation =
   | { op: 'remove_symbol'; symbolId: string }
   | { op: 'upsert_component'; component: WebDesignComponent }
   | { op: 'remove_component'; componentId: string }
-  | { op: 'set_parent'; componentId: string; parentId?: string }
+  | { op: 'set_parent'; componentId: string; parentId?: string; slot?: string }
   | { op: 'set_layout'; componentId: string; layout: WebContainerLayout }
   | { op: 'move_component'; componentId: string; x: number; y: number; device?: WebDesignDevice }
   | { op: 'resize_component'; componentId: string; width: number; height: number; device?: WebDesignDevice }
@@ -350,6 +353,8 @@ export function assertComponent(value: unknown): asserts value is WebDesignCompo
   assertIdentifier(component.id, 'component.id');
   if (component.pageId !== undefined) assertIdentifier(component.pageId, 'component.pageId');
   if (component.parentId !== undefined) assertIdentifier(component.parentId, 'component.parentId');
+  if (component.slot !== undefined) assertIdentifier(component.slot, 'component.slot');
+  if (component.slot !== undefined && component.parentId === undefined) throw new Error('component.slot requires component.parentId.');
   if (component.symbolId !== undefined) assertIdentifier(component.symbolId, 'component.symbolId');
   if (component.symbolInstanceId !== undefined) assertIdentifier(component.symbolInstanceId, 'component.symbolInstanceId');
   if (component.symbolComponentId !== undefined) assertIdentifier(component.symbolComponentId, 'component.symbolComponentId');
@@ -380,6 +385,7 @@ export function assertComponent(value: unknown): asserts value is WebDesignCompo
     if (component.library.name !== 'antd') throw new Error('Component library is unsupported.');
     if (typeof component.library.version !== 'string' || !component.library.version.trim() || component.library.version.length > 32) throw new Error('Component library version is invalid.');
     if (typeof component.library.component !== 'string' || !/^[A-Za-z][A-Za-z0-9.]{0,63}$/.test(component.library.component)) throw new Error('Component library component is invalid.');
+    if (component.library.variant !== undefined && (typeof component.library.variant !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/i.test(component.library.variant))) throw new Error('Component library variant is invalid.');
     if (!component.library.props || typeof component.library.props !== 'object' || Array.isArray(component.library.props)) throw new Error('Component library props are invalid.');
     let serializedProps: string;
     try {
@@ -681,13 +687,14 @@ export function applyWebDesignPatch(document: WebDesignDocument, operations: Web
       }
       case 'remove_component':
         next.components = next.components.filter((component) => component.id !== operation.componentId);
-        next.components = next.components.map((component) => component.parentId === operation.componentId ? { ...component, parentId: undefined } : component);
+        next.components = next.components.map((component) => component.parentId === operation.componentId ? { ...component, parentId: undefined, slot: undefined } : component);
         next.requests = next.requests.filter((request) => request.componentId !== operation.componentId);
         break;
       case 'set_parent': {
         const component = requiredComponent(next, operation.componentId);
         if (operation.parentId !== undefined) requiredComponent(next, operation.parentId);
         component.parentId = operation.parentId;
+        component.slot = operation.parentId ? operation.slot : undefined;
         break;
       }
       case 'set_layout':

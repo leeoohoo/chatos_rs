@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-web-design-studio",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Design and refine editable websites with an AI-aware visual canvas.",
   "author": {
     "name": "Chatos"
@@ -23,7 +23,7 @@
       "source": "./ui/index.html",
       "title": "Web Design Studio",
       "surface": "workbench",
-      "assets": ["./ui/assets/app.js", "./ui/assets/app.css"],
+      "assets": ["./ui/assets/app.js", "./ui/assets/app.css", "./ui/assets/AntdCanvasComponent.js"],
       "bridgeCapabilities": [
         "host.context.read",
         "artifact.list",

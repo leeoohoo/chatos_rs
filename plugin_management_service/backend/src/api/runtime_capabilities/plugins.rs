@@ -394,15 +394,19 @@ fn resolve_plugin_records(
             ),
         );
     }
-    let available_count = components
+    let unavailable_required = components
         .iter()
-        .filter(|component| component.available)
-        .count();
-    if available_count != components.len() {
+        .filter(|component| component.component.required && !component.available)
+        .collect::<Vec<_>>();
+    if !unavailable_required.is_empty() {
+        let available_count = components
+            .iter()
+            .filter(|component| component.available)
+            .count();
         let status = if available_count > 0 {
             PluginAvailabilityStatus::PartiallyAvailable
         } else {
-            components
+            unavailable_required
                 .first()
                 .map(|component| component.status)
                 .unwrap_or(PluginAvailabilityStatus::Unavailable)
@@ -418,7 +422,22 @@ fn resolve_plugin_records(
             auth_connection_ids,
             available: false,
             status,
-            reason: Some("one or more selected Plugin components are unavailable".to_string()),
+            reason: Some("one or more required Plugin components are unavailable".to_string()),
+        };
+    }
+    if components.iter().any(|component| !component.available) {
+        return ResolvedPlugin {
+            catalog,
+            release,
+            binding,
+            installation,
+            preference,
+            components,
+            component_snapshots,
+            auth_connection_ids,
+            available: true,
+            status: PluginAvailabilityStatus::PartiallyAvailable,
+            reason: Some("one or more optional Plugin components are unavailable".to_string()),
         };
     }
     ResolvedPlugin {

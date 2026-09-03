@@ -24,7 +24,7 @@ struct NativePluginRuntimeTests {
         let launcher = binDirectory.appendingPathComponent("demo-app")
         let script = #"""
         #!/bin/sh
-        exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end("Plugin application ready")}).listen(port,"127.0.0.1")'
+        exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)}).listen(port,"127.0.0.1")'
         """#
         try Data(script.utf8).write(to: launcher)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
@@ -89,10 +89,31 @@ struct NativePluginRuntimeTests {
             )
         )
         let body = try await URLSession.shared.data(from: launch.url).0
-        #expect(String(decoding: body, as: UTF8.self) == "Plugin application ready")
+        #expect(String(decoding: body, as: UTF8.self) == "release-demo")
         #expect(FileManager.default.fileExists(
             atPath: runtimeRoot.appendingPathComponent("data", isDirectory: true).path
         ))
+
+        var updatedRecord = record
+        updatedRecord.releaseID = "release-demo-2"
+        updatedRecord.artifactSHA256 = String(repeating: "b", count: 64)
+        let updatedLaunch = try await runtime.launch(
+            record: updatedRecord,
+            manifest: manifest,
+            contribution: manifest.ui[0],
+            runtimeRootURL: runtimeRoot,
+            application: application,
+            hostContext: .init(
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                workspaceID: nil,
+                workspaceRoot: nil,
+                projectID: nil,
+                projectName: nil
+            )
+        )
+        let updatedBody = try await URLSession.shared.data(from: updatedLaunch.url).0
+        #expect(String(decoding: updatedBody, as: UTF8.self) == "release-demo-2")
         await runtime.stopAll()
     }
 
@@ -401,6 +422,10 @@ struct NativePluginRuntimeTests {
         try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
         try Data("---\nname: fixture-skill\ndescription: Fixture skill.\n---\n".utf8)
             .write(to: skill.appendingPathComponent("SKILL.md"))
+        let ui = root.appendingPathComponent("ui", isDirectory: true)
+        try FileManager.default.createDirectory(at: ui, withIntermediateDirectories: true)
+        try Data("<html><body>Fixture</body></html>".utf8)
+            .write(to: ui.appendingPathComponent("index.html"))
         try Data("""
         {
           "schemaVersion": 3,
@@ -410,6 +435,12 @@ struct NativePluginRuntimeTests {
           "mcpServers": {
             "fixture-mcp": {"type": "stdio", "bin": "fixture", "args": []}
           },
+          "ui": [{
+            "componentKey": "fixture-workbench",
+            "source": "./ui/index.html",
+            "surface": "workbench",
+            "runtime": {"type": "local_http", "bin": "fixture", "args": ["studio"]}
+          }],
           "permissions": [
             {"permission": "process.spawn", "required": true, "components": ["fixture-mcp"]},
             {"permission": "workspace.read", "required": true, "components": ["fixture-mcp"]}
@@ -451,6 +482,13 @@ struct NativePluginRuntimeTests {
                 lastError: nil,
                 lastCheckedAt: "1970-01-01T00:00:00Z"
             ),
+            GatewayPluginComponentStatus(
+                componentKey: "fixture-workbench",
+                kind: "ui_contribution",
+                availabilityStatus: "ready",
+                lastError: nil,
+                lastCheckedAt: "1970-01-01T00:00:00Z"
+            ),
         ])
 
         let payload = try JSONEncoder().encode(
@@ -462,6 +500,7 @@ struct NativePluginRuntimeTests {
         let statuses = try #require(items[0]["component_statuses"] as? [[String: Any]])
         #expect(statuses[0]["kind"] as? String == "skill_collection")
         #expect(statuses[1]["kind"] as? String == "mcp_server")
+        #expect(statuses[2]["kind"] as? String == "ui_contribution")
     }
 
     @Test("installation status fails closed when a declared Skill is missing")

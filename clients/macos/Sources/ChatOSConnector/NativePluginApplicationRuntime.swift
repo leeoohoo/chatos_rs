@@ -7,6 +7,8 @@ actor NativePluginApplicationRuntime {
         var process: Process
         var baseURL: URL
         var healthPath: String
+        var releaseID: String
+        var artifactSHA256: String
         var standardOutput: Pipe
         var standardError: Pipe
     }
@@ -30,7 +32,10 @@ actor NativePluginApplicationRuntime {
         )
         let key = "\(application.id):\(resolvedContext.scopeKey)"
         let websiteDataStoreID = resolvedContext.websiteDataStoreID(applicationID: application.id)
-        if let current = running[key], current.process.isRunning,
+        if let current = running[key],
+           current.releaseID == record.releaseID,
+           current.artifactSHA256 == record.artifactSHA256,
+           current.process.isRunning,
            await isHealthy(baseURL: current.baseURL, healthPath: current.healthPath) {
             return .init(
                 application: application,
@@ -101,6 +106,9 @@ actor NativePluginApplicationRuntime {
             "CHATOS_PLUGIN_APP_PORT": String(port),
             "CHATOS_PLUGIN_ID": record.pluginID,
             "CHATOS_PLUGIN_COMPONENT_KEY": contribution.componentKey,
+            "CHATOS_PLUGIN_RELEASE_ID": record.releaseID,
+            "CHATOS_PLUGIN_VERSION": record.version,
+            "CHATOS_PLUGIN_ARTIFACT_SHA256": record.artifactSHA256,
         ]
         overrides.merge(resolvedContext.environment, uniquingKeysWith: { _, runtime in runtime })
         let environment = NativePluginProcessEnvironment.make(overrides: overrides)
@@ -117,6 +125,8 @@ actor NativePluginApplicationRuntime {
             process: process,
             baseURL: baseURL,
             healthPath: healthPath,
+            releaseID: record.releaseID,
+            artifactSHA256: record.artifactSHA256,
             standardOutput: output,
             standardError: error
         )

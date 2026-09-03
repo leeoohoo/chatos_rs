@@ -18,6 +18,7 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     await client.connect(transport);
     const tools = await client.listTools();
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_apply_patch'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_component_library'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_list_requests'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_auto_layout'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_export_html'));
@@ -25,6 +26,12 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_export_vue'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_sync_symbol_instances'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_update_symbol_from_instance'));
+
+    const library = await client.callTool({ name: 'web_design_get_component_library', arguments: {} });
+    assert.equal(library.structuredContent.library.name, 'antd');
+    assert.equal(library.structuredContent.components.length, 68);
+    assert.equal(library.structuredContent.themes.length, 6);
+    assert.equal(library.structuredContent.components.find((component) => component.id === 'Input').variants.length, 7);
 
     const created = await client.callTool({ name: 'web_design_create_document', arguments: { title: 'MCP Website' } });
     const documentId = created.structuredContent.document.documentId;

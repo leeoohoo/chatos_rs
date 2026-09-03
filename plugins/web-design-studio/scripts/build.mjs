@@ -21,6 +21,7 @@ await Promise.all([
   build({ ...common, entryPoints: ['src/vue-exporter.ts'], outfile: 'dist/vue-exporter.test.mjs' }),
   build({ ...common, entryPoints: ['src/component-library.ts'], outfile: 'dist/component-library.test.mjs' }),
   build({ ...common, entryPoints: ['src/antd-library.ts'], outfile: 'dist/antd-library.test.mjs' }),
+  build({ ...common, entryPoints: ['src/antd-slots.ts'], outfile: 'dist/antd-slots.test.mjs' }),
   build({ ...common, entryPoints: ['src/templates.ts'], outfile: 'dist/templates.test.mjs' }),
   build({ ...common, entryPoints: ['src/document-store.ts'], outfile: 'dist/document-store.test.mjs' })
 ]);

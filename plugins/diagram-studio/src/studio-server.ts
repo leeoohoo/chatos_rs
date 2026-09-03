@@ -13,6 +13,27 @@ const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.DIAGRAM_STUDIO_HO
 const store = new DiagramDocumentStore();
 await store.initialize();
 
+const contextKind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
+const runtimeContext = {
+  kind: contextKind,
+  shared: contextKind === 'device',
+  ...(process.env.CHATOS_PROJECT_ID ? { chatosProjectId: process.env.CHATOS_PROJECT_ID } : {}),
+  ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
+  ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
+};
+let defaultProjectId: string | undefined;
+if (contextKind === 'project' && process.env.CHATOS_PROJECT_ID) {
+  const projects = await store.listProjects();
+  if (projects.length === 0) {
+    const project = await store.createProject(
+      process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 项目图形'
+    );
+    defaultProjectId = project.projectId;
+  } else if (projects.length === 1) {
+    defaultProjectId = projects[0].projectId;
+  }
+}
+
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '8mb' }));
@@ -26,6 +47,14 @@ function publishChange(): void {
 app.get('/api/health', (_request, response) => {
   response.setHeader('Cache-Control', 'no-store');
   response.json({ ok: true, service: 'diagram-studio', dataDirectory: store.rootDirectory });
+});
+
+app.get('/api/context', (_request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  response.json({
+    ...runtimeContext,
+    ...(defaultProjectId ? { defaultProjectId } : {})
+  });
 });
 
 app.get('/api/documents', async (_request, response, next) => {

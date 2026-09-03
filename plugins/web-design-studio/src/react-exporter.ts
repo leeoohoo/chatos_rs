@@ -71,7 +71,17 @@ function AntDesignComponent({ component, outerProps }) {
   const name = component.library.component;
   const p = component.library.props || {};
   let content;
-  if (name === 'Typography') content = <Antd.Typography.Title level={p.level || 3} style={{ margin: 0 }}>{component.content}</Antd.Typography.Title>;
+  if (name === 'Typography') {
+    if (component.library.variant === 'paragraph') content = <Antd.Typography.Paragraph style={{ margin: 0 }}>{component.content}</Antd.Typography.Paragraph>;
+    else if (component.library.variant === 'text') content = <Antd.Typography.Text>{component.content}</Antd.Typography.Text>;
+    else content = <Antd.Typography.Title level={p.level || 3} style={{ margin: 0 }}>{component.content}</Antd.Typography.Title>;
+  }
+  else if (name === 'Input') {
+    if (component.library.variant === 'search') content = <Antd.Input.Search {...p} placeholder={component.content} />;
+    else if (component.library.variant === 'password') content = <Antd.Input.Password {...p} placeholder={component.content} />;
+    else if (component.library.variant === 'textarea') content = <Antd.Input.TextArea {...p} placeholder={component.content} style={{ height: '100%' }} />;
+    else content = <Antd.Input {...p} placeholder={component.content} />;
+  }
   else if (name === 'Grid') content = <Antd.Row gutter={p.gutter || 8} style={{ width: '100%' }}>{[1, 2, 3].map((value) => <Antd.Col key={value} span={8}><div className="antd-grid-cell">{value}</div></Antd.Col>)}</Antd.Row>;
   else if (name === 'Layout') content = <Antd.Layout style={{ width: '100%', height: '100%' }}><Antd.Layout.Header>Header</Antd.Layout.Header><Antd.Layout><Antd.Layout.Sider width="28%">Sider</Antd.Layout.Sider><Antd.Layout.Content>Content</Antd.Layout.Content></Antd.Layout></Antd.Layout>;
   else if (name === 'Splitter') content = <Antd.Splitter {...p} style={{ width: '100%', height: '100%' }}><Antd.Splitter.Panel>面板一</Antd.Splitter.Panel><Antd.Splitter.Panel>面板二</Antd.Splitter.Panel></Antd.Splitter>;

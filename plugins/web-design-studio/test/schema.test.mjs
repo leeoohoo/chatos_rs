@@ -19,7 +19,8 @@ import {
 } from '../dist/editor-model.test.mjs';
 import { componentDefaults, createLandingPage } from '../dist/templates.test.mjs';
 import { createBlockPreset, createPageTemplate, WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES } from '../dist/component-library.test.mjs';
-import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_VERSION, createAntdComponent } from '../dist/antd-library.test.mjs';
+import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_VERSION, applyAntdComponentVariant, createAntdComponent, variantsForAntdComponent } from '../dist/antd-library.test.mjs';
+import { editableSlotsForAntdComponent, isAntdContentContainer } from '../dist/antd-slots.test.mjs';
 import { exportDocumentHtmlFiles, exportPageHtml } from '../dist/html-exporter.test.mjs';
 import { exportReactComponent } from '../dist/react-exporter.test.mjs';
 import { exportVueComponent } from '../dist/vue-exporter.test.mjs';
@@ -96,7 +97,8 @@ test('Ant Design 6.2.2 catalog provides valid persistent components across every
   });
   document.components = components;
   assert.equal(ANTD_VERSION, '6.2.2');
-  assert.equal(ANTD_COMPONENTS.length, 65);
+  assert.equal(ANTD_COMPONENTS.length, 68);
+  assert.equal(ANTD_COMPONENTS.every((component) => variantsForAntdComponent(component.id).length >= 2), true);
   assert.deepEqual([...new Set(ANTD_COMPONENTS.map((component) => component.category))], ANTD_CATEGORIES);
   assert.equal(components.every((component) => component.library?.name === 'antd' && component.library.version === ANTD_VERSION), true);
   assertWebDesignDocument(document);
@@ -107,6 +109,72 @@ test('Ant Design 6.2.2 catalog provides valid persistent components across every
   const react = exportReactComponent(document);
   assert.match(react.content, /import \* as Antd from 'antd'/);
   assert.match(react.content, /AntDesignComponent/);
+});
+
+test('Ant Design variants and structured sample data remain editable and persistent', () => {
+  const input = applyAntdComponentVariant(createAntdComponent('Input', 20, 20), 'search');
+  assert.equal(input.library.variant, 'search');
+  assert.equal(input.library.props.enterButton, true);
+  assert.equal(variantsForAntdComponent('Input').length, 7);
+  assert.equal(variantsForAntdComponent('List').length, 6);
+  assert.equal(variantsForAntdComponent('Menu').length, 4);
+  assert.equal(variantsForAntdComponent('Drawer').length, 4);
+  assert.equal(variantsForAntdComponent('Table').length, 4);
+
+  const select = createAntdComponent('Select', 20, 80);
+  select.library.props.options = [{ value: 'custom', label: '自定义选项' }];
+  const multiple = applyAntdComponentVariant(select, 'multiple');
+  assert.equal(multiple.library.variant, 'multiple');
+  assert.equal(multiple.library.props.mode, 'multiple');
+  assert.deepEqual(multiple.library.props.options, [{ value: 'custom', label: '自定义选项' }]);
+
+  const document = createLandingPage();
+  input.pageId = 'home';
+  multiple.pageId = 'home';
+  document.components = [input, multiple];
+  assertWebDesignDocument(document);
+
+  const expandedFamilies = ['List', 'Table', 'Menu', 'Tabs', 'Collapse', 'Form', 'Drawer', 'Modal', 'Slider', 'Tree'];
+  document.components = expandedFamilies.flatMap((componentId, familyIndex) => variantsForAntdComponent(componentId).map((variant, variantIndex) => {
+    const component = applyAntdComponentVariant(createAntdComponent(componentId, 20 + variantIndex * 40, 20 + familyIndex * 40), variant.id);
+    component.pageId = 'home';
+    component.zIndex = familyIndex * 10 + variantIndex + 1;
+    return component;
+  }));
+  assertWebDesignDocument(document);
+
+  document.components = ANTD_COMPONENTS.flatMap((definition, familyIndex) => variantsForAntdComponent(definition.id).map((variant, variantIndex) => {
+    const component = applyAntdComponentVariant(createAntdComponent(definition.id, 20 + variantIndex * 30, 20 + familyIndex * 30), variant.id);
+    component.pageId = 'home';
+    component.zIndex = familyIndex * 10 + variantIndex + 1;
+    return component;
+  }));
+  assertWebDesignDocument(document);
+});
+
+test('content-bearing Ant Design components expose editable single and multi-region slots', () => {
+  const drawer = createAntdComponent('Drawer', 120, 80);
+  const modal = createAntdComponent('Modal', 120, 140);
+  const card = createAntdComponent('Card', 120, 200);
+  const tabs = createAntdComponent('Tabs', 120, 260);
+  const collapse = createAntdComponent('Collapse', 120, 320);
+  const layout = createAntdComponent('Layout', 120, 380);
+  assert.deepEqual(editableSlotsForAntdComponent(drawer).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForAntdComponent(modal).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForAntdComponent(card).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForAntdComponent(tabs).map((slot) => slot.id), ['tab-1', 'tab-2', 'tab-3']);
+  assert.deepEqual(editableSlotsForAntdComponent(collapse).map((slot) => slot.id), ['panel-1', 'panel-2']);
+  assert.deepEqual(editableSlotsForAntdComponent(layout).map((slot) => slot.id), ['header', 'content', 'sider']);
+  assert.equal(isAntdContentContainer(drawer), true);
+
+  const input = createAntdComponent('Input', 132, 152);
+  drawer.pageId = 'home';
+  input.pageId = 'home';
+  input.parentId = drawer.id;
+  input.slot = 'content';
+  const document = createLandingPage();
+  document.components = [drawer, input];
+  assertWebDesignDocument(document);
 });
 
 test('device-specific patches preserve desktop layout and update mobile overrides', () => {
