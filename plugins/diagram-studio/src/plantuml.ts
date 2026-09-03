@@ -864,14 +864,15 @@ function plantUmlStructuralToDiagram(source: string, options: PlantUmlImportOpti
     const appearance = structuralAppearance(node.type, kind);
     const parentId = node.parentAlias ? idByAlias.get(node.parentAlias) : undefined;
     const isContainer = node.container === true;
+    const visualLineCount = node.label.split(/\r?\n/).reduce((count, line) => count + Math.max(1, Math.ceil([...line].length / 22)), 0);
     return {
       id: idByAlias.get(node.alias)!,
       type: isContainer ? 'laneNode' : 'diagramNode',
       parentId,
       extent: parentId ? 'parent' : undefined,
       position: { x: 0, y: 0 },
-      width: isContainer ? 280 : 200,
-      height: isContainer ? 180 : 88,
+      width: isContainer ? 300 : 220,
+      height: isContainer ? 180 : Math.max(92, 52 + visualLineCount * 18),
       zIndex: isContainer ? 0 : 2 + index,
       data: {
         label: node.label,
@@ -1158,29 +1159,59 @@ function layoutStructuralNodes(
       visualContainer.height = 150;
       continue;
     }
-    const childAliases = new Set(children.map((child) => child.alias));
-    const childEdges = edges.filter((edge) => childAliases.has(edge.source) && childAliases.has(edge.target));
+    const directChild = (alias: string): string | undefined => {
+      let current = semanticByAlias.get(alias);
+      const seen = new Set<string>();
+      while (current?.parentAlias && !seen.has(current.alias)) {
+        seen.add(current.alias);
+        if (current.parentAlias === container.alias) return current.alias;
+        current = semanticByAlias.get(current.parentAlias);
+      }
+      return undefined;
+    };
+    const seenChildEdges = new Set<string>();
+    const childEdges = edges.flatMap((edge): PlantUmlStructuralEdge[] => {
+      const source = directChild(edge.source);
+      const target = directChild(edge.target);
+      if (!source || !target || source === target) return [];
+      const key = `${source}\u0000${target}`;
+      if (seenChildEdges.has(key)) return [];
+      seenChildEdges.add(key);
+      return [{ ...edge, source, target }];
+    });
     const childRanks = structuralRanks(children, childEdges);
     const ranks = [...new Set(children.map((child) => childRanks.get(child.alias) ?? 0))].sort((left, right) => left - right);
-    let x = 28;
-    let contentBottom = 58;
+    let x = 34;
+    let y = 70;
+    let rowHeight = 0;
+    let contentRight = 34;
+    let contentBottom = 70;
+    const maximumRowWidth = 1540;
     for (const rank of ranks) {
       const column = children.filter((child) => (childRanks.get(child.alias) ?? 0) === rank);
       const columnWidth = Math.max(200, ...column.map((child) => visualByAlias.get(child.alias)?.width ?? 200));
-      let y = 58;
+      const columnHeight = column.reduce((height, child, index) => height + (visualByAlias.get(child.alias)?.height ?? 88) + (index > 0 ? 58 : 0), 0);
+      if (x > 34 && x + columnWidth > maximumRowWidth) {
+        x = 34;
+        y += rowHeight + 90;
+        rowHeight = 0;
+      }
+      let childY = y;
       for (const child of column) {
         const visualChild = visualByAlias.get(child.alias);
         if (!visualChild) continue;
         visualChild.parentId = idByAlias.get(container.alias);
         visualChild.extent = 'parent';
-        visualChild.position = { x, y };
-        y += (visualChild.height ?? 88) + 34;
-        contentBottom = Math.max(contentBottom, y);
+        visualChild.position = { x, y: childY };
+        childY += (visualChild.height ?? 88) + 58;
       }
-      x += columnWidth + 42;
+      rowHeight = Math.max(rowHeight, columnHeight);
+      contentRight = Math.max(contentRight, x + columnWidth);
+      contentBottom = Math.max(contentBottom, y + columnHeight);
+      x += columnWidth + 76;
     }
-    visualContainer.width = Math.max(280, x - 12);
-    visualContainer.height = Math.max(150, contentBottom + 2);
+    visualContainer.width = Math.max(300, contentRight + 34);
+    visualContainer.height = Math.max(170, contentBottom + 34);
   }
 
   const topAlias = (alias: string): string => {
@@ -1217,9 +1248,9 @@ function layoutStructuralNodes(
       const visualNode = visualByAlias.get(node.alias);
       if (!visualNode) continue;
       visualNode.position = { x: rankX, y };
-      y += (visualNode.height ?? 88) + 68;
+      y += (visualNode.height ?? 88) + 110;
     }
-    rankX += columnWidth + 110;
+    rankX += columnWidth + 160;
   }
 }
 
@@ -1242,6 +1273,20 @@ function structuralRanks(nodes: PlantUmlStructuralNode[], edges: PlantUmlStructu
       ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
       incoming.set(target, Math.max(0, (incoming.get(target) ?? 0) - 1));
       if ((incoming.get(target) ?? 0) === 0) queue.push(target);
+    }
+  }
+  for (const node of nodes) {
+    if (visited.has(node.alias)) continue;
+    const cycleQueue = [node.alias];
+    visited.add(node.alias);
+    while (cycleQueue.length) {
+      const current = cycleQueue.shift()!;
+      for (const target of outgoing.get(current) ?? []) {
+        if (visited.has(target)) continue;
+        ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
+        visited.add(target);
+        cycleQueue.push(target);
+      }
     }
   }
   return ranks;
@@ -1496,7 +1541,7 @@ function escapeQuoted(value: string): string {
 }
 
 function unescapeQuoted(value: string): string {
-  return value.replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+  return value.replaceAll('\\"', '"').replaceAll('\\\\', '\\').replaceAll('\\n', '\n');
 }
 
 function unquote(value: string): string {

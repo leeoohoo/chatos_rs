@@ -15,7 +15,7 @@ import {
 import { plantUmlToDiagram } from './plantuml.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.1.5';
+const SERVER_VERSION = '0.1.6';
 const store = new DiagramDocumentStore();
 
 const policy = {

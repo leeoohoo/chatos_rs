@@ -48,6 +48,7 @@ export async function layoutDiagram(
   }
   if (next.nodes.some((node) => node.data.shape === 'container')) {
     layoutContainerDiagram(next, direction ?? 'RIGHT');
+    refreshGenericEdgeHandles(next);
     return next;
   }
 
@@ -112,24 +113,55 @@ function layoutContainerDiagram(document: DiagramDocument, direction: 'RIGHT' | 
       container.height = Math.max(container.height ?? 0, 150);
       continue;
     }
-    const childIds = new Set(children.map((child) => child.id));
-    const ranks = graphRanks(children, document.edges.filter((edge) => childIds.has(edge.source) && childIds.has(edge.target)));
+    const directChild = (nodeId: string): DiagramNode | undefined => {
+      let current = nodeById.get(nodeId);
+      const seen = new Set<string>();
+      while (current?.parentId && !seen.has(current.id)) {
+        seen.add(current.id);
+        if (current.parentId === container.id) return current;
+        current = nodeById.get(current.parentId);
+      }
+      return undefined;
+    };
+    const seenChildEdges = new Set<string>();
+    const childEdges = document.edges.flatMap((edge) => {
+      const source = directChild(edge.source);
+      const target = directChild(edge.target);
+      if (!source || !target || source.id === target.id) return [];
+      const key = `${source.id}\u0000${target.id}`;
+      if (seenChildEdges.has(key)) return [];
+      seenChildEdges.add(key);
+      return [{ ...edge, source: source.id, target: target.id }];
+    });
+    const ranks = graphRanks(children, childEdges);
     const rankValues = [...new Set(children.map((child) => ranks.get(child.id) ?? 0))].sort((left, right) => left - right);
-    let x = 28;
-    let contentBottom = 58;
+    let x = 34;
+    let y = 70;
+    let rowHeight = 0;
+    let contentRight = 34;
+    let contentBottom = 70;
+    const maximumRowWidth = 1540;
     for (const rank of rankValues) {
       const column = children.filter((child) => (ranks.get(child.id) ?? 0) === rank);
       const columnWidth = Math.max(...column.map((child) => child.width ?? nodeSize(child).width));
-      let y = 58;
-      for (const child of column) {
-        child.position = { x, y };
-        y += (child.height ?? nodeSize(child).height) + 34;
-        contentBottom = Math.max(contentBottom, y);
+      const columnHeight = column.reduce((height, child, index) => height + (child.height ?? nodeSize(child).height) + (index > 0 ? 58 : 0), 0);
+      if (x > 34 && x + columnWidth > maximumRowWidth) {
+        x = 34;
+        y += rowHeight + 90;
+        rowHeight = 0;
       }
-      x += columnWidth + 42;
+      let childY = y;
+      for (const child of column) {
+        child.position = { x, y: childY };
+        childY += (child.height ?? nodeSize(child).height) + 58;
+      }
+      rowHeight = Math.max(rowHeight, columnHeight);
+      contentRight = Math.max(contentRight, x + columnWidth);
+      contentBottom = Math.max(contentBottom, y + columnHeight);
+      x += columnWidth + 76;
     }
-    container.width = Math.max(280, x - 12);
-    container.height = Math.max(150, contentBottom + 2);
+    container.width = Math.max(300, contentRight + 34);
+    container.height = Math.max(170, contentBottom + 34);
   }
 
   const topNode = (nodeId: string): DiagramNode | undefined => {
@@ -163,11 +195,39 @@ function layoutContainerDiagram(document: DiagramDocument, direction: 'RIGHT' | 
       node.position = direction === 'RIGHT'
         ? { x: primaryOffset, y: secondaryOffset }
         : { x: secondaryOffset, y: primaryOffset };
-      secondaryOffset += (direction === 'RIGHT' ? height : width) + 68;
+      secondaryOffset += (direction === 'RIGHT' ? height : width) + 110;
       maximumPrimarySize = Math.max(maximumPrimarySize, direction === 'RIGHT' ? width : height);
     }
-    primaryOffset += maximumPrimarySize + 110;
+    primaryOffset += maximumPrimarySize + 160;
   }
+}
+
+function refreshGenericEdgeHandles(document: DiagramDocument): void {
+  document.edges = document.edges.map((edge) => {
+    const source = document.nodes.find((node) => node.id === edge.source);
+    const target = document.nodes.find((node) => node.id === edge.target);
+    if (!source || !target) return edge;
+    const sourcePosition = absoluteNodePosition(document.nodes, source);
+    const targetPosition = absoluteNodePosition(document.nodes, target);
+    const sourceSize = nodeSize(source);
+    const targetSize = nodeSize(target);
+    const sourceCenter = { x: sourcePosition.x + sourceSize.width / 2, y: sourcePosition.y + sourceSize.height / 2 };
+    const targetCenter = { x: targetPosition.x + targetSize.width / 2, y: targetPosition.y + targetSize.height / 2 };
+    const vertical = Math.abs(targetCenter.y - sourceCenter.y) >= Math.abs(targetCenter.x - sourceCenter.x);
+    return {
+      ...edge,
+      sourceHandle: vertical ? (targetCenter.y >= sourceCenter.y ? 'bottom' : 'top') : (targetCenter.x >= sourceCenter.x ? 'right' : 'left'),
+      targetHandle: vertical ? (targetCenter.y >= sourceCenter.y ? 'top' : 'bottom') : (targetCenter.x >= sourceCenter.x ? 'left' : 'right')
+    };
+  });
+}
+
+function absoluteNodePosition(nodes: DiagramNode[], node: DiagramNode): { x: number; y: number } {
+  if (!node.parentId) return node.position;
+  const parent = nodes.find((candidate) => candidate.id === node.parentId);
+  if (!parent) return node.position;
+  const parentPosition = absoluteNodePosition(nodes, parent);
+  return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y };
 }
 
 function graphRanks(nodes: DiagramNode[], edges: DiagramDocument['edges']): Map<string, number> {
@@ -193,6 +253,20 @@ function graphRanks(nodes: DiagramNode[], edges: DiagramDocument['edges']): Map<
       ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
       incoming.set(target, Math.max(0, (incoming.get(target) ?? 0) - 1));
       if ((incoming.get(target) ?? 0) === 0) queue.push(target);
+    }
+  }
+  for (const node of nodes) {
+    if (visited.has(node.id)) continue;
+    const cycleQueue = [node.id];
+    visited.add(node.id);
+    while (cycleQueue.length) {
+      const current = cycleQueue.shift()!;
+      for (const target of outgoing.get(current) ?? []) {
+        if (visited.has(target)) continue;
+        ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
+        visited.add(target);
+        cycleQueue.push(target);
+      }
     }
   }
   return ranks;

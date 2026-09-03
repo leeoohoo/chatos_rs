@@ -41,7 +41,7 @@ import { Inspector } from './Inspector';
 import { Icon } from './Icons';
 
 const nodeTypes = { diagramNode: DiagramNodeView, laneNode: LaneNodeView };
-const edgeTypes = { sequenceMessage: SequenceMessageEdge };
+const edgeTypes = { sequenceMessage: SequenceMessageEdge, smartOrthogonal: SmartOrthogonalEdge };
 
 type Repository = Awaited<ReturnType<typeof createRepository>>;
 
@@ -780,8 +780,11 @@ export function DiagramStudioApp() {
       ? { width: node.width ?? 1120, height: node.height ?? 180 }
       : { width: node.width ?? defaultNodeSize(node).width, height: node.height ?? defaultNodeSize(node).height }
   })) ?? [], [document?.nodes, selectedNodeIds]);
-  const flowEdges = useMemo(() => document?.edges.map((edge) => {
+  const flowEdges = useMemo(() => document?.edges.map((edge, edgeIndex) => {
     const isSequence = document.kind === 'sequence';
+    const useSmartRouting = (document.kind === 'architecture' || document.kind === 'topology')
+      && edge.type !== 'straight'
+      && edge.type !== 'bezier';
     const isReturnMessage = isSequence && (edge.data?.lineStyle === 'dashed' || edge.data?.dashed);
     const marker = {
       type: isReturnMessage ? MarkerType.Arrow : MarkerType.ArrowClosed,
@@ -793,17 +796,31 @@ export function DiagramStudioApp() {
     const baseStrokeWidth = edge.data?.strokeWidth ?? (isSequence ? 1.4 : 1.7);
     return {
       ...edge,
-      type: isSequence ? 'sequenceMessage' : edge.type,
-      data: isSequence ? {
-        ...edge.data,
-        onVerticalMoveStart: beginSequenceEdgeMove,
-        onVerticalMove: moveSequenceEdge,
-        onVerticalMoveEnd: finishSequenceEdgeMove,
-        onSelect: (edgeId: string) => {
-          setSelectedNodeIds(new Set());
-          setSelectedEdgeId(edgeId);
-        }
-      } : edge.data,
+      type: isSequence ? 'sequenceMessage' : useSmartRouting ? 'smartOrthogonal' : edge.type,
+      data: isSequence
+        ? {
+            ...edge.data,
+            onVerticalMoveStart: beginSequenceEdgeMove,
+            onVerticalMove: moveSequenceEdge,
+            onVerticalMoveEnd: finishSequenceEdgeMove,
+            onSelect: (edgeId: string) => {
+              setSelectedNodeIds(new Set());
+              setSelectedEdgeId(edgeId);
+            }
+          }
+        : useSmartRouting
+          ? {
+              ...edge.data,
+              routingOffset: (edgeIndex % 13 - 6) * 9,
+              routingObstacles: document.nodes
+                .filter((node) => node.id !== edge.source && node.id !== edge.target && node.data.shape !== 'container' && node.data.shape !== 'lane')
+                .map((node) => {
+                  const position = absoluteNodePosition(document.nodes, node);
+                  const size = defaultNodeSize(node);
+                  return { x: position.x, y: position.y, width: node.width ?? size.width, height: node.height ?? size.height };
+                })
+            }
+          : edge.data,
       selected: edge.id === selectedEdgeId,
       markerStart: edge.data?.startMarker === 'arrow' ? marker : undefined,
       markerEnd: edge.data?.endMarker === 'none' ? undefined : marker,
@@ -820,7 +837,9 @@ export function DiagramStudioApp() {
         strokeLinecap: 'round'
       },
       labelStyle: { fill: '#465267', fontSize: edge.data?.fontSize ?? 13, fontWeight: 600 },
-      labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.95 }
+      labelBgStyle: { fill: 'var(--surface-solid)', fillOpacity: 0.98 },
+      labelBgPadding: [7, 5],
+      labelBgBorderRadius: 6
     };
   }) ?? [], [document?.edges, document?.kind, document?.nodes, selectedEdgeId]);
 
@@ -1232,6 +1251,162 @@ function closestSequenceHandleAtY(
     return closestActivationHandle(node, nodes, current?.side ?? 'left', connectionY);
   }
   return currentHandle;
+}
+
+type RoutingPoint = { x: number; y: number };
+type RoutingObstacle = RoutingPoint & { width: number; height: number };
+type SmartEdgeRuntimeData = DiagramEdge['data'] & {
+  routingObstacles?: RoutingObstacle[];
+  routingOffset?: number;
+};
+
+function SmartOrthogonalEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerStart,
+  markerEnd,
+  style,
+  label,
+  labelStyle,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  interactionWidth,
+  data
+}: EdgeProps) {
+  const runtime = data as SmartEdgeRuntimeData | undefined;
+  const points = routeOrthogonalEdge(
+    { x: sourceX, y: sourceY },
+    { x: targetX, y: targetY },
+    String(sourcePosition),
+    String(targetPosition),
+    runtime?.routingObstacles ?? [],
+    runtime?.routingOffset ?? 0
+  );
+  const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+  const labelPoint = routeLabelPoint(points);
+  return <BaseEdge
+    id={id}
+    path={path}
+    labelX={labelPoint.x}
+    labelY={labelPoint.y}
+    markerStart={markerStart}
+    markerEnd={markerEnd}
+    style={style}
+    label={label}
+    labelStyle={labelStyle}
+    labelBgStyle={labelBgStyle}
+    labelBgPadding={labelBgPadding}
+    labelBgBorderRadius={labelBgBorderRadius}
+    interactionWidth={interactionWidth}
+  />;
+}
+
+function routeOrthogonalEdge(
+  source: RoutingPoint,
+  target: RoutingPoint,
+  sourcePosition: string,
+  targetPosition: string,
+  obstacles: RoutingObstacle[],
+  laneOffset: number
+): RoutingPoint[] {
+  const clearance = 18;
+  const expanded = obstacles.map((obstacle) => ({
+    x: obstacle.x - clearance,
+    y: obstacle.y - clearance,
+    width: obstacle.width + clearance * 2,
+    height: obstacle.height + clearance * 2
+  }));
+  const sourceStub = routingStub(source, sourcePosition, 24);
+  const targetStub = routingStub(target, targetPosition, 24);
+  const xCandidates = uniqueNumbers([
+    (sourceStub.x + targetStub.x) / 2 + laneOffset,
+    ...expanded.flatMap((obstacle) => [obstacle.x - 12 + laneOffset, obstacle.x + obstacle.width + 12 + laneOffset])
+  ]);
+  const yCandidates = uniqueNumbers([
+    (sourceStub.y + targetStub.y) / 2 + laneOffset,
+    ...expanded.flatMap((obstacle) => [obstacle.y - 12 + laneOffset, obstacle.y + obstacle.height + 12 + laneOffset])
+  ]);
+  const candidates: RoutingPoint[][] = [
+    ...xCandidates.map((x) => [source, sourceStub, { x, y: sourceStub.y }, { x, y: targetStub.y }, targetStub, target]),
+    ...yCandidates.map((y) => [source, sourceStub, { x: sourceStub.x, y }, { x: targetStub.x, y }, targetStub, target])
+  ].map(simplifyRoute);
+  return candidates.sort((left, right) => routeScore(left, expanded) - routeScore(right, expanded))[0] ?? [source, target];
+}
+
+function routingStub(point: RoutingPoint, position: string, distance: number): RoutingPoint {
+  switch (position.toLowerCase()) {
+    case 'left': return { x: point.x - distance, y: point.y };
+    case 'top': return { x: point.x, y: point.y - distance };
+    case 'bottom': return { x: point.x, y: point.y + distance };
+    default: return { x: point.x + distance, y: point.y };
+  }
+}
+
+function uniqueNumbers(values: number[]): number[] {
+  const seen = new Set<number>();
+  return values.filter((value) => {
+    const rounded = Math.round(value * 2) / 2;
+    if (seen.has(rounded)) return false;
+    seen.add(rounded);
+    return true;
+  });
+}
+
+function simplifyRoute(points: RoutingPoint[]): RoutingPoint[] {
+  const deduplicated = points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y);
+  return deduplicated.filter((point, index) => {
+    if (index === 0 || index === deduplicated.length - 1) return true;
+    const previous = deduplicated[index - 1];
+    const next = deduplicated[index + 1];
+    return !((previous.x === point.x && point.x === next.x) || (previous.y === point.y && point.y === next.y));
+  });
+}
+
+function routeScore(points: RoutingPoint[], obstacles: RoutingObstacle[]): number {
+  let length = 0;
+  let intersections = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    length += Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+    intersections += obstacles.filter((obstacle) => segmentIntersectsObstacle(start, end, obstacle)).length;
+  }
+  return intersections * 1_000_000 + length + Math.max(0, points.length - 2) * 28;
+}
+
+function segmentIntersectsObstacle(start: RoutingPoint, end: RoutingPoint, obstacle: RoutingObstacle): boolean {
+  const right = obstacle.x + obstacle.width;
+  const bottom = obstacle.y + obstacle.height;
+  if (start.x === end.x) {
+    return start.x > obstacle.x && start.x < right
+      && Math.max(Math.min(start.y, end.y), obstacle.y) < Math.min(Math.max(start.y, end.y), bottom);
+  }
+  if (start.y === end.y) {
+    return start.y > obstacle.y && start.y < bottom
+      && Math.max(Math.min(start.x, end.x), obstacle.x) < Math.min(Math.max(start.x, end.x), right);
+  }
+  return true;
+}
+
+function routeLabelPoint(points: RoutingPoint[]): RoutingPoint {
+  let best = { x: (points[0]?.x ?? 0), y: (points[0]?.y ?? 0), length: -1, horizontal: false };
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const horizontal = start.y === end.y;
+    const length = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+    const weightedLength = horizontal ? length + 10_000 : length;
+    const bestWeightedLength = best.horizontal ? best.length + 10_000 : best.length;
+    if (weightedLength <= bestWeightedLength) continue;
+    best = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2, length, horizontal };
+  }
+  return { x: best.x, y: best.y - (best.horizontal ? 10 : 0) };
 }
 
 type SequenceMessageRuntimeData = DiagramEdge['data'] & {
