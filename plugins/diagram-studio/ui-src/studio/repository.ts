@@ -143,6 +143,22 @@ class LocalRepository implements Repository {
     localStorage.removeItem(`${localDocumentPrefix}${documentId}`);
     const ids = JSON.parse(localStorage.getItem(localIndexKey) ?? '[]') as string[];
     localStorage.setItem(localIndexKey, JSON.stringify(ids.filter((id) => id !== documentId)));
+    const projectIds = JSON.parse(localStorage.getItem(localProjectIndexKey) ?? '[]') as string[];
+    for (const projectId of projectIds) {
+      const raw = localStorage.getItem(`${localProjectPrefix}${projectId}`);
+      if (!raw) continue;
+      try {
+        const project = JSON.parse(raw) as DiagramProject;
+        if (!project.diagramIds.includes(documentId)) continue;
+        await this.persistProject({
+          ...project,
+          diagramIds: project.diagramIds.filter((id) => id !== documentId),
+          updatedAt: new Date().toISOString()
+        });
+      } catch {
+        // Ignore malformed unrelated projects while deleting a document.
+      }
+    }
   }
 
   private async persist(document: DiagramDocument): Promise<void> {

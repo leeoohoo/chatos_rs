@@ -114,6 +114,7 @@ export interface DiagramEdgeData extends Record<string, unknown> {
   color?: string;
   fontSize?: number;
   plantUmlId?: string;
+  plantUmlType?: string;
 }
 
 export interface DiagramEdge {

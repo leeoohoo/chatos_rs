@@ -193,13 +193,63 @@ end
   const document = plantUmlToDiagram(source, { documentId: 'sequence-import' });
   assert.equal(document.title, '登录认证');
   assert.equal(document.nodes.filter((node) => node.data.shape === 'lifeline').length, 4);
-  assert.equal(document.nodes.filter((node) => node.data.shape === 'activation').length, 2);
+  assert.equal(document.nodes.filter((node) => node.data.shape === 'activation').length, 3);
   assert.ok(document.nodes.filter((node) => node.data.shape === 'activation').every((node) => node.parentId && node.extent === 'parent'));
   assert.equal(document.nodes.filter((node) => node.data.shape === 'fragment').length, 1);
+  assert.equal(document.nodes.find((node) => node.data.shape === 'fragment').data.fillColor, 'transparent');
   assert.equal(document.edges.length, 6);
   assert.ok(document.edges.every((edge) => edge.type === 'straight'));
   assert.ok(document.edges.every((edge) => edge.sourceHandle && edge.targetHandle));
   assert.ok(document.edges.some((edge) => edge.data.lineStyle === 'dashed'));
+});
+
+test('partial explicit sequence activations are preserved while missing synchronous callees are inferred', () => {
+  const source = `@startuml
+participant Caller
+participant Relay
+participant Worker
+Caller -> Relay: dispatch
+activate Relay
+Relay -> Worker: execute
+Worker --> Relay: result
+Relay --> Caller: complete
+deactivate Relay
+@enduml`;
+
+  const document = plantUmlToDiagram(source, { documentId: 'sequence-partial-activations' });
+  const lifelines = new Map(document.nodes
+    .filter((node) => node.data.shape === 'lifeline')
+    .map((node) => [node.id, node.data.plantUmlId]));
+  const activationOwners = document.nodes
+    .filter((node) => node.data.shape === 'activation')
+    .map((node) => lifelines.get(node.parentId))
+    .sort();
+
+  assert.deepEqual(activationOwners, ['Relay', 'Worker']);
+});
+
+test('sequence activation inference does not duplicate covered calls or activate asynchronous notifications', () => {
+  const source = `@startuml
+participant Client
+participant Service
+participant Events
+Client -> Service: request
+activate Service
+Service ->> Events: publish
+Events -->> Service: accepted
+Service --> Client: response
+deactivate Service
+@enduml`;
+
+  const document = plantUmlToDiagram(source, { documentId: 'sequence-async-activations' });
+  const activationNodes = document.nodes.filter((node) => node.data.shape === 'activation');
+  assert.equal(activationNodes.length, 1);
+  assert.equal(document.edges.find((edge) => edge.label === 'publish').data.plantUmlType, 'async-message');
+  assert.equal(document.edges.find((edge) => edge.label === 'accepted').data.plantUmlType, 'async-message');
+
+  const roundTrip = diagramToPlantUml(document);
+  assert.match(roundTrip, /Service ->> Events: publish/);
+  assert.match(roundTrip, /Events -->> Service: accepted/);
 });
 
 test('editing generated PlantUML rebuilds semantics instead of restoring stale layout metadata', () => {

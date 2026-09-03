@@ -44,6 +44,7 @@ const nodeTypes = { diagramNode: DiagramNodeView, laneNode: LaneNodeView };
 const edgeTypes = { sequenceMessage: SequenceMessageEdge, smartOrthogonal: SmartOrthogonalEdge };
 
 type Repository = Awaited<ReturnType<typeof createRepository>>;
+type DeleteDocumentTarget = Pick<DiagramSummary, 'documentId' | 'title'>;
 
 export function DiagramStudioApp() {
   const reactFlow = useReactFlow();
@@ -74,6 +75,8 @@ export function DiagramStudioApp() {
   const [newProjectName, setNewProjectName] = useState('');
   const [newDiagramName, setNewDiagramName] = useState('');
   const [homeConfirmVisible, setHomeConfirmVisible] = useState(false);
+  const [deleteDocumentTarget, setDeleteDocumentTarget] = useState<DeleteDocumentTarget>();
+  const [isDeletingDocument, setIsDeletingDocument] = useState(false);
   const [exportVisible, setExportVisible] = useState(false);
   const [plantUmlVisible, setPlantUmlVisible] = useState(false);
   const [plantUmlSource, setPlantUmlSource] = useState('');
@@ -261,6 +264,40 @@ export function DiagramStudioApp() {
       window.setTimeout(() => reactFlow.fitView({ padding: 0.16, duration: 320 }), 60);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function requestDeleteDocument(target: DeleteDocumentTarget) {
+    setDeleteDocumentTarget(target);
+    setLibraryVisible(false);
+  }
+
+  async function deleteRequestedDocument() {
+    if (!repository || !deleteDocumentTarget || isDeletingDocument) return;
+    const target = deleteDocumentTarget;
+    const deletingCurrent = document?.documentId === target.documentId;
+    setIsDeletingDocument(true);
+    try {
+      await repository.remove(target.documentId);
+      if (activeProject) setActiveProject(await repository.readProject(activeProject.projectId));
+      await Promise.all([refreshDocuments(repository), refreshProjects(repository)]);
+      if (deletingCurrent) {
+        setDocument(undefined);
+        setPersistedRevision(0);
+        setDirty(false);
+        setPast([]);
+        setFuture([]);
+        setSelectedNodeIds(new Set());
+        setSelectedEdgeId(undefined);
+        setPlantUmlVisible(false);
+        setExportVisible(false);
+      }
+      setDeleteDocumentTarget(undefined);
+      showToast(`已删除“${target.title}”`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsDeletingDocument(false);
     }
   }
 
@@ -881,6 +918,17 @@ export function DiagramStudioApp() {
     </section>
   </div>;
 
+  const deleteDocumentSheet = deleteDocumentTarget && <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !isDeletingDocument) setDeleteDocumentTarget(undefined); }}>
+    <section className="confirm-sheet" role="alertdialog" aria-modal="true" aria-labelledby="delete-document-title">
+      <span className="confirm-icon destructive"><Icon name="trash" /></span>
+      <div><strong id="delete-document-title">删除图形？</strong><p>“{deleteDocumentTarget.title}”将从当前项目中永久删除，此操作无法撤销。{document?.documentId === deleteDocumentTarget.documentId && dirty ? ' 未保存的修改也会一并丢失。' : ''}</p></div>
+      <div className="confirm-actions">
+        <button className="toolbar-button" disabled={isDeletingDocument} onClick={() => setDeleteDocumentTarget(undefined)}>取消</button>
+        <button className="toolbar-button destructive-primary" disabled={isDeletingDocument} onClick={() => void deleteRequestedDocument()}><Icon name="trash" />{isDeletingDocument ? '正在删除…' : '删除图形'}</button>
+      </div>
+    </section>
+  </div>;
+
   if (!isReady) return <div className="loading-screen"><div className="loading-spinner" /><span>正在准备 Diagram Studio…</span></div>;
 
   const storageStatus = <span className={`runtime-badge ${repository?.mode === 'server' ? 'connected' : 'fallback'}`} title={repository?.mode === 'server' ? '项目和图形由本机 Diagram Studio 服务保存' : '当前未连接本地服务，数据仅保存在这个浏览器中'}>
@@ -937,17 +985,21 @@ export function DiagramStudioApp() {
         </section>
         <section className="projects-section">
           <div className="projects-heading"><div><h2>项目图形</h2><span>{activeProjectDocuments.length} 张</span></div></div>
-          {activeProjectDocuments.length > 0 ? <div className="diagram-grid">{activeProjectDocuments.map((item) => <button className="diagram-card" key={item.documentId} onClick={() => void openDocument(item.documentId)} aria-label={`打开图形 ${item.title}`}>
-            <span className={`project-card-icon kind-${item.kind}`}><Icon name={kindIcon(item.kind)} /></span>
-            <span className="project-card-copy"><strong>{item.title}</strong><small><b>{kindLabel(item.kind)}</b> · {item.nodeCount} 个节点 · {item.edgeCount} 条连线</small></span>
-            <span className="project-card-date">{formatUpdatedAt(item.updatedAt)}</span>
-            <Icon name="chevron" className="project-card-chevron" />
-          </button>)}</div> : <div className="empty-projects">
+          {activeProjectDocuments.length > 0 ? <div className="diagram-grid">{activeProjectDocuments.map((item) => <div className="diagram-card" key={item.documentId}>
+            <button className="diagram-card-open" onClick={() => void openDocument(item.documentId)} aria-label={`打开图形 ${item.title}`}>
+              <span className={`project-card-icon kind-${item.kind}`}><Icon name={kindIcon(item.kind)} /></span>
+              <span className="project-card-copy"><strong>{item.title}</strong><small><b>{kindLabel(item.kind)}</b> · {item.nodeCount} 个节点 · {item.edgeCount} 条连线</small></span>
+              <span className="project-card-date">{formatUpdatedAt(item.updatedAt)}</span>
+              <Icon name="chevron" className="project-card-chevron" />
+            </button>
+            <button className="diagram-card-delete" onClick={() => requestDeleteDocument(item)} aria-label={`删除图形 ${item.title}`} title="删除图形"><Icon name="trash" /></button>
+          </div>)}</div> : <div className="empty-projects">
             <span><Icon name="architecture" /></span><strong>这个项目还没有图形</strong><p>先创建一张图，并为它单独命名。</p><button className="toolbar-button primary" onClick={openNewDiagramSheet}><Icon name="plus" />新建图形</button>
           </div>}
         </section>
       </main>
       {newDiagramSheet}
+      {deleteDocumentSheet}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
@@ -976,6 +1028,7 @@ export function DiagramStudioApp() {
           <button className="toolbar-button" onClick={() => void autoLayout()}><Icon name="layout" />自动布局</button>
           {supportsPlantUml(document.kind) && <button className={`toolbar-button ${plantUmlVisible ? 'active' : ''}`} onClick={openPlantUmlEditor}><Icon name="document" />PlantUML</button>}
           <button className="toolbar-button primary" disabled={!dirty || isSaving} onClick={() => void save()}><Icon name="save" />保存</button>
+          <button className="icon-button destructive-icon" onClick={() => requestDeleteDocument(document)} aria-label="删除当前图形" title="删除当前图形"><Icon name="trash" /></button>
           <div className="export-anchor">
             <button className="toolbar-button" onClick={() => setExportVisible(!exportVisible)}><Icon name="export" />导出<Icon name="chevron" className="chevron" /></button>
             {exportVisible && <div className="popover-menu export-menu">
@@ -1038,10 +1091,13 @@ export function DiagramStudioApp() {
       {libraryVisible && <div className="library-popover popover-menu">
         <div className="popover-heading"><strong>{`${activeProject?.name ?? ''} · 图形`}</strong><button className="icon-button subtle" onClick={() => setLibraryVisible(false)}><Icon name="close" /></button></div>
         <div className="document-list">
-          {activeProjectDocuments.map((item) => <button key={item.documentId} className={item.documentId === document.documentId ? 'active' : ''} onClick={() => void openDocument(item.documentId)}>
-            <span className="document-kind-icon"><Icon name={kindIcon(item.kind)} /></span>
-            <span><strong>{item.title}</strong><small>{kindLabel(item.kind)} · {item.nodeCount} 个节点 · v{item.revision}</small></span>
-          </button>)}
+          {activeProjectDocuments.map((item) => <div key={item.documentId} className={`document-list-item ${item.documentId === document.documentId ? 'active' : ''}`}>
+            <button className="document-list-open" onClick={() => void openDocument(item.documentId)}>
+              <span className="document-kind-icon"><Icon name={kindIcon(item.kind)} /></span>
+              <span><strong>{item.title}</strong><small>{kindLabel(item.kind)} · {item.nodeCount} 个节点 · v{item.revision}</small></span>
+            </button>
+            <button className="document-list-delete" onClick={() => requestDeleteDocument(item)} aria-label={`删除图形 ${item.title}`} title="删除图形"><Icon name="trash" /></button>
+          </div>)}
         </div>
         <div className="popover-footer">
           <button onClick={() => importInputRef.current?.click()}><Icon name="folder" />导入 JSON 或 PlantUML</button>
@@ -1086,6 +1142,8 @@ export function DiagramStudioApp() {
           </div>
         </section>
       </div>}
+
+      {deleteDocumentSheet}
 
       {toast && <div className="toast">{toast}</div>}
     </div>

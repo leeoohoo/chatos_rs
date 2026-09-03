@@ -66,3 +66,22 @@ test('stable artifact keys make AI retries idempotent inside one project', async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('deleting a diagram also removes it from its project', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-studio-delete-test-'));
+  try {
+    const store = new DiagramDocumentStore(root);
+    const project = await store.createProject('可删除图形');
+    const first = await store.createInProject(project.projectId, 'architecture', '系统架构', true);
+    const second = await store.createInProject(project.projectId, 'sequence', '调用时序', true);
+
+    await store.remove(first.documentId);
+
+    const updatedProject = await store.readProject(project.projectId);
+    assert.deepEqual(updatedProject.diagramIds, [second.documentId]);
+    assert.equal((await store.list()).some((item) => item.documentId === first.documentId), false);
+    await assert.rejects(() => store.read(first.documentId));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -38,6 +38,7 @@ export interface PlantUmlSequenceMessage {
   target: string;
   label: string;
   dashed: boolean;
+  async?: boolean;
 }
 
 export interface PlantUmlSequenceFragment {
@@ -114,6 +115,7 @@ function sequenceDiagramToPlantUml(document: DiagramDocument): string {
         target,
         label: edge.label ?? edge.data?.relation ?? '',
         dashed: edge.data?.lineStyle === 'dashed' || edge.data?.dashed === true,
+        async: edge.data?.plantUmlType === 'async-message',
         y: edgeEndpointY(document.nodes, edge),
         edge
       }];
@@ -122,7 +124,7 @@ function sequenceDiagramToPlantUml(document: DiagramDocument): string {
 
   const events: Array<{ y: number; priority: number; line: string }> = [];
   for (const message of messages) {
-    const arrow = message.dashed ? '-->' : '->';
+    const arrow = message.async ? (message.dashed ? '-->>' : '->>') : (message.dashed ? '-->' : '->');
     events.push({
       y: message.y,
       priority: 10,
@@ -346,14 +348,7 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
   });
   const participantByAlias = new Map(ir.participants.map((participant, index) => [participant.alias, participantNodes[index]]));
 
-  const activationRanges = [...ir.activations];
-  if (activationRanges.length === 0) {
-    ir.messages.forEach((message, index) => {
-      if (message.dashed) return;
-      const responseIndex = ir.messages.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.dashed && candidate.source === message.target);
-      activationRanges.push({ alias: message.target, startMessage: index, endMessage: responseIndex >= 0 ? responseIndex : index });
-    });
-  }
+  const activationRanges = inferMissingSequenceActivations(ir.messages, ir.activations);
   const activationNodes = activationRanges.flatMap((activation, index): DiagramNode[] => {
     const owner = participantByAlias.get(activation.alias);
     if (!owner) return [];
@@ -367,7 +362,7 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
       extent: 'parent',
       position: { x: 73, y: startY - owner.position.y },
       width: 14,
-      height: Math.max(72, endY - startY + 30),
+      height: Math.max(44, endY - startY + 30),
       zIndex: 20 + index,
       data: {
         label: `${owner.data.label}激活`,
@@ -410,7 +405,8 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
         endMarker: 'arrow',
         strokeWidth: 1.4,
         color: '#77839A',
-        plantUmlId: `message-${index + 1}`
+        plantUmlId: `message-${index + 1}`,
+        plantUmlType: message.async ? 'async-message' : 'message'
       }
     }];
   });
@@ -431,7 +427,7 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
         shape: 'fragment',
         showLabel: true,
         color: '#667085',
-        fillColor: '#FFFFFF',
+        fillColor: 'transparent',
         plantUmlId: `fragment-${index + 1}`,
         plantUmlType: fragment.kind
       }
@@ -1378,8 +1374,43 @@ function parseMessage(line: string): PlantUmlSequenceMessage | undefined {
     source: reverse ? right : left,
     target: reverse ? left : right,
     label: (match[4] ?? '').replaceAll('\\n', '\n'),
-    dashed: match[2].includes('--')
+    dashed: match[2].includes('--'),
+    async: match[2].includes('>>') || match[2].includes('<<')
   };
+}
+
+function inferMissingSequenceActivations(
+  messages: PlantUmlSequenceMessage[],
+  explicitActivations: PlantUmlSequenceIr['activations']
+): PlantUmlSequenceIr['activations'] {
+  const ranges = explicitActivations.map((activation) => ({ ...activation }));
+
+  messages.forEach((message, index) => {
+    // Dashed arrows are returns, while open-arrow messages are asynchronous and
+    // do not transfer synchronous control to the receiver.
+    if (message.dashed || message.async) return;
+    if (ranges.some((range) => range.alias === message.target && range.startMessage <= index && range.endMessage >= index)) return;
+
+    const responseIndex = messages.findIndex((candidate, candidateIndex) => (
+      candidateIndex > index
+      && candidate.dashed
+      && !candidate.async
+      && candidate.source === message.target
+      && candidate.target === message.source
+    ));
+    let endMessage = responseIndex >= 0 ? responseIndex : index;
+
+    // An activation beginning inside this call owns the rest of that interval.
+    // Stop immediately before it instead of rendering overlapping bars.
+    const nextRange = ranges
+      .filter((range) => range.alias === message.target && range.startMessage > index && range.startMessage <= endMessage)
+      .sort((left, right) => left.startMessage - right.startMessage)[0];
+    if (nextRange) endMessage = Math.max(index, nextRange.startMessage - 1);
+
+    ranges.push({ alias: message.target, startMessage: index, endMessage });
+  });
+
+  return ranges.sort((left, right) => left.startMessage - right.startMessage || left.endMessage - right.endMessage || left.alias.localeCompare(right.alias));
 }
 
 function participantAppearance(type: string): { category: DiagramNodeCategory; icon: DiagramNodeIcon; color: string; fill: string } {

@@ -27,20 +27,41 @@ Use Diagram Studio when a user asks to visualize a software architecture, proces
 16. For an AI-maintained deliverable, also use a stable `artifactKey` (for example `system-architecture-main` or `checkout-sequence-v2`) with `mode: "upsert"`. This identifies one diagram instance, not a diagram category. Multiple architecture diagrams are valid when they have different artifact keys or use `create_new`.
 17. Do not use a diagram title as identity. Titles may be renamed or translated; `artifactKey` is the logical instance identity inside a Diagram Studio project.
 
+## Plan a diagram set before drawing
+
+A Diagram Studio project is a container for related diagrams, not a requirement to place the whole system on one canvas. When the requested scope covers several business capabilities, user journeys, or technical levels, plan a small diagram set and create multiple focused diagrams unless the user explicitly asks for one consolidated view.
+
+- Each diagram must answer one clear question and have a title that states that subject. If a proposed title needs “and”, “与”, or “以及” to join unrelated goals, split it.
+- Do not combine independent business processes merely because they belong to the same software project. Registration, order fulfillment, refunds, approvals, scheduled jobs, and administration are normally separate flowcharts or swimlanes.
+- Use an overview diagram only to show the relationships among major capabilities. Do not duplicate every step, exception, API call, and data object inside that overview.
+- Create detail diagrams for the important capabilities or scenarios. Reusing the same diagram type several times in one project is expected and is not duplication when each diagram has a distinct scope and `artifactKey`.
+- Treat more than about 15 meaningful process nodes, more than 3 major independent branches, several unrelated start/end events, or labels that are unreadable at fit-to-view as strong signals to split the diagram. These are decision signals, not targets to fill.
+- Do not solve crowding by shrinking nodes, reducing text below a comfortable reading size, or expanding the canvas indefinitely. Split by business outcome, actor collaboration, bounded context, runtime environment, or level of detail.
+- Keep closely related error handling, retries, and alternatives with their primary scenario when they help explain that scenario. Move reusable subprocesses or unrelated exception families into their own diagrams.
+
+For a whole-system request, a useful default deliverable is:
+
+1. One concise system or business-capability overview.
+2. Separate flowcharts or swimlanes for each major business outcome.
+3. Separate sequence diagrams for the most important runtime interactions.
+4. Architecture or topology detail diagrams only where the overview cannot communicate the required technical structure.
+
+Before creating documents, identify this diagram set, give every item a stable title and `artifactKey`, and avoid creating two diagrams that communicate substantially the same scope.
+
 ## Diagram choice
 
 - Architecture: services, modules, storage, APIs, queues, and external systems.
-- Flowchart: sequential steps, decisions, branches, retries, and terminal states.
-- Swimlane: cross-team or cross-system workflows with ownership boundaries.
+- Flowchart: one business outcome or focused subprocess with its sequential steps, decisions, retries, and terminal states.
+- Swimlane: one collaboration scenario across teams or systems with clear ownership boundaries.
 - Topology: hosts, zones, networks, gateways, clusters, replicas, and observability.
-- Sequence: participants, synchronous calls, return messages, activation intervals, and combined fragments.
+- Sequence: one use case or runtime scenario with its participants, synchronous calls, return messages, activation intervals, and closely related combined fragments.
 
 ## Typical sequence
 
-1. Inspect the project or process description.
+1. Inspect the project or process description and decide whether it needs one diagram or a focused diagram set.
 2. Call `diagram_list_projects` in the current isolated runtime scope.
 3. Reuse the intended Diagram Studio project or call `diagram_create_project`.
-4. Choose a stable `artifactKey` for the intended diagram instance and an `idempotencyKey` for this tool action. Call `diagram_create_document` or `diagram_import_plantuml` with that `projectId`, both keys, and `mode: "upsert"`.
+4. For each planned diagram, choose a distinct stable `artifactKey` and an `idempotencyKey` for that tool action. Call `diagram_create_document` or `diagram_import_plantuml` with that `projectId`, both keys, and `mode: "upsert"`.
 5. Read the created document.
 6. Patch nodes and edges with verified names and evidence.
 7. Auto-layout.
@@ -87,6 +108,8 @@ core --> db : SQL
 ## PlantUML workflow
 
 - Sequence supports participant, actor, boundary, control, entity, database, queue, messages, activate/deactivate, and alt/opt/loop-style fragments.
+- In sequence diagrams, give every participant that performs synchronous work an activation interval. Start it when a synchronous call transfers control and normally end it at the matching return. Keep explicit `activate`/`deactivate` statements for intentional or nested intervals; asynchronous notifications (`->>`/`-->>`) must not create long inferred activations.
+- Combined fragments such as `alt`, `opt`, and `loop` are structural boundaries, not content masks. Keep messages and activation bars readable inside them and avoid overlapping fragment labels with the first message.
 - Flowchart supports Activity Diagram `start`, activities, `if/else/endif`, and `stop` semantics.
 - Swimlane supports the same Activity semantics plus `partition` and `|Lane|` lane switches.
 - Architecture supports Component Diagram actors, components, interfaces, databases, queues, and labeled or dashed dependencies.
