@@ -204,6 +204,10 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
+        Self.publishAuthenticationExpirationIfNeeded(
+            statusCode: http.statusCode,
+            token: token
+        )
         guard (200..<300).contains(http.statusCode) else {
             throw NativeConnectorError.server(
                 status: http.statusCode,
@@ -253,6 +257,10 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
+        Self.publishAuthenticationExpirationIfNeeded(
+            statusCode: http.statusCode,
+            token: token
+        )
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? decoder.decode(GatewayErrorDTO.self, from: data)
             throw NativeConnectorError.server(
@@ -285,6 +293,10 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
+        Self.publishAuthenticationExpirationIfNeeded(
+            statusCode: http.statusCode,
+            token: token
+        )
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? decoder.decode(GatewayErrorDTO.self, from: data)
             throw NativeConnectorError.server(
@@ -304,6 +316,21 @@ struct NativeConnectorGateway: Sendable {
             string: baseURL.absoluteString
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/")) + endpoint
         )
+    }
+
+    @discardableResult
+    static func publishAuthenticationExpirationIfNeeded(
+        statusCode: Int,
+        token: String?,
+        notificationCenter: NotificationCenter = .default
+    ) -> Bool {
+        guard statusCode == 401,
+              let token,
+              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        notificationCenter.post(name: .chatOSAuthenticationDidExpire, object: nil)
+        return true
     }
 }
 

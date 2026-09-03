@@ -6,6 +6,12 @@ struct SettingsView: View {
     @State private var selection: SettingsSection = .general
 
     var body: some View {
+        AuthenticationGateView(authentication: model.authentication) {
+            authenticatedSettings
+        }
+    }
+
+    private var authenticatedSettings: some View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("ChatOS") {

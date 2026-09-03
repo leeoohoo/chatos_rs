@@ -4,6 +4,37 @@ import Testing
 
 struct NativeConnectorGatewayDTOTests {
     @Test
+    func authenticatedUnauthorizedResponsePublishesSessionExpiration() async {
+        let center = NotificationCenter()
+        await confirmation("connector authentication expiration") { confirmed in
+            let observer = center.addObserver(
+                forName: .chatOSAuthenticationDidExpire,
+                object: nil,
+                queue: nil
+            ) { _ in
+                confirmed()
+            }
+            defer { center.removeObserver(observer) }
+
+            #expect(NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+                statusCode: 401,
+                token: "expired-token",
+                notificationCenter: center
+            ))
+        }
+        #expect(!NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+            statusCode: 401,
+            token: nil,
+            notificationCenter: center
+        ))
+        #expect(!NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+            statusCode: 500,
+            token: "token",
+            notificationCenter: center
+        ))
+    }
+
+    @Test
     func pluginSourceDecodesPublisherObjectAndNestedCategory() throws {
         let data = Data(
             """
