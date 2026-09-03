@@ -181,6 +181,7 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
       <PluginPublishWizard
         open={modalOpen}
         marketplaces={marketplacesQuery.data?.items || []}
+        plugins={pluginsQuery.data?.items || []}
         publishers={publishersQuery.data?.items || []}
         onClose={() => setModalOpen(false)}
         onPublished={(result) => {

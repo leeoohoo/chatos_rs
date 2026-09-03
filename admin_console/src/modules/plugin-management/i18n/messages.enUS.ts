@@ -246,6 +246,7 @@ export const enUSMessages: Record<string, string> = {
   'pluginPublish.preview': 'Publish preview',
   'pluginPublish.packageBins': 'MCP executables',
   'pluginPublish.permissions': 'Permissions',
+  'pluginPublish.existingCatalogPolicyPreserved': 'This is a new Release for an existing Plugin. Visibility, featured status, and reviewed license metadata are preserved from the catalog.',
   'pluginPublish.publish': 'Publish',
   'pluginPublish.published': 'Plugin published and ready for client installation',
   'pluginAudit.title': 'Audit Diagnostics',

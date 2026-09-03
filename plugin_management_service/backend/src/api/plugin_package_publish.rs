@@ -204,6 +204,20 @@ pub(super) async fn publish_uploaded_plugin(
                 "existing Plugin catalog entry belongs to another publisher",
             ));
         }
+        if state
+            .store
+            .find_plugin_release_by_version(
+                catalog.id.as_str(),
+                stored.normalized_manifest.version.as_str(),
+            )
+            .await
+            .map_err(ApiError::internal)?
+            .is_some()
+        {
+            return Err(ApiError::conflict(
+                "Plugin release version is immutable and already exists",
+            ));
+        }
     }
     let publisher = ensure_admin_managed_publisher(
         &state,
@@ -223,33 +237,9 @@ pub(super) async fn publish_uploaded_plugin(
         website: publisher.website.clone(),
         verified: true,
     };
+    let updates_existing_catalog = existing_catalog.is_some();
     let catalog = match existing_catalog {
-        Some(mut catalog) => {
-            // A new package release is also the source of truth for marketplace
-            // presentation metadata. Without this refresh, renamed plugins keep
-            // showing the title and description from their first published build.
-            catalog.display_name = stored.normalized_manifest.interface.display_name.clone();
-            catalog.description = stored.normalized_manifest.description.clone();
-            catalog.publisher = plugin_publisher.clone();
-            catalog.interface = stored.normalized_manifest.interface.clone();
-            catalog.keywords = stored.normalized_manifest.keywords.clone();
-            catalog.visibility = request.visibility;
-            catalog.featured = request.featured;
-            catalog.has_ui = !stored.normalized_manifest.ui.is_empty();
-            catalog.license = PluginLicenseMetadata {
-                license_id: request.license_id,
-                license_url,
-                redistributable: request.redistributable,
-                reviewed_at: request.redistributable.then(now_rfc3339),
-            };
-            catalog.updated_at = now_rfc3339();
-            state
-                .store
-                .replace_plugin_catalog_entry(&catalog)
-                .await
-                .map_err(ApiError::internal)?;
-            catalog
-        }
+        Some(catalog) => catalog,
         None => {
             publish_plugin_catalog_entry(
                 &state,
@@ -259,16 +249,16 @@ pub(super) async fn publish_uploaded_plugin(
                     name: stored.normalized_manifest.name.clone(),
                     display_name: stored.normalized_manifest.interface.display_name.clone(),
                     description: stored.normalized_manifest.description.clone(),
-                    publisher: plugin_publisher,
+                    publisher: plugin_publisher.clone(),
                     interface: stored.normalized_manifest.interface.clone(),
                     keywords: stored.normalized_manifest.keywords.clone(),
-                    visibility: request.visibility,
+                    visibility: request.visibility.clone(),
                     featured: request.featured,
                     enabled: true,
                     has_ui: !stored.normalized_manifest.ui.is_empty(),
                     license: PluginLicenseMetadata {
-                        license_id: request.license_id,
-                        license_url,
+                        license_id: request.license_id.clone(),
+                        license_url: license_url.clone(),
                         redistributable: request.redistributable,
                         reviewed_at: request.redistributable.then(now_rfc3339),
                     },
@@ -320,10 +310,45 @@ pub(super) async fn publish_uploaded_plugin(
             sbom_ref: None,
             release_channel: request.release_channel,
         },
-        stored.normalized_manifest,
+        stored.normalized_manifest.clone(),
     )
     .await?;
+    let mut catalog = state
+        .store
+        .get_plugin_catalog_entry(catalog.id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::internal("published Plugin catalog entry is missing"))?;
+    if updates_existing_catalog {
+        // Package publishing refreshes presentation data only. Governance fields
+        // (visibility, featured status and reviewed license metadata) belong to
+        // the catalog and must not be reset by release-form defaults.
+        apply_uploaded_presentation_metadata(
+            &mut catalog,
+            &stored.normalized_manifest,
+            plugin_publisher,
+        );
+        catalog.updated_at = now_rfc3339();
+        state
+            .store
+            .replace_plugin_catalog_entry(&catalog)
+            .await
+            .map_err(ApiError::internal)?;
+    }
     Ok(Json(PublishUploadedPluginResponse { catalog, release }))
+}
+
+fn apply_uploaded_presentation_metadata(
+    catalog: &mut PluginCatalogRecord,
+    manifest: &PluginManifest,
+    publisher: PluginPublisher,
+) {
+    catalog.display_name = manifest.interface.display_name.clone();
+    catalog.description = manifest.description.clone();
+    catalog.publisher = publisher;
+    catalog.interface = manifest.interface.clone();
+    catalog.keywords = manifest.keywords.clone();
+    catalog.has_ui = !manifest.ui.is_empty();
 }
 
 pub(super) async fn download_plugin_artifact(
@@ -1049,5 +1074,91 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.message.contains("missing from the npm package"));
+    }
+
+    #[test]
+    fn existing_release_refresh_preserves_catalog_governance_metadata() {
+        let old_manifest = parse_plugin_manifest(r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.0.0",
+          "description":"Old description",
+          "author":{"name":"Old Publisher"},
+          "mcpServers":{"demo":{"type":"stdio","bin":"demo-mcp"}},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start MCP","components":["demo"]}],
+          "interface":{"displayName":"Old Name","shortDescription":"Old","longDescription":"Old description","developerName":"Old Publisher","category":"Developer Tools"}
+        }"#).expect("old manifest");
+        let new_manifest = parse_plugin_manifest(r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.1.0",
+          "description":"New description",
+          "author":{"name":"New Publisher"},
+          "keywords":["browser","automation"],
+          "mcpServers":{"demo":{"type":"stdio","bin":"demo-mcp"}},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start MCP","components":["demo"]}],
+          "interface":{"displayName":"New Name","shortDescription":"New","longDescription":"New description","developerName":"New Publisher","category":"Productivity"}
+        }"#).expect("new manifest");
+        let mut catalog = PluginCatalogRecord {
+            id: "plugin-id".to_string(),
+            plugin_key: "demo-mcp@marketplace".to_string(),
+            marketplace_id: "marketplace".to_string(),
+            owner_user_id: None,
+            name: "demo-mcp".to_string(),
+            display_name: old_manifest.interface.display_name.clone(),
+            description: old_manifest.description.clone(),
+            publisher: PluginPublisher {
+                id: "publisher".to_string(),
+                name: "Old Publisher".to_string(),
+                website: None,
+                verified: true,
+            },
+            interface: old_manifest.interface,
+            keywords: Vec::new(),
+            visibility: "private".to_string(),
+            featured: true,
+            enabled: true,
+            has_ui: false,
+            latest_release_id: "release-id".to_string(),
+            license: PluginLicenseMetadata {
+                license_id: "Apache-2.0".to_string(),
+                license_url: Some("https://www.apache.org/licenses/LICENSE-2.0".to_string()),
+                redistributable: true,
+                reviewed_at: Some("2026-09-03T00:00:00Z".to_string()),
+            },
+            created_at: "2026-09-03T00:00:00Z".to_string(),
+            updated_at: "2026-09-03T00:00:00Z".to_string(),
+        };
+        let governance_before = (
+            catalog.visibility.clone(),
+            catalog.featured,
+            catalog.license.clone(),
+            catalog.latest_release_id.clone(),
+        );
+
+        apply_uploaded_presentation_metadata(
+            &mut catalog,
+            &new_manifest,
+            PluginPublisher {
+                id: "publisher".to_string(),
+                name: "New Publisher".to_string(),
+                website: Some("https://example.com".to_string()),
+                verified: true,
+            },
+        );
+
+        assert_eq!(catalog.display_name, "New Name");
+        assert_eq!(catalog.description, "New description");
+        assert_eq!(catalog.publisher.name, "New Publisher");
+        assert_eq!(catalog.keywords, vec!["automation", "browser"]);
+        assert_eq!(
+            (
+                catalog.visibility,
+                catalog.featured,
+                catalog.license,
+                catalog.latest_release_id,
+            ),
+            governance_before,
+        );
     }
 }
