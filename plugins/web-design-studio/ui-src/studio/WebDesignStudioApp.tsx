@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { ConfigProvider } from 'antd';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   autoLayoutContainer,
   breakpointFor,
@@ -43,7 +42,8 @@ import {
   type WebSymbolOverride
 } from '../../src/schema';
 import { createRepository, type DesignRepository, type DesignSummary } from './repository';
-import { AntdCanvasComponent } from './AntdCanvasComponent';
+
+const AntdCanvasComponent = lazy(() => import('./AntdCanvasComponent').then((module) => ({ default: module.AntdCanvasComponent })));
 
 type PaletteCategory = '布局' | '内容' | '表单' | '展示';
 
@@ -1139,15 +1139,13 @@ export function WebDesignStudioApp() {
                 '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
                 '--radius-large': `${tokens?.radii.large ?? 28}px`
               } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { setSelectedId(undefined); setSelectedIds([]); }}>
-                <ConfigProvider theme={{ token: { colorPrimary: tokens?.colors.primary ?? '#007AFF', borderRadius: tokens?.radii.medium ?? 14, fontFamily: tokens?.typography.fontFamily } }}>
-                  {snapGuides.x !== undefined && <div className="snap-guide vertical" style={{ left: snapGuides.x }} />}
-                  {snapGuides.y !== undefined && <div className="snap-guide horizontal" style={{ top: snapGuides.y }} />}
-                  {[...pageComponents].sort((left, right) => left.zIndex - right.zIndex).map((component) => {
-                    const resolved = resolveComponent(component, device);
-                    if (resolved.hidden) return null;
-                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} preview={preview} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
-                  })}
-                </ConfigProvider>
+                {snapGuides.x !== undefined && <div className="snap-guide vertical" style={{ left: snapGuides.x }} />}
+                {snapGuides.y !== undefined && <div className="snap-guide horizontal" style={{ top: snapGuides.y }} />}
+                {[...pageComponents].sort((left, right) => left.zIndex - right.zIndex).map((component) => {
+                  const resolved = resolveComponent(component, device);
+                  if (resolved.hidden) return null;
+                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} preview={preview} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                })}
               </div>
             </div>
           </div>
@@ -1223,7 +1221,7 @@ function NumberField({ label, value, onChange, disabled = false }: { label: stri
 }
 
 function CanvasComponentContent({ component, preview }: { component: WebDesignComponent; preview: boolean }) {
-  if (component.library?.name === 'antd') return <div className={`antd-canvas-content ${preview ? 'preview' : ''}`}><AntdCanvasComponent component={component} preview={preview} /></div>;
+  if (component.library?.name === 'antd') return <div className={`antd-canvas-content ${preview ? 'preview' : ''}`}><Suspense fallback={<span className="antd-loading-placeholder">加载组件…</span>}><AntdCanvasComponent component={component} preview={preview} /></Suspense></div>;
   if (component.type === 'image') return component.content ? <img src={component.content} alt={component.name} draggable={false} /> : <span className="image-placeholder">图片</span>;
   if (component.type === 'video') return component.content ? <video src={component.content} controls={preview} muted /> : <span className="media-placeholder">▶<small>视频</small></span>;
   if (component.type === 'input') return <span className="input-placeholder">{component.content}</span>;

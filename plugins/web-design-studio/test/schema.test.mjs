@@ -19,6 +19,7 @@ import {
 } from '../dist/editor-model.test.mjs';
 import { componentDefaults, createLandingPage } from '../dist/templates.test.mjs';
 import { createBlockPreset, createPageTemplate, WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES } from '../dist/component-library.test.mjs';
+import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_VERSION, createAntdComponent } from '../dist/antd-library.test.mjs';
 import { exportDocumentHtmlFiles, exportPageHtml } from '../dist/html-exporter.test.mjs';
 import { exportReactComponent } from '../dist/react-exporter.test.mjs';
 import { exportVueComponent } from '../dist/vue-exporter.test.mjs';
@@ -83,6 +84,29 @@ test('complete page templates replace the active page and remain valid on every 
     }
   }
   assert.deepEqual(WEB_DESIGN_PAGE_TEMPLATES.map((template) => template.id), ['saas', 'launch', 'business']);
+});
+
+test('Ant Design 6.2.2 catalog provides valid persistent components across every category', () => {
+  const document = createLandingPage();
+  const components = ANTD_COMPONENTS.map((definition, index) => {
+    const component = createAntdComponent(definition.id, 20 + (index % 5) * 180, 20 + Math.floor(index / 5) * 90);
+    component.pageId = 'home';
+    component.zIndex = index + 1;
+    return component;
+  });
+  document.components = components;
+  assert.equal(ANTD_VERSION, '6.2.2');
+  assert.equal(ANTD_COMPONENTS.length, 65);
+  assert.deepEqual([...new Set(ANTD_COMPONENTS.map((component) => component.category))], ANTD_CATEGORIES);
+  assert.equal(components.every((component) => component.library?.name === 'antd' && component.library.version === ANTD_VERSION), true);
+  assertWebDesignDocument(document);
+
+  const html = exportPageHtml(document, 'home');
+  assert.match(html, /data-library="antd"/);
+  assert.match(html, /data-library-component="Button"/);
+  const react = exportReactComponent(document);
+  assert.match(react.content, /import \* as Antd from 'antd'/);
+  assert.match(react.content, /AntDesignComponent/);
 });
 
 test('device-specific patches preserve desktop layout and update mobile overrides', () => {

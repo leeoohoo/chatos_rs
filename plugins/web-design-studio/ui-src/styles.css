@@ -166,6 +166,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .canvas-component.library-antd { align-items: flex-start; justify-content: flex-start; padding: 0; line-height: normal; }
 .antd-canvas-content { width: 100%; height: 100%; display: flex; align-items: center; justify-content: flex-start; overflow: visible; pointer-events: none; }
 .antd-canvas-content.preview { pointer-events: auto; }
+.antd-loading-placeholder { padding: 6px 9px; border-radius: 7px; background: #eaf3ff; color: #0066cc; font-size: 11px; }
 .antd-canvas-content .ant-btn, .antd-canvas-content .ant-input, .antd-canvas-content .ant-input-number, .antd-canvas-content .ant-select, .antd-canvas-content .ant-picker { max-width: 100%; }
 .antd-grid-cell, .antd-split-panel { width: 100%; height: 100%; display: grid; place-items: center; border-radius: 7px; background: #eaf3ff; color: #0066cc; }
 .antd-layout-header { height: 38px !important; line-height: 38px !important; padding: 0 12px !important; background: #1677ff !important; color: white !important; }
