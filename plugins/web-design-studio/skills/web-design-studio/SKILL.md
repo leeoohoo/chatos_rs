@@ -38,6 +38,9 @@ Use Web Design Studio when the user wants an editable website, landing page, UI 
 27. Respect each symbol layer's `symbolOverrides` values: `content`, `style`, and `frame`.
 28. Use `interaction` with `{ type: "page", target: pageId }` or an HTTPS URL for preview click behavior.
 29. Export HTML, React, or Vue only when the user explicitly asks for a code deliverable.
+30. Prefer a returned production page template or section preset as the starting structure for product sites, brand sites, portfolios, and campaign pages. Do not approximate a marketing site by stacking dashboard cards and form controls.
+31. Treat full-page templates and reusable page sections as editable component trees, not opaque screenshots. Preserve their parent relationships and responsive frames when refining them.
+32. Use `web_design_apply_page_template` for a new full product, brand, portfolio, campaign, or developer page when a matching template exists. Use `web_design_insert_section` to add a single narrative region without replacing the rest of the page.
 
 ## Typical workflow
 
@@ -46,11 +49,12 @@ Use Web Design Studio when the user wants an editable website, landing page, UI 
 3. Call `web_design_list_documents` with that internal `projectId`.
 4. Reuse the intended document or call `web_design_create_document` with that internal `projectId`.
 5. Call `web_design_get_document` and inspect pages, components, annotations, requests, tokens, and revision.
-6. Call `web_design_get_component_library` when adding components or choosing a visual direction.
-7. Apply focused operations with `web_design_apply_patch`.
-8. If working from the request queue, call `web_design_resolve_request` after the requested design change succeeds.
-9. Call `web_design_validate` and fix layout or structural issues before finishing.
-10. Only when code delivery is requested, call the matching export tool and return the generated files.
+6. Call `web_design_get_component_library` when adding components or choosing a visual direction; inspect its `sections` and `pageTemplates` before assembling a visually rich public-facing page.
+7. Apply a suitable full-page starting point with `web_design_apply_page_template`, or add individual regions with `web_design_insert_section`.
+8. Refine the result with focused operations through `web_design_apply_patch` instead of discarding the generated structure.
+9. If working from the request queue, call `web_design_resolve_request` after the requested design change succeeds.
+10. Call `web_design_validate` and fix layout or structural issues before finishing.
+11. Only when code delivery is requested, call the matching export tool and return the generated files.
 
 ## Component editing guidance
 

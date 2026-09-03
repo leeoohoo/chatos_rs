@@ -14,7 +14,8 @@ import {
   type WebDesignPatchOperation
 } from './schema.js';
 import { createBlankWebsite, createLandingPage } from './templates.js';
-import { autoLayoutContainer, syncSymbolInstances, updateSymbolFromInstance } from './editor-model.js';
+import { autoLayoutContainer, growPageToFitContent, syncSymbolInstances, updateSymbolFromInstance } from './editor-model.js';
+import { createBlockPreset, createPageTemplate, type WebDesignBlockPresetId, type WebDesignPageTemplateId } from './component-library.js';
 import type { WebDesignDevice } from './schema.js';
 
 export class RevisionConflictError extends Error {
@@ -247,6 +248,53 @@ export class WebDesignDocumentStore {
       const current = await this.read(documentId);
       if (current.revision !== expectedRevision) throw new RevisionConflictError(current.revision);
       const next = autoLayoutContainer(current, containerId, device);
+      next.revision = expectedRevision + 1;
+      next.updatedAt = new Date().toISOString();
+      assertWebDesignDocument(next);
+      await this.atomicWrite(this.documentPath(documentId), next);
+      return next;
+    });
+  }
+
+  async insertSection(
+    documentId: string,
+    expectedRevision: number,
+    pageId: string,
+    presetId: WebDesignBlockPresetId
+  ): Promise<WebDesignDocument> {
+    return this.withLock(documentId, async () => {
+      const current = await this.read(documentId);
+      if (current.revision !== expectedRevision) throw new RevisionConflictError(current.revision);
+      if (!(current.pages ?? [{ id: 'home' }]).some((page) => page.id === pageId)) throw new Error(`Page not found: ${pageId}`);
+      const block = createBlockPreset(current, pageId, presetId);
+      let next: WebDesignDocument = { ...current, components: [...current.components, ...block.components] };
+      for (const device of ['desktop', 'tablet', 'mobile'] as const) next = growPageToFitContent(next, pageId, device);
+      next.revision = expectedRevision + 1;
+      next.updatedAt = new Date().toISOString();
+      assertWebDesignDocument(next);
+      await this.atomicWrite(this.documentPath(documentId), next);
+      return next;
+    });
+  }
+
+  async applyPageTemplate(
+    documentId: string,
+    expectedRevision: number,
+    pageId: string,
+    templateId: WebDesignPageTemplateId
+  ): Promise<WebDesignDocument> {
+    return this.withLock(documentId, async () => {
+      const current = await this.read(documentId);
+      if (current.revision !== expectedRevision) throw new RevisionConflictError(current.revision);
+      if (!(current.pages ?? [{ id: 'home' }]).some((page) => page.id === pageId)) throw new Error(`Page not found: ${pageId}`);
+      const removedIds = new Set(current.components.filter((component) => (component.pageId ?? 'home') === pageId).map((component) => component.id));
+      const template = createPageTemplate(current, pageId, templateId);
+      let next: WebDesignDocument = {
+        ...current,
+        components: [...current.components.filter((component) => !removedIds.has(component.id)), ...template.components],
+        requests: current.requests.filter((request) => !request.componentId || !removedIds.has(request.componentId))
+      };
+      for (const device of ['desktop', 'tablet', 'mobile'] as const) next = growPageToFitContent(next, pageId, device);
       next.revision = expectedRevision + 1;
       next.updatedAt = new Date().toISOString();
       assertWebDesignDocument(next);

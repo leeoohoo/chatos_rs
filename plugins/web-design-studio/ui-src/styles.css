@@ -146,7 +146,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .palette-panel-content::-webkit-scrollbar, .inspector-panel::-webkit-scrollbar, .canvas-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
 .palette-panel-content::-webkit-scrollbar-thumb, .inspector-panel::-webkit-scrollbar-thumb, .canvas-scroll::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: #aeaeb2; background-clip: padding-box; }
 .palette-panel-content::-webkit-scrollbar-corner, .inspector-panel::-webkit-scrollbar-corner, .canvas-scroll::-webkit-scrollbar-corner { background: transparent; }
-.library-tabs { flex: none; display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; padding: 10px 10px 8px; border-bottom: 1px solid var(--separator); background: rgba(255,255,255,.72); }
+.library-tabs { flex: none; display: grid; grid-template-columns: repeat(4,1fr); gap: 4px; padding: 10px 10px 8px; border-bottom: 1px solid var(--separator); background: rgba(255,255,255,.72); }
 .library-tabs button { height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--secondary-label); font-size: 12px; font-weight: 650; }
 .library-tabs button:hover { background: rgba(118,118,128,.1); color: #007aff; }
 .library-tabs button.active { background: #e8f2ff; color: #007aff; box-shadow: inset 0 0 0 1px rgba(0,122,255,.14); }
@@ -160,6 +160,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .page-template-list button > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .page-template-list strong { font-size: 11px; }
 .page-template-list small { color: var(--tertiary-label); font-size: 9px; line-height: 1.35; }
+.page-template-list.rich { gap: 9px; }
+.page-template-list.rich button { position: relative; min-height: 104px; grid-template-columns: 52px minmax(0,1fr) 12px; padding: 11px; border-radius: 13px; background: rgba(255,255,255,.9); }
+.page-template-list.rich button:hover { background: #FFFFFF; }
+.page-template-list.rich .page-template-icon { width: 52px; height: 72px; border-radius: 12px; font-size: 13px; letter-spacing: -.04em; box-shadow: inset 0 0 0 1px rgba(255,255,255,.14),0 8px 18px rgba(15,23,42,.12); }
+.page-template-list.rich button > div { gap: 2px; }
+.page-template-list.rich em { color: #007AFF; font-size: 8px; font-style: normal; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.page-template-list.rich strong { font-size: 12px; }
+.page-template-list.rich small { display: -webkit-box; overflow: hidden; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.page-template-list.rich i { margin-top: 3px; color: var(--tertiary-label); font-size: 8.5px; font-style: normal; }
+.page-template-list.rich b { color: var(--tertiary-label); font-size: 16px; font-weight: 500; }
 .panel-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 750; color: var(--secondary-label); margin-bottom: 12px; }
 .antd-library-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 2px 1px; }
 .antd-library-heading > div:last-child { display: flex; flex-direction: column; gap: 2px; }
@@ -276,6 +286,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .palette-item:hover { border-color: rgba(0,122,255,.42); color: #007aff; background: #f4f9ff; box-shadow: 0 7px 18px rgba(0,122,255,.08); }
 .palette-icon { font-size: 21px; font-weight: 800; }
 .block-preset-list { display: flex; flex-direction: column; gap: 6px; }
+.block-preset-category { margin: 0 0 17px; }
+.block-preset-category-title { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 7px; padding-bottom: 7px; border-bottom: 1px solid var(--separator); }
+.block-preset-category-title strong { color: var(--secondary-label); font-size: 10px; font-weight: 750; }
+.block-preset-category-title span { min-width: 18px; padding: 2px 5px; border-radius: 999px; background: var(--fill); color: var(--tertiary-label); font-size: 8px; text-align: center; }
 .block-preset-list > button { width: 100%; display: grid; grid-template-columns: 28px minmax(0,1fr) 18px; align-items: center; gap: 7px; padding: 9px 8px; border: 1px solid #dfdce8; border-radius: 10px; background: #faf9fc; color: #625d70; text-align: left; }
 .block-preset-list > button:hover { border-color: rgba(0,122,255,.38); background: #f3f8ff; color: #007aff; }
 .block-preset-list > button > span { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: #e8f2ff; color: #007aff; font-weight: 850; }

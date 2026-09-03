@@ -37,6 +37,8 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_create_project'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_project'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_move_document'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_insert_section'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_apply_page_template'));
     assert.equal(tools.tools.some((tool) => Object.hasOwn(tool.inputSchema.properties ?? {}, 'chatosProjectId')), false);
 
     const projectList = await client.callTool({ name: 'web_design_list_projects', arguments: {} });
@@ -57,13 +59,32 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.equal(chakraLibrary.components.every((component) => component.variants.length >= 2), true);
     assert.ok(library.structuredContent.libraries.find((item) => item.id === 'shadcn').components.length >= 45);
     assert.equal(library.structuredContent.themes.length, 6);
+    assert.equal(library.structuredContent.sections.length, 28);
+    assert.equal(library.structuredContent.pageTemplates.length, 8);
+    assert.equal(library.structuredContent.sections.some((section) => section.id === 'hero-centered'), true);
+    assert.equal(library.structuredContent.pageTemplates.some((template) => template.id === 'developer'), true);
     assert.equal(library.structuredContent.libraries.find((item) => item.id === 'antd').components.find((component) => component.id === 'Input').variants.length, 9);
+
+    const templateSeed = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'Template Website', blank: true } });
+    const templateDocumentId = templateSeed.structuredContent.document.documentId;
+    const templated = await client.callTool({
+      name: 'web_design_apply_page_template',
+      arguments: { documentId: templateDocumentId, expectedRevision: 1, pageId: 'home', templateId: 'developer' }
+    });
+    assert.equal(templated.structuredContent.document.revision, 2);
+    assert.ok(templated.structuredContent.document.components.length > 50);
+    const withSection = await client.callTool({
+      name: 'web_design_insert_section',
+      arguments: { documentId: templateDocumentId, expectedRevision: 2, pageId: 'home', sectionId: 'gallery' }
+    });
+    assert.equal(withSection.structuredContent.document.revision, 3);
+    assert.ok(withSection.structuredContent.document.components.length > templated.structuredContent.document.components.length);
 
     const created = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'MCP Website' } });
     const documentId = created.structuredContent.document.documentId;
     assert.equal(created.structuredContent.scope.chatosProjectId, 'host-project-through-123');
     const internalProject = await client.callTool({ name: 'web_design_get_project', arguments: { projectId: internalProjectId } });
-    assert.deepEqual(internalProject.structuredContent.project.designIds, [documentId]);
+    assert.deepEqual(internalProject.structuredContent.project.designIds, [templateDocumentId, documentId]);
     assert.equal(internalProject.structuredContent.scope.chatosProjectId, 'host-project-through-123');
     const read = await client.callTool({ name: 'web_design_get_document', arguments: { documentId } });
     assert.equal(read.structuredContent.document.revision, 1);

@@ -215,13 +215,14 @@ test('finished block presets insert valid responsive component trees', () => {
   let document = createLandingPage();
   for (const preset of WEB_DESIGN_BLOCK_PRESETS) {
     const block = createBlockPreset(document, 'home', preset.id);
-    assert.ok(block.components.length >= 5);
+    assert.ok(block.components.length >= 3);
     assert.ok(block.rootIds.length >= 1);
     assert.equal(block.components.every((component) => component.pageId === 'home' && component.responsive?.mobile), true);
     document = { ...document, components: [...document.components, ...block.components] };
     assertWebDesignDocument(document);
   }
-  assert.deepEqual(WEB_DESIGN_BLOCK_PRESETS.map((preset) => preset.id), ['navbar', 'hero', 'features', 'pricing', 'faq', 'contact', 'footer']);
+  assert.equal(WEB_DESIGN_BLOCK_PRESETS.length, 28);
+  assert.deepEqual([...new Set(WEB_DESIGN_BLOCK_PRESETS.map((preset) => preset.category))], ['导航', '首屏', '品牌信任', '产品介绍', '内容展示', '转化', '视觉效果', '页脚']);
 });
 
 test('complete page templates replace the active page and remain valid on every device', () => {
@@ -249,7 +250,8 @@ test('complete page templates replace the active page and remain valid on every 
       assert.ok(Math.max(...frames.map((frame) => frame.y + frame.height)) > breakpointFor(document, device).height);
     }
   }
-  assert.deepEqual(WEB_DESIGN_PAGE_TEMPLATES.map((template) => template.id), ['saas', 'launch', 'business']);
+  assert.deepEqual(WEB_DESIGN_PAGE_TEMPLATES.map((template) => template.id), ['saas', 'ai-product', 'developer', 'launch', 'business', 'creative', 'portfolio', 'mobile-app']);
+  assert.equal(WEB_DESIGN_PAGE_TEMPLATES.every((template) => template.blocks.length >= 9 && template.palette.length === 3), true);
 });
 
 test('Ant Design 6.6.2 catalog matches the current official component baseline', () => {

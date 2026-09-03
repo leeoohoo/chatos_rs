@@ -279,7 +279,7 @@ type Interaction = {
 
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
-type LibraryTab = 'components' | WebDesignLibraryName | 'blocks' | 'layers';
+type LibraryTab = 'components' | WebDesignLibraryName | 'blocks' | 'pages' | 'layers';
 type VariantPickerTarget = { library: WebDesignLibraryName; componentId: string };
 type EditingSlot = { componentId: string; slotId: string };
 
@@ -1647,6 +1647,8 @@ export function WebDesignStudioApp() {
     || `${item.label} ${item.id} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const filteredPresets = WEB_DESIGN_BLOCK_PRESETS.filter((preset) => !normalizedPaletteQuery
     || `${preset.name} ${preset.description} ${preset.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
+  const filteredPageTemplates = WEB_DESIGN_PAGE_TEMPLATES.filter((template) => !normalizedPaletteQuery
+    || `${template.name} ${template.description} ${template.category} ${template.blocks.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const activeUiLibrary = libraryTab === 'antd' || libraryTab === 'chakra' || libraryTab === 'shadcn' ? uiLibraryByName(libraryTab) : undefined;
   const filteredUiLibraryComponents = activeUiLibrary?.components.filter((item) => !normalizedPaletteQuery
     || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery)) ?? [];
@@ -1698,11 +1700,12 @@ export function WebDesignStudioApp() {
             <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => setLibraryTab('chakra')}>Chakra</button>
             <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => setLibraryTab('shadcn')}>shadcn</button>
             <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>图形</button>
-            <button className={libraryTab === 'blocks' ? 'active' : ''} onClick={() => setLibraryTab('blocks')}>区块</button>
+            <button className={libraryTab === 'blocks' ? 'active' : ''} onClick={() => setLibraryTab('blocks')}>版块</button>
+            <button className={libraryTab === 'pages' ? 'active' : ''} onClick={() => setLibraryTab('pages')}>页面</button>
             <button className={libraryTab === 'layers' ? 'active' : ''} onClick={() => setLibraryTab('layers')}>图层</button>
           </div>
           <div className="palette-panel-content">
-            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索基础图形…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : '搜索成品区块…'} />}
+            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索基础图形…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : libraryTab === 'pages' ? '搜索页面模板…' : '搜索版块…'} />}
 
             {libraryTab === 'components' && <>
               <div className="panel-intro"><strong>基础图形</strong><span>只保留矩形、圆形和直线；产品组件统一使用成熟 UI 库</span></div>
@@ -1721,13 +1724,19 @@ export function WebDesignStudioApp() {
             </>}
 
             {libraryTab === 'blocks' && <>
-              <div className="panel-intro"><strong>页面模板</strong><span>一键替换当前页，得到可继续编辑的完整网站结构</span></div>
-              <div className="page-template-list">{WEB_DESIGN_PAGE_TEMPLATES.map((template) => <button key={template.id} onClick={() => applyPageTemplate(template.id)}><span>{template.icon}</span><div><strong>{template.name}</strong><small>{template.description}</small></div></button>)}</div>
-              <div className="panel-title section-title">成品区块</div>
-              <div className="block-preset-list">{filteredPresets.map((preset) => <button key={preset.id} onClick={() => insertBlockPreset(preset.id)}><span>{preset.icon}</span><div><strong>{preset.name}</strong><small>{preset.description}</small></div><b>＋</b></button>)}</div>
+              <div className="panel-intro"><strong>页面版块</strong><span>{WEB_DESIGN_BLOCK_PRESETS.length} 个完整设计区域，可单独插入并继续调整每个图层</span></div>
+              {Array.from(new Set(WEB_DESIGN_BLOCK_PRESETS.map((preset) => preset.category))).map((category) => {
+                const items = filteredPresets.filter((preset) => preset.category === category);
+                return items.length > 0 && <section className="block-preset-category" key={category}><div className="block-preset-category-title"><strong>{category}</strong><span>{items.length}</span></div><div className="block-preset-list">{items.map((preset) => <button key={preset.id} onClick={() => insertBlockPreset(preset.id)}><span>{preset.icon}</span><div><strong>{preset.name}</strong><small>{preset.description}</small></div><b>＋</b></button>)}</div></section>;
+              })}
               <div className="panel-title section-title layer-title"><span>我的组件</span><small>{document.symbols?.length ?? 0}</small></div>
               {selectedIds.length > 0 && <button className="secondary-button" onClick={saveSelectionAsSymbol}>将选中项保存为组件</button>}
               <div className="symbol-list">{(document.symbols ?? []).map((symbol) => <div key={symbol.id} className="symbol-row"><button className="symbol-insert" onClick={() => insertSymbol(symbol)}><span>◇</span><strong>{symbol.name}</strong><small>{symbol.components.length} 层</small></button><button className="symbol-remove" title="移出组件库" onClick={() => removeSymbol(symbol.id)}>×</button></div>)}</div>
+            </>}
+
+            {libraryTab === 'pages' && <>
+              <div className="panel-intro"><strong>完整页面</strong><span>一键替换当前页面，生成结构、视觉和响应式均可继续编辑的长页面</span></div>
+              <div className="page-template-list rich">{filteredPageTemplates.map((template) => <button key={template.id} onClick={() => applyPageTemplate(template.id)}><span className="page-template-icon" style={{ background: `linear-gradient(145deg,${template.palette[1]},${template.palette[0]})`, color: template.palette[2] }}>{template.icon}</span><div><em>{template.category}</em><strong>{template.name}</strong><small>{template.description}</small><i>{template.blocks.length} 个版块</i></div><b>›</b></button>)}</div>
             </>}
 
             {libraryTab === 'layers' && <>

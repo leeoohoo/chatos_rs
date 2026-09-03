@@ -10,6 +10,7 @@ import { editableSlotsForUiComponent, isUiContentContainer } from './library-slo
 import { createComponentFromUiLibrary, UI_LIBRARIES } from './ui-libraries.js';
 import { WEB_DESIGN_THEME_PRESETS } from './design-themes.js';
 import { createBlankWebsite } from './templates.js';
+import { WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES } from './component-library.js';
 import {
   assertWebDesignDocument,
   designSummary,
@@ -99,9 +100,41 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'web_design_get_component_library',
-    description: 'Read independently grouped Ant Design, Chakra UI, and shadcn/ui components, variants, editable internal content slots, sample data, insertion sizes, and curated whole-site visual themes. Children placed in a slot use parentId plus slot.',
+    description: 'Read independently grouped Ant Design, Chakra UI, and shadcn/ui components plus production page sections, full-page templates, variants, editable slots, sample data, insertion sizes, and curated visual themes. Children placed in a slot use parentId plus slot.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     _meta: { ...policy, 'chatos/toolResultMaxChars': 300_000 }
+  },
+  {
+    name: 'web_design_insert_section',
+    description: 'Insert one production-ready responsive page section at the end of a page while preserving all existing components.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedRevision: { type: 'integer', minimum: 0 },
+        pageId: { type: 'string', minLength: 1, maxLength: 128 },
+        sectionId: { type: 'string', enum: WEB_DESIGN_BLOCK_PRESETS.map((section) => section.id) }
+      },
+      required: ['documentId', 'expectedRevision', 'pageId', 'sectionId'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_apply_page_template',
+    description: 'Replace one page with a complete editable responsive page template while preserving every other page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedRevision: { type: 'integer', minimum: 0 },
+        pageId: { type: 'string', minLength: 1, maxLength: 128 },
+        templateId: { type: 'string', enum: WEB_DESIGN_PAGE_TEMPLATES.map((template) => template.id) }
+      },
+      required: ['documentId', 'expectedRevision', 'pageId', 'templateId'],
+      additionalProperties: false
+    },
+    _meta: policy
   },
   {
     name: 'web_design_replace_document',
@@ -359,7 +392,27 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
             editableSlots: editableSlotsForUiComponent(createComponentFromUiLibrary(library.id, component.id, 0, 0))
           }))
         })),
+        sections: WEB_DESIGN_BLOCK_PRESETS,
+        pageTemplates: WEB_DESIGN_PAGE_TEMPLATES,
         themes: WEB_DESIGN_THEME_PRESETS
+      };
+    case 'web_design_insert_section':
+      return {
+        document: await store.insertSection(
+          String(argumentsValue.documentId),
+          Number(argumentsValue.expectedRevision),
+          String(argumentsValue.pageId),
+          String(argumentsValue.sectionId) as (typeof WEB_DESIGN_BLOCK_PRESETS)[number]['id']
+        )
+      };
+    case 'web_design_apply_page_template':
+      return {
+        document: await store.applyPageTemplate(
+          String(argumentsValue.documentId),
+          Number(argumentsValue.expectedRevision),
+          String(argumentsValue.pageId),
+          String(argumentsValue.templateId) as (typeof WEB_DESIGN_PAGE_TEMPLATES)[number]['id']
+        )
       };
     case 'web_design_replace_document': {
       const document: unknown = argumentsValue.document;

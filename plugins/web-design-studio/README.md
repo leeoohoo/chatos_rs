@@ -14,8 +14,9 @@ The product provides:
 - an insertion-time live variant gallery, so people choose a visual treatment before adding a component;
 - editable structured example data for options, items, table rows, trees, menus, steps, and other data-driven components;
 - persisted UI-library identity, variant, and JSON-safe props, editable from the inspector and preserved in reusable components;
-- responsive ready-made Navbar, Hero, Features, Pricing, FAQ, Contact, and Footer sections;
-- complete SaaS, product-launch, and business-service page templates that replace the current page in one action;
+- 28 responsive ready-made sections grouped as navigation, hero, trust, product storytelling, editorial content, conversion, visual effects, and footers;
+- eight complete page templates for SaaS, AI products, developer tools, product launches, enterprise services, creative studios, portfolios, and mobile apps;
+- separate Sections and Pages tabs so reusable page regions and full-page starting points remain easy to discover;
 - an Apple-inspired workbench with system typography, neutral materials, translucent chrome, and a single system-blue accent;
 - a scalable desktop canvas;
 - independently scrollable library, canvas, and inspector regions, including long-page canvas scrolling;
