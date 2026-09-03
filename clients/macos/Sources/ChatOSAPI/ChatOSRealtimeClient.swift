@@ -94,7 +94,11 @@ public actor ChatOSRealtimeClient: ConversationRealtimeStreaming, PetActivityStr
         }
         let socket = session.webSocketTask(with: url)
         socket.resume()
-        defer { socket.cancel(with: .goingAway, reason: nil) }
+        let heartbeat = Self.startHeartbeat(for: socket)
+        defer {
+            heartbeat.cancel()
+            socket.cancel(with: .goingAway, reason: nil)
+        }
 
         try await socket.send(.string(Self.userSubscriptionMessage()))
         continuation.yield(.reconcile)
@@ -118,9 +122,14 @@ public actor ChatOSRealtimeClient: ConversationRealtimeStreaming, PetActivityStr
 
         let socket = session.webSocketTask(with: url)
         socket.resume()
-        defer { socket.cancel(with: .goingAway, reason: nil) }
+        let heartbeat = Self.startHeartbeat(for: socket)
+        defer {
+            heartbeat.cancel()
+            socket.cancel(with: .goingAway, reason: nil)
+        }
 
         try await socket.send(.string(Self.subscriptionMessage(sessionID: sessionID)))
+        continuation.yield(Self.reconcileSignal(sessionID: sessionID))
 
         while !Task.isCancelled {
             let message = try await socket.receive()
@@ -157,6 +166,50 @@ public actor ChatOSRealtimeClient: ConversationRealtimeStreaming, PetActivityStr
             return nil
         }
         return envelope.signal(expectedSessionID: sessionID)
+    }
+
+    static func reconcileSignal(sessionID: String) -> ConversationRealtimeSignal {
+        ConversationRealtimeSignal(
+            eventID: "reconcile-\(UUID().uuidString.lowercased())",
+            eventSequence: 0,
+            sessionID: sessionID,
+            turnID: nil,
+            kind: .reconcile,
+            eventName: "conversation.reconcile",
+            timestamp: ISO8601DateFormatter().string(from: Date())
+        )
+    }
+
+    private static func startHeartbeat(
+        for socket: URLSessionWebSocketTask
+    ) -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(20))
+                    guard !Task.isCancelled else { return }
+                    try await sendPing(to: socket)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    socket.cancel(with: .goingAway, reason: nil)
+                    return
+                }
+            }
+        }
+    }
+
+    private static func sendPing(to socket: URLSessionWebSocketTask) async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            socket.sendPing { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 }
 

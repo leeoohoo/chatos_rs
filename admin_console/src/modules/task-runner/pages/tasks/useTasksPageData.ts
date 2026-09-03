@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../../api/client';
+import { api as userServiceApi } from '../../../user-service/api/client';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   TaskProjectRecord,
@@ -196,8 +197,8 @@ export function useTasksPageData({
     enabled: Boolean(detailTaskId),
   });
   const modelsQuery = useQuery({
-    queryKey: ['task-runner', 'model-configs'],
-    queryFn: api.listModelConfigs,
+    queryKey: ['user-service', 'model-configs', 'current-user'],
+    queryFn: () => userServiceApi.listModelConfigs(),
   });
   const projectsQuery = useQuery({
     queryKey: ['task-runner', 'task-projects', 'active'],
@@ -250,7 +251,7 @@ export function useTasksPageData({
   const modelOptions = useMemo(
     () =>
       (modelsQuery.data || [])
-        .filter((model) => model.enabled)
+        .filter((model) => model.enabled && model.task_enabled)
         .map((model) => ({
           label: taskModelOptionLabel(model, t),
           value: model.id,
@@ -261,7 +262,7 @@ export function useTasksPageData({
   const modelNameMap = useMemo(() => {
     const map = new Map<string, string>();
     (modelsQuery.data || []).forEach((model) => {
-      map.set(model.id, model.name);
+      map.set(model.id, model.name || model.model_name);
     });
     return map;
   }, [modelsQuery.data]);

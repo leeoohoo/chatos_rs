@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { Button, Popconfirm, Space, Switch, Tag, Typography } from 'antd';
+import { Button, Popconfirm, Space, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -220,77 +220,7 @@ export function buildProviderColumns({
   ];
 }
 
-export function buildModelColumns({
-  users,
-  onEnabledChange,
-  updatingModelId,
-}: {
-  users?: UserSummaryRecord[];
-  onEnabledChange: (record: UserModelConfigRecord, enabled: boolean) => void;
-  updatingModelId?: string;
-}): ColumnsType<UserModelConfigRecord> {
-  return [
-    {
-      title: 'Concrete Model',
-      dataIndex: 'name',
-      render: (_, record) => (
-        <Space direction="vertical" size={0}>
-          <Typography.Text strong>{record.name}</Typography.Text>
-          <Typography.Text type="secondary">
-            {record.provider} | {record.model_name}
-          </Typography.Text>
-        </Space>
-      ),
-    },
-    {
-      title: 'Owner',
-      dataIndex: 'owner_user_id',
-      width: 220,
-      render: (ownerUserId: string) => userLabel(users, ownerUserId),
-    },
-    {
-      title: 'Task Usage',
-      dataIndex: 'task_usage_scenario',
-      width: 220,
-      render: (value?: string | null) => value || '-',
-    },
-    {
-      title: 'Task Thinking',
-      dataIndex: 'task_thinking_level',
-      width: 160,
-      render: (value?: string | null) => value || '-',
-    },
-    {
-      title: 'Status',
-      dataIndex: 'enabled',
-      width: 150,
-      render: (enabled: boolean, record) => (
-        <Switch
-          checked={enabled}
-          checkedChildren="Enabled"
-          unCheckedChildren="Disabled"
-          loading={updatingModelId === record.id}
-          disabled={Boolean(updatingModelId) && updatingModelId !== record.id}
-          onChange={(nextEnabled) => onEnabledChange(record, nextEnabled)}
-        />
-      ),
-    },
-    {
-      title: 'Flags',
-      key: 'flags',
-      width: 220,
-      render: (_, record) => <ModelCapabilityTags record={record} showEnabled={false} />,
-    },
-    {
-      title: 'Updated',
-      dataIndex: 'updated_at',
-      width: 180,
-      render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss'),
-    },
-  ];
-}
-
-function ModelCapabilityTags({
+export function ModelCapabilityTags({
   record,
   showEnabled = true,
 }: {

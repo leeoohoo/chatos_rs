@@ -9,12 +9,13 @@ Users normally describe the outcome they want, not the Browser CDP implementatio
 
 ## Reliable workflow
 
-1. Open a browser session with `browser_session_open`, or reuse the task's still-valid session. The Browser MCP process binds the opened session internally and supplies it to later tools. Do not add, guess, request, copy, or reconstruct `browser_session_id`; it is program state, not model input. Keep optional tab IDs separate and use them only when a tool needs an explicit tab choice.
-2. Navigate to the requested or reasonably inferred URL with `browser_navigate`.
-3. After navigation, tab switching, or any page transition, call `browser_snapshot` before interacting. Use the newest returned element refs; navigation and later snapshots invalidate older refs.
-4. Use high-level tools such as `browser_click`, `browser_type`, `browser_fill_form`, and `browser_scroll` with the current refs. Use `browser_cdp_send` only when the high-level tools cannot complete the requested operation.
-5. Verify every meaningful action with a fresh read. Prefer `browser_snapshot` when page content or interaction state matters and `browser_session_status` when session health matters. Do not claim success from a click or navigation call alone.
-6. Continue until the requested content or visible outcome is verified. Close the task session with `browser_session_close` when no further browser work is needed.
+1. Open a browser session with `browser_session_open`, or reuse the task's still-valid session. The model-facing tool input has no `mode`, `headless`, or `persistent_profile` fields; never add or invent them. ChatOS selects the browser from verified local authorization: it uses the user's paired Google Chrome with a task-named native tab group after authorization, and automatically falls back to an isolated browser before authorization. The Browser MCP process binds the opened session internally and supplies it to later tools. Do not add, guess, request, copy, or reconstruct `browser_session_id`; it is program state, not model input. Keep optional tab IDs separate and use them only when a tool needs an explicit tab choice.
+2. Read the top-level `mode` in the `browser_session_open` result before navigating. `chrome_extension` means this task is operating the user's Google Chrome and its native task tab group. `managed` means this task is using the isolated fallback because Chrome authorization is unavailable. Never guess the mode or claim that the user's Chrome is in use without this result. If the session was reused or the mode is uncertain, call `browser_session_status` and read its `mode`.
+3. Navigate to the requested or reasonably inferred URL with `browser_navigate`.
+4. After navigation, tab switching, or any page transition, call `browser_snapshot` before interacting. Use the newest returned element refs; navigation and later snapshots invalidate older refs.
+5. Use high-level tools such as `browser_click`, `browser_type`, `browser_fill_form`, and `browser_scroll` with the current refs. Use `browser_cdp_send` only when the high-level tools cannot complete the requested operation.
+6. Verify every meaningful action with a fresh read. Prefer `browser_snapshot` when page content or interaction state matters and `browser_session_status` when session health or the actual mode matters. Do not claim success from a click or navigation call alone.
+7. Continue until the requested content or visible outcome is verified. Close the task session with `browser_session_close` when no further browser work is needed.
 
 For search-and-open requests, do not stop at search-result snippets. Snapshot the results, open the intended result using its current ref, then inspect the destination page before reporting titles, README text, documentation, or other details.
 

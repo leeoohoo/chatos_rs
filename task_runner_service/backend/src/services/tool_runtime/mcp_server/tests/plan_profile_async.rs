@@ -123,7 +123,7 @@ async fn chatos_async_reuse_is_scoped_by_task_profile() {
 }
 
 #[tokio::test]
-async fn chatos_async_create_task_inherits_selected_conversation_model() {
+async fn chatos_async_create_task_preserves_ai_selected_task_model() {
     let (mcp_service, task_service, project_service) = test_mcp_service().await;
     let current_user = agent_user("owner-a");
     for (id, name) in [
@@ -199,10 +199,7 @@ async fn chatos_async_create_task_inherits_selected_conversation_model() {
         .await
         .expect("get plan task")
         .expect("plan task");
-    assert_eq!(
-        task.default_model_config_id.as_deref(),
-        Some("model-selected")
-    );
+    assert_eq!(task.default_model_config_id.as_deref(), Some("model-other"));
 }
 
 #[tokio::test]

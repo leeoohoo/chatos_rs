@@ -37,9 +37,6 @@ impl TaskRunnerMcpService {
                 self.call_task_tool(name, args, current_user, request_context)
                     .await
             }
-            "list_model_configs" | "get_model_config" | "test_model_config" => {
-                self.call_model_tool(name, args, current_user).await
-            }
             "list_runs"
             | "get_run"
             | "start_task_run"
@@ -81,7 +78,7 @@ mod tests {
     #[test]
     fn narrow_tool_profiles_cannot_be_bypassed_by_admin_identity() {
         assert!(tool_call_allowed_for_identity(
-            "test_model_config",
+            "get_task_stats",
             true,
             &McpRequestContext::default(),
         ));

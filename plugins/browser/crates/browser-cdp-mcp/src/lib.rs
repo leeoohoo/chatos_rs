@@ -15,7 +15,7 @@ use tokio::{
 type PendingRequests = Arc<Mutex<HashMap<String, AbortHandle>>>;
 type ActiveBrowserSession = Arc<Mutex<Option<String>>>;
 
-const SERVER_INSTRUCTIONS: &str = "Users describe browser goals, not tool sequences. Call browser_session_open before browser work; the Browser MCP process binds that session internally and automatically supplies it to later tools, so never ask the user for a session ID and never add browser_session_id to tool arguments. After navigation, tab changes, or page transitions, call browser_snapshot before interacting and use only refs from the newest snapshot. Verify meaningful actions with a fresh browser_snapshot, or browser_session_status when session health matters. If browser_navigate times out, check session status and snapshot before concluding that navigation failed. If the process or session is unavailable, reopen once and replay from the last verified step; do not loop. Close the session when browser work is complete. Prefer high-level browser tools and use browser_cdp_send only when they are insufficient.";
+const SERVER_INSTRUCTIONS: &str = "Users describe browser goals, not tool sequences. Call browser_session_open before browser work. Browser mode fields do not exist in the model-facing input: ChatOS uses the user's paired Google Chrome and creates a native task tab group after authorization, then automatically falls back to an isolated browser before authorization. Read the actual mode from every browser_session_open result before continuing: chrome_extension means the user's Google Chrome, while managed means the isolated fallback. The Browser MCP process binds the opened session internally and automatically supplies it to later tools, so never ask the user for a session ID and never add browser_session_id to tool arguments. After navigation, tab changes, or page transitions, call browser_snapshot before interacting and use only refs from the newest snapshot. Verify meaningful actions with a fresh browser_snapshot, or browser_session_status when session health or the current mode matters. If browser_navigate times out, check session status and snapshot before concluding that navigation failed. If the process or session is unavailable, reopen once and replay from the last verified step; do not loop. Close the session when browser work is complete. Prefer high-level browser tools and use browser_cdp_send only when they are insufficient.";
 
 pub async fn serve_stdio(runtime: Arc<BrowserRuntime>) -> Result<(), std::io::Error> {
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
@@ -858,28 +858,17 @@ fn tool_catalog() -> Vec<Value> {
     let mut tools = vec![
         tool_with_permission_rules(
             "browser_session_open",
-            "Launch an isolated managed Chrome session or connect through the Browser MCP owned Existing Chrome bridge.",
+            "Open the browser selected by ChatOS from verified local authorization: paired Google Chrome with a task-named native tab group when available, otherwise an isolated managed browser. The input has no browser-mode fields. Read the returned mode: chrome_extension is the user's Chrome; managed is the isolated fallback.",
             object_schema(
-                vec![
-                    (
-                        "mode",
-                        json!({"type":"string","enum":["managed","chrome_extension"],"default":"managed"}),
-                    ),
-                    ("headless", json!({"type":"boolean","default":true})),
-                    (
-                        "persistent_profile",
-                        json!({"type":"boolean","default":false}),
-                    ),
-                    (
-                        "session_name",
-                        json!({
-                            "type":"string",
-                            "minLength":1,
-                            "maxLength":80,
-                            "description":"Human-readable task name used for the native Chrome tab group in chrome_extension mode."
-                        }),
-                    ),
-                ],
+                vec![(
+                    "session_name",
+                    json!({
+                        "type":"string",
+                        "minLength":1,
+                        "maxLength":80,
+                        "description":"Human-readable task name used for the native Chrome tab group in chrome_extension mode."
+                    }),
+                )],
                 &[],
             ),
             &[],
@@ -891,19 +880,19 @@ fn tool_catalog() -> Vec<Value> {
                 {
                     "argumentPointer": "/mode",
                     "equals": "managed",
-                    "matchWhenMissing": true,
                     "requiredPermissions": ["browser.managed.launch"]
                 },
                 {
                     "argumentPointer": "/mode",
                     "equals": "chrome_extension",
+                    "matchWhenMissing": true,
                     "requiredPermissions": ["browser.chrome.attach"]
                 }
             ]),
         ),
         tool(
             "browser_session_status",
-            "Get browser session status and capabilities.",
+            "Get browser session status, actual current mode, and capabilities.",
             session_schema(),
             &["browser.page.read"],
             "low",
@@ -1788,17 +1777,20 @@ mod tests {
         let mut result = json!({
             "browser_session_id": "bs_private",
             "state": "open",
+            "mode": "managed",
             "browser": {"mode": "managed"}
         });
         hide_browser_session_id_from_result(&mut result);
         assert!(result.get("browser_session_id").is_none());
         assert_eq!(result["state"], "open");
+        assert_eq!(result["mode"], "managed");
     }
 
     #[test]
-    fn session_open_declares_signed_parameter_conditioned_permissions() {
-        let tool = tool_catalog()
-            .into_iter()
+    fn session_open_hides_mode_and_keeps_internal_auto_selection_rules() {
+        let tools = tool_catalog();
+        let tool = tools
+            .iter()
             .find(|tool| tool["name"] == "browser_session_open")
             .unwrap();
         assert_eq!(
@@ -1808,6 +1800,17 @@ mod tests {
         assert_eq!(
             tool.pointer("/_meta/chatos~1requiredPermissions"),
             Some(&json!([]))
+        );
+        assert!(tool.pointer("/inputSchema/properties/mode").is_none());
+        assert!(tool.pointer("/inputSchema/properties/headless").is_none());
+        assert!(
+            tool.pointer("/inputSchema/properties/persistent_profile")
+                .is_none()
+        );
+        assert!(
+            tools
+                .iter()
+                .all(|tool| tool["name"] != "browser_session_open_managed")
         );
         assert_eq!(
             tool.pointer("/_meta/chatos~1permissionRules/0/requiredPermissions/0"),

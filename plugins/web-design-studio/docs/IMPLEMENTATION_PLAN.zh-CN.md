@@ -133,7 +133,7 @@ Web Design Studio Workbench ┘
 - [已完成] 组件、区块、图层三类左侧信息架构，以及适应宽度和 25%–150% 画布缩放；
 - [已完成] 左侧库、中央长页面画布、右侧检查器独立滚动；
 - [已完成] Apple-inspired 设计语言：系统字体、中性灰材质、半透明工具栏、细分隔线和系统蓝强调色；
-- [已完成] 接入实际 Ant Design 6.2.2 包，覆盖七大分类 68 个组件；
+- [已完成] 接入实际 Ant Design 6.6.2 包，按当前官网七大分类覆盖 72 个组件；
 - [已完成] Ant Design 组件中英文搜索、点击插入、拖拽插入和图层识别；
 - [已完成] Ant Design 组件身份、版本和 JSON 属性持久化，以及检查器属性编辑；
 - [已完成] 自有组件入口收缩为矩形、圆形和直线三种基础图形；
@@ -148,8 +148,11 @@ Web Design Studio Workbench ┘
 - [已调整] HTML/React/Vue 导出收纳为次要交付菜单，不再占据核心设计流程。
 - [已完成] List 六种常用展示，以及 Menu、Table、Tabs、Collapse、Form、Drawer、Modal、Slider、Tree 等组件的成体系示例款式。
 - [已完成] 画布内“交互模式”，无需离开编辑器即可输入、选择、切换标签、展开内容和打开 Drawer/Modal 等浮层。
-- [已完成] 全部 68 个 Ant Design 组件至少提供两种真实展示款式，不再用单个默认示例代表整个组件。
+- [已完成] 全部 72 个 Ant Design 组件至少提供两种真实展示款式，并记录官网文档、引入版本和废弃状态；新增 Listy、BorderBeam、App、ConfigProvider，以及 OTP、分组选择、可选择表格、可调整抽屉、可编辑标签页等官网主要形态。
 - [已完成] Drawer、Modal、Select、Dropdown 等浮层限定在当前网页画布内；全屏预览会隐藏编辑器 chrome 并按视口适配页面。
+- [已完成] Ant Design、Chakra UI、shadcn/ui 使用独立 Tab、独立运行时渲染器和统一组件目录抽象，不混合组件体系。
+- [已完成] Chakra UI List 按 3.37.0 官方文档覆盖基础、有序、图标、嵌套、Marker Style、plain、align 与 unstyled 形态；列表条目、说明和嵌套 children 均可在检查器中编辑并持久化。
+- [已完成] 以 Chakra UI 3.37.0 官网 114 个组件/工具页面作为精确审计基线，目录现已覆盖 114/114，所有条目均具备至少两种专属款式。包内组件直接使用 Chakra 官方运行时；Prose、RichTextEditor、PasswordInput、SegmentedControl、ToggleTip 与 Toast 等官网 snippet 按官方 composition 方式接入，其中富文本使用真实 Tiptap 编辑内核。LocaleProvider、FormatNumber、FormatByte、Checkmark、ClientOnly、EnvironmentProvider、For、Presence、Portal、Radiomark、Show、SkipNav、VisuallyHidden、Theme 等非视觉工具也提供了可观察、可配置的设计形态。
 
 ### 阶段三：界面内直接 AI 执行
 

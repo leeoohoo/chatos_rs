@@ -20,8 +20,25 @@ export function runtimeRows(value: WebDesignJsonValue | undefined): string[][] {
     : [];
 }
 
-function canvasFor(anchor: HTMLElement | null): HTMLElement | null {
-  return anchor?.closest('.design-canvas') as HTMLElement | null;
+function portalHostFor(anchor: HTMLElement | null): HTMLElement | null {
+  return anchor?.closest('[data-library-portal-host], .design-canvas') as HTMLElement | null;
+}
+
+function portalThemeFor(anchor: HTMLElement | null): CSSProperties {
+  const runtime = anchor?.closest('.shadcn-runtime, .chakra-runtime') as HTMLElement | null;
+  if (!runtime) return {};
+  const computed = window.getComputedStyle(runtime);
+  const style: Record<string, string> = {
+    fontFamily: computed.fontFamily,
+    fontSize: computed.fontSize
+  };
+  for (let index = 0; index < computed.length; index += 1) {
+    const property = computed.item(index);
+    if (!property.startsWith('--')) continue;
+    const value = computed.getPropertyValue(property).trim();
+    if (value) style[property] = value;
+  }
+  return style as CSSProperties;
 }
 
 export function DesignOverlay({ anchorRef, open, side = 'center', title, className, children, onClose, footer }: {
@@ -34,10 +51,10 @@ export function DesignOverlay({ anchorRef, open, side = 'center', title, classNa
   onClose: () => void;
   footer?: ReactNode;
 }) {
-  const target = canvasFor(anchorRef.current);
+  const target = portalHostFor(anchorRef.current);
   if (!open || !target) return null;
   const normalizedSide = side === 'end' ? 'right' : side === 'start' ? 'left' : side;
-  return createPortal(<div className={`library-overlay-host ${className}`} onPointerDown={(event) => event.stopPropagation()}>
+  return createPortal(<div className={`library-overlay-host ${className}`} style={portalThemeFor(anchorRef.current)} onPointerDown={(event) => event.stopPropagation()}>
     <button className="library-overlay-scrim" aria-label="关闭" onClick={onClose} />
     <section className={`library-overlay-panel side-${normalizedSide}`}>
       <header><strong>{title}</strong><button aria-label="关闭" onClick={onClose}>×</button></header>
@@ -47,24 +64,33 @@ export function DesignOverlay({ anchorRef, open, side = 'center', title, classNa
   </div>, target);
 }
 
-export function FloatingSurface({ anchorRef, open, className, children }: {
+export function FloatingSurface({ anchorRef, open, className, children, placement = 'bottom' }: {
   anchorRef: RefObject<HTMLElement | null>;
   open: boolean;
   className: string;
   children: ReactNode;
+  placement?: string;
 }) {
   const [style, setStyle] = useState<CSSProperties>({});
-  const target = canvasFor(anchorRef.current);
+  const target = portalHostFor(anchorRef.current);
   useLayoutEffect(() => {
     if (!open || !target || !anchorRef.current) return;
     const anchor = anchorRef.current.getBoundingClientRect();
     const canvas = target.getBoundingClientRect();
-    const left = Math.max(12, Math.min(anchor.left - canvas.left, canvas.width - 340));
-    const top = Math.max(12, anchor.bottom - canvas.top + 8);
-    setStyle({ left, top });
-  }, [open, target, anchorRef]);
+    const anchorLeft = anchor.left - canvas.left;
+    const anchorTop = anchor.top - canvas.top;
+    if (placement === 'top') {
+      setStyle({ left: Math.max(12, Math.min(anchorLeft, canvas.width - 340)), top: Math.max(12, anchorTop - 8), transform: 'translateY(-100%)' });
+    } else if (placement === 'left') {
+      setStyle({ left: Math.max(12, anchorLeft - 8), top: Math.max(12, anchorTop), transform: 'translateX(-100%)' });
+    } else if (placement === 'right') {
+      setStyle({ left: Math.min(canvas.width - 340, anchor.right - canvas.left + 8), top: Math.max(12, anchorTop) });
+    } else {
+      setStyle({ left: Math.max(12, Math.min(anchorLeft, canvas.width - 340)), top: Math.max(12, anchor.bottom - canvas.top + 8) });
+    }
+  }, [open, target, anchorRef, placement]);
   if (!open || !target) return null;
-  return createPortal(<div className={`library-floating-surface ${className}`} style={style} onPointerDown={(event) => event.stopPropagation()}>{children}</div>, target);
+  return createPortal(<div className={`library-floating-surface ${className}`} style={{ ...portalThemeFor(anchorRef.current), ...style }} onPointerDown={(event) => event.stopPropagation()}>{children}</div>, target);
 }
 
 export function MiniCalendar({ month = '2026 年 9 月', selectedDay = 3, className = '' }: { month?: string; selectedDay?: number; className?: string }) {

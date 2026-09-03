@@ -3,8 +3,10 @@ import SwiftUI
 
 struct LocalConnectorPluginsView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var viewModel: LocalConnectorControlCenterViewModel
     @State private var searchText = ""
+    @State private var browserExtensionInstalled = false
 
     var body: some View {
         SettingsGroupedPage {
@@ -76,6 +78,22 @@ struct LocalConnectorPluginsView: View {
                 }
             }
         }
+        .onAppear {
+            refreshBrowserExtensionStatus()
+            refreshBrowserExtensionPairingStatuses()
+            automaticallyGuideBrowserExtensionIfNeeded()
+        }
+        .onChange(of: viewModel.plugins) { _, _ in
+            refreshBrowserExtensionStatus()
+            refreshBrowserExtensionPairingStatuses()
+            automaticallyGuideBrowserExtensionIfNeeded()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                refreshBrowserExtensionStatus()
+                refreshBrowserExtensionPairingStatuses()
+            }
+        }
     }
 
     private var filteredPlugins: [LocalConnectorPlugin] {
@@ -133,6 +151,9 @@ struct LocalConnectorPluginsView: View {
                 if plugin.installed {
                     permissionSection(plugin, isOperating: isOperating)
                 }
+                if plugin.installed, BrowserExtensionGuide.isBrowserPlugin(plugin) {
+                    browserExtensionSection(plugin, isOperating: isOperating)
+                }
                 HStack {
                     Text(plugin.category)
                         .appFont(.caption2.weight(.medium))
@@ -147,12 +168,16 @@ struct LocalConnectorPluginsView: View {
                     Spacer()
                     if plugin.installed {
                         if plugin.updateAvailable {
-                            Button(model.localized("更新", english: "Update")) { viewModel.installPlugin(id: plugin.id) }
+                            Button(model.localized("更新", english: "Update")) {
+                                installPlugin(plugin)
+                            }
                                 .buttonStyle(.borderedProminent)
                         }
                         Button(model.localized("卸载", english: "Uninstall"), role: .destructive) { viewModel.uninstallPlugin(id: plugin.id) }
                     } else {
-                        Button(model.localized("安装", english: "Install")) { viewModel.installPlugin(id: plugin.id) }
+                        Button(model.localized("安装", english: "Install")) {
+                            installPlugin(plugin)
+                        }
                             .buttonStyle(.borderedProminent)
                             .disabled(!plugin.installAvailable)
                     }
@@ -160,6 +185,135 @@ struct LocalConnectorPluginsView: View {
                 .disabled(isOperating)
             }
         }
+    }
+
+    private func browserExtensionSection(
+        _ plugin: LocalConnectorPlugin,
+        isOperating: Bool
+    ) -> some View {
+        let isPaired = viewModel.browserExtensionPairedPluginIDs.contains(plugin.id)
+        return VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isPaired || browserExtensionInstalled
+                    ? "checkmark.circle.fill"
+                    : "puzzlepiece.extension.fill")
+                    .foregroundStyle(isPaired || browserExtensionInstalled ? .green : .blue)
+                    .font(.title3)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(model.localized(
+                            isPaired ? "Google Chrome 已连接" : "连接您的 Google Chrome",
+                            english: isPaired ? "Google Chrome Connected" : "Connect Your Google Chrome"
+                        ))
+                            .appFont(.subheadline.weight(.semibold))
+                        Text(isPaired
+                            ? model.localized("已连接", english: "Connected")
+                            : browserExtensionInstalled
+                            ? model.localized("已安装", english: "Installed")
+                            : model.localized("还需安装扩展", english: "Extension Required"))
+                            .appFont(.caption2.weight(.semibold))
+                            .foregroundStyle(isPaired || browserExtensionInstalled ? .green : .orange)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                (isPaired || browserExtensionInstalled ? Color.green : Color.orange).opacity(0.1),
+                                in: Capsule()
+                            )
+                    }
+                    Text(isPaired
+                        ? model.localized(
+                            "此 Chrome 用户配置已完成一次性授权，后续浏览器任务会自动连接。",
+                            english: "This Chrome profile has completed one-time authorization. Future browser tasks reconnect automatically."
+                        )
+                        : model.localized(
+                            "Browser CDP 使用您现有的 Chrome。点击后，Chatos 会自动启动一次性本机连接服务并打开正式扩展页面；首次连接完成后，后续浏览器任务会自动重连。",
+                            english: "Browser CDP uses your existing Chrome. ChatOS automatically starts the one-time local pairing service and opens the official extension page; later browser tasks reconnect automatically."
+                        ))
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
+                VStack(alignment: .trailing, spacing: 5) {
+                    if !isPaired {
+                        Button {
+                            startBrowserExtensionGuide(plugin)
+                        } label: {
+                            Label(
+                                browserExtensionInstalled
+                                    ? model.localized("连接 Google Chrome", english: "Connect Google Chrome")
+                                    : model.localized("安装 Chrome 扩展", english: "Install Chrome Extension"),
+                                systemImage: "arrow.up.forward.app"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isOperating)
+                    }
+                    if browserExtensionInstalled {
+                        Button(model.localized("查看商店页面", english: "View Store Page")) {
+                            BrowserExtensionGuide.openWebStore()
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
+    }
+
+    private func installPlugin(_ plugin: LocalConnectorPlugin) {
+        viewModel.installPlugin(id: plugin.id) {
+            refreshBrowserExtensionStatus()
+            if BrowserExtensionGuide.isBrowserPlugin(plugin) {
+                startBrowserExtensionGuide(plugin, onlyIfStorePromptNeeded: true)
+            }
+        }
+    }
+
+    private func startBrowserExtensionGuide(
+        _ plugin: LocalConnectorPlugin,
+        onlyIfStorePromptNeeded: Bool = false
+    ) {
+        if onlyIfStorePromptNeeded,
+           !BrowserExtensionGuide.shouldAutomaticallyGuide(pluginVersion: plugin.latestVersion) {
+            return
+        }
+        viewModel.startBrowserExtensionGuide(pluginID: plugin.id) {
+            refreshBrowserExtensionStatus()
+            viewModel.refreshBrowserExtensionPairingStatus(pluginID: plugin.id)
+            if browserExtensionInstalled {
+                BrowserExtensionGuide.openOnboarding()
+            } else if onlyIfStorePromptNeeded {
+                BrowserExtensionGuide.openWebStoreAfterInstallIfNeeded(
+                    pluginVersion: plugin.latestVersion
+                )
+            } else {
+                BrowserExtensionGuide.openWebStore()
+            }
+        }
+    }
+
+    private func refreshBrowserExtensionStatus() {
+        browserExtensionInstalled = BrowserExtensionGuide.isExtensionInstalled()
+    }
+
+    private func refreshBrowserExtensionPairingStatuses() {
+        for plugin in viewModel.plugins where plugin.installed
+            && BrowserExtensionGuide.isBrowserPlugin(plugin) {
+            viewModel.refreshBrowserExtensionPairingStatus(pluginID: plugin.id)
+        }
+    }
+
+    private func automaticallyGuideBrowserExtensionIfNeeded() {
+        guard let plugin = viewModel.plugins.first(where: {
+            $0.installed && BrowserExtensionGuide.isBrowserPlugin($0)
+        }), BrowserExtensionGuide.shouldAutomaticallyGuide(
+            pluginVersion: plugin.latestVersion
+        ), !viewModel.pluginOperationIDs.contains(plugin.id) else {
+            return
+        }
+        startBrowserExtensionGuide(plugin, onlyIfStorePromptNeeded: true)
     }
 
     private func permissionSection(

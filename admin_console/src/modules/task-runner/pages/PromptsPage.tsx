@@ -203,7 +203,6 @@ export function PromptsPage() {
         onClose={closePromptDrawer}
         onOpenTask={(taskId) => navigate(`/task-runner/tasks?task_id=${encodeURIComponent(taskId)}`)}
         onOpenRun={(runId) => navigate(`/task-runner/runs?run_id=${encodeURIComponent(runId)}`)}
-        onOpenModel={(modelId) => navigate(`/task-runner/models?model_id=${encodeURIComponent(modelId)}`)}
         onSubmit={(id, values) => submitPromptMutation.mutate({ id, values })}
         onCancelPrompt={(id) => cancelPromptMutation.mutate(id)}
       />

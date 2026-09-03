@@ -40,6 +40,7 @@ const RELAY_TIMEOUT: Duration = Duration::from_secs(15);
 const EXTENSION_TOKEN_LIFETIME: Duration = Duration::from_secs(120);
 const DEFAULT_MCP_TOKEN_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
 const CHANNEL_CAPACITY: usize = 256;
+const PAIRING_FILE_NAME: &str = "extension-pairing.json";
 
 #[derive(Debug, Clone)]
 pub struct BridgeServerConfig {
@@ -86,6 +87,12 @@ struct McpCredentialFile<'a> {
     expires_at_unix_ms: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+struct PersistedPairing {
+    protocol_version: String,
+    allowed_extension_origin: String,
+}
+
 pub struct BridgeServer {
     listener: TcpListener,
     state: Arc<ServerState>,
@@ -97,6 +104,7 @@ struct ServerState {
     mcp_expires_at_unix_ms: u64,
     mcp_token_used: AtomicBool,
     allowed_extension_origin: String,
+    pairing_file: PathBuf,
     paired: AtomicBool,
     extension_tokens: Mutex<HashMap<String, u64>>,
     extension: Mutex<Option<Arc<ExtensionClient>>>,
@@ -169,6 +177,11 @@ impl BridgeServer {
         let base = format!("ws://{address}");
         let state_file = config.data_dir.join(STATE_FILE_NAME);
         let credential_file = config.data_dir.join("mcp-credential.json");
+        let pairing_file = config.data_dir.join(PAIRING_FILE_NAME);
+        tokio::fs::create_dir_all(&config.data_dir)
+            .await
+            .map_err(|error| format!("could not create Bridge data directory: {error}"))?;
+        let paired = load_persisted_pairing(&pairing_file, &allowed_extension_origin).await;
         let persisted = BridgeStateFile {
             protocol_version: PROTOCOL_VERSION.into(),
             control_endpoint: format!("{base}/v1/control"),
@@ -179,9 +192,6 @@ impl BridgeServer {
             allowed_extension_origin: allowed_extension_origin.clone(),
             expires_at_unix_ms,
         };
-        tokio::fs::create_dir_all(&config.data_dir)
-            .await
-            .map_err(|error| format!("could not create Bridge data directory: {error}"))?;
         write_private_json(&state_file, &persisted).await?;
         write_private_json(
             &credential_file,
@@ -206,7 +216,8 @@ impl BridgeServer {
                     mcp_expires_at_unix_ms: expires_at_unix_ms,
                     mcp_token_used: AtomicBool::new(false),
                     allowed_extension_origin,
-                    paired: AtomicBool::new(false),
+                    pairing_file,
+                    paired: AtomicBool::new(paired),
                     extension_tokens: Mutex::new(HashMap::new()),
                     extension: Mutex::new(None),
                     mcp: Mutex::new(None),
@@ -385,6 +396,14 @@ async fn handle_control(mut socket: BridgeSocket, state: Arc<ServerState>) -> Re
             continue;
         }
         if pairing_requested {
+            if let Err(error) = persist_pairing(&state).await {
+                send_value(
+                    &mut socket,
+                    error_response(id, WireError::new("backend_error", error)),
+                )
+                .await?;
+                continue;
+            }
             state.paired.store(true, Ordering::Release);
         } else if !state.paired.load(Ordering::Acquire) {
             send_value(
@@ -736,6 +755,16 @@ async fn handle_browser_request(
 
 async fn relay_extension_event(state: &ServerState, message: &WireMessage) {
     match message.method.as_deref() {
+        Some("extension.unpair") => {
+            state.paired.store(false, Ordering::Release);
+            match tokio::fs::remove_file(&state.pairing_file).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => tracing_compat_warn(&format!(
+                    "could not remove Browser Bridge pairing file: {error}"
+                )),
+            }
+        }
         Some("extension.cdpEvent") => {
             if let Some(peer) = state.mcp.lock().await.clone() {
                 let _ = peer
@@ -749,6 +778,41 @@ async fn relay_extension_event(state: &ServerState, message: &WireMessage) {
         }
         _ => {}
     }
+}
+
+async fn load_persisted_pairing(path: &Path, allowed_extension_origin: &str) -> bool {
+    let Ok(metadata) = tokio::fs::symlink_metadata(path).await else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 16 * 1024 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return false;
+        }
+    }
+    let Ok(bytes) = tokio::fs::read(path).await else {
+        return false;
+    };
+    let Ok(pairing) = serde_json::from_slice::<PersistedPairing>(&bytes) else {
+        return false;
+    };
+    pairing.protocol_version == PROTOCOL_VERSION
+        && pairing.allowed_extension_origin == allowed_extension_origin
+}
+
+async fn persist_pairing(state: &ServerState) -> Result<(), String> {
+    write_private_json(
+        &state.pairing_file,
+        &PersistedPairing {
+            protocol_version: PROTOCOL_VERSION.into(),
+            allowed_extension_origin: state.allowed_extension_origin.clone(),
+        },
+    )
+    .await
 }
 
 async fn notify_mcp_disconnected(state: &ServerState, reason: &str) {
@@ -865,6 +929,28 @@ mod tests {
     use super::*;
 
     const EXTENSION_ID: &str = "nkeimhogjdpnpccoofpliimaahmaaome";
+
+    #[tokio::test]
+    async fn pairing_survives_bridge_restart_and_is_bound_to_extension_identity() {
+        let directory = tempdir().unwrap();
+        let config = BridgeServerConfig::development(directory.path().to_owned(), EXTENSION_ID);
+        let (server, _) = BridgeServer::bind(config.clone()).await.unwrap();
+        assert!(!server.state.paired.load(Ordering::Acquire));
+        persist_pairing(&server.state).await.unwrap();
+        drop(server);
+
+        let (restarted, _) = BridgeServer::bind(config).await.unwrap();
+        assert!(restarted.state.paired.load(Ordering::Acquire));
+        drop(restarted);
+
+        let (different_extension, _) = BridgeServer::bind(BridgeServerConfig::development(
+            directory.path().to_owned(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ))
+        .await
+        .unwrap();
+        assert!(!different_extension.state.paired.load(Ordering::Acquire));
+    }
 
     #[tokio::test]
     async fn relays_browser_commands_and_extension_events() {

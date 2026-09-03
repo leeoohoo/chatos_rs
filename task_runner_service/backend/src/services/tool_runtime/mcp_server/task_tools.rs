@@ -101,14 +101,6 @@ impl TaskRunnerMcpService {
                             .unwrap_or(existing);
                         return Ok(text_result(task_for_agent_tool(task)));
                     }
-                    if let Some(default_model_config_id) = request_context
-                        .default_model_config_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                    {
-                        input.default_model_config_id = Some(default_model_config_id.to_string());
-                    }
                     self.ensure_mcp_default_model_config(&mut input, current_user)
                         .await?;
                     input = planner_root_create_request(input, request_context)?;

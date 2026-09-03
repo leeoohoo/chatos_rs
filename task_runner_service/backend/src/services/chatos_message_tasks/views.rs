@@ -68,7 +68,6 @@ pub struct ChatosMessageModelConfigSummary {
     pub name: String,
     pub provider: String,
     pub model: String,
-    pub usage_scenario: Option<String>,
     pub enabled: bool,
     pub updated_at: String,
 }
@@ -240,7 +239,6 @@ impl From<ModelConfigRecord> for ChatosMessageModelConfigSummary {
             name: model.name,
             provider: model.provider,
             model: model.model,
-            usage_scenario: model.usage_scenario,
             enabled: model.enabled,
             updated_at: model.updated_at,
         }

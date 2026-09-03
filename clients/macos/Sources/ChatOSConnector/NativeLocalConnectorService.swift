@@ -29,6 +29,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
     let pluginApplicationRuntime = NativePluginApplicationRuntime()
+    let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
@@ -127,6 +128,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         }
         await stopGatewayConnection()
         await pluginApplicationRuntime.stopAll()
+        await browserExtensionPairingRuntime.stop()
         try secretStore.delete(account: Self.accessTokenAccount)
         cachedAccessToken = nil
         hasLoadedAccessToken = true
@@ -145,6 +147,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         reconnectTask = nil
         await closeGatewayConnection(terminatePluginSessions: true)
         await pluginApplicationRuntime.stopAll()
+        await browserExtensionPairingRuntime.stop()
     }
 
     public func recoverGatewayConnection(forceReconnect: Bool = false) async {

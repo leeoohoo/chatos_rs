@@ -9,6 +9,7 @@ export type WebContainerAlign = 'start' | 'center' | 'end' | 'stretch';
 export type AnnotationStatus = 'open' | 'resolved';
 export type DesignRequestStatus = 'pending' | 'resolved';
 export type WebSymbolOverride = 'content' | 'style' | 'frame';
+export type WebHorizontalConstraint = 'auto' | 'left' | 'center' | 'right' | 'stretch' | 'scale';
 
 export interface WebDesignPage {
   id: string;
@@ -111,7 +112,12 @@ export interface WebDesignComponent {
   hidden?: boolean;
   layout?: WebContainerLayout;
   responsive?: Partial<Record<'tablet' | 'mobile', WebComponentResponsiveOverride>>;
+  constraints?: Partial<Record<WebDesignDevice, WebComponentConstraints>>;
   annotations: WebDesignAnnotation[];
+}
+
+export interface WebComponentConstraints {
+  horizontal: WebHorizontalConstraint;
 }
 
 export interface WebContainerLayout {
@@ -150,12 +156,37 @@ export interface WebDesignViewport {
 export interface WebDesignBreakpoint {
   width: number;
   height: number;
+  preview?: {
+    presetId?: string;
+    orientation: 'default' | 'rotated';
+    viewportHeight: number;
+  };
 }
 
 export interface WebDesignBreakpoints {
   desktop: WebDesignBreakpoint;
   tablet: WebDesignBreakpoint;
   mobile: WebDesignBreakpoint;
+}
+
+export interface WebDesignProject {
+  schemaVersion: 1;
+  projectId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+  designIds: string[];
+}
+
+export interface WebDesignProjectSummary {
+  projectId: string;
+  name: string;
+  description?: string;
+  designCount: number;
+  designIds: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WebDesignDocument {
@@ -194,7 +225,7 @@ export type WebDesignPatchOperation =
   | { op: 'set_layout'; componentId: string; layout: WebContainerLayout }
   | { op: 'move_component'; componentId: string; x: number; y: number; device?: WebDesignDevice }
   | { op: 'resize_component'; componentId: string; width: number; height: number; device?: WebDesignDevice }
-  | { op: 'update_component'; componentId: string; device?: WebDesignDevice; changes: Partial<Pick<WebDesignComponent, 'name' | 'content' | 'zIndex' | 'style' | 'locked' | 'hidden' | 'symbolOverrides'>> & { interaction?: WebDesignInteraction | null } }
+  | { op: 'update_component'; componentId: string; device?: WebDesignDevice; changes: Partial<Pick<WebDesignComponent, 'name' | 'content' | 'zIndex' | 'style' | 'locked' | 'hidden' | 'symbolOverrides' | 'constraints'>> & { interaction?: WebDesignInteraction | null } }
   | { op: 'add_annotation'; componentId: string; annotation: WebDesignAnnotation }
   | { op: 'resolve_annotation'; componentId: string; annotationId: string }
   | { op: 'add_request'; request: WebDesignRequest }
@@ -207,9 +238,11 @@ const componentTypes = new Set<WebComponentType>([
   'list', 'table', 'video'
 ]);
 const devices = new Set<WebDesignDevice>(['desktop', 'tablet', 'mobile']);
+const libraryNames = new Set<WebDesignLibraryName>(['antd', 'chakra', 'shadcn']);
 const layoutModes = new Set<WebContainerLayoutMode>(['free', 'flex-row', 'flex-column', 'grid']);
 const layoutAlignments = new Set<WebContainerAlign>(['start', 'center', 'end', 'stretch']);
 const symbolOverrides = new Set<WebSymbolOverride>(['content', 'style', 'frame']);
+const horizontalConstraints = new Set<WebHorizontalConstraint>(['auto', 'left', 'center', 'right', 'stretch', 'scale']);
 
 export const DEFAULT_WEB_DESIGN_PAGE: WebDesignPage = { id: 'home', name: '首页', slug: '/' };
 export const DEFAULT_WEB_DESIGN_TOKENS: WebDesignTokens = {
@@ -226,6 +259,40 @@ export const DEFAULT_WEB_DESIGN_BREAKPOINTS: WebDesignBreakpoints = {
 
 export function assertIdentifier(value: string, label: string): void {
   if (!identifierPattern.test(value)) throw new Error(`${label} must use letters, digits, hyphens, or underscores.`);
+}
+
+export function assertWebDesignProject(value: unknown): asserts value is WebDesignProject {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Web design project must be an object.');
+  const project = value as WebDesignProject;
+  if (project.schemaVersion !== 1) throw new Error('Unsupported web design project schema version.');
+  assertIdentifier(project.projectId, 'projectId');
+  if (typeof project.name !== 'string' || !project.name.trim() || project.name.length > 240) {
+    throw new Error('Project name must contain 1 to 240 characters.');
+  }
+  if (project.description !== undefined && (typeof project.description !== 'string' || project.description.length > 4000)) {
+    throw new Error('Project description is invalid.');
+  }
+  if (!Array.isArray(project.designIds) || project.designIds.length > 5000) throw new Error('Project designIds are invalid.');
+  const ids = new Set<string>();
+  for (const designId of project.designIds) {
+    if (typeof designId !== 'string') throw new Error('Project designIds must contain identifiers.');
+    assertIdentifier(designId, 'designId');
+    if (ids.has(designId)) throw new Error(`Duplicate project designId: ${designId}`);
+    ids.add(designId);
+  }
+  if (typeof project.createdAt !== 'string' || typeof project.updatedAt !== 'string') throw new Error('Project timestamps are required.');
+}
+
+export function webDesignProjectSummary(project: WebDesignProject): WebDesignProjectSummary {
+  return {
+    projectId: project.projectId,
+    name: project.name,
+    description: project.description,
+    designCount: project.designIds.length,
+    designIds: [...project.designIds],
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt
+  };
 }
 
 function assertPage(value: unknown): asserts value is WebDesignPage {
@@ -382,7 +449,7 @@ export function assertComponent(value: unknown): asserts value is WebDesignCompo
   }
   if (component.library !== undefined) {
     if (!component.library || typeof component.library !== 'object' || Array.isArray(component.library)) throw new Error('Component library binding is invalid.');
-    if (component.library.name !== 'antd') throw new Error('Component library is unsupported.');
+    if (!libraryNames.has(component.library.name)) throw new Error('Component library is unsupported.');
     if (typeof component.library.version !== 'string' || !component.library.version.trim() || component.library.version.length > 32) throw new Error('Component library version is invalid.');
     if (typeof component.library.component !== 'string' || !/^[A-Za-z][A-Za-z0-9.]{0,63}$/.test(component.library.component)) throw new Error('Component library component is invalid.');
     if (component.library.variant !== undefined && (typeof component.library.variant !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/i.test(component.library.variant))) throw new Error('Component library variant is invalid.');
@@ -415,6 +482,16 @@ export function assertComponent(value: unknown): asserts value is WebDesignCompo
     }
     if (component.responsive.tablet !== undefined) assertResponsiveOverride(component.responsive.tablet, 'component.responsive.tablet');
     if (component.responsive.mobile !== undefined) assertResponsiveOverride(component.responsive.mobile, 'component.responsive.mobile');
+  }
+  if (component.constraints !== undefined) {
+    if (!component.constraints || typeof component.constraints !== 'object' || Array.isArray(component.constraints)) throw new Error('Component responsive constraints are invalid.');
+    for (const device of devices) {
+      const constraint = component.constraints[device];
+      if (constraint === undefined) continue;
+      if (!constraint || typeof constraint !== 'object' || Array.isArray(constraint) || !horizontalConstraints.has(constraint.horizontal)) {
+        throw new Error(`Component ${device} horizontal constraint is invalid.`);
+      }
+    }
   }
   if (!Array.isArray(component.annotations) || component.annotations.length > 1000) throw new Error('Component annotations are invalid.');
   component.annotations.forEach(assertAnnotation);
@@ -458,6 +535,12 @@ export function assertWebDesignDocument(value: unknown): asserts value is WebDes
       if (!breakpoint || typeof breakpoint !== 'object') throw new Error(`Breakpoint ${device} is required.`);
       finiteNumber(breakpoint.width, `breakpoints.${device}.width`, 320, 10000);
       finiteNumber(breakpoint.height, `breakpoints.${device}.height`, 320, 30000);
+      if (breakpoint.preview !== undefined) {
+        if (!breakpoint.preview || typeof breakpoint.preview !== 'object' || Array.isArray(breakpoint.preview)) throw new Error(`breakpoints.${device}.preview is invalid.`);
+        if (breakpoint.preview.presetId !== undefined) assertIdentifier(breakpoint.preview.presetId, `breakpoints.${device}.preview.presetId`);
+        if (breakpoint.preview.orientation !== 'default' && breakpoint.preview.orientation !== 'rotated') throw new Error(`breakpoints.${device}.preview.orientation is invalid.`);
+        finiteNumber(breakpoint.preview.viewportHeight, `breakpoints.${device}.preview.viewportHeight`, 320, 10000);
+      }
     }
   }
   const pages = document.pages ?? [DEFAULT_WEB_DESIGN_PAGE];
@@ -607,7 +690,7 @@ export function applyWebDesignPatch(document: WebDesignDocument, operations: Web
           ...DEFAULT_WEB_DESIGN_BREAKPOINTS,
           desktop: { width: next.viewport.width, height: next.viewport.height }
         });
-        breakpoints[device] = { width: operation.width, height: operation.height };
+        breakpoints[device] = { ...breakpoints[device], width: operation.width, height: operation.height };
         next.breakpoints = breakpoints;
         if (device === 'desktop') {
           next.viewport.width = operation.width;
@@ -733,6 +816,7 @@ export function applyWebDesignPatch(document: WebDesignDocument, operations: Web
         if (operation.changes.zIndex !== undefined) component.zIndex = operation.changes.zIndex;
         if (operation.changes.locked !== undefined) component.locked = operation.changes.locked;
         if (operation.changes.symbolOverrides !== undefined) component.symbolOverrides = [...operation.changes.symbolOverrides];
+        if (operation.changes.constraints !== undefined) component.constraints = structuredClone(operation.changes.constraints);
         if ('interaction' in operation.changes) component.interaction = operation.changes.interaction ? structuredClone(operation.changes.interaction) : undefined;
         const device = assertDevice(operation.device);
         if (device === 'desktop') {

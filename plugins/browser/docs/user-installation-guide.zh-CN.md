@@ -2,14 +2,21 @@
 
 Browser CDP 包含两个必须配套安装的组件：ChatOS Marketplace 中的 **Browser CDP 插件**，
 以及 Chrome 中的 **Chatos Browser Bridge 扩展**。只安装其中一个，无法控制用户当前的
-Chrome；但仍可使用插件的隔离托管浏览器模式。
+Chrome；未完成授权时会自动使用插件的隔离托管浏览器。
+
+`browser_session_open` 不向 AI 暴露浏览器模式参数。已完成一次性授权时固定连接用户的
+Google Chrome；尚未授权时自动回退到隔离托管浏览器。AI 执行点击时会在页面内显示虚拟
+鼠标，并通过 Chrome 原生 CDP 鼠标移动、按下和抬起事件完成交互。
 
 ## 正式用户安装流程
 
 1. 在 ChatOS 的“插件管理 → 插件市场”中找到 **Browser CDP**，点击安装。
 2. 安装完成后启用插件，并按需授予“连接现有 Chrome”权限。页面读取、页面控制、网络
    观察和原始 CDP 等高权限仍由 ChatOS 分开审批。
-3. 从 Chrome Web Store 安装 **Chatos Browser Bridge**，并建议固定到浏览器工具栏。
+3. 从 Chrome Web Store 安装
+   [Chatos Browser Bridge](https://chromewebstore.google.com/detail/jooaepjckiofmpldinopgdgddcoaofil)，
+   并建议固定到浏览器工具栏。正式 Extension ID 为
+   `jooaepjckiofmpldinopgdgddcoaofil`。
 4. 在 ChatOS 中启动一个会使用 Browser CDP 的任务，使本机 Browser MCP 进程开始运行。
 5. 打开 Chatos Browser Bridge，点击一次“首次连接”。这是用户对本机桥接的显式授权。
 6. 状态显示“已连接”后即可使用。以后 Browser MCP、Local Connector 或扩展重启，扩展
@@ -48,16 +55,15 @@ Messaging Host 和回环地址 Bridge。
 先启动一个 Browser CDP 任务并等待几秒。若仍未恢复，打开扩展查看错误提示；只有主动
 断开过连接时才需要再次点击“首次连接”。
 
-## 发布方上线检查清单
+## 发布方更新检查清单
 
-1. 将 `extension/dist` 打包为 Chrome Web Store ZIP 并提交审核。
-2. 获得正式 Chrome Web Store Extension ID 后，以该 ID 设置
-   `CHATOS_BROWSER_EXTENSION_ID` 重新编译全部平台的 Browser MCP Release 二进制。
+1. 将 `extension/dist` 打包为 Chrome Web Store ZIP，并更新现有商店条目。
+2. 以正式 ID `jooaepjckiofmpldinopgdgddcoaofil` 重新编译全部平台的 Browser MCP Release
+   二进制。
 3. 将带固定 Extension ID 的二进制放入 npm 包，重新生成 SBOM、哈希、签名和 Marketplace
    Release。
 4. 在全新 Chrome Profile 和全新 ChatOS 安装环境执行上述六步首次安装流程。
 5. 验证首次配对、自动重连、任务命名标签组、新标签入组、会话结束后保留并折叠。
 
-在 Chrome Web Store 正式 Extension ID 写入 Browser MCP Release 之前，开发版必须通过
-`CHATOS_BROWSER_EXTENSION_ID` 显式传入当前未打包扩展 ID；这种方式仅用于开发验收，
-不能作为普通用户安装方案。
+本地暂存构建默认使用正式商店 ID。只有测试未打包扩展时，才通过
+`CHATOS_BROWSER_EXTENSION_ID` 显式覆盖为开发扩展 ID。

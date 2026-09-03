@@ -25,18 +25,16 @@ use crate::models::{
     CancelTaskResponse, ChatosProjectImportRequest, CreateTaskProjectRequest, CreateTaskRequest,
     CreateUserRequest, CurrentUserResponse, HealthResponse, LoginRequest, LoginResponse,
     McpCatalogEntry, McpPromptPreviewRequest, McpPromptPreviewResponse, McpServerInfo,
-    ModelCatalogResponse, ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord,
-    PaginatedResponse, PreviewModelCatalogRequest, PromptListFilters, RecordTaskProcessRequest,
-    RunListFilters, RunSummaryRecord, SetTaskPrerequisitesRequest, SseTicketResponse,
-    StartTaskRunRequest, SubmitAskUserPromptRequest, SystemConfigResponse, TaskDependencyGraph,
-    TaskIndexResponse, TaskListFilters, TaskMcpResolutionResponse, TaskMemoryContextOptions,
+    PaginatedResponse, PromptListFilters, RecordTaskProcessRequest, RunListFilters,
+    RunSummaryRecord, SetTaskPrerequisitesRequest, SseTicketResponse, StartTaskRunRequest,
+    SubmitAskUserPromptRequest, SystemConfigResponse, TaskDependencyGraph, TaskIndexResponse,
+    TaskListFilters, TaskMcpResolutionResponse, TaskMemoryContextOptions,
     TaskMemoryContextResponse, TaskMemoryRecordsOptions, TaskMemoryRecordsResponse,
     TaskMemorySummaryResponse, TaskProjectRecord, TaskProjectScopeFilter, TaskProjectStatus,
     TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
     TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TestModelConfigRequest,
-    UpdateRuntimeSettingsRequest, UpdateTaskProjectRequest, UpdateTaskRequest, UpdateUserRequest,
-    UserRole, UserSummaryRecord,
+    TaskStatsResponse, TaskStatus, TaskSummaryRecord, UpdateRuntimeSettingsRequest,
+    UpdateTaskProjectRequest, UpdateTaskRequest, UpdateUserRequest, UserRole, UserSummaryRecord,
 };
 use crate::services::{health, system_config};
 use crate::state::AppState;
@@ -46,7 +44,6 @@ mod core;
 mod internal;
 mod internal_auth;
 mod mcp;
-mod models;
 mod projects;
 mod prompts;
 mod router;

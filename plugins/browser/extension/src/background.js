@@ -4,6 +4,7 @@ import {ExtensionController} from './controller.js';
 const bridge = new LocalConnectorBridge();
 const controller = new ExtensionController({bridge});
 const AUTO_RECONNECT_DELAY_MS = 2000;
+const ONBOARDING_PATH = 'onboarding/onboarding.html';
 
 let pairingEnabled = false;
 let reconnectTimer = null;
@@ -11,13 +12,18 @@ let reconnectTimer = null;
 controller.start();
 bridge.setRequestHandler((method, params) => controller.handleRequest(method, params));
 bridge.onStateChange(({connected}) => {
-  void chrome.action.setBadgeText({text: connected ? 'ON' : ''});
-  void chrome.action.setBadgeBackgroundColor({color: '#2563EB'});
+  void updateActionBadge(connected);
   if (connected) {
     cancelReconnect();
   } else {
     void controller.revokeAll();
     scheduleReconnect();
+  }
+});
+
+chrome.runtime.onInstalled.addListener(({reason}) => {
+  if (reason === 'install' || reason === 'update') {
+    void openOnboardingIfNeeded();
   }
 });
 
@@ -43,6 +49,7 @@ void restorePairing();
 async function restorePairing() {
   const {paired = false} = await chrome.storage.local.get('paired');
   pairingEnabled = paired;
+  await updateActionBadge(bridge.connected);
   if (!pairingEnabled) return;
   await reconnectPairedBridge();
 }
@@ -78,8 +85,12 @@ async function handlePopupMessage(message) {
     case 'connect':
       await bridge.connect({pairingRequested: true});
       pairingEnabled = true;
-      await chrome.storage.local.set({paired: true});
+      await chrome.storage.local.set({paired: true, onboarding_completed: true});
+      await updateActionBadge(true);
       return {connected: true, paired: true, ...controller.status()};
+    case 'open_onboarding':
+      await openOnboarding();
+      return {connected: bridge.connected, paired: pairingEnabled, ...controller.status()};
     case 'share_current_tab': {
       if (!bridge.connected) {
         throw new BridgeProtocolError('extension_unavailable', 'Connect to Browser MCP first');
@@ -98,6 +109,7 @@ async function handlePopupMessage(message) {
       pairingEnabled = false;
       cancelReconnect();
       await chrome.storage.local.set({paired: false});
+      await updateActionBadge(false);
       bridge.notify('extension.unpair', {});
       await bridge.disconnect('user_disconnected');
       await controller.revokeAll();
@@ -105,6 +117,38 @@ async function handlePopupMessage(message) {
     default:
       throw new BridgeProtocolError('invalid_request', 'Unknown popup action');
   }
+}
+
+async function openOnboardingIfNeeded() {
+  const {paired = false, onboarding_completed: onboardingCompleted = false} =
+    await chrome.storage.local.get(['paired', 'onboarding_completed']);
+  if (paired) {
+    if (!onboardingCompleted) await chrome.storage.local.set({onboarding_completed: true});
+    return;
+  }
+  if (onboardingCompleted) return;
+  await openOnboarding();
+}
+
+async function openOnboarding() {
+  const url = chrome.runtime.getURL(ONBOARDING_PATH);
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find(tab => tab.url === url);
+  if (Number.isSafeInteger(existing?.id)) {
+    await chrome.tabs.update(existing.id, {active: true});
+    if (Number.isSafeInteger(existing.windowId)) {
+      await chrome.windows.update(existing.windowId, {focused: true});
+    }
+    return;
+  }
+  await chrome.tabs.create({url, active: true});
+}
+
+async function updateActionBadge(connected = bridge.connected) {
+  const text = connected ? 'ON' : pairingEnabled ? '…' : '!';
+  const color = connected ? '#16A34A' : pairingEnabled ? '#D97706' : '#DC2626';
+  await chrome.action.setBadgeText({text});
+  await chrome.action.setBadgeBackgroundColor({color});
 }
 
 function normalizeError(error) {

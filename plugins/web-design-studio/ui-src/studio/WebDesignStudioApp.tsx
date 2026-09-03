@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   autoLayoutContainer,
   breakpointFor,
@@ -8,7 +8,10 @@ import {
   detachSymbolInstance,
   descendantIds,
   flattenComponentTree,
+  fitContentCanvasToComponents,
+  growPageToFitContent,
   moveComponentsWithDescendants,
+  reflowPageForViewport,
   instantiateSymbol,
   resolveComponent,
   selectedRootIds,
@@ -25,10 +28,25 @@ import { exportPageHtml } from '../../src/html-exporter';
 import { exportReactComponent } from '../../src/react-exporter';
 import { exportVueComponent } from '../../src/vue-exporter';
 import { createBlockPreset, createPageTemplate, WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES, type WebDesignBlockPresetId, type WebDesignPageTemplateId } from '../../src/component-library';
-import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_COMPONENT_VARIANTS, ANTD_VERSION, applyAntdComponentVariant, createAntdComponent, variantsForAntdComponent } from '../../src/antd-library';
-import { editableSlotsForAntdComponent, isAntdContentContainer, type AntdEditableSlot } from '../../src/antd-slots';
+import {
+  componentsInSlot,
+  editableSlotsForUiComponent,
+  growUiContentContainersToFit,
+  isOverlayUiContentContainer,
+  isUiContentContainer,
+  slotIdForDescendant,
+  visibleComponentsInSlot
+} from '../../src/library-slots';
+import { applyUiLibraryVariant, createComponentFromUiLibrary, uiLibraryByName, UI_LIBRARIES, variantsForBoundComponent } from '../../src/ui-libraries';
+import type { UiEditableSlot } from '../../src/ui-library';
 import { WEB_DESIGN_THEME_PRESETS, type WebDesignThemePreset } from '../../src/design-themes';
 import { componentDefaults } from '../../src/templates';
+import {
+  matchViewportPreset,
+  viewportDimensions,
+  viewportPresetsForDevice,
+  type WebDesignViewportOrientation
+} from '../../src/viewport-presets';
 import {
   pagesForDocument,
   tokensForDocument,
@@ -39,13 +57,16 @@ import {
   type WebDesignDevice,
   type WebDesignDocument,
   type WebDesignJsonValue,
+  type WebDesignLibraryName,
+  type WebDesignProject,
+  type WebDesignProjectSummary,
+  type WebHorizontalConstraint,
   type WebDesignSymbol,
   type WebDesignTokens,
   type WebSymbolOverride
 } from '../../src/schema';
 import { createRepository, type DesignRepository, type DesignSummary } from './repository';
-
-const AntdCanvasComponent = lazy(() => import('./AntdCanvasComponent').then((module) => ({ default: module.AntdCanvasComponent })));
+import { LibraryCanvasComponent } from './LibraryCanvasComponent';
 
 type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
 
@@ -77,65 +98,72 @@ function contentContainerAncestor(document: WebDesignDocument, component: WebDes
   const byId = new Map(document.components.map((candidate) => [candidate.id, candidate]));
   let parent = component.parentId ? byId.get(component.parentId) : undefined;
   while (parent) {
-    if (isAntdContentContainer(parent)) return parent;
+    if (isUiContentContainer(parent)) return parent;
     parent = parent.parentId ? byId.get(parent.parentId) : undefined;
   }
   return undefined;
 }
 
-function slotIdForDescendant(document: WebDesignDocument, component: WebDesignComponent, containerId: string): string | undefined {
+function overlayContentContainerAncestor(document: WebDesignDocument, component: WebDesignComponent): WebDesignComponent | undefined {
   const byId = new Map(document.components.map((candidate) => [candidate.id, candidate]));
-  let current = component;
-  while (current.parentId && current.parentId !== containerId) {
-    const parent = byId.get(current.parentId);
-    if (!parent) return undefined;
-    current = parent;
+  let parent = component.parentId ? byId.get(component.parentId) : undefined;
+  while (parent) {
+    if (isOverlayUiContentContainer(parent)) return parent;
+    parent = parent.parentId ? byId.get(parent.parentId) : undefined;
   }
-  return current.parentId === containerId ? (current.slot ?? 'content') : undefined;
+  return undefined;
 }
 
-function componentsInSlot(document: WebDesignDocument, containerId: string, slotId: string): WebDesignComponent[] {
-  return document.components.filter((component) => slotIdForDescendant(document, component, containerId) === slotId);
+function growCanvasForDevice(document: WebDesignDocument, pageId: string, device: WebDesignDevice, minimumHeight?: number): WebDesignDocument {
+  const fitted = growUiContentContainersToFit(document, pageId, device);
+  const excludedComponentIds = new Set(componentsForPage(fitted, pageId)
+    .filter((component) => overlayContentContainerAncestor(fitted, component))
+    .map((component) => component.id));
+  return growPageToFitContent(fitted, pageId, device, { excludedComponentIds, minimumHeight });
 }
 
-function visibleComponentsInSlot(document: WebDesignDocument, containerId: string, slotId: string): WebDesignComponent[] {
-  const byId = new Map(document.components.map((candidate) => [candidate.id, candidate]));
-  return componentsInSlot(document, containerId, slotId).filter((component) => {
-    let parent = component.parentId ? byId.get(component.parentId) : undefined;
-    while (parent && parent.id !== containerId) {
-      if (isAntdContentContainer(parent)) return false;
-      parent = parent.parentId ? byId.get(parent.parentId) : undefined;
-    }
-    return true;
-  });
+function growAllCanvases(document: WebDesignDocument): WebDesignDocument {
+  return pagesForDocument(document).reduce((current, page) =>
+    (['desktop', 'tablet', 'mobile'] as const).reduce((next, device) => growCanvasForDevice(next, page.id, device), current), document);
 }
 
 function createSlotStarterComponents(
   container: WebDesignComponent,
-  slot: AntdEditableSlot,
+  slot: UiEditableSlot,
   template: 'form' | 'details',
   pageId: string,
   device: WebDesignDevice
 ): WebDesignComponent[] {
   const containerFrame = resolveComponent(container, device);
   const availableWidth = Math.max(220, slot.width - 24);
+  const libraryName = container.library?.name ?? 'antd';
+  const componentNames = libraryName === 'chakra'
+    ? { title: 'Heading', input: 'Input', select: 'NativeSelect', textarea: 'Textarea', details: 'Table', divider: 'Separator', button: 'Button' }
+    : libraryName === 'shadcn'
+      ? { title: 'Typography', input: 'Input', select: 'Select', textarea: 'Textarea', details: 'DataTable', divider: 'Separator', button: 'Button' }
+      : { title: 'Typography', input: 'Input', select: 'Select', textarea: 'Input', details: 'Descriptions', divider: 'Divider', button: 'Button' };
+  const variants = libraryName === 'chakra'
+    ? { title: 'default', input: 'outline', select: 'outline', textarea: 'default', details: 'default', divider: 'default', button: 'solid' }
+    : libraryName === 'shadcn'
+      ? { title: 'default', input: 'default', select: 'default', textarea: 'default', details: 'default', divider: 'default', button: 'default' }
+      : { title: 'title', input: 'outlined', select: 'outlined', textarea: 'textarea', details: 'bordered', divider: 'plain', button: 'primary' };
   const rows = template === 'form'
     ? [
-      { definition: 'Typography', variant: 'title', name: '表单标题', content: '完善信息', x: 12, y: 12, width: availableWidth, height: 44 },
-      { definition: 'Input', variant: 'outlined', name: '姓名输入', content: '请输入姓名', x: 12, y: 76, width: availableWidth, height: 40 },
-      { definition: 'Select', variant: 'outlined', name: '类型选择', content: '请选择类型', x: 12, y: 132, width: availableWidth, height: 40 },
-      { definition: 'Input', variant: 'textarea', name: '详细说明', content: '请输入详细说明', x: 12, y: 188, width: availableWidth, height: 96 },
-      { definition: 'Button', variant: 'primary', name: '提交按钮', content: '保存修改', x: 12, y: 304, width: 120, height: 40 }
+      { definition: componentNames.title, variant: variants.title, name: '表单标题', content: '完善信息', x: 12, y: 12, width: availableWidth, height: 44 },
+      { definition: componentNames.input, variant: variants.input, name: '姓名输入', content: '请输入姓名', x: 12, y: 76, width: availableWidth, height: 40 },
+      { definition: componentNames.select, variant: variants.select, name: '类型选择', content: '请选择类型', x: 12, y: 132, width: availableWidth, height: 40 },
+      { definition: componentNames.textarea, variant: variants.textarea, name: '详细说明', content: '请输入详细说明', x: 12, y: 188, width: availableWidth, height: 96 },
+      { definition: componentNames.button, variant: variants.button, name: '提交按钮', content: '保存修改', x: 12, y: 304, width: 120, height: 40 }
     ]
     : [
-      { definition: 'Typography', variant: 'title', name: '详情标题', content: '产品详情', x: 12, y: 12, width: availableWidth, height: 44 },
-      { definition: 'Descriptions', variant: 'bordered', name: '详情信息', content: '', x: 12, y: 72, width: availableWidth, height: 170 },
-      { definition: 'Divider', variant: 'plain', name: '内容分隔线', content: '', x: 12, y: 258, width: availableWidth, height: 24 },
-      { definition: 'Button', variant: 'primary', name: '确认按钮', content: '确认', x: 12, y: 300, width: 100, height: 40 }
+      { definition: componentNames.title, variant: variants.title, name: '详情标题', content: '产品详情', x: 12, y: 12, width: availableWidth, height: 44 },
+      { definition: componentNames.details, variant: variants.details, name: '详情信息', content: '', x: 12, y: 72, width: availableWidth, height: 170 },
+      { definition: componentNames.divider, variant: variants.divider, name: '内容分隔线', content: '', x: 12, y: 258, width: availableWidth, height: 24 },
+      { definition: componentNames.button, variant: variants.button, name: '确认按钮', content: '确认', x: 12, y: 300, width: 100, height: 40 }
     ];
   return rows.map((row, index) => {
-    let child = createAntdComponent(row.definition, container.x + row.x, container.y + row.y);
-    child = applyAntdComponentVariant(child, row.variant);
+    let child = createComponentFromUiLibrary(libraryName, row.definition, container.x + row.x, container.y + row.y);
+    child = applyUiLibraryVariant(child, row.variant);
     child.name = row.name;
     child.content = row.content;
     child.pageId = pageId;
@@ -154,11 +182,88 @@ function createSlotStarterComponents(
   });
 }
 
+function materializeExistingSlotContent(
+  container: WebDesignComponent,
+  slot: UiEditableSlot,
+  pageId: string,
+  device: WebDesignDevice
+): WebDesignComponent[] {
+  if (slot.id !== 'content' || container.library?.component !== 'Card' || !container.content.trim()) return [];
+  const libraryName = container.library.name;
+  const textDefinition = libraryName === 'chakra' ? 'Text' : 'Typography';
+  const textVariant = libraryName === 'antd' ? 'paragraph' : libraryName === 'chakra' ? 'body' : 'default';
+  const containerFrame = resolveComponent(container, device);
+  let content = createComponentFromUiLibrary(libraryName, textDefinition, containerFrame.x + 12, containerFrame.y + 12);
+  content = applyUiLibraryVariant(content, textVariant);
+  content.name = '卡片正文';
+  content.content = container.content;
+  content.pageId = pageId;
+  content.parentId = container.id;
+  content.slot = slot.id;
+  content.zIndex = 1;
+  content.width = Math.max(120, slot.width - 24);
+  content.height = Math.max(56, Math.min(96, slot.height - 24));
+  if (device !== 'desktop') content = updateComponentFrame(content, device, {
+    x: containerFrame.x + 12,
+    y: containerFrame.y + 12,
+    width: content.width,
+    height: content.height
+  });
+  return [content];
+}
+
 const deviceOptions: Array<{ device: WebDesignDevice; label: string; icon: string }> = [
   { device: 'desktop', label: '桌面', icon: '▰' },
   { device: 'tablet', label: '平板', icon: '▯' },
   { device: 'mobile', label: '手机', icon: '▯' }
 ];
+
+const horizontalConstraintOptions: Array<{ id: WebHorizontalConstraint; label: string; description: string }> = [
+  { id: 'auto', label: '智能响应', description: '根据组件大小和位置自动选择缩放或锚定方式' },
+  { id: 'left', label: '左侧固定', description: '保持宽度和左边距' },
+  { id: 'center', label: '水平居中', description: '保持宽度并相对容器居中' },
+  { id: 'right', label: '右侧固定', description: '保持宽度和右边距' },
+  { id: 'stretch', label: '左右拉伸', description: '保持左右边距，宽度跟随容器' },
+  { id: 'scale', label: '等比缩放', description: '位置和宽度随容器同比例变化' }
+];
+
+type ViewportSelection = {
+  presetId?: string;
+  orientation: WebDesignViewportOrientation;
+  customHeight: number;
+};
+
+const DEFAULT_VIEWPORT_SELECTIONS: Record<WebDesignDevice, ViewportSelection> = {
+  desktop: { presetId: 'desktop-responsive', orientation: 'default', customHeight: 900 },
+  tablet: { presetId: 'tablet-responsive', orientation: 'default', customHeight: 1024 },
+  mobile: { presetId: 'mobile-responsive', orientation: 'default', customHeight: 844 }
+};
+
+function viewportSelectionsForDocument(document: WebDesignDocument): Record<WebDesignDevice, ViewportSelection> {
+  return Object.fromEntries((['desktop', 'tablet', 'mobile'] as const).map((device) => {
+    const breakpoint = breakpointFor(document, device);
+    if (breakpoint.preview) {
+      const persistedPreset = viewportPresetsForDevice(device).find((preset) => preset.id === breakpoint.preview?.presetId);
+      return [device, {
+        presetId: persistedPreset?.id,
+        orientation: breakpoint.preview.orientation,
+        customHeight: breakpoint.preview.viewportHeight
+      }];
+    }
+    const match = matchViewportPreset(device, breakpoint.width);
+    if (!match) return [device, { ...DEFAULT_VIEWPORT_SELECTIONS[device], presetId: undefined }];
+    return [device, {
+      presetId: match.preset.id,
+      orientation: match.orientation,
+      customHeight: viewportDimensions(match.preset, match.orientation).height
+    }];
+  })) as Record<WebDesignDevice, ViewportSelection>;
+}
+
+function editableDocumentPayload(document: WebDesignDocument): string {
+  const { revision: _revision, createdAt: _createdAt, updatedAt: _updatedAt, ...editable } = document;
+  return JSON.stringify(editable);
+}
 
 type Interaction = {
   kind: 'move' | 'resize';
@@ -174,13 +279,18 @@ type Interaction = {
 
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
-type LibraryTab = 'components' | 'antd' | 'blocks' | 'layers';
+type LibraryTab = 'components' | WebDesignLibraryName | 'blocks' | 'layers';
+type VariantPickerTarget = { library: WebDesignLibraryName; componentId: string };
 type EditingSlot = { componentId: string; slotId: string };
 
 export function WebDesignStudioApp() {
   const [repository, setRepository] = useState<DesignRepository>();
   const [documents, setDocuments] = useState<DesignSummary[]>([]);
+  const [projects, setProjects] = useState<WebDesignProjectSummary[]>([]);
+  const [activeProject, setActiveProject] = useState<WebDesignProject>();
   const [document, setDocument] = useState<WebDesignDocument>();
+  const [ready, setReady] = useState(false);
+  const [screen, setScreen] = useState<'projects' | 'project' | 'editor'>('projects');
   const [persistedRevision, setPersistedRevision] = useState(0);
   const [selectedId, setSelectedId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -192,6 +302,7 @@ export function WebDesignStudioApp() {
   const [preview, setPreview] = useState(false);
   const [interactionMode, setInteractionMode] = useState(false);
   const [device, setDevice] = useState<WebDesignDevice>('desktop');
+  const [viewportSelections, setViewportSelections] = useState<Record<WebDesignDevice, ViewportSelection>>(() => structuredClone(DEFAULT_VIEWPORT_SELECTIONS));
   const [zoom, setZoom] = useState(0.82);
   const [past, setPast] = useState<WebDesignDocument[]>([]);
   const [future, setFuture] = useState<WebDesignDocument[]>([]);
@@ -200,9 +311,16 @@ export function WebDesignStudioApp() {
   const [aiInstruction, setAiInstruction] = useState('');
   const [paletteQuery, setPaletteQuery] = useState('');
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('antd');
-  const [variantPickerId, setVariantPickerId] = useState<string>();
+  const [variantPickerTarget, setVariantPickerTarget] = useState<VariantPickerTarget>();
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDescription, setNewProjectDescription] = useState('');
+  const [newDesignOpen, setNewDesignOpen] = useState(false);
+  const [newDesignName, setNewDesignName] = useState('');
+  const [newDesignBlank, setNewDesignBlank] = useState(true);
   const [editingSlot, setEditingSlot] = useState<EditingSlot>();
   const interaction = useRef<Interaction | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
@@ -226,13 +344,25 @@ export function WebDesignStudioApp() {
     () => document ? breakpointFor(document, device) : { width: 1200, height: 940 },
     [document, device]
   );
+  const viewportPresets = useMemo(() => viewportPresetsForDevice(device), [device]);
+  const viewportSelection = viewportSelections[device];
+  const viewportPreset = viewportPresets.find((preset) => preset.id === viewportSelection.presetId);
+  const previewViewportHeight = viewportPreset
+    ? viewportDimensions(viewportPreset, viewportSelection.orientation).height
+    : viewportSelection.customHeight;
+  const viewportLabel = viewportPreset?.label ?? '自定义视口';
+  const renderedCanvasHeight = Math.max(breakpoint.height, previewViewportHeight);
   const pages = useMemo(() => document ? pagesForDocument(document) : [], [document]);
+  const activeProjectDocuments = useMemo(() => {
+    const ids = new Set(activeProject?.designIds ?? []);
+    return documents.filter((item) => ids.has(item.documentId));
+  }, [activeProject?.designIds, documents]);
   const tokens = useMemo(() => document ? tokensForDocument(document) : undefined, [document]);
   const currentPage = useMemo(() => pages.find((page) => page.id === pageId) ?? pages[0], [pages, pageId]);
   const pageComponents = useMemo(() => document && currentPage ? componentsForPage(document, currentPage.id) : [], [document, currentPage]);
   const editingContainer = useMemo(() => editingSlot ? document?.components.find((component) => component.id === editingSlot.componentId) : undefined, [document, editingSlot]);
   const editingSlotDefinition = useMemo(() => editingContainer && editingSlot
-    ? editableSlotsForAntdComponent(editingContainer).find((slot) => slot.id === editingSlot.slotId)
+    ? editableSlotsForUiComponent(editingContainer).find((slot) => slot.id === editingSlot.slotId)
     : undefined, [editingContainer, editingSlot]);
   const editingSlotComponents = useMemo(() => document && editingSlot
     ? componentsInSlot(document, editingSlot.componentId, editingSlot.slotId)
@@ -240,6 +370,16 @@ export function WebDesignStudioApp() {
   const editingVisibleComponents = useMemo(() => document && editingSlot
     ? visibleComponentsInSlot(document, editingSlot.componentId, editingSlot.slotId)
     : [], [document, editingSlot]);
+  const editingSlotCanvasSize = useMemo(() => {
+    if (!editingContainer || !editingSlotDefinition) return undefined;
+    const containerFrame = resolveComponent(editingContainer, device);
+    return fitContentCanvasToComponents(editingVisibleComponents, device, {
+      minimumWidth: editingSlotDefinition.width,
+      minimumHeight: editingSlotDefinition.height,
+      originX: containerFrame.x,
+      originY: containerFrame.y
+    });
+  }, [editingContainer, editingSlotDefinition, editingVisibleComponents, device]);
   const inspectedFrame = useMemo(() => {
     if (!selectedFrame || !editingContainer || !editingSlot || !selected || slotIdForDescendant(document!, selected, editingContainer.id) !== editingSlot.slotId) return selectedFrame;
     const containerFrame = resolveComponent(editingContainer, device);
@@ -250,17 +390,18 @@ export function WebDesignStudioApp() {
     void (async () => {
       const repo = await createRepository();
       setRepository(repo);
-      let items = await repo.list();
-      let first: WebDesignDocument;
-      if (items.length === 0) {
-        first = await repo.create('AI 产品落地页');
-        items = await repo.list();
-      } else {
-        first = await repo.read(items[0].documentId);
-      }
+      const [items, projectItems, runtimeContext] = await Promise.all([repo.list(), repo.listProjects(), repo.runtimeContext()]);
       setDocuments(items);
-      openDocument(first);
-    })().catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+      setProjects(projectItems);
+      if (runtimeContext.defaultProjectId) {
+        setActiveProject(await repo.readProject(runtimeContext.defaultProjectId));
+        setScreen('project');
+      }
+      setReady(true);
+    })().catch((error) => {
+      setReady(true);
+      showToast(error instanceof Error ? error.message : String(error));
+    });
   }, []);
 
   useEffect(() => {
@@ -276,7 +417,7 @@ export function WebDesignStudioApp() {
           ? { frame: candidate, guides: {} as SnapGuides }
           : snapComponentFrame(active.snapshot, active.componentId, device, candidate, movingIds);
         setSnapGuides(snapped.guides);
-        changeLive(() => {
+        changeLiveWithCanvasGrowth(() => {
           const moved = moveComponentsWithDescendants(
             active.snapshot,
             active.selectedIds,
@@ -288,7 +429,7 @@ export function WebDesignStudioApp() {
           return { ...moved, components: moved.components.map((component) => moving.has(component.id) ? setSymbolOverride(component, 'frame', true) : component) };
         });
       } else {
-        changeLive(() => ({
+        changeLiveWithCanvasGrowth(() => ({
           ...active.snapshot,
           components: active.snapshot.components.map((component) => component.id === active.componentId
             ? setSymbolOverride(updateComponentFrame(component, device, {
@@ -313,7 +454,7 @@ export function WebDesignStudioApp() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [device, zoom]);
+  }, [device, zoom, pageId, editingSlot]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -335,6 +476,12 @@ export function WebDesignStudioApp() {
       } else if (command && event.shiftKey && event.key.toLowerCase() === 'z') {
         event.preventDefault();
         redo();
+      } else if (command && event.shiftKey && event.key.toLowerCase() === 'g') {
+        event.preventDefault();
+        ungroupSelected();
+      } else if (command && event.key.toLowerCase() === 'g') {
+        event.preventDefault();
+        groupSelected();
       } else if (command && event.key.toLowerCase() === 'd') {
         event.preventDefault();
         duplicateSelected();
@@ -370,7 +517,8 @@ export function WebDesignStudioApp() {
   }
 
   function openDocument(next: WebDesignDocument) {
-    setCurrent(next);
+    const opened = structuredClone(next);
+    setCurrent(opened);
     setPersistedRevision(next.revision);
     setSelectedId(undefined);
     setSelectedIds([]);
@@ -378,6 +526,7 @@ export function WebDesignStudioApp() {
     setPast([]);
     setFuture([]);
     setDevice('desktop');
+    setViewportSelections(viewportSelectionsForDocument(opened));
     setPageId(pagesForDocument(next)[0].id);
     setEditingSlot(undefined);
   }
@@ -392,11 +541,35 @@ export function WebDesignStudioApp() {
     setDirty(true);
   }
 
+  function commitWithCanvasGrowth(
+    updater: (current: WebDesignDocument) => WebDesignDocument,
+    targetDevices: readonly WebDesignDevice[] = [device],
+    targetPageId = pageId
+  ) {
+    commit((current) => targetDevices.reduce(
+      (next, targetDevice) => growCanvasForDevice(next, targetPageId, targetDevice),
+      updater(current)
+    ));
+  }
+
   function changeLive(updater: (current: WebDesignDocument) => WebDesignDocument) {
     const current = documentRef.current;
     if (!current) return;
     setCurrent(updater(current));
     setDirty(true);
+  }
+
+  function changeLiveWithCanvasGrowth(
+    updater: (current: WebDesignDocument) => WebDesignDocument,
+    targetPageId = pageId,
+    targetDevice = device
+  ) {
+    changeLive((current) => growCanvasForDevice(
+      updater(current),
+      targetPageId,
+      targetDevice,
+      breakpointFor(current, targetDevice).height
+    ));
   }
 
   function historyDocument(snapshot: WebDesignDocument, current: WebDesignDocument): WebDesignDocument {
@@ -424,7 +597,7 @@ export function WebDesignStudioApp() {
   }
 
   function updateComponent(componentId: string, updater: (component: WebDesignComponent) => WebDesignComponent) {
-    commit((current) => ({ ...current, components: current.components.map((component) => component.id === componentId ? updater(component) : component) }));
+    commitWithCanvasGrowth((current) => ({ ...current, components: current.components.map((component) => component.id === componentId ? updater(component) : component) }));
   }
 
   async function save(force = false, silent = false) {
@@ -432,7 +605,11 @@ export function WebDesignStudioApp() {
     if (!repository || !current || saving || (!dirty && !force)) return;
     setSaving(true);
     try {
-      const saved = await repository.save(current, persistedRevision);
+      const snapshot = structuredClone(current);
+      const saved = await repository.save(snapshot, persistedRevision);
+      if (editableDocumentPayload(saved) !== editableDocumentPayload(snapshot)) {
+        throw new Error('保存返回的数据改变了当前设计，已停止应用该结果以保护画布布局。');
+      }
       setCurrent(saved);
       setPersistedRevision(saved.revision);
       setDirty(false);
@@ -459,11 +636,106 @@ export function WebDesignStudioApp() {
   }
 
   async function createNew() {
+    if (!activeProject) {
+      setNewProjectName('');
+      setNewProjectDescription('');
+      setNewProjectOpen(true);
+      return;
+    }
+    setNewDesignName('');
+    setNewDesignBlank(true);
+    setNewDesignOpen(true);
+    setProjectLibraryOpen(false);
+  }
+
+  async function refreshCatalog() {
+    if (!repository) return;
+    const [nextDocuments, nextProjects] = await Promise.all([repository.list(), repository.listProjects()]);
+    setDocuments(nextDocuments);
+    setProjects(nextProjects);
+  }
+
+  async function createProjectFromSheet() {
+    if (!repository || !newProjectName.trim()) return;
+    try {
+      const created = await repository.createProject(newProjectName, newProjectDescription);
+      setActiveProject(created);
+      setScreen('project');
+      setNewProjectOpen(false);
+      setNewProjectName('');
+      setNewProjectDescription('');
+      await refreshCatalog();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function openProject(projectId: string) {
     if (!repository) return;
     try {
-      const created = await repository.create(`网站设计 ${documents.length + 1}`);
-      setDocuments(await repository.list());
+      setActiveProject(await repository.readProject(projectId));
+      setDocument(undefined);
+      setScreen('project');
+      setDirty(false);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function createDesignFromSheet() {
+    if (!repository || !activeProject || !newDesignName.trim()) return;
+    try {
+      const created = await repository.createInProject(activeProject.projectId, newDesignName, newDesignBlank);
+      setActiveProject(await repository.readProject(activeProject.projectId));
+      await refreshCatalog();
+      setNewDesignOpen(false);
+      setNewDesignName('');
       openDocument(created);
+      setScreen('editor');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function openProjectDocument(documentId: string) {
+    if (!repository) return;
+    if (dirty && !window.confirm('切换设计会丢弃未保存修改，确定继续吗？')) return;
+    try {
+      openDocument(await repository.read(documentId));
+      setProjectLibraryOpen(false);
+      setScreen('editor');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function goToProjects() {
+    if (dirty && !window.confirm('返回项目列表会丢弃未保存修改，确定继续吗？')) return;
+    setDocument(undefined);
+    setActiveProject(undefined);
+    setDirty(false);
+    setScreen('projects');
+    setProjectLibraryOpen(false);
+  }
+
+  function goToActiveProject() {
+    if (dirty && !window.confirm('返回项目首页会丢弃未保存修改，确定继续吗？')) return;
+    setDocument(undefined);
+    setDirty(false);
+    setScreen('project');
+    setProjectLibraryOpen(false);
+  }
+
+  async function deleteProjectDocument(target: DesignSummary) {
+    if (!repository || !activeProject) return;
+    if (!window.confirm(`确定永久删除“${target.title}”吗？`)) return;
+    try {
+      await repository.remove(target.documentId);
+      setActiveProject(await repository.readProject(activeProject.projectId));
+      if (document?.documentId === target.documentId) setDocument(undefined);
+      await refreshCatalog();
+      setScreen('project');
+      showToast(`已删除“${target.title}”`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
@@ -474,20 +746,22 @@ export function WebDesignStudioApp() {
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  function onAntdDrag(event: DragEvent, definitionId: string) {
-    event.dataTransfer.setData('application/x-web-design-antd', definitionId);
+  function onUiLibraryDrag(event: DragEvent, library: WebDesignLibraryName, definitionId: string) {
+    event.dataTransfer.setData('application/x-web-design-library', JSON.stringify({ library, definitionId }));
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  function addAntdComponent(definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot) {
+  function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot) {
     const current = documentRef.current;
     if (!current) return;
+    const library = uiLibraryByName(libraryName);
+    if (!library) return;
     const container = targetSlot ? current.components.find((candidate) => candidate.id === targetSlot.componentId) : undefined;
     const containerFrame = container ? resolveComponent(container, device) : undefined;
     const componentX = containerFrame ? containerFrame.x + x : x;
     const componentY = containerFrame ? containerFrame.y + y : y;
-    let component = createAntdComponent(definitionId, componentX, componentY);
-    if (variantId) component = applyAntdComponentVariant(component, variantId);
+    let component = createComponentFromUiLibrary(libraryName, definitionId, componentX, componentY);
+    if (variantId) component = applyUiLibraryVariant(component, variantId);
     component.pageId = pageId;
     if (container && targetSlot) {
       component.parentId = container.id;
@@ -497,29 +771,44 @@ export function WebDesignStudioApp() {
       component.zIndex = Math.max(1, ...componentsForPage(current, pageId).filter((item) => !contentContainerAncestor(current, item)).map((item) => item.zIndex)) + 1;
     }
     if (device !== 'desktop') component = updateComponentFrame(component, device, { x: componentX, y: componentY });
-    const starterSlot = !container && (definitionId === 'Drawer' || definitionId === 'Modal') ? editableSlotsForAntdComponent(component)[0] : undefined;
+    const starterSlot = !container && ['Drawer', 'Modal', 'Dialog', 'Sheet', 'AlertDialog'].includes(definitionId) ? editableSlotsForUiComponent(component)[0] : undefined;
     const starter = starterSlot ? createSlotStarterComponents(component, starterSlot, 'form', pageId, device) : [];
-    commit((active) => ({ ...active, components: [...active.components, component, ...starter] }));
+    commitWithCanvasGrowth((active) => ({ ...active, components: [...active.components, component, ...starter] }));
     setSelectedId(component.id);
     setSelectedIds([component.id]);
-    showToast(container ? `已添加到${editableSlotsForAntdComponent(container).find((slot) => slot.id === targetSlot?.slotId)?.label ?? '组件内容'}` : `已插入 Ant Design ${component.library?.component}`);
+    showToast(container ? `已添加到${editableSlotsForUiComponent(container).find((slot) => slot.id === targetSlot?.slotId)?.label ?? '组件内容'}` : `已插入 ${library.displayName} ${component.library?.component}`);
   }
 
-  function insertAntdComponent(definitionId: string, variantId?: string) {
-    const definition = ANTD_COMPONENTS.find((candidate) => candidate.id === definitionId);
+  function insertUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, variantId?: string) {
+    const definition = uiLibraryByName(libraryName)?.components.find((candidate) => candidate.id === definitionId);
     if (!definition) return;
-    if (editingSlotDefinition) {
-      addAntdComponent(definitionId, Math.max(12, Math.round((editingSlotDefinition.width - definition.width) / 2)), 28, variantId);
+    if (editingSlotCanvasSize) {
+      addUiLibraryComponent(libraryName, definitionId, Math.max(12, Math.round((editingSlotCanvasSize.width - definition.width) / 2)), 28, variantId);
     } else {
-      addAntdComponent(definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80, variantId);
+      addUiLibraryComponent(libraryName, definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80, variantId);
     }
-    setVariantPickerId(undefined);
+    setVariantPickerTarget(undefined);
   }
 
   function editComponentSlot(component: WebDesignComponent, slotId: string) {
     if (interactionMode) setInteractionMode(false);
+    const current = documentRef.current;
+    const slot = editableSlotsForUiComponent(component).find((candidate) => candidate.id === slotId);
+    let first = current ? componentsInSlot(current, component.id, slotId)[0] : undefined;
+    if (current && slot && !first) {
+      const materialized = materializeExistingSlotContent(component, slot, pageId, device);
+      if (materialized.length > 0) {
+        commitWithCanvasGrowth((active) => ({
+          ...active,
+          components: [
+            ...active.components.map((candidate) => candidate.id === component.id ? { ...candidate, content: '' } : candidate),
+            ...materialized
+          ]
+        }));
+        first = materialized[0];
+      }
+    }
     setEditingSlot({ componentId: component.id, slotId });
-    const first = documentRef.current ? componentsInSlot(documentRef.current, component.id, slotId)[0] : undefined;
     setSelectedId(first?.id);
     setSelectedIds(first ? [first.id] : []);
   }
@@ -542,18 +831,9 @@ export function WebDesignStudioApp() {
       const frame = resolveComponent(component, device);
       return updateComponentFrame(component, device, { y: frame.y + offsetY });
     });
-    const containerFrame = resolveComponent(editingContainer, device);
-    const contentBottom = Math.max(...adjusted.map((component) => {
-      const frame = resolveComponent(component, device);
-      return frame.y - containerFrame.y + frame.height;
-    }));
-    const shouldGrowContainer = !['Drawer', 'Modal', 'Popover'].includes(editingContainer.library?.component ?? '');
-    const grownContainer = shouldGrowContainer
-      ? updateComponentFrame(editingContainer, device, { height: Math.max(containerFrame.height, Math.ceil(contentBottom + 68)) })
-      : editingContainer;
-    commit((active) => ({
+    commitWithCanvasGrowth((active) => ({
       ...active,
-      components: [...active.components.map((component) => component.id === grownContainer.id ? grownContainer : component), ...adjusted]
+      components: [...active.components, ...adjusted]
     }));
     setSelectedId(adjusted[0]?.id);
     setSelectedIds(adjusted[0] ? [adjusted[0].id] : []);
@@ -568,10 +848,16 @@ export function WebDesignStudioApp() {
     const activeScale = editingSlot ? 1 : zoom;
     const x = Math.round((event.clientX - bounds.left) / activeScale);
     const y = Math.round((event.clientY - bounds.top) / activeScale);
-    const antdDefinitionId = event.dataTransfer.getData('application/x-web-design-antd');
-    if (antdDefinitionId && ANTD_COMPONENTS.some((item) => item.id === antdDefinitionId)) {
-      addAntdComponent(antdDefinitionId, x, y);
-      return;
+    const libraryPayload = event.dataTransfer.getData('application/x-web-design-library');
+    if (libraryPayload) {
+      try {
+        const parsed = JSON.parse(libraryPayload) as VariantPickerTarget & { definitionId?: string };
+        const definitionId = parsed.definitionId ?? parsed.componentId;
+        if (uiLibraryByName(parsed.library)?.components.some((item) => item.id === definitionId)) {
+          addUiLibraryComponent(parsed.library, definitionId, x, y);
+          return;
+        }
+      } catch { /* Ignore malformed drag payloads. */ }
     }
     const shapeId = event.dataTransfer.getData('application/x-web-design-shape') as BasicShapeId;
     if (!palette.some((item) => item.id === shapeId)) return;
@@ -589,7 +875,7 @@ export function WebDesignStudioApp() {
       if (device !== 'desktop') component = updateComponentFrame(component, device, { x, y });
       component.zIndex = Math.max(1, ...componentsForPage(current, pageId).filter((item) => !contentContainerAncestor(current, item)).map((item) => item.zIndex)) + 1;
     }
-    commit((active) => ({ ...active, components: [...active.components, component] }));
+    commitWithCanvasGrowth((active) => ({ ...active, components: [...active.components, component] }));
     setSelectedId(component.id);
     setSelectedIds([component.id]);
   }
@@ -598,26 +884,10 @@ export function WebDesignStudioApp() {
     const current = documentRef.current;
     if (!current) return;
     const block = createBlockPreset(current, pageId, presetId);
-    commit((active) => {
-      const breakpoints = structuredClone(active.breakpoints ?? {
-        desktop: { width: active.viewport.width, height: active.viewport.height },
-        tablet: { width: 768, height: 1100 },
-        mobile: { width: 390, height: 844 }
-      });
-      for (const target of ['desktop', 'tablet', 'mobile'] as const) {
-        const bottom = Math.max(...block.components.map((component) => {
-          const frame = resolveComponent(component, target);
-          return frame.y + frame.height;
-        }));
-        breakpoints[target].height = Math.max(breakpoints[target].height, Math.ceil(bottom + 40));
-      }
-      return {
-        ...active,
-        breakpoints,
-        viewport: { ...active.viewport, height: breakpoints.desktop.height },
-        components: [...active.components, ...block.components]
-      };
-    });
+    commitWithCanvasGrowth(
+      (active) => ({ ...active, components: [...active.components, ...block.components] }),
+      ['desktop', 'tablet', 'mobile']
+    );
     setSelectedId(block.rootIds[0]);
     setSelectedIds(block.rootIds);
     showToast(`已插入${WEB_DESIGN_BLOCK_PRESETS.find((preset) => preset.id === presetId)?.name ?? '成品区块'}`);
@@ -631,25 +901,11 @@ export function WebDesignStudioApp() {
     const template = createPageTemplate(current, pageId, templateId);
     commit((active) => {
       const nextComponents = [...active.components.filter((component) => !existingIds.has(component.id)), ...template.components];
-      const breakpoints = structuredClone(active.breakpoints ?? {
-        desktop: { width: active.viewport.width, height: active.viewport.height },
-        tablet: { width: 768, height: 1100 },
-        mobile: { width: 390, height: 844 }
-      });
-      for (const target of ['desktop', 'tablet', 'mobile'] as const) {
-        const bottom = Math.max(...template.components.map((component) => {
-          const frame = resolveComponent(component, target);
-          return frame.y + frame.height;
-        }));
-        breakpoints[target].height = Math.max(640, Math.ceil(bottom + 60));
-      }
-      return {
+      return growAllCanvases({
         ...active,
-        breakpoints,
-        viewport: { ...active.viewport, height: breakpoints.desktop.height },
         components: nextComponents,
         requests: active.requests.filter((request) => !request.componentId || !existingIds.has(request.componentId))
-      };
+      });
     });
     setSelectedId(undefined);
     setSelectedIds([]);
@@ -660,7 +916,7 @@ export function WebDesignStudioApp() {
     if (preview || interactionMode) return;
     event.preventDefault();
     event.stopPropagation();
-    if (event.shiftKey) {
+    if (event.shiftKey || event.metaKey || event.ctrlKey) {
       const next = selectedIds.includes(component.id) ? selectedIds.filter((id) => id !== component.id) : [...selectedIds, component.id];
       setSelectedIds(next);
       setSelectedId(next.includes(component.id) ? component.id : next[0]);
@@ -715,6 +971,14 @@ export function WebDesignStudioApp() {
     updateComponent(selected.id, (component) => setSymbolOverride(updateComponentStyle(component, device, changes), 'style', true));
   }
 
+  function updateSelectedHorizontalConstraint(horizontal: WebHorizontalConstraint) {
+    if (!selected) return;
+    updateComponent(selected.id, (component) => setSymbolOverride({
+      ...component,
+      constraints: { ...component.constraints, [device]: { horizontal } }
+    }, 'frame', true));
+  }
+
   function deleteSelected() {
     const current = documentRef.current;
     if (selectedIds.length === 0 || !current) return;
@@ -735,7 +999,7 @@ export function WebDesignStudioApp() {
     const current = documentRef.current;
     if (selectedIds.length === 0 || !current) return;
     const cloned = cloneComponentSubtrees(current, selectedIds, pageId, 20, current);
-    commit((active) => ({ ...active, components: [...active.components, ...cloned.components] }));
+    commitWithCanvasGrowth((active) => ({ ...active, components: [...active.components, ...cloned.components] }));
     setSelectedId(cloned.rootIds[0]);
     setSelectedIds(cloned.rootIds);
   }
@@ -751,7 +1015,7 @@ export function WebDesignStudioApp() {
     const current = documentRef.current;
     if (!current || !clipboard) return;
     const cloned = cloneComponentSubtrees(clipboard.document, clipboard.componentIds, pageId, 20, current);
-    commit((active) => ({ ...active, components: [...active.components, ...cloned.components] }));
+    commitWithCanvasGrowth((active) => ({ ...active, components: [...active.components, ...cloned.components] }));
     setSelectedId(cloned.rootIds[0]);
     setSelectedIds(cloned.rootIds);
     showToast('已粘贴到当前页面');
@@ -773,8 +1037,8 @@ export function WebDesignStudioApp() {
 
   function alignSelected(action: AlignAction) {
     if (!inspectedFrame) return;
-    const targetWidth = editingSlotDefinition?.width ?? breakpoint.width;
-    const targetHeight = editingSlotDefinition?.height ?? breakpoint.height;
+    const targetWidth = editingSlotCanvasSize?.width ?? breakpoint.width;
+    const targetHeight = editingSlotCanvasSize?.height ?? breakpoint.height;
     const changes: Partial<ResolvedWebDesignComponent> = {};
     if (action === 'left') changes.x = 0;
     if (action === 'center') changes.x = Math.round((targetWidth - inspectedFrame.width) / 2);
@@ -787,7 +1051,7 @@ export function WebDesignStudioApp() {
 
   function nudgeSelected(dx: number, dy: number) {
     if (selectedIds.length === 0 || selectedIds.some((id) => documentRef.current?.components.find((component) => component.id === id)?.locked)) return;
-    commit((current) => {
+    commitWithCanvasGrowth((current) => {
       const moving = new Set(selectedRootIds(current, selectedIds).flatMap((id) => [id, ...descendantIds(current, id)]));
       const moved = moveComponentsWithDescendants(current, selectedIds, device, dx, dy);
       return { ...moved, components: moved.components.map((component) => moving.has(component.id) ? setSymbolOverride(component, 'frame', true) : component) };
@@ -803,16 +1067,90 @@ export function WebDesignStudioApp() {
     updateComponent(component.id, (current) => ({ ...current, locked: !current.locked }));
   }
 
-  function updateBreakpoint(width: number, height: number) {
-    commit((current) => {
+  function updateBreakpoint(width: number, height: number, previewSelection?: ViewportSelection, reflow = false) {
+    const safeWidth = Math.min(10000, Math.max(320, Math.round(width)));
+    const safeHeight = Math.min(30000, Math.max(320, Math.round(height)));
+    commitWithCanvasGrowth((current) => {
+      const previousWidth = breakpointFor(current, device).width;
+      const reflowed = reflow && previousWidth !== safeWidth
+        ? pagesForDocument(current).reduce(
+          (next, page) => reflowPageForViewport(next, page.id, device, previousWidth, safeWidth),
+          current
+        )
+        : current;
       const breakpoints = {
-        desktop: current.breakpoints?.desktop ?? { width: current.viewport.width, height: current.viewport.height },
-        tablet: current.breakpoints?.tablet ?? { width: 768, height: 1100 },
-        mobile: current.breakpoints?.mobile ?? { width: 390, height: 844 }
+        desktop: { ...(reflowed.breakpoints?.desktop ?? { width: reflowed.viewport.width, height: reflowed.viewport.height }) },
+        tablet: { ...(reflowed.breakpoints?.tablet ?? { width: 768, height: 1100 }) },
+        mobile: { ...(reflowed.breakpoints?.mobile ?? { width: 390, height: 844 }) }
       };
-      breakpoints[device] = { width, height };
-      return { ...current, breakpoints, viewport: device === 'desktop' ? { ...current.viewport, width, height } : current.viewport };
+      breakpoints[device] = {
+        ...breakpoints[device],
+        width: safeWidth,
+        height: safeHeight,
+        preview: previewSelection ? {
+          presetId: previewSelection.presetId,
+          orientation: previewSelection.orientation,
+          viewportHeight: previewSelection.customHeight
+        } : breakpoints[device].preview
+      };
+      return { ...reflowed, breakpoints, viewport: device === 'desktop' ? { ...reflowed.viewport, width: safeWidth, height: safeHeight } : reflowed.viewport };
     });
+  }
+
+  function selectViewportPreset(presetId: string) {
+    const preset = viewportPresets.find((candidate) => candidate.id === presetId);
+    if (!preset) return;
+    const dimensions = viewportDimensions(preset, 'default');
+    const selection: ViewportSelection = { presetId: preset.id, orientation: 'default', customHeight: dimensions.height };
+    setViewportSelections((current) => ({
+      ...current,
+      [device]: selection
+    }));
+    updateBreakpoint(dimensions.width, breakpoint.height, selection, true);
+    window.setTimeout(() => fitCanvasToWidth(dimensions.width), 0);
+  }
+
+  function rotateViewport() {
+    if (viewportPreset) {
+      const orientation: WebDesignViewportOrientation = viewportSelection.orientation === 'default' ? 'rotated' : 'default';
+      const dimensions = viewportDimensions(viewportPreset, orientation);
+      const selection: ViewportSelection = { ...viewportSelection, orientation, customHeight: dimensions.height };
+      setViewportSelections((current) => ({
+        ...current,
+        [device]: selection
+      }));
+      updateBreakpoint(dimensions.width, breakpoint.height, selection, true);
+      window.setTimeout(() => fitCanvasToWidth(dimensions.width), 0);
+      return;
+    }
+    const nextWidth = previewViewportHeight;
+    const nextViewportHeight = breakpoint.width;
+    const selection: ViewportSelection = { presetId: undefined, orientation: 'default', customHeight: nextViewportHeight };
+    setViewportSelections((current) => ({
+      ...current,
+      [device]: selection
+    }));
+    updateBreakpoint(nextWidth, breakpoint.height, selection, true);
+    window.setTimeout(() => fitCanvasToWidth(nextWidth), 0);
+  }
+
+  function updateCustomViewportWidth(width: number) {
+    const selection: ViewportSelection = { ...viewportSelection, presetId: undefined };
+    setViewportSelections((current) => ({
+      ...current,
+      [device]: selection
+    }));
+    updateBreakpoint(width, breakpoint.height, selection, true);
+  }
+
+  function updateCustomViewportHeight(height: number) {
+    const safeHeight = Math.min(30000, Math.max(320, Math.round(height)));
+    const selection: ViewportSelection = { presetId: undefined, orientation: 'default', customHeight: safeHeight };
+    setViewportSelections((current) => ({
+      ...current,
+      [device]: selection
+    }));
+    updateBreakpoint(breakpoint.width, breakpoint.height, selection);
   }
 
   function switchDevice(next: WebDesignDevice) {
@@ -822,12 +1160,16 @@ export function WebDesignStudioApp() {
     setZoom(next === 'desktop' ? .82 : next === 'tablet' ? .72 : .9);
   }
 
-  function fitCanvasWidth() {
+  function fitCanvasToWidth(targetWidth: number) {
     const scroller = canvasScroll.current;
     if (!scroller) return;
-    const nextZoom = Math.max(.25, Math.min(1, (scroller.clientWidth - 120) / breakpoint.width));
+    const nextZoom = Math.max(.05, Math.min(1, (scroller.clientWidth - 120) / targetWidth));
     setZoom(nextZoom);
     window.setTimeout(() => scroller.scrollTo({ left: 0, top: 0, behavior: 'smooth' }), 0);
+  }
+
+  function fitCanvasWidth() {
+    fitCanvasToWidth(breakpoint.width);
   }
 
   function toggleFullPreview() {
@@ -845,7 +1187,7 @@ export function WebDesignStudioApp() {
     window.setTimeout(() => {
       const scroller = canvasScroll.current;
       if (!scroller) return;
-      setZoom(Math.max(.25, Math.min(1.5, scroller.clientWidth / breakpoint.width)));
+      setZoom(Math.max(.05, Math.min(1.5, scroller.clientWidth / breakpoint.width)));
       scroller.scrollTo({ left: 0, top: 0 });
     }, 0);
   }
@@ -903,7 +1245,7 @@ export function WebDesignStudioApp() {
     const slotIds = new Set(components.map((component) => component.slot));
     const group = componentDefaults('section', desktopBounds.x, desktopBounds.y);
     group.id = `group-${crypto.randomUUID().slice(0, 8)}`;
-    group.name = '组件组合';
+    group.name = `新建分组 · ${roots.length} 项`;
     group.pageId = pageId;
     group.width = desktopBounds.width;
     group.height = desktopBounds.height;
@@ -912,12 +1254,13 @@ export function WebDesignStudioApp() {
     group.zIndex = Math.max(0, Math.min(...components.map((component) => component.zIndex)) - 1);
     group.layout = { mode: 'free', gap: 16, padding, align: 'start' };
     group.responsive = { tablet: tabletBounds, mobile: mobileBounds };
-    commit((active) => ({
+    commitWithCanvasGrowth((active) => ({
       ...active,
       components: [...active.components.map((component) => roots.includes(component.id) ? { ...component, parentId: group.id } : component), group]
     }));
     setSelectedId(group.id);
     setSelectedIds([group.id]);
+    showToast('已创建分组，拖动分组外框即可整体移动');
   }
 
   function ungroupSelected() {
@@ -935,6 +1278,7 @@ export function WebDesignStudioApp() {
     }));
     setSelectedId(childIds[0]);
     setSelectedIds(childIds);
+    showToast('已取消分组，内部组件保持在原位置');
   }
 
   function updateSelectedLayout(changes: Partial<NonNullable<WebDesignComponent['layout']>>) {
@@ -947,7 +1291,7 @@ export function WebDesignStudioApp() {
 
   function applySelectedAutoLayout() {
     if (!selected) return;
-    commit((current) => {
+    commitWithCanvasGrowth((current) => {
       const changedIds = new Set(current.components.filter((component) => component.parentId === selected.id)
         .flatMap((component) => [component.id, ...descendantIds(current, component.id)]));
       const laidOut = autoLayoutContainer(current, selected.id, device);
@@ -967,26 +1311,10 @@ export function WebDesignStudioApp() {
     const current = documentRef.current;
     if (!current) return;
     const instance = instantiateSymbol(current, symbol, pageId);
-    commit((active) => {
-      const breakpoints = structuredClone(active.breakpoints ?? {
-        desktop: { width: active.viewport.width, height: active.viewport.height },
-        tablet: { width: 768, height: 1100 },
-        mobile: { width: 390, height: 844 }
-      });
-      for (const target of ['desktop', 'tablet', 'mobile'] as const) {
-        const bottom = Math.max(...instance.components.map((component) => {
-          const frame = resolveComponent(component, target);
-          return frame.y + frame.height;
-        }));
-        breakpoints[target].height = Math.max(breakpoints[target].height, Math.ceil(bottom + 40));
-      }
-      return {
-        ...active,
-        breakpoints,
-        viewport: { ...active.viewport, height: breakpoints.desktop.height },
-        components: [...active.components, ...instance.components]
-      };
-    });
+    commitWithCanvasGrowth(
+      (active) => ({ ...active, components: [...active.components, ...instance.components] }),
+      ['desktop', 'tablet', 'mobile']
+    );
     setSelectedId(instance.rootIds[0]);
     setSelectedIds(instance.rootIds);
     const instanceTop = Math.min(...instance.components.map((component) => resolveComponent(component, device).y));
@@ -1036,9 +1364,9 @@ export function WebDesignStudioApp() {
     updateSelected({ library: { ...selected.library, props: { ...selected.library.props, [key]: value } } });
   }
 
-  function applySelectedAntdVariant(variantId: string) {
-    if (!selected?.library || selected.library.name !== 'antd') return;
-    updateComponent(selected.id, (component) => applyAntdComponentVariant(component, variantId));
+  function applySelectedLibraryVariant(variantId: string) {
+    if (!selected?.library) return;
+    updateComponent(selected.id, (component) => applyUiLibraryVariant(component, variantId));
   }
 
   function detachSelectedSymbol() {
@@ -1251,24 +1579,80 @@ export function WebDesignStudioApp() {
     showToast(target ? '已提交组件修改任务' : '已提交整页设计任务');
   }
 
-  if (!document) return <div className="loading-screen"><div className="loading-dot" />正在打开 Web Design Studio…</div>;
+  const storageBadge = <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>;
+  const newProjectModal = newProjectOpen && <div className="studio-modal-backdrop" onPointerDown={() => setNewProjectOpen(false)}>
+    <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
+      <header><div><span className="eyebrow">WEB DESIGN STUDIO</span><h2>新建网站项目</h2><p>项目用于管理同一个产品、品牌或业务下的多份网站设计。</p></div><button onClick={() => setNewProjectOpen(false)}>×</button></header>
+      <div className="project-form-body">
+        <label>项目名称<input autoFocus maxLength={240} value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && newProjectName.trim()) void createProjectFromSheet(); }} placeholder="例如：Chatos 官方网站" /></label>
+        <label>项目说明<textarea rows={3} maxLength={4000} value={newProjectDescription} onChange={(event) => setNewProjectDescription(event.target.value)} placeholder="项目目标、品牌、受众或设计要求（可选）" /></label>
+      </div>
+      <footer className="project-modal-actions"><button className="quiet-button" onClick={() => setNewProjectOpen(false)}>取消</button><button className="primary-button" disabled={!newProjectName.trim()} onClick={() => void createProjectFromSheet()}>创建项目</button></footer>
+    </section>
+  </div>;
+  const newDesignModal = newDesignOpen && activeProject && <div className="studio-modal-backdrop" onPointerDown={() => setNewDesignOpen(false)}>
+    <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
+      <header><div><span className="eyebrow">{activeProject.name}</span><h2>新建网站设计</h2><p>每份设计拥有独立页面、组件、响应式布局和设计系统。</p></div><button onClick={() => setNewDesignOpen(false)}>×</button></header>
+      <div className="project-form-body">
+        <label>设计名称<input autoFocus maxLength={240} value={newDesignName} onChange={(event) => setNewDesignName(event.target.value)} placeholder="例如：官网改版 2026" /></label>
+        <div className="design-start-options">
+          <button className={newDesignBlank ? 'active' : ''} onClick={() => setNewDesignBlank(true)}><span>＋</span><strong>空白网站</strong><small>从干净画布开始设计</small></button>
+          <button className={!newDesignBlank ? 'active' : ''} onClick={() => setNewDesignBlank(false)}><span>✦</span><strong>产品落地页</strong><small>从完整响应式模板开始</small></button>
+        </div>
+      </div>
+      <footer className="project-modal-actions"><button className="quiet-button" onClick={() => setNewDesignOpen(false)}>取消</button><button className="primary-button" disabled={!newDesignName.trim()} onClick={() => void createDesignFromSheet()}>创建并打开</button></footer>
+    </section>
+  </div>;
+
+  if (!ready) return <div className="loading-screen"><div className="loading-dot" />正在准备 Web Design Studio…</div>;
+
+  if (screen === 'projects') return <div className="web-project-shell">
+    <header className="web-project-toolbar"><div className="brand"><span className="brand-mark">W</span><span>Web Design Studio</span>{storageBadge}</div><button className="primary-button" onClick={() => { setNewProjectName(''); setNewProjectDescription(''); setNewProjectOpen(true); }}>＋ 新建项目</button></header>
+    <main className="web-project-home">
+      <section className="web-project-intro"><div><span className="eyebrow">WEB DESIGN STUDIO</span><h1>网站项目</h1><p>一个项目可以包含多份网站设计，每份设计内部可以继续包含多个页面。</p></div><button className="web-project-new-card" onClick={() => setNewProjectOpen(true)}><span>＋</span><strong>新建网站项目</strong><small>先建立项目，再创建具体设计</small></button></section>
+      <section className="web-project-section"><div className="web-project-section-heading"><h2>所有项目</h2><span>{projects.length} 个项目</span></div>
+        {projects.length ? <div className="web-project-grid">{projects.map((project) => <button className="web-project-card" key={project.projectId} onClick={() => void openProject(project.projectId)}>
+          <span className="web-project-folder">⌘</span><span className="web-project-card-copy"><strong>{project.name}</strong><small>{project.designCount} 份网站设计{project.description ? ` · ${project.description}` : ''}</small></span><time>{formatProjectDate(project.updatedAt)}</time><b>›</b>
+        </button>)}</div> : <div className="web-project-empty"><span>⌘</span><strong>还没有网站项目</strong><p>创建项目后，可以把同一产品的官网、活动页和不同设计方案放在一起管理。</p><button className="primary-button" onClick={() => setNewProjectOpen(true)}>＋ 新建网站项目</button></div>}
+      </section>
+    </main>{newProjectModal}{toast && <div className="toast">{toast}</div>}
+  </div>;
+
+  if (screen === 'project' && activeProject) return <div className="web-project-shell">
+    <header className="web-project-toolbar"><div className="brand"><button className="web-home-button" onClick={goToProjects} aria-label="返回项目列表">‹</button><span className="brand-mark">W</span><span>{activeProject.name}</span>{storageBadge}</div><button className="primary-button" onClick={() => void createNew()}>＋ 新建设计</button></header>
+    <main className="web-project-home">
+      <section className="web-project-intro"><div><span className="eyebrow">网站项目</span><h1>{activeProject.name}</h1><p>{activeProject.description || `项目内共有 ${activeProjectDocuments.length} 份网站设计。`}</p></div><button className="web-project-new-card" onClick={() => void createNew()}><span>＋</span><strong>新建网站设计</strong><small>创建空白网站或从完整模板开始</small></button></section>
+      <section className="web-project-section"><div className="web-project-section-heading"><h2>项目设计</h2><span>{activeProjectDocuments.length} 份</span></div>
+        {activeProjectDocuments.length ? <div className="web-design-grid">{activeProjectDocuments.map((item) => <article className="web-design-card" key={item.documentId}>
+          <button className="web-design-card-open" onClick={() => void openProjectDocument(item.documentId)}><span className="web-design-thumbnail"><i /><i /><i /></span><span className="web-project-card-copy"><strong>{item.title}</strong><small>{item.pageCount ?? 1} 个页面 · {item.componentCount} 个组件 · v{item.revision}</small></span><time>{formatProjectDate(item.updatedAt)}</time><b>›</b></button>
+          <button className="web-design-delete" aria-label={`删除设计 ${item.title}`} onClick={() => void deleteProjectDocument(item)}>×</button>
+        </article>)}</div> : <div className="web-project-empty"><span>▧</span><strong>这个项目还没有网站设计</strong><p>先创建一份设计，为它单独命名，再进入画布设计页面。</p><button className="primary-button" onClick={() => void createNew()}>＋ 新建网站设计</button></div>}
+      </section>
+    </main>{newDesignModal}{toast && <div className="toast">{toast}</div>}
+  </div>;
+
+  if (!document || !activeProject) return <div className="loading-screen"><div className="loading-dot" />正在打开网站项目…</div>;
 
   const layerComponents = flattenComponentTree(document, pageId);
   const directChildCount = selected ? document.components.filter((component) => component.parentId === selected.id).length : 0;
   const canUngroup = Boolean(selected?.id.startsWith('group-') && directChildCount > 0);
   const selectedSymbol = selected?.symbolId ? document.symbols?.find((symbol) => symbol.id === selected.symbolId) : undefined;
-  const selectedAntdVariants = selected?.library?.name === 'antd' ? variantsForAntdComponent(selected.library.component) : [];
-  const selectedEditableSlots = selected ? editableSlotsForAntdComponent(selected) : [];
+  const selectedLibrary = uiLibraryByName(selected?.library?.name);
+  const selectedLibraryDefinition = selected?.library ? selectedLibrary?.components.find((item) => item.id === selected.library?.component) : undefined;
+  const selectedLibraryVariants = selected?.library ? variantsForBoundComponent(selected) : [];
+  const selectedEditableSlots = selected ? editableSlotsForUiComponent(selected) : [];
   const aiTarget = selected ?? editingContainer;
   const normalizedPaletteQuery = paletteQuery.trim().toLowerCase();
   const filteredPalette = palette.filter((item) => !normalizedPaletteQuery
     || `${item.label} ${item.id} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const filteredPresets = WEB_DESIGN_BLOCK_PRESETS.filter((preset) => !normalizedPaletteQuery
     || `${preset.name} ${preset.description} ${preset.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const filteredAntdComponents = ANTD_COMPONENTS.filter((item) => !normalizedPaletteQuery
-    || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const variantPickerDefinition = variantPickerId ? ANTD_COMPONENTS.find((item) => item.id === variantPickerId) : undefined;
-  const variantPickerVariants = variantPickerDefinition ? variantsForAntdComponent(variantPickerDefinition.id) : [];
+  const activeUiLibrary = libraryTab === 'antd' || libraryTab === 'chakra' || libraryTab === 'shadcn' ? uiLibraryByName(libraryTab) : undefined;
+  const filteredUiLibraryComponents = activeUiLibrary?.components.filter((item) => !normalizedPaletteQuery
+    || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery)) ?? [];
+  const variantPickerLibrary = variantPickerTarget ? uiLibraryByName(variantPickerTarget.library) : undefined;
+  const variantPickerDefinition = variantPickerTarget ? variantPickerLibrary?.components.find((item) => item.id === variantPickerTarget.componentId) : undefined;
+  const variantPickerVariants = variantPickerDefinition && variantPickerLibrary ? variantPickerLibrary.variants[variantPickerDefinition.id] ?? [{ id: 'default', label: '默认款式', props: {} }] : [];
   const aiQuickPrompts = aiTarget
     ? ['让这个组件更精致、更有层次', '优化尺寸、间距和对齐', '给我 3 个更好看的视觉方案']
     : ['设计一个像 Apple 官网一样克制高级的页面', '统一整页的字号、间距、圆角和色彩', '检查并修复页面中不协调的视觉细节'];
@@ -1276,15 +1660,12 @@ export function WebDesignStudioApp() {
   return (
     <div className={`studio-shell ${preview ? 'preview-active' : ''}`}>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">W</span><span>Web Design Studio</span></div>
-        <select className="document-select" value={document.documentId} onChange={(event) => {
-          const id = event.target.value;
-          if (!repository || (dirty && !window.confirm('切换设计会丢弃未保存修改，确定继续吗？'))) return;
-          void repository.read(id).then(openDocument).catch((error) => showToast(String(error)));
-        }}>
-          {documents.map((item) => <option key={item.documentId} value={item.documentId}>{item.title}</option>)}
-        </select>
-        <button className="quiet-button" onClick={() => void createNew()}>新建设计</button>
+        <div className="brand editor-brand"><button className="web-home-button" onClick={goToActiveProject} aria-label="返回当前项目首页">‹</button><span className="brand-mark">W</span></div>
+        <button className={`project-library-trigger ${projectLibraryOpen ? 'active' : ''}`} onClick={() => setProjectLibraryOpen((open) => !open)} aria-label="打开当前项目的设计列表">
+          <span>⌘</span><strong>{activeProject.name}</strong><small>{activeProjectDocuments.length}</small><b>⌄</b>
+        </button>
+        <div className="editor-document-title"><span>项目：{activeProject.name}<i>/</i></span><strong>{document.title}</strong><small>{saving ? '正在保存…' : dirty ? '未保存修改' : `已保存 · v${persistedRevision}`}</small></div>
+        <button className="quiet-button compact-new-design" aria-label="在当前项目中新建设计" onClick={() => void createNew()}>＋ 新建设计</button>
         <button className="quiet-button style-trigger" onClick={() => setThemePickerOpen(true)}>设计风格</button>
         <div className="history-tools">
           <button title="撤销 ⌘Z" disabled={past.length === 0} onClick={undo}>↶</button>
@@ -1299,29 +1680,42 @@ export function WebDesignStudioApp() {
         <button className="primary-button" disabled={!dirty || saving} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '已保存'}</button>
       </header>
 
+      {projectLibraryOpen && !preview && <div className="project-library-popover">
+        <header><div><span className="eyebrow">当前网站项目</span><strong>{activeProject.name}</strong></div><button onClick={() => setProjectLibraryOpen(false)} aria-label="关闭项目设计列表">×</button></header>
+        <div className="project-library-list">
+          {activeProjectDocuments.map((item) => <div key={item.documentId} className={`project-library-item ${item.documentId === document.documentId ? 'active' : ''}`}>
+            <button onClick={() => void openProjectDocument(item.documentId)}><span className="project-library-thumb"><i /><i /><i /></span><span><strong>{item.title}</strong><small>{item.pageCount ?? 1} 个页面 · {item.componentCount} 个组件 · v{item.revision}</small></span></button>
+            <button className="project-library-delete" onClick={() => void deleteProjectDocument(item)} aria-label={`删除设计 ${item.title}`}>×</button>
+          </div>)}
+        </div>
+        <footer><button onClick={() => void createNew()}>＋ 在当前项目中新建设计</button><button onClick={goToActiveProject}>查看项目首页</button></footer>
+      </div>}
+
       <main className={`workspace ${preview ? 'preview-mode' : ''}`}>
         {!preview && <aside className="palette-panel">
           <div className="library-tabs">
             <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => setLibraryTab('antd')}>AntD</button>
+            <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => setLibraryTab('chakra')}>Chakra</button>
+            <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => setLibraryTab('shadcn')}>shadcn</button>
             <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>图形</button>
             <button className={libraryTab === 'blocks' ? 'active' : ''} onClick={() => setLibraryTab('blocks')}>区块</button>
             <button className={libraryTab === 'layers' ? 'active' : ''} onClick={() => setLibraryTab('layers')}>图层</button>
           </div>
           <div className="palette-panel-content">
-            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索基础图形…' : libraryTab === 'antd' ? '搜索 Ant Design 组件…' : '搜索成品区块…'} />}
+            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索基础图形…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : '搜索成品区块…'} />}
 
             {libraryTab === 'components' && <>
               <div className="panel-intro"><strong>基础图形</strong><span>只保留矩形、圆形和直线；产品组件统一使用成熟 UI 库</span></div>
               <div className="palette-grid shapes-grid">{filteredPalette.map((item) => <div key={item.id} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.id)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}</div>
             </>}
 
-            {libraryTab === 'antd' && <>
-              <div className="antd-library-heading"><div className="antd-logo-mark">A</div><div><strong>Ant Design</strong><span>实际组件库 · v{ANTD_VERSION}</span></div></div>
-              <div className="panel-intro"><strong>Ant Design 组件总览</strong><span>点击先预览不同款式，拖拽则直接插入默认款</span></div>
-              {ANTD_CATEGORIES.map((category) => {
-                const items = filteredAntdComponents.filter((item) => item.category === category);
-                return items.length > 0 && <div key={category} className="antd-category"><div className="antd-category-title">{category}</div><div className="antd-component-list">
-                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onAntdDrag(event, item.id)} onClick={() => setVariantPickerId(item.id)}><span className="antd-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{(ANTD_COMPONENT_VARIANTS[item.id]?.length ?? 1) > 1 ? `${ANTD_COMPONENT_VARIANTS[item.id].length} 款` : '预览'}</em><b>›</b></button>)}
+            {activeUiLibrary && <>
+              <div className={`ui-library-heading library-${activeUiLibrary.id}`}><div className="ui-library-logo-mark">{activeUiLibrary.brandMark}</div><div><strong>{activeUiLibrary.displayName}</strong><span>{activeUiLibrary.id === 'shadcn' ? `本地源码组件 · ${activeUiLibrary.version}` : `官方运行时 · v${activeUiLibrary.version}`}</span></div></div>
+              <div className="panel-intro"><strong>{activeUiLibrary.displayName} 组件总览</strong><span>点击先预览不同款式，拖拽则直接插入默认款</span></div>
+              {activeUiLibrary.categories.map((category) => {
+                const items = filteredUiLibraryComponents.filter((item) => item.category === category);
+                return items.length > 0 && <div key={category} className="ui-library-category"><div className="ui-library-category-title">{category}</div><div className="ui-library-component-list">
+                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onUiLibraryDrag(event, activeUiLibrary.id, item.id)} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : (activeUiLibrary.variants[item.id]?.length ?? 1) > 1 ? `${activeUiLibrary.variants[item.id].length} 款` : '预览'}</em><b>›</b></button>)}
                 </div></div>;
               })}
             </>}
@@ -1338,12 +1732,20 @@ export function WebDesignStudioApp() {
 
             {libraryTab === 'layers' && <>
               <div className="panel-title layer-title"><span>页面图层</span><small>{pageComponents.length}</small></div>
+              <div className={`layer-group-actions ${selectedIds.length > 1 || canUngroup ? 'ready' : ''}`}>
+                <div><strong>{selectedIds.length > 1 ? `已选择 ${selectedIds.length} 个图层` : canUngroup ? '当前是一个分组' : '创建可整体移动的分组'}</strong><small>{selectedIds.length > 1 ? '创建后拖动外框，内部组件会一起移动' : canUngroup ? `${directChildCount} 个直接子组件` : '按住 Shift、Command 或 Ctrl 点击多个图层'}</small></div>
+                {selectedIds.length > 1
+                  ? <button onClick={groupSelected}>创建分组 <kbd>⌘G</kbd></button>
+                  : canUngroup
+                    ? <button onClick={ungroupSelected}>取消分组 <kbd>⇧⌘G</kbd></button>
+                    : undefined}
+              </div>
               <div className="layers-list expanded">
                 {layerComponents.map(({ component, depth }) => {
                   const resolved = resolveComponent(component, device);
-                  return <div key={component.id} className={`layer-row ${selectedIdSet.has(component.id) ? 'selected' : ''} ${resolved.hidden ? 'hidden' : ''}`} style={{ paddingLeft: 4 + depth * 14 }} onClick={(event) => selectComponent(component.id, event.shiftKey)}>
+                  return <div key={component.id} className={`layer-row ${selectedIdSet.has(component.id) ? 'selected' : ''} ${resolved.hidden ? 'hidden' : ''}`} style={{ paddingLeft: 4 + depth * 14 }} onClick={(event) => selectComponent(component.id, event.shiftKey || event.metaKey || event.ctrlKey)}>
                     <button title={resolved.hidden ? '显示' : '隐藏'} onClick={(event) => { event.stopPropagation(); toggleHidden(component); }}>{resolved.hidden ? '○' : '●'}</button>
-                    <span className="layer-type">{component.library?.name === 'antd' ? ANTD_COMPONENTS.find((item) => item.id === component.library?.component)?.icon : palette.find((item) => item.type === component.type)?.icon}</span>
+                    <span className="layer-type">{component.library ? uiLibraryByName(component.library.name)?.components.find((item) => item.id === component.library?.component)?.icon : palette.find((item) => item.type === component.type)?.icon}</span>
                     <span className="layer-name">{depth > 0 ? '└ ' : ''}{component.name}</span>
                     <button title={component.locked ? '解锁' : '锁定'} onClick={(event) => { event.stopPropagation(); toggleLocked(component); }}>{component.locked ? '🔒' : '⌁'}</button>
                   </div>;
@@ -1355,7 +1757,10 @@ export function WebDesignStudioApp() {
               <div className="page-actions"><button onClick={addPage}>＋ 新建</button><button onClick={duplicatePage}>复制页</button><button disabled={pages.length <= 1} onClick={deleteCurrentPage}>删除</button></div>
               {currentPage && <><label className="field-label">页面名称<input value={currentPage.name} onChange={(event) => updateCurrentPage({ name: event.target.value })} /></label><label className="field-label page-slug">路径<input value={currentPage.slug} onChange={(event) => updateCurrentPage({ slug: event.target.value })} /></label></>}
               <label className="field-label">网站标题<input value={document.title} onChange={(event) => commit((current) => ({ ...current, title: event.target.value }))} /></label>
-              <div className="size-row"><NumberField label={`${device} 宽`} value={breakpoint.width} onChange={(width) => updateBreakpoint(width, breakpoint.height)} /><NumberField label="高" value={breakpoint.height} onChange={(height) => updateBreakpoint(breakpoint.width, height)} /></div>
+              <div className="panel-title section-title">视口与页面</div>
+              <div className="size-row"><NumberField label="视口宽" value={breakpoint.width} onChange={updateCustomViewportWidth} /><NumberField label="首屏高" value={previewViewportHeight} onChange={updateCustomViewportHeight} /></div>
+              <NumberField label="页面内容高度" value={breakpoint.height} onChange={(height) => updateBreakpoint(breakpoint.width, height)} />
+              <p className="helper-text viewport-helper">视口决定响应式宽度；页面内容可以超过首屏并继续向下滚动。</p>
               <label className="field-label">背景<input value={document.viewport.background} onChange={(event) => commit((current) => ({ ...current, viewport: { ...current.viewport, background: event.target.value } }))} /></label>
 
               <div className="panel-title section-title layer-title"><span>图片资源</span><small>{document.assets?.length ?? 0}</small></div>
@@ -1385,7 +1790,14 @@ export function WebDesignStudioApp() {
                 {deviceOptions.map((item) => <button key={item.device} className={device === item.device ? 'active' : ''} title={item.label} onClick={() => switchDevice(item.device)}>{item.icon}<span>{item.label}</span></button>)}
               </div>
               <span className="toolbar-divider" />
-              <button title="缩小" onClick={() => setZoom(Math.max(.25, zoom - .1))}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setZoom(Math.min(1.5, zoom + .1))}>＋</button>
+              <select className="viewport-preset-select" aria-label="预览分辨率" value={viewportSelection.presetId ?? 'custom'} onChange={(event) => selectViewportPreset(event.target.value)}>
+                {!viewportSelection.presetId && <option value="custom">自定义 · {breakpoint.width} × {previewViewportHeight}</option>}
+                <optgroup label="常用 CSS 视口">{viewportPresets.filter((preset) => !preset.group).map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>
+                {viewportPresets.some((preset) => preset.group === 'large-display') && <optgroup label="超宽与原生高分辨率">{viewportPresets.filter((preset) => preset.group === 'large-display').map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>}
+              </select>
+              <button className="rotate-viewport-button" title="旋转视口" onClick={rotateViewport}>↻</button>
+              <span className="toolbar-divider" />
+              <button title="缩小" onClick={() => setZoom(Math.max(.05, zoom - .1))}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setZoom(Math.min(1.5, zoom + .1))}>＋</button>
               <span className="toolbar-divider" />
               <button className="fit-button" title="适应画布宽度" onClick={fitCanvasWidth}>适应</button><button className="fit-button" title="恢复 100%" onClick={() => setZoom(1)}>100%</button>
               <span className="toolbar-divider" /><button className={`fit-button interaction-mode-button ${interactionMode ? 'active' : ''}`} title="操作输入框、选择器、抽屉、标签页等真实组件" onClick={toggleInteractionMode}>{interactionMode ? '退出交互' : '交互'}</button>
@@ -1399,26 +1811,29 @@ export function WebDesignStudioApp() {
             <button title="顶部对齐" onClick={() => alignSelected('top')}>↥</button><button title="垂直居中" onClick={() => alignSelected('middle')}>↕</button><button title="底部对齐" onClick={() => alignSelected('bottom')}>↧</button>
             <span /><button title="置于顶层" onClick={() => reorderSelected('front')}>⤒</button><button title="上移一层" onClick={() => reorderSelected('forward')}>↑</button><button title="下移一层" onClick={() => reorderSelected('backward')}>↓</button><button title="置于底层" onClick={() => reorderSelected('back')}>⤓</button>
             <span /><button title="复制 ⌘C" onClick={copySelected}>⧉</button><button title="粘贴 ⌘V" disabled={!clipboard} onClick={pasteClipboard}>▣</button>
-            {selectedIds.length > 1 && <><span /><button className="wide-tool" title="将选中组件组合" onClick={groupSelected}>组合</button></>}
-            {canUngroup && <button className="wide-tool" title="取消当前容器组合" onClick={ungroupSelected}>取消组合</button>}
+            {selectedIds.length > 1 && <><span /><button className="wide-tool" title="创建可整体移动的分组 ⌘G" onClick={groupSelected}>创建分组</button></>}
+            {canUngroup && <button className="wide-tool" title="取消当前分组 ⇧⌘G" onClick={ungroupSelected}>取消分组</button>}
           </div>}
           <div ref={canvasScroll} className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : ''} ${editingSlot ? 'slot-editor-scroll' : ''}`}>
-            {editingSlot && editingContainer && editingSlotDefinition ? <div className="slot-editor-frame">
-              <div className="slot-editor-heading"><div><span>可编辑内容区域</span><strong>{editingSlotDefinition.label}</strong><small>{editingSlotDefinition.description}</small></div><em>{Math.round(editingSlotDefinition.width)} × {Math.round(editingSlotDefinition.height)}</em></div>
-              <div className="slot-design-canvas design-canvas" style={{ width: editingSlotDefinition.width, height: editingSlotDefinition.height }} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { setSelectedId(undefined); setSelectedIds([]); }}>
-                {editingSlotComponents.length === 0 && <div className="slot-empty-state"><span>＋</span><strong>从左侧拖入组件</strong><p>也可以先插入表单或详情模板，再逐项调整。</p><div><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('form')}>插入表单</button><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('details')}>插入详情</button></div></div>}
-                {editingVisibleComponents.sort((left, right) => left.zIndex - right.zIndex).map((component) => {
-                  const frame = resolveComponent(component, device);
-                  const containerFrame = resolveComponent(editingContainer, device);
-                  const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
-                  if (resolved.hidden) return null;
-                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
-                })}
+            {editingSlot && editingContainer && editingSlotDefinition && editingSlotCanvasSize ? <div className="slot-editor-centering"><div className="slot-editor-frame">
+              <div className="slot-editor-heading"><div><span>可编辑内容区域</span><strong>{editingSlotDefinition.label}</strong><small>{editingSlotDefinition.description}</small></div><em>{Math.round(editingSlotCanvasSize.width)} × {Math.round(editingSlotCanvasSize.height)}</em></div>
+              <div className="slot-editor-canvas-shell">
+                <div className="slot-design-canvas design-canvas" style={{ width: editingSlotCanvasSize.width, height: editingSlotCanvasSize.height }} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { setSelectedId(undefined); setSelectedIds([]); }}>
+                  {editingSlotComponents.length === 0 && <div className="slot-empty-state"><span>＋</span><strong>从左侧拖入组件</strong><p>也可以先插入表单或详情模板，再逐项调整。</p><div><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('form')}>插入表单</button><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('details')}>插入详情</button></div></div>}
+                  {editingVisibleComponents.sort((left, right) => left.zIndex - right.zIndex).map((component) => {
+                    const frame = resolveComponent(component, device);
+                    const containerFrame = resolveComponent(editingContainer, device);
+                    const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
+                    if (resolved.hidden) return null;
+                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                  })}
+                </div>
               </div>
-            </div> : <div className="canvas-scale" style={{ width: breakpoint.width * zoom, height: breakpoint.height * zoom }}>
+            </div></div> : <div className="canvas-scale" style={{ width: breakpoint.width * zoom, height: renderedCanvasHeight * zoom }}>
+              {!preview && <div className="canvas-device-caption"><strong>{viewportLabel}{viewportSelection.orientation === 'rotated' ? ' · 横向' : ''}</strong><span>{breakpoint.width} × {previewViewportHeight} CSS px</span><em>页面高 {breakpoint.height}</em></div>}
               <div className={`design-canvas device-${device}`} style={{
                 width: breakpoint.width,
-                height: breakpoint.height,
+                height: renderedCanvasHeight,
                 background: document.viewport.background,
                 transform: `scale(${zoom})`,
                 fontFamily: tokens?.typography.fontFamily,
@@ -1432,6 +1847,7 @@ export function WebDesignStudioApp() {
                 '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
                 '--radius-large': `${tokens?.radii.large ?? 28}px`
               } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode) { setSelectedId(undefined); setSelectedIds([]); } }}>
+                {!preview && previewViewportHeight < renderedCanvasHeight && <div className="viewport-fold-line" style={{ top: previewViewportHeight }}><span>首屏结束 · {breakpoint.width} × {previewViewportHeight}</span></div>}
                 {snapGuides.x !== undefined && <div className="snap-guide vertical" style={{ left: snapGuides.x }} />}
                 {snapGuides.y !== undefined && <div className="snap-guide horizontal" style={{ top: snapGuides.y }} />}
                 {[...pageComponents].filter((component) => !contentContainerAncestor(document, component)).sort((left, right) => left.zIndex - right.zIndex).map((component) => {
@@ -1458,9 +1874,11 @@ export function WebDesignStudioApp() {
             </div>}
             <label className="field-label">组件名称<input value={selected.name} onChange={(event) => updateSelected({ name: event.target.value })} /></label>
             <label className="field-label">内容<textarea rows={3} value={selected.content} onChange={(event) => updateSelected({ content: event.target.value })} /></label>
-            {selected.library?.name === 'antd' && <div className="antd-inspector">
-              <div className="panel-title section-title">Ant Design 组件</div>
-              <div className="antd-binding-summary"><span>组件</span><strong>{selected.library.component}</strong><small>v{selected.library.version}</small></div>
+            {selected.library && selectedLibrary && <div className={`ui-library-inspector library-${selected.library.name}`}>
+              <div className="panel-title section-title">{selectedLibrary.displayName} 组件</div>
+              <div className="antd-binding-summary"><span>组件</span><strong>{selected.library.component}</strong><small>{selected.library.name === 'shadcn' ? selected.library.version : `v${selected.library.version}`}</small></div>
+              {selectedLibraryDefinition?.docsUrl && <a className="ui-library-doc-link" href={selectedLibraryDefinition.docsUrl} target="_blank" rel="noreferrer">查看当前官网文档 ↗</a>}
+              {selectedLibraryDefinition?.status === 'deprecated' && <div className="ui-library-deprecation-note">官网已将该组件标记为废弃；新设计建议使用 Listy。</div>}
               {selectedEditableSlots.length > 0 && <div className="content-slots-panel">
                 <div className="content-slots-heading"><div><strong>内部内容</strong><span>像页面一样继续设计</span></div><em>{selectedEditableSlots.length} 个区域</em></div>
                 {selectedEditableSlots.map((slot) => {
@@ -1468,13 +1886,13 @@ export function WebDesignStudioApp() {
                   return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : '空白'}</em><b>编辑 ›</b></button>;
                 })}
               </div>}
-              <label className="field-label antd-variant-field">展现款式<select value={selected.library.variant ?? selectedAntdVariants[0]?.id} onChange={(event) => applySelectedAntdVariant(event.target.value)}>{selectedAntdVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
+              <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
               {Object.entries(selected.library.props).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
-                ? <label key={key} className="antd-boolean-prop"><input type="checkbox" checked={value} onChange={(event) => updateSelectedLibraryProp(key, event.target.checked)} /><span>{key}</span></label>
+                ? <label key={key} className="ui-library-boolean-prop"><input type="checkbox" checked={value} onChange={(event) => updateSelectedLibraryProp(key, event.target.checked)} /><span>{key}</span></label>
                 : typeof value === 'number'
                   ? <NumberField key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />
                   : <label key={key} className="field-label">{key}<input value={String(value)} onChange={(event) => updateSelectedLibraryProp(key, event.target.value)} /></label>)}
-              {Object.entries(selected.library.props).some(([, value]) => value !== null && typeof value === 'object') && <div className="antd-data-editors"><div className="panel-title section-title">示例数据</div>{Object.entries(selected.library.props).filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
+              {Object.entries(selected.library.props).some(([, value]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{Object.entries(selected.library.props).filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
             </div>}
             <div className="panel-title section-title">预览交互</div>
             <label className="field-label">点击行为<select value={selected.interaction?.type ?? 'none'} onChange={(event) => {
@@ -1491,6 +1909,9 @@ export function WebDesignStudioApp() {
               <NumberField label="W" value={inspectedFrame.width} onChange={(width) => updateInspectedFrame({ width })} disabled={selected.locked} />
               <NumberField label="H" value={inspectedFrame.height} onChange={(height) => updateInspectedFrame({ height })} disabled={selected.locked} />
             </div>
+            <div className="panel-title section-title">响应式布局 · {device}</div>
+            <label className="field-label responsive-constraint-field">水平约束<select value={selected.constraints?.[device]?.horizontal ?? 'auto'} onChange={(event) => updateSelectedHorizontalConstraint(event.target.value as WebHorizontalConstraint)}>{horizontalConstraintOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+            <p className="helper-text responsive-constraint-help">{horizontalConstraintOptions.find((option) => option.id === (selected.constraints?.[device]?.horizontal ?? 'auto'))?.description}</p>
             <div className="panel-title section-title">样式 · {device}</div>
             <label className="field-label">背景<input value={inspectedFrame.style.background ?? ''} onChange={(event) => updateSelectedStyle({ background: event.target.value })} /></label>
             <label className="field-label">文字颜色<input value={inspectedFrame.style.color ?? ''} onChange={(event) => updateSelectedStyle({ color: event.target.value })} /></label>
@@ -1512,18 +1933,18 @@ export function WebDesignStudioApp() {
           </> : <div className="empty-inspector"><div className="empty-icon">↖</div><strong>选择一个组件</strong><p>在画布或图层中选择组件，然后编辑、对齐、锁定、批注或提交 AI 请求。</p></div>}
         </aside>}
       </main>
-      {variantPickerDefinition && <div className="studio-modal-backdrop" onPointerDown={() => setVariantPickerId(undefined)}>
-        <section className="studio-modal variant-picker" onPointerDown={(event) => event.stopPropagation()}>
-          <header><div><span className="eyebrow">Ant Design · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerId(undefined)}>×</button></header>
+      {variantPickerDefinition && variantPickerLibrary && <div className="studio-modal-backdrop" onPointerDown={() => setVariantPickerTarget(undefined)}>
+        <section className="studio-modal variant-picker" data-library-portal-host onPointerDown={(event) => event.stopPropagation()}>
+          <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
           <div className="variant-preview-grid">{variantPickerVariants.map((variant) => {
-            const previewComponent = applyAntdComponentVariant(createAntdComponent(variantPickerDefinition.id, 0, 0), variant.id);
-            return <button key={variant.id} className="variant-preview-card" onClick={() => insertAntdComponent(variantPickerDefinition.id, variant.id)}><div className="variant-live-preview"><Suspense fallback={<span className="antd-loading-placeholder">加载组件…</span>}><AntdCanvasComponent component={previewComponent} preview={false} tokens={tokens} /></Suspense></div><span><strong>{variant.label}</strong><small>插入此款式</small></span></button>;
+            const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
+            return <article key={variant.id} className="variant-preview-card"><div className="variant-live-preview" style={{ minHeight: Math.max(118, Math.min(320, previewComponent.height + 24)) }}><LibraryCanvasComponent component={previewComponent} preview tokens={tokens} /></div><footer><strong>{variant.label}</strong><button onClick={() => insertUiLibraryComponent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id)}>插入此款式</button></footer></article>;
           })}</div>
         </section>
       </div>}
       {themePickerOpen && <div className="studio-modal-backdrop" onPointerDown={() => setThemePickerOpen(false)}>
         <section className="studio-modal theme-picker" onPointerDown={(event) => event.stopPropagation()}>
-          <header><div><span className="eyebrow">Visual system</span><h2>选择整站设计风格</h2><p>一次统一颜色、字体、圆角、画布背景和 Ant Design 主题。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>
+          <header><div><span className="eyebrow">Visual system</span><h2>选择整站设计风格</h2><p>一次统一颜色、字体、圆角、画布背景和全部 UI 组件主题。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>
           <div className="theme-preset-grid">{WEB_DESIGN_THEME_PRESETS.map((preset) => <button key={preset.id} onClick={() => applyDesignTheme(preset)}><div className="theme-preview" style={{ background: preset.canvasBackground }}><i style={{ background: preset.preview[1] }} /><b style={{ background: preset.preview[2] }} /><span style={{ color: preset.tokens.colors.text }}>Aa</span></div><strong>{preset.name}</strong><small>{preset.description}</small><div className="theme-swatches">{preset.preview.map((color) => <i key={color} style={{ background: color }} />)}</div></button>)}</div>
         </section>
       </div>}
@@ -1560,7 +1981,7 @@ function JsonPropertyEditor({ label, value, onChange }: { label: string; value: 
 }
 
 function CanvasComponentContent({ component, interactive, tokens, slotContent }: { component: WebDesignComponent; interactive: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
-  if (component.library?.name === 'antd') return <div className={`antd-canvas-content ${interactive ? 'preview' : ''}`}><Suspense fallback={<span className="antd-loading-placeholder">加载组件…</span>}><AntdCanvasComponent component={component} preview={interactive} tokens={tokens} slotContent={slotContent} /></Suspense></div>;
+  if (component.library) return <div className={`ui-library-canvas-content library-${component.library.name} ${interactive ? 'preview' : ''}`}><LibraryCanvasComponent component={component} preview={interactive} tokens={tokens} slotContent={slotContent} /></div>;
   if (component.type === 'image') return component.content ? <img src={component.content} alt={component.name} draggable={false} /> : <span className="image-placeholder">图片</span>;
   if (component.type === 'video') return component.content ? <video src={component.content} controls={interactive} muted /> : <span className="media-placeholder">▶<small>视频</small></span>;
   if (component.type === 'input') return <span className="input-placeholder">{component.content}</span>;
@@ -1596,7 +2017,7 @@ function CanvasComponent({ component, resolved, selected, primary, interactive, 
     textAlign: resolved.style.textAlign, opacity: resolved.style.opacity, boxShadow: resolved.style.shadow
   };
   return (
-    <div className={`canvas-component type-${component.type} ${component.library?.name === 'antd' ? 'library-antd' : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} onPointerDown={onPointerDown} onClick={(event) => { if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
+    <div className={`canvas-component type-${component.type} ${component.library ? `library-component library-${component.library.name}` : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} onPointerDown={onPointerDown} onClick={(event) => { if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
       <CanvasComponentContent component={component} interactive={interactive} tokens={tokens} slotContent={slotContent} />
       {!interactive && component.annotations.some((annotation) => annotation.status === 'open') && <span className="annotation-badge">{component.annotations.filter((annotation) => annotation.status === 'open').length}</span>}
       {primary && !interactive && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
@@ -1612,7 +2033,7 @@ function runtimeSlotContentMap(
   tokens: WebDesignTokens | undefined,
   onPreviewActivate: (component: WebDesignComponent) => void
 ): Record<string, ReactNode> {
-  return Object.fromEntries(editableSlotsForAntdComponent(component)
+  return Object.fromEntries(editableSlotsForUiComponent(component)
     .filter((slot) => componentsInSlot(document, component.id, slot.id).length > 0)
     .map((slot) => [slot.id,
       <RuntimeSlotContent key={slot.id} document={document} container={component} slot={slot} device={device} interactive={interactive} tokens={tokens} onPreviewActivate={onPreviewActivate} />
@@ -1622,7 +2043,7 @@ function runtimeSlotContentMap(
 function RuntimeSlotContent({ document, container, slot, device, interactive, tokens, onPreviewActivate }: {
   document: WebDesignDocument;
   container: WebDesignComponent;
-  slot: AntdEditableSlot;
+  slot: UiEditableSlot;
   device: WebDesignDevice;
   interactive: boolean;
   tokens?: WebDesignTokens;
@@ -1655,4 +2076,16 @@ function RuntimeSlotContent({ document, container, slot, device, interactive, to
       }}><CanvasComponentContent component={child} interactive={interactive} tokens={tokens} slotContent={runtimeSlotContentMap(document, child, device, interactive, tokens, onPreviewActivate)} /></div>;
     })}
   </div>;
+}
+
+function formatProjectDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '最近更新';
+  const today = new Date();
+  const sameDay = date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth()
+    && date.getDate() === today.getDate();
+  return sameDay
+    ? `今天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
+    : date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
 }

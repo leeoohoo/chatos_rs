@@ -54,6 +54,8 @@ public protocol LocalConnectorControlServicing: Sendable {
     func uninstallPlugin(id: String) async throws
     func updatePluginEnabled(id: String, enabled: Bool) async throws
     func requestPluginPermission(pluginID: String, permissionID: String) async throws
+    func isBrowserExtensionPaired(pluginID: String) async throws -> Bool
+    func startBrowserExtensionPairing(pluginID: String) async throws
 }
 
 public extension LocalConnectorControlServicing {
@@ -83,5 +85,13 @@ public extension LocalConnectorControlServicing {
     func updateModelSettings(_ settings: LocalConnectorModelSettings) async throws {}
     func requestPluginPermission(pluginID: String, permissionID: String) async throws {
         _ = try await requestSystemPermission(id: permissionID)
+    }
+
+    func startBrowserExtensionPairing(pluginID: String) async throws {
+        throw URLError(.unsupportedURL)
+    }
+
+    func isBrowserExtensionPaired(pluginID: String) async throws -> Bool {
+        false
     }
 }

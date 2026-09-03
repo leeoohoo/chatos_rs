@@ -75,6 +75,25 @@ test('bridge authenticates before serving connector requests', async () => {
   assert.equal(bridge.connected, false);
 });
 
+test('authenticated bridge remains connected after the bootstrap credential expires', async () => {
+  const native = new FakeNativePort({credentialLifetimeMs: 20});
+  const chromeApi = {
+    runtime: {
+      connectNative() {
+        return native;
+      }
+    }
+  };
+  const bridge = new LocalConnectorBridge({chromeApi, WebSocketImpl: FakeWebSocket});
+  await bridge.connect();
+  assert.equal(bridge.connected, true);
+
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  assert.equal(bridge.connected, true);
+  await bridge.disconnect('test_complete');
+});
+
 test('native host disconnect reports the Chrome runtime error immediately', async () => {
   const native = new FakeNativePort();
   const chromeApi = {
@@ -100,6 +119,10 @@ class FakeNativePort {
   onDisconnect = hook();
   lastRequest = null;
 
+  constructor({credentialLifetimeMs = 60_000} = {}) {
+    this.credentialLifetimeMs = credentialLifetimeMs;
+  }
+
   postMessage(message) {
     this.lastRequest = message;
     queueMicrotask(() => {
@@ -110,7 +133,7 @@ class FakeNativePort {
           protocol_version: '1.0',
           endpoint: 'ws://127.0.0.1:39001/v1/extension',
           token: 'extension-bootstrap-token-012345',
-          expires_at_unix_ms: Date.now() + 60_000
+          expires_at_unix_ms: Date.now() + this.credentialLifetimeMs
         }
       });
     });

@@ -247,6 +247,11 @@ extension MessageTaskWorkspaceViewModel {
             do {
                 for try await signal in stream {
                     guard let self, !Task.isCancelled else { return }
+                    if signal.kind == .reconcile {
+                        await self.refreshWorkspaceState(refreshInspector: true)
+                        self.startPollingIfNeeded()
+                        continue
+                    }
                     self.applyRealtimeSignal(signal)
                     if signal.turnID == self.turn.id,
                        [.completed, .failed, .cancelled, .persisted].contains(signal.kind) {

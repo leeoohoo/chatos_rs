@@ -4,6 +4,12 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
+default_extension_id=jooaepjckiofmpldinopgdgddcoaofil
+if [ -z "${CHATOS_BROWSER_EXTENSION_ID:-}" ]; then
+  CHATOS_BROWSER_EXTENSION_ID=$default_extension_id
+  export CHATOS_BROWSER_EXTENSION_ID
+fi
+
 build_profile=${CHATOS_BROWSER_BUILD_PROFILE:-release}
 case "$build_profile" in
   debug)

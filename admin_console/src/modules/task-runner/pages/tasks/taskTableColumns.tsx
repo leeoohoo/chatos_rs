@@ -158,16 +158,7 @@ export function buildTaskTableColumns({
         if (!value) {
           return t('tasks.modelUnbound');
         }
-        return (
-          <Button
-            type="link"
-            size="small"
-            className="task-cell-link"
-            onClick={() => navigate(`/task-runner/models?model_id=${encodeURIComponent(value)}`)}
-          >
-            {modelNameMap.get(value) || value}
-          </Button>
-        );
+        return <Typography.Text>{modelNameMap.get(value) || value}</Typography.Text>;
       },
     },
     {

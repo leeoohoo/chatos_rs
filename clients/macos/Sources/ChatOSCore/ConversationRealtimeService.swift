@@ -1,4 +1,5 @@
 public enum ConversationRealtimeKind: String, Sendable, Equatable {
+    case reconcile
     case started
     case updated
     case persisted

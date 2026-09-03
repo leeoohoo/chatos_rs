@@ -14,8 +14,6 @@ use crate::models::{
 mod common;
 #[path = "types/jsonrpc.rs"]
 mod jsonrpc;
-#[path = "types/model.rs"]
-mod model;
 #[path = "types/prompt.rs"]
 mod prompt;
 #[path = "types/run.rs"]
@@ -25,7 +23,6 @@ mod task;
 
 pub(super) use self::common::{decode_args, text_result};
 pub use self::jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-pub(super) use self::model::{ModelConfigIdArgs, TestModelConfigArgs};
 pub(super) use self::prompt::{CancelPromptArgs, ListPromptsArgs, PromptIdArgs, SubmitPromptArgs};
 pub(super) use self::run::{
     GetTaskMemoryContextArgs, ListRunsArgs, ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs,

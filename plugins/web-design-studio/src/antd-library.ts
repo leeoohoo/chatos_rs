@@ -6,9 +6,28 @@ export type AntdCategory = '通用' | '布局' | '导航' | '数据录入' | '�
 export type AntdComponentDefinition = UiComponentDefinition<AntdCategory>;
 export type AntdComponentVariant = UiComponentVariant;
 
-const item = defineUiComponent<AntdCategory>;
+const baseItem = defineUiComponent<AntdCategory>;
+type AntdItemArgs = Parameters<typeof baseItem>;
 
-export const ANTD_VERSION = '6.2.2';
+const ANTD_COMPONENT_METADATA: Partial<Record<string, Pick<AntdComponentDefinition, 'introduced' | 'status'>>> = {
+  BorderBeam: { introduced: '6.4.0' },
+  List: { status: 'deprecated' },
+  Listy: { introduced: '6.6.0' }
+};
+
+function item(...args: AntdItemArgs): AntdComponentDefinition {
+  const definition = baseItem(...args);
+  const slug = definition.id.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase();
+  return {
+    ...definition,
+    docsUrl: `https://ant.design/components/${slug}-cn`,
+    status: 'stable',
+    ...ANTD_COMPONENT_METADATA[definition.id]
+  };
+}
+
+export const ANTD_VERSION = '6.6.2';
+export const ANTD_OFFICIAL_COMPONENT_COUNT = 72;
 export const ANTD_CATEGORIES: AntdCategory[] = ['通用', '布局', '导航', '数据录入', '数据展示', '反馈', '其他'];
 
 export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
@@ -24,12 +43,14 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'large', label: '大型图标', props: { color: '#722ed1', size: 44 }, width: 68, height: 68 }
   ],
   Button: [
-    { id: 'primary', label: '主要按钮', props: { type: 'primary', danger: false }, content: '主要按钮' },
-    { id: 'default', label: '默认按钮', props: { type: 'default', danger: false }, content: '默认按钮' },
-    { id: 'dashed', label: '虚线按钮', props: { type: 'dashed', danger: false }, content: '虚线按钮' },
-    { id: 'text', label: '文本按钮', props: { type: 'text', danger: false }, content: '文本按钮' },
-    { id: 'link', label: '链接按钮', props: { type: 'link', danger: false }, content: '链接按钮' },
-    { id: 'danger', label: '危险按钮', props: { type: 'primary', danger: true }, content: '危险操作' }
+    { id: 'primary', label: '主色实心按钮', props: { color: 'primary', variant: 'solid', danger: false }, content: '主要按钮' },
+    { id: 'default', label: '默认描边按钮', props: { color: 'default', variant: 'outlined', danger: false }, content: '默认按钮' },
+    { id: 'dashed', label: '虚线按钮', props: { color: 'default', variant: 'dashed', danger: false }, content: '虚线按钮' },
+    { id: 'filled', label: '柔和填充按钮', props: { color: 'primary', variant: 'filled', danger: false }, content: '填充按钮' },
+    { id: 'text', label: '文本按钮', props: { color: 'primary', variant: 'text', danger: false }, content: '文本按钮' },
+    { id: 'link', label: '链接按钮', props: { color: 'primary', variant: 'link', danger: false }, content: '链接按钮' },
+    { id: 'danger', label: '危险实心按钮', props: { color: 'danger', variant: 'solid', danger: true }, content: '危险操作' },
+    { id: 'gradient', label: '渐变按钮', props: { color: 'primary', variant: 'solid', gradient: true, danger: false }, content: 'AI 生成' }
   ],
   Input: [
     { id: 'outlined', label: '描边输入框', props: { variant: 'outlined', size: 'middle' }, content: '请输入内容' },
@@ -38,7 +59,9 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'underlined', label: '下划线输入框', props: { variant: 'underlined', size: 'middle' }, content: '请输入内容' },
     { id: 'search', label: '搜索输入框', props: { variant: 'outlined', size: 'middle', enterButton: true }, content: '搜索内容' },
     { id: 'password', label: '密码输入框', props: { variant: 'outlined', size: 'middle' }, content: '请输入密码' },
-    { id: 'textarea', label: '多行输入框', props: { variant: 'outlined', autoSize: { minRows: 3, maxRows: 5 } }, content: '请输入详细内容', height: 96 }
+    { id: 'textarea', label: '多行输入框', props: { variant: 'outlined', autoSize: { minRows: 3, maxRows: 5 } }, content: '请输入详细内容', height: 96 },
+    { id: 'otp', label: '一次性密码输入框', props: { length: 6, size: 'large' }, content: '', width: 360, height: 54 },
+    { id: 'prefix-suffix', label: '前后缀输入框', props: { variant: 'outlined', prefixText: 'https://', suffixText: '.com' }, content: 'your-site' }
   ],
   Select: [
     { id: 'outlined', label: '描边选择器', props: { variant: 'outlined', mode: null } },
@@ -46,7 +69,10 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'borderless', label: '无边框选择器', props: { variant: 'borderless', mode: null } },
     { id: 'underlined', label: '下划线选择器', props: { variant: 'underlined', mode: null } },
     { id: 'multiple', label: '多选选择器', props: { variant: 'outlined', mode: 'multiple', defaultValue: ['apple', 'antd'] }, height: 52 },
-    { id: 'tags', label: '标签选择器', props: { variant: 'outlined', mode: 'tags', defaultValue: ['AI'] }, height: 52 }
+    { id: 'tags', label: '标签选择器', props: { variant: 'outlined', mode: 'tags', defaultValue: ['AI'] }, height: 52 },
+    { id: 'search', label: '可搜索选择器', props: { variant: 'outlined', showSearch: true, optionFilterProp: 'label', allowClear: true, mode: null } },
+    { id: 'grouped', label: '分组选项选择器', props: { variant: 'outlined', mode: null, optionGroups: [{ label: '设计', options: [{ value: 'figma', label: 'Figma' }, { value: 'web', label: '网站设计' }] }, { label: '开发', options: [{ value: 'react', label: 'React' }, { value: 'ai', label: 'AI 应用' }] }] } },
+    { id: 'large', label: '大型选择器', props: { variant: 'outlined', size: 'large', mode: null }, height: 52 }
   ],
   Typography: [
     { id: 'title', label: '标题', props: { level: 2 }, content: '设计系统标题', height: 72 },
@@ -89,7 +115,8 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
   ],
   Splitter: [
     { id: 'horizontal', label: '水平分隔面板', props: { orientation: 'horizontal' }, width: 460, height: 170 },
-    { id: 'vertical', label: '垂直分隔面板', props: { orientation: 'vertical' }, width: 420, height: 220 }
+    { id: 'vertical', label: '垂直分隔面板', props: { orientation: 'vertical' }, width: 420, height: 220 },
+    { id: 'collapsible', label: '可折叠分隔面板', props: { orientation: 'horizontal', collapsible: true }, width: 480, height: 190 }
   ],
   Anchor: [
     { id: 'vertical', label: '垂直锚点', props: { direction: 'vertical', affix: false }, width: 220, height: 150 },
@@ -126,7 +153,10 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
   Form: [
     { id: 'vertical', label: '纵向表单', props: { layout: 'vertical', size: 'middle' }, width: 360, height: 210 },
     { id: 'horizontal', label: '横向表单', props: { layout: 'horizontal', size: 'middle', labelCol: { span: 6 }, wrapperCol: { span: 18 } }, width: 460, height: 180 },
-    { id: 'compact', label: '紧凑表单', props: { layout: 'vertical', size: 'small' }, width: 330, height: 185 }
+    { id: 'compact', label: '紧凑表单', props: { layout: 'vertical', size: 'small' }, width: 330, height: 185 },
+    { id: 'inline-login', label: '内联登录栏', props: { layout: 'inline', size: 'middle', formTemplate: 'login' }, width: 620, height: 72 },
+    { id: 'login', label: '登录表单', props: { layout: 'vertical', size: 'large', formTemplate: 'login' }, width: 380, height: 250 },
+    { id: 'registration', label: '注册表单', props: { layout: 'vertical', size: 'middle', formTemplate: 'registration' }, width: 400, height: 360 }
   ],
   Radio: [
     { id: 'radio', label: '普通单选', props: { optionType: 'default', buttonStyle: 'outline', defaultValue: 'a' } },
@@ -204,13 +234,17 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
   Upload: [
     { id: 'button', label: '按钮上传', props: { listType: 'text', showUploadList: false, multiple: false } },
     { id: 'multiple', label: '多文件上传', props: { listType: 'text', showUploadList: true, multiple: true }, width: 180, height: 70 },
-    { id: 'picture', label: '图片上传', props: { listType: 'picture-card', showUploadList: false, multiple: false }, width: 110, height: 110 }
+    { id: 'picture', label: '图片上传', props: { listType: 'picture-card', showUploadList: false, multiple: false }, width: 110, height: 110 },
+    { id: 'dragger', label: '拖拽上传', props: { multiple: true, showUploadList: true }, width: 420, height: 180 }
   ],
   DatePicker: [
     { id: 'outlined', label: '描边日期', props: { variant: 'outlined' } },
     { id: 'filled', label: '填充日期', props: { variant: 'filled' } },
     { id: 'borderless', label: '无边框日期', props: { variant: 'borderless' } },
-    { id: 'underlined', label: '下划线日期', props: { variant: 'underlined' } }
+    { id: 'underlined', label: '下划线日期', props: { variant: 'underlined' } },
+    { id: 'range', label: '日期范围选择器', props: { variant: 'outlined', pickerMode: 'range' }, width: 360 },
+    { id: 'multiple', label: '多日期选择器', props: { variant: 'outlined', multiple: true, needConfirm: true }, width: 320, height: 52 },
+    { id: 'datetime', label: '日期时间选择器', props: { variant: 'outlined', showTime: true, showNow: true }, width: 280 }
   ],
   Card: [
     { id: 'default', label: '默认卡片', props: { size: 'default', bordered: true } },
@@ -224,19 +258,36 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'compact', label: '紧凑列表', props: { bordered: true, size: 'small', dataSource: ['待处理设计请求', '组件属性更新', '响应式检查'] }, width: 360, height: 150 },
     { id: 'metadata', label: '图文信息列表', props: { bordered: false, itemLayout: 'horizontal', dataSource: [{ title: '设计系统', description: '统一颜色、字体、圆角与间距。', avatar: 'DS' }, { title: 'AI 协作', description: '针对整页或组件提交修改任务。', avatar: 'AI' }, { title: '响应式', description: '分别检查桌面、平板和手机布局。', avatar: 'R' }] }, width: 440, height: 230 },
     { id: 'actions', label: '操作列表', props: { bordered: true, itemLayout: 'horizontal', dataSource: [{ title: '首页设计', description: '刚刚更新' }, { title: '定价页面', description: '2 个待处理批注' }, { title: '登录流程', description: '等待确认' }] }, width: 460, height: 230 },
-    { id: 'grid', label: '网格卡片列表', props: { grid: { gutter: 12, column: 2 }, dataSource: [{ title: '组件库', description: '68 个组件' }, { title: '视觉主题', description: '6 套主题' }, { title: '页面模板', description: '快速起稿' }, { title: 'AI 修改', description: '精确到组件' }] }, width: 460, height: 230 }
+    { id: 'grid', label: '网格卡片列表', props: { grid: { gutter: 12, column: 2 }, dataSource: [{ title: '组件库', description: '72 个组件' }, { title: '视觉主题', description: '6 套主题' }, { title: '页面模板', description: '快速起稿' }, { title: 'AI 修改', description: '精确到组件' }] }, width: 460, height: 230 },
+    { id: 'pagination', label: '分页列表', props: { bordered: false, size: 'default', pagination: { pageSize: 3, position: 'bottom', align: 'center' }, dataSource: ['首页设计', '定价页面', '登录流程', '工作台', '数据报表', '设置中心'] }, width: 420, height: 260 },
+    { id: 'vertical', label: '竖排图文列表', props: { itemLayout: 'vertical', dataSource: [{ title: 'AI 网站设计', description: '通过自然语言和可视化画布共同完成网页。' }, { title: '成熟组件库', description: '直接复用 Ant Design、Chakra UI 和 shadcn/ui。' }] }, width: 500, height: 260 }
+  ],
+  Listy: [
+    { id: 'basic', label: '基础虚拟列表', props: { height: 260, virtual: false, itemCount: 20 }, width: 420, height: 280 },
+    { id: 'virtual', label: '万条虚拟滚动', props: { height: 300, virtual: true, itemCount: 10000 }, width: 440, height: 320 },
+    { id: 'grouped', label: '分组与吸顶', props: { height: 300, virtual: true, sticky: true, itemCount: 80 }, width: 440, height: 320 },
+    { id: 'rich', label: '复杂内容列表', props: { height: 320, virtual: true, itemCount: 60 }, width: 480, height: 340 },
+    { id: 'drag-sorting', label: '拖拽排序列表', props: { height: 300, virtual: false, itemCount: 12 }, width: 440, height: 320 },
+    { id: 'infinite', label: '无限加载列表', props: { height: 280, virtual: true, itemCount: 200 }, width: 440, height: 340 },
+    { id: 'style-class', label: '自定义语义样式', props: { height: 300, virtual: false, itemCount: 16, semanticStyle: true }, width: 440, height: 320 },
+    { id: 'scroll-control', label: '滚动控制列表', props: { height: 280, virtual: true, itemCount: 200 }, width: 440, height: 340 }
   ],
   Table: [
     { id: 'basic', label: '基础表格', props: { bordered: false, size: 'middle', pagination: false }, width: 520, height: 220 },
     { id: 'bordered', label: '带边框表格', props: { bordered: true, size: 'middle', pagination: false }, width: 520, height: 220 },
     { id: 'compact', label: '紧凑表格', props: { bordered: true, size: 'small', pagination: false }, width: 500, height: 190 },
-    { id: 'pagination', label: '分页表格', props: { bordered: false, size: 'middle', pagination: { pageSize: 2 } }, width: 540, height: 260 }
+    { id: 'pagination', label: '分页表格', props: { bordered: false, size: 'middle', pagination: { pageSize: 2 } }, width: 540, height: 260 },
+    { id: 'selection', label: '可选择表格', props: { bordered: false, size: 'middle', pagination: false, rowSelection: { type: 'checkbox' } }, width: 560, height: 240 },
+    { id: 'expandable', label: '可展开表格', props: { bordered: true, size: 'middle', pagination: false, expandable: { defaultExpandedRowKeys: ['1'] } }, width: 580, height: 280 },
+    { id: 'scroll', label: '固定表头表格', props: { bordered: true, size: 'small', pagination: false, scroll: { y: 180 } }, width: 560, height: 250 }
   ],
   Tabs: [
     { id: 'line', label: '线形标签页', props: { type: 'line', tabPosition: 'top', defaultActiveKey: '1' }, width: 420, height: 150 },
     { id: 'card', label: '卡片标签页', props: { type: 'card', tabPosition: 'top', defaultActiveKey: '1' }, width: 420, height: 160 },
     { id: 'left', label: '左侧标签页', props: { type: 'line', tabPosition: 'left', defaultActiveKey: '1' }, width: 460, height: 190 },
-    { id: 'centered', label: '居中标签页', props: { type: 'line', tabPosition: 'top', centered: true, defaultActiveKey: '1' }, width: 420, height: 150 }
+    { id: 'centered', label: '居中标签页', props: { type: 'line', tabPosition: 'top', centered: true, defaultActiveKey: '1' }, width: 420, height: 150 },
+    { id: 'bottom', label: '底部标签页', props: { type: 'line', tabPosition: 'bottom', defaultActiveKey: '1' }, width: 430, height: 170 },
+    { id: 'editable', label: '可新增关闭标签页', props: { type: 'editable-card', tabPosition: 'top', defaultActiveKey: '1', hideAdd: false }, width: 500, height: 180 }
   ],
   Collapse: [
     { id: 'default', label: '基础折叠面板', props: { accordion: false, bordered: true, ghost: false, defaultActiveKey: ['1'] }, width: 400, height: 170 },
@@ -256,7 +307,9 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'default', label: '基础轮播', props: { autoplay: false, effect: 'scrollx', dotPosition: 'bottom' } },
     { id: 'autoplay', label: '自动轮播', props: { autoplay: true, effect: 'scrollx', dotPosition: 'bottom' } },
     { id: 'fade', label: '淡入轮播', props: { autoplay: false, effect: 'fade', dotPosition: 'bottom' } },
-    { id: 'left-dots', label: '左侧指示器', props: { autoplay: false, effect: 'scrollx', dotPosition: 'left' } }
+    { id: 'left-dots', label: '左侧指示器', props: { autoplay: false, effect: 'scrollx', dotPosition: 'left' } },
+    { id: 'arrows', label: '带切换箭头', props: { autoplay: false, arrows: true, dotPosition: 'bottom' } },
+    { id: 'progress', label: '进度式指示器', props: { autoplay: true, autoplaySpeed: 3000, dots: { className: 'antd-carousel-progress-dots' } } }
   ],
   Empty: [
     { id: 'default', label: '默认空状态', props: { image: 'default' }, content: '暂无数据' },
@@ -283,7 +336,8 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
   Segmented: [
     { id: 'default', label: '标准分段器', props: { size: 'middle', vertical: false, block: true } },
     { id: 'large', label: '大型分段器', props: { size: 'large', vertical: false, block: true }, height: 52 },
-    { id: 'vertical', label: '垂直分段器', props: { size: 'middle', vertical: true, block: false }, width: 120, height: 130 }
+    { id: 'vertical', label: '垂直分段器', props: { size: 'middle', vertical: true, block: false }, width: 120, height: 130 },
+    { id: 'pill', label: '胶囊分段器', props: { size: 'middle', vertical: false, block: true, shape: 'round' } }
   ],
   Statistic: [
     { id: 'basic', label: '基础统计值', props: { title: '活跃用户', value: 112893, precision: 0, suffix: '人' } },
@@ -315,12 +369,17 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'right', label: '右侧抽屉', props: { placement: 'right', title: '详情面板', width: 420 } },
     { id: 'left', label: '左侧抽屉', props: { placement: 'left', title: '导航面板', width: 360 } },
     { id: 'top', label: '顶部抽屉', props: { placement: 'top', title: '通知中心', height: 300 } },
-    { id: 'bottom', label: '底部抽屉', props: { placement: 'bottom', title: '快捷操作', height: 300 } }
+    { id: 'bottom', label: '底部抽屉', props: { placement: 'bottom', title: '快捷操作', height: 300 } },
+    { id: 'resizable', label: '可调整大小抽屉', props: { placement: 'right', title: '可调整详情面板', width: 420, resizable: true } },
+    { id: 'loading', label: '加载中抽屉', props: { placement: 'right', title: '正在加载', width: 420, loading: true } },
+    { id: 'maskless', label: '无遮罩抽屉', props: { placement: 'right', title: '辅助面板', width: 360, mask: false } }
   ],
   Modal: [
     { id: 'default', label: '基础对话框', props: { title: '确认操作', width: 520 } },
     { id: 'compact', label: '紧凑对话框', props: { title: '快速确认', width: 400 } },
-    { id: 'wide', label: '宽幅对话框', props: { title: '产品详情', width: 760 } }
+    { id: 'wide', label: '宽幅对话框', props: { title: '产品详情', width: 760 } },
+    { id: 'loading', label: '加载中对话框', props: { title: '正在处理', width: 520, loading: true } },
+    { id: 'maskless', label: '无遮罩对话框', props: { title: '轻量对话框', width: 520, mask: false } }
   ],
   Message: [
     { id: 'info', label: '信息提示', props: { type: 'info', content: '操作已完成' }, content: '显示信息' },
@@ -358,6 +417,23 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'brand', label: '品牌水印', props: { content: 'AI DESIGN', rotate: -18, gap: [90, 90], font: { color: 'rgba(22,119,255,.16)', fontSize: 16 } } },
     { id: 'dense', label: '密集水印', props: { content: 'CONFIDENTIAL', rotate: -25, gap: [60, 60], font: { color: 'rgba(0,0,0,.12)', fontSize: 13 } } }
   ],
+  App: [
+    { id: 'default', label: '应用上下文容器', props: { messageMaxCount: 3, notificationPlacement: 'topRight' }, width: 420, height: 180 },
+    { id: 'limited', label: '单条消息上下文', props: { messageMaxCount: 1, notificationPlacement: 'bottomLeft' }, width: 420, height: 180 }
+  ],
+  ConfigProvider: [
+    { id: 'default', label: '默认全局配置', props: { direction: 'ltr', componentSize: 'middle', componentDisabled: false }, width: 420, height: 180 },
+    { id: 'rtl', label: 'RTL 从右到左', props: { direction: 'rtl', componentSize: 'middle', componentDisabled: false }, width: 420, height: 180 },
+    { id: 'large', label: '大型组件配置', props: { direction: 'ltr', componentSize: 'large', componentDisabled: false }, width: 460, height: 190 },
+    { id: 'disabled', label: '全局禁用配置', props: { direction: 'ltr', componentSize: 'middle', componentDisabled: true }, width: 420, height: 180 }
+  ],
+  BorderBeam: [
+    { id: 'basic', label: '基础边框流光', props: { count: 1, duration: 6, size: 80, lineWidth: 2, color: '#1677ff' }, width: 380, height: 190 },
+    { id: 'multiple', label: '多条边框流光', props: { count: 3, duration: 7, size: 72, lineWidth: 2, color: '#1677ff' }, width: 380, height: 190 },
+    { id: 'aurora', label: '极光渐变流光', props: { count: 2, duration: 6, size: 92, lineWidth: 2, color: [{ color: '#7c3aed', percent: 0 }, { color: '#06b6d4', percent: 57 }, { color: '#67e8f9', percent: 100 }] }, width: 400, height: 200 },
+    { id: 'slow', label: '慢速细线流光', props: { count: 1, duration: 12, size: 110, lineWidth: 1, color: '#722ed1' }, width: 380, height: 190 },
+    { id: 'bold', label: '高亮粗线流光', props: { count: 2, duration: 5, size: 90, lineWidth: 4, color: '#ff4d4f' }, width: 400, height: 200 }
+  ],
   Alert: ['info', 'success', 'warning', 'error'].map((type) => ({ id: type, label: `${type} 提示`, props: { type, showIcon: true } })),
   Progress: [
     { id: 'line', label: '线形进度', props: { type: 'line', percent: 68 }, width: 320, height: 70 },
@@ -386,7 +462,7 @@ export function variantsForAntdComponent(componentId: string): AntdComponentVari
 }
 
 export const ANTD_COMPONENTS: AntdComponentDefinition[] = [
-  item('Button', '按钮', '通用', '▣', 'button', 150, 48, '主要按钮', { type: 'primary', size: 'middle' }),
+  item('Button', '按钮', '通用', '▣', 'button', 150, 48, '主要按钮', { color: 'primary', variant: 'solid', size: 'middle' }),
   item('FloatButton', '悬浮按钮', '通用', '◉', 'button', 64, 64, '', { tooltip: '快捷操作' }),
   item('Icon', '图标', '通用', '✦', 'icon', 56, 56, ''),
   item('Typography', '排版', '通用', 'T', 'text', 320, 72, 'Ant Design 排版文本', { level: 3 }),
@@ -405,6 +481,7 @@ export const ANTD_COMPONENTS: AntdComponentDefinition[] = [
   item('Menu', '导航菜单', '导航', '☰', 'list', 420, 48, '', { mode: 'horizontal', defaultSelectedKeys: ['home'], items: [{ key: 'home', label: '首页' }, { key: 'product', label: '产品' }, { key: 'about', label: '关于' }] }),
   item('Pagination', '分页', '导航', '•••', 'list', 360, 48, '', { defaultCurrent: 1, total: 80, showSizeChanger: false }),
   item('Steps', '步骤条', '导航', '①', 'list', 500, 74, '', { current: 1, items: [{ title: '创建' }, { title: '配置' }, { title: '完成' }] }),
+  item('Tabs', '标签页', '导航', '▤', 'card', 420, 150, '', { defaultActiveKey: '1', items: [{ key: '1', label: '概览', children: '产品概览内容' }, { key: '2', label: '功能', children: '功能说明内容' }, { key: '3', label: '设置', children: '设置内容' }] }),
 
   item('AutoComplete', '自动完成', '数据录入', '⌨', 'input', 260, 44, '输入关键词', { options: [{ value: 'Apple' }, { value: 'Ant Design' }, { value: 'AI Website' }] }),
   item('Cascader', '级联选择', '数据录入', '⌄', 'select', 260, 44, '请选择城市', { options: [{ value: 'zhejiang', label: '浙江', children: [{ value: 'hangzhou', label: '杭州' }] }, { value: 'jiangsu', label: '江苏', children: [{ value: 'nanjing', label: '南京' }] }] }),
@@ -434,13 +511,13 @@ export const ANTD_COMPONENTS: AntdComponentDefinition[] = [
   item('Descriptions', '描述列表', '数据展示', '☷', 'table', 480, 150, '', { title: '产品信息', column: 2, items: [{ key: '1', label: '名称', children: 'Web Design Studio' }, { key: '2', label: '版本', children: '0.9.0' }, { key: '3', label: '状态', children: '开发中' }] }),
   item('Empty', '空状态', '数据展示', '∅', 'card', 280, 160, '暂无数据', {}),
   item('Image', '图片', '数据展示', '▧', 'image', 240, 160, '', { src: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=600&q=80', preview: false }),
-  item('List', '列表', '数据展示', '☷', 'list', 360, 190, '', { bordered: true, dataSource: ['可视化编辑', '响应式页面', 'AI 协作修改'] }),
+  item('List', '列表（已废弃）', '数据展示', '☷', 'list', 360, 190, '', { bordered: true, dataSource: ['可视化编辑', '响应式页面', 'AI 协作修改'] }, ['deprecated', '废弃', '旧列表']),
+  item('Listy', '虚拟列表', '数据展示', '☷', 'list', 420, 280, '', { height: 260, virtual: false, itemCount: 20 }, ['virtual list', '虚拟滚动', '长列表']),
   item('Popover', '气泡卡片', '数据展示', '▢', 'button', 160, 44, '查看详情', { title: '产品信息', content: '这是一个气泡卡片。' }),
   item('QRCode', '二维码', '数据展示', '▦', 'image', 170, 170, '', { value: 'https://ant.design', size: 140 }),
   item('Segmented', '分段控制器', '数据展示', '▥', 'button', 300, 44, '', { defaultValue: '日', options: ['日', '周', '月'] }),
   item('Statistic', '统计数值', '数据展示', '#', 'card', 220, 100, '', { title: '活跃用户', value: 112893, suffix: '人' }),
   item('Table', '表格', '数据展示', '▦', 'table', 520, 220, '', { pagination: false, size: 'small', columns: [{ title: '名称', dataIndex: 'name', key: 'name' }, { title: '状态', dataIndex: 'status', key: 'status' }, { title: '数量', dataIndex: 'count', key: 'count' }], dataSource: [{ key: '1', name: '网站组件', status: '可用', count: 20 }, { key: '2', name: 'Ant Design', status: '新增', count: 60 }] }),
-  item('Tabs', '标签页', '数据展示', '▤', 'card', 420, 150, '', { defaultActiveKey: '1', items: [{ key: '1', label: '概览', children: '产品概览内容' }, { key: '2', label: '功能', children: '功能说明内容' }, { key: '3', label: '设置', children: '设置内容' }] }),
   item('Tag', '标签', '数据展示', '◆', 'badge', 100, 36, '已发布', { color: 'blue' }),
   item('Timeline', '时间轴', '数据展示', '│', 'list', 300, 180, '', { items: [{ children: '创建项目' }, { children: '完成设计', color: 'blue' }, { children: '准备发布', color: 'gray' }] }),
   item('Tooltip', '文字提示', '数据展示', '?', 'button', 150, 44, '悬停查看', { title: '这是提示文字' }),
@@ -457,9 +534,12 @@ export const ANTD_COMPONENTS: AntdComponentDefinition[] = [
   item('Result', '结果', '反馈', '✓', 'card', 380, 240, '', { status: 'success', title: '发布成功', subTitle: '页面已经成功发布。' }),
   item('Skeleton', '骨架屏', '反馈', '▧', 'card', 360, 150, '', { active: true, paragraph: { rows: 3 } }),
   item('Spin', '加载中', '反馈', '◌', 'card', 180, 100, '加载中…', { size: 'large' }),
+  item('Watermark', '水印', '反馈', 'W', 'card', 360, 180, '', { content: 'Web Design Studio' }),
 
   item('Affix', '固钉', '其他', '⌖', 'button', 150, 44, '固定操作', { offsetTop: 20 }),
-  item('Watermark', '水印', '其他', 'W', 'card', 360, 180, '', { content: 'Web Design Studio' })
+  item('App', '包裹组件', '其他', 'A', 'section', 420, 180, '', { messageMaxCount: 3, notificationPlacement: 'topRight' }),
+  item('BorderBeam', '边框流光', '其他', '◈', 'section', 380, 190, '', { count: 1, duration: 6, size: 80, lineWidth: 2, color: '#1677ff' }),
+  item('ConfigProvider', '全局化配置', '其他', '⚙', 'section', 420, 180, '', { direction: 'ltr', componentSize: 'middle', componentDisabled: false })
 ];
 
 export function createAntdComponent(definitionId: string, x: number, y: number): WebDesignComponent {

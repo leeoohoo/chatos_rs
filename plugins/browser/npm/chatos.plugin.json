@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "name": "chatos-browser-cdp",
-  "version": "0.1.7",
-  "description": "Operate managed Chromium sessions or an explicitly connected Chrome browser through the Chrome DevTools Protocol.",
+  "version": "0.1.9",
+  "description": "Control the user's paired Google Chrome automatically, with an isolated Chromium fallback before authorization, through the Chrome DevTools Protocol.",
   "author": {
     "name": "Chatos",
     "url": "https://github.com/chatos-ai"
@@ -26,12 +26,13 @@
   "interface": {
     "displayName": "Browser CDP",
     "shortDescription": "Full browser control through Chrome DevTools Protocol",
-    "longDescription": "Launch an isolated managed Chrome browser or connect to an explicitly paired existing Chrome session. Existing-Chrome mode also requires the Chatos Browser Bridge Chrome extension and one explicit first connection; later restarts reconnect automatically. Supports high-level browser automation and raw CDP commands with local permission enforcement.",
+    "longDescription": "Automatically use the user's paired Google Chrome, including a visible virtual mouse for automated clicks and task-named native tab groups. Before the Chatos Browser Bridge extension has completed its one-time authorization, ChatOS automatically falls back to an isolated managed browser; later restarts reconnect without asking the model or user to choose a mode.",
     "developerName": "Chatos",
     "category": "Developer Tools",
     "capabilities": [
-      "Managed browser sessions",
       "Existing Chrome connection",
+      "Visible virtual mouse",
+      "Managed browser sessions",
       "Task-owned native Chrome tab groups",
       "Page interaction",
       "Network inspection",
@@ -39,7 +40,8 @@
     ],
     "websiteURL": "https://github.com/chatos-ai/chatos-browser-cdp",
     "defaultPrompt": [
-      "Users describe browsing goals, not tool sequences; automatically open or reuse a Browser CDP session. The MCP process binds it internally, so never provide, request, copy, guess, or reconstruct browser_session_id in later tool arguments.",
+      "Users describe browsing goals, not tool sequences. Call browser_session_open; its input has no mode, headless, or persistent_profile fields. ChatOS uses the user's paired Google Chrome and a task-named native tab group after authorization, and automatically falls back to an isolated browser before authorization. The MCP process binds the session internally, so never provide, request, copy, guess, or reconstruct browser_session_id in later tool arguments.",
+      "Before navigating, read the actual top-level mode returned by browser_session_open: chrome_extension means the user's Google Chrome; managed means the isolated fallback. If reusing a session or uncertain, read mode from browser_session_status instead of guessing.",
       "After navigation or page changes, inspect a fresh snapshot before interacting and use only current element refs.",
       "Verify meaningful actions with a fresh snapshot or session-status read, and recover once from a timed-out navigation before reporting failure."
     ],

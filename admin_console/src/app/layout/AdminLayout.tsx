@@ -113,7 +113,6 @@ function buildMenuItems(superAdmin: boolean, t: ReturnType<typeof useAdminI18n>[
       { key: '/task-runner/tasks', label: t('nav.tasks') },
       { key: '/task-runner/runs', label: t('nav.runs') },
       { key: '/task-runner/prompts', label: t('nav.prompts') },
-      { key: '/task-runner/models', label: t('nav.executionModels') },
       { key: '/task-runner/projects', label: t('nav.executionProjects') },
       { key: '/task-runner/mcp', label: t('nav.taskMcp') },
       { key: '/task-runner/tooling', label: t('nav.tooling') },

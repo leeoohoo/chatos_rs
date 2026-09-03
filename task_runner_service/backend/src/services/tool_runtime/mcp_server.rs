@@ -17,8 +17,6 @@ mod context;
 mod dispatch;
 #[path = "mcp_server/entrypoints.rs"]
 mod entrypoints;
-#[path = "mcp_server/model_tools.rs"]
-mod model_tools;
 #[path = "mcp_server/prerequisite_creation.rs"]
 mod prerequisite_creation;
 #[path = "mcp_server/prompt_tools.rs"]

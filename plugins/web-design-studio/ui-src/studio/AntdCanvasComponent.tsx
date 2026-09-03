@@ -1,8 +1,8 @@
 import { useRef, useState, type ReactNode } from 'react';
 import {
-  Affix, Alert, Anchor, AutoComplete, Avatar, Badge, Breadcrumb, Button, Calendar, Card, Carousel, ConfigProvider,
+  Affix, Alert, Anchor, App as AntApp, AutoComplete, Avatar, Badge, BorderBeam, Breadcrumb, Button, Calendar, Card, Carousel, ConfigProvider,
   Cascader, Checkbox, Collapse, ColorPicker, DatePicker, Descriptions, Divider, Drawer, Dropdown,
-  Empty, Flex, FloatButton, Form, Image as AntImage, Input, InputNumber, Layout, List, Masonry, Menu,
+  Empty, Flex, FloatButton, Form, Image as AntImage, Input, InputNumber, Layout, List, Listy, Masonry, Menu,
   Mentions, Modal, Pagination, Popconfirm, Popover, Progress, QRCode, Radio, Rate, Result, Row, Col,
   Segmented, Select, Skeleton, Slider, Space, Spin, Splitter, Statistic, Steps, Switch, Table, Tabs,
   Tag, TimePicker, Timeline, Tooltip, Tour, Transfer, Tree, TreeSelect, Typography, Upload, Watermark,
@@ -33,6 +33,9 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [listyCount, setListyCount] = useState(20);
+  const [draggingListyId, setDraggingListyId] = useState<number>();
+  const [listyOrder, setListyOrder] = useState(() => Array.from({ length: 20 }, (_, index) => index));
   const modalTrigger = useRef<HTMLButtonElement>(null);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   const [transferTargetKeys, setTransferTargetKeys] = useState<string[]>(() => {
@@ -40,6 +43,9 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
     return Array.isArray(targetKeys) ? targetKeys.map(String) : [];
   });
   const tourTarget = useRef<HTMLButtonElement>(null);
+  const listyRef = useRef<any>(null);
+  const initialTabItems = Array.isArray(component.library?.props.items) ? component.library.props.items as AnyProps[] : [];
+  const [editableTabItems, setEditableTabItems] = useState<AnyProps[]>(() => initialTabItems.map((entry) => ({ ...entry })));
   const [messageApi, messageContext] = message.useMessage();
   const [notificationApi, notificationContext] = notification.useNotification();
   const binding = component.library;
@@ -50,7 +56,10 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
   const designCanvasFor = (trigger: HTMLButtonElement | null): HTMLElement => (trigger?.closest('.design-canvas') as HTMLElement | null) ?? document.body;
 
   switch (name) {
-    case 'Button': return <Button {...p}>{component.content}</Button>;
+    case 'Button': {
+      const { gradient, ...buttonProps } = p;
+      return <Button {...buttonProps} style={gradient ? { border: 0, color: '#fff', background: 'linear-gradient(135deg,#1677ff,#722ed1)' } : p.style}>{component.content}</Button>;
+    }
     case 'FloatButton': return <div style={{ ...fill, position: 'relative' }}><FloatButton {...p} style={{ position: 'absolute', right: 6, bottom: 6 }} /></div>;
     case 'Icon': return <AntDesignOutlined style={{ color: p.color ?? '#1677ff', fontSize: p.size ?? 32 }} />;
     case 'Typography': {
@@ -75,7 +84,10 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
       return <Masonry {...p} items={items} itemRender={({ data }: AnyProps) => <div className="antd-masonry-item" style={{ height: data.height }}>{data.label}</div>} />;
     }
     case 'Space': return <Space {...p}>{slotContent.content ?? <><Button>取消</Button><Button type="primary">确定</Button><Tag>更多</Tag></>}</Space>;
-    case 'Splitter': return <Splitter {...p} style={fill}><Splitter.Panel>{slotContent['panel-1'] ?? <div className="antd-split-panel">面板一</div>}</Splitter.Panel><Splitter.Panel>{slotContent['panel-2'] ?? <div className="antd-split-panel">面板二</div>}</Splitter.Panel></Splitter>;
+    case 'Splitter': {
+      const collapsible = Boolean(p.collapsible);
+      return <Splitter {...p} collapsible={collapsible ? { motion: true } : undefined} style={fill}><Splitter.Panel collapsible={collapsible ? { end: true } : false}>{slotContent['panel-1'] ?? <div className="antd-split-panel">面板一</div>}</Splitter.Panel><Splitter.Panel collapsible={collapsible ? { start: true } : false}>{slotContent['panel-2'] ?? <div className="antd-split-panel">面板二</div>}</Splitter.Panel></Splitter>;
+    }
     case 'Anchor': return <Anchor {...p} />;
     case 'Breadcrumb': return <Breadcrumb {...p} />;
     case 'Dropdown': return <Dropdown {...p}><Button>{component.content}⌄</Button></Dropdown>;
@@ -86,25 +98,41 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
     case 'Cascader': return <Cascader {...p} style={{ width: '100%' }} placeholder={component.content} />;
     case 'Checkbox': return <Checkbox {...p}>{component.content}</Checkbox>;
     case 'ColorPicker': return <ColorPicker {...p} />;
-    case 'DatePicker': return <DatePicker {...p} style={{ width: '100%' }} />;
-    case 'Form': return <Form {...p} style={{ width: '100%', height: '100%' }}>{slotContent.content ?? <><Form.Item label="名称" style={{ marginBottom: 10 }}><Input placeholder="请输入名称" /></Form.Item><Form.Item label="邮箱" style={{ marginBottom: 10 }}><Input placeholder="name@example.com" /></Form.Item><Button type="primary">提交</Button></>}</Form>;
+    case 'DatePicker': {
+      const { pickerMode, ...dateProps } = p;
+      return pickerMode === 'range' ? <DatePicker.RangePicker {...dateProps} style={{ width: '100%' }} /> : <DatePicker {...dateProps} style={{ width: '100%' }} />;
+    }
+    case 'Form': {
+      const { formTemplate, ...formProps } = p;
+      const fallback = formTemplate === 'login' ? <><Form.Item name="account" label={p.layout === 'inline' ? undefined : '账号'} style={{ marginBottom: 10 }}><Input placeholder="邮箱或手机号" /></Form.Item><Form.Item name="password" label={p.layout === 'inline' ? undefined : '密码'} style={{ marginBottom: 10 }}><Input.Password placeholder="请输入密码" /></Form.Item><Button type="primary">登录</Button></>
+        : formTemplate === 'registration' ? <><Form.Item label="姓名" style={{ marginBottom: 10 }}><Input placeholder="请输入姓名" /></Form.Item><Form.Item label="邮箱" style={{ marginBottom: 10 }}><Input placeholder="name@example.com" /></Form.Item><Form.Item label="密码" style={{ marginBottom: 10 }}><Input.Password placeholder="至少 8 位字符" /></Form.Item><Form.Item style={{ marginBottom: 10 }}><Checkbox>同意服务条款</Checkbox></Form.Item><Button type="primary" block>创建账号</Button></>
+          : <><Form.Item label="名称" style={{ marginBottom: 10 }}><Input placeholder="请输入名称" /></Form.Item><Form.Item label="邮箱" style={{ marginBottom: 10 }}><Input placeholder="name@example.com" /></Form.Item><Button type="primary">提交</Button></>;
+      return <Form {...formProps} style={{ width: '100%', height: '100%' }}>{slotContent.content ?? fallback}</Form>;
+    }
     case 'Input': {
+      if (binding.variant === 'otp') return <Input.OTP {...p} />;
       if (binding.variant === 'search') return <Input.Search {...p} placeholder={component.content} />;
       if (binding.variant === 'password') return <Input.Password {...p} placeholder={component.content} />;
       if (binding.variant === 'textarea') return <Input.TextArea {...p} placeholder={component.content} style={{ height: '100%' }} />;
-      return <Input {...p} placeholder={component.content} />;
+      const { prefixText, suffixText, ...inputProps } = p;
+      return <Input {...inputProps} prefix={prefixText} suffix={suffixText} placeholder={component.content} />;
     }
     case 'InputNumber': return <InputNumber {...p} style={{ width: '100%' }} />;
     case 'Mentions': return <Mentions {...p} placeholder={component.content} style={{ height: '100%' }} />;
     case 'Radio': return <Radio.Group {...p} />;
     case 'Rate': return <Rate {...p} />;
-    case 'Select': return <Select {...p} style={{ width: '100%' }} placeholder={component.content} />;
+    case 'Select': {
+      const { optionGroups, ...selectProps } = p;
+      return <Select {...selectProps} options={binding.variant === 'grouped' ? optionGroups : p.options} style={{ width: '100%' }} placeholder={component.content} />;
+    }
     case 'Slider': return <Slider {...p} style={{ width: '100%' }} />;
     case 'Switch': return <Space><Switch {...p} /><span>{component.content}</span></Space>;
     case 'TimePicker': return <TimePicker {...p} style={{ width: '100%' }} />;
     case 'Transfer': return <Transfer {...p} targetKeys={transferTargetKeys} onChange={(keys) => setTransferTargetKeys(keys.map(String))} render={(item: AnyProps) => item.title} listStyle={{ width: 190, height: 170 }} />;
     case 'TreeSelect': return <TreeSelect {...p} style={{ width: '100%' }} placeholder={component.content} />;
-    case 'Upload': return binding.variant === 'picture'
+    case 'Upload': return binding.variant === 'dragger'
+      ? <Upload.Dragger {...p} style={{ height: '100%' }}><p className="antd-upload-drag-icon"><UploadOutlined /></p><p>点击或拖拽文件到这里上传</p><small>支持单个或批量文件</small></Upload.Dragger>
+      : binding.variant === 'picture'
       ? <Upload {...p}><button className="antd-picture-upload"><UploadOutlined /><span>上传图片</span></button></Upload>
       : <Upload {...p}><Button icon={<UploadOutlined />}>{component.content}</Button></Upload>;
     case 'Avatar': return <Avatar {...p}>{component.content}</Avatar>;
@@ -123,14 +151,46 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
       if (binding.variant === 'metadata') return <List {...p} style={{ width: '100%' }} renderItem={(entry: AnyProps) => <List.Item><List.Item.Meta avatar={<Avatar style={{ background: '#1677ff' }}>{entry.avatar}</Avatar>} title={entry.title} description={entry.description} /></List.Item>} />;
       if (binding.variant === 'actions') return <List {...p} style={{ width: '100%' }} renderItem={(entry: AnyProps) => <List.Item actions={[<a key="edit">编辑</a>, <a key="more">更多</a>]}><List.Item.Meta title={entry.title} description={entry.description} /></List.Item>} />;
       if (binding.variant === 'grid') return <List {...p} style={{ width: '100%' }} renderItem={(entry: AnyProps) => <List.Item><Card size="small" title={entry.title}>{entry.description}</Card></List.Item>} />;
+      if (binding.variant === 'vertical') return <List {...p} style={{ width: '100%' }} renderItem={(entry: AnyProps) => <List.Item><List.Item.Meta title={entry.title} description={entry.description} /></List.Item>} />;
       return <List {...p} style={{ width: '100%' }} renderItem={(entry: string) => <List.Item>{entry}</List.Item>} />;
+    }
+    case 'Listy': {
+      const total = Math.max(1, Math.min(10000, Number(p.itemCount ?? 20)));
+      const visibleCount = binding.variant === 'infinite' ? Math.min(total, listyCount) : total;
+      const orderedIds = binding.variant === 'drag-sorting' ? listyOrder.slice(0, visibleCount) : Array.from({ length: visibleCount }, (_, index) => index);
+      const items = orderedIds.map((index) => ({ id: index, name: `成员 ${String(index + 1).padStart(3, '0')}`, group: String.fromCharCode(65 + (index % 8)), description: index % 3 === 0 ? '完成了页面结构与组件状态检查。' : '更新了设计批注和交互细节。', time: `${String(9 + index % 9).padStart(2, '0')}:${String((index * 7) % 60).padStart(2, '0')}` }));
+      const listHeight = binding.variant === 'infinite' || binding.variant === 'scroll-control' ? Math.max(160, Number(p.height ?? 280) - 48) : Number(p.height ?? 260);
+      const group = binding.variant === 'grouped' ? { key: (entry: AnyProps) => entry.group, title: (key: string) => <strong className="antd-listy-group">分组 {key}</strong> } : undefined;
+      const itemRender = binding.variant === 'rich' ? (entry: AnyProps) => <div className="antd-listy-rich-item"><Avatar style={{ background: '#1677ff' }}>{entry.group}</Avatar><div><strong>{entry.name}</strong><span>{entry.description}</span></div><time>{entry.time}</time></div>
+        : binding.variant === 'drag-sorting' ? (entry: AnyProps) => <div className="antd-listy-item antd-listy-sortable" draggable={preview} onDragStart={() => setDraggingListyId(entry.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => {
+          if (!preview || draggingListyId === undefined || draggingListyId === entry.id) return;
+          setListyOrder((current) => {
+            const next = current.filter((id) => id !== draggingListyId);
+            next.splice(Math.max(0, next.indexOf(entry.id)), 0, draggingListyId);
+            return next;
+          });
+          setDraggingListyId(undefined);
+        }}><b>≡</b><span>{entry.name}</span><small>{entry.time}</small></div>
+          : (entry: AnyProps) => <div className="antd-listy-item"><span>{entry.name}</span><small>{entry.time}</small></div>;
+      return <div className={`antd-listy-shell ${p.semanticStyle ? 'semantic-style' : ''}`}><Listy ref={listyRef} items={items} rowKey="id" height={listHeight} virtual={Boolean(p.virtual)} sticky={Boolean(p.sticky)} group={group} itemRender={itemRender} />{binding.variant === 'infinite' && <Button size="small" disabled={visibleCount >= total} onClick={() => preview && setListyCount((value) => Math.min(total, value + 20))}>{visibleCount >= total ? '已加载全部' : `加载更多 · ${visibleCount}/${total}`}</Button>}{binding.variant === 'scroll-control' && <Space size="small"><Button size="small" onClick={() => preview && listyRef.current?.scrollTo({ key: Math.min(79, total - 1), align: 'top' })}>跳到第 80 项</Button><Button size="small" onClick={() => preview && listyRef.current?.scrollTo(0)}>回到顶部</Button></Space>}</div>;
     }
     case 'Popover': return <Popover {...p} content={slotContent.popup ?? p.content}><Button>{component.content}</Button></Popover>;
     case 'QRCode': return <QRCode {...p} value={p.value ?? 'https://ant.design'} />;
-    case 'Segmented': return <Segmented {...p} options={p.options ?? ['日', '周', '月']} block />;
+    case 'Segmented': return <Segmented {...p} options={p.options ?? ['日', '周', '月']} />;
     case 'Statistic': return <Statistic {...p} />;
-    case 'Table': return <Table {...p} style={{ width: '100%' }} />;
-    case 'Tabs': return <Tabs {...p} items={Array.isArray(p.items) ? p.items.map((item: AnyProps, index: number) => ({ ...item, children: slotContent[`tab-${String(item.key ?? index + 1).replace(/[^a-zA-Z0-9_-]/g, '-')}`] ?? item.children })) : p.items} style={{ width: '100%' }} />;
+    case 'Table': {
+      const expandable = binding.variant === 'expandable' ? { ...(p.expandable ?? {}), expandedRowRender: (record: AnyProps) => <div style={{ padding: '8px 36px' }}>“{record.name}”的详细说明、负责人和最近更新时间。</div> } : p.expandable;
+      return <Table {...p} expandable={expandable} style={{ width: '100%' }} />;
+    }
+    case 'Tabs': {
+      const baseItems: AnyProps[] = (binding.variant === 'editable' ? editableTabItems : Array.isArray(p.items) ? p.items : []).map((item: AnyProps, index: number) => ({ ...item, children: slotContent[`tab-${String(item.key ?? index + 1).replace(/[^a-zA-Z0-9_-]/g, '-')}`] ?? item.children, closable: index > 0 }));
+      const onEdit = (target: any, action: 'add' | 'remove') => {
+        if (!preview) return;
+        if (action === 'add') setEditableTabItems((items) => [...items, { key: `new-${items.length + 1}`, label: `新标签 ${items.length + 1}`, children: '新标签页内容' }]);
+        else setEditableTabItems((items) => items.filter((item) => String(item.key) !== String(target)));
+      };
+      return <Tabs {...p} items={baseItems as any} onEdit={binding.variant === 'editable' ? onEdit : undefined} style={{ width: '100%' }} />;
+    }
     case 'Tag': return <Tag {...p}>{component.content}</Tag>;
     case 'Timeline': return <Timeline {...p} style={{ width: '100%' }} />;
     case 'Tooltip': return <Tooltip {...p}><Button>{component.content}</Button></Tooltip>;
@@ -148,6 +208,20 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
     case 'Spin': return <Spin {...p} tip={component.content}><div style={{ width: 120, height: 54 }} /></Spin>;
     case 'Affix': return <Affix {...p}><Button type="primary">{component.content}</Button></Affix>;
     case 'Watermark': return <Watermark {...p} style={fill}>{slotContent.content ?? <div className="antd-watermark-content">产品内容区域</div>}</Watermark>;
+    case 'App': {
+      const { messageMaxCount, notificationPlacement, ...appProps } = p;
+      return <AntApp {...appProps} message={{ maxCount: Number(messageMaxCount ?? 3) }} notification={{ placement: notificationPlacement ?? 'topRight' }} style={fill}>{slotContent.content ?? <AntdAppActions active={preview} />}</AntApp>;
+    }
+    case 'ConfigProvider': {
+      const { direction, componentSize, componentDisabled, ...configProps } = p;
+      return <ConfigProvider {...configProps} direction={direction} componentSize={componentSize} componentDisabled={componentDisabled}><div className="antd-config-provider-demo" style={fill}>{slotContent.content ?? <><Input placeholder="全局配置下的输入框" /><Select defaultValue="design" options={[{ value: 'design', label: '网站设计' }, { value: 'ai', label: 'AI 应用' }]} /><Button type="primary">主要操作</Button></>}</div></ConfigProvider>;
+    }
+    case 'BorderBeam': return <BorderBeam {...p}><div className="antd-border-beam-host" style={fill}>{slotContent.content ?? <><Typography.Title level={4}>重点内容区域</Typography.Title><Typography.Paragraph>适合 AI 模块、推荐卡片和关键行动区域。</Typography.Paragraph><Button type="primary">开始设计</Button></>}</div></BorderBeam>;
     default: return <Tag color="blue">Ant Design · {name}</Tag>;
   }
+}
+
+function AntdAppActions({ active }: { active: boolean }) {
+  const { message: appMessage, modal, notification: appNotification } = AntApp.useApp();
+  return <Space wrap><Button onClick={() => active && appMessage.success('保存成功')}>Message</Button><Button onClick={() => active && modal.info({ title: '应用级对话框', content: '它继承 App 与 ConfigProvider 的上下文。' })}>Modal</Button><Button onClick={() => active && appNotification.info({ title: '应用通知', description: '通知位置和数量可在右侧配置。' })}>Notification</Button></Space>;
 }

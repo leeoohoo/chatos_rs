@@ -17,6 +17,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published private(set) var sandboxBackends: [LocalConnectorSandboxBackend] = []
     @Published private(set) var sandboxSettings: LocalConnectorSandboxSettings?
     @Published private(set) var plugins: [LocalConnectorPlugin] = []
+    @Published private(set) var browserExtensionPairedPluginIDs: Set<String> = []
     @Published private(set) var isStarting = false
     @Published private(set) var isLoading = false
     @Published private(set) var isPerformingAction = false
@@ -107,6 +108,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         pendingApprovals = []
         latestApprovalEvent = nil
         plugins = []
+        browserExtensionPairedPluginIDs = []
         Task {
             _ = try? await service.disconnect()
         }
@@ -328,8 +330,15 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         }
     }
 
-    func installPlugin(id: String) {
-        performPluginAction(id: id, successNotice: "Plugin 已完成校验并安装到本机。") {
+    func installPlugin(
+        id: String,
+        onSuccess: (@MainActor () -> Void)? = nil
+    ) {
+        performPluginAction(
+            id: id,
+            successNotice: "Plugin 已完成校验并安装到本机。",
+            onSuccess: onSuccess
+        ) {
             try await self.service.installPlugin(id: id)
         }
     }
@@ -361,6 +370,30 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     func refreshPluginPermissions(id: String) {
         performPluginAction(id: id, successNotice: "Plugin 权限状态已重新检测。") {}
+    }
+
+    func startBrowserExtensionGuide(
+        pluginID: String,
+        onReady: @escaping @MainActor () -> Void
+    ) {
+        performPluginAction(
+            id: pluginID,
+            successNotice: "Chrome 一次性连接服务已启动。",
+            onSuccess: onReady
+        ) {
+            try await self.service.startBrowserExtensionPairing(pluginID: pluginID)
+        }
+    }
+
+    func refreshBrowserExtensionPairingStatus(pluginID: String) {
+        Task {
+            let isPaired = (try? await service.isBrowserExtensionPaired(pluginID: pluginID)) ?? false
+            if isPaired {
+                browserExtensionPairedPluginIDs.insert(pluginID)
+            } else {
+                browserExtensionPairedPluginIDs.remove(pluginID)
+            }
+        }
     }
 
     func clearMessages() {
@@ -431,6 +464,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private func performPluginAction(
         id: String,
         successNotice: String,
+        onSuccess: (@MainActor () -> Void)? = nil,
         _ operation: @escaping @MainActor () async throws -> Void
     ) {
         pluginOperationIDs.insert(id)
@@ -441,6 +475,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                 try await operation()
                 plugins = try await service.fetchPlugins()
                 notice = successNotice
+                onSuccess?()
             } catch {
                 errorMessage = error.localizedDescription
             }

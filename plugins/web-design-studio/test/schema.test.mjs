@@ -9,8 +9,11 @@ import {
   createSymbolFromSelection,
   detachSymbolInstance,
   flattenComponentTree,
+  fitContentCanvasToComponents,
+  growPageToFitContent,
   instantiateSymbol,
   moveComponentsWithDescendants,
+  reflowPageForViewport,
   resolveComponent,
   setSymbolOverride,
   syncSymbolInstances,
@@ -19,8 +22,13 @@ import {
 } from '../dist/editor-model.test.mjs';
 import { componentDefaults, createLandingPage } from '../dist/templates.test.mjs';
 import { createBlockPreset, createPageTemplate, WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES } from '../dist/component-library.test.mjs';
-import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_VERSION, applyAntdComponentVariant, createAntdComponent, variantsForAntdComponent } from '../dist/antd-library.test.mjs';
+import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_OFFICIAL_COMPONENT_COUNT, ANTD_VERSION, applyAntdComponentVariant, createAntdComponent, variantsForAntdComponent } from '../dist/antd-library.test.mjs';
 import { editableSlotsForAntdComponent, isAntdContentContainer } from '../dist/antd-slots.test.mjs';
+import { CHAKRA_CATEGORIES, CHAKRA_COMPONENTS, CHAKRA_VERSION, applyChakraComponentVariant, createChakraComponent, variantsForChakraComponent } from '../dist/chakra-library.test.mjs';
+import { SHADCN_CATEGORIES, SHADCN_COMPONENTS, SHADCN_VERSION, applyShadcnComponentVariant, createShadcnComponent, variantsForShadcnComponent } from '../dist/shadcn-library.test.mjs';
+import { editableSlotsForUiComponent, growUiContentContainersToFit, isUiContentContainer } from '../dist/library-slots.test.mjs';
+import { UI_LIBRARIES, applyUiLibraryVariant, createComponentFromUiLibrary } from '../dist/ui-libraries.test.mjs';
+import { matchViewportPreset, viewportDimensions, viewportPresetsForDevice, WEB_DESIGN_VIEWPORT_PRESETS } from '../dist/viewport-presets.test.mjs';
 import { exportDocumentHtmlFiles, exportPageHtml } from '../dist/html-exporter.test.mjs';
 import { exportReactComponent } from '../dist/react-exporter.test.mjs';
 import { exportVueComponent } from '../dist/vue-exporter.test.mjs';
@@ -34,6 +42,163 @@ test('landing page template is a valid editable document', () => {
   assert.ok(document.components.some((component) => component.id === 'hero-heading'));
   assert.equal(breakpointFor(document, 'mobile').width, 390);
   assert.equal(resolveComponent(document.components.find((component) => component.id === 'hero-heading'), 'mobile').style.fontSize, 39);
+});
+
+test('canvas height grows to fit visible page content without shrinking other device breakpoints', () => {
+  const document = createLandingPage();
+  const desktopBefore = breakpointFor(document, 'desktop');
+  const tabletBefore = breakpointFor(document, 'tablet');
+  const textarea = componentDefaults('textarea', 32, desktopBefore.height + 25);
+  textarea.pageId = 'home';
+  textarea.height = 140;
+  document.components = [textarea];
+
+  const grown = growPageToFitContent(document, 'home', 'desktop');
+  const expectedHeight = Math.ceil((textarea.y + textarea.height + 80) / 100) * 100;
+  assert.equal(breakpointFor(grown, 'desktop').height, expectedHeight);
+  assert.equal(grown.viewport.height, expectedHeight);
+  assert.deepEqual(breakpointFor(grown, 'tablet'), tabletBefore);
+
+  const unchanged = growPageToFitContent(grown, 'home', 'desktop');
+  assert.equal(unchanged, grown);
+});
+
+test('canvas growth respects device overrides, hidden components, and excluded overlay content', () => {
+  const document = createLandingPage();
+  const desktopBefore = breakpointFor(document, 'desktop');
+  const mobileBefore = breakpointFor(document, 'mobile');
+  const component = componentDefaults('textarea', 20, 20);
+  component.pageId = 'home';
+  component.responsive = {
+    mobile: { x: 20, y: mobileBefore.height + 40, width: 350, height: 180 }
+  };
+  document.components = [component];
+
+  const mobileGrown = growPageToFitContent(document, 'home', 'mobile');
+  assert.ok(breakpointFor(mobileGrown, 'mobile').height > mobileBefore.height);
+  assert.deepEqual(breakpointFor(mobileGrown, 'desktop'), desktopBefore);
+  assert.equal(mobileGrown.viewport.height, desktopBefore.height);
+
+  component.hidden = true;
+  const hiddenDocument = { ...document, components: [component] };
+  assert.equal(growPageToFitContent(hiddenDocument, 'home', 'mobile'), hiddenDocument);
+
+  component.hidden = false;
+  const excludedDocument = { ...document, components: [component] };
+  assert.equal(growPageToFitContent(excludedDocument, 'home', 'mobile', { excludedComponentIds: new Set([component.id]) }), excludedDocument);
+});
+
+test('nested content canvas grows in both dimensions from visible component bounds', () => {
+  const first = componentDefaults('input', 120, 90);
+  first.width = 300;
+  first.height = 40;
+  const second = componentDefaults('table', 610, 540);
+  second.width = 420;
+  second.height = 260;
+  const hidden = componentDefaults('textarea', 5000, 9000);
+  hidden.hidden = true;
+
+  assert.deepEqual(fitContentCanvasToComponents([], 'desktop', {
+    minimumWidth: 440,
+    minimumHeight: 320,
+    originX: 100,
+    originY: 70
+  }), { width: 440, height: 320 });
+
+  assert.deepEqual(fitContentCanvasToComponents([first, second, hidden], 'desktop', {
+    minimumWidth: 440,
+    minimumHeight: 320,
+    originX: 100,
+    originY: 70,
+    padding: 48,
+    step: 80
+  }), { width: 1040, height: 800 });
+
+  second.responsive = { mobile: { x: 350, y: 420, width: 280, height: 180 } };
+  assert.deepEqual(fitContentCanvasToComponents([second], 'mobile', {
+    minimumWidth: 320,
+    minimumHeight: 300,
+    originX: 100,
+    originY: 70,
+    padding: 48,
+    step: 80
+  }), { width: 640, height: 640 });
+});
+
+test('viewport presets expose real CSS viewport sizes and support rotation', () => {
+  assert.equal(viewportPresetsForDevice('desktop').length, 14);
+  assert.equal(viewportPresetsForDevice('tablet').length, 5);
+  assert.equal(viewportPresetsForDevice('mobile').length, 5);
+  assert.equal(WEB_DESIGN_VIEWPORT_PRESETS.every((preset) => preset.width >= 320 && preset.height >= 320), true);
+
+  const iphone = WEB_DESIGN_VIEWPORT_PRESETS.find((preset) => preset.id === 'iphone-16');
+  assert.deepEqual(viewportDimensions(iphone, 'default'), { width: 393, height: 852 });
+  assert.deepEqual(viewportDimensions(iphone, 'rotated'), { width: 852, height: 393 });
+  assert.deepEqual(matchViewportPreset('mobile', 852), { preset: iphone, orientation: 'rotated' });
+  assert.equal(matchViewportPreset('mobile', 401), undefined);
+
+  const eightK = WEB_DESIGN_VIEWPORT_PRESETS.find((preset) => preset.id === 'desktop-8k');
+  assert.deepEqual(viewportDimensions(eightK, 'default'), { width: 7680, height: 4320 });
+  assert.equal(eightK.group, 'large-display');
+
+  const document = createLandingPage();
+  document.breakpoints.desktop.preview = { presetId: 'desktop-8k', orientation: 'default', viewportHeight: 4320 };
+  assertWebDesignDocument(document);
+  const resized = applyWebDesignPatch(document, [{ op: 'set_breakpoint', device: 'desktop', width: 3840, height: 1800 }]);
+  assert.deepEqual(resized.breakpoints.desktop.preview, document.breakpoints.desktop.preview);
+});
+
+test('responsive constraints reflow nested components without overflowing a narrower viewport', () => {
+  const document = createLandingPage();
+  const section = componentDefaults('section', 384, 100);
+  section.id = 'responsive-section';
+  section.pageId = 'home';
+  section.width = 6912;
+  section.height = 500;
+  const button = componentDefaults('button', 3740, 260);
+  button.id = 'responsive-button';
+  button.pageId = 'home';
+  button.parentId = section.id;
+  button.width = 200;
+  button.constraints = { desktop: { horizontal: 'auto' } };
+  document.components = [section, button];
+
+  const narrowed = reflowPageForViewport(document, 'home', 'desktop', 7680, 1200);
+  const sectionFrame = resolveComponent(narrowed.components.find((component) => component.id === section.id), 'desktop');
+  const buttonFrame = resolveComponent(narrowed.components.find((component) => component.id === button.id), 'desktop');
+  assert.deepEqual({ x: sectionFrame.x, width: sectionFrame.width }, { x: 60, width: 1080 });
+  assert.deepEqual({ x: buttonFrame.x, width: buttonFrame.width }, { x: 500, width: 200 });
+  assert.ok(sectionFrame.x + sectionFrame.width <= 1200);
+  assert.ok(buttonFrame.x >= sectionFrame.x && buttonFrame.x + buttonFrame.width <= sectionFrame.x + sectionFrame.width);
+  assertWebDesignDocument(narrowed);
+});
+
+test('explicit left, center, right, stretch, and scale constraints remain predictable', () => {
+  const document = createLandingPage();
+  const modes = ['left', 'center', 'right', 'stretch', 'scale'];
+  document.components = modes.map((horizontal, index) => {
+    const component = componentDefaults('section', 100, 40 + index * 100);
+    component.id = `constraint-${horizontal}`;
+    component.pageId = 'home';
+    component.width = 1000;
+    component.height = 80;
+    component.constraints = { desktop: { horizontal } };
+    return component;
+  });
+  const widened = reflowPageForViewport(document, 'home', 'desktop', 1200, 1920);
+  const frame = (mode) => resolveComponent(widened.components.find((component) => component.id === `constraint-${mode}`), 'desktop');
+  assert.deepEqual({ x: frame('left').x, width: frame('left').width }, { x: 100, width: 1000 });
+  assert.deepEqual({ x: frame('center').x, width: frame('center').width }, { x: 460, width: 1000 });
+  assert.deepEqual({ x: frame('right').x, width: frame('right').width }, { x: 820, width: 1000 });
+  assert.deepEqual({ x: frame('stretch').x, width: frame('stretch').width }, { x: 100, width: 1720 });
+  assert.deepEqual({ x: frame('scale').x, width: frame('scale').width }, { x: 160, width: 1600 });
+
+  const patched = applyWebDesignPatch(document, [{
+    op: 'update_component', componentId: 'constraint-left', device: 'desktop',
+    changes: { constraints: { desktop: { horizontal: 'right' } } }
+  }]);
+  assert.equal(patched.components.find((component) => component.id === 'constraint-left').constraints.desktop.horizontal, 'right');
+  assertWebDesignDocument(patched);
 });
 
 test('product component library provides complete valid defaults', () => {
@@ -87,7 +252,7 @@ test('complete page templates replace the active page and remain valid on every 
   assert.deepEqual(WEB_DESIGN_PAGE_TEMPLATES.map((template) => template.id), ['saas', 'launch', 'business']);
 });
 
-test('Ant Design 6.2.2 catalog provides valid persistent components across every category', () => {
+test('Ant Design 6.6.2 catalog matches the current official component baseline', () => {
   const document = createLandingPage();
   const components = ANTD_COMPONENTS.map((definition, index) => {
     const component = createAntdComponent(definition.id, 20 + (index % 5) * 180, 20 + Math.floor(index / 5) * 90);
@@ -96,10 +261,14 @@ test('Ant Design 6.2.2 catalog provides valid persistent components across every
     return component;
   });
   document.components = components;
-  assert.equal(ANTD_VERSION, '6.2.2');
-  assert.equal(ANTD_COMPONENTS.length, 68);
+  assert.equal(ANTD_VERSION, '6.6.2');
+  assert.equal(ANTD_OFFICIAL_COMPONENT_COUNT, 72);
+  assert.equal(ANTD_COMPONENTS.length, ANTD_OFFICIAL_COMPONENT_COUNT);
   assert.equal(ANTD_COMPONENTS.every((component) => variantsForAntdComponent(component.id).length >= 2), true);
   assert.deepEqual([...new Set(ANTD_COMPONENTS.map((component) => component.category))], ANTD_CATEGORIES);
+  assert.deepEqual(ANTD_COMPONENTS.filter((component) => component.introduced).map((component) => [component.id, component.introduced]), [['Listy', '6.6.0'], ['BorderBeam', '6.4.0']]);
+  assert.equal(ANTD_COMPONENTS.find((component) => component.id === 'List')?.status, 'deprecated');
+  assert.equal(ANTD_COMPONENTS.every((component) => component.docsUrl?.startsWith('https://ant.design/components/')), true);
   assert.equal(components.every((component) => component.library?.name === 'antd' && component.library.version === ANTD_VERSION), true);
   assertWebDesignDocument(document);
 
@@ -115,11 +284,14 @@ test('Ant Design variants and structured sample data remain editable and persist
   const input = applyAntdComponentVariant(createAntdComponent('Input', 20, 20), 'search');
   assert.equal(input.library.variant, 'search');
   assert.equal(input.library.props.enterButton, true);
-  assert.equal(variantsForAntdComponent('Input').length, 7);
-  assert.equal(variantsForAntdComponent('List').length, 6);
+  assert.equal(variantsForAntdComponent('Input').length, 9);
+  assert.equal(variantsForAntdComponent('Select').length, 9);
+  assert.equal(variantsForAntdComponent('List').length, 8);
+  assert.equal(variantsForAntdComponent('Listy').length, 8);
+  assert.equal(variantsForAntdComponent('BorderBeam').length, 5);
   assert.equal(variantsForAntdComponent('Menu').length, 4);
-  assert.equal(variantsForAntdComponent('Drawer').length, 4);
-  assert.equal(variantsForAntdComponent('Table').length, 4);
+  assert.equal(variantsForAntdComponent('Drawer').length, 7);
+  assert.equal(variantsForAntdComponent('Table').length, 7);
 
   const select = createAntdComponent('Select', 20, 80);
   select.library.props.options = [{ value: 'custom', label: '自定义选项' }];
@@ -152,6 +324,91 @@ test('Ant Design variants and structured sample data remain editable and persist
   assertWebDesignDocument(document);
 });
 
+test('Chakra UI and shadcn/ui catalogs create valid independently bound components', () => {
+  assert.equal(CHAKRA_VERSION, '3.37.0');
+  assert.equal(SHADCN_VERSION, 'registry-2026.09');
+  assert.equal(CHAKRA_COMPONENTS.length, 114);
+  const officialShadcnComponents = [
+    'Accordion', 'Alert', 'AlertDialog', 'AspectRatio', 'Attachment', 'Avatar', 'Badge', 'Breadcrumb', 'Bubble', 'Button',
+    'ButtonGroup', 'Calendar', 'Card', 'Carousel', 'Chart', 'Checkbox', 'Collapsible', 'Combobox', 'Command', 'ContextMenu',
+    'DataTable', 'DatePicker', 'Dialog', 'Direction', 'Drawer', 'DropdownMenu', 'Empty', 'Field', 'HoverCard', 'Input',
+    'InputGroup', 'InputOTP', 'Item', 'Kbd', 'Label', 'Marker', 'Menubar', 'Message', 'MessageScroller', 'NativeSelect',
+    'NavigationMenu', 'Pagination', 'Popover', 'Progress', 'Questionnaire', 'RadioGroup', 'Resizable', 'ScrollArea', 'Select',
+    'Separator', 'Sheet', 'Sidebar', 'Skeleton', 'Slider', 'Spinner', 'Switch', 'Table', 'Tabs', 'Textarea', 'Toast',
+    'Toggle', 'ToggleGroup', 'Tooltip', 'Typography'
+  ];
+  assert.deepEqual(SHADCN_COMPONENTS.map((component) => component.id).sort(), officialShadcnComponents.sort());
+  assert.deepEqual([...new Set(CHAKRA_COMPONENTS.map((component) => component.category))], CHAKRA_CATEGORIES);
+  assert.deepEqual([...new Set(SHADCN_COMPONENTS.map((component) => component.category))], SHADCN_CATEGORIES);
+  assert.deepEqual(UI_LIBRARIES.map((library) => library.id), ['antd', 'chakra', 'shadcn']);
+
+  const chakraInput = applyChakraComponentVariant(createChakraComponent('Input', 20, 20), 'subtle');
+  const shadcnButton = applyShadcnComponentVariant(createShadcnComponent('Button', 20, 80), 'destructive');
+  assert.equal(chakraInput.library.name, 'chakra');
+  assert.equal(chakraInput.library.props.variant, 'subtle');
+  assert.equal(shadcnButton.library.name, 'shadcn');
+  assert.equal(shadcnButton.library.props.variant, 'destructive');
+  assert.ok(variantsForChakraComponent('Button').length >= 5);
+  assert.deepEqual(variantsForChakraComponent('List').map((variant) => variant.id), [
+    'basic', 'ordered', 'icon-check', 'icon-info', 'nested', 'custom-marker', 'plain', 'align-end'
+  ]);
+  assert.equal(CHAKRA_COMPONENTS.every((definition) => variantsForChakraComponent(definition.id).length >= 2), true);
+  assert.ok(variantsForShadcnComponent('Button').length >= 6);
+  assert.equal(SHADCN_COMPONENTS.every((definition) => variantsForShadcnComponent(definition.id).length >= 2), true);
+
+  for (const definition of CHAKRA_COMPONENTS) {
+    const variants = variantsForChakraComponent(definition.id);
+    assert.equal(new Set(variants.map((variant) => variant.id)).size, variants.length);
+    for (const variant of variants) {
+      const component = applyChakraComponentVariant(createChakraComponent(definition.id, 24, 24), variant.id);
+      assert.equal(component.library.name, 'chakra');
+      assert.equal(component.library.component, definition.id);
+      assert.equal(component.library.variant, variant.id);
+      const variantDocument = createLandingPage();
+      component.pageId = 'home';
+      variantDocument.components = [component];
+      assertWebDesignDocument(variantDocument);
+    }
+  }
+
+  for (const definition of SHADCN_COMPONENTS) {
+    const variants = variantsForShadcnComponent(definition.id);
+    assert.equal(new Set(variants.map((variant) => variant.id)).size, variants.length);
+    for (const variant of variants) {
+      const component = applyShadcnComponentVariant(createShadcnComponent(definition.id, 24, 24), variant.id);
+      assert.equal(component.library.name, 'shadcn');
+      assert.equal(component.library.component, definition.id);
+      assert.equal(component.library.variant, variant.id);
+      const variantDocument = createLandingPage();
+      component.pageId = 'home';
+      variantDocument.components = [component];
+      assertWebDesignDocument(variantDocument);
+    }
+  }
+
+  const document = createLandingPage();
+  document.components = UI_LIBRARIES.flatMap((library, libraryIndex) => library.components.map((definition, index) => {
+    const component = createComponentFromUiLibrary(library.id, definition.id, 20 + (index % 5) * 180, 20 + libraryIndex * 2000 + Math.floor(index / 5) * 90);
+    component.pageId = 'home';
+    component.zIndex = libraryIndex * 100 + index + 1;
+    return applyUiLibraryVariant(component, component.library.variant ?? 'default');
+  }));
+  assertWebDesignDocument(document);
+});
+
+test('content slots use the same contract across Ant Design, Chakra UI, and shadcn/ui', () => {
+  const chakraDrawer = createChakraComponent('Drawer', 80, 80);
+  const chakraTabs = createChakraComponent('Tabs', 80, 140);
+  const shadcnSheet = createShadcnComponent('Sheet', 80, 200);
+  const shadcnAccordion = createShadcnComponent('Accordion', 80, 260);
+  assert.deepEqual(editableSlotsForUiComponent(chakraDrawer).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForUiComponent(chakraTabs).map((slot) => slot.id), ['tab-overview', 'tab-features', 'tab-settings']);
+  assert.deepEqual(editableSlotsForUiComponent(shadcnSheet).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForUiComponent(shadcnAccordion).map((slot) => slot.id), ['panel-design', 'panel-ai', 'panel-export']);
+  assert.equal(isUiContentContainer(chakraDrawer), true);
+  assert.equal(isUiContentContainer(shadcnSheet), true);
+});
+
 test('content-bearing Ant Design components expose editable single and multi-region slots', () => {
   const drawer = createAntdComponent('Drawer', 120, 80);
   const modal = createAntdComponent('Modal', 120, 140);
@@ -159,12 +416,18 @@ test('content-bearing Ant Design components expose editable single and multi-reg
   const tabs = createAntdComponent('Tabs', 120, 260);
   const collapse = createAntdComponent('Collapse', 120, 320);
   const layout = createAntdComponent('Layout', 120, 380);
+  const app = createAntdComponent('App', 120, 440);
+  const configProvider = createAntdComponent('ConfigProvider', 120, 500);
+  const borderBeam = createAntdComponent('BorderBeam', 120, 560);
   assert.deepEqual(editableSlotsForAntdComponent(drawer).map((slot) => slot.id), ['content']);
   assert.deepEqual(editableSlotsForAntdComponent(modal).map((slot) => slot.id), ['content']);
   assert.deepEqual(editableSlotsForAntdComponent(card).map((slot) => slot.id), ['content']);
   assert.deepEqual(editableSlotsForAntdComponent(tabs).map((slot) => slot.id), ['tab-1', 'tab-2', 'tab-3']);
   assert.deepEqual(editableSlotsForAntdComponent(collapse).map((slot) => slot.id), ['panel-1', 'panel-2']);
   assert.deepEqual(editableSlotsForAntdComponent(layout).map((slot) => slot.id), ['header', 'content', 'sider']);
+  assert.deepEqual(editableSlotsForAntdComponent(app).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForAntdComponent(configProvider).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForAntdComponent(borderBeam).map((slot) => slot.id), ['content']);
   assert.equal(isAntdContentContainer(drawer), true);
 
   const input = createAntdComponent('Input', 132, 152);
@@ -175,6 +438,40 @@ test('content-bearing Ant Design components expose editable single and multi-reg
   const document = createLandingPage();
   document.components = [drawer, input];
   assertWebDesignDocument(document);
+});
+
+test('content containers grow with their nested canvas while overlay and scroll viewports stay fixed', () => {
+  const document = createLandingPage();
+  const form = createAntdComponent('Form', 100, 200);
+  form.pageId = 'home';
+  form.width = 360;
+  form.height = 320;
+  const wideChild = createAntdComponent('Typography', 820, 540);
+  wideChild.pageId = 'home';
+  wideChild.parentId = form.id;
+  wideChild.slot = 'content';
+  wideChild.width = 420;
+  wideChild.height = 180;
+
+  const drawer = createAntdComponent('Drawer', 80, 80);
+  drawer.pageId = 'home';
+  const drawerChild = createAntdComponent('Typography', 900, 900);
+  drawerChild.pageId = 'home';
+  drawerChild.parentId = drawer.id;
+  drawerChild.slot = 'content';
+  drawerChild.width = 600;
+  drawerChild.height = 500;
+
+  document.components = [form, wideChild, drawer, drawerChild];
+  const grown = growUiContentContainersToFit(document, 'home', 'desktop');
+  const grownForm = resolveComponent(grown.components.find((component) => component.id === form.id), 'desktop');
+  const unchangedDrawer = resolveComponent(grown.components.find((component) => component.id === drawer.id), 'desktop');
+  assert.ok(grownForm.width > form.width);
+  assert.ok(grownForm.height > form.height);
+  assert.equal(grownForm.width, 1200);
+  assert.equal(grownForm.height, 640);
+  assert.equal(unchangedDrawer.width, drawer.width);
+  assert.equal(unchangedDrawer.height, drawer.height);
 });
 
 test('device-specific patches preserve desktop layout and update mobile overrides', () => {

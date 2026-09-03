@@ -980,8 +980,10 @@ final class AppModel: ObservableObject {
         switch selection {
         case let .project(id):
             let conversationID = projects.first(where: { $0.id == id })?.conversationID
-            projectConversation = conversationID.map {
-                conversation(for: $0, allowsPlanMode: true)
+            projectConversation = conversationID.map { conversationID in
+                let conversation = conversation(for: conversationID, allowsPlanMode: true)
+                conversation.activate()
+                return conversation
             }
             contactConversation = nil
             if conversationID == nil {
@@ -989,8 +991,10 @@ final class AppModel: ObservableObject {
             }
         case let .contact(id):
             let conversationID = contacts.first(where: { $0.id == id })?.conversationID
-            contactConversation = conversationID.map {
-                conversation(for: $0, allowsPlanMode: false)
+            contactConversation = conversationID.map { conversationID in
+                let conversation = conversation(for: conversationID, allowsPlanMode: false)
+                conversation.activate()
+                return conversation
             }
             projectConversation = nil
         default:
@@ -1045,7 +1049,9 @@ final class AppModel: ObservableObject {
         }
         projectConversationPreparationErrors[projectID] = nil
         if selection == .project(projectID) {
-            projectConversation = conversation(for: conversationID, allowsPlanMode: true)
+            let conversation = conversation(for: conversationID, allowsPlanMode: true)
+            conversation.activate()
+            projectConversation = conversation
         }
     }
 

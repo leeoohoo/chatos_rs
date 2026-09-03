@@ -114,6 +114,21 @@ impl McpRequestContext {
 
     pub(super) fn enforce_created_task_context(&self, input: &mut CreateTaskRequest) {
         input.project_id = self.project_scope_id();
+        let has_explicit_model = input
+            .default_model_config_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if !has_explicit_model {
+            if let Some(model_config_id) = self
+                .default_model_config_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                input.default_model_config_id = Some(model_config_id.to_string());
+            }
+        }
         if !self.is_chatos_plan_task_profile() {
             input.task_profile = Some(TASK_PROFILE_DEFAULT.to_string());
             return;

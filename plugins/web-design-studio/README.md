@@ -5,11 +5,15 @@ Web Design Studio is an editable website design workbench and MCP server for Cha
 The product provides:
 
 - a focused native shape toolbox containing only rectangle, ellipse, and line primitives;
-- 68 real Ant Design 6.2.2 components across general, layout, navigation, data-entry, data-display, feedback, and utility categories;
-- multiple curated variants for all 68 Ant Design components, including seven Input forms, six Select forms, six List forms, and real alternatives for navigation, layout, forms, data display, overlays, and feedback;
+- all 72 components from the current Ant Design 6.6.2 official navigation, including Listy, BorderBeam, App, and ConfigProvider, grouped in the same seven categories as the website;
+- an independent Chakra UI 3.37.0 catalog backed by the official Chakra runtime;
+- an independent shadcn/ui catalog whose source-owned components reuse Radix interaction primitives and Lucide icons;
+- separate AntD, Chakra, and shadcn tabs so component systems are never mixed into one palette;
+- a shared component-library adapter for catalog definitions, variants, insertion, inspector props, editable slots, AI metadata, and canvas rendering dispatch;
+- multiple production-oriented variants for all 72 Ant Design components, including Input OTP, searchable and grouped Select, virtual and grouped Listy, selectable and expandable Table, resizable Drawer, editable Tabs, and content-bearing App/ConfigProvider/BorderBeam containers;
 - an insertion-time live variant gallery, so people choose a visual treatment before adding a component;
 - editable structured example data for options, items, table rows, trees, menus, steps, and other data-driven components;
-- persisted Ant Design component identity, variant, and JSON-safe props, editable from the inspector and preserved in reusable components;
+- persisted UI-library identity, variant, and JSON-safe props, editable from the inspector and preserved in reusable components;
 - responsive ready-made Navbar, Hero, Features, Pricing, FAQ, Contact, and Footer sections;
 - complete SaaS, product-launch, and business-service page templates that replace the current page in one action;
 - an Apple-inspired workbench with system typography, neutral materials, translucent chrome, and a single system-blue accent;
@@ -29,7 +33,7 @@ The product provides:
 - reusable component instance synchronization with per-layer content, style, and frame overrides;
 - updating component definitions from an instance, synchronizing all instances, and detaching an instance;
 - global color, radius, and typography design tokens with CSS variable support;
-- six curated whole-site visual themes that also drive the live Ant Design theme;
+- six curated whole-site visual themes that drive all live component-library renderers;
 - route switching while previewing multi-page designs;
 - component click interactions that navigate to another page or open an external URL in preview mode;
 - a routed single-file React JSX export;
@@ -45,9 +49,9 @@ The product provides:
 - revisioned JSON persistence shared by the visual workbench and MCP tools;
 - focused AI patch operations that preserve unrelated user edits.
 
-The native toolbox intentionally contains only rectangle, ellipse, and line primitives. Product UI comes from the actual Ant Design 6.2.2 package with 68 components, searchable in Chinese or English and insertable by click or drag. Components such as Input, Select, Button, Card, Alert, Progress, Tag, Avatar, and Badge expose selectable visual variants. Data-driven components ship with sample data that can be edited as structured JSON in the inspector.
+The native toolbox intentionally contains only rectangle, ellipse, and line primitives. Product UI comes from Ant Design, Chakra UI, or shadcn/ui, each searchable in Chinese or English and insertable by click or drag. Ant Design definitions track the current official documentation URL, introduced version, and deprecation state; the legacy List remains available for existing work while new long-list designs use Listy. Common components such as Input, Select, Button, Card, Alert, Progress, Badge, Tabs, Dialog, Drawer, and Sheet expose selectable visual variants. Data-driven components ship with sample data that can be edited as structured JSON in the inspector.
 
-The left library is organized into AntD, Shapes, Sections, and Layers. Clicking an Ant Design item opens a live variant gallery; dragging inserts its default variant immediately. The AntD runtime is code-split and loads only when an Ant Design component is present on the canvas. The Sections view includes full-page templates and reusable user components; the canvas toolbar supports 25%–150% zoom, 100%, and fit-to-width controls.
+The left library is organized into AntD, Chakra, shadcn, Shapes, Sections, and Layers. Clicking a library item opens a live variant gallery; dragging inserts its default variant immediately. Each runtime is code-split and loads only when its components are present on the canvas. Content-bearing components from all three systems share the same nested-canvas contract, while default form/detail starters preserve the selected parent's library instead of mixing systems. The Sections view includes full-page templates and reusable user components; the canvas toolbar supports 25%–150% zoom, 100%, and fit-to-width controls.
 
 The implementation plan is in [docs/IMPLEMENTATION_PLAN.zh-CN.md](docs/IMPLEMENTATION_PLAN.zh-CN.md).
 

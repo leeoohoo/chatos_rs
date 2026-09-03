@@ -69,7 +69,6 @@ type RunDetailDrawerProps = {
   changesLoading: boolean;
   onClose: () => void;
   onOpenTask: (taskId: string) => void;
-  onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
   onRetryIntegration: (runId: string) => void;
@@ -105,7 +104,6 @@ export function RunDetailDrawer({
   changesLoading,
   onClose,
   onOpenTask,
-  onOpenModel,
   onCancel,
   onRetry,
   onRetryIntegration,
@@ -142,7 +140,6 @@ export function RunDetailDrawer({
             integrationWaiving={integrationWaiving}
             changesLoading={changesLoading}
             onOpenTask={onOpenTask}
-            onOpenModel={onOpenModel}
             onCancel={onCancel}
             onRetry={onRetry}
             onRetryIntegration={onRetryIntegration}

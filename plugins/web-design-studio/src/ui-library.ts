@@ -12,6 +12,9 @@ export interface UiComponentDefinition<TCategory extends string = string> {
   width: number;
   height: number;
   props?: Record<string, WebDesignJsonValue>;
+  docsUrl?: string;
+  introduced?: string;
+  status?: 'stable' | 'deprecated';
 }
 
 export interface UiComponentVariant {

@@ -6,9 +6,10 @@ import { breakpointFor, resolveComponent } from './editor-model.js';
 import { exportDocumentHtmlFiles } from './html-exporter.js';
 import { exportReactComponent } from './react-exporter.js';
 import { exportVueComponent } from './vue-exporter.js';
-import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_COMPONENT_VARIANTS, ANTD_VERSION, createAntdComponent } from './antd-library.js';
-import { editableSlotsForAntdComponent, isAntdContentContainer } from './antd-slots.js';
+import { editableSlotsForUiComponent, isUiContentContainer } from './library-slots.js';
+import { createComponentFromUiLibrary, UI_LIBRARIES } from './ui-libraries.js';
 import { WEB_DESIGN_THEME_PRESETS } from './design-themes.js';
+import { createBlankWebsite } from './templates.js';
 import {
   assertWebDesignDocument,
   designSummary,
@@ -31,16 +32,56 @@ const policy = {
 const TOOL_DEFINITIONS = [
   {
     name: 'web_design_list_documents',
-    description: 'List editable website design documents in the current ChatOS runtime scope.',
+    description: 'List editable website design documents, optionally limited to one Web Design Studio project.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 } }, additionalProperties: false },
+    _meta: policy
+  },
+  {
+    name: 'web_design_list_projects',
+    description: 'List Web Design Studio projects in the current ChatOS runtime scope.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     _meta: policy
   },
   {
+    name: 'web_design_create_project',
+    description: 'Create a project that can contain multiple separately named website designs.',
+    inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 240 }, description: { type: 'string', maxLength: 4000 } }, required: ['name'], additionalProperties: false },
+    _meta: policy
+  },
+  {
+    name: 'web_design_get_project',
+    description: 'Read a website project and the summaries of designs assigned to it.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['projectId'], additionalProperties: false },
+    _meta: policy
+  },
+  {
+    name: 'web_design_update_project',
+    description: 'Rename a website project or update its description.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 }, name: { type: 'string', minLength: 1, maxLength: 240 }, description: { type: 'string', maxLength: 4000 } }, required: ['projectId'], additionalProperties: false },
+    _meta: policy
+  },
+  {
+    name: 'web_design_delete_project',
+    description: 'Delete a website project, optionally deleting all website designs assigned to it.',
+    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 }, deleteDocuments: { type: 'boolean', default: false } }, required: ['projectId'], additionalProperties: false },
+    _meta: policy
+  },
+  {
+    name: 'web_design_move_document',
+    description: 'Attach or move one website design into another Web Design Studio project.',
+    inputSchema: { type: 'object', properties: { documentId: { type: 'string', minLength: 1, maxLength: 128 }, targetProjectId: { type: 'string', minLength: 1, maxLength: 128 }, sourceProjectId: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['documentId', 'targetProjectId'], additionalProperties: false },
+    _meta: policy
+  },
+  {
     name: 'web_design_create_document',
-    description: 'Create an editable website design from the built-in landing page template.',
+    description: 'Create an editable website design, optionally inside a project and optionally as a blank canvas.',
     inputSchema: {
       type: 'object',
-      properties: { title: { type: 'string', minLength: 1, maxLength: 240 } },
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 240 },
+        projectId: { type: 'string', minLength: 1, maxLength: 128 },
+        blank: { type: 'boolean', default: false }
+      },
       additionalProperties: false
     },
     _meta: policy
@@ -58,7 +99,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'web_design_get_component_library',
-    description: 'Read available Ant Design components, variants, editable internal content slots, default sample data, insertion sizes, and curated whole-site visual themes before creating or restyling a design. Children placed in a slot use parentId plus slot.',
+    description: 'Read independently grouped Ant Design, Chakra UI, and shadcn/ui components, variants, editable internal content slots, sample data, insertion sizes, and curated whole-site visual themes. Children placed in a slot use parentId plus slot.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     _meta: { ...policy, 'chatos/toolResultMaxChars': 300_000 }
   },
@@ -278,21 +319,45 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
     case 'web_design_list_documents':
-      return { scope: runtimeScope(), documents: await store.list() };
+      return { scope: runtimeScope(), documents: typeof argumentsValue.projectId === 'string' ? await store.listInProject(argumentsValue.projectId) : await store.list() };
+    case 'web_design_list_projects':
+      return { scope: runtimeScope(), projects: await store.listProjects() };
+    case 'web_design_create_project':
+      return { scope: runtimeScope(), project: await store.createProject(String(argumentsValue.name), typeof argumentsValue.description === 'string' ? argumentsValue.description : undefined) };
+    case 'web_design_get_project': {
+      const projectId = String(argumentsValue.projectId);
+      return { scope: runtimeScope(), project: await store.readProject(projectId), documents: await store.listInProject(projectId) };
+    }
+    case 'web_design_update_project':
+      return { project: await store.updateProject(String(argumentsValue.projectId), { name: typeof argumentsValue.name === 'string' ? argumentsValue.name : undefined, description: typeof argumentsValue.description === 'string' ? argumentsValue.description : undefined }) };
+    case 'web_design_delete_project':
+      await store.deleteProject(String(argumentsValue.projectId), argumentsValue.deleteDocuments === true);
+      return { deleted: true, projectId: String(argumentsValue.projectId) };
+    case 'web_design_move_document':
+      return store.moveDocument(String(argumentsValue.documentId), String(argumentsValue.targetProjectId), typeof argumentsValue.sourceProjectId === 'string' ? argumentsValue.sourceProjectId : undefined);
     case 'web_design_create_document': {
-      const document = await store.create(typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined);
+      const title = typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined;
+      const document = typeof argumentsValue.projectId === 'string'
+        ? await store.createInProject(argumentsValue.projectId, title, argumentsValue.blank === true)
+        : argumentsValue.blank === true
+          ? await store.writeNew(createBlankWebsite(title))
+          : await store.create(title);
       return { scope: runtimeScope(), document: designSummary(document) };
     }
     case 'web_design_get_document':
       return { document: await store.read(String(argumentsValue.documentId)) };
     case 'web_design_get_component_library':
       return {
-        library: { name: 'antd', version: ANTD_VERSION },
-        categories: ANTD_CATEGORIES,
-        components: ANTD_COMPONENTS.map((component) => ({
-          ...component,
-          variants: ANTD_COMPONENT_VARIANTS[component.id] ?? [{ id: 'default', label: '默认款式', props: {} }],
-          editableSlots: editableSlotsForAntdComponent(createAntdComponent(component.id, 0, 0))
+        libraries: UI_LIBRARIES.map((library) => ({
+          id: library.id,
+          name: library.displayName,
+          version: library.version,
+          categories: library.categories,
+          components: library.components.map((component) => ({
+            ...component,
+            variants: library.variants[component.id] ?? [{ id: 'default', label: '默认款式', props: {} }],
+            editableSlots: editableSlotsForUiComponent(createComponentFromUiLibrary(library.id, component.id, 0, 0))
+          }))
         })),
         themes: WEB_DESIGN_THEME_PRESETS
       };
@@ -395,7 +460,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         if (!component.parentId) return [];
         const parent = byId.get(component.parentId);
         if (!parent) return [];
-        if (component.slot && isAntdContentContainer(parent)) return [];
+        if (component.slot && isUiContentContainer(parent)) return [];
         const childFrame = resolveComponent(component, device);
         const parentFrame = resolveComponent(parent, device);
         return !childFrame.hidden && !parentFrame.hidden && (
@@ -411,7 +476,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const unusualParents = document.components.flatMap((component) => {
         if (!component.parentId) return [];
         const parent = byId.get(component.parentId);
-        return parent && !['section', 'card'].includes(parent.type) && !isAntdContentContainer(parent)
+        return parent && !['section', 'card'].includes(parent.type) && !isUiContentContainer(parent)
           ? [{ componentId: component.id, parentId: parent.id, parentType: parent.type }]
           : [];
       });
@@ -443,6 +508,7 @@ function result(value: Record<string, unknown>, isError = false) {
 
 async function runMcp(): Promise<void> {
   await store.initialize();
+  await store.ensureLegacyProject();
   const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...TOOL_DEFINITIONS] }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

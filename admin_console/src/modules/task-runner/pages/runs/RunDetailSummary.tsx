@@ -9,6 +9,7 @@ import {
   Modal,
   Space,
   Tag,
+  Typography,
 } from 'antd';
 import dayjs from 'dayjs';
 
@@ -38,7 +39,6 @@ type RunDetailSummaryProps = {
   integrationWaiving: boolean;
   changesLoading: boolean;
   onOpenTask: (taskId: string) => void;
-  onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
   onRetryIntegration: (runId: string) => void;
@@ -61,7 +61,6 @@ export function RunDetailSummary({
   integrationWaiving,
   changesLoading,
   onOpenTask,
-  onOpenModel,
   onCancel,
   onRetry,
   onRetryIntegration,
@@ -193,14 +192,7 @@ export function RunDetailSummary({
         ) : null}
         <Descriptions.Item label={t('runs.detail.agent')}>{agentLabel}</Descriptions.Item>
         <Descriptions.Item label={t('runs.column.modelConfig')}>
-          <Button
-            type="link"
-            size="small"
-            style={{ paddingInline: 0 }}
-            onClick={() => onOpenModel(run.model_config_id)}
-          >
-            {modelName}
-          </Button>
+          <Typography.Text>{modelName}</Typography.Text>
         </Descriptions.Item>
         <Descriptions.Item label={t('runs.column.startedAt')}>
           {run.started_at ? dayjs(run.started_at).format('YYYY-MM-DD HH:mm:ss') : '-'}

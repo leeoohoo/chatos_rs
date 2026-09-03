@@ -80,7 +80,6 @@ export class LocalConnectorBridge {
   #requestHandler = null;
   #stateListeners = new Set();
   #nextId = 1;
-  #expiryTimer = null;
   #connected = false;
   #connecting = null;
 
@@ -153,9 +152,6 @@ export class LocalConnectorBridge {
       throw new BridgeProtocolError('unsupported_by_backend', 'Browser Bridge protocol mismatch');
     }
     this.#connected = true;
-    this.#expiryTimer = setTimeout(() => {
-      void this.disconnect('credential_expired');
-    }, Math.max(1, bootstrap.expiresAtUnixMs - Date.now()));
     this.#emitState();
   }
 
@@ -165,8 +161,6 @@ export class LocalConnectorBridge {
     this.#socket = null;
     this.#nativePort = null;
     this.#connected = false;
-    if (this.#expiryTimer !== null) clearTimeout(this.#expiryTimer);
-    this.#expiryTimer = null;
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(new BridgeProtocolError('extension_unavailable', reason));

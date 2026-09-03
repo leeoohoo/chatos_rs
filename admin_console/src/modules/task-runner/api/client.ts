@@ -7,7 +7,6 @@ import type {
   BatchTaskRunPayload,
   BatchTaskStatusUpdatePayload,
   CancelAskUserPromptPayload,
-  CreateModelConfigPayload,
   CreateTaskPayload,
   CreateUserPayload,
   HealthResponse,
@@ -16,12 +15,7 @@ import type {
   McpPromptPreviewPayload,
   McpPromptPreviewResponse,
   McpServerInfo,
-  ModelCatalogResponse,
-  ModelConfigRecord,
-  ModelConfigTestResponse,
-  ModelConfigUsageRecord,
   PaginatedResponse,
-  PreviewModelCatalogPayload,
   PromptListFilters,
   RecordTaskProcessPayload,
   StartTaskRunPayload,
@@ -45,7 +39,6 @@ import type {
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
-  TestModelConfigPayload,
   ToolingNotepadFoldersResponse,
   ToolingNotepadNoteResponse,
   ToolingNotepadNotesResponse,
@@ -57,7 +50,6 @@ import type {
   AskUserPromptRecord,
   AskUserPromptStatus,
   AskUserPromptTaskCountRecord,
-  UpdateModelConfigPayload,
   UpdateRuntimeSettingsPayload,
   UpdateTaskPayload,
   UpdateUserPayload,
@@ -223,35 +215,6 @@ export const api = {
     request<TaskMcpResolutionResponse>(`/api/tasks/${id}/mcp/resolution`),
   previewTaskMcpPrompt: (taskId: string) =>
     request<McpPromptPreviewResponse>(`/api/tasks/${taskId}/mcp/prompt-preview`),
-  listModelConfigs: () => request<ModelConfigRecord[]>('/api/model-configs'),
-  listModelConfigUsage: () => request<ModelConfigUsageRecord[]>('/api/model-configs/usage'),
-  getModelConfig: (id: string) => request<ModelConfigRecord>(`/api/model-configs/${id}`),
-  createModelConfig: (payload: CreateModelConfigPayload) =>
-    request<ModelConfigRecord>('/api/model-configs', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  testModelConfig: (id: string, payload: TestModelConfigPayload = {}) =>
-    request<ModelConfigTestResponse>(`/api/model-configs/${id}/test`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  listModelCatalog: (id: string) =>
-    request<ModelCatalogResponse>(`/api/model-configs/${id}/models`),
-  previewModelCatalog: (payload: PreviewModelCatalogPayload) =>
-    request<ModelCatalogResponse>('/api/model-configs/catalog/preview', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateModelConfig: (id: string, payload: UpdateModelConfigPayload) =>
-    request<ModelConfigRecord>(`/api/model-configs/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-  deleteModelConfig: (id: string) =>
-    request<void>(`/api/model-configs/${id}`, {
-      method: 'DELETE',
-    }),
   listRuns: (filters?: RunListFilters) =>
     request<TaskRunRecord[]>(
       withQuery('/api/runs', {

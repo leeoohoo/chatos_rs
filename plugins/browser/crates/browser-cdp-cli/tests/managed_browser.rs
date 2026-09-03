@@ -16,7 +16,7 @@ use tungstenite::{Message, accept};
 
 #[test]
 #[ignore = "requires an installed Chrome/Chromium browser"]
-fn managed_browser_end_to_end() {
+fn managed_browser_internal_fallback_end_to_end() {
     let (url, stop_server) = serve_fixture();
     let websocket_url = serve_websocket_fixture(stop_server.clone());
     let mut mcp = McpProcess::spawn();

@@ -292,7 +292,7 @@ fn default_model_config_id_schema() -> Value {
     json!({
         "type": "string",
         "minLength": 1,
-        "description": "Optional single Task Runner execution model config id. The available choices are injected dynamically for the current user. Choose the model whose usage scenario best matches this task; omit the field to let Task Runner select automatically."
+        "description": "Model selected explicitly by ChatOS for this task. Use the user's task-purpose description when available; otherwise choose from model identity and capabilities using your own knowledge."
     })
 }
 
@@ -354,10 +354,7 @@ pub(crate) fn create_project_execution_tasks_schema() -> Value {
                         "input_payload": {},
                         "priority": { "type": "integer" },
                         "tags": { "type": "array", "items": { "type": "string" } },
-                        "default_model_config_id": {
-                            "type": "string",
-                            "description": "Optional Task Runner execution model config id. Omit to use the current user's default."
-                        },
+                        "default_model_config_id": default_model_config_id_schema(),
                         "requires_execution": requires_execution_schema(),
                         "enabled_builtin_kinds": task_mcp_selection_schema(
                             "Select the builtin MCP capabilities this execution task needs from the Task Runner execution Agent binding.",

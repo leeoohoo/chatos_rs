@@ -390,7 +390,6 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "requires_execution": true,
                         "enabled_builtin_kinds": ["CodeMaintainerWrite"],
                         "owned_paths": ["src"],
-                        "default_model_config_id": "model-that-must-be-overridden",
                         "input_payload": {
                             "requirement_id": "child-requirement-1",
                             "slice": "analysis"
@@ -406,7 +405,6 @@ async fn project_execution_planner_creates_multiple_runner_tasks_and_syncs_links
                         "requires_execution": true,
                         "enabled_builtin_kinds": ["CodeMaintainerWrite", "TerminalController"],
                         "owned_paths": ["src"],
-                        "default_model_config_id": "another-model-that-must-be-overridden",
                         "prerequisite_refs": ["prepare"],
                         "context_refs": ["prepare"],
                         "input_payload": { "slice": "code" }

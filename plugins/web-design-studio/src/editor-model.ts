@@ -7,6 +7,7 @@ import {
   type WebDesignComponent,
   type WebDesignDevice,
   type WebDesignDocument,
+  type WebHorizontalConstraint,
   type WebDesignSymbol,
   type WebSymbolOverride
 } from './schema.js';
@@ -38,6 +39,34 @@ export interface SnapResult {
 export interface ClonedComponentSubtrees {
   components: WebDesignComponent[];
   rootIds: string[];
+}
+
+export interface GrowPageToFitContentOptions {
+  padding?: number;
+  step?: number;
+  minimumHeight?: number;
+  maxHeight?: number;
+  excludedComponentIds?: ReadonlySet<string>;
+}
+
+export interface FitContentCanvasOptions {
+  minimumWidth: number;
+  minimumHeight: number;
+  originX?: number;
+  originY?: number;
+  padding?: number;
+  step?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+}
+
+export interface ContentCanvasSize {
+  width: number;
+  height: number;
+}
+
+export interface ReflowPageForViewportOptions {
+  excludedComponentIds?: ReadonlySet<string>;
 }
 
 export function createSymbolFromSelection(
@@ -334,6 +363,170 @@ export function scaleFrameForBreakpoint(
 
 export function componentsForPage(document: WebDesignDocument, pageId: string): WebDesignComponent[] {
   return document.components.filter((component) => pageIdForComponent(document, component) === pageId);
+}
+
+export function fitContentCanvasToComponents(
+  components: readonly WebDesignComponent[],
+  device: WebDesignDevice,
+  options: FitContentCanvasOptions
+): ContentCanvasSize {
+  const minimumWidth = Math.min(10000, Math.max(16, options.minimumWidth));
+  const minimumHeight = Math.min(30000, Math.max(16, options.minimumHeight));
+  const maxWidth = Math.max(minimumWidth, Math.min(10000, options.maxWidth ?? 10000));
+  const maxHeight = Math.max(minimumHeight, Math.min(30000, options.maxHeight ?? 30000));
+  const padding = Math.max(0, options.padding ?? 48);
+  const step = Math.max(1, options.step ?? 80);
+  const originX = options.originX ?? 0;
+  const originY = options.originY ?? 0;
+  let contentRight = 0;
+  let contentBottom = 0;
+  let hasVisibleContent = false;
+
+  for (const component of components) {
+    const frame = resolveComponent(component, device);
+    if (frame.hidden) continue;
+    hasVisibleContent = true;
+    contentRight = Math.max(contentRight, frame.x - originX + frame.width);
+    contentBottom = Math.max(contentBottom, frame.y - originY + frame.height);
+  }
+
+  if (!hasVisibleContent) return { width: minimumWidth, height: minimumHeight };
+  return {
+    width: Math.min(maxWidth, Math.max(minimumWidth, Math.ceil((Math.max(0, contentRight) + padding) / step) * step)),
+    height: Math.min(maxHeight, Math.max(minimumHeight, Math.ceil((Math.max(0, contentBottom) + padding) / step) * step))
+  };
+}
+
+export function growPageToFitContent(
+  document: WebDesignDocument,
+  pageId: string,
+  device: WebDesignDevice,
+  options: GrowPageToFitContentOptions = {}
+): WebDesignDocument {
+  const current = breakpointFor(document, device);
+  const padding = Math.max(0, options.padding ?? 80);
+  const step = Math.max(1, options.step ?? 100);
+  const minimumHeight = Math.min(30000, Math.max(current.height, options.minimumHeight ?? current.height));
+  const maxHeight = Math.max(minimumHeight, Math.min(30000, options.maxHeight ?? 30000));
+  let contentBottom = 0;
+
+  for (const component of componentsForPage(document, pageId)) {
+    if (options.excludedComponentIds?.has(component.id)) continue;
+    const frame = resolveComponent(component, device);
+    if (frame.hidden) continue;
+    contentBottom = Math.max(contentBottom, frame.y + frame.height);
+  }
+
+  const requiredHeight = Math.min(maxHeight, Math.max(minimumHeight, Math.ceil((Math.max(0, contentBottom) + padding) / step) * step));
+  if (requiredHeight <= current.height) return document;
+
+  const breakpoints = {
+    desktop: { ...(document.breakpoints?.desktop ?? { width: document.viewport.width, height: document.viewport.height }) },
+    tablet: { ...(document.breakpoints?.tablet ?? DEFAULT_WEB_DESIGN_BREAKPOINTS.tablet) },
+    mobile: { ...(document.breakpoints?.mobile ?? DEFAULT_WEB_DESIGN_BREAKPOINTS.mobile) }
+  };
+  breakpoints[device] = { ...breakpoints[device], height: requiredHeight };
+  return {
+    ...document,
+    breakpoints,
+    viewport: device === 'desktop' ? { ...document.viewport, height: requiredHeight } : document.viewport
+  };
+}
+
+function responsiveMinimumWidth(component: WebDesignComponent): number {
+  if (component.type === 'icon' || component.type === 'avatar' || component.type === 'badge' || component.type === 'checkbox' || component.type === 'switch') return 24;
+  if (component.type === 'button' || component.type === 'link') return 72;
+  if (component.type === 'input' || component.type === 'textarea' || component.type === 'select') return 120;
+  return 48;
+}
+
+function inferredHorizontalConstraint(
+  frame: ResolvedWebDesignComponent,
+  containerX: number,
+  containerWidth: number,
+  nextContainerWidth: number
+): Exclude<WebHorizontalConstraint, 'auto'> {
+  const relativeX = frame.x - containerX;
+  const right = containerWidth - relativeX - frame.width;
+  const centerOffset = relativeX + frame.width / 2 - containerWidth / 2;
+  const ratio = nextContainerWidth / Math.max(1, containerWidth);
+  const compact = frame.width <= Math.min(480, containerWidth * .25);
+  if ((ratio < .8 || ratio > 1.25) && !compact) return 'scale';
+  if (frame.width >= containerWidth * .65) return 'stretch';
+  if (Math.abs(centerOffset) <= containerWidth * .05) return 'center';
+  if (right >= 0 && right <= containerWidth * .08 && right < relativeX) return 'right';
+  return 'left';
+}
+
+function reflowHorizontalFrame(
+  component: WebDesignComponent,
+  frame: ResolvedWebDesignComponent,
+  device: WebDesignDevice,
+  previousContainer: { x: number; width: number },
+  nextContainer: { x: number; width: number }
+): ResolvedWebDesignComponent {
+  const relativeX = frame.x - previousContainer.x;
+  const right = previousContainer.width - relativeX - frame.width;
+  const ratio = nextContainer.width / Math.max(1, previousContainer.width);
+  const configured = component.constraints?.[device]?.horizontal ?? 'auto';
+  const constraint = configured === 'auto'
+    ? inferredHorizontalConstraint(frame, previousContainer.x, previousContainer.width, nextContainer.width)
+    : configured;
+  let width = frame.width;
+  let x = nextContainer.x + relativeX;
+
+  if (constraint === 'scale') {
+    width = frame.width * ratio;
+    x = nextContainer.x + relativeX * ratio;
+  } else if (constraint === 'center') {
+    const centerOffset = relativeX + frame.width / 2 - previousContainer.width / 2;
+    x = nextContainer.x + nextContainer.width / 2 + centerOffset - frame.width / 2;
+  } else if (constraint === 'right') {
+    x = nextContainer.x + nextContainer.width - right - frame.width;
+  } else if (constraint === 'stretch') {
+    width = nextContainer.width - relativeX - right;
+  }
+
+  width = Math.min(nextContainer.width, Math.max(responsiveMinimumWidth(component), Math.round(width)));
+  x = Math.min(nextContainer.x + nextContainer.width - width, Math.max(nextContainer.x, Math.round(x)));
+  return { ...frame, x, width };
+}
+
+export function reflowPageForViewport(
+  document: WebDesignDocument,
+  pageId: string,
+  device: WebDesignDevice,
+  previousWidth: number,
+  nextWidth: number,
+  options: ReflowPageForViewportOptions = {}
+): WebDesignDocument {
+  if (previousWidth === nextWidth) return document;
+  const frames = new Map<string, ResolvedWebDesignComponent>();
+  const visit = (
+    component: WebDesignComponent,
+    previousContainer: { x: number; width: number },
+    nextContainer: { x: number; width: number }
+  ) => {
+    const previousFrame = resolveComponent(component, device);
+    const nextFrame = options.excludedComponentIds?.has(component.id)
+      ? { ...previousFrame, x: previousFrame.x + nextContainer.x - previousContainer.x }
+      : reflowHorizontalFrame(component, previousFrame, device, previousContainer, nextContainer);
+    frames.set(component.id, nextFrame);
+    for (const child of childrenOf(document, component.id, pageId)) {
+      visit(child, { x: previousFrame.x, width: previousFrame.width }, { x: nextFrame.x, width: nextFrame.width });
+    }
+  };
+
+  for (const component of componentsForPage(document, pageId).filter((candidate) => candidate.parentId === undefined)) {
+    visit(component, { x: 0, width: previousWidth }, { x: 0, width: nextWidth });
+  }
+  return {
+    ...document,
+    components: document.components.map((component) => {
+      const frame = frames.get(component.id);
+      return frame ? updateComponentFrame(component, device, { x: frame.x, width: frame.width }) : component;
+    })
+  };
 }
 
 export function childrenOf(document: WebDesignDocument, parentId?: string, pageId?: string): WebDesignComponent[] {

@@ -44,7 +44,6 @@ type PromptDetailDrawerProps = {
   onClose: () => void;
   onOpenTask: (taskId: string) => void;
   onOpenRun: (runId: string) => void;
-  onOpenModel: (modelId: string) => void;
   onSubmit: (promptId: string, values: Record<string, unknown>) => void;
   onCancelPrompt: (promptId: string) => void;
 };
@@ -63,7 +62,6 @@ export function PromptDetailDrawer({
   onClose,
   onOpenTask,
   onOpenRun,
-  onOpenModel,
   onSubmit,
   onCancelPrompt,
 }: PromptDetailDrawerProps) {
@@ -102,14 +100,9 @@ export function PromptDetailDrawer({
             </Descriptions.Item>
             <Descriptions.Item label={t('prompts.detail.modelConfig')}>
               {selectedRun?.model_config_id ? (
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ paddingInline: 0 }}
-                  onClick={() => onOpenModel(selectedRun.model_config_id)}
-                >
+                <Typography.Text>
                   {modelMap.get(selectedRun.model_config_id) || selectedRun.model_config_id}
-                </Button>
+                </Typography.Text>
               ) : (
                 '-'
               )}

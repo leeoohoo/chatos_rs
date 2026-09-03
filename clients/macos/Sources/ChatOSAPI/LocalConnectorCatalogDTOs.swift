@@ -133,6 +133,8 @@ struct PluginCatalogDTO: Decodable, Sendable { var items: [PluginDTO] }
 
 struct PluginDTO: Decodable, Sendable {
     var pluginID: String
+    var packageName: String?
+    var pluginKey: String?
     var displayName: String
     var description: String
     var category: String
@@ -146,6 +148,8 @@ struct PluginDTO: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case description, category, publisher, installation, preference
         case pluginID = "plugin_id"
+        case packageName = "name"
+        case pluginKey = "plugin_key"
         case displayName = "display_name"
         case latestVersion = "latest_version"
         case updateAvailable = "update_available"
@@ -154,7 +158,8 @@ struct PluginDTO: Decodable, Sendable {
     }
     var domainModel: LocalConnectorPlugin {
         .init(
-            pluginID: pluginID, displayName: displayName, description: description,
+            pluginID: pluginID, packageName: packageName, pluginKey: pluginKey,
+            displayName: displayName, description: description,
             category: category, publisher: publisher, latestVersion: latestVersion,
             installed: installation != nil, updateAvailable: updateAvailable,
             installAvailable: installAvailable, enabled: preference?.enabled ?? true,

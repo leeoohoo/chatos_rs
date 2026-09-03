@@ -8,6 +8,25 @@ const port = Number.parseInt(process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.W
 const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.WEB_DESIGN_STUDIO_HOST ?? '127.0.0.1';
 const store = new WebDesignDocumentStore();
 await store.initialize();
+await store.ensureLegacyProject();
+
+const contextKind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
+const runtimeContext = {
+  kind: contextKind,
+  shared: contextKind === 'device',
+  ...(process.env.CHATOS_PROJECT_ID ? { chatosProjectId: process.env.CHATOS_PROJECT_ID } : {}),
+  ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
+  ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
+};
+let defaultProjectId: string | undefined;
+if (contextKind === 'project' && process.env.CHATOS_PROJECT_ID) {
+  const projects = await store.listProjects();
+  if (projects.length === 0) {
+    defaultProjectId = (await store.createProject(process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 网站项目')).projectId;
+  } else if (projects.length === 1) {
+    defaultProjectId = projects[0].projectId;
+  }
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -18,10 +37,72 @@ app.get('/api/health', (_request, response) => {
   response.json({ ok: true, service: 'web-design-studio', dataDirectory: store.rootDirectory });
 });
 
+app.get('/api/context', (_request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  response.json({ ...runtimeContext, ...(defaultProjectId ? { defaultProjectId } : {}) });
+});
+
 app.get('/api/documents', async (_request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
     response.json({ items: await store.list() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/projects', async (_request, response, next) => {
+  try {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json({ items: await store.listProjects() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/projects/:projectId', async (request, response, next) => {
+  try {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json(await store.readProject(request.params.projectId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/projects', async (request, response, next) => {
+  try {
+    const name = typeof request.body?.name === 'string' ? request.body.name : '';
+    const description = typeof request.body?.description === 'string' ? request.body.description : undefined;
+    response.status(201).json(await store.createProject(name, description));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/projects/:projectId', async (request, response, next) => {
+  try {
+    response.json(await store.updateProject(request.params.projectId, {
+      name: typeof request.body?.name === 'string' ? request.body.name : undefined,
+      description: typeof request.body?.description === 'string' ? request.body.description : undefined
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/projects/:projectId', async (request, response, next) => {
+  try {
+    await store.deleteProject(request.params.projectId, request.query.deleteDocuments === 'true');
+    response.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/projects/:projectId/documents', async (request, response, next) => {
+  try {
+    const title = typeof request.body?.title === 'string' ? request.body.title : undefined;
+    response.status(201).json(await store.createInProject(request.params.projectId, title, request.body?.blank === true));
   } catch (error) {
     next(error);
   }

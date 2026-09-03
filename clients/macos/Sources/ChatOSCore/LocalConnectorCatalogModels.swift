@@ -66,6 +66,8 @@ public struct LocalConnectorSandboxSettings: Codable, Sendable, Equatable {
 
 public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var pluginID: String
+    public var packageName: String?
+    public var pluginKey: String?
     public var displayName: String
     public var description: String
     public var category: String
@@ -82,6 +84,8 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
 
     public init(
         pluginID: String,
+        packageName: String? = nil,
+        pluginKey: String? = nil,
         displayName: String,
         description: String,
         category: String,
@@ -95,6 +99,8 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         permissions: [LocalConnectorPluginPermission] = []
     ) {
         self.pluginID = pluginID
+        self.packageName = packageName
+        self.pluginKey = pluginKey
         self.displayName = displayName
         self.description = description
         self.category = category

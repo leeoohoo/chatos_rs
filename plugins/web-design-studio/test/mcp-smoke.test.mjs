@@ -12,7 +12,14 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ['dist/mcp-server.mjs', 'mcp'],
-    env: { ...process.env, WEB_DESIGN_STUDIO_DATA_DIR: root, CHATOS_CONTEXT_SCOPE: 'project', CHATOS_PROJECT_ID: 'project-1' }
+    env: {
+      ...process.env,
+      WEB_DESIGN_STUDIO_DATA_DIR: root,
+      CHATOS_CONTEXT_SCOPE: 'project',
+      CHATOS_PROJECT_ID: 'host-project-through-123',
+      CHATOS_PROJECT_NAME: '宿主产品项目',
+      CHATOS_WORKSPACE_ID: 'workspace-through-456'
+    }
   });
   try {
     await client.connect(transport);
@@ -26,15 +33,38 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_export_vue'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_sync_symbol_instances'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_update_symbol_from_instance'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_list_projects'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_create_project'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_project'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_move_document'));
+    assert.equal(tools.tools.some((tool) => Object.hasOwn(tool.inputSchema.properties ?? {}, 'chatosProjectId')), false);
+
+    const projectList = await client.callTool({ name: 'web_design_list_projects', arguments: {} });
+    assert.equal(projectList.structuredContent.scope.chatosProjectId, 'host-project-through-123');
+    assert.equal(projectList.structuredContent.scope.chatosProjectName, '宿主产品项目');
+    assert.equal(projectList.structuredContent.scope.workspaceId, 'workspace-through-456');
+
+    const createdProject = await client.callTool({ name: 'web_design_create_project', arguments: { name: 'Web Studio 内部项目' } });
+    const internalProjectId = createdProject.structuredContent.project.projectId;
+    assert.notEqual(internalProjectId, projectList.structuredContent.scope.chatosProjectId);
+    assert.equal(createdProject.structuredContent.scope.chatosProjectId, 'host-project-through-123');
 
     const library = await client.callTool({ name: 'web_design_get_component_library', arguments: {} });
-    assert.equal(library.structuredContent.library.name, 'antd');
-    assert.equal(library.structuredContent.components.length, 68);
+    assert.deepEqual(library.structuredContent.libraries.map((item) => item.id), ['antd', 'chakra', 'shadcn']);
+    assert.equal(library.structuredContent.libraries.find((item) => item.id === 'antd').components.length, 72);
+    const chakraLibrary = library.structuredContent.libraries.find((item) => item.id === 'chakra');
+    assert.equal(chakraLibrary.components.length, 114);
+    assert.equal(chakraLibrary.components.every((component) => component.variants.length >= 2), true);
+    assert.ok(library.structuredContent.libraries.find((item) => item.id === 'shadcn').components.length >= 45);
     assert.equal(library.structuredContent.themes.length, 6);
-    assert.equal(library.structuredContent.components.find((component) => component.id === 'Input').variants.length, 7);
+    assert.equal(library.structuredContent.libraries.find((item) => item.id === 'antd').components.find((component) => component.id === 'Input').variants.length, 9);
 
-    const created = await client.callTool({ name: 'web_design_create_document', arguments: { title: 'MCP Website' } });
+    const created = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'MCP Website' } });
     const documentId = created.structuredContent.document.documentId;
+    assert.equal(created.structuredContent.scope.chatosProjectId, 'host-project-through-123');
+    const internalProject = await client.callTool({ name: 'web_design_get_project', arguments: { projectId: internalProjectId } });
+    assert.deepEqual(internalProject.structuredContent.project.designIds, [documentId]);
+    assert.equal(internalProject.structuredContent.scope.chatosProjectId, 'host-project-through-123');
     const read = await client.callTool({ name: 'web_design_get_document', arguments: { documentId } });
     assert.equal(read.structuredContent.document.revision, 1);
 

@@ -4,7 +4,6 @@
 use chatos_ai_runtime::model_config::{normalize_provider, normalize_thinking_level};
 use chatos_ai_runtime::ModelRuntimeConfig;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::{default_tool_result_model_max_chars, default_tool_results_model_total_max_chars};
 
@@ -158,26 +157,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateModelConfigRequest {
-    pub name: String,
-    pub provider: String,
-    pub prompt_vendor: Option<String>,
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-    pub usage_scenario: Option<String>,
-    pub temperature: Option<f64>,
-    pub max_output_tokens: Option<i64>,
-    pub thinking_level: Option<String>,
-    pub supports_responses: Option<bool>,
-    pub instructions: Option<String>,
-    pub request_cwd: Option<String>,
-    pub include_prompt_cache_retention: Option<bool>,
-    pub request_body_limit_bytes: Option<usize>,
-    pub enabled: Option<bool>,
-}
-
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatosSyncedModelConfigRequest {
     pub id: String,
@@ -202,47 +182,6 @@ pub struct ChatosSyncedModelConfigRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UpdateModelConfigRequest {
-    pub name: Option<String>,
-    pub provider: Option<String>,
-    pub prompt_vendor: Option<String>,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
-    pub model: Option<String>,
-    pub usage_scenario: Option<String>,
-    pub temperature: Option<f64>,
-    pub max_output_tokens: Option<i64>,
-    pub thinking_level: Option<String>,
-    pub supports_responses: Option<bool>,
-    pub instructions: Option<String>,
-    pub request_cwd: Option<String>,
-    pub include_prompt_cache_retention: Option<bool>,
-    pub request_body_limit_bytes: Option<usize>,
-    pub enabled: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PreviewModelCatalogRequest {
-    pub provider: String,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
-    pub model: Option<String>,
-    pub supports_responses: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderModelRecord {
-    pub id: String,
-    pub owned_by: Option<String>,
-    pub context_length: Option<i64>,
-    pub supports_images: bool,
-    pub supports_video: bool,
-    pub supports_reasoning: bool,
-    pub supports_responses: bool,
-    pub raw: Option<Value>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeSettingsRecord {
     pub id: String,
@@ -263,41 +202,4 @@ pub struct UpdateRuntimeSettingsRequest {
     pub execution_timeout_ms: Option<u64>,
     pub tool_result_model_max_chars: Option<usize>,
     pub tool_results_model_total_max_chars: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelCatalogResponse {
-    pub provider_config_id: Option<String>,
-    pub provider: String,
-    pub base_url: String,
-    pub source: String,
-    pub fetched_at: Option<String>,
-    pub models: Vec<ProviderModelRecord>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TestModelConfigRequest {
-    pub prompt: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelConfigTestResponse {
-    pub ok: bool,
-    pub model_config_id: String,
-    pub provider: String,
-    pub model: String,
-    pub content: Option<String>,
-    pub reasoning: Option<String>,
-    pub usage: Option<Value>,
-    pub response_id: Option<String>,
-    pub error: Option<String>,
-    pub tested_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelConfigUsageRecord {
-    pub model_config_id: String,
-    pub task_count: usize,
-    pub run_count: usize,
 }

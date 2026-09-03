@@ -317,21 +317,49 @@ struct NativePluginRuntimeTests {
     }
 
     @Test
-    func browserSessionApprovalSummaryExplainsIsolationInsteadOfOnlyHashingArguments() {
+    func browserSessionApprovalSummaryExplainsExistingChromeInsteadOfOnlyHashingArguments() {
         let summary = NativeLocalConnectorService.safeArgumentSummary(
             toolName: "browser_session_open",
             arguments: .object([
-                "mode": .string("managed"),
-                "headless": .bool(true),
-                "persistent_profile": .bool(false),
+                "mode": .string("chrome_extension"),
+                "session_name": .string("今日 AI 新闻"),
             ])
         )
 
-        #expect(summary.contains("隔离浏览器会话"))
-        #expect(summary.contains("模式 managed"))
-        #expect(summary.contains("Headless 是"))
-        #expect(summary.contains("持久化浏览器资料 否"))
+        #expect(summary.contains("用户现有的 Google Chrome"))
+        #expect(summary.contains("今日 AI 新闻"))
+        #expect(summary.contains("原生标签组"))
         #expect(!summary.contains("内容摘要"))
+    }
+
+    @Test
+    func browserSessionOpenBuildsPairedChromeExecutionRequestFromVerifiedState() {
+        let arguments = NativeLocalConnectorService.browserSessionArguments(
+            arguments: .object([
+                "mode": .string("managed"),
+                "headless": .bool(true),
+                "persistent_profile": .bool(true),
+            ]),
+            relayBody: ["task_title": .string("今日 AI 新闻")],
+            browserExtensionPaired: true
+        )
+
+        #expect(arguments.jsonObject?["mode"]?.jsonString == "chrome_extension")
+        #expect(arguments.jsonObject?["headless"] == nil)
+        #expect(arguments.jsonObject?["persistent_profile"] == nil)
+        #expect(arguments.jsonObject?["session_name"]?.jsonString == "今日 AI 新闻")
+    }
+
+    @Test
+    func browserSessionOpenBuildsManagedFallbackExecutionRequestWithoutPairing() {
+        let arguments = NativeLocalConnectorService.browserSessionArguments(
+            arguments: .object(["mode": .string("chrome_extension")]),
+            relayBody: ["task_title": .string("首次使用")],
+            browserExtensionPaired: false
+        )
+
+        #expect(arguments.jsonObject?["mode"]?.jsonString == "managed")
+        #expect(arguments.jsonObject?["session_name"]?.jsonString == "首次使用")
     }
 
     @Test
@@ -361,14 +389,14 @@ struct NativePluginRuntimeTests {
     }
 
     @Test
-    func browserSessionPermissionDescriptionStatesExistingChromeIsNotReused() {
+    func browserSessionPermissionDescriptionStatesExistingChromeIsUsed() {
         let description = NativeLocalConnectorService.permissionDescription(
             toolName: "browser_session_open",
-            requiredPermissions: ["browser.managed.launch"]
+            requiredPermissions: ["browser.chrome.attach"]
         )
 
-        #expect(description.contains("不连接用户现有 Chrome"))
-        #expect(description.contains("browser.managed.launch"))
+        #expect(description.contains("用户已配对的 Google Chrome"))
+        #expect(description.contains("browser.chrome.attach"))
     }
 
     @Test
@@ -1183,6 +1211,93 @@ struct NativePluginRuntimeTests {
         #expect(screenshotCall.split(separator: "\n").count == 1)
         #expect(screenshotCall.contains("\"full_page\":false"))
         #expect(!screenshotCall.contains("browser_session_id"))
+        let status = try await store.call(
+            adapterSessionID: identity.adapterSessionID,
+            invocationID: "status-1",
+            toolName: "browser_session_status",
+            arguments: .object([:]),
+            timeout: .seconds(1)
+        )
+        #expect(status.jsonObject?["structuredContent"]?.jsonObject?["state"]?.jsonString == "open")
+        await store.terminateAll()
+    }
+
+    @Test("a timed-out Browser CDP tool keeps the MCP process available for recovery")
+    func browserToolTimeoutKeepsPluginSessionAlive() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = root.appendingPathComponent("fixture.zsh")
+        try """
+        while IFS= read -r line; do
+          if [[ "$line" == *'tools/list'* ]]; then
+            echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"browser_wait"},{"name":"browser_session_status"}]}}'
+          elif [[ "$line" == *'"name":"browser_wait"'* ]]; then
+            : # Deliberately leave the request pending until the host cancels it.
+          elif [[ "$line" == *'"name":"browser_session_status"'* ]]; then
+            echo '{"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"open"}],"structuredContent":{"state":"open"}}}'
+          elif [[ "$line" == *'initialize'* ]]; then
+            echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
+          fi
+        done
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"browser-cdp":{"type":"stdio","bin":"fixture","args":[]}}}
+            """.utf8)
+        )
+        let launch = NativePreparedPluginLaunch(
+            manifest: manifest,
+            componentKey: "browser-cdp",
+            server: manifest.mcpServers["browser-cdp"]!,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [script.path],
+            environment: [:],
+            installationURL: root,
+            visualSessionURL: root.appendingPathComponent("visual"),
+            artifactURL: root.appendingPathComponent("artifacts"),
+            displayName: "Browser fixture"
+        )
+        let client = NativePluginStdioClient(launch: launch)
+        try await client.start()
+        let initialized = try await client.initialize()
+        let store = NativePluginRuntimeStore()
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-1",
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            componentKey: "browser-cdp",
+            adapterSessionID: "adapter-1"
+        )
+        await store.insert(
+            identity: identity,
+            client: client,
+            tools: initialized.tools,
+            permissionSnapshot: [],
+            displayName: "Browser fixture",
+            visualSessionURL: launch.visualSessionURL,
+            artifactURL: launch.artifactURL,
+            projectRootURL: nil,
+            workspaceID: nil
+        )
+
+        do {
+            _ = try await store.call(
+                adapterSessionID: identity.adapterSessionID,
+                invocationID: "wait-1",
+                toolName: "browser_wait",
+                arguments: .object([:]),
+                timeout: .milliseconds(100)
+            )
+            Issue.record("Expected the browser call to time out")
+        } catch let error as NativePluginRuntimeError {
+            #expect(error.errorDescription == NativePluginRuntimeError.timeout.errorDescription)
+        }
+
         let status = try await store.call(
             adapterSessionID: identity.adapterSessionID,
             invocationID: "status-1",

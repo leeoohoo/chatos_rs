@@ -22,6 +22,12 @@ await Promise.all([
   build({ ...common, entryPoints: ['src/component-library.ts'], outfile: 'dist/component-library.test.mjs' }),
   build({ ...common, entryPoints: ['src/antd-library.ts'], outfile: 'dist/antd-library.test.mjs' }),
   build({ ...common, entryPoints: ['src/antd-slots.ts'], outfile: 'dist/antd-slots.test.mjs' }),
+  build({ ...common, entryPoints: ['src/ui-library.ts'], outfile: 'dist/ui-library.test.mjs' }),
+  build({ ...common, entryPoints: ['src/chakra-library.ts'], outfile: 'dist/chakra-library.test.mjs' }),
+  build({ ...common, entryPoints: ['src/shadcn-library.ts'], outfile: 'dist/shadcn-library.test.mjs' }),
+  build({ ...common, entryPoints: ['src/ui-libraries.ts'], outfile: 'dist/ui-libraries.test.mjs' }),
+  build({ ...common, entryPoints: ['src/library-slots.ts'], outfile: 'dist/library-slots.test.mjs' }),
+  build({ ...common, entryPoints: ['src/viewport-presets.ts'], outfile: 'dist/viewport-presets.test.mjs' }),
   build({ ...common, entryPoints: ['src/templates.ts'], outfile: 'dist/templates.test.mjs' }),
   build({ ...common, entryPoints: ['src/document-store.ts'], outfile: 'dist/document-store.test.mjs' })
 ]);

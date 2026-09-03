@@ -451,9 +451,6 @@ export function TasksPage() {
           }
           navigate(`/task-runner/prompts?${search.toString()}`);
         }}
-        onOpenModel={(modelId) =>
-          navigate(`/task-runner/models?model_id=${encodeURIComponent(modelId)}`)
-        }
         onOpenDetail={openDetailDrawer}
       />
 

@@ -16,6 +16,7 @@ await mkdir(output, {recursive: true});
 await Promise.all([
   cp(path.join(root, 'src'), path.join(output, 'src'), {recursive: true}),
   cp(path.join(root, 'popup'), path.join(output, 'popup'), {recursive: true}),
+  cp(path.join(root, 'onboarding'), path.join(output, 'onboarding'), {recursive: true}),
   cp(path.join(root, 'README.md'), path.join(output, 'README.md')),
   cp(path.join(root, '..', 'LICENSE'), path.join(output, 'LICENSE')),
   writeFile(path.join(output, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)

@@ -237,18 +237,19 @@ export function isTaskRunActionDisabled(
 export function taskModelOptionLabel(
   model: {
     name: string;
-    model: string;
-    usage_scenario?: string | null;
+    model?: string;
+    model_name?: string;
+    task_usage_scenario?: string | null;
     enabled?: boolean;
   },
   t: TranslateFn,
 ): string {
-  const parts = [`${model.name} (${model.model})`];
-  const usageScenario = model.usage_scenario?.trim();
-  if (usageScenario) {
-    parts.push(usageScenario);
+  const concreteModel = model.model_name || model.model || model.name;
+  let label = `${model.name} (${concreteModel})`;
+  const taskPurpose = model.task_usage_scenario?.trim();
+  if (taskPurpose) {
+    label = `${label} - ${taskPurpose}`;
   }
-  let label = parts.join(' - ');
   if (model.enabled === false) {
     label = `${label} / ${t('common.disabled')}`;
   }

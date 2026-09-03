@@ -158,6 +158,15 @@ final class RealtimeDTOTests: XCTestCase {
         XCTAssertEqual(topics, [["scope": "user"]])
     }
 
+    func testConversationReconnectProducesReconcileSignal() {
+        let signal = ChatOSRealtimeClient.reconcileSignal(sessionID: "conversation-1")
+
+        XCTAssertEqual(signal.sessionID, "conversation-1")
+        XCTAssertEqual(signal.kind, .reconcile)
+        XCTAssertEqual(signal.eventName, "conversation.reconcile")
+        XCTAssertNil(signal.turnID)
+    }
+
     func testTaskRunnerEventDoesNotBypassPetInbox() throws {
         let envelope = try JSONDecoder().decode(
             PetRealtimeEnvelopeDTO.self,
