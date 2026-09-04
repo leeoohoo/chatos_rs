@@ -27,6 +27,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private let messagePanel: NSPanel
     private let interactionState = PetOverlayInteractionState()
     private let onOpen: (PetActivity) -> Void
+    private var taskInspectorPanel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
     private var isProgrammaticMove = false
     private var isDraggingPet = false
@@ -82,7 +83,10 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
                     onLoadTask: onLoadTask,
                     onLoadPrompt: onLoadPrompt,
                     onSubmitPrompt: onSubmitPrompt,
-                    onCancelPrompt: onCancelPrompt
+                    onCancelPrompt: onCancelPrompt,
+                    onInspectTaskReply: { [weak self] selection, service in
+                        self?.presentTaskInspector(selection: selection, service: service)
+                    }
                 )
             )
         )
@@ -107,6 +111,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             window.orderFrontRegardless()
             updateMessageVisibility()
         } else {
+            dismissTaskInspector()
             window.orderOut(nil)
             messagePanel.orderOut(nil)
         }
@@ -197,6 +202,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
                 if presented {
                     self.applyMessageSize(self.preferredQuickChatMessageSize())
                 } else {
+                    self.dismissTaskInspector()
                     self.applyMessageSize(
                         self.interactionState.isMessageExpanded
                             ? self.preferredExpandedMessageSize()
@@ -212,6 +218,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self, self.interactionState.isQuickChatPresented else { return }
+                self.dismissTaskInspector()
                 self.applyMessageSize(self.preferredQuickChatMessageSize())
             }
             .store(in: &cancellables)
@@ -311,6 +318,66 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private func attachMessagePanelIfNeeded() {
         guard let window, messagePanel.parent !== window else { return }
         window.addChildWindow(messagePanel, ordered: .above)
+    }
+
+    private func presentTaskInspector(
+        selection: TaskReplySelection,
+        service: any MessageTaskGraphServicing
+    ) {
+        guard let model, let petWindow = window else { return }
+        dismissTaskInspector()
+
+        let size = NSSize(width: 720, height: 620)
+        let panel = PetTaskInspectorPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = messagePanel.collectionBehavior
+        panel.level = NSWindow.Level(rawValue: messagePanel.level.rawValue + 1)
+        panel.onCancel = { [weak self] in self?.dismissTaskInspector() }
+        panel.contentView = NSHostingView(
+            rootView: PetQuickChatTaskInspectorView(
+                selection: selection,
+                service: service,
+                onClose: { [weak self] in self?.dismissTaskInspector() }
+            )
+            .environmentObject(model)
+        )
+
+        panel.setFrameOrigin(taskInspectorOrigin(
+            size: size,
+            petWindow: petWindow
+        ))
+        messagePanel.addChildWindow(panel, ordered: .above)
+        panel.makeKeyAndOrderFront(nil)
+        taskInspectorPanel = panel
+    }
+
+    private func dismissTaskInspector() {
+        guard let panel = taskInspectorPanel else { return }
+        if panel.parent === messagePanel {
+            messagePanel.removeChildWindow(panel)
+        }
+        panel.orderOut(nil)
+        taskInspectorPanel = nil
+    }
+
+    private func taskInspectorOrigin(size: NSSize, petWindow: NSWindow) -> NSPoint {
+        let screen = messagePanel.screen ?? petWindow.screen ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? .zero
+        return PetTaskInspectorPlacement.origin(
+            size: size,
+            conversationFrame: messagePanel.frame,
+            petFrame: petWindow.frame,
+            visibleFrame: visible
+        )
     }
 
     private func applyMessageSize(_ size: NSSize) {
@@ -478,6 +545,26 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
+struct PetTaskInspectorPlacement {
+    static func origin(
+        size: NSSize,
+        conversationFrame: NSRect,
+        petFrame: NSRect,
+        visibleFrame: NSRect
+    ) -> NSPoint {
+        let centeredX = conversationFrame.midX - size.width / 2
+        let x = min(
+            max(centeredX, visibleFrame.minX + 8),
+            visibleFrame.maxX - size.width - 8
+        )
+        let aboveConversation = conversationFrame.maxY + 10
+        if aboveConversation + size.height <= visibleFrame.maxY - 8 {
+            return NSPoint(x: x, y: aboveConversation)
+        }
+        return NSPoint(x: x, y: petFrame.minY - size.height - 10)
+    }
+}
+
 private final class PetMessagePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -487,6 +574,17 @@ private final class PetMessagePanel: NSPanel {
             makeKey()
         }
         super.sendEvent(event)
+    }
+}
+
+private final class PetTaskInspectorPanel: NSPanel {
+    var onCancel: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
     }
 }
 

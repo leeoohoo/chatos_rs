@@ -59,6 +59,7 @@ struct PetMessageView: View {
     let onLoadPrompt: (PetActivity) async throws -> AskUserPrompt
     let onSubmitPrompt: (AskUserPrompt, AskUserSubmission) async throws -> Void
     let onCancelPrompt: (AskUserPrompt) async throws -> Void
+    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     @State private var retryInstruction = ""
     @State private var isRetrying = false
@@ -72,7 +73,8 @@ struct PetMessageView: View {
             PetQuickChatView(
                 interactionState: interactionState,
                 resources: model.petQuickChatResources,
-                hasPendingNotification: store.presentation.primaryActivity != nil
+                hasPendingNotification: store.presentation.primaryActivity != nil,
+                onInspectTaskReply: onInspectTaskReply
             )
         } else if let primaryActivity = store.presentation.primaryActivity
             ?? interactionState.inspectedTaskActivity {

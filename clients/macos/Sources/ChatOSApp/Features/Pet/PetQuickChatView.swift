@@ -6,6 +6,7 @@ struct PetQuickChatView: View {
     @ObservedObject var interactionState: PetOverlayInteractionState
     let resources: [PetQuickChatResource]
     let hasPendingNotification: Bool
+    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
         Group {
@@ -14,7 +15,8 @@ struct PetQuickChatView: View {
                     resource: selectedResource,
                     conversation: model.petConversation(for: selectedResource),
                     onBack: { interactionState.selectedQuickChatResourceID = nil },
-                    onClose: close
+                    onClose: close,
+                    onInspectTaskReply: onInspectTaskReply
                 )
             } else {
                 resourceList
@@ -165,13 +167,17 @@ private struct PetQuickChatConversationView: View {
     let conversation: ConversationSessionViewModel?
     let onBack: () -> Void
     let onClose: () -> Void
+    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             if let conversation {
-                PetQuickChatTimeline(conversation: conversation)
+                PetQuickChatTimeline(
+                    conversation: conversation,
+                    onInspectTaskReply: onInspectTaskReply
+                )
                 Divider()
                 PetQuickChatComposer(conversation: conversation)
             } else {
@@ -225,7 +231,7 @@ private struct PetQuickChatConversationView: View {
 private struct PetQuickChatTimeline: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var conversation: ConversationSessionViewModel
-    @State private var selectedTaskReply: TaskReplySelection?
+    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -279,25 +285,6 @@ private struct PetQuickChatTimeline: View {
                 scrollToBottom(proxy, animated: true)
             }
         }
-        .sheet(item: $selectedTaskReply) { selection in
-            if let service = conversation.messageTaskGraphService {
-                PetQuickChatTaskInspectorSheet(
-                    selection: selection,
-                    service: service
-                )
-                .environmentObject(model)
-            } else {
-                ContentUnavailableView(
-                    model.localized("无法读取任务详情", english: "Task Details Unavailable"),
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(model.localized(
-                        "当前会话没有可用的任务详情服务。",
-                        english: "Task details are not available for this conversation."
-                    ))
-                )
-                .frame(width: 520, height: 300)
-            }
-        }
         .frame(maxHeight: .infinity)
         .background(Color(nsColor: .textBackgroundColor).opacity(0.28))
     }
@@ -318,7 +305,8 @@ private struct PetQuickChatTimeline: View {
                 if let taskSelection {
                     Divider()
                     Button {
-                        selectedTaskReply = taskSelection
+                        guard let service = conversation.messageTaskGraphService else { return }
+                        onInspectTaskReply(taskSelection, service)
                     } label: {
                         Label(
                             model.localized("查看详情与执行过程", english: "View Details and Execution"),
@@ -360,17 +348,19 @@ private struct PetQuickChatTimeline: View {
     }
 }
 
-private struct PetQuickChatTaskInspectorSheet: View {
+struct PetQuickChatTaskInspectorView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: TaskReplyInspectorViewModel
     private let selection: TaskReplySelection
+    private let onClose: () -> Void
 
     init(
         selection: TaskReplySelection,
-        service: any MessageTaskGraphServicing
+        service: any MessageTaskGraphServicing,
+        onClose: @escaping () -> Void
     ) {
         self.selection = selection
+        self.onClose = onClose
         _viewModel = StateObject(
             wrappedValue: TaskReplyInspectorViewModel(
                 selection: selection,
@@ -389,7 +379,14 @@ private struct PetQuickChatTaskInspectorSheet: View {
             }
         }
         .frame(width: 720, height: 620)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(
+            Color(nsColor: .windowBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        }
         .task {
             viewModel.update(selection: selection)
             viewModel.load()
@@ -426,9 +423,7 @@ private struct PetQuickChatTaskInspectorSheet: View {
                 }
                 .buttonStyle(.plain)
                 .help(model.localized("刷新", english: "Refresh"))
-                Button {
-                    dismiss()
-                } label: {
+                Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 26, height: 26)
