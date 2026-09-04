@@ -39,6 +39,7 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
 const RELAY_TIMEOUT: Duration = Duration::from_secs(15);
 const EXTENSION_TOKEN_LIFETIME: Duration = Duration::from_secs(120);
 const DEFAULT_MCP_TOKEN_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
+const BRIDGE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 const CHANNEL_CAPACITY: usize = 256;
 const PAIRING_FILE_NAME: &str = "extension-pairing.json";
 
@@ -502,13 +503,25 @@ async fn handle_extension(mut socket: BridgeSocket, state: Arc<ServerState>) -> 
     });
     *state.extension.lock().await = Some(client.clone());
     let writer = tokio::spawn(async move {
-        while let Some(value) = outbound_rx.recv().await {
-            let Ok(encoded) = serde_json::to_string(&value) else {
-                break;
-            };
-            if encoded.len() > MAX_MESSAGE_BYTES || sink.send(Message::text(encoded)).await.is_err()
-            {
-                break;
+        let mut heartbeat = tokio::time::interval(BRIDGE_HEARTBEAT_INTERVAL);
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        heartbeat.tick().await;
+        loop {
+            tokio::select! {
+                value = outbound_rx.recv() => {
+                    let Some(value) = value else { break; };
+                    let Ok(encoded) = serde_json::to_string(&value) else { break; };
+                    if encoded.len() > MAX_MESSAGE_BYTES
+                        || sink.send(Message::text(encoded)).await.is_err()
+                    {
+                        break;
+                    }
+                }
+                _ = heartbeat.tick() => {
+                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -599,24 +612,6 @@ async fn handle_browser(mut socket: BridgeSocket, state: Arc<ServerState>) -> Re
         .await?;
         return Ok(());
     }
-    if state
-        .mcp_token_used
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        send_value(
-            &mut socket,
-            error_response(
-                auth_id,
-                WireError::new(
-                    "token_expired",
-                    "Browser Bridge credential was already used",
-                ),
-            ),
-        )
-        .await?;
-        return Ok(());
-    }
     let extension = state
         .extension
         .lock()
@@ -637,7 +632,22 @@ async fn handle_browser(mut socket: BridgeSocket, state: Arc<ServerState>) -> Re
         .get("capabilities")
         .cloned()
         .unwrap_or_else(|| json!([]));
-    send_value(
+    if state
+        .mcp_token_used
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        send_value(
+            &mut socket,
+            error_response(
+                auth_id,
+                WireError::new("invalid_request", "An MCP client is already connecting"),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+    if let Err(error) = send_value(
         &mut socket,
         response(
             auth_id,
@@ -650,7 +660,11 @@ async fn handle_browser(mut socket: BridgeSocket, state: Arc<ServerState>) -> Re
             }),
         ),
     )
-    .await?;
+    .await
+    {
+        state.mcp_token_used.store(false, Ordering::Release);
+        return Err(error);
+    }
     let (mut sink, mut stream) = socket.split();
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<Value>(CHANNEL_CAPACITY);
     let peer = McpPeer {
@@ -703,6 +717,7 @@ async fn handle_browser(mut socket: BridgeSocket, state: Arc<ServerState>) -> Re
         let mut mcp = state.mcp.lock().await;
         if mcp.as_ref().is_some_and(|current| current.id == peer_id) {
             mcp.take();
+            state.mcp_token_used.store(false, Ordering::Release);
         }
     }
     drop(peer);
@@ -1090,6 +1105,35 @@ mod tests {
         )
         .await;
         assert_eq!(receive_json(&mut browser).await["id"], 4);
+
+        // The credential remains private and time-bounded, but it can be
+        // reused after the previous authenticated MCP connection closes. This
+        // lets a task recover from a transient extension/Bridge disconnect.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let mut reconnected_browser =
+            connect(&persisted.browser_endpoint, BROWSER_SUBPROTOCOL).await;
+        send_json(
+            &mut reconnected_browser,
+            json!({
+                "type":"request","id":1,"method":"bridge.authenticate",
+                "params":{"protocol_version":PROTOCOL_VERSION,"token":credential["token"]}
+            }),
+        )
+        .await;
+        let capabilities_request = receive_json(&mut extension).await;
+        assert_eq!(capabilities_request["method"], "extension.getCapabilities");
+        send_json(
+            &mut extension,
+            json!({
+                "type":"response","id":capabilities_request["id"],
+                "result":{"capabilities":["page_control","raw_cdp","native_tab_groups"]}
+            }),
+        )
+        .await;
+        assert_eq!(
+            receive_json(&mut reconnected_browser).await["result"]["protocol_version"],
+            "1.0"
+        );
         let _ = shutdown_tx.send(());
         server_task.await.unwrap().unwrap();
     }
