@@ -41,5 +41,20 @@ await Promise.all([
     ...common,
     entryPoints: ['src/layers.ts'],
     outfile: 'dist/layers.test.mjs'
+  }),
+  build({
+    ...common,
+    entryPoints: ['src/quality.ts'],
+    outfile: 'dist/quality.test.mjs'
+  }),
+  build({
+    ...common,
+    entryPoints: ['src/layout.ts'],
+    outfile: 'dist/layout.test.mjs'
+  }),
+  build({
+    ...common,
+    entryPoints: ['src/generation-guides.ts'],
+    outfile: 'dist/generation-guides.test.mjs'
   })
 ]);

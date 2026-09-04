@@ -100,13 +100,30 @@ extension NativeLocalConnectorService {
         let adapterSessionID = UUID().uuidString.lowercased()
         let skillKeys = try body.optionalStringArray("skill_keys")
         if !skillKeys.isEmpty {
-            let prepared = try NativePluginSkillSnapshotLoader.prepareBody(
+            guard body["skill_runtime_protocol"]?.jsonNumber
+                    == Double(NativePluginSkillSnapshotLoader.protocolVersion),
+                  skillKeys == [componentKey],
+                  let expectedSnapshot = body["skill_snapshot"] else {
+                throw NativePluginRuntimeError.invalidRequest("Plugin Skill 只支持 v2 固定快照协议")
+            }
+            let prepared = try NativePluginSkillSnapshotLoader.prepareV2Body(
                 record: record,
                 componentKey: componentKey,
-                skillKeys: skillKeys,
-                expectedContentSHA256: body["content_sha256"]?.jsonString,
+                expectedSnapshot: expectedSnapshot,
                 runID: runID,
                 adapterSessionID: adapterSessionID
+            )
+            pluginSkillRuntimeSessions[adapterSessionID] = .init(
+                runID: runID,
+                pluginID: pluginID,
+                releaseID: releaseID,
+                artifactSHA256: artifactSHA256.lowercased(),
+                componentKey: componentKey,
+                adapterSessionID: adapterSessionID,
+                workspaceID: scope.workspaceID,
+                projectID: projectID,
+                expectedSnapshot: expectedSnapshot,
+                expiresAt: Date().addingTimeInterval(8 * 24 * 60 * 60)
             )
             return .init(
                 type: "plugin_prepare_response",
@@ -231,8 +248,23 @@ extension NativeLocalConnectorService {
         let adapterSessionID = try body.requireString("adapter_session_id")
         let invocationID = try body.requireString("invocation_id")
         let operation = try body.requireString("operation")
-        let toolName = try body.requireString("tool_name")
         let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
+        if operation == "skill_activate" || operation == "skill_read_resource" {
+            return try executePluginSkill(
+                request: request,
+                scope: scope,
+                body: body,
+                pluginID: pluginID,
+                releaseID: releaseID,
+                artifactSHA256: artifactSHA256,
+                componentKey: componentKey,
+                adapterSessionID: adapterSessionID,
+                invocationID: invocationID,
+                operation: operation,
+                projectID: projectID
+            )
+        }
+        let toolName = try body.requireString("tool_name")
         guard operation == "mcp_tools_call" else {
             throw NativePluginRuntimeError.invalidRequest("不支持这个 Plugin 操作")
         }
@@ -352,6 +384,75 @@ extension NativeLocalConnectorService {
         )
     }
 
+    private func executePluginSkill(
+        request: NativeRelayRequest,
+        scope: NativePluginRelayScope,
+        body: [String: NativeJSONValue],
+        pluginID: String,
+        releaseID: String,
+        artifactSHA256: String,
+        componentKey: String,
+        adapterSessionID: String,
+        invocationID: String,
+        operation: String,
+        projectID: String?
+    ) throws -> NativeRelayResponse {
+        guard let session = pluginSkillRuntimeSessions[adapterSessionID] else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 会话不存在或已经结束")
+        }
+        try session.validate(
+            pluginID: pluginID,
+            releaseID: releaseID,
+            artifactSHA256: artifactSHA256,
+            componentKey: componentKey,
+            workspaceID: scope.workspaceID,
+            projectID: projectID
+        )
+        guard state.pluginPreferences[pluginID] ?? true,
+              let record = state.installedPluginRecords?[pluginID],
+              record.releaseID == releaseID,
+              record.artifactSHA256 == artifactSHA256.lowercased() else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin 未安装、已停用或 Release 不匹配")
+        }
+        let result: NativeJSONValue
+        switch operation {
+        case "skill_activate":
+            result = try NativePluginSkillSnapshotLoader.activateV2(
+                record: record,
+                componentKey: componentKey,
+                expectedSnapshot: session.expectedSnapshot
+            )
+        case "skill_read_resource":
+            let arguments = try (body["arguments"] ?? .object([:])).requireObject()
+            result = try NativePluginSkillSnapshotLoader.readV2Resource(
+                record: record,
+                componentKey: componentKey,
+                expectedSnapshot: session.expectedSnapshot,
+                relativePath: try arguments.requireString("relative_path"),
+                offset: Int(arguments["offset"]?.jsonNumber ?? 0),
+                maximumCharacters: Int(arguments["max_chars"]?.jsonNumber ?? 32_000)
+            )
+        default:
+            throw NativePluginRuntimeError.invalidRequest("不支持这个 Plugin Skill 操作")
+        }
+        return .init(
+            type: "plugin_execute_response",
+            requestID: request.requestID,
+            status: 200,
+            body: .object([
+                "plugin_id": .string(pluginID),
+                "release_id": .string(releaseID),
+                "version": .string(record.version),
+                "artifact_sha256": .string(record.artifactSHA256),
+                "component_key": .string(componentKey),
+                "invocation_id": .string(invocationID),
+                "adapter_session_id": .string(adapterSessionID),
+                "operation": .string(operation),
+                "result": result,
+            ])
+        )
+    }
+
     private func cancelPlugin(
         _ request: NativeRelayRequest,
         scope: NativePluginRelayScope
@@ -361,6 +462,19 @@ extension NativeLocalConnectorService {
         let adapterSessionID = try body.requireString("adapter_session_id")
         let invocationID = body["invocation_id"]?.jsonString?.nonEmptyTrimmed
         let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
+        if pluginSkillRuntimeSessions.removeValue(forKey: adapterSessionID) != nil {
+            return .init(
+                type: "plugin_cancel_response",
+                requestID: request.requestID,
+                status: 200,
+                body: .object([
+                    "run_id": .string(runID),
+                    "adapter_session_id": .string(adapterSessionID),
+                    "invocation_id": .string(invocationID ?? ""),
+                    "status": .string("closed"),
+                ])
+            )
+        }
         try await pluginRuntimeStore.validateScopeIfPresent(
             adapterSessionID: adapterSessionID,
             workspaceID: scope.workspaceID,

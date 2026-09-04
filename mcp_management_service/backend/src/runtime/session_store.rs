@@ -142,6 +142,7 @@ impl RuntimeSessionSnapshot {
             effective_mcp_ids: self.effective_mcp_ids.clone(),
             provider_skills_prompt: self.provider_skills_prompt.clone(),
             plugin_instruction_items: self.plugin_instruction_items.clone(),
+            protected_skill_instruction_items: Vec::new(),
             mcp_command_queue: String::new(),
             mcp_server_url: String::new(),
             runtime_token: String::new(),

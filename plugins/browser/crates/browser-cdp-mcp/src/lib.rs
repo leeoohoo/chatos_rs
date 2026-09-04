@@ -1477,13 +1477,34 @@ fn hide_browser_session_id_from_result(result: &mut Value) {
 fn tool(
     name: &str,
     description: &str,
-    input_schema: Value,
+    mut input_schema: Value,
     permissions: &[&str],
     risk: &str,
     approval: &str,
     parallel_safe: bool,
     timeout_ms: u64,
 ) -> Value {
+    if let Some(properties) = input_schema
+        .pointer_mut("/properties")
+        .and_then(Value::as_object_mut)
+    {
+        properties.insert(
+            "skillEvidence".to_string(),
+            json!({
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 8,
+                "items": {"type": "string", "minLength": 1},
+                "description": "Platform-issued activation evidence for browser-cdp and this tool's specialist Browser Skill. ChatOS validates and removes this field before local execution."
+            }),
+        );
+    }
+    if let Some(required) = input_schema
+        .pointer_mut("/required")
+        .and_then(Value::as_array_mut)
+    {
+        required.push(json!("skillEvidence"));
+    }
     json!({
         "name": name,
         "description": description,
@@ -1495,9 +1516,42 @@ fn tool(
             "chatos/approvalMode": approval,
             "chatos/parallelSafe": parallel_safe,
             "chatos/timeoutMs": timeout_ms,
-            "chatos/toolResultMaxChars": MAX_TOOL_RESULT_CHARS
+            "chatos/toolResultMaxChars": MAX_TOOL_RESULT_CHARS,
+            "chatos/skillGate": {
+                "evidenceArgument": "skillEvidence",
+                "allOf": ["browser-cdp", browser_skill_for_tool(name)]
+            }
         }
     })
+}
+
+fn browser_skill_for_tool(name: &str) -> &'static str {
+    if name == "browser_upload" || name == "browser_downloads" {
+        return "browser-file-transfer";
+    }
+    if name.starts_with("browser_console")
+        || name.starts_with("browser_network")
+        || name.starts_with("browser_har")
+        || name.starts_with("browser_websocket")
+        || name.starts_with("browser_route")
+        || name.starts_with("browser_cdp")
+    {
+        return "browser-network-debugging";
+    }
+    if name == "browser_snapshot" || name == "browser_find" || name == "browser_screenshot" {
+        return "browser-observation-verification";
+    }
+    if name == "browser_click"
+        || name == "browser_type"
+        || name == "browser_fill_form"
+        || name == "browser_press"
+        || name == "browser_scroll"
+        || name == "browser_wait"
+        || name == "browser_handle_dialog"
+    {
+        return "browser-interaction";
+    }
+    "browser-navigation"
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1711,6 +1765,18 @@ mod tests {
             assert!(tool.pointer("/_meta/chatos~1approvalMode").is_some());
             assert!(tool.pointer("/_meta/chatos~1timeoutMs").is_some());
             assert!(tool.pointer("/_meta/chatos~1toolResultMaxChars").is_some());
+            assert_eq!(
+                tool.pointer("/_meta/chatos~1skillGate/evidenceArgument"),
+                Some(&json!("skillEvidence"))
+            );
+            assert_eq!(
+                tool.pointer("/inputSchema/properties/skillEvidence/type"),
+                Some(&json!("array"))
+            );
+            assert!(tool
+                .pointer("/inputSchema/required")
+                .and_then(Value::as_array)
+                .is_some_and(|required| required.contains(&json!("skillEvidence"))));
             assert!(matches!(
                 tool.pointer("/_meta/chatos~1approvalMode")
                     .and_then(Value::as_str),

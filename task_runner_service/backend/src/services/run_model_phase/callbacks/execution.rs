@@ -42,6 +42,7 @@ impl RunService {
                 .filter(|criterion| !criterion.is_empty())
                 .map(ToOwned::to_owned)
                 .collect(),
+            prepared_execution.mcp_management_runtime_session.clone(),
         );
         let supply_chain_policy = if task.mcp_config.requires_execution {
             Some(self.effective_node_supply_chain_policy().await?)

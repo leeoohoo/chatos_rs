@@ -1,118 +1,172 @@
 ---
 name: diagram-studio
-description: Create and edit structured architecture diagrams, flowcharts, swimlane diagrams, topology maps, and sequence diagrams, including PlantUML Sequence, Activity, Component, and Deployment import and export, with Diagram Studio MCP tools.
+description: Use Diagram Studio MCP tools to inspect, create, revise, validate, and export editable technical diagrams. Routes every AI-generated diagram through the matching on-demand diagram guide and prevents unrelated business concerns from being crowded onto one canvas.
+metadata:
+  chatos.role: router
+  chatos.related-skills: "diagram-architecture,diagram-flowchart,diagram-swimlane,diagram-topology,diagram-sequence"
 ---
 
-# Diagram Studio workflow
+# Diagram Studio MCP guide
 
-Use Diagram Studio when a user asks to visualize a software architecture, process, responsibility flow, infrastructure topology, dependency map, or interaction sequence.
+Use Diagram Studio when the requested deliverable is an editable architecture diagram, flowchart, swimlane diagram, topology map, or sequence diagram. A Mermaid or PlantUML block in chat is not a completed Diagram Studio deliverable.
 
-## Rules
+## Runtime scope
 
-1. Read the relevant project files before claiming that a component or connection exists.
-2. Use stable, descriptive node IDs such as `api-gateway`, `project-service`, or `postgres-primary`.
-3. Put source paths or concise evidence into each node's `data.sourceReferences` when the diagram is based on code.
-4. Read the current document and revision before editing it.
-5. Treat the ChatOS runtime scope as authoritative. Never accept or invent a ChatOS project ID in tool arguments; the host injects it outside the model-controlled MCP schema.
-6. List or create a Diagram Studio project before creating a diagram. Pass its `projectId` to document creation and PlantUML import tools.
-7. Prefer `diagram_apply_patch` over complete replacement so unrelated user edits are preserved.
-8. If a revision conflict occurs, read the document again and rebase the intended change.
-9. Run `diagram_auto_layout` after adding or removing several nodes.
-10. Run `diagram_validate` before reporting that a project-derived diagram is complete.
-11. Use edge labels for protocols or semantics such as `HTTPS`, `MCP`, `SQL`, `Publish`, `Consume`, or `depends_on`.
-12. Do not invent code relationships. If a relationship is inferred rather than verified, state that in the node or edge description.
-13. For diagrams supplied as PlantUML, use `diagram_import_plantuml` so the visual editor and source share the same semantic model. Pass `kind` when the source is ambiguous.
-14. Preserve user-authored canvas layout and styling. Use focused document patches for visual changes; do not replace an existing diagram from generated PlantUML unless the user asks to apply source changes.
-15. Every mutating AI call must include an `idempotencyKey` that is stable for that single intended tool action. Reuse it only when the same call is retried; generate a new one for an intentional second diagram.
-16. For an AI-maintained deliverable, also use a stable `artifactKey` (for example `system-architecture-main` or `checkout-sequence-v2`) with `mode: "upsert"`. This identifies one diagram instance, not a diagram category. Multiple architecture diagrams are valid when they have different artifact keys or use `create_new`.
-17. Do not use a diagram title as identity. Titles may be renamed or translated; `artifactKey` is the logical instance identity inside a Diagram Studio project.
+ChatOS injects the current user, tenant, project or public scope, workspace, and runtime session. Treat that context as authoritative.
 
-## Plan a diagram set before drawing
+- Never ask for, invent, or pass a ChatOS project ID.
+- Diagram creation tools resolve the destination from the injected runtime scope.
+- A conversation without a ChatOS project uses that user's isolated public Diagram Studio scope. Public does not mean shared between users.
+- `artifactKey` identifies one logical diagram inside the current injected scope. It is not a project ID.
+- Reuse the same `artifactKey` when revising the same deliverable. Use a new key only for an intentionally different diagram.
 
-A Diagram Studio project is a container for related diagrams, not a requirement to place the whole system on one canvas. When the requested scope covers several business capabilities, user journeys, or technical levels, plan a small diagram set and create multiple focused diagrams unless the user explicitly asks for one consolidated view.
+## First decide the diagram set
 
-- Each diagram must answer one clear question and have a title that states that subject. If a proposed title needs “and”, “与”, or “以及” to join unrelated goals, split it.
-- Do not combine independent business processes merely because they belong to the same software project. Registration, order fulfillment, refunds, approvals, scheduled jobs, and administration are normally separate flowcharts or swimlanes.
-- Use an overview diagram only to show the relationships among major capabilities. Do not duplicate every step, exception, API call, and data object inside that overview.
-- Create detail diagrams for the important capabilities or scenarios. Reusing the same diagram type several times in one project is expected and is not duplication when each diagram has a distinct scope and `artifactKey`.
-- Treat more than about 15 meaningful process nodes, more than 3 major independent branches, several unrelated start/end events, or labels that are unreadable at fit-to-view as strong signals to split the diagram. These are decision signals, not targets to fill.
-- Do not solve crowding by shrinking nodes, reducing text below a comfortable reading size, or expanding the canvas indefinitely. Split by business outcome, actor collaboration, bounded context, runtime environment, or level of detail.
-- Keep closely related error handling, retries, and alternatives with their primary scenario when they help explain that scenario. Move reusable subprocesses or unrelated exception families into their own diagrams.
+A Diagram Studio workspace may contain many diagrams. One canvas is not a complete software specification. Each diagram must answer one clear question for one audience at one level of detail.
 
-For a whole-system request, a useful default deliverable is:
+Before writing anything, identify:
 
-1. One concise system or business-capability overview.
-2. Separate flowcharts or swimlanes for each major business outcome.
-3. Separate sequence diagrams for the most important runtime interactions.
-4. Architecture or topology detail diagrams only where the overview cannot communicate the required technical structure.
+1. The question the user should answer after reading the diagram.
+2. The appropriate diagram kind.
+3. The viewpoint or scenario.
+4. The information that must be visible.
+5. The information deliberately excluded.
+6. Whether independent concerns require separate diagrams.
 
-Before creating documents, identify this diagram set, give every item a stable title and `artifactKey`, and avoid creating two diagrams that communicate substantially the same scope.
+Split the work when:
 
-## Diagram choice
+- the title needs “and”, “与”, “以及”, or “同时” to join unrelated subjects;
+- an architecture overview also expands controllers, services, repositories, tables, or deployment nodes;
+- a flowchart contains several unrelated business outcomes or start/end paths;
+- a sequence diagram combines login, ordering, payment, refund, notification, and administration scenarios;
+- a swimlane diagram attempts to cover an organization's entire operating model;
+- a topology diagram mixes logical code structure with every physical deployment detail;
+- the graph can fit only by shrinking text, creating a very long canvas, or accepting a mass of crossing edges.
 
-- Architecture: services, modules, storage, APIs, queues, and external systems.
-- Flowchart: one business outcome or focused subprocess with its sequential steps, decisions, retries, and terminal states.
-- Swimlane: one collaboration scenario across teams or systems with clear ownership boundaries.
-- Topology: hosts, zones, networks, gateways, clusters, replicas, and observability.
-- Sequence: one use case or runtime scenario with its participants, synchronous calls, return messages, activation intervals, and closely related combined fragments.
+Do not include information merely because it is true. Include it only when it helps the current diagram answer its single question.
 
-## Typical sequence
+Bad deliverable:
 
-1. Inspect the project or process description and decide whether it needs one diagram or a focused diagram set.
-2. Call `diagram_list_projects` in the current isolated runtime scope.
-3. Reuse the intended Diagram Studio project or call `diagram_create_project`.
-4. For each planned diagram, choose a distinct stable `artifactKey` and an `idempotencyKey` for that tool action. Call `diagram_create_document` or `diagram_import_plantuml` with that `projectId`, both keys, and `mode: "upsert"`.
-5. Read the created document.
-6. Patch nodes and edges with verified names and evidence.
-7. Auto-layout.
-8. Validate.
-9. Export JSON, SVG, or PlantUML as requested.
-
-## Architecture diagram standard
-
-An architecture diagram is not a flat dependency graph. It must communicate system boundaries, layers, ownership, and one primary reading direction.
-
-- Start with a system-context or container-level view. Default to 4–7 top-level domains such as External, Client, Edge/API, Application/Domain, Data, and Infrastructure.
-- Use PlantUML `package`, `frame`, or other grouped structural blocks for real visual boundaries. Put components inside their owning boundary; never represent a package as a peer component.
-- Keep one clear direction, normally left-to-right: users/external systems → clients → entry points → domain services → data/infrastructure.
-- Show only verified, architecturally important dependencies. Prefer one labeled edge for a meaningful protocol or responsibility; omit incidental imports and utility calls.
-- Limit each boundary to roughly 3–6 core components. If the whole view exceeds about 20 components, create a high-level overview and separate detail diagrams instead of shrinking everything into one canvas.
-- Avoid edges that span the whole canvas, duplicated bidirectional edges, crossing lines, floating nodes, and unrelated implementation details.
-- Use readable labels: a short component name plus an optional concise responsibility. Do not place file paths, environment variables, long class lists, or source excerpts in the visible label; keep evidence in `sourceReferences`.
-- Use a consistent visual hierarchy: boundaries are subdued dashed containers, components are transparent with visible borders, and external actors/data stores use appropriate icons.
-- Before completion, verify that every top-level boundary has a purpose, the primary request/data path can be followed without guessing, labels remain readable at fit-to-view, and unused whitespace is not caused by an outlier node or long edge.
-
-For project-derived architecture, prefer `diagram_import_plantuml` with stable aliases and grouped Component Diagram source. Example structure:
-
-```plantuml
-@startuml
-left to right direction
-actor User
-package "Client" as client {
-  component "Desktop App" as desktop
-}
-package "Application" as app {
-  component "API Gateway" as gateway
-  component "Core Service" as core
-}
-package "Data" as data {
-  database "PostgreSQL" as db
-}
-User --> desktop : Uses
-desktop --> gateway : HTTPS
-gateway --> core : RPC
-core --> db : SQL
-@enduml
+```text
+WMS complete diagram
+  every page + every controller + every service + every table
+  + procurement + inventory + production + deployment + all calls
 ```
 
-## PlantUML workflow
+Better deliverable set:
 
-- Sequence supports participant, actor, boundary, control, entity, database, queue, messages, activate/deactivate, and alt/opt/loop-style fragments.
-- In sequence diagrams, give every participant that performs synchronous work an activation interval. Start it when a synchronous call transfers control and normally end it at the matching return. Keep explicit `activate`/`deactivate` statements for intentional or nested intervals; asynchronous notifications (`->>`/`-->>`) must not create long inferred activations.
-- Combined fragments such as `alt`, `opt`, and `loop` are structural boundaries, not content masks. Keep messages and activation bars readable inside them and avoid overlapping fragment labels with the first message.
-- Flowchart supports Activity Diagram `start`, activities, `if/else/endif`, and `stop` semantics.
-- Swimlane supports the same Activity semantics plus `partition` and `|Lane|` lane switches.
-- Architecture supports Component Diagram actors, components, interfaces, databases, queues, and labeled or dashed dependencies.
-- Topology supports Deployment Diagram nodes, clouds, databases, storage, artifacts, and labeled or dashed infrastructure links.
-- Diagram Studio layout comments are valid PlantUML comments. Keep them intact when exact canvas round-tripping matters.
-- Unknown PlantUML statements are preserved as opaque source blocks but may not have visual editing controls.
+```text
+WMS diagrams
+  system boundary overview
+  order-to-production business flow
+  procurement inbound flow
+  inventory reservation sequence
+  inventory-service internal architecture
+  production deployment topology
+```
+
+## Mandatory generation protocol
+
+For every AI-generated or structurally rewritten diagram:
+
+1. Call `diagram_list_documents` to avoid accidental duplicates when appropriate.
+2. Choose exactly one diagram kind and one mode for the next document.
+3. Activate the matching dedicated Skill from the platform catalog with `skill_skill_activate`, using this router activation as `parent_activation_ref`.
+4. Read the dedicated Skill's linked examples or contract resource when its instructions require them.
+5. Call `diagram_prepare_generation` with the router and leaf activation evidence plus a bounded plan.
+6. Call `diagram_commit_generation` with the same current Skill evidence and the returned `generationPermit`.
+7. If the result is not `ready`, revise the plan or split the diagram and obtain a new permit.
+8. Call `diagram_validate` before reporting completion.
+9. Return the document ID, artifact key, guide ID/version, and validation result.
+
+Activation evidence proves that the correct immutable Skill instructions were loaded in this Runtime Session. The structured plan and final quality validation prove that the instructions were applied.
+
+## Tool reference
+
+### `diagram_list_documents`
+
+Lists diagrams in the current injected scope. Use it before creation when an equivalent logical deliverable may already exist. It takes no project ID. Match existing work primarily by `artifactKey`, then by title and kind.
+
+### `diagram_list_projects`
+
+Lists Diagram Studio's UI classification projects inside the already injected ChatOS scope. These are folders for organizing diagrams, not ChatOS project selectors. Never use this tool to choose or change the outer ChatOS project.
+
+### `diagram_create_project`
+
+Creates an optional UI classification folder inside the current scope. It is not required before creating a diagram. Generated diagrams are automatically assigned to the stable scope project when no UI classification move is requested.
+
+### `diagram_get_project`, `diagram_update_project`, and `diagram_delete_project`
+
+Read or manage UI classification metadata only. A project ID returned by these tools is internal to Diagram Studio and valid only inside the current injected scope. It must never be treated as or copied into a ChatOS project ID.
+
+### `diagram_move_document`
+
+Moves a document between Diagram Studio UI classifications within the current injected scope. It cannot move content across ChatOS users, projects, workspaces, tenants, or public scope. Do not use it to simulate scope switching.
+
+### `diagram_get_document`
+
+Returns the complete editable document. Call it before revising an existing diagram so node IDs, edge IDs, current revision, user positions, styles, and evidence can be preserved.
+
+### `diagram_prepare_generation`
+
+Submits the plan for one logical diagram and returns a signed `generationPermit`. The plan must state scope, excluded details, estimated size, boundaries or participants, split decisions, and the dedicated Skill checklist acknowledgements. Pass `kind`, optional `mode`, and the router plus leaf activation evidence. It takes no project ID.
+
+A permit is bound to the injected runtime scope, diagram kind, mode, artifact key, operation, plan, and current guide version. Do not reuse it for another diagram.
+
+### `diagram_commit_generation`
+
+Creates or upserts one generated diagram from PlantUML. It requires a valid permit. Use stable ASCII aliases, pass source evidence for code-derived nodes, and use the same `artifactKey` and `idempotencyKey` selected in the plan.
+
+This tool performs parsing, layout, contract checks, quality validation, persistence, and generation-provenance recording. Do not call `diagram_create_document` first.
+
+### `diagram_import_plantuml`
+
+Imports PlantUML through the same generation gates as `diagram_commit_generation`. It requires current Skill evidence and the matching `generationPermit`, accepts no project ID, and applies the same contract, quality, scope, and provenance checks.
+
+### `diagram_create_document`
+
+Creates an empty canvas only. Use it when the user explicitly wants to draw manually from a blank page. It is not preparation for generated PlantUML and it must not be followed by a second create call for the same deliverable.
+
+### `diagram_apply_patch`
+
+Applies focused changes to an existing document using optimistic revision control. Title, description, position, and viewport-only changes do not require a generation permit. Adding/removing nodes or semantic edges requires a permit for that document and diagram kind.
+
+Preserve unrelated user edits. On a revision conflict, reread the document and rebase the intended patch.
+
+### `diagram_replace_document`
+
+Replaces the complete structured document and therefore requires a generation permit. Prefer a focused patch unless the entire semantic structure truly must change.
+
+### `diagram_auto_layout`
+
+Rearranges the existing graph without changing its semantic elements. Use after substantial structural edits, not after every small style or position adjustment. Do not relayout user-positioned diagrams unless requested or necessary to repair overlaps.
+
+### `diagram_validate`
+
+Checks structural validity and delivery readiness. Completion requires `valid: true` and `ready: true`. Blocking issues must be repaired, simplified, or split. Use the same quality profile selected by the dedicated guide.
+
+### `diagram_export`
+
+Exports the current document as JSON, SVG, or PlantUML. Export does not replace validation and does not create a new logical diagram.
+
+### `diagram_delete_document`
+
+Deletes one document in the current injected scope. Use only when the user explicitly requests deletion. Do not delete a crowded diagram merely because a better replacement was generated.
+
+## Plan requirements
+
+Every generation plan must contain:
+
+- one-sentence `goal`;
+- bounded `scope`;
+- `excludedDetails` with at least one meaningful exclusion;
+- `estimatedPrimaryItemCount` and `estimatedEdgeCount`;
+- `structure`, listing the important boundaries, lanes, deployment groups, or participants;
+- `splitPlan`, even when empty, with a reason for keeping or separating concerns;
+- every checklist ID returned by the dedicated guide.
+
+If the estimated size exceeds the guide contract, split the diagram instead of asking for a larger canvas.
+
+## Evidence and completion
+
+For code-derived diagrams, map PlantUML aliases to concrete source references. Do not place file paths in visible labels. A final response must name the created or updated documents and must not claim success if any required diagram is missing, unvalidated, or `ready: false`.

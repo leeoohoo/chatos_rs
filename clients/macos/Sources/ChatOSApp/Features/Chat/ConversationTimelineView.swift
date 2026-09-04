@@ -8,7 +8,7 @@ struct ConversationTimelineView: View {
     @ObservedObject var conversation: ConversationSessionViewModel
     @EnvironmentObject private var model: AppModel
     let title: String
-    let showsTaskState: Bool
+    var projectRootPath: String? = nil
     @State private var selectedProcessTurn: ConversationTurn?
     @State private var selectedTaskTurn: ConversationTurn?
     @State private var selectedTaskReply: TaskReplySelection?
@@ -53,17 +53,6 @@ struct ConversationTimelineView: View {
         HStack {
             Text(title).appFont(.subheadline.weight(.semibold))
             Spacer()
-            if showsTaskState {
-                Label(
-                    model.localized(
-                        "执行中 · 可发送引导",
-                        english: "Running · Guidance available"
-                    ),
-                    systemImage: "sparkles"
-                )
-                    .appFont(.caption.weight(.medium))
-                    .foregroundStyle(AppPalette.ai)
-            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -221,6 +210,7 @@ struct ConversationTimelineView: View {
                     TaskAgentReplyView(
                         reply: reply,
                         expandedSection: expandedSection(for: reply),
+                        projectRootPath: projectRootPath,
                         onToggleInspector: { section in
                             toggleTaskReply(turn, reply, section)
                         }
@@ -237,7 +227,7 @@ struct ConversationTimelineView: View {
                     }
                 }
             } else {
-                AssistantReplyView(reply: reply)
+                AssistantReplyView(reply: reply, projectRootPath: projectRootPath)
             }
 
         case let .prompt(prompt):

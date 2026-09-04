@@ -64,7 +64,15 @@ export class DiagramDocumentStore {
       .map(diagramSummary);
   }
 
-  async listProjects(): Promise<ReturnType<typeof diagramProjectSummary>[]> {
+  async listProjects(scopeKey?: string): Promise<ReturnType<typeof diagramProjectSummary>[]> {
+    const projects = await this.readAllProjects();
+    return projects
+      .filter((project) => scopeKey === undefined || project.scopeKey === scopeKey)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(diagramProjectSummary);
+  }
+
+  private async readAllProjects(): Promise<DiagramProject[]> {
     await this.initialize();
     const entries = await fs.readdir(this.rootDirectory, { withFileTypes: true });
     const projects: DiagramProject[] = [];
@@ -76,9 +84,7 @@ export class DiagramDocumentStore {
         // Ignore malformed project files in list; direct reads still report the problem.
       }
     }
-    return projects
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map(diagramProjectSummary);
+    return projects;
   }
 
   async readProject(projectId: string): Promise<DiagramProject> {
@@ -90,8 +96,8 @@ export class DiagramDocumentStore {
     return value;
   }
 
-  async listInProject(projectId: string): Promise<ReturnType<typeof diagramSummary>[]> {
-    const project = await this.readProject(projectId);
+  async listInProject(projectId: string, scopeKey?: string): Promise<ReturnType<typeof diagramSummary>[]> {
+    const project = scopeKey ? await this.readProjectInScope(projectId, scopeKey) : await this.readProject(projectId);
     const documents = await Promise.all(project.diagramIds.map(async (documentId) => {
       try {
         return await this.read(documentId);
@@ -105,13 +111,20 @@ export class DiagramDocumentStore {
       .map(diagramSummary);
   }
 
-  async createProject(name: string, description?: string): Promise<DiagramProject> {
+  async createProject(name: string, description?: string, scopeKey?: string): Promise<DiagramProject> {
+    return this.withLock(() => this.createProjectUnlocked(name, description, scopeKey));
+  }
+
+  private async createProjectUnlocked(name: string, description?: string, scopeKey?: string, isScopeDefault = false): Promise<DiagramProject> {
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length > 240) throw new Error('Project name must contain 1 to 240 characters.');
+    if (scopeKey !== undefined && !/^[a-f0-9]{64}$/.test(scopeKey)) throw new Error('scopeKey must be a SHA-256 fingerprint.');
     const now = new Date().toISOString();
     const project: DiagramProject = {
       schemaVersion: 1,
       projectId: `project-${randomUUID().slice(0, 8)}`,
+      ...(scopeKey ? { scopeKey } : {}),
+      ...(isScopeDefault ? { isScopeDefault: true } : {}),
       name: trimmedName,
       description: description?.trim().slice(0, 4000) || undefined,
       createdAt: now,
@@ -119,6 +132,76 @@ export class DiagramDocumentStore {
       diagramIds: []
     };
     await this.atomicWriteProject(this.projectPath(project.projectId), project);
+    return project;
+  }
+
+  async ensureScopedProject(scopeKey: string, name: string): Promise<DiagramProject> {
+    if (!/^[a-f0-9]{64}$/.test(scopeKey)) throw new Error('scopeKey must be a SHA-256 fingerprint.');
+    return this.withLock(async () => {
+      const projects = await this.readAllProjects();
+      const existing = projects.find((project) => project.scopeKey === scopeKey && project.isScopeDefault === true);
+      if (existing) return existing;
+      const scopedProjects = projects.filter((project) => project.scopeKey === scopeKey);
+      if (scopedProjects.length > 0) {
+        const promoted: DiagramProject = {
+          ...scopedProjects.sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0],
+          isScopeDefault: true,
+          updatedAt: new Date().toISOString()
+        };
+        await this.atomicWriteProject(this.projectPath(promoted.projectId), promoted);
+        return promoted;
+      }
+      if (projects.length > 0 && projects.every((project) => project.scopeKey === undefined)) {
+        const ordered = [...projects].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+        const migratedAt = new Date().toISOString();
+        for (const [index, project] of ordered.entries()) {
+          await this.atomicWriteProject(this.projectPath(project.projectId), {
+            ...project,
+            scopeKey,
+            ...(index === 0 ? { isScopeDefault: true } : {}),
+            updatedAt: migratedAt
+          });
+        }
+        return this.readProject(ordered[0].projectId);
+      }
+      return this.createProjectUnlocked(name, undefined, scopeKey, true);
+    });
+  }
+
+  async readProjectInScope(projectId: string, scopeKey: string): Promise<DiagramProject> {
+    const project = await this.readProject(projectId);
+    if (project.scopeKey !== scopeKey) throw new Error('Diagram Studio project belongs to a different ChatOS user or project scope.');
+    return project;
+  }
+
+  async listInScope(scopeKey: string): Promise<ReturnType<typeof diagramSummary>[]> {
+    const projects = await this.readAllProjects();
+    const documentIds = new Set(projects.filter((project) => project.scopeKey === scopeKey).flatMap((project) => project.diagramIds));
+    const documents = await Promise.all([...documentIds].map(async (documentId) => {
+      try {
+        return await this.read(documentId);
+      } catch {
+        return undefined;
+      }
+    }));
+    return documents
+      .filter((document): document is DiagramDocument => document !== undefined)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(diagramSummary);
+  }
+
+  async readInScope(documentId: string, scopeKey: string): Promise<DiagramDocument> {
+    const projects = await this.readAllProjects();
+    if (!projects.some((project) => project.scopeKey === scopeKey && project.diagramIds.includes(documentId))) {
+      throw new Error('Diagram document belongs to a different ChatOS user or project scope.');
+    }
+    return this.read(documentId);
+  }
+
+  async findProjectForDocumentInScope(documentId: string, scopeKey: string): Promise<DiagramProject> {
+    const projects = await this.readAllProjects();
+    const project = projects.find((candidate) => candidate.scopeKey === scopeKey && candidate.diagramIds.includes(documentId));
+    if (!project) throw new Error('Diagram document belongs to a different ChatOS user or project scope.');
     return project;
   }
 
@@ -354,15 +437,23 @@ export class DiagramDocumentStore {
   async moveDocument(
     documentId: string,
     targetProjectId: string,
-    sourceProjectId?: string
+    sourceProjectId?: string,
+    scopeKey?: string
   ): Promise<{ sourceProject?: DiagramProject; targetProject: DiagramProject }> {
     return this.withLock(async () => {
-      await this.read(documentId);
-      const target = await this.readProject(targetProjectId);
+      if (scopeKey) await this.readInScope(documentId, scopeKey);
+      else await this.read(documentId);
+      const target = scopeKey ? await this.readProjectInScope(targetProjectId, scopeKey) : await this.readProject(targetProjectId);
       if (sourceProjectId === targetProjectId) {
         return { targetProject: target };
       }
-      const source = sourceProjectId ? await this.readProject(sourceProjectId) : undefined;
+      const source = sourceProjectId
+        ? scopeKey
+          ? await this.readProjectInScope(sourceProjectId, scopeKey)
+          : await this.readProject(sourceProjectId)
+        : scopeKey
+          ? (await this.readAllProjects()).find((project) => project.scopeKey === scopeKey && project.diagramIds.includes(documentId))
+          : undefined;
       const now = new Date().toISOString();
       const nextTarget: DiagramProject = {
         ...target,
@@ -491,12 +582,14 @@ export class DiagramDocumentStore {
   async patch(
     documentId: string,
     expectedRevision: number,
-    operations: DiagramPatchOperation[]
+    operations: DiagramPatchOperation[],
+    generationProvenance?: DiagramDocument['generationProvenance']
   ): Promise<DiagramDocument> {
     return this.withLock(async () => {
       const current = await this.read(documentId);
       if (current.revision !== expectedRevision) throw new RevisionConflictError(current.revision);
       const next = applyDiagramPatch(current, operations);
+      if (generationProvenance) next.generationProvenance = structuredClone(generationProvenance);
       next.revision = current.revision + 1;
       next.updatedAt = new Date().toISOString();
       await this.atomicWrite(this.documentPath(documentId), next);

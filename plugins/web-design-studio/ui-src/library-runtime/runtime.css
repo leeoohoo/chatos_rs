@@ -1,0 +1,16 @@
+@import "tailwindcss";
+@source "./vendor/inspira/**/*.vue";
+
+:root { color-scheme: light dark; font-family: Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif; }
+html,body,#root { width:100%;height:100%;margin:0;overflow:hidden;background:transparent; }
+#root { position:relative;isolation:isolate; }
+#root > * { width:100%!important;height:100%!important;min-height:100%!important; }
+.runtime-default-slot { position:absolute;inset:0;pointer-events:none; }
+.runtime-error { box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:20px;background:#fff7ed;color:#9a3412;text-align:center; }
+.runtime-error strong { font-size:13px; }.runtime-error span { max-width:460px;font-size:10px;line-height:1.5; }
+
+@keyframes aurora { from { background-position:50% 50%,50% 50%; } to { background-position:350% 50%,350% 50%; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after { animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important; }
+}

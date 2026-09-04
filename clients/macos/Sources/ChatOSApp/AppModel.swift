@@ -76,6 +76,7 @@ final class AppModel: ObservableObject {
     let localConnectorControl: LocalConnectorControlCenterViewModel
     let visualSessionStore = VisualSessionPresentationStore()
     let petPreferences = PetPreferencesStore()
+    let petDefaultFileHandlerPrompt = PetDefaultFileHandlerPromptController()
     let petOverlayStore = PetOverlayStore()
     let globalUtilityPreferences = GlobalUtilityPreferencesStore()
     private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
@@ -128,6 +129,7 @@ final class AppModel: ObservableObject {
     private var authenticatedUserID: String?
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
+    var mainWindowPresentationHandler: (() -> Void)?
 
     init() {
         let credentialStore = KeychainCredentialStore()
@@ -286,6 +288,43 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func openPetFile(
+        path: String,
+        targetLine: Int? = nil,
+        mode: PetFileOpenMode = .preview,
+        access: PetFileAccess = .workspace
+    ) {
+        startPetOverlayIfNeeded()
+        if !petPreferences.isEnabled {
+            petPreferences.isEnabled = true
+        }
+        petOverlayCoordinator?.openFile(PetFileOpenRequest(
+            path: path,
+            targetLine: targetLine,
+            mode: mode,
+            access: access
+        ))
+    }
+
+    func openUserSelectedPetFiles(_ urls: [URL]) {
+        for url in urls where url.isFileURL {
+            openPetFile(
+                path: url.standardizedFileURL.path,
+                access: .userSelectedLocal
+            )
+        }
+    }
+
+    @discardableResult
+    func openPetFileLink(_ url: URL, projectRootPath: String?) -> Bool {
+        guard let resolved = PetFileLinkResolver.resolve(
+            url,
+            projectRootPath: projectRootPath
+        ) else { return false }
+        openPetFile(path: resolved.path, targetLine: resolved.targetLine)
+        return true
+    }
+
     func startGlobalUtilitiesIfNeeded() {
         globalUtilityCoordinator.start()
     }
@@ -331,11 +370,7 @@ final class AppModel: ObservableObject {
             )
         }
 
-        NSApp.activate(ignoringOtherApps: true)
-        let mainWindow = NSApp.windows.first {
-            !($0 is NSPanel) && $0.title == "ChatOS"
-        }
-        mainWindow?.makeKeyAndOrderFront(nil)
+        showMainWindow()
     }
 
     func openGlobalSearchProject(_ projectID: String) {
@@ -362,6 +397,10 @@ final class AppModel: ObservableObject {
     }
 
     private func showMainWindow() {
+        if let mainWindowPresentationHandler {
+            mainWindowPresentationHandler()
+            return
+        }
         NSApp.activate(ignoringOtherApps: true)
         let mainWindow = NSApp.windows.first {
             !($0 is NSPanel) && $0.title == "ChatOS"

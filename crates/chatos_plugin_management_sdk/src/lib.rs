@@ -12,6 +12,7 @@ pub mod plugin_runtime;
 pub mod plugin_signing;
 pub mod policy;
 pub mod provider_skills;
+pub mod skill_runtime;
 
 pub use agent_prompts::{
     agent_prompt_checksum, normalize_agent_prompt_profile, normalize_agent_prompt_vendor,
@@ -30,3 +31,4 @@ pub use provider_skills::{
     compose_mcp_provider_skills_prompt, compose_mcp_provider_skills_prompt_for_task_profile,
     provider_skills_from_metadata, McpProviderSkill, PROVIDER_SKILLS_METADATA_KEY,
 };
+pub use skill_runtime::*;

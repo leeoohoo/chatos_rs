@@ -8,6 +8,7 @@ import {
   constrainComponentFrame,
   componentsForPage,
   createSymbolFromSelection,
+  deriveResponsivePageFromDevice,
   detachSymbolInstance,
   flattenComponentTree,
   fitContentCanvasToComponents,
@@ -27,6 +28,10 @@ import { ANTD_CATEGORIES, ANTD_COMPONENTS, ANTD_OFFICIAL_COMPONENT_COUNT, ANTD_V
 import { editableSlotsForAntdComponent, isAntdContentContainer } from '../dist/antd-slots.test.mjs';
 import { CHAKRA_CATEGORIES, CHAKRA_COMPONENTS, CHAKRA_VERSION, applyChakraComponentVariant, createChakraComponent, variantsForChakraComponent } from '../dist/chakra-library.test.mjs';
 import { SHADCN_CATEGORIES, SHADCN_COMPONENTS, SHADCN_VERSION, applyShadcnComponentVariant, createShadcnComponent, variantsForShadcnComponent } from '../dist/shadcn-library.test.mjs';
+import { MAGICUI_CATEGORIES, MAGICUI_COMPONENTS, MAGICUI_VERSION, applyMagicUiComponentVariant, createMagicUiComponent, variantsForMagicUiComponent } from '../dist/magicui-library.test.mjs';
+import { SPELL_CATEGORIES, SPELL_COMPONENTS, SPELL_VERSION, applySpellComponentVariant, createSpellComponent, variantsForSpellComponent } from '../dist/spell-library.test.mjs';
+import { INSPIRA_CATEGORIES, INSPIRA_COMPONENTS, INSPIRA_COMPONENT_SLUGS, INSPIRA_VERSION, applyInspiraComponentVariant, createInspiraComponent, variantsForInspiraComponent } from '../dist/inspira-library.test.mjs';
+import { DAISYUI_CATEGORIES, DAISYUI_COMPONENTS, DAISYUI_COMPONENT_SLUGS, DAISYUI_VERSION, applyDaisyUiComponentVariant, createDaisyUiComponent, variantsForDaisyUiComponent } from '../dist/daisyui-library.test.mjs';
 import { editableSlotsForUiComponent, growUiContentContainersToFit, isUiContentContainer } from '../dist/library-slots.test.mjs';
 import { UI_LIBRARIES, applyUiLibraryVariant, createComponentFromUiLibrary } from '../dist/ui-libraries.test.mjs';
 import { matchViewportPreset, viewportDimensions, viewportPresetsForDevice, WEB_DESIGN_VIEWPORT_PRESETS } from '../dist/viewport-presets.test.mjs';
@@ -225,6 +230,38 @@ test('responsive constraints reflow nested components without overflowing a narr
   assertWebDesignDocument(narrowed);
 });
 
+test('responsive layout generation preserves desktop and existing manual overrides while fitting new tablet and mobile frames', () => {
+  const document = createLandingPage('Responsive generation');
+  const parent = componentDefaults('section', 40, 160);
+  parent.id = 'responsive-parent';
+  parent.pageId = 'home';
+  parent.width = 1120;
+  parent.height = 520;
+  parent.constraints = { tablet: { horizontal: 'stretch' }, mobile: { horizontal: 'stretch' } };
+  const child = componentDefaults('card', 80, 210);
+  child.id = 'responsive-child';
+  child.pageId = 'home';
+  child.parentId = parent.id;
+  child.width = 500;
+  child.height = 220;
+  const manual = componentDefaults('button', 920, 720);
+  manual.id = 'manual-mobile';
+  manual.pageId = 'home';
+  manual.responsive = { mobile: { x: 27.5, y: 612.25, width: 180.5, height: 54.75 } };
+  document.components = [parent, child, manual];
+  const desktopBefore = document.components.map((component) => ({ id: component.id, x: component.x, y: component.y, width: component.width, height: component.height }));
+  const tablet = deriveResponsivePageFromDevice(document, 'home', 'desktop', 'tablet', 1200, 768);
+  const responsive = deriveResponsivePageFromDevice(tablet, 'home', 'desktop', 'mobile', 1200, 390);
+  assert.deepEqual(responsive.components.map((component) => ({ id: component.id, x: component.x, y: component.y, width: component.width, height: component.height })), desktopBefore);
+  const mobileParent = resolveComponent(responsive.components.find((component) => component.id === parent.id), 'mobile');
+  const mobileChild = resolveComponent(responsive.components.find((component) => component.id === child.id), 'mobile');
+  const mobileManual = resolveComponent(responsive.components.find((component) => component.id === manual.id), 'mobile');
+  assert.ok(mobileParent.x >= 0 && mobileParent.x + mobileParent.width <= 390);
+  assert.ok(mobileChild.x >= mobileParent.x && mobileChild.x + mobileChild.width <= mobileParent.x + mobileParent.width);
+  assert.deepEqual(mobileManual, { x: 27.5, y: 612.25, width: 180.5, height: 54.75, hidden: false, style: manual.style });
+  assert.ok(responsive.components.every((component) => component.responsive?.tablet));
+});
+
 test('explicit left, center, right, stretch, and scale constraints remain predictable', () => {
   const document = createLandingPage();
   const modes = ['left', 'center', 'right', 'stretch', 'scale'];
@@ -396,7 +433,7 @@ test('Chakra UI and shadcn/ui catalogs create valid independently bound componen
   assert.deepEqual(SHADCN_COMPONENTS.map((component) => component.id).sort(), officialShadcnComponents.sort());
   assert.deepEqual([...new Set(CHAKRA_COMPONENTS.map((component) => component.category))], CHAKRA_CATEGORIES);
   assert.deepEqual([...new Set(SHADCN_COMPONENTS.map((component) => component.category))], SHADCN_CATEGORIES);
-  assert.deepEqual(UI_LIBRARIES.map((library) => library.id), ['antd', 'chakra', 'shadcn']);
+  assert.deepEqual(UI_LIBRARIES.map((library) => library.id), ['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
 
   const chakraInput = applyChakraComponentVariant(createChakraComponent('Input', 20, 20), 'subtle');
   const shadcnButton = applyShadcnComponentVariant(createShadcnComponent('Button', 20, 80), 'destructive');
@@ -452,17 +489,124 @@ test('Chakra UI and shadcn/ui catalogs create valid independently bound componen
   assertWebDesignDocument(document);
 });
 
+test('Magic UI catalog follows the current MIT registry and every curated example is valid', () => {
+  assert.equal(MAGICUI_VERSION, 'registry-2026.09');
+  assert.equal(MAGICUI_COMPONENTS.length, 78);
+  assert.deepEqual([...new Set(MAGICUI_COMPONENTS.map((component) => component.category))], MAGICUI_CATEGORIES);
+  assert.equal(MAGICUI_COMPONENTS.every((definition) => variantsForMagicUiComponent(definition.id).length >= 1), true);
+  assert.equal(MAGICUI_COMPONENTS.every((definition) => variantsForMagicUiComponent(definition.id).length === 3), false);
+  assert.equal(MAGICUI_COMPONENTS.every((definition) => definition.docsUrl?.startsWith('https://magicui.design/docs/components/')), true);
+  const obsoleteOrPaid = new Set(['ScriptCopyBtn', 'ArcTimeline', 'BoxReveal', 'ScratchToReveal', 'GridBeams']);
+  assert.equal(MAGICUI_COMPONENTS.some((definition) => obsoleteOrPaid.has(definition.id)), false);
+  for (const definition of MAGICUI_COMPONENTS) {
+    const variants = variantsForMagicUiComponent(definition.id);
+    assert.equal(new Set(variants.map((variant) => variant.id)).size, variants.length);
+    for (const variant of variants) {
+      const component = applyMagicUiComponentVariant(createMagicUiComponent(definition.id, 24, 24), variant.id);
+      assert.equal(component.library.name, 'magicui');
+      assert.equal(component.library.component, definition.id);
+      assert.equal(component.library.variant, variant.id);
+      assert.equal(component.library.props.componentSlug, definition.docsUrl.split('/').at(-1));
+      const variantDocument = createLandingPage();
+      component.pageId = 'home';
+      variantDocument.components = [component];
+      assertWebDesignDocument(variantDocument);
+    }
+  }
+});
+
+test('Spell UI catalog covers all public MIT registry components with valid curated examples', () => {
+  assert.equal(SPELL_VERSION, 'registry-2026.09');
+  assert.equal(SPELL_COMPONENTS.length, 33);
+  assert.deepEqual([...new Set(SPELL_COMPONENTS.map((component) => component.category))], SPELL_CATEGORIES);
+  assert.equal(SPELL_COMPONENTS.every((definition) => variantsForSpellComponent(definition.id).length >= 1), true);
+  assert.equal(SPELL_COMPONENTS.every((definition) => variantsForSpellComponent(definition.id).length === 3), false);
+  for (const definition of SPELL_COMPONENTS) {
+    for (const variant of variantsForSpellComponent(definition.id)) {
+      const component = applySpellComponentVariant(createSpellComponent(definition.id, 24, 24), variant.id);
+      assert.equal(component.library.name, 'spell');
+      assert.equal(component.library.variant, variant.id);
+      const document = createLandingPage();
+      component.pageId = 'home';
+      document.components = [component];
+      assertWebDesignDocument(document);
+    }
+  }
+});
+
+test('Inspira UI catalog covers all current public MIT documentation components with valid curated examples', () => {
+  assert.equal(INSPIRA_VERSION, 'docs-2026.09');
+  assert.equal(INSPIRA_COMPONENTS.length, 155);
+  assert.equal(new Set(INSPIRA_COMPONENT_SLUGS).size, 155);
+  assert.deepEqual([...new Set(INSPIRA_COMPONENTS.map((component) => component.category))], INSPIRA_CATEGORIES);
+  assert.equal(INSPIRA_COMPONENTS.every((definition) => definition.docsUrl.startsWith('https://inspira-ui.com/docs/en/components/')), true);
+  assert.equal(INSPIRA_COMPONENTS.every((definition) => variantsForInspiraComponent(definition.id).length >= 1), true);
+  assert.equal(INSPIRA_COMPONENTS.every((definition) => variantsForInspiraComponent(definition.id).length === 3), false);
+  const upload = createInspiraComponent('FileUpload', 24, 24);
+  assert.equal(upload.library.props.family, 'upload');
+  assert.equal(upload.library.props.multiple, true);
+  assert.equal(upload.library.props.accept, 'image/*,.pdf');
+  for (const definition of INSPIRA_COMPONENTS) {
+    for (const variant of variantsForInspiraComponent(definition.id)) {
+      const component = applyInspiraComponentVariant(createInspiraComponent(definition.id, 24, 24), variant.id);
+      assert.equal(component.library.name, 'inspira');
+      assert.equal(component.library.variant, variant.id);
+      const document = createLandingPage();
+      component.pageId = 'home';
+      document.components = [component];
+      assertWebDesignDocument(document);
+    }
+  }
+});
+
+test('daisyUI catalog covers every current official component route and its structural modifiers', () => {
+  assert.equal(DAISYUI_VERSION, '5.7.28');
+  assert.equal(DAISYUI_COMPONENTS.length, 68);
+  assert.equal(new Set(DAISYUI_COMPONENT_SLUGS).size, 68);
+  assert.deepEqual([...new Set(DAISYUI_COMPONENTS.map((component) => component.category))], DAISYUI_CATEGORIES);
+  assert.equal(DAISYUI_COMPONENTS.every((definition) => definition.docsUrl === `https://daisyui.com/components/${definition.props.componentSlug}/`), true);
+  assert.equal(DAISYUI_COMPONENTS.every((definition) => variantsForDaisyUiComponent(definition.id).length >= 1), true);
+  assert.equal(DAISYUI_COMPONENTS.some((definition) => variantsForDaisyUiComponent(definition.id).length === 1), true);
+  assert.deepEqual(variantsForDaisyUiComponent('Avatar').map((variant) => variant.id), ['single', 'ring', 'group', 'placeholder']);
+  assert.deepEqual(variantsForDaisyUiComponent('Button').map((variant) => variant.id), ['primary', 'secondary', 'outline', 'soft', 'dash', 'wide']);
+  assert.deepEqual(variantsForDaisyUiComponent('Card').map((variant) => variant.id), ['body', 'image', 'side', 'compact']);
+  assert.deepEqual(variantsForDaisyUiComponent('Modal').map((variant) => variant.id), ['dialog', 'bottom', 'sheet']);
+  for (const definition of DAISYUI_COMPONENTS) {
+    for (const variant of variantsForDaisyUiComponent(definition.id)) {
+      const component = applyDaisyUiComponentVariant(createDaisyUiComponent(definition.id, 24, 24), variant.id);
+      assert.equal(component.library.name, 'daisyui');
+      assert.equal(component.library.variant, variant.id);
+      const document = createLandingPage();
+      component.pageId = 'home';
+      document.components = [component];
+      assertWebDesignDocument(document);
+    }
+  }
+});
+
 test('content slots use the same contract across Ant Design, Chakra UI, and shadcn/ui', () => {
   const chakraDrawer = createChakraComponent('Drawer', 80, 80);
   const chakraTabs = createChakraComponent('Tabs', 80, 140);
   const shadcnSheet = createShadcnComponent('Sheet', 80, 200);
   const shadcnAccordion = createShadcnComponent('Accordion', 80, 260);
+  const inspiraTabs = createInspiraComponent('AnimatedTabs', 80, 320);
+  const inspiraModal = createInspiraComponent('AnimatedModal', 80, 380);
+  const daisyTabs = createDaisyUiComponent('Tab', 80, 440);
+  const daisyDrawer = createDaisyUiComponent('Drawer', 80, 500);
   assert.deepEqual(editableSlotsForUiComponent(chakraDrawer).map((slot) => slot.id), ['content']);
   assert.deepEqual(editableSlotsForUiComponent(chakraTabs).map((slot) => slot.id), ['tab-overview', 'tab-features', 'tab-settings']);
   assert.deepEqual(editableSlotsForUiComponent(shadcnSheet).map((slot) => slot.id), ['content']);
   assert.deepEqual(editableSlotsForUiComponent(shadcnAccordion).map((slot) => slot.id), ['panel-design', 'panel-ai', 'panel-export']);
+  assert.deepEqual(editableSlotsForUiComponent(inspiraTabs).map((slot) => slot.id), ['tab-Overview', 'tab-Motion', 'tab-Accessibility']);
+  assert.deepEqual(editableSlotsForUiComponent(inspiraModal).map((slot) => slot.id), ['content']);
+  assert.deepEqual(editableSlotsForUiComponent(daisyTabs).map((slot) => slot.id), ['tab-1', 'tab-2', 'tab-3']);
+  assert.deepEqual(editableSlotsForUiComponent(daisyDrawer).map((slot) => slot.id), ['content']);
   assert.equal(isUiContentContainer(chakraDrawer), true);
   assert.equal(isUiContentContainer(shadcnSheet), true);
+  assert.equal(isUiContentContainer(inspiraTabs), true);
+  assert.equal(isUiContentContainer(inspiraModal), true);
+  assert.equal(isUiContentContainer(daisyTabs), true);
+  assert.equal(isUiContentContainer(daisyDrawer), true);
 });
 
 test('content-bearing Ant Design components expose editable single and multi-region slots', () => {

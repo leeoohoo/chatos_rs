@@ -215,6 +215,7 @@ fn component_snapshots(records: &PluginRecords) -> Vec<PluginComponentSnapshot> 
             release_id: records.release.id.clone(),
             component,
             content_sha256: "d".repeat(64),
+            skill: None,
         })
         .collect()
 }

@@ -1,82 +1,45 @@
 ---
 name: web-design-studio
-description: Design polished editable websites with Web Design Studio using independently grouped Ant Design, Chakra UI, and shadcn/ui components, visual themes, responsive layouts, annotations, and page- or component-level AI design requests.
+description: Route editable website design work to project, component-system, responsive-layout, visual-system, and validation or export specialists in Web Design Studio.
+metadata:
+  chatos.role: router
+  chatos.related-skills: "web-design-projects,web-design-components,web-design-responsive-layout,web-design-visual-system,web-design-validation-export"
 ---
 
-# Web Design Studio workflow
+# Web Design Studio
 
-Use Web Design Studio when the user wants an editable website, landing page, UI composition, or focused visual changes in the design workbench. The primary outcome is a good-looking, coherent, human-editable design. Code export is secondary and should happen only when requested.
+Use Web Design Studio when the user wants an editable website, landing page, interface composition, or focused visual revision. The primary output is a coherent human-editable design; code export is secondary and happens only when requested.
 
-## Rules
+## Runtime scope
 
-1. Treat the ChatOS runtime scope as authoritative. The outer ChatOS project ID is injected by the host as `CHATOS_PROJECT_ID` and is returned as `scope.chatosProjectId`; never invent it, copy it into tool arguments, or ask the user to provide it.
-2. Keep the two project identities separate. A tool argument named `projectId` always means an internal Web Design Studio project returned by `web_design_list_projects` or `web_design_get_project`; it never means the outer ChatOS project ID.
-3. Start project-aware work with `web_design_list_projects`. Reuse the intended internal project or create one with `web_design_create_project`, then list or create designs inside it. A website project may contain multiple separately named designs, and each design may contain multiple pages.
-4. List documents before creating a new one when the user may already have an active design.
-5. Read the complete document and current revision before modifying it.
-6. Call `web_design_get_component_library` before creating a page or introducing a new component family. Select one of its independently grouped Ant Design, Chakra UI, or shadcn/ui definitions and use the returned variants, sample data, slots, and visual themes instead of inventing unsupported bindings.
-7. Preserve stable component IDs and use `web_design_apply_patch` for focused edits.
-8. Never replace unrelated components when a request targets one selected component.
-9. Treat open annotations and pending page- or component-level design requests as user requirements.
-10. When a revision conflict occurs, read the document again and rebase the intended patch.
-11. Keep components inside the viewport unless the user explicitly asks for overflow.
-12. Use clear semantic component names such as `hero-heading`, `pricing-card-pro`, or `signup-email-input`.
-13. Resolve a design request only after its requested visual change has been applied.
-14. Run `web_design_validate` before reporting that a multi-component design task is complete.
-15. When a request targets a responsive breakpoint, pass `device` on move, resize, and update operations instead of changing the desktop frame.
-16. Preserve valid `parentId` relationships. Use `set_parent` for structural edits and avoid parent cycles.
-17. For Flex/Grid containers, set the container layout first and then call `web_design_auto_layout` for each affected device.
-18. Inspect `pages` and component `pageId` values before editing a multi-page document; keep components and their parents on the same page.
-19. Establish or preserve a coherent visual system before polishing individual components. Use `set_tokens` for the global palette, typography, and radii. Prefer a curated theme returned by `web_design_get_component_library` when it fits the brief.
-20. Product UI should use a mature library binding whenever a matching component exists. Keep native components for basic geometry only. Do not silently mix design systems inside one section: preserve the user's chosen library unless a mixed-library composition is explicitly requested.
-21. A library component uses `library: { name: "antd" | "chakra" | "shadcn", version, component, variant, props }`. Copy supported values from the matching library group returned by `web_design_get_component_library`, and keep structured example data editable in `props`.
-22. Content-bearing components expose `editableSlots` through the same contract in all three libraries. Place editable child components inside one of those regions with both `parentId: <container id>` and `slot: <editable slot id>`. This applies to overlays, cards, fields, tabs, accordions, layouts, splitters, scroll areas, and other returned slot-capable components.
-23. Build complete pages from semantic sections. Common production structures include navigation, hero, social proof, feature grids, product previews, pricing, FAQ, calls to action, contact forms, and footers.
-24. Default to strong design craft: consistent spacing rhythm, restrained color use, clear type hierarchy, aligned edges, sufficient contrast, purposeful imagery, and no arbitrary decoration.
-25. For a new or substantially redesigned page, check desktop, tablet, and mobile layouts before completion. Do not merely shrink the desktop composition.
-26. Treat reusable definitions in `symbols` as shared assets. Preserve symbol and instance IDs unless intentionally detaching them.
-27. Respect each symbol layer's `symbolOverrides` values: `content`, `style`, and `frame`.
-28. Use `interaction` with `{ type: "page", target: pageId }` or an HTTPS URL for preview click behavior.
-29. Export HTML, React, or Vue only when the user explicitly asks for a code deliverable.
-30. Treat page templates and section presets as optional starting material, never as the editor's design boundary. For a distinctive brief, freely construct an editable component tree from geometry, typography, media, library components, nesting, and visual effects instead of forcing the request into the nearest preset. Do not approximate a marketing site by stacking dashboard cards and form controls.
-31. Treat full-page templates and reusable page sections as editable component trees, not opaque screenshots. Preserve their parent relationships and responsive frames when refining them.
-32. Use `web_design_apply_page_template` for a new full product, brand, portfolio, campaign, or developer page when a matching template exists. Use `web_design_insert_section` to add a single narrative region without replacing the rest of the page.
-33. Build visual treatments through component `style`: gradients in `background`; fill and stroke; padding and radius; shadow, blur, backdrop blur, opacity, rotation, scale, overflow, and blend mode; typography controls; and media object fit/position. These fields may be overridden independently for tablet and mobile.
-34. Use component `states.hover`, `states.active`, and `states.focus` when interaction should visibly respond. Use per-device `constraints` for horizontal behavior, minimum/maximum width and height, and aspect-ratio locking; do not fake responsive behavior by creating disconnected duplicate components.
-35. When a requested visual treatment is not covered by a dedicated style field, use `style.customCss` (or a state-specific `customCss`) with valid CSS property/value pairs instead of refusing the design or approximating it with a fixed template. Prefer dedicated fields when they exist.
-36. Treat saved personal components as user-authored building blocks. Preserve their internal hierarchy, slots, responsive frames, visual states, and custom CSS when instantiating them in another design.
+ChatOS injects the outer user/project/public scope. Never ask for, invent, or pass a ChatOS project ID. Tool `projectId` values are internal Web Design Studio project identifiers returned by the plugin.
 
-## Typical workflow
+## Route the work
 
-1. Call `web_design_list_projects` and note the host-injected `scope.chatosProjectId` without passing it back as an argument.
-2. Select or create an internal Web Design Studio project and use its returned `projectId` for subsequent project-scoped tools.
-3. Call `web_design_list_documents` with that internal `projectId`.
-4. Reuse the intended document or call `web_design_create_document` with that internal `projectId`.
-5. Call `web_design_get_document` and inspect pages, components, annotations, requests, tokens, and revision.
-6. Call `web_design_get_component_library` when adding product UI components or when a returned section/page is genuinely useful; templates are optional accelerators rather than required construction paths.
-7. Establish the page's visual concept and construct the necessary editable hierarchy. Apply a suitable template or section only when it supports that concept without flattening its distinctiveness.
-8. Refine the result with focused operations through `web_design_apply_patch` instead of discarding the generated structure.
-9. If working from the request queue, call `web_design_resolve_request` after the requested design change succeeds.
-10. Call `web_design_validate` and fix layout or structural issues before finishing.
-11. Only when code delivery is requested, call the matching export tool and return the generated files.
+- Activate `web-design-projects` for project/document discovery, reuse, revisions, pages, annotations, and request queues.
+- Activate `web-design-components` before choosing library bindings, slots, nesting, symbols, interactions, or reusable components.
+- Activate `web-design-responsive-layout` for frames, constraints, Flex/Grid, auto layout, desktop/tablet/mobile behavior, and overflow repair.
+- Activate `web-design-visual-system` for tokens, typography, color, spacing, imagery, effects, states, and coherent art direction.
+- Activate `web-design-validation-export` before completion, conflict recovery, validation, preview, or HTML/React/Vue export.
 
-## Component editing guidance
+Use this router activation as `parent_activation_ref`. A substantial new page normally needs projects, components, responsive layout, visual system, and validation. A focused text edit may need only projects and validation.
 
-- Prefer `update_component` for content, frame-independent visual style, visibility, and interaction changes.
-- Use `upsert_component` when adding or changing any UI library binding because it preserves the complete typed component record.
-- Use `move_component` and `resize_component` for layout changes.
-- Use `set_breakpoint` to change desktop, tablet, or mobile canvas dimensions.
-- Use `set_parent` to nest components and include `slot` when the parent exposes editable library content regions. Use `set_layout` to configure `free`, `flex-row`, `flex-column`, or `grid` containers; Flex layouts may use `justify` and row `wrap` for responsive composition.
-- Use structured style fields instead of hiding essential visual decisions in library-specific props. Supported visual fields include `background`, `color`, `borderColor`, `borderWidth`, `borderStyle`, `borderRadius`, `padding`, `fontSize`, `fontWeight`, `textAlign`, `lineHeight`, `letterSpacing`, `textTransform`, `textDecoration`, `opacity`, `shadow`, `blur`, `backdropBlur`, `rotate`, `scale`, `overflow`, `objectFit`, `objectPosition`, and `mixBlendMode`.
-- Put only differences from the default style into `states.hover`, `states.active`, or `states.focus`. Check contrast and focus visibility, and use state effects consistently across related controls.
-- Configure `constraints[device]` with `horizontal` plus optional `minWidth`, `maxWidth`, `minHeight`, `maxHeight`, and `lockAspectRatio` when resizing or viewport reflow must remain bounded.
-- For Tabs and Collapse, use the exact per-panel slot IDs returned by `editableSlots`; do not put every child into a generic content slot.
-- Use `web_design_auto_layout` after structural or container-layout changes.
-- Assign `pageId` on newly created components and keep parent-child relationships on the same page.
-- Reuse existing image assets when possible instead of embedding duplicates.
-- Use `set_tokens` to update the global colors, radii, and typography without rewriting every component.
-- Use `web_design_sync_symbol_instances` after changing a reusable definition.
-- Use `web_design_update_symbol_from_instance` when a selected instance should become the shared definition.
-- Pass `device: "tablet"` or `device: "mobile"` for breakpoint-specific layout and style changes.
-- Use stable, descriptive IDs rather than random IDs when AI creates components.
-- Preserve user-authored positions, sizes, styles, data, and annotations unless the request explicitly changes them.
+## Platform Skill protocol
+
+Activate this router through `skill_skill_activate`, activate every leaf that materially governs the requested edit using this activation as `parent_activation_ref`, and pass all returned evidence tokens in `skillEvidence`. Use the platform resource tools only for references declared by an activated Skill. Do not invent ChatOS scope fields or evidence.
+
+## MCP tool directory
+
+- Projects and documents: `web_design_list_projects`, `web_design_create_project`, `web_design_get_project`, `web_design_update_project`, `web_design_delete_project`, `web_design_list_documents`, `web_design_create_document`, `web_design_get_document`, and `web_design_move_document` manage the plugin's editable project structure inside the injected outer scope.
+- Components and templates: `web_design_get_component_library` inspects available systems; `web_design_insert_section` adds a bounded section; `web_design_apply_page_template` replaces one page from a template; `web_design_replace_document` replaces a complete editable document when a full redesign is intended.
+- Focused editing: `web_design_apply_patch` applies revision-checked operations; `web_design_auto_layout` computes bounded layout changes; `web_design_sync_symbol_instances` refreshes instances from definitions; `web_design_update_symbol_from_instance` promotes an instance change into its reusable symbol.
+- Requests: `web_design_list_requests` reads user-authored visual requests; `web_design_resolve_request` marks one request resolved only after the corresponding edit exists.
+- Quality and delivery: `web_design_validate` checks document invariants and device layouts; `web_design_export_html`, `web_design_export_react`, and `web_design_export_vue` produce secondary code artifacts after the editable design is ready.
+
+## Invariants
+
+- Read the current complete document and revision before modifying it.
+- Preserve stable IDs and unrelated user-authored content.
+- Use focused patches for focused requests.
+- Treat templates and sections as editable starting material, not a design boundary.
+- Validate desktop, tablet, and mobile for new or substantially redesigned pages.

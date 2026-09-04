@@ -22,7 +22,7 @@ import { toPng, toSvg } from 'html-to-image';
 import type { DiagramDocument, DiagramEdge, DiagramKind, DiagramNode, DiagramProject, DiagramProjectSummary } from '../../src/schema';
 import { layoutDiagram } from '../../src/layout';
 import { nextNodeZIndex, reorderNodeLayers, type NodeLayerAction } from '../../src/layers';
-import { detectPlantUmlDiagramKind, diagramToPlantUml, plantUmlToDiagram } from '../../src/plantuml';
+import { detectPlantUmlDiagramKind, diagramToPlantUml, hasEmbeddedDiagramLayout, plantUmlToDiagram } from '../../src/plantuml';
 import {
   parseSequenceActivationHandle,
   parseSequenceSlot,
@@ -699,14 +699,14 @@ export function DiagramStudioApp() {
     }
   }
 
-  function applyPlantUmlSource() {
+  async function applyPlantUmlSource() {
     if (!document) return;
     if (!supportsPlantUml(document.kind)) {
       setPlantUmlError('当前图形类型尚未接入 PlantUML 双向转换。');
       return;
     }
     try {
-      const next = plantUmlToDiagram(plantUmlSource, {
+      const imported = plantUmlToDiagram(plantUmlSource, {
         documentId: document.documentId,
         title: document.title,
         revision: document.revision,
@@ -714,6 +714,9 @@ export function DiagramStudioApp() {
         updatedAt: document.updatedAt,
         kind: document.kind
       });
+      const next = hasEmbeddedDiagramLayout(plantUmlSource)
+        ? imported
+        : await layoutDiagram(imported, document.kind === 'flowchart' || document.kind === 'swimlane' ? 'DOWN' : 'RIGHT');
       commit(next);
       setPlantUmlError(undefined);
       setPlantUmlVisible(false);
@@ -758,7 +761,7 @@ export function DiagramStudioApp() {
         const detectedKind = detectPlantUmlDiagramKind(text);
         const fallbackTitle = file.name.replace(/\.(puml|plantuml|pu)$/i, '').trim() || `导入的${kindLabel(detectedKind)}`;
         const seed = await repository.createInProject(activeProject.projectId, detectedKind, fallbackTitle);
-        const imported = plantUmlToDiagram(text, {
+        const parsed = plantUmlToDiagram(text, {
           documentId: seed.documentId,
           title: fallbackTitle,
           revision: seed.revision,
@@ -766,6 +769,9 @@ export function DiagramStudioApp() {
           updatedAt: seed.updatedAt,
           kind: detectedKind
         });
+        const imported = hasEmbeddedDiagramLayout(text)
+          ? parsed
+          : await layoutDiagram(parsed, detectedKind === 'flowchart' || detectedKind === 'swimlane' ? 'DOWN' : 'RIGHT');
         openResolvedDocument(imported);
         setDirty(true);
         await saveImported(repository, imported, seed.revision);

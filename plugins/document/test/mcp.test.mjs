@@ -120,6 +120,9 @@ test('lists policy-annotated tools and inspects a DOCX', async () => {
       for (const permission of tool._meta['chatos/requiredPermissions']) {
         assert.ok(['workspace.read', 'artifact.create'].includes(permission));
       }
+      assert.equal(tool._meta['chatos/skillGate'].evidenceArgument, 'skillEvidence');
+      assert.equal(tool.inputSchema.properties.skillEvidence.type, 'array');
+      assert.ok(tool.inputSchema.required.includes('skillEvidence'));
     }
 
     const response = await client.callTool({
@@ -234,7 +237,8 @@ test('creates and edits validated Office artifacts with typed operations', async
               ['North', 42]
             ],
             style: 'medium2'
-          }
+          },
+          { type: 'word_add_paragraph', text: 'Second page for PDF conversion', pageBreakBefore: true }
         ]
       }
     });
@@ -270,17 +274,16 @@ test('creates and edits validated Office artifacts with typed operations', async
     assert.equal(inspectedCreated.isError, false, JSON.stringify(inspectedCreated.structuredContent));
     assert.equal(inspectedCreated.structuredContent.source.relativePath, 'created.docx');
 
-    const twoPageXml = createdXml.replace(
-      '</w:body>',
-      '<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>Second page for PDF conversion</w:t></w:r></w:p></w:body>'
-    );
-    await writeFile(
-      path.join(workspace, 'two-page.docx'),
-      zipSync({ ...createdZip, 'word/document.xml': strToU8(twoPageXml) })
-    );
+    await copyFile(createdPath, path.join(workspace, 'two-page.docx'));
     const convertedDocx = await client.callTool({
       name: 'document_convert',
-      arguments: { inputPath: 'two-page.docx', outputName: 'two-page.pdf', viewportWidth: 800, viewportHeight: 600 }
+      arguments: {
+        inputPath: 'two-page.docx',
+        outputName: 'two-page.pdf',
+        pages: [1, 2],
+        viewportWidth: 800,
+        viewportHeight: 600
+      }
     });
     assert.equal(convertedDocx.isError, false, JSON.stringify(convertedDocx.structuredContent));
     assert.equal(convertedDocx.structuredContent.conversionMode, 'raster');

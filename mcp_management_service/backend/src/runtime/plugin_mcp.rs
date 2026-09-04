@@ -72,6 +72,8 @@ pub struct PluginToolComponentRuntimeBinding {
     pub normalized_manifest_sha256: String,
     pub component: PluginComponentDescriptor,
     pub component_content_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_snapshot: Option<chatos_plugin_management_sdk::PluginSkillComponentSnapshot>,
     pub installation_device_id: Option<String>,
     pub permission_snapshot: Vec<String>,
     pub auth_connection_ids: Vec<String>,

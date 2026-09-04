@@ -99,6 +99,41 @@ internal sealed class PluginRelayHandler(
         }
 
         var adapterSessionId = Guid.NewGuid().ToString("D").ToLowerInvariant();
+        var skillKeys = StringArray(body, "skill_keys", required: false);
+        if (skillKeys.Count > 0)
+        {
+            if (!body.TryGetProperty("skill_runtime_protocol", out var protocol) ||
+                !protocol.TryGetInt32(out var protocolVersion) ||
+                protocolVersion != PluginSkillSnapshotLoader.ProtocolVersion ||
+                skillKeys.Count != 1 ||
+                !string.Equals(skillKeys[0], componentKey, StringComparison.Ordinal) ||
+                !body.TryGetProperty("skill_snapshot", out var expectedSnapshot))
+            {
+                throw new PluginRuntimeException("Plugin Skill v2 selection or immutable snapshot is invalid.");
+            }
+            var now = _timeProvider.GetUtcNow();
+            var prepared = PluginSkillSnapshotLoader.Prepare(
+                record,
+                componentKey,
+                expectedSnapshot,
+                runId,
+                adapterSessionId,
+                now);
+            sessions.InsertSkill(
+                new PluginRuntimeIdentity(
+                    runId,
+                    pluginId,
+                    releaseId,
+                    record.Version,
+                    record.ArtifactSha256,
+                    componentKey,
+                    adapterSessionId,
+                    scope.WorkspaceId,
+                    projectId),
+                expectedSnapshot,
+                now.AddDays(8));
+            return RelayHandlerResult.Ok(prepared);
+        }
         var launch = await manifestLoader.PrepareAsync(
             record,
             componentKey,
@@ -237,14 +272,49 @@ internal sealed class PluginRelayHandler(
         var adapterSessionId = RequiredString(body, "adapter_session_id");
         var invocationId = RequiredString(body, "invocation_id");
         var operation = RequiredString(body, "operation");
-        var toolName = RequiredString(body, "tool_name");
         var projectId = OptionalString(body, "project_id");
+        var scope = ResolveScope(request, null);
+        if (operation is "skill_activate" or "skill_read_resource")
+        {
+            var expectedSnapshot = sessions.ValidateSkill(
+                adapterSessionId,
+                pluginId,
+                releaseId,
+                artifactSha256,
+                componentKey,
+                scope.WorkspaceId,
+                projectId);
+            var enabled = (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
+                .FirstOrDefault(plugin => string.Equals(plugin.PluginId, pluginId, StringComparison.Ordinal));
+            var record = await installedPlugins.GetAsync(pluginId, cancellationToken).ConfigureAwait(false);
+            if (enabled is null || !enabled.Enabled || record is null ||
+                !string.Equals(record.ReleaseId, releaseId, StringComparison.Ordinal) ||
+                !string.Equals(record.ArtifactSha256, artifactSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PluginRuntimeException("Plugin is not installed, is disabled, or its Release does not match.");
+            }
+            var result = operation == "skill_activate"
+                ? PluginSkillSnapshotLoader.Activate(record, componentKey, expectedSnapshot)
+                : ReadSkillResource(record, componentKey, expectedSnapshot, body);
+            return RelayHandlerResult.Ok(JsonSerializer.SerializeToElement(new
+            {
+                plugin_id = pluginId,
+                release_id = releaseId,
+                version = record.Version,
+                artifact_sha256 = record.ArtifactSha256,
+                component_key = componentKey,
+                invocation_id = invocationId,
+                adapter_session_id = adapterSessionId,
+                operation,
+                result,
+            }, JsonOptions));
+        }
+        var toolName = RequiredString(body, "tool_name");
         if (operation != "mcp_tools_call")
         {
             throw new PluginRuntimeException("Plugin operation is not supported.");
         }
 
-        var scope = ResolveScope(request, null);
         var identity = sessions.Validate(
             adapterSessionId,
             pluginId,
@@ -341,6 +411,16 @@ internal sealed class PluginRelayHandler(
         var invocationId = OptionalString(body, "invocation_id");
         var projectId = OptionalString(body, "project_id");
         var scope = ResolveScope(request, null);
+        if (sessions.RemoveSkill(adapterSessionId, runId, scope.WorkspaceId, projectId))
+        {
+            return RelayHandlerResult.Ok(JsonSerializer.SerializeToElement(new
+            {
+                run_id = runId,
+                adapter_session_id = adapterSessionId,
+                invocation_id = invocationId ?? string.Empty,
+                status = "closed",
+            }, JsonOptions));
+        }
         var status = await sessions.CancelAsync(
                 adapterSessionId,
                 invocationId,
@@ -441,6 +521,29 @@ internal sealed class PluginRelayHandler(
     private static string CanonicalHash(JsonElement value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(CanonicalJson.Serialize(value))))
             .ToLowerInvariant();
+
+    private static JsonElement ReadSkillResource(
+        InstalledPluginRecord record,
+        string componentKey,
+        JsonElement expectedSnapshot,
+        JsonElement body)
+    {
+        var arguments = body.TryGetProperty("arguments", out var value) &&
+            value.ValueKind == JsonValueKind.Object
+                ? value
+                : JsonSerializer.SerializeToElement(new { }, JsonOptions);
+        return PluginSkillSnapshotLoader.ReadResource(
+            record,
+            componentKey,
+            expectedSnapshot,
+            RequiredString(arguments, "relative_path"),
+            arguments.TryGetProperty("offset", out var offset) && offset.TryGetInt32(out var offsetValue)
+                ? offsetValue
+                : 0,
+            arguments.TryGetProperty("max_chars", out var maximum) && maximum.TryGetInt32(out var maximumValue)
+                ? maximumValue
+                : 32_000);
+    }
 
     private static string SafeArgumentSummary(string toolName, JsonElement arguments)
     {

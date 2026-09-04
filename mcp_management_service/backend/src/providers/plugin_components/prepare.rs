@@ -61,6 +61,33 @@ impl PluginComponentProvider {
                 }
             }
         }
+        let mut skill_resource_ids = local_bindings
+            .values()
+            .filter(|binding| binding.runtime.skill_snapshot.is_some())
+            .map(|binding| binding.runtime.resource_id.clone())
+            .collect::<Vec<_>>();
+        skill_resource_ids.sort();
+        if let Some(host_resource_id) = skill_resource_ids.first().cloned() {
+            let tools = super::validation::skill_runtime_tool_definitions();
+            for resource_id in &skill_resource_ids {
+                let published = if resource_id == &host_resource_id {
+                    tools.clone()
+                } else {
+                    Vec::new()
+                };
+                if let Some(binding) = local_bindings.get_mut(resource_id) {
+                    binding.tools = published.clone();
+                }
+                tool_snapshots.insert(resource_id.clone(), published);
+            }
+            if let Some(route) = routes
+                .iter_mut()
+                .find(|route| route.resource_id == host_resource_id)
+            {
+                route.server_name = "skill".to_string();
+                route.tool_namespace = "skill".to_string();
+            }
+        }
         (local_bindings, tool_snapshots)
     }
 }

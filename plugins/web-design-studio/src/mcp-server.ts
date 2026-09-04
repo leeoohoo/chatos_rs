@@ -30,7 +30,7 @@ const policy = {
   'chatos/toolResultMaxChars': 100_000
 };
 
-const TOOL_DEFINITIONS = [
+const TOOL_DEFINITIONS_BASE = [
   {
     name: 'web_design_list_documents',
     description: 'List editable website design documents, optionally limited to one Web Design Studio project.',
@@ -100,7 +100,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'web_design_get_component_library',
-    description: 'Read independently grouped Ant Design, Chakra UI, and shadcn/ui components plus production page sections, full-page templates, variants, editable slots, sample data, insertion sizes, and curated visual themes. Children placed in a slot use parentId plus slot.',
+    description: 'Read independently grouped design-library components, including Ant Design, Chakra UI, shadcn/ui and licensed creative libraries, plus variants, editable slots, sample data, insertion sizes, production sections, page templates, and visual themes. Children placed in a slot use parentId plus slot.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     _meta: { ...policy, 'chatos/toolResultMaxChars': 300_000 }
   },
@@ -317,6 +317,45 @@ const TOOL_DEFINITIONS = [
   }
 ] as const;
 
+const webDesignSkillEvidence = {
+  type: 'array',
+  minItems: 1,
+  maxItems: 8,
+  items: { type: 'string', minLength: 1 },
+  description: 'Platform-issued activation evidence for Web Design Studio and the specialist workflow required by this tool. ChatOS validates and removes it before local execution.'
+} as const;
+
+function webDesignToolSkills(name: string): string[] {
+  if (name === 'web_design_replace_document'
+    || name === 'web_design_insert_section' || name === 'web_design_apply_page_template') {
+    return ['web-design-components', 'web-design-responsive-layout', 'web-design-visual-system'];
+  }
+  if (name === 'web_design_apply_patch') return ['web-design-components'];
+  if (name.includes('auto_layout')) return ['web-design-responsive-layout'];
+  if (name.includes('component_library') || name.includes('symbol')) return ['web-design-components'];
+  if (name.includes('export') || name.includes('validate')) return ['web-design-validation-export'];
+  return ['web-design-projects'];
+}
+
+const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.map((tool) => ({
+  ...tool,
+  inputSchema: {
+    ...tool.inputSchema,
+    properties: {
+      ...tool.inputSchema.properties,
+      skillEvidence: webDesignSkillEvidence
+    },
+    required: [...('required' in tool.inputSchema ? tool.inputSchema.required : []), 'skillEvidence']
+  },
+  _meta: {
+    ...tool._meta,
+    'chatos/skillGate': {
+      evidenceArgument: 'skillEvidence',
+      allOf: ['web-design-studio', ...webDesignToolSkills(tool.name)]
+    }
+  }
+}));
+
 function objectArguments(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Tool arguments must be an object.');
   return value as Record<string, unknown>;
@@ -385,6 +424,9 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
           id: library.id,
           name: library.displayName,
           version: library.version,
+          license: library.license,
+          sourceUrl: library.sourceUrl,
+          licenseUrl: library.licenseUrl,
           categories: library.categories,
           components: library.components.map((component) => ({
             ...component,

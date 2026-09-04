@@ -28,6 +28,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
+    var pluginSkillRuntimeSessions: [String: NativePluginSkillRuntimeSession] = [:]
     let pluginApplicationRuntime = NativePluginApplicationRuntime()
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let pluginRuntimeRootURL: URL
@@ -747,6 +748,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         lastGatewayPongAt = nil
         if terminatePluginSessions {
             await pluginRuntimeStore.terminateAll()
+            pluginSkillRuntimeSessions.removeAll()
         }
     }
 

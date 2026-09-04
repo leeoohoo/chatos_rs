@@ -284,6 +284,8 @@ pub struct PluginComponentSnapshot {
     pub release_id: String,
     pub component: PluginComponentDescriptor,
     pub content_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<crate::skill_runtime::PluginSkillComponentSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

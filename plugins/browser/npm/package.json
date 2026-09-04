@@ -36,6 +36,8 @@
   ],
   "scripts": {
     "sbom": "node ../scripts/generate-sbom.mjs",
-    "test": "node --test test/*.test.js"
+    "sync:skills": "node ../scripts/sync-skills.mjs",
+    "test": "npm run sync:skills && node --test test/*.test.js",
+    "prepack": "npm run sync:skills"
   }
 }

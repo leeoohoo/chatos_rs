@@ -14,7 +14,10 @@ use chatos_mcp_management_sdk::{
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
-    plugin_command_snapshot_sha256, PluginComponentDescriptor, PluginComponentKind, PluginPathRef,
+    plugin_command_snapshot_sha256, plugin_skill_snapshot_sha256, skill_resource_manifest_sha256,
+    PackagedSkillMetadata, PluginComponentDescriptor, PluginComponentKind, PluginPathRef,
+    PluginSkillComponentSnapshot, RuntimeSkillResourceDescriptor, SkillActivationPolicy,
+    SkillContextMode, SkillResourceKind, SkillRole, SKILL_RUNTIME_PROTOCOL_VERSION,
 };
 use serde_json::json;
 
@@ -55,6 +58,7 @@ fn command_binding() -> PluginToolComponentRuntimeBinding {
             ]),
         },
         component_content_sha256: "c".repeat(64),
+        skill_snapshot: None,
         installation_device_id: Some("device-1".to_string()),
         permission_snapshot: vec!["workspace.read".to_string()],
         auth_connection_ids: Vec::new(),
@@ -64,7 +68,7 @@ fn command_binding() -> PluginToolComponentRuntimeBinding {
     }
 }
 
-fn prompt_skill_binding() -> PluginToolComponentRuntimeBinding {
+fn skill_binding_base() -> PluginToolComponentRuntimeBinding {
     PluginToolComponentRuntimeBinding {
         provider_ref: format!("plugin-tool-binding:{}", "f".repeat(64)),
         resource_id: "plugin_component_review_skill".to_string(),
@@ -87,6 +91,7 @@ fn prompt_skill_binding() -> PluginToolComponentRuntimeBinding {
             )]),
         },
         component_content_sha256: "c".repeat(64),
+        skill_snapshot: None,
         installation_device_id: Some("device-1".to_string()),
         permission_snapshot: vec!["workspace.read".to_string()],
         auth_connection_ids: Vec::new(),
@@ -94,6 +99,50 @@ fn prompt_skill_binding() -> PluginToolComponentRuntimeBinding {
         allow_writes: false,
         command_arguments: None,
     }
+}
+
+fn progressive_skill_binding() -> PluginToolComponentRuntimeBinding {
+    let metadata = PackagedSkillMetadata {
+        name: "review-skill".to_string(),
+        description: "Review the current change with specialist guidance".to_string(),
+        role: SkillRole::Leaf,
+        activation_policy: SkillActivationPolicy::ModelOrUser,
+        context_mode: SkillContextMode::Inline,
+        required_skills: Vec::new(),
+        related_skills: Vec::new(),
+        max_output_chars: None,
+        extra: BTreeMap::new(),
+    };
+    let resources = vec![RuntimeSkillResourceDescriptor {
+        relative_path: "references/guide.md".to_string(),
+        kind: SkillResourceKind::Reference,
+        size_bytes: 22,
+        sha256: sha256_text("# Guide\nUse evidence.\n"),
+    }];
+    let resource_manifest_sha256 = skill_resource_manifest_sha256(&resources).unwrap();
+    let instructions_sha256 = sha256_text("progressive instructions");
+    let snapshot_sha256 = plugin_skill_snapshot_sha256(
+        "review-skill",
+        "skills/review-skill/SKILL.md",
+        &metadata,
+        instructions_sha256.as_str(),
+        resource_manifest_sha256.as_str(),
+    )
+    .unwrap();
+    let mut binding = skill_binding_base();
+    binding.component.entrypoint = Some(PluginPathRef::new("./skills/review-skill/SKILL.md"));
+    binding.component_content_sha256 = snapshot_sha256.clone();
+    binding.skill_snapshot = Some(PluginSkillComponentSnapshot {
+        protocol_version: SKILL_RUNTIME_PROTOCOL_VERSION,
+        skill_id: "review-skill".to_string(),
+        relative_skill_path: "skills/review-skill/SKILL.md".to_string(),
+        metadata,
+        instructions_sha256,
+        resource_manifest_sha256,
+        resources,
+        snapshot_sha256,
+    });
+    binding
 }
 
 fn command_snapshot(
@@ -346,6 +395,7 @@ async fn local_command_is_approved_once_during_prepare_and_reused_without_duplic
         Duration::from_secs(5),
         Some(SECRET.to_string()),
         1024 * 1024,
+        Arc::new(SkillActivationAttestationService::new(SECRET).unwrap()),
     )
     .unwrap();
     let mut routes = vec![route(&immutable)];
@@ -408,11 +458,10 @@ async fn local_command_is_approved_once_during_prepare_and_reused_without_duplic
 }
 
 #[tokio::test]
-async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapter_session() {
-    const SECRET: &str = "plugin-component-local-skill-test-secret";
-    let immutable = prompt_skill_binding();
-    let instructions = "Review changes carefully and report concrete findings.";
-    let instructions_sha256 = sha256_text(instructions);
+async fn progressive_local_skill_prepare_returns_catalog_without_preloading_instructions() {
+    const SECRET: &str = "plugin-component-progressive-skill-test-secret";
+    let immutable = progressive_skill_binding();
+    let expected = immutable.skill_snapshot.clone().unwrap();
     let requests = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
     let captured_requests = requests.clone();
     let server_binding = immutable.clone();
@@ -423,9 +472,9 @@ async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapte
         post(move |Path(action): Path<String>, Json(body): Json<Value>| {
             let requests = captured_requests.clone();
             let binding = server_binding.clone();
-            let instructions_sha256 = instructions_sha256.clone();
+            let expected = expected.clone();
             async move {
-                requests.lock().unwrap().push((action.clone(), body));
+                requests.lock().unwrap().push((action.clone(), body.clone()));
                 match action.as_str() {
                     "prepare" => Json(json!({
                         "run_id": "session-1",
@@ -434,24 +483,48 @@ async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapte
                         "version": binding.version,
                         "artifact_sha256": binding.artifact_sha256,
                         "component_key": binding.component.component_key,
-                        "skills": [{
-                            "plugin_id": binding.plugin_id,
-                            "release_id": binding.release_id,
-                            "version": binding.version,
-                            "artifact_sha256": binding.artifact_sha256,
-                            "component_key": binding.component.component_key,
-                            "skill_key": binding.component.component_key,
-                            "instructions": instructions,
-                            "instructions_sha256": instructions_sha256,
-                            "snapshot_sha256": "d".repeat(64)
-                        }],
-                        "operations": ["load_skill_resource"],
-                        "adapter_session_id": "adapter-skill-1",
+                        "skills": [expected],
+                        "operations": [SKILL_ACTIVATE_OPERATION, SKILL_READ_RESOURCE_OPERATION],
+                        "adapter_session_id": "adapter-progressive-skill-1",
                         "session_sha256": "e".repeat(64),
                         "expires_at": chrono::Utc::now().timestamp() + 7200
                     })),
+                    "execute" if body["operation"] == SKILL_READ_RESOURCE_OPERATION => Json(json!({
+                        "plugin_id": binding.plugin_id,
+                        "release_id": binding.release_id,
+                        "version": binding.version,
+                        "artifact_sha256": binding.artifact_sha256,
+                        "component_key": binding.component.component_key,
+                        "adapter_session_id": "adapter-progressive-skill-1",
+                        "operation": SKILL_READ_RESOURCE_OPERATION,
+                        "result": {
+                            "skill_id": "review-skill",
+                            "relative_path": "references/guide.md",
+                            "sha256": binding.skill_snapshot.as_ref().unwrap().resources[0].sha256,
+                            "content": "# Guide\n",
+                            "offset": 0,
+                            "next_offset": 8,
+                            "truncated": true
+                        }
+                    })),
+                    "execute" => Json(json!({
+                        "plugin_id": binding.plugin_id,
+                        "release_id": binding.release_id,
+                        "version": binding.version,
+                        "artifact_sha256": binding.artifact_sha256,
+                        "component_key": binding.component.component_key,
+                        "adapter_session_id": "adapter-progressive-skill-1",
+                        "operation": SKILL_ACTIVATE_OPERATION,
+                        "result": {
+                            "skill_id": "review-skill",
+                            "instructions": "progressive instructions",
+                            "instructions_sha256": binding.skill_snapshot.as_ref().unwrap().instructions_sha256,
+                            "resource_manifest_sha256": binding.skill_snapshot.as_ref().unwrap().resource_manifest_sha256,
+                            "snapshot_sha256": binding.skill_snapshot.as_ref().unwrap().snapshot_sha256,
+                            "resources": binding.skill_snapshot.as_ref().unwrap().resources
+                        }
+                    })),
                     "cancel" => Json(json!({"cancelled": true})),
-                    "execute" => panic!("prompt-only Skill must not execute after prepare"),
                     _ => panic!("unexpected Plugin component action"),
                 }
             }
@@ -464,6 +537,7 @@ async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapte
         Duration::from_secs(5),
         Some(SECRET.to_string()),
         1024 * 1024,
+        Arc::new(SkillActivationAttestationService::new(SECRET).unwrap()),
     )
     .unwrap();
     let mut routes = vec![route(&immutable)];
@@ -478,28 +552,81 @@ async fn prompt_only_local_skill_is_static_and_runtime_close_releases_its_adapte
             expires_at_unix,
         )
         .await;
-    assert_eq!(tool_snapshots[&immutable.resource_id][0]["name"], "apply");
+    let prepared_request = requests.lock().unwrap()[0].1.clone();
+    assert_eq!(prepared_request["skill_runtime_protocol"], 2);
+    assert_eq!(
+        prepared_request["skill_snapshot"],
+        json!(immutable.skill_snapshot)
+    );
+    assert_eq!(
+        tool_snapshots[&immutable.resource_id][0]["name"],
+        SKILL_ACTIVATE_TOOL_NAME
+    );
     let local = local_bindings[&immutable.resource_id].clone();
-    assert_eq!(local.operation, LOCAL_SKILL_APPLY_OPERATION);
-    assert!(local.static_result.is_some());
-    assert_eq!(local.instruction_items.len(), 1);
-    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(local.operation, SKILL_ACTIVATE_OPERATION);
+    assert!(local.instruction_items.is_empty());
+    assert!(local.static_result.is_none());
 
     let runtime = snapshot(&immutable, local, routes[0].clone(), expires_at_unix);
     let outcome = provider
-        .call_tool(&runtime, &routes[0], "apply", json!({}))
+        .call_tool(
+            &runtime,
+            &routes[0],
+            SKILL_ACTIVATE_TOOL_NAME,
+            json!({"skill_ref": skill_ref(&local_bindings[&immutable.resource_id])}),
+        )
         .await
         .unwrap();
-    assert!(outcome
-        .result
-        .pointer("/content/0/text")
-        .and_then(Value::as_str)
+    assert!(outcome.result["content"][0]["text"]
+        .as_str()
         .unwrap()
-        .contains(instructions));
-    assert_eq!(requests.lock().unwrap().len(), 1);
-
-    provider.close_session(&runtime).await;
-    assert_eq!(requests.lock().unwrap()[1].0, "cancel");
+        .contains("progressive instructions"));
+    assert!(outcome.result["structuredContent"]["activation_evidence"]
+        .as_str()
+        .is_some_and(|value| value.split('.').count() == 3));
+    let activation_ref = outcome.result["structuredContent"]["activation_ref"]
+        .as_str()
+        .unwrap();
+    let activation_evidence = outcome.result["structuredContent"]["activation_evidence"]
+        .as_str()
+        .unwrap();
+    let listed = provider
+        .call_tool(
+            &runtime,
+            &routes[0],
+            SKILL_LIST_RESOURCES_TOOL_NAME,
+            json!({
+                "activation_ref": activation_ref,
+                "activation_evidence": activation_evidence
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        listed.result["structuredContent"]["resources"][0]["relative_path"],
+        "references/guide.md"
+    );
+    let read = provider
+        .call_tool(
+            &runtime,
+            &routes[0],
+            SKILL_READ_RESOURCE_TOOL_NAME,
+            json!({
+                "activation_ref": activation_ref,
+                "activation_evidence": activation_evidence,
+                "relative_path": "references/guide.md",
+                "offset": 0,
+                "max_chars": 8
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read.result["content"][0]["text"], "# Guide\n");
+    let resource_request = requests.lock().unwrap()[2].1.clone();
+    assert!(resource_request["arguments"]
+        .get("activation_evidence")
+        .is_none());
+    assert_eq!(requests.lock().unwrap()[1].0, "execute");
     server.abort();
 }
 

@@ -6,6 +6,7 @@ import {
   constrainComponentFrame,
   componentsForPage,
   createSymbolFromSelection,
+  deriveResponsivePageFromDevice,
   detachSymbolInstance,
   descendantIds,
   flattenComponentTree,
@@ -358,8 +359,11 @@ const OPEN_OVERLAY_PREVIEWS = new Set([
   'HoverCard', 'Menu', 'Modal', 'OverlayManager', 'Popconfirm', 'Popover', 'Portal', 'Select', 'Sheet', 'Toast', 'ToggleTip', 'Tooltip', 'Tour', 'TreeSelect'
 ]);
 
+const WIDE_VARIANT_PREVIEWS = new Set(['OverlayManager']);
+
 function variantIsInteractive(variant: UiComponentVariant, componentId: string): boolean {
   return INTERACTIVE_COMPONENT_PREVIEWS.has(componentId)
+    || variant.props.motion === true
     || ['hoverable', 'showSearch', 'multiple', 'allowClear', 'draggable', 'collapsible', 'editable', 'autoplay'].some((key) => variant.props[key] === true);
 }
 
@@ -879,7 +883,7 @@ export function WebDesignStudioApp() {
     if (device !== 'desktop') component = updateComponentFrame(component, device, { x: componentX, y: componentY });
     const starterSlot = !container && ['Drawer', 'Modal', 'Dialog', 'Sheet', 'AlertDialog'].includes(definitionId) ? editableSlotsForUiComponent(component)[0] : undefined;
     const starter = starterSlot ? createSlotStarterComponents(component, starterSlot, 'form', pageId, device) : [];
-    commitWithCanvasGrowth((active) => ({ ...active, components: [...active.components, component, ...starter] }));
+    commitWithCanvasGrowth((active) => withGeneratedResponsiveLayouts({ ...active, components: [...active.components, component, ...starter] }, pageId), ['desktop', 'tablet', 'mobile']);
     setSelectedId(component.id);
     setSelectedIds([component.id]);
     showToast(container ? `已添加到${editableSlotsForUiComponent(container).find((slot) => slot.id === targetSlot?.slotId)?.label ?? '组件内容'}` : `已插入 ${library.displayName} ${component.library?.component}`);
@@ -937,10 +941,10 @@ export function WebDesignStudioApp() {
       const frame = resolveComponent(component, device);
       return updateComponentFrame(component, device, { y: frame.y + offsetY });
     });
-    commitWithCanvasGrowth((active) => ({
+    commitWithCanvasGrowth((active) => withGeneratedResponsiveLayouts({
       ...active,
       components: [...active.components, ...adjusted]
-    }));
+    }, pageId), ['desktop', 'tablet', 'mobile']);
     setSelectedId(adjusted[0]?.id);
     setSelectedIds(adjusted[0] ? [adjusted[0].id] : []);
     showToast(template === 'form' ? '已插入可编辑表单' : '已插入可编辑详情内容');
@@ -981,7 +985,7 @@ export function WebDesignStudioApp() {
       if (device !== 'desktop') component = updateComponentFrame(component, device, { x, y });
       component.zIndex = Math.max(1, ...componentsForPage(current, pageId).filter((item) => !contentContainerAncestor(current, item)).map((item) => item.zIndex)) + 1;
     }
-    commitWithCanvasGrowth((active) => ({ ...active, components: [...active.components, component] }));
+    commitWithCanvasGrowth((active) => withGeneratedResponsiveLayouts({ ...active, components: [...active.components, component] }, pageId), ['desktop', 'tablet', 'mobile']);
     setSelectedId(component.id);
     setSelectedIds([component.id]);
   }
@@ -1261,6 +1265,20 @@ export function WebDesignStudioApp() {
     setSelectedId(undefined);
     setSelectedIds([]);
     setZoom(next === 'desktop' ? .82 : next === 'tablet' ? .72 : .9);
+  }
+
+  function withGeneratedResponsiveLayouts(active: WebDesignDocument, targetPageId: string) {
+    const desktopWidth = breakpointFor(active, 'desktop').width;
+    const tabletWidth = breakpointFor(active, 'tablet').width;
+    const mobileWidth = breakpointFor(active, 'mobile').width;
+    const withTablet = deriveResponsivePageFromDevice(active, targetPageId, 'desktop', 'tablet', desktopWidth, tabletWidth);
+    return deriveResponsivePageFromDevice(withTablet, targetPageId, 'desktop', 'mobile', desktopWidth, mobileWidth);
+  }
+
+  function generateResponsiveLayouts() {
+    if (!documentRef.current) return;
+    commitWithCanvasGrowth((active) => withGeneratedResponsiveLayouts(active, pageId), ['tablet', 'mobile']);
+    showToast('已补齐平板和手机布局，已有人工调整保持不变');
   }
 
   function fitCanvasToWidth(targetWidth: number) {
@@ -1760,7 +1778,7 @@ export function WebDesignStudioApp() {
     || `${item.label} ${item.id} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const filteredPersonalSymbols = personalSymbols.filter((symbol) => !normalizedPaletteQuery
     || `${symbol.name} ${symbol.components.map((component) => component.name).join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const activeUiLibrary = libraryTab === 'antd' || libraryTab === 'chakra' || libraryTab === 'shadcn' ? uiLibraryByName(libraryTab) : undefined;
+  const activeUiLibrary = libraryTab !== 'components' && libraryTab !== 'my' && libraryTab !== 'layers' ? uiLibraryByName(libraryTab) : undefined;
   const filteredUiLibraryComponents = activeUiLibrary?.components.filter((item) => !normalizedPaletteQuery
     || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery)) ?? [];
   const variantPickerLibrary = variantPickerTarget ? uiLibraryByName(variantPickerTarget.library) : undefined;
@@ -1810,6 +1828,10 @@ export function WebDesignStudioApp() {
             <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => setLibraryTab('antd')}>AntD</button>
             <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => setLibraryTab('chakra')}>Chakra</button>
             <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => setLibraryTab('shadcn')}>shadcn</button>
+            <button className={libraryTab === 'magicui' ? 'active' : ''} onClick={() => setLibraryTab('magicui')}>Magic</button>
+            <button className={libraryTab === 'spell' ? 'active' : ''} onClick={() => setLibraryTab('spell')}>Spell</button>
+            <button className={libraryTab === 'inspira' ? 'active' : ''} onClick={() => setLibraryTab('inspira')}>Inspira</button>
+            <button className={libraryTab === 'daisyui' ? 'active' : ''} onClick={() => setLibraryTab('daisyui')}>daisyUI</button>
             <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>图形</button>
             <button className={libraryTab === 'my' ? 'active' : ''} onClick={() => setLibraryTab('my')}>我的</button>
             <button className={libraryTab === 'layers' ? 'active' : ''} onClick={() => setLibraryTab('layers')}>图层</button>
@@ -1823,7 +1845,7 @@ export function WebDesignStudioApp() {
             </>}
 
             {activeUiLibrary && <>
-              <div className={`ui-library-heading library-${activeUiLibrary.id}`}><div className="ui-library-logo-mark">{activeUiLibrary.brandMark}</div><div><strong>{activeUiLibrary.displayName}</strong><span>{activeUiLibrary.id === 'shadcn' ? `本地源码组件 · ${activeUiLibrary.version}` : `官方运行时 · v${activeUiLibrary.version}`}</span></div></div>
+              <div className={`ui-library-heading library-${activeUiLibrary.id}`}><div className="ui-library-logo-mark">{activeUiLibrary.brandMark}</div><div><strong>{activeUiLibrary.displayName}</strong><span>{activeUiLibrary.license ? `开源组件 · ${activeUiLibrary.license} · ${activeUiLibrary.version}` : activeUiLibrary.id === 'shadcn' ? `本地源码组件 · ${activeUiLibrary.version}` : `官方运行时 · v${activeUiLibrary.version}`}</span></div></div>
               <div className="panel-intro"><strong>{activeUiLibrary.displayName} 组件总览</strong><span>点击先预览不同款式，拖拽则直接插入默认款</span></div>
               {activeUiLibrary.categories.map((category) => {
                 const items = filteredUiLibraryComponents.filter((item) => item.category === category);
@@ -1905,6 +1927,7 @@ export function WebDesignStudioApp() {
                 {viewportPresets.some((preset) => preset.group === 'large-display') && <optgroup label="超宽与原生高分辨率">{viewportPresets.filter((preset) => preset.group === 'large-display').map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>}
               </select>
               <button className="rotate-viewport-button" title="旋转视口" onClick={rotateViewport}>↻</button>
+              <button className="fit-button responsive-generate-button" title="从桌面布局补齐尚未单独编辑的平板和手机布局，不改变桌面或已有响应式调整" onClick={generateResponsiveLayouts}>响应式</button>
               <span className="toolbar-divider" />
               <button title="缩小" onClick={() => setZoom(Math.max(.05, zoom - .1))}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setZoom(Math.min(1.5, zoom + .1))}>＋</button>
               <span className="toolbar-divider" />
@@ -2079,7 +2102,7 @@ export function WebDesignStudioApp() {
       {variantPickerDefinition && variantPickerLibrary && <div className="studio-modal-backdrop" onPointerDown={() => setVariantPickerTarget(undefined)}>
         <section className="studio-modal variant-picker" data-library-portal-host onPointerDown={(event) => event.stopPropagation()}>
           <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
-          <div className="variant-preview-grid">{variantPickerVariants.map((variant) => {
+          <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) ? 'wide-component-previews' : ''}`}>{variantPickerVariants.map((variant) => {
             const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
             const differences = variantDifferenceLabels(variant);
             const interactiveVariant = variantIsInteractive(variant, variantPickerDefinition.id);

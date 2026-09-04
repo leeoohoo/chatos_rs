@@ -29,9 +29,15 @@ import { designStyleScopeProps } from './component-style';
 type AnyProps = Record<string, any>;
 
 function overlayManagerBody(props: AnyProps) {
-  if (props.kind === 'form') return <Stack gap="3"><Text textStyle="sm" color="fg.muted">{String(props.description)}</Text><Field.Root><Field.Label>项目名称</Field.Label><Input defaultValue="品牌官网改版" /></Field.Root><Field.Root><Field.Label>项目说明</Field.Label><Textarea defaultValue="统一首页视觉语言与响应式体验。" rows={2} /></Field.Root></Stack>;
-  if (props.kind === 'details') return <Stack gap="3"><Text textStyle="sm" color="fg.muted">{String(props.description)}</Text><DataList.Root orientation="horizontal" size="sm"><DataList.Item><DataList.ItemLabel>组件</DataList.ItemLabel><DataList.ItemValue>Hero Section</DataList.ItemValue></DataList.Item><DataList.Item><DataList.ItemLabel>尺寸</DataList.ItemLabel><DataList.ItemValue>1200 × 640</DataList.ItemValue></DataList.Item><DataList.Item><DataList.ItemLabel>状态</DataList.ItemLabel><DataList.ItemValue><Status.Root colorPalette="green"><Status.Indicator />可用</Status.Root></DataList.ItemValue></DataList.Item></DataList.Root></Stack>;
-  return <Stack gap="3"><Flex gap="3" align="start"><Center width="9" height="9" flex="none" borderRadius="full" background="orange.100" color="orange.700"><TriangleAlert size={18} /></Center><Box><Text fontWeight="semibold">{String(props.title)}</Text><Text textStyle="sm" color="fg.muted">{String(props.description)}</Text></Box></Flex><Flex justify="end" gap="2"><Button size="sm" variant="outline">取消</Button><Button size="sm" colorPalette="blue">确认发布</Button></Flex></Stack>;
+  if (props.kind === 'form') return <Stack gap="3"><Text textStyle="sm" color="fg.muted">{String(props.description)}</Text><Field.Root><Field.Label>项目名称</Field.Label><Input defaultValue="品牌官网改版" /></Field.Root><Field.Root><Field.Label>项目类型</Field.Label><NativeSelect.Root><NativeSelect.Field defaultValue="marketing"><option value="marketing">品牌营销网站</option><option value="commerce">电子商务网站</option><option value="product">产品应用</option></NativeSelect.Field><NativeSelect.Indicator /></NativeSelect.Root></Field.Root><Field.Root><Field.Label>项目说明</Field.Label><Textarea defaultValue="统一首页视觉语言与响应式体验。" rows={2} /></Field.Root></Stack>;
+  if (props.kind === 'details') return <Stack gap="4"><Flex align="center" gap="3"><Center width="11" height="11" borderRadius="xl" background="linear-gradient(135deg, #5856d6, #007aff)" color="white" fontWeight="bold">H</Center><Box><Heading size="sm">Hero Section</Heading><Text textStyle="xs" color="fg.muted">营销首页 · 主视觉容器</Text></Box><Badge marginStart="auto" colorPalette="green">已同步</Badge></Flex><Text textStyle="sm" color="fg.muted">{String(props.description)}</Text><DataList.Root orientation="horizontal" size="sm"><DataList.Item><DataList.ItemLabel>尺寸</DataList.ItemLabel><DataList.ItemValue>1200 × 640</DataList.ItemValue></DataList.Item><DataList.Item><DataList.ItemLabel>响应式</DataList.ItemLabel><DataList.ItemValue>桌面 / 平板 / 手机</DataList.ItemValue></DataList.Item><DataList.Item><DataList.ItemLabel>最后修改</DataList.ItemLabel><DataList.ItemValue>AI 设计师 · 刚刚</DataList.ItemValue></DataList.Item></DataList.Root></Stack>;
+  return <Stack gap="4"><Flex gap="3" align="start"><Center width="10" height="10" flex="none" borderRadius="full" background="orange.100" color="orange.700"><TriangleAlert size={19} /></Center><Box><Text fontWeight="semibold">{String(props.title)}</Text><Text textStyle="sm" color="fg.muted">{String(props.description)}</Text></Box></Flex><Alert.Root status="warning" variant="subtle"><Alert.Indicator /><Alert.Content><Alert.Title>发布后将更新共享预览</Alert.Title><Alert.Description>当前 4 位协作者会立即看到新版本。</Alert.Description></Alert.Content></Alert.Root></Stack>;
+}
+
+function overlayManagerActions(kind: string, close: () => void) {
+  if (kind === 'form') return <><Button size="sm" variant="outline" onClick={close}>取消</Button><Button size="sm" colorPalette="purple" onClick={close}>保存项目</Button></>;
+  if (kind === 'details') return <><Button size="sm" variant="outline" onClick={close}>关闭</Button><Button size="sm" colorPalette="blue" onClick={close}>在画布中定位</Button></>;
+  return <><Button size="sm" variant="outline" onClick={close}>暂不发布</Button><Button size="sm" colorPalette="orange" onClick={close}>确认发布</Button></>;
 }
 
 function portalBody(props: AnyProps) {
@@ -83,7 +89,7 @@ function skipNavBody(props: AnyProps) {
 const studioToaster = createToaster({ placement: 'bottom-end', pauseOnPageIdle: true });
 const managedOverlay = createOverlay<AnyProps>((props) => {
   const { title, description, kind, content, ...rootProps } = props;
-  return <Dialog.Root {...rootProps}><Portal><Dialog.Backdrop /><Dialog.Positioner><Dialog.Content><Dialog.Header><Dialog.Title>{String(title ?? '浮层')}</Dialog.Title></Dialog.Header><Dialog.Body>{content ?? overlayManagerBody({ title, description, kind })}</Dialog.Body><Dialog.CloseTrigger asChild><CloseButton /></Dialog.CloseTrigger></Dialog.Content></Dialog.Positioner></Portal></Dialog.Root>;
+  return <Dialog.Root {...rootProps}><Portal><Dialog.Backdrop /><Dialog.Positioner><Dialog.Content><Dialog.Header><Dialog.Title>{String(title ?? '浮层')}</Dialog.Title></Dialog.Header><Dialog.Body>{content ?? overlayManagerBody({ title, description, kind })}</Dialog.Body><Dialog.Footer><Dialog.CloseTrigger asChild><Button variant="outline">取消</Button></Dialog.CloseTrigger><Dialog.CloseTrigger asChild><Button colorPalette={kind === 'form' ? 'purple' : kind === 'details' ? 'blue' : 'orange'}>{kind === 'form' ? '保存项目' : kind === 'details' ? '在画布中定位' : '确认发布'}</Button></Dialog.CloseTrigger></Dialog.Footer><Dialog.CloseTrigger asChild><CloseButton /></Dialog.CloseTrigger></Dialog.Content></Dialog.Positioner></Portal></Dialog.Root>;
 });
 const sampleImage = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5D50DF"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient></defs><rect width="800" height="480" rx="32" fill="url(#g)"/><circle cx="650" cy="100" r="180" fill="#fff" opacity=".12"/><rect x="80" y="90" width="320" height="30" rx="15" fill="#fff" opacity=".92"/><rect x="80" y="145" width="500" height="18" rx="9" fill="#fff" opacity=".45"/><rect x="80" y="210" width="640" height="190" rx="24" fill="#fff" opacity=".16"/><text x="105" y="315" font-family="Arial" font-size="42" font-weight="700" fill="white">Web Design Studio</text></svg>')}`;
 
@@ -112,6 +118,16 @@ function ChakraPortalShowcase({ component, props, slotContent }: { component: We
   useEffect(() => setOpen(true), [component.id, name, props.title, props.kind, props.placement]);
   const placement = String(props.placement ?? (name === 'ActionBar' ? 'bottom' : 'top'));
   const palette = props.type === 'error' ? 'red' : props.type === 'success' ? 'green' : props.type === 'loading' ? 'orange' : 'blue';
+  if (name === 'OverlayManager') {
+    const kind = String(props.kind ?? 'confirm');
+    const triggerLabel = kind === 'form' ? '编辑项目资料' : kind === 'details' ? '查看组件详情' : '发布当前设计';
+    return <Grid className={`chakra-overlay-manager-showcase kind-${kind}`} width="100%" height="100%" minHeight="280px" templateColumns="minmax(120px,.7fr) minmax(240px,1.3fr)" gap="4" alignItems="center" padding="3">
+      <Stack align="start" gap="3"><Badge colorPalette={kind === 'form' ? 'purple' : kind === 'details' ? 'blue' : 'orange'}>{kind === 'form' ? 'FORM OVERLAY' : kind === 'details' ? 'DETAIL OVERLAY' : 'CONFIRM OVERLAY'}</Badge><Heading size="sm">由 Overlay Manager 程序化创建</Heading><Text textStyle="xs" color="fg.muted">同一个管理器可以创建完全不同的浮层内容与操作。</Text><Button colorPalette={kind === 'form' ? 'purple' : kind === 'details' ? 'blue' : 'orange'} onClick={() => setOpen(true)}>{triggerLabel}</Button></Stack>
+      <Stack minHeight="250px" overflow="hidden" borderWidth="1px" borderRadius="2xl" background="bg.panel" shadow="lg" opacity={open ? 1 : .7}>
+        {open ? <><Flex align="center" justify="space-between" padding="4" borderBottomWidth="1px"><Box><Text textStyle="xs" color="fg.muted">OVERLAY MANAGER</Text><Heading size="sm" marginTop="1">{String(props.title)}</Heading></Box><CloseButton size="sm" onClick={() => setOpen(false)} /></Flex><Box flex="1" padding="4" overflow="auto">{slotContent.content ?? overlayManagerBody(props)}</Box><Flex justify="end" gap="2" padding="3 4" borderTopWidth="1px" background="bg.subtle">{overlayManagerActions(kind, () => setOpen(false))}</Flex></> : <Center flex="1"><Stack align="center" gap="2"><Text color="fg.muted" textStyle="sm">浮层已关闭</Text><Button size="sm" variant="outline" onClick={() => setOpen(true)}>重新打开</Button></Stack></Center>}
+      </Stack>
+    </Grid>;
+  }
   let content: ReactNode;
   if (name === 'ActionBar') {
     content = props.kind === 'bulk'
@@ -123,8 +139,6 @@ function ChakraPortalShowcase({ component, props, slotContent }: { component: We
     content = <Stack className="chakra-showcase-panel" gap="3"><Flex align="center" justify="space-between"><Flex align="center" gap="2"><GripHorizontal size={15} /><Text fontWeight="semibold">{String(props.title ?? '浮动面板')}</Text></Flex><Flex gap="1"><Minus size={13} /><Square size={13} /><X size={13} /></Flex></Flex>{slotContent.content ?? floatingPanelBody(props)}</Stack>;
   } else if (name === 'HoverCard') {
     content = slotContent.popup ?? hoverCardBody(props);
-  } else if (name === 'OverlayManager') {
-    content = overlayManagerBody(props);
   } else if (name === 'ToggleTip') {
     content = <Flex align="center" gap="2">{props.showArrow && <Text color="purple.500">▲</Text>}{slotContent.popup ?? toggleTipBody(props)}</Flex>;
   } else if (name === 'Portal') {
@@ -490,7 +504,7 @@ export function ChakraCanvasComponent({ component, preview, showcase = false, to
   slotContent?: Record<string, ReactNode>;
 }) {
   const scope = designStyleScopeProps(component.style);
-  return <ChakraProvider value={defaultSystem}><Box {...scope} color={component.style.color} fontFamily={tokens?.typography.fontFamily}>
+  return <ChakraProvider value={defaultSystem}><Box className={`chakra-runtime ${scope.className}`} style={scope.style} color={component.style.color} fontFamily={tokens?.typography.fontFamily}>
     <ChakraCanvasRenderer component={component} preview={preview} showcase={showcase} slotContent={slotContent} />
   </Box></ChakraProvider>;
 }

@@ -15,6 +15,13 @@
       "env": {}
     }
   },
+  "skills": [
+    "./skills/document",
+    "./skills/document-word",
+    "./skills/document-spreadsheet",
+    "./skills/document-presentation",
+    "./skills/document-pdf"
+  ],
   "interface": {
     "displayName": "Document Tools",
     "shortDescription": "Local Word, Excel, PowerPoint, and PDF tools",

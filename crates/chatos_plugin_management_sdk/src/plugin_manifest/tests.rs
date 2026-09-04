@@ -84,11 +84,11 @@ fn preserves_published_manifest_hashes_without_runtime_context() {
     let fixtures = [
         (
             include_str!("../../../../plugins/computer-use/chatos.plugin.json"),
-            "e104fa58900677d9f2123e14e38c33c7b7325cd739b0a8496791d193a1ec9ea5",
+            "97275ab2cb710a193d24369f3b5b8048595f74ced800e2153129d7004d0be3d1",
         ),
         (
             include_str!("../../../../plugins/document/chatos.plugin.json"),
-            "6c7e7b7e688546bcc33312fed022ca3b627ef2d1ac72620df19f83c29ba32814",
+            "b3b73e8d032c9f9aca19351fc916917b29a6bb8249b3f68c838ad4a227be7f0e",
         ),
     ];
 

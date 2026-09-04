@@ -11,11 +11,16 @@ import {
 import { Icon } from './Icons';
 
 function NodeHandles() {
+  const slots = [15, 27, 38.5, 50, 61.5, 73, 85];
   return <>
     <Handle type="source" position={Position.Left} id="left" />
     <Handle type="source" position={Position.Right} id="right" />
     <Handle type="source" position={Position.Top} id="top" />
     <Handle type="source" position={Position.Bottom} id="bottom" />
+    {slots.map((offset, index) => <Handle key={`left-${index}`} type="source" position={Position.Left} id={`left-${index}`} style={{ top: `${offset}%` }} />)}
+    {slots.map((offset, index) => <Handle key={`right-${index}`} type="source" position={Position.Right} id={`right-${index}`} style={{ top: `${offset}%` }} />)}
+    {slots.map((offset, index) => <Handle key={`top-${index}`} type="source" position={Position.Top} id={`top-${index}`} style={{ left: `${offset}%` }} />)}
+    {slots.map((offset, index) => <Handle key={`bottom-${index}`} type="source" position={Position.Bottom} id={`bottom-${index}`} style={{ left: `${offset}%` }} />)}
   </>;
 }
 

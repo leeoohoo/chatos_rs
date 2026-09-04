@@ -90,6 +90,7 @@ pub(in super::super) fn resolved_command_plugin(requires_confirmation: bool) -> 
             release_id: release_id.clone(),
             component,
             content_sha256: "d".repeat(64),
+            skill: None,
         })
         .collect();
     plugin
@@ -174,6 +175,7 @@ pub(in super::super) fn resolved_agent_plugin(base_agent: &str) -> ResolvedPlugi
             release_id: release_id.clone(),
             component,
             content_sha256: "e".repeat(64),
+            skill: None,
         })
         .collect();
     plugin

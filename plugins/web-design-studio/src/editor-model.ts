@@ -574,6 +574,60 @@ export function reflowPageForViewport(
   };
 }
 
+export function deriveResponsivePageFromDevice(
+  document: WebDesignDocument,
+  pageId: string,
+  sourceDevice: WebDesignDevice,
+  targetDevice: Exclude<WebDesignDevice, 'desktop'>,
+  sourceWidth: number,
+  targetWidth: number,
+  options: { preserveExisting?: boolean } = {}
+): WebDesignDocument {
+  const preserveExisting = options.preserveExisting !== false;
+  const generatedFrames = new Map<string, ResolvedWebDesignComponent>();
+  const visit = (
+    component: WebDesignComponent,
+    sourceContainer: { x: number; y: number; width: number },
+    targetContainer: { x: number; y: number; width: number }
+  ) => {
+    const sourceFrame = resolveComponent(component, sourceDevice);
+    const existing = component.responsive?.[targetDevice];
+    const targetFrame = preserveExisting && existing
+      ? resolveComponent(component, targetDevice)
+      : {
+          ...reflowHorizontalFrame(
+            component,
+            sourceFrame,
+            targetDevice,
+            { x: sourceContainer.x, width: sourceContainer.width },
+            { x: targetContainer.x, width: targetContainer.width }
+          ),
+          y: Math.round(targetContainer.y + sourceFrame.y - sourceContainer.y),
+          height: sourceFrame.height
+        };
+    if (!(preserveExisting && existing)) generatedFrames.set(component.id, targetFrame);
+    for (const child of childrenOf(document, component.id, pageId)) {
+      visit(
+        child,
+        { x: sourceFrame.x, y: sourceFrame.y, width: sourceFrame.width },
+        { x: targetFrame.x, y: targetFrame.y, width: targetFrame.width }
+      );
+    }
+  };
+
+  for (const component of componentsForPage(document, pageId).filter((candidate) => candidate.parentId === undefined)) {
+    visit(component, { x: 0, y: 0, width: sourceWidth }, { x: 0, y: 0, width: targetWidth });
+  }
+
+  return {
+    ...document,
+    components: document.components.map((component) => {
+      const frame = generatedFrames.get(component.id);
+      return frame ? updateComponentFrame(component, targetDevice, frame) : component;
+    })
+  };
+}
+
 export function childrenOf(document: WebDesignDocument, parentId?: string, pageId?: string): WebDesignComponent[] {
   return document.components
     .filter((component) => component.parentId === parentId && (!pageId || pageIdForComponent(document, component) === pageId))

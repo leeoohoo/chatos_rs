@@ -2,13 +2,19 @@ import ChatOSCore
 import Foundation
 
 struct NativeWorkspaceFilesystem: Sendable {
-    private static let maximumPreviewBytes: Int64 = 2 * 1_024 * 1_024
+    private static let maximumTextPreviewBytes: Int64 = 2 * 1_024 * 1_024
+    private static let maximumImagePreviewBytes: Int64 = 25 * 1_024 * 1_024
     private static let maximumSearchFileBytes: Int64 = 2 * 1_024 * 1_024
     private static let maximumSearchVisits = 20_000
     private static let searchDuration: TimeInterval = 3
 
     private let workspace: LocalConnectorWorkspace
     private var fileManager: FileManager { .default }
+
+    private static let previewableImageExtensions: Set<String> = [
+        "avif", "bmp", "gif", "heic", "heif", "ico", "jpeg", "jpg",
+        "png", "svg", "tif", "tiff", "webp",
+    ]
 
     init(workspace: LocalConnectorWorkspace) {
         self.workspace = workspace
@@ -71,7 +77,11 @@ struct NativeWorkspaceFilesystem: Sendable {
         let values = try resourceValues(url)
         guard values.isRegularFile == true else { throw NativeWorkspaceRelayError.notFile }
         let size = Int64(values.fileSize ?? 0)
-        guard size <= Self.maximumPreviewBytes else {
+        let extensionName = url.pathExtension.lowercased()
+        let maximumPreviewBytes = Self.previewableImageExtensions.contains(extensionName)
+            ? Self.maximumImagePreviewBytes
+            : Self.maximumTextPreviewBytes
+        guard size <= maximumPreviewBytes else {
             throw NativeWorkspaceRelayError.fileTooLarge(size)
         }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])

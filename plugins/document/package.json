@@ -13,6 +13,7 @@
   "files": [
     "bin/",
     "dist/",
+    "skills/",
     "vendor/",
     "chatos.plugin.json",
     "LICENSE",

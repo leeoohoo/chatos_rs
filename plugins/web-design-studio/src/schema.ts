@@ -3,7 +3,7 @@ export type WebComponentType =
   | 'input' | 'textarea' | 'select' | 'checkbox' | 'switch' | 'divider' | 'badge' | 'avatar'
   | 'list' | 'table' | 'video';
 export type WebDesignDevice = 'desktop' | 'tablet' | 'mobile';
-export type WebDesignLibraryName = 'antd' | 'chakra' | 'shadcn';
+export type WebDesignLibraryName = 'antd' | 'chakra' | 'shadcn' | 'magicui' | 'spell' | 'inspira' | 'daisyui';
 export type WebContainerLayoutMode = 'free' | 'flex-row' | 'flex-column' | 'grid';
 export type WebContainerAlign = 'start' | 'center' | 'end' | 'stretch';
 export type WebContainerJustify = 'start' | 'center' | 'end' | 'space-between' | 'space-around';
@@ -271,7 +271,7 @@ const componentTypes = new Set<WebComponentType>([
   'list', 'table', 'video'
 ]);
 const devices = new Set<WebDesignDevice>(['desktop', 'tablet', 'mobile']);
-const libraryNames = new Set<WebDesignLibraryName>(['antd', 'chakra', 'shadcn']);
+const libraryNames = new Set<WebDesignLibraryName>(['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
 const layoutModes = new Set<WebContainerLayoutMode>(['free', 'flex-row', 'flex-column', 'grid']);
 const layoutAlignments = new Set<WebContainerAlign>(['start', 'center', 'end', 'stretch']);
 const layoutJustifications = new Set<WebContainerJustify>(['start', 'center', 'end', 'space-between', 'space-around']);

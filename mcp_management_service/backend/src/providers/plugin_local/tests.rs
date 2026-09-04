@@ -164,6 +164,7 @@ async fn mcp_prepare_ignores_plugin_tool_component_routes() {
         Duration::from_secs(1),
         Some("plugin-local-secret".to_string()),
         1024 * 1024,
+        Arc::new(SkillActivationAttestationService::new("plugin-local-secret").unwrap()),
     )
     .unwrap();
     let mut routes = vec![ResolvedMcpRoute {
@@ -407,6 +408,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         Duration::from_secs(5),
         Some(SECRET.to_string()),
         1024 * 1024,
+        Arc::new(SkillActivationAttestationService::new(SECRET).unwrap()),
     )
     .unwrap();
     let immutable = immutable_binding();
@@ -601,6 +603,7 @@ async fn execute_recovers_a_missing_local_adapter_session_once_and_reuses_it() {
         Duration::from_secs(5),
         Some(SECRET.to_string()),
         1024 * 1024,
+        Arc::new(SkillActivationAttestationService::new(SECRET).unwrap()),
     )
     .unwrap();
     let immutable = immutable_binding();
@@ -698,6 +701,7 @@ async fn device_only_plugin_prepare_uses_the_installation_device_without_workspa
         Duration::from_secs(5),
         Some(SECRET.to_string()),
         1024 * 1024,
+        Arc::new(SkillActivationAttestationService::new(SECRET).unwrap()),
     )
     .unwrap();
     let mut immutable = immutable_binding();

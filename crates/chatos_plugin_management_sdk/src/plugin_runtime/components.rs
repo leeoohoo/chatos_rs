@@ -38,7 +38,7 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
             PluginComponentKind::SkillCollection,
             "skill_collection",
             Some(skill.clone()),
-            true,
+            false,
         ));
     }
     for server in &manifest.mcp_servers {

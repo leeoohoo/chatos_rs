@@ -16,7 +16,14 @@
       "env": {}
     }
   },
-  "skills": ["./skills/web-design-studio"],
+  "skills": [
+    "./skills/web-design-studio",
+    "./skills/web-design-projects",
+    "./skills/web-design-components",
+    "./skills/web-design-responsive-layout",
+    "./skills/web-design-visual-system",
+    "./skills/web-design-validation-export"
+  ],
   "ui": [
     {
       "componentKey": "web-design-workbench",

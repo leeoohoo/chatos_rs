@@ -100,6 +100,57 @@ tasks --> db : SQL
   assert.match(exported, /\s+component "桌面应用" as desktop/);
 });
 
+test('non-ASCII packages without explicit aliases remain distinct architecture boundaries', () => {
+  const source = `@startuml
+left to right direction
+package "客户端" {
+  component "Web 管理端" as web
+}
+package "接入层" {
+  component "API 网关" as gateway
+}
+package "业务服务层" {
+  component "订单服务" as orders
+}
+package "数据与基础设施" {
+  database "PostgreSQL" as db
+}
+web --> gateway
+gateway --> orders
+orders --> db
+@enduml`;
+
+  const ir = parsePlantUmlStructural(source);
+  const containers = ir.nodes.filter((node) => node.container);
+  assert.equal(containers.length, 4);
+  assert.equal(new Set(containers.map((node) => node.alias)).size, 4);
+
+  const document = plantUmlToDiagram(source, { documentId: 'implicit-non-ascii-groups', kind: 'architecture' });
+  const visualContainers = document.nodes.filter((node) => node.data.shape === 'container');
+  assert.deepEqual(
+    visualContainers.map((node) => node.data.label),
+    ['客户端', '接入层', '业务服务层', '数据与基础设施']
+  );
+  assert.ok(visualContainers.every((container) => document.nodes.filter((node) => node.parentId === container.id).length === 1));
+});
+
+test('implicit aliases with the same ASCII fragment do not merge non-ASCII groups', () => {
+  const source = `@startuml
+package "领域 API 层" {
+  component "Order API" as order_api
+}
+package "外部 API 层" {
+  component "Partner API" as partner_api
+}
+order_api --> partner_api
+@enduml`;
+
+  const ir = parsePlantUmlStructural(source);
+  const containers = ir.nodes.filter((node) => node.container);
+  assert.equal(containers.length, 2);
+  assert.equal(new Set(containers.map((node) => node.alias)).size, 2);
+});
+
 test('topology diagrams round-trip through PlantUML Deployment Diagram with exact canvas state', () => {
   const original = createTemplate('topology');
   const source = diagramToPlantUml(original);

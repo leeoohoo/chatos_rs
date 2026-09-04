@@ -6,9 +6,16 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-test('MCP can create, patch, layout, validate, and export a diagram', async () => {
+const checklistByKind = {
+  architecture: ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'],
+  flowchart: ['single_business_outcome', 'start_and_terminal_states_are_clear', 'decisions_have_named_outcomes', 'failure_and_retry_paths_are_bounded', 'independent_processes_are_split', 'code_evidence_is_mapped'],
+  swimlane: ['single_collaboration_scenario', 'lanes_represent_real_ownership', 'handoffs_are_explicit', 'decisions_have_named_outcomes', 'independent_scenarios_are_split', 'code_evidence_is_mapped'],
+  topology: ['single_environment_or_traffic_question', 'deployment_boundaries_are_real', 'traffic_direction_is_visible', 'redundancy_is_not_fake_detail', 'logical_architecture_is_separated', 'configuration_evidence_is_mapped'],
+  sequence: ['single_runtime_scenario', 'participants_have_distinct_roles', 'message_order_is_causal', 'activation_intervals_are_bounded', 'fragments_do_not_hide_content', 'independent_scenarios_are_split']
+};
+
+test('MCP enforces Skill-gated permits, injected scope, and idempotent generated diagrams', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-studio-test-'));
-  const artifacts = path.join(root, 'artifacts');
   const client = new Client({ name: 'diagram-studio-test', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -16,8 +23,9 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
     env: {
       ...process.env,
       DIAGRAM_STUDIO_DATA_DIR: path.join(root, 'data'),
-      CHATOS_PLUGIN_ARTIFACT_DIR: artifacts,
+      CHATOS_PLUGIN_ARTIFACT_DIR: path.join(root, 'artifacts'),
       CHATOS_CONTEXT_SCOPE: 'project',
+      CHATOS_CONTEXT_SCOPE_ID: 'scope-project-one',
       CHATOS_PROJECT_ID: 'chatos-project-1',
       CHATOS_PROJECT_NAME: 'ChatOS Project One',
       CHATOS_WORKSPACE_ID: 'workspace-1'
@@ -25,232 +33,157 @@ test('MCP can create, patch, layout, validate, and export a diagram', async () =
   });
   try {
     await client.connect(transport);
-    const tools = await client.listTools();
-    assert.ok(tools.tools.some((tool) => tool.name === 'diagram_apply_patch'));
-    assert.ok(tools.tools.some((tool) => tool.name === 'diagram_import_plantuml'));
-    assert.ok(tools.tools.some((tool) => tool.name === 'diagram_create_project'));
+    const listedTools = await client.listTools();
+    const tools = new Map(listedTools.tools.map((tool) => [tool.name, tool]));
+    for (const name of ['diagram_prepare_generation', 'diagram_commit_generation']) assert.ok(tools.has(name));
+    assert.equal(tools.has('diagram_get_generation_guide'), false);
+    for (const name of ['diagram_list_documents', 'diagram_create_document', 'diagram_import_plantuml']) {
+      assert.equal(Object.hasOwn(tools.get(name).inputSchema.properties, 'projectId'), false, `${name} must not accept projectId`);
+    }
+    for (const name of ['diagram_prepare_generation', 'diagram_commit_generation', 'diagram_import_plantuml']) {
+      const tool = tools.get(name);
+      assert.equal(tool._meta['chatos/skillGate'].evidenceArgument, 'skillEvidence');
+      assert.equal(tool.inputSchema.properties.skillEvidence.type, 'array');
+      assert.ok(tool.inputSchema.required.includes('skillEvidence'));
+    }
+    assert.ok(tools.has('diagram_create_project'), 'UI classification projects remain available');
 
-    const projectCreated = await client.callTool({
-      name: 'diagram_create_project',
-      arguments: { name: 'Architecture Project', description: 'Managed through MCP' }
-    });
-    const projectId = projectCreated.structuredContent.project.projectId;
-    assert.equal(projectCreated.structuredContent.scope.kind, 'project');
-    assert.equal(projectCreated.structuredContent.scope.chatosProjectId, 'chatos-project-1');
-    const targetProjectCreated = await client.callTool({
-      name: 'diagram_create_project',
-      arguments: { name: 'Target Project' }
-    });
-    const targetProjectId = targetProjectCreated.structuredContent.project.projectId;
+    const blank = await call(client, 'diagram_create_document', { kind: 'architecture', title: 'Blank Architecture', artifactKey: 'blank-architecture' });
+    const blankRetry = await call(client, 'diagram_create_document', { kind: 'architecture', title: 'Blank Architecture', artifactKey: 'blank-architecture' });
+    assert.equal(blankRetry.document.documentId, blank.document.documentId);
+    const blankDocument = await call(client, 'diagram_get_document', { documentId: blank.document.documentId });
+    assert.deepEqual(blankDocument.document.nodes, []);
+    assert.deepEqual(blankDocument.document.edges, []);
 
-    const blankCreated = await client.callTool({
-      name: 'diagram_create_document',
+    const noPermit = await client.callTool({
+      name: 'diagram_import_plantuml',
       arguments: {
-        kind: 'architecture',
-        title: 'Blank Architecture',
-        projectId,
-        blank: true,
-        artifactKey: 'blank-architecture'
+        source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\n@enduml',
+        title: 'No Permit', kind: 'sequence', artifactKey: 'no-permit'
       }
     });
-    const blankDocumentId = blankCreated.structuredContent.document.documentId;
-    const blankRetried = await client.callTool({
-      name: 'diagram_create_document',
+    assert.equal(noPermit.isError, true);
+
+    const goal = 'Show one token refresh runtime scenario';
+    const overBudget = await client.callTool({
+      name: 'diagram_prepare_generation',
       arguments: {
-        kind: 'architecture',
-        title: 'Blank Architecture',
-        projectId,
-        blank: true,
-        artifactKey: 'blank-architecture'
+        skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
+        artifactKey: 'token-refresh', operation: 'create', title: 'Token Refresh Sequence',
+        plan: planFor('sequence', goal, { estimatedPrimaryItemCount: 9 })
       }
     });
-    assert.equal(blankRetried.structuredContent.document.documentId, blankDocumentId);
-    assert.equal(blankRetried.structuredContent.reused, true);
-    const blankDocument = await client.callTool({
-      name: 'diagram_get_document',
-      arguments: { documentId: blankDocumentId }
-    });
-    assert.deepEqual(blankDocument.structuredContent.document.nodes, []);
-    assert.deepEqual(blankDocument.structuredContent.document.edges, []);
+    assert.equal(overBudget.isError, true);
+    assert.match(overBudget.structuredContent.error, /exceeding.*budget|exceeds.*budget/i);
 
-    const created = await client.callTool({
-      name: 'diagram_create_document',
-      arguments: { kind: 'architecture', title: 'MCP Architecture' }
+    const prepared = await call(client, 'diagram_prepare_generation', {
+      skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
+      artifactKey: 'token-refresh', operation: 'create', title: 'Token Refresh Sequence',
+      plan: planFor('sequence', goal)
     });
-    const createdBody = created.structuredContent;
-    const documentId = createdBody.document.documentId;
-    assert.equal(createdBody.document.revision, 1);
+    const source = [
+      '@startuml',
+      'actor "User" as user',
+      'participant "Client" as client',
+      'participant "Auth API" as auth_api',
+      'database "Session Store" as session_store',
+      'user -> client : Continue',
+      'client -> auth_api : Refresh token',
+      'activate auth_api',
+      'auth_api -> session_store : Validate session',
+      'activate session_store',
+      'session_store --> auth_api : Session state',
+      'deactivate session_store',
+      'auth_api --> client : New token',
+      'deactivate auth_api',
+      'client --> user : Continue',
+      '@enduml'
+    ].join('\n');
+    const committed = await call(client, 'diagram_commit_generation', {
+      skillEvidence: ['router-evidence', 'sequence-evidence'],
+      generationPermit: prepared.generationPermit,
+      source, title: 'Token Refresh Sequence', kind: 'sequence', artifactKey: 'token-refresh',
+      idempotencyKey: 'token-refresh-write-1', responseDetail: 'document'
+    });
+    assert.equal(committed.created, true);
+    assert.equal(committed.quality.ready, true);
+    assert.equal(committed.document.kind, 'sequence');
+    assert.equal(committed.document.generationProvenance.guideId, 'diagram-sequence');
+    assert.equal(committed.document.generationProvenance.planHash, prepared.planHash);
 
-    const intentionalCopyOne = await client.callTool({
-      name: 'diagram_create_document',
-      arguments: { kind: 'architecture', title: 'Repeated Kind', blank: true, mode: 'create_new', idempotencyKey: 'copy-call-1' }
+    const retry = await call(client, 'diagram_commit_generation', {
+      skillEvidence: ['router-evidence', 'sequence-evidence'],
+      generationPermit: prepared.generationPermit,
+      source, title: 'Token Refresh Sequence', kind: 'sequence', artifactKey: 'token-refresh',
+      idempotencyKey: 'token-refresh-write-1'
     });
-    const intentionalCopyOneRetry = await client.callTool({
-      name: 'diagram_create_document',
-      arguments: { kind: 'architecture', title: 'Repeated Kind', blank: true, mode: 'create_new', idempotencyKey: 'copy-call-1' }
-    });
-    const intentionalCopyTwo = await client.callTool({
-      name: 'diagram_create_document',
-      arguments: { kind: 'architecture', title: 'Repeated Kind', blank: true, mode: 'create_new', idempotencyKey: 'copy-call-2' }
-    });
-    assert.equal(intentionalCopyOneRetry.structuredContent.document.documentId, intentionalCopyOne.structuredContent.document.documentId);
-    assert.notEqual(intentionalCopyTwo.structuredContent.document.documentId, intentionalCopyOne.structuredContent.document.documentId);
+    assert.equal(retry.document.documentId, committed.document.documentId);
+    assert.equal(retry.reused, true);
 
-    const patched = await client.callTool({
+    const structuralPatchWithoutPermit = await client.callTool({
       name: 'diagram_apply_patch',
       arguments: {
-        documentId,
-        expectedRevision: 1,
-        operations: [{ op: 'set_title', title: 'Updated Architecture' }]
+        documentId: committed.document.documentId,
+        expectedRevision: committed.document.revision,
+        operations: [{ op: 'remove_edge', edgeId: committed.document.edges[0].id }]
       }
     });
-    assert.equal(patched.structuredContent.document.revision, 2);
-    assert.equal(patched.structuredContent.document.title, 'Updated Architecture');
+    assert.equal(structuralPatchWithoutPermit.isError, true);
+    assert.match(structuralPatchWithoutPermit.structuredContent.error, /generationPermit/);
 
-    const laidOut = await client.callTool({
-      name: 'diagram_auto_layout',
-      arguments: { documentId, expectedRevision: 2, direction: 'RIGHT' }
+    const renamed = await call(client, 'diagram_apply_patch', {
+      documentId: committed.document.documentId,
+      expectedRevision: committed.document.revision,
+      operations: [{ op: 'set_title', title: 'Token Refresh Runtime Sequence' }]
     });
-    assert.equal(laidOut.structuredContent.document.revision, 3);
+    assert.equal(renamed.document.title, 'Token Refresh Runtime Sequence');
 
-    const validation = await client.callTool({
-      name: 'diagram_validate',
-      arguments: { documentId }
-    });
-    assert.equal(validation.structuredContent.valid, true);
+    const listedDocuments = await call(client, 'diagram_list_documents', {});
+    assert.equal(listedDocuments.scope.chatosProjectId, 'chatos-project-1');
+    assert.equal(listedDocuments.documents.length, 2);
 
-    const exported = await client.callTool({
-      name: 'diagram_export',
-      arguments: { documentId, format: 'svg' }
-    });
-    assert.equal(exported.structuredContent.mimeType, 'image/svg+xml');
-    assert.match(exported.structuredContent.sha256, /^[0-9a-f]{64}$/);
+    const target = await call(client, 'diagram_create_project', { name: 'Reviewed Diagrams' });
+    await call(client, 'diagram_move_document', { documentId: blank.document.documentId, targetProjectId: target.project.projectId });
+    const targetAfterMove = await call(client, 'diagram_get_project', { projectId: target.project.projectId });
+    assert.deepEqual(targetAfterMove.project.diagramIds, [blank.document.documentId]);
 
-    const imported = await client.callTool({
-      name: 'diagram_import_plantuml',
-      arguments: {
-        source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\nAPI --> User: Response\n@enduml',
-        title: 'Imported Sequence',
-        projectId,
-        artifactKey: 'request-sequence'
-      }
-    });
-    assert.equal(imported.structuredContent.document.kind, 'sequence');
-    const plantUmlExport = await client.callTool({
-      name: 'diagram_export',
-      arguments: { documentId: imported.structuredContent.document.documentId, format: 'plantuml' }
-    });
-    assert.equal(plantUmlExport.structuredContent.mimeType, 'text/vnd.plantuml');
-    assert.match(plantUmlExport.structuredContent.relativePath, /\.puml$/);
-    const importedRetry = await client.callTool({
-      name: 'diagram_import_plantuml',
-      arguments: {
-        source: '@startuml\nactor User\nparticipant API\nUser -> API: Request\nAPI --> User: Response\n@enduml',
-        title: 'Imported Sequence',
-        projectId,
-        artifactKey: 'request-sequence'
-      }
-    });
-    assert.equal(importedRetry.structuredContent.document.documentId, imported.structuredContent.document.documentId);
-    assert.equal(importedRetry.structuredContent.reused, true);
-
-    const importedActivity = await client.callTool({
-      name: 'diagram_import_plantuml',
-      arguments: {
-        source: '@startuml\nstart\n:Check request;\nif (Valid?) then (yes)\n:Process;\nelse (no)\n:Reject;\nendif\nstop\n@enduml',
-        title: 'Imported Flow',
-        kind: 'flowchart'
-      }
-    });
-    assert.equal(importedActivity.structuredContent.document.kind, 'flowchart');
-    const activityExport = await client.callTool({
-      name: 'diagram_export',
-      arguments: { documentId: importedActivity.structuredContent.document.documentId, format: 'plantuml' }
-    });
-    assert.equal(activityExport.structuredContent.mimeType, 'text/vnd.plantuml');
-
-    const importedArchitecture = await client.callTool({
-      name: 'diagram_import_plantuml',
-      arguments: {
-        source: '@startuml\nactor User\ncomponent "Web App" as web\ndatabase DB\nUser --> web : HTTPS\nweb --> DB : SQL\n@enduml',
-        title: 'Imported Architecture'
-      }
-    });
-    assert.equal(importedArchitecture.structuredContent.document.kind, 'architecture');
-    assert.equal(importedArchitecture.structuredContent.document.notation.dialect, 'component');
-
-    const importedTopology = await client.callTool({
-      name: 'diagram_import_plantuml',
-      arguments: {
-        source: '@startuml\ncloud Internet\nnode "App Node" as app\ndatabase DB\nInternet --> app : HTTPS\napp --> DB : SQL\n@enduml',
-        title: 'Imported Topology'
-      }
-    });
-    assert.equal(importedTopology.structuredContent.document.kind, 'topology');
-    assert.equal(importedTopology.structuredContent.document.notation.dialect, 'deployment');
-
-    const projectDocuments = await client.callTool({
-      name: 'diagram_list_documents',
-      arguments: { projectId }
-    });
-    assert.equal(projectDocuments.structuredContent.documents.length, 2);
-
-    await client.callTool({
-      name: 'diagram_move_document',
-      arguments: {
-        documentId: blankDocumentId,
-        sourceProjectId: projectId,
-        targetProjectId
-      }
-    });
-    const sourceAfterMove = await client.callTool({
-      name: 'diagram_get_project',
-      arguments: { projectId }
-    });
-    const targetAfterMove = await client.callTool({
-      name: 'diagram_get_project',
-      arguments: { projectId: targetProjectId }
-    });
-    assert.deepEqual(sourceAfterMove.structuredContent.project.diagramIds, [
-      imported.structuredContent.document.documentId
-    ]);
-    assert.deepEqual(targetAfterMove.structuredContent.project.diagramIds, [blankDocumentId]);
-
-    const renamed = await client.callTool({
-      name: 'diagram_update_project',
-      arguments: { projectId: targetProjectId, name: 'Renamed Target' }
-    });
-    assert.equal(renamed.structuredContent.project.name, 'Renamed Target');
-
-    await client.callTool({
-      name: 'diagram_delete_document',
-      arguments: { documentId: imported.structuredContent.document.documentId }
-    });
-    const sourceAfterDelete = await client.callTool({
-      name: 'diagram_get_project',
-      arguments: { projectId }
-    });
-    assert.deepEqual(sourceAfterDelete.structuredContent.project.diagramIds, []);
-
-    await client.callTool({
-      name: 'diagram_delete_project',
-      arguments: { projectId: targetProjectId, deleteDocuments: false }
-    });
-    const retainedDocument = await client.callTool({
-      name: 'diagram_get_document',
-      arguments: { documentId: blankDocumentId }
-    });
-    assert.equal(retainedDocument.structuredContent.document.documentId, blankDocumentId);
-    await client.callTool({
-      name: 'diagram_delete_document',
-      arguments: { documentId: blankDocumentId }
-    });
-    await client.callTool({
-      name: 'diagram_delete_project',
-      arguments: { projectId, deleteDocuments: true }
-    });
+    const validation = await call(client, 'diagram_validate', { documentId: committed.document.documentId });
+    assert.equal(validation.ready, true);
+    const exported = await call(client, 'diagram_export', { documentId: committed.document.documentId, format: 'plantuml' });
+    assert.equal(exported.mimeType, 'text/vnd.plantuml');
+    assert.match(exported.sha256, /^[a-f0-9]{64}$/);
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });
   }
 });
+
+function planFor(kind, goal, overrides = {}) {
+  const structure = kind === 'sequence'
+    ? ['User', 'Client', 'Auth API', 'Session Store']
+    : kind === 'swimlane'
+      ? ['Requester', 'Approver']
+      : kind === 'topology'
+        ? ['Public Edge', 'Application Cluster']
+        : kind === 'architecture'
+          ? ['Client Boundary', 'Service Boundary']
+          : ['Request to completion'];
+  return {
+    goal,
+    scope: 'Only the selected scenario and its primary path.',
+    excludedDetails: ['Unrelated business journeys and implementation details.'],
+    estimatedPrimaryItemCount: kind === 'sequence' ? 4 : 6,
+    estimatedEdgeCount: 8,
+    structure,
+    splitPlan: ['Put unrelated scenarios in separately named diagrams.'],
+    splitRationale: 'This diagram remains focused on one question; unrelated work is split.',
+    checklistAcknowledgements: checklistByKind[kind],
+    ...overrides
+  };
+}
+
+async function call(client, name, args) {
+  const response = await client.callTool({ name, arguments: args });
+  assert.equal(response.isError, false, `${name} failed: ${response.structuredContent?.error ?? response.content?.[0]?.text}`);
+  return response.structuredContent;
+}

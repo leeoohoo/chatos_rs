@@ -1,10 +1,7 @@
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import { WebDesignStudioApp } from './studio/WebDesignStudioApp';
-import './styles.css';
+const query = new URLSearchParams(window.location.search);
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <WebDesignStudioApp />
-  </StrictMode>
-);
+if (query.has('library-runtime')) {
+  void import('./library-runtime/main');
+} else {
+  void import('./studio-main');
+}

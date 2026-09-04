@@ -98,6 +98,24 @@ final class NativeWorkspaceFilesystemTests: XCTestCase {
         XCTAssertEqual(path, "Sources/main.swift")
     }
 
+    func testImagePreviewAllowsFilesLargerThanTextPreviewLimit() throws {
+        let root = try temporaryDirectory(named: "image-preview-limit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let imageBytes = Data(repeating: 0, count: 3 * 1_024 * 1_024)
+        try imageBytes.write(to: root.appendingPathComponent("large.png"))
+        try Data(repeating: 65, count: 3 * 1_024 * 1_024)
+            .write(to: root.appendingPathComponent("large.txt"))
+        let filesystem = NativeWorkspaceFilesystem(workspace: workspace(root))
+
+        let image = try filesystem.read(path: "large.png")
+        guard case let .object(imageObject) = image,
+              case let .bool(isBinary)? = imageObject["is_binary"] else {
+            return XCTFail("expected image payload")
+        }
+        XCTAssertTrue(isBinary)
+        XCTAssertThrowsError(try filesystem.read(path: "large.txt"))
+    }
+
     private func workspace(_ root: URL) -> LocalConnectorWorkspace {
         .init(id: "workspace", alias: "test", absoluteRoot: root.path, fingerprint: "fingerprint")
     }

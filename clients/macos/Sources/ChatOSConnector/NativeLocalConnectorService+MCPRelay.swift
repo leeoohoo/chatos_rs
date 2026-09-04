@@ -452,7 +452,10 @@ extension NativeLocalConnectorService {
     }
 
     private nonisolated static var codeReadToolNames: Set<String> {
-        ["read_file_raw", "read_file_range", "read_file", "list_dir", "search_text", "search_files"]
+        [
+            "read_file_raw", "read_file_range", "read_file", "list_dir", "search_text",
+            "search_files", "open_file_in_pet",
+        ]
     }
 
     private nonisolated static func rpcError(

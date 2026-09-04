@@ -85,3 +85,56 @@ test('deleting a diagram also removes it from its project', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('scope-bound projects and documents cannot be read or moved across ChatOS scopes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-studio-scope-test-'));
+  try {
+    const store = new DiagramDocumentStore(root);
+    const scopeA = 'a'.repeat(64);
+    const scopeB = 'b'.repeat(64);
+    const projectA = await store.createProject('User A', undefined, scopeA);
+    const projectB = await store.createProject('User B', undefined, scopeB);
+    const documentA = await store.createInProject(projectA.projectId, 'architecture', 'A architecture', true);
+    assert.deepEqual((await store.listProjects(scopeA)).map((project) => project.projectId), [projectA.projectId]);
+    assert.deepEqual((await store.listInScope(scopeB)), []);
+    await assert.rejects(() => store.readProjectInScope(projectA.projectId, scopeB), /different ChatOS user or project scope/);
+    await assert.rejects(() => store.readInScope(documentA.documentId, scopeB), /different ChatOS user or project scope/);
+    await assert.rejects(() => store.moveDocument(documentA.documentId, projectB.projectId, projectA.projectId, scopeA), /different ChatOS user or project scope/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a transmitted scope automatically gets one stable default project, including public scope', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-studio-public-scope-test-'));
+  try {
+    const store = new DiagramDocumentStore(root);
+    const publicScope = 'd'.repeat(64);
+    const first = await store.ensureScopedProject(publicScope, '公共图形');
+    const second = await store.ensureScopedProject(publicScope, 'Ignored replacement name');
+    assert.equal(second.projectId, first.projectId);
+    assert.equal(first.name, '公共图形');
+    assert.equal(first.isScopeDefault, true);
+    assert.equal(first.scopeKey, publicScope);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('all legacy projects in an already isolated data root are migrated without disappearing', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-studio-legacy-scope-test-'));
+  try {
+    const store = new DiagramDocumentStore(root);
+    const first = await store.createProject('Legacy A');
+    const second = await store.createProject('Legacy B');
+    const scope = 'e'.repeat(64);
+    const defaultProject = await store.ensureScopedProject(scope, 'Unused');
+    const migrated = await store.listProjects(scope);
+    assert.equal(migrated.length, 2);
+    assert.deepEqual(new Set(migrated.map((project) => project.projectId)), new Set([first.projectId, second.projectId]));
+    assert.ok([first.projectId, second.projectId].includes(defaultProject.projectId));
+    assert.equal((await store.readProject(defaultProject.projectId)).isScopeDefault, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

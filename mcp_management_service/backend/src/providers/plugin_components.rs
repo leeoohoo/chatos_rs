@@ -5,11 +5,16 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::Arc;
 
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
 const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
-const LOCAL_SKILL_APPLY_OPERATION: &str = "local_skill_apply";
+const SKILL_ACTIVATE_OPERATION: &str = "skill_activate";
+const SKILL_READ_RESOURCE_OPERATION: &str = "skill_read_resource";
+const SKILL_ACTIVATE_TOOL_NAME: &str = "skill_activate";
+const SKILL_LIST_RESOURCES_TOOL_NAME: &str = "skill_list_resources";
+const SKILL_READ_RESOURCE_TOOL_NAME: &str = "skill_read_resource";
 const COMMAND_INVOKE_OPERATION: &str = "command_invoke";
 const AGENT_APPLY_OPERATION: &str = "agent_apply";
 const COMMAND_TOOL_NAME: &str = "invoke";
@@ -26,6 +31,7 @@ pub(super) struct PluginComponentProvider {
     internal_secret: Option<String>,
     request_timeout: Duration,
     response_limit_bytes: usize,
+    skill_attestations: Arc<SkillActivationAttestationService>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,10 +57,14 @@ struct PluginPrepareResponse {
 mod local_prepare;
 mod local_relay_client;
 mod local_runtime;
+pub(crate) use local_runtime::skill_ref;
 mod prepare;
 mod result;
 mod runtime_dispatch;
+mod skill_attestation;
 mod validation;
+
+pub(crate) use skill_attestation::SkillActivationAttestationService;
 
 #[cfg(test)]
 mod tests;

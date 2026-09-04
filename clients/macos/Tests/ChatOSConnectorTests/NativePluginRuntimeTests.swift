@@ -577,26 +577,25 @@ struct NativePluginRuntimeTests {
         #expect(item.componentStatuses.first?.lastError == "Plugin Skill 目录不存在")
     }
 
-    @Test("plugin relay prepares a signed Skill component without launching it as an MCP server")
-    func pluginSkillPrepareSnapshot() throws {
+    @Test("plugin Skill v2 separates catalog, activation and resource reads")
+    func pluginSkillV2ProgressiveLoading() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let skill = root.appendingPathComponent("skills/fixture-skill", isDirectory: true)
         let references = skill.appendingPathComponent("references", isDirectory: true)
         try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try Data("""
+        let instructions = Data("""
         ---
         name: fixture-skill
         description: Fixture Skill instructions.
         ---
-
         # Fixture Skill
-
-        Read [guide.md](references/guide.md) when more detail is needed.
-        """.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
-        try Data("# Guide\n\nUse fresh screenshots.\n".utf8)
-            .write(to: references.appendingPathComponent("guide.md"))
+        Read the guide only when needed.
+        """.utf8)
+        let guide = Data("# Guide\nUse fresh screenshots.\n".utf8)
+        try instructions.write(to: skill.appendingPathComponent("SKILL.md"))
+        try guide.write(to: references.appendingPathComponent("guide.md"))
         try Data("""
         {
           "schemaVersion": 3,
@@ -606,42 +605,86 @@ struct NativePluginRuntimeTests {
           "mcpServers": {}
         }
         """.utf8).write(to: root.appendingPathComponent("chatos.plugin.json"))
-        let artifactSHA256 = String(repeating: "a", count: 64)
+        let resource: NativeJSONValue = .object([
+            "relative_path": .string("references/guide.md"),
+            "kind": .string("reference"),
+            "size_bytes": .number(Double(guide.count)),
+            "sha256": .string(NativePluginHash.sha256(guide)),
+        ])
+        let resourceManifestSHA256 = try NativePluginHash.canonicalSHA256(.array([resource]))
+        let metadata: NativeJSONValue = .object([
+            "name": .string("fixture-skill"),
+            "description": .string("Fixture Skill instructions."),
+            "role": .string("leaf"),
+            "activation_policy": .string("model_or_user"),
+            "context_mode": .string("inline"),
+            "required_skills": .array([]),
+            "related_skills": .array([]),
+            "extra": .object([:]),
+        ])
+        let instructionsSHA256 = NativePluginHash.sha256(instructions)
+        let snapshotSHA256 = try NativePluginHash.canonicalSHA256(.object([
+            "protocol_version": .number(2),
+            "skill_id": .string("fixture-skill"),
+            "relative_skill_path": .string("skills/fixture-skill/SKILL.md"),
+            "metadata": metadata,
+            "instructions_sha256": .string(instructionsSHA256),
+            "resource_manifest_sha256": .string(resourceManifestSHA256),
+        ]))
+        let expectedSnapshot: NativeJSONValue = .object([
+            "protocol_version": .number(2),
+            "skill_id": .string("fixture-skill"),
+            "relative_skill_path": .string("skills/fixture-skill/SKILL.md"),
+            "metadata": metadata,
+            "instructions_sha256": .string(instructionsSHA256),
+            "resource_manifest_sha256": .string(resourceManifestSHA256),
+            "resources": .array([resource]),
+            "snapshot_sha256": .string(snapshotSHA256),
+        ])
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-09-04T00:00:00Z"
+        )
 
-        let body = try NativePluginSkillSnapshotLoader.prepareBody(
-            record: .init(
-                pluginID: "plugin-1",
-                releaseID: "release-1",
-                version: "1.0.0",
-                artifactSHA256: artifactSHA256,
-                installationPath: root.path,
-                installedAt: "2026-08-27T00:00:00Z"
-            ),
+        let prepared = try NativePluginSkillSnapshotLoader.prepareV2Body(
+            record: record,
             componentKey: "fixture-skill",
-            skillKeys: ["fixture-skill"],
-            expectedContentSHA256: artifactSHA256,
+            expectedSnapshot: expectedSnapshot,
             runID: "run-1",
             adapterSessionID: "adapter-1",
             now: Date(timeIntervalSince1970: 0)
         )
+        let preparedObject = try prepared.requireObject()
+        #expect(try preparedObject.requireStringArray("operations") == [
+            "skill_activate", "skill_read_resource",
+        ])
+        let catalog = try #require(preparedObject["skills"]?.jsonArray?.first?.jsonObject)
+        #expect(catalog["instructions"] == nil)
 
-        let object = try body.requireObject()
-        #expect(try object.requireString("component_key") == "fixture-skill")
-        #expect(try object.requireStringArray("operations") == ["load_skill_resource"])
-        #expect(try object.requireString("session_sha256").count == 64)
-        let skills = try #require(object["skills"]?.jsonArray)
-        #expect(skills.count == 1)
-        let snapshot = try skills[0].requireObject()
-        #expect(try snapshot.requireString("skill_key") == "fixture-skill")
-        #expect(try snapshot.requireString("instructions").contains("Read [guide.md]"))
-        #expect(try snapshot.requireString("instructions_sha256").count == 64)
-        #expect(try snapshot.requireString("snapshot_sha256").count == 64)
-        let resources = try #require(snapshot["resources"]?.jsonArray)
-        #expect(resources.count == 1)
-        #expect(
-            try resources[0].requireObject().requireString("relative_path")
-                == "skills/fixture-skill/references/guide.md"
+        let activated = try NativePluginSkillSnapshotLoader.activateV2(
+            record: record,
+            componentKey: "fixture-skill",
+            expectedSnapshot: expectedSnapshot
         )
+        #expect(try activated.requireObject().requireString("instructions").contains("# Fixture Skill"))
+
+        let resourceRead = try NativePluginSkillSnapshotLoader.readV2Resource(
+            record: record,
+            componentKey: "fixture-skill",
+            expectedSnapshot: expectedSnapshot,
+            relativePath: "references/guide.md",
+            offset: 0,
+            maximumCharacters: 8
+        )
+        let resourceObject = try resourceRead.requireObject()
+        let expectedPage = String(String(decoding: guide, as: UTF8.self).prefix(8))
+        let actualPage = try #require(resourceObject["content"]?.jsonString)
+        #expect(actualPage == expectedPage)
+        #expect(resourceObject["truncated"]?.jsonBool == true)
     }
 
     @Test("installation status fails closed when executable is missing")

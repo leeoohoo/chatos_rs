@@ -8,7 +8,11 @@ The product provides:
 - all 72 components from the current Ant Design 6.6.2 official navigation, including Listy, BorderBeam, App, and ConfigProvider, grouped in the same seven categories as the website;
 - an independent Chakra UI 3.37.0 catalog backed by the official Chakra runtime;
 - an independent shadcn/ui catalog whose source-owned components reuse Radix interaction primitives and Lucide icons;
-- separate AntD, Chakra, and shadcn tabs so component systems are never mixed into one palette;
+- an independent Magic UI catalog tracking all 78 components in the current MIT-licensed registry, with component-specific effects, real interaction, and three structurally distinct design modes;
+- an independent Spell UI catalog covering all 33 components in its public MIT registry;
+- an independent Inspira UI catalog covering all 155 components across the current 12 documentation categories, including real file selection, tabs, modals, galleries, tooltips, loaders, calendars, and testimonials;
+- an independent daisyUI 5.7.28 catalog covering all 68 current official component routes, backed by the official runtime CSS and principal structural/state modifiers;
+- separate AntD, Chakra, shadcn, Magic, Spell, Inspira, and daisyUI tabs so component systems are never mixed into one palette;
 - a shared component-library adapter for catalog definitions, variants, insertion, inspector props, editable slots, AI metadata, and canvas rendering dispatch;
 - multiple production-oriented variants for all 72 Ant Design components, including Input OTP, searchable and grouped Select, virtual and grouped Listy, selectable and expandable Table, resizable Drawer, editable Tabs, and content-bearing App/ConfigProvider/BorderBeam containers;
 - an insertion-time live variant gallery, so people choose a visual treatment before adding a component;
@@ -27,6 +31,7 @@ The product provides:
 - open-ended `customCss` declarations for visual effects that are not yet represented by a dedicated inspector control, while preserving validation, persistence, responsive overrides, and export;
 - per-breakpoint minimum/maximum size constraints and aspect-ratio locking for predictable manual resizing and responsive reflow;
 - desktop, tablet, and mobile breakpoint-specific frames and typography overrides;
+- automatic tablet/mobile frame generation when inserting components, plus a toolbar action that fills missing responsive layouts without changing desktop geometry or existing hand-tuned overrides;
 - a visual layer stack with visibility and locking controls;
 - hierarchical component layers, shift multi-selection, grouping/ungrouping, and grouped dragging;
 - canvas-edge and sibling snapping guides;
@@ -55,9 +60,11 @@ The product provides:
 - revisioned JSON persistence shared by the visual workbench and MCP tools;
 - focused AI patch operations that preserve unrelated user edits.
 
-The native toolbox intentionally contains only rectangle, ellipse, and line primitives. These are open visual building blocks rather than a finite business-component catalog: the shared inspector can turn them and library components into gradients, glass surfaces, glows, masks through overflow, typographic treatments, transformed layers, and responsive compositions. Product UI comes from Ant Design, Chakra UI, or shadcn/ui, each searchable in Chinese or English and insertable by click or drag. Ant Design definitions track the current official documentation URL, introduced version, and deprecation state; the legacy List remains available for existing work while new long-list designs use Listy. Common components such as Input, Select, Button, Card, Alert, Progress, Badge, Tabs, Dialog, Drawer, and Sheet expose selectable visual variants. Data-driven components ship with sample data that can be edited as structured JSON in the inspector.
+The native toolbox intentionally contains only rectangle, ellipse, and line primitives. These are open visual building blocks rather than a finite business-component catalog: the shared inspector can turn them and library components into gradients, glass surfaces, glows, masks through overflow, typographic treatments, transformed layers, and responsive compositions. Product UI comes from Ant Design, Chakra UI, shadcn/ui, or the independently grouped Magic UI catalog, each searchable in Chinese or English and insertable by click or drag. Ant Design definitions track the current official documentation URL, introduced version, and deprecation state; the legacy List remains available for existing work while new long-list designs use Listy. Common components expose selectable visual variants, and data-driven components ship with sample data that can be edited as structured JSON in the inspector.
 
-The left library is organized into AntD, Chakra, shadcn, Shapes, Sections, Pages, and Layers. Clicking a library item opens a live variant gallery; dragging inserts its default variant immediately. Each runtime is code-split and loads only when its components are present on the canvas. Content-bearing components from all three systems share the same nested-canvas contract, while default form/detail starters preserve the selected parent's library instead of mixing systems. Sections and Pages are optional editable starting points rather than the editor's design boundary; the canvas toolbar supports 25%–150% zoom, 100%, and fit-to-width controls.
+The left library is organized into independent AntD, Chakra, shadcn, Magic, Spell, Inspira, daisyUI, Shapes, My, and Layers tabs. Clicking a library item opens a live variant gallery; dragging inserts its default variant immediately. Each runtime is code-split and loads only when its components are present on the canvas. Content-bearing components share the same nested-canvas contract, while default form/detail starters preserve the selected parent's library instead of mixing systems. The canvas toolbar supports 25%–150% zoom, 100%, and fit-to-width controls.
+
+Third-party license details and explicit exclusions are recorded in [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md). Magic UI Pro templates and React Bits components are not bundled.
 
 The implementation plan is in [docs/IMPLEMENTATION_PLAN.zh-CN.md](docs/IMPLEMENTATION_PLAN.zh-CN.md).
 

@@ -8,8 +8,7 @@ use serde_json::{json, Value};
 use super::result::{plugin_agent_result, plugin_command_result};
 use super::validation::*;
 use super::{
-    PluginComponentProvider, PluginPrepareResponse, AGENT_APPLY_OPERATION,
-    COMMAND_INVOKE_OPERATION, LOCAL_SKILL_APPLY_OPERATION,
+    PluginComponentProvider, PluginPrepareResponse, AGENT_APPLY_OPERATION, COMMAND_INVOKE_OPERATION,
 };
 use crate::providers::ProviderCallError;
 use crate::runtime::{
@@ -57,10 +56,17 @@ impl PluginComponentProvider {
         ]);
         match immutable.component.kind {
             PluginComponentKind::SkillCollection => {
+                let snapshot = immutable.skill_snapshot.as_ref().ok_or_else(|| {
+                    ProviderCallError::provider_unavailable(
+                        "Plugin Skill component is missing its required v2 snapshot",
+                    )
+                })?;
                 body.insert(
                     "skill_keys".to_string(),
                     json!([immutable.component.component_key]),
                 );
+                body.insert("skill_runtime_protocol".to_string(), json!(2));
+                body.insert("skill_snapshot".to_string(), json!(snapshot));
             }
             PluginComponentKind::Command | PluginComponentKind::Agent => {
                 body.insert("catalog_only".to_string(), json!(true));
@@ -101,32 +107,20 @@ impl PluginComponentProvider {
                     ));
                 }
                 let skill = &prepared.skills[0];
-                validate_local_skill_snapshot(immutable, skill)?;
-                let instruction_items = prepared
-                    .skills
-                    .iter()
-                    .filter_map(|skill| {
-                        let instructions =
-                            skill.get("instructions").and_then(Value::as_str)?.trim();
-                        if instructions.is_empty() {
-                            return None;
-                        }
-                        Some(plugin_instruction_item(
-                            immutable,
-                            "Plugin Skill",
-                            instructions,
-                            None,
-                        ))
-                    })
-                    .collect();
-                required_operation(prepared.operations.as_slice(), "load_skill_resource")?;
-                let result =
-                    super::result::plugin_skill_result_from_local_snapshot(immutable, skill)?;
+                validate_local_skill_catalog(immutable, skill)?;
+                required_operation(
+                    prepared.operations.as_slice(),
+                    super::SKILL_ACTIVATE_OPERATION,
+                )?;
+                required_operation(
+                    prepared.operations.as_slice(),
+                    super::SKILL_READ_RESOURCE_OPERATION,
+                )?;
                 (
-                    LOCAL_SKILL_APPLY_OPERATION.to_string(),
-                    vec![skill_tool_definition(immutable)],
-                    instruction_items,
-                    Some(result),
+                    super::SKILL_ACTIVATE_OPERATION.to_string(),
+                    skill_runtime_tool_definitions(),
+                    Vec::new(),
+                    None,
                 )
             }
             PluginComponentKind::Command => {
@@ -280,26 +274,6 @@ fn plugin_result_instruction_items(result: &Value) -> Vec<Value> {
         .filter_map(|item| item.get("text").and_then(Value::as_str))
         .map(plugin_message_item)
         .collect()
-}
-
-fn plugin_instruction_item(
-    immutable: &PluginToolComponentRuntimeBinding,
-    label: &str,
-    instructions: &str,
-    arguments: Option<&str>,
-) -> Value {
-    let mut text = format!(
-        "{}\n\n[{label}: {} / {}]\n{}",
-        super::THIRD_PARTY_PLUGIN_ENVELOPE,
-        immutable.plugin_id,
-        immutable.component.component_key,
-        instructions,
-    );
-    if let Some(arguments) = arguments {
-        text.push_str("\n\nArguments for this invocation:\n");
-        text.push_str(arguments);
-    }
-    plugin_message_item(text.as_str())
 }
 
 fn plugin_message_item(text: &str) -> Value {

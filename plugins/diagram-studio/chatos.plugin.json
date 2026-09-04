@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-diagram-studio",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "description": "Create and edit architecture diagrams, flowcharts, swimlane diagrams, topology maps, and sequence diagrams with complete PlantUML interoperability.",
   "author": {
     "name": "Chatos"
@@ -17,7 +17,12 @@
     }
   },
   "skills": [
-    "./skills/diagram-studio"
+    "./skills/diagram-studio",
+    "./skills/diagram-architecture",
+    "./skills/diagram-flowchart",
+    "./skills/diagram-swimlane",
+    "./skills/diagram-topology",
+    "./skills/diagram-sequence"
   ],
   "ui": [
     {

@@ -102,11 +102,15 @@ export function translateOperations(format: OfficeFormat, operations: unknown, m
     const item = operation as JsonObject;
     const type = stringValue(item.type, `operations[${index}].type`, 64);
     if (type === 'word_add_paragraph' && format === 'docx') {
+      const pageBreakBefore = optionalBoolean(item.pageBreakBefore, `operations[${index}].pageBreakBefore`);
       return {
         command: 'add',
         parent: '/body',
         type: 'paragraph',
-        props: { text: stringValue(item.text, `operations[${index}].text`) }
+        props: {
+          text: stringValue(item.text, `operations[${index}].text`),
+          ...(pageBreakBefore === undefined ? {} : { pageBreakBefore })
+        }
       };
     }
     if (type === 'word_replace_text' && format === 'docx') {
@@ -121,13 +125,15 @@ export function translateOperations(format: OfficeFormat, operations: unknown, m
     }
     if (type === 'word_add_heading' && format === 'docx') {
       const level = positiveInteger(item.level, `operations[${index}].level`, 6);
+      const pageBreakBefore = optionalBoolean(item.pageBreakBefore, `operations[${index}].pageBreakBefore`);
       return {
         command: 'add',
         parent: '/body',
         type: 'paragraph',
         props: {
           text: stringValue(item.text, `operations[${index}].text`),
-          style: `Heading${level}`
+          style: `Heading${level}`,
+          ...(pageBreakBefore === undefined ? {} : { pageBreakBefore })
         }
       };
     }

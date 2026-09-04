@@ -24,7 +24,11 @@
     }
   },
   "skills": [
-    "./skills/visual-computer-use"
+    "./skills/visual-computer-use",
+    "./skills/visual-observation-targeting",
+    "./skills/visual-pointer-keyboard",
+    "./skills/visual-application-focus",
+    "./skills/visual-safety-verification"
   ],
   "interface": {
     "displayName": "Visual Computer Use",

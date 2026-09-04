@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "guideId": "diagram-architecture",
+  "guideVersion": "1.0.0",
+  "kind": "architecture",
+  "defaultMode": "overview",
+  "modes": {
+    "overview": { "qualityProfile": "architecture-overview", "maxPrimaryItems": 12, "maxEdges": 18, "minStructureItems": 2 },
+    "detail": { "qualityProfile": "architecture-detail", "maxPrimaryItems": 20, "maxEdges": 28, "minStructureItems": 1 }
+  },
+  "checklist": [
+    "single_architecture_viewpoint",
+    "boundaries_show_ownership",
+    "primary_path_is_visible",
+    "implementation_detail_is_excluded",
+    "independent_concerns_are_split",
+    "code_evidence_is_mapped"
+  ]
+}

@@ -15,6 +15,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         static let expandedMessageWidth: CGFloat = 400
         static let quickChatWidth: CGFloat = 420
         static let quickChatConversationHeight: CGFloat = 500
+        static let fileWorkbenchSize = NSSize(width: 760, height: 560)
         // Keep the process inspector compact and stable. Its timeline already scrolls,
         // so reserving space for several hypothetical nodes only creates empty space
         // for the common one-node case and makes the panel appear to jump in size.
@@ -25,6 +26,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private let preferences: PetPreferencesStore
     private weak var model: AppModel?
     private let messagePanel: NSPanel
+    private let fileWorkbenchPanel: NSPanel
+    private let fileWorkbenchStore: PetFileWorkbenchStore
     private let interactionState = PetOverlayInteractionState()
     private let onOpen: (PetActivity) -> Void
     private var taskInspectorPanel: NSPanel?
@@ -56,6 +59,9 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             size: Layout.compactMessageSize,
             acceptsKeyboardInput: true
         )
+        let fileWorkbenchStore = PetFileWorkbenchStore(service: model.projectFilesystemService)
+        self.fileWorkbenchStore = fileWorkbenchStore
+        self.fileWorkbenchPanel = Self.makeFileWorkbenchPanel(size: Layout.fileWorkbenchSize)
         super.init(window: petPanel)
 
         petPanel.delegate = self
@@ -95,6 +101,22 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         messagePanel.contentView = messageHostingView
         applyMessageSize(Layout.compactMessageSize)
 
+        let fileWorkbenchHostingView = NSHostingView(
+            rootView: PetLocalizedRoot(
+                model: model,
+                content: PetFileWorkbenchView(
+                    store: fileWorkbenchStore,
+                    defaultHandlerPrompt: model.petDefaultFileHandlerPrompt
+                )
+            )
+        )
+        fileWorkbenchHostingView.sizingOptions = []
+        fileWorkbenchHostingView.frame = NSRect(origin: .zero, size: Layout.fileWorkbenchSize)
+        fileWorkbenchPanel.contentView = fileWorkbenchHostingView
+        (fileWorkbenchPanel as? PetFileWorkbenchPanel)?.onCancel = { [weak fileWorkbenchStore] in
+            fileWorkbenchStore?.requestDismiss()
+        }
+
         applyCollectionBehavior()
         restoreOrPlaceDefault()
         bind()
@@ -110,11 +132,22 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         if visible {
             window.orderFrontRegardless()
             updateMessageVisibility()
+            updateFileWorkbenchVisibility()
         } else {
             dismissTaskInspector()
             window.orderOut(nil)
             messagePanel.orderOut(nil)
+            fileWorkbenchPanel.orderOut(nil)
         }
+    }
+
+    func openFile(_ request: PetFileOpenRequest) {
+        interactionState.isQuickChatPresented = false
+        interactionState.isMessageExpanded = false
+        dismissTaskInspector()
+        fileWorkbenchStore.open(request)
+        updateMessageVisibility()
+        updateFileWorkbenchVisibility()
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -129,6 +162,9 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         }
         if messagePanel.isVisible {
             positionMessagePanel()
+        }
+        if fileWorkbenchPanel.isVisible {
+            positionFileWorkbenchPanel()
         }
     }
 
@@ -171,6 +207,28 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         return panel
     }
 
+    private static func makeFileWorkbenchPanel(size: NSSize) -> NSPanel {
+        let panel = PetFileWorkbenchPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
+        panel.animationBehavior = .utilityWindow
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.contentMinSize = NSSize(width: 520, height: 360)
+        panel.contentMaxSize = NSSize(width: 1_200, height: 920)
+        return panel
+    }
+
     private func bind() {
         store.$presentation
             .receive(on: RunLoop.main)
@@ -210,6 +268,15 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
                     )
                 }
                 self.updateMessageVisibility()
+            }
+            .store(in: &cancellables)
+
+        fileWorkbenchStore.$isPresented
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateMessageVisibility()
+                self?.updateFileWorkbenchVisibility()
             }
             .store(in: &cancellables)
 
@@ -287,6 +354,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             : [.managed, .ignoresCycle]
         window?.collectionBehavior = behavior
         messagePanel.collectionBehavior = behavior
+        fileWorkbenchPanel.collectionBehavior = behavior
     }
 
     private func updatePetSize(_ size: Double) {
@@ -303,6 +371,10 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             messagePanel.orderOut(nil)
             return
         }
+        if fileWorkbenchStore.isPresented {
+            messagePanel.orderOut(nil)
+            return
+        }
         if !interactionState.isQuickChatPresented,
            store.presentation.primaryActivity == nil,
            interactionState.inspectedTaskActivity == nil {
@@ -315,9 +387,24 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    private func updateFileWorkbenchVisibility() {
+        guard window?.isVisible == true, fileWorkbenchStore.isPresented else {
+            fileWorkbenchPanel.orderOut(nil)
+            return
+        }
+        attachFileWorkbenchPanelIfNeeded()
+        positionFileWorkbenchPanel()
+        fileWorkbenchPanel.makeKeyAndOrderFront(nil)
+    }
+
     private func attachMessagePanelIfNeeded() {
         guard let window, messagePanel.parent !== window else { return }
         window.addChildWindow(messagePanel, ordered: .above)
+    }
+
+    private func attachFileWorkbenchPanelIfNeeded() {
+        guard let window, fileWorkbenchPanel.parent !== window else { return }
+        window.addChildWindow(fileWorkbenchPanel, ordered: .above)
     }
 
     private func presentTaskInspector(
@@ -462,6 +549,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         if didDrag {
             clampToVisibleScreen()
             savePosition()
+        } else if fileWorkbenchStore.isPresented {
+            fileWorkbenchStore.requestDismiss()
         } else {
             interactionState.isMessageExpanded = false
             interactionState.selectedActivityID = nil
@@ -487,6 +576,21 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         let centeredX = pet.midX - bubble.width / 2
         let x = min(max(centeredX, visible.minX + 8), visible.maxX - bubble.width - 8)
         messagePanel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func positionFileWorkbenchPanel() {
+        guard let petWindow = window,
+              let screen = petWindow.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        let workbench = fileWorkbenchPanel.frame.size
+        let pet = petWindow.frame
+        let preferredAbove = pet.maxY + 12
+        let y = preferredAbove + workbench.height <= visible.maxY
+            ? preferredAbove
+            : max(visible.minY + 8, pet.minY - workbench.height - 12)
+        let centeredX = pet.midX - workbench.width / 2
+        let x = min(max(centeredX, visible.minX + 8), visible.maxX - workbench.width - 8)
+        fileWorkbenchPanel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
     private func restoreOrPlaceDefault() {
@@ -515,6 +619,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         isProgrammaticMove = false
         savePosition()
         positionMessagePanel()
+        positionFileWorkbenchPanel()
     }
 
     private func clampToVisibleScreen() {
@@ -531,6 +636,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         isProgrammaticMove = false
         savePosition()
         positionMessagePanel()
+        positionFileWorkbenchPanel()
     }
 
     private func savePosition() {
@@ -591,6 +697,17 @@ private final class PetMessagePanel: NSPanel {
 }
 
 private final class PetTaskInspectorPanel: NSPanel {
+    var onCancel: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
+}
+
+private final class PetFileWorkbenchPanel: NSPanel {
     var onCancel: (() -> Void)?
 
     override var canBecomeKey: Bool { true }

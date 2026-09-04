@@ -43,6 +43,9 @@ export interface UiLibraryCatalog<TCategory extends string = string> {
   categories: readonly TCategory[];
   components: readonly UiComponentDefinition<TCategory>[];
   variants: Record<string, UiComponentVariant[]>;
+  license?: string;
+  sourceUrl?: string;
+  licenseUrl?: string;
 }
 
 export const DEFAULT_UI_COMPONENT_VARIANT: UiComponentVariant = { id: 'default', label: '默认款式', props: {} };
@@ -131,13 +134,22 @@ export function contentSlot(component: WebDesignComponent, id: string, label: st
 }
 
 export function namedItemSlots(component: WebDesignComponent, prefix: string, fallbackLabel: string): UiEditableSlot[] {
-  const items = recordLibraryItems(component.library?.props.items);
+  const rawItems = component.library?.props.items;
+  const items = Array.isArray(rawItems) ? rawItems : [];
   return items.map((item, index) => {
-    const key = typeof item.key === 'string' || typeof item.key === 'number'
-      ? String(item.key)
-      : typeof item.value === 'string' || typeof item.value === 'number' ? String(item.value) : String(index + 1);
-    const label = typeof item.label === 'string' ? item.label : typeof item.title === 'string' ? item.title : `${fallbackLabel} ${index + 1}`;
-    return contentSlot(component, `${prefix}-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`, label, `编辑“${label}”区域中的组件`);
+    const record = item && typeof item === 'object' && !Array.isArray(item) ? item : undefined;
+    const key = record && (typeof record.key === 'string' || typeof record.key === 'number')
+      ? String(record.key)
+      : record && (typeof record.value === 'string' || typeof record.value === 'number')
+        ? String(record.value)
+        : typeof item === 'string' || typeof item === 'number' ? String(item) : String(index + 1);
+    const label = record && typeof record.label === 'string'
+      ? record.label
+      : record && typeof record.title === 'string'
+        ? record.title
+        : typeof item === 'string' || typeof item === 'number' ? String(item) : `${fallbackLabel} ${index + 1}`;
+    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+|-+$/g, '') || String(index + 1);
+    return contentSlot(component, `${prefix}-${safeKey}`, label, `编辑“${label}”区域中的组件`);
   });
 }
 

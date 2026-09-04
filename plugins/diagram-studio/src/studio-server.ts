@@ -3,6 +3,7 @@ import { watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DiagramDocumentStore, RevisionConflictError } from './document-store.js';
+import { runtimeScopeFingerprint } from './generation-guides.js';
 import { assertDiagramDocument, type DiagramDocument, type DiagramKind } from './schema.js';
 
 const port = Number.parseInt(
@@ -21,18 +22,14 @@ const runtimeContext = {
   ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
   ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
 };
-let defaultProjectId: string | undefined;
-if (contextKind === 'project' && process.env.CHATOS_PROJECT_ID) {
-  const projects = await store.listProjects();
-  if (projects.length === 0) {
-    const project = await store.createProject(
-      process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 项目图形'
-    );
-    defaultProjectId = project.projectId;
-  } else if (projects.length === 1) {
-    defaultProjectId = projects[0].projectId;
-  }
-}
+const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
+const defaultProject = await store.ensureScopedProject(
+  scopeKey,
+  contextKind === 'project' && process.env.CHATOS_PROJECT_ID
+    ? process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 项目图形'
+    : '公共图形'
+);
+const defaultProjectId = defaultProject.projectId;
 
 const app = express();
 app.disable('x-powered-by');
@@ -60,7 +57,7 @@ app.get('/api/context', (_request, response) => {
 app.get('/api/documents', async (_request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json({ items: await store.list() });
+    response.json({ items: await store.listInScope(scopeKey) });
   } catch (error) {
     next(error);
   }
@@ -69,7 +66,7 @@ app.get('/api/documents', async (_request, response, next) => {
 app.get('/api/projects', async (_request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json({ items: await store.listProjects() });
+    response.json({ items: await store.listProjects(scopeKey) });
   } catch (error) {
     next(error);
   }
@@ -78,7 +75,7 @@ app.get('/api/projects', async (_request, response, next) => {
 app.get('/api/projects/:projectId', async (request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json(await store.readProject(request.params.projectId));
+    response.json(await store.readProjectInScope(request.params.projectId, scopeKey));
   } catch (error) {
     next(error);
   }
@@ -87,7 +84,7 @@ app.get('/api/projects/:projectId', async (request, response, next) => {
 app.post('/api/projects', async (request, response, next) => {
   try {
     const name = typeof request.body?.name === 'string' ? request.body.name : '';
-    const project = await store.createProject(name);
+    const project = await store.createProject(name, undefined, scopeKey);
     publishChange();
     response.status(201).json(project);
   } catch (error) {
@@ -99,6 +96,7 @@ app.post('/api/projects/:projectId/documents', async (request, response, next) =
   try {
     const kind = request.body?.kind as DiagramKind;
     const title = typeof request.body?.title === 'string' ? request.body.title : undefined;
+    await store.readProjectInScope(request.params.projectId, scopeKey);
     const document = await store.createInProject(request.params.projectId, kind, title, request.body?.blank === true);
     publishChange();
     response.status(201).json(document);
@@ -110,7 +108,7 @@ app.post('/api/projects/:projectId/documents', async (request, response, next) =
 app.get('/api/documents/:documentId', async (request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json(await store.read(request.params.documentId));
+    response.json(await store.readInScope(request.params.documentId, scopeKey));
   } catch (error) {
     next(error);
   }
@@ -119,7 +117,12 @@ app.get('/api/documents/:documentId', async (request, response, next) => {
 app.post('/api/documents', async (request, response, next) => {
   try {
     const kind = request.body?.kind as DiagramKind;
-    const document = await store.create(kind, typeof request.body?.title === 'string' ? request.body.title : undefined);
+    const document = await store.createInProject(
+      defaultProjectId,
+      kind,
+      typeof request.body?.title === 'string' ? request.body.title : undefined,
+      request.body?.blank === true
+    );
     publishChange();
     response.status(201).json(document);
   } catch (error) {
@@ -143,6 +146,7 @@ app.put('/api/documents/:documentId', async (request, response, next) => {
     };
     assertDiagramDocument(document);
     if (document.documentId !== request.params.documentId) throw new Error('Document identity mismatch.');
+    await store.readInScope(request.params.documentId, scopeKey);
     const saved = await store.replace(document, expectedRevision);
     publishChange();
     response.json(saved);
@@ -155,6 +159,7 @@ app.post('/api/documents/:documentId/layout', async (request, response, next) =>
   try {
     const expectedRevision = request.body?.expectedRevision;
     if (!Number.isSafeInteger(expectedRevision)) throw new Error('expectedRevision is required.');
+    await store.readInScope(request.params.documentId, scopeKey);
     const direction = request.body?.direction === 'DOWN' ? 'DOWN' : request.body?.direction === 'RIGHT' ? 'RIGHT' : undefined;
     const saved = await store.autoLayout(request.params.documentId, expectedRevision, direction);
     publishChange();
@@ -166,6 +171,7 @@ app.post('/api/documents/:documentId/layout', async (request, response, next) =>
 
 app.delete('/api/documents/:documentId', async (request, response, next) => {
   try {
+    await store.readInScope(request.params.documentId, scopeKey);
     await store.remove(request.params.documentId);
     publishChange();
     response.status(204).end();

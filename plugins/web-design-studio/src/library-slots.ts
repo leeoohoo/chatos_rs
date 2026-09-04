@@ -55,6 +55,35 @@ export function editableSlotsForUiComponent(component: WebDesignComponent): UiEd
   if (!library || !name) return [];
   if (library === 'antd') return editableSlotsForAntdComponent(component);
 
+  if (library === 'magicui' || library === 'spell' || library === 'inspira' || library === 'daisyui') {
+    const family = component.library?.props.family;
+    if (family === 'bento' || family === 'card' || family === 'device' || family === 'media' || family === 'social' || family === 'tree' || family === 'terminal' || family === 'list') {
+      return [contentSlot(component, 'content', '内容区域', '在保留组件视觉与交互的同时，放入自由编辑的内容', {
+        width: Math.max(280, component.width - 32),
+        height: Math.max(160, component.height - 48)
+      })];
+    }
+    if (family === 'tabs') return namedItemSlots(component, 'tab', '标签页');
+    if (family === 'modal') return [contentSlot(component, 'content', '弹窗内容', '在弹窗中设计表单、详情和操作区域', { width: 480, height: 400 })];
+    if (family === 'gallery') return [contentSlot(component, 'content', '画廊内容', '在保留画廊导航的同时设计媒体和说明', { width: Math.max(320, component.width - 40), height: Math.max(220, component.height - 72) })];
+    if (family === 'tooltip') return [contentSlot(component, 'popup', '提示内容', '悬停或点击时展示的自由内容', { width: 300, height: 180 })];
+    if (family === 'testimonial') return [contentSlot(component, 'content', '评价内容', '设计头像、引用、身份和辅助媒体', { width: Math.max(300, component.width - 40), height: Math.max(180, component.height - 64) })];
+  }
+
+  if (library === 'daisyui') {
+    if (name === 'Accordion') return namedItemSlots(component, 'panel', '手风琴面板');
+    if (name === 'Tab') return namedItemSlots(component, 'tab', '标签页');
+    if (name === 'Carousel') return namedItemSlots(component, 'slide', '轮播项');
+    if (name === 'Drawer') return overlaySlot(component, '抽屉内容', '导航、表单、详情和操作区域');
+    if (name === 'Modal') return [contentSlot(component, 'content', '模态框内容', '正文、表单和操作区域', { width: 480, height: 400 })];
+    if (['Card', 'Collapse', 'Fieldset', 'Footer', 'Hero', 'Navbar'].includes(name)) {
+      return [contentSlot(component, 'content', `${component.library?.component ?? '组件'}内容`, '保留 daisyUI 结构并放入自由编辑的内容', {
+        width: Math.max(280, component.width - 32),
+        height: Math.max(160, component.height - 56)
+      })];
+    }
+  }
+
   if (library === 'chakra') {
     const single = CHAKRA_CONTENT_SLOTS[name];
     if (single) return [contentSlot(component, 'content', single[0], single[1])];
@@ -89,7 +118,9 @@ export function isUiContentContainer(component: WebDesignComponent): boolean {
 }
 
 export function isOverlayUiContentContainer(component: WebDesignComponent): boolean {
-  return OVERLAY_CONTENT_COMPONENTS.has(component.library?.component ?? '');
+  return OVERLAY_CONTENT_COMPONENTS.has(component.library?.component ?? '')
+    || component.library?.props.family === 'modal'
+    || component.library?.name === 'daisyui' && ['Drawer', 'Modal'].includes(component.library.component);
 }
 
 export function slotIdForDescendant(document: WebDesignDocument, component: WebDesignComponent, containerId: string): string | undefined {

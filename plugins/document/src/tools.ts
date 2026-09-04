@@ -21,7 +21,8 @@ const officeOperationSchema = {
       type: 'object',
       properties: {
         type: { const: 'word_add_paragraph' },
-        text: { type: 'string', maxLength: 20000 }
+        text: { type: 'string', maxLength: 20000 },
+        pageBreakBefore: { type: 'boolean', default: false }
       },
       required: ['type', 'text'],
       additionalProperties: false
@@ -41,7 +42,8 @@ const officeOperationSchema = {
       properties: {
         type: { const: 'word_add_heading' },
         level: { type: 'integer', minimum: 1, maximum: 6 },
-        text: { type: 'string', maxLength: 20000 }
+        text: { type: 'string', maxLength: 20000 },
+        pageBreakBefore: { type: 'boolean', default: false }
       },
       required: ['type', 'level', 'text'],
       additionalProperties: false
@@ -233,7 +235,7 @@ const officeOperationSchema = {
   ]
 } as const;
 
-export const TOOL_DEFINITIONS = [
+const TOOL_DEFINITIONS_BASE = [
   {
     name: 'document_inspect',
     description: 'Inspect a DOCX, XLSX, PPTX, or PDF from the bound workspace or a managed artifact created earlier in the current session.',
@@ -744,6 +746,52 @@ export const TOOL_DEFINITIONS = [
     }
   }
 ] as const;
+
+const documentSkillEvidence = {
+  type: 'array',
+  minItems: 1,
+  maxItems: 8,
+  items: { type: 'string', minLength: 1 },
+  description: 'Platform-issued activation evidence for the Document router and any required format Skill. ChatOS validates and removes this field before local execution.'
+} as const;
+
+function requiredDocumentSkills(toolName: string): string[] {
+  if (toolName.startsWith('spreadsheet_')) return ['document', 'document-spreadsheet'];
+  if (toolName.startsWith('pdf_')) return ['document', 'document-pdf'];
+  return ['document'];
+}
+
+export const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.map((tool) => {
+  const selector = tool.name === 'office_create'
+    ? {
+        pointer: '/format',
+        map: {
+          docx: 'document-word',
+          xlsx: 'document-spreadsheet',
+          pptx: 'document-presentation'
+        }
+      }
+    : undefined;
+  return {
+    ...tool,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        skillEvidence: documentSkillEvidence
+      },
+      required: [...tool.inputSchema.required, 'skillEvidence']
+    },
+    _meta: {
+      ...tool._meta,
+      'chatos/skillGate': {
+        evidenceArgument: 'skillEvidence',
+        allOf: requiredDocumentSkills(tool.name),
+        ...(selector ? { selectByArgument: selector } : {})
+      }
+    }
+  };
+});
 
 export async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
   if (![

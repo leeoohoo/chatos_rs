@@ -66,6 +66,10 @@ export interface PlantUmlImportOptions {
   kind?: DiagramKind;
 }
 
+export function hasEmbeddedDiagramLayout(source: string): boolean {
+  return source.replaceAll('\r\n', '\n').split('\n').some((line) => line.startsWith(layoutPrefix));
+}
+
 interface LayoutPayload {
   version: 1;
   semanticHash: string;
@@ -1558,9 +1562,20 @@ function safeIdentifier(prefix: string, value: string, index: number): string {
 }
 
 function sanitizeAlias(value: string): string {
-  const normalized = value.normalize('NFKD').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
-  const withPrefix = /^[A-Za-z_]/.test(normalized) ? normalized : `participant_${normalized}`;
-  return (withPrefix || 'participant').slice(0, 96);
+  const canonical = value.normalize('NFKD');
+  const normalized = canonical.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  const readable = /^[A-Za-z_]/.test(normalized)
+    ? normalized
+    : normalized
+      ? `node_${normalized}`
+      : 'node';
+  // PlantUML permits declarations such as `package "客户端" {` without an explicit
+  // alias. A purely ASCII sanitizer used to collapse every non-Latin label to the
+  // same `participant_` identifier, silently merging otherwise unrelated packages.
+  // Keep generated aliases readable, but add a stable suffix whenever transliteration
+  // discards non-ASCII content so distinct labels remain distinct across imports.
+  const suffix = /[^\x00-\x7F]/.test(canonical) ? `_${stableHash(value)}` : '';
+  return `${readable.slice(0, Math.max(1, 96 - suffix.length))}${suffix}`;
 }
 
 function singleLine(value: string): string {

@@ -171,6 +171,15 @@ struct ProjectFileEditorView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.isSaving)
             } else {
+                Button(
+                    model.localized("宠物中打开", english: "Open in Pet"),
+                    systemImage: "pawprint.fill"
+                ) {
+                    model.openPetFile(
+                        path: file.path,
+                        targetLine: viewModel.selectedLine
+                    )
+                }
                 Button(model.localized("复制", english: "Copy"), systemImage: "doc.on.doc") {
                     copyToPasteboard(file)
                 }

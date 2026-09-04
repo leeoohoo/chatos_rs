@@ -10,6 +10,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
+use super::plugin_components::SkillActivationAttestationService;
+
 const CALLER_SERVICE: &str = "mcp-management-service";
 const TOKEN_AUDIENCE: &str = "local-connector-service";
 const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
@@ -37,6 +39,7 @@ pub(super) struct PluginLocalProvider {
     response_limit_bytes: usize,
     recovered_bindings: Arc<RwLock<HashMap<String, PluginLocalProviderBinding>>>,
     recovery_lock: Arc<Mutex<()>>,
+    skill_attestations: Arc<SkillActivationAttestationService>,
 }
 
 #[derive(Debug, Deserialize)]

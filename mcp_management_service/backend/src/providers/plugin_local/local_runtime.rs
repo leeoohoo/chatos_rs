@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chatos_mcp_management_sdk::{ProjectExecutionContext, ResolvedMcpRoute};
 use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
+use chatos_plugin_management_sdk::{SkillActivationAttestationClaims, SkillGateDeclaration};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use super::validation::{validate_bound_route, validate_prepare_response};
 use super::{
@@ -211,6 +213,9 @@ impl PluginLocalProvider {
             .effective_binding(snapshot, route, prepared_binding)
             .await;
         validate_bound_route(snapshot, route, &binding)?;
+        let arguments = self
+            .apply_skill_gate(snapshot, prepared_binding, original_tool_name, arguments)
+            .await?;
         let first = self
             .execute_tool_with_binding(
                 snapshot,
@@ -235,6 +240,206 @@ impl PluginLocalProvider {
             }
             Err(error) => Err(error),
         }
+    }
+
+    async fn apply_skill_gate(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        binding: &PluginLocalProviderBinding,
+        tool_name: &str,
+        mut arguments: Value,
+    ) -> Result<Value, ProviderCallError> {
+        let definition = binding
+            .tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some(tool_name))
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "Plugin MCP tool definition is missing from the immutable snapshot",
+                )
+            })?;
+        let Some(raw_gate) = definition
+            .get("_meta")
+            .and_then(Value::as_object)
+            .and_then(|meta| meta.get("chatos/skillGate"))
+        else {
+            return Ok(arguments);
+        };
+        let gate: SkillGateDeclaration =
+            serde_json::from_value(raw_gate.clone()).map_err(|error| {
+                ProviderCallError::invalid_response(format!(
+                    "Plugin MCP tool has an invalid chatos/skillGate declaration: {error}"
+                ))
+            })?;
+        let evidence_argument = gate.evidence_argument.trim();
+        if evidence_argument.is_empty()
+            || (gate.all_of.is_empty() && gate.select_by_argument.is_none())
+        {
+            return Err(ProviderCallError::invalid_response(
+                "Plugin MCP skill gate must declare an evidence argument and at least one required Skill",
+            ));
+        }
+        let object = arguments.as_object_mut().ok_or_else(|| {
+            ProviderCallError::invalid_response(
+                "Plugin MCP tool arguments must be an object when a Skill gate is declared",
+            )
+        })?;
+        let evidence_value = object
+            .remove(evidence_argument)
+            .ok_or_else(|| ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: format!(
+                    "Plugin tool requires active Skill evidence in argument {evidence_argument}"
+                ),
+            })?;
+        let tokens = match evidence_value {
+            Value::String(token) => vec![token],
+            Value::Array(values) => values
+                .into_iter()
+                .map(|value| {
+                    value.as_str().map(str::to_string).ok_or_else(|| {
+                        ProviderCallError::invalid_response(
+                            "Plugin Skill evidence array must contain only strings",
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => {
+                return Err(ProviderCallError::invalid_response(
+                    "Plugin Skill evidence must be a token string or an array of token strings",
+                ))
+            }
+        };
+        if tokens.is_empty() || tokens.len() > 16 {
+            return Err(ProviderCallError::invalid_response(
+                "Plugin Skill evidence must contain between 1 and 16 tokens",
+            ));
+        }
+        let mut required = gate
+            .all_of
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect::<HashSet<_>>();
+        if let Some(selector) = gate.select_by_argument {
+            let selected = arguments
+                .pointer(selector.pointer.as_str())
+                .ok_or_else(|| {
+                    ProviderCallError::invalid_response(format!(
+                        "Plugin Skill gate selector argument is missing: {}",
+                        selector.pointer
+                    ))
+                })?;
+            let selected = selected.as_str().ok_or_else(|| {
+                ProviderCallError::invalid_response(
+                    "Plugin Skill gate selector value must be a string",
+                )
+            })?;
+            let skill_name = selector.map.get(selected).ok_or_else(|| {
+                ProviderCallError::invalid_response(format!(
+                    "Plugin Skill gate has no mapping for selector value {selected}"
+                ))
+            })?;
+            required.insert(skill_name.clone());
+        }
+        let mut activated_names = HashSet::new();
+        for token in tokens {
+            let activation = self
+                .skill_attestations
+                .verify_active(token.trim())
+                .await
+                .map_err(ProviderCallError::provider_unavailable)?;
+            self.validate_gated_activation(snapshot, binding, &activation.claims)?;
+            if !activated_names.insert(activation.claims.skill_name.clone()) {
+                return Err(ProviderCallError::invalid_response(
+                    "Plugin Skill evidence contains a duplicate Skill activation",
+                ));
+            }
+        }
+        let mut missing = required
+            .difference(&activated_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        missing.sort();
+        if !missing.is_empty() {
+            return Err(ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: format!(
+                    "Plugin tool requires activated Skills: {}",
+                    missing.join(", ")
+                ),
+            });
+        }
+        Ok(arguments)
+    }
+
+    fn validate_gated_activation(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        binding: &PluginLocalProviderBinding,
+        claims: &SkillActivationAttestationClaims,
+    ) -> Result<(), ProviderCallError> {
+        let skill_binding = snapshot
+            .plugin_local_tool_component_bindings
+            .values()
+            .find(|candidate| {
+                candidate.runtime.plugin_id == claims.plugin_id
+                    && candidate.runtime.release_id == claims.release_id
+                    && candidate.runtime.component.component_key == claims.component_key
+            })
+            .ok_or_else(|| ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: "Plugin Skill evidence refers to a component outside this Runtime Session"
+                    .to_string(),
+            })?;
+        let skill = skill_binding
+            .runtime
+            .skill_snapshot
+            .as_ref()
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable("Plugin Skill v2 snapshot is missing")
+            })?;
+        let (scope_kind, scope_material) = if let Some(project_id) = snapshot.project_id.as_deref()
+        {
+            (
+                "project",
+                format!(
+                    "project\n{}\n{}\n{}",
+                    snapshot.tenant_id, snapshot.owner_user_id, project_id
+                ),
+            )
+        } else {
+            (
+                "user_public",
+                format!(
+                    "user_public\n{}\n{}\n{}",
+                    snapshot.tenant_id, snapshot.owner_user_id, binding.device_id
+                ),
+            )
+        };
+        let scope_id = hex::encode(Sha256::digest(scope_material.as_bytes()));
+        if claims.tenant_id != snapshot.tenant_id
+            || claims.owner_user_id != snapshot.owner_user_id
+            || claims.task_id != snapshot.task_id
+            || claims.run_id != snapshot.run_id
+            || claims.runtime_session_id != snapshot.session_id
+            || claims.scope_kind != scope_kind
+            || claims.scope_id != scope_id
+            || claims.device_id.as_deref() != Some(binding.device_id.as_str())
+            || claims.workspace_id != binding.workspace_id
+            || claims.plugin_id != binding.runtime.plugin_id
+            || claims.release_id != binding.runtime.release_id
+            || claims.skill_name != skill.metadata.name
+            || claims.instructions_sha256 != skill.instructions_sha256
+            || claims.resource_manifest_sha256 != skill.resource_manifest_sha256
+        {
+            return Err(ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: "Plugin Skill evidence does not match the target Plugin Runtime Session"
+                    .to_string(),
+            });
+        }
+        Ok(())
     }
 
     async fn execute_tool_with_binding(

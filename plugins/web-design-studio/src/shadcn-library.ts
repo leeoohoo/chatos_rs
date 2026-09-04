@@ -9,23 +9,7 @@ export const SHADCN_VERSION = 'registry-2026.09';
 export const SHADCN_CATEGORIES: ShadcnCategory[] = ['布局', '排版', '按钮', '数据录入', '导航', '数据展示', '反馈', '浮层'];
 const item = defineUiComponent<ShadcnCategory>;
 
-const genericExamples = (): ShadcnComponentVariant[] => [
-  { id: 'default', label: '默认示例', props: { density: 'default', tone: 'neutral' } },
-  { id: 'compact', label: '紧凑示例', props: { density: 'compact', tone: 'neutral' } },
-  { id: 'accent', label: '强调示例', props: { density: 'comfortable', tone: 'accent' } }
-];
-
-const GENERIC_VARIANT_COMPONENTS = [
-  'AspectRatio', 'ButtonGroup', 'Resizable', 'ScrollArea', 'Separator', 'Sidebar', 'Typography', 'Label', 'Kbd',
-  'Toggle', 'ToggleGroup', 'InputGroup', 'InputOTP', 'Textarea', 'NativeSelect', 'Select', 'Combobox', 'Checkbox',
-  'Switch', 'RadioGroup', 'Slider', 'Calendar', 'Field', 'Breadcrumb', 'Collapsible', 'Menubar', 'NavigationMenu',
-  'Pagination', 'Avatar', 'Chart', 'DataTable', 'Empty', 'Table', 'Spinner', 'Toast', 'AlertDialog', 'DropdownMenu',
-  'ContextMenu', 'HoverCard', 'Popover', 'Tooltip', 'Attachment', 'Bubble', 'Carousel', 'Command', 'DatePicker',
-  'Direction', 'Item', 'Marker', 'Message', 'MessageScroller', 'Questionnaire'
-];
-
 export const SHADCN_COMPONENT_VARIANTS: Record<string, ShadcnComponentVariant[]> = {
-  ...Object.fromEntries(GENERIC_VARIANT_COMPONENTS.map((component) => [component, genericExamples()])),
   AspectRatio: [
     { id: 'video', label: '16:9 视频画面', props: { kind: 'video', ratio: 16 / 9, label: '16:9', title: '产品演示视频' }, width: 400, height: 225 },
     { id: 'square', label: '1:1 方形媒体', props: { kind: 'square', ratio: 1, label: '1:1', title: '品牌视觉素材' }, width: 240, height: 240 },

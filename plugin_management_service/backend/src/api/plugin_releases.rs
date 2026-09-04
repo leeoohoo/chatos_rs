@@ -4,7 +4,8 @@
 use std::collections::BTreeMap;
 
 use chatos_plugin_management_sdk::{
-    plugin_component_descriptors, verify_plugin_release_signature, PluginReleaseVerificationContext,
+    plugin_component_descriptors, verify_plugin_release_signature, PluginComponentKind,
+    PluginReleaseVerificationContext, PluginSkillComponentSnapshot,
 };
 use semver::Version;
 
@@ -40,6 +41,7 @@ pub(super) async fn publish_plugin_release_from_manifest(
     plugin_id: &str,
     mut payload: PluginReleasePayload,
     manifest: PluginManifest,
+    skill_snapshots: Vec<PluginSkillComponentSnapshot>,
 ) -> Result<PluginReleaseRecord, ApiError> {
     let mut plugin = state
         .store
@@ -124,15 +126,59 @@ pub(super) async fn publish_plugin_release_from_manifest(
         published_at: now_rfc3339(),
         revoked_at: None,
     };
+    if skill_snapshots.len() != manifest.skills.len() {
+        return Err(ApiError::bad_request(
+            "every declared Plugin Skill requires an analyzed immutable snapshot",
+        ));
+    }
+    let skill_snapshots =
+        skill_snapshots
+            .into_iter()
+            .try_fold(BTreeMap::new(), |mut snapshots, snapshot| {
+                if snapshots
+                    .insert(snapshot.skill_id.clone(), snapshot)
+                    .is_some()
+                {
+                    return Err(ApiError::bad_request(
+                        "Plugin Skill snapshots contain duplicate Skill names",
+                    ));
+                }
+                Ok(snapshots)
+            })?;
+    for component in release
+        .components
+        .iter()
+        .filter(|component| component.kind == PluginComponentKind::SkillCollection)
+    {
+        if !skill_snapshots.contains_key(component.component_key.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "Plugin Skill snapshot is missing for component {}",
+                component.component_key
+            )));
+        }
+    }
     let component_snapshots = release
         .components
         .iter()
         .cloned()
-        .map(|component| PluginComponentSnapshot {
-            plugin_id: release.plugin_id.clone(),
-            release_id: release.id.clone(),
-            component,
-            content_sha256: release.artifact_sha256.clone(),
+        .map(|component| {
+            let skill = (component.kind == PluginComponentKind::SkillCollection)
+                .then(|| {
+                    skill_snapshots
+                        .get(component.component_key.as_str())
+                        .cloned()
+                })
+                .flatten();
+            PluginComponentSnapshot {
+                plugin_id: release.plugin_id.clone(),
+                release_id: release.id.clone(),
+                content_sha256: skill
+                    .as_ref()
+                    .map(|snapshot| snapshot.snapshot_sha256.clone())
+                    .unwrap_or_else(|| release.artifact_sha256.clone()),
+                component,
+                skill,
+            }
         })
         .collect::<Vec<_>>();
     state

@@ -56,7 +56,9 @@ struct UserTurnMessageView: View {
 }
 
 struct AssistantReplyView: View {
+    @EnvironmentObject private var model: AppModel
     let reply: ConversationAssistantReply
+    var projectRootPath: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -67,7 +69,16 @@ struct AssistantReplyView: View {
                     markdown: reply.message.text,
                     allowsTextSelection: false
                 )
+                .environment(\.openURL, petFileOpenAction)
             }
+        }
+    }
+
+    private var petFileOpenAction: OpenURLAction {
+        OpenURLAction { url in
+            model.openPetFileLink(url, projectRootPath: projectRootPath)
+                ? .handled
+                : .systemAction
         }
     }
 
@@ -91,6 +102,7 @@ struct TaskAgentReplyView: View {
     @EnvironmentObject private var model: AppModel
     let reply: ConversationAssistantReply
     let expandedSection: TaskReplyInspectorSection?
+    var projectRootPath: String? = nil
     let onToggleInspector: (TaskReplyInspectorSection) -> Void
 
     var body: some View {
@@ -113,6 +125,7 @@ struct TaskAgentReplyView: View {
                     markdown: reply.message.text,
                     allowsTextSelection: false
                 )
+                .environment(\.openURL, petFileOpenAction)
                 HStack(spacing: 14) {
                     inspectorButton(
                         title: "执行过程",
@@ -126,6 +139,14 @@ struct TaskAgentReplyView: View {
                     )
                 }
             }
+        }
+    }
+
+    private var petFileOpenAction: OpenURLAction {
+        OpenURLAction { url in
+            model.openPetFileLink(url, projectRootPath: projectRootPath)
+                ? .handled
+                : .systemAction
         }
     }
 

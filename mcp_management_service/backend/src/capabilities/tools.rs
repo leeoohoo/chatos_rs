@@ -469,6 +469,7 @@ mod tests {
                 metadata: Default::default(),
             },
             component_content_sha256: "c".repeat(64),
+            skill_snapshot: None,
             installation_device_id: Some("device-1".to_string()),
             permission_snapshot: Vec::new(),
             auth_connection_ids: Vec::new(),

@@ -5,6 +5,10 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { applyMagicUiComponentVariant, createMagicUiComponent } from '../dist/magicui-library.test.mjs';
+import { applySpellComponentVariant, createSpellComponent } from '../dist/spell-library.test.mjs';
+import { applyInspiraComponentVariant, createInspiraComponent } from '../dist/inspira-library.test.mjs';
+import { applyDaisyUiComponentVariant, createDaisyUiComponent } from '../dist/daisyui-library.test.mjs';
 
 test('studio serves the packaged workbench and persists a design', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-studio-server-test-'));
@@ -73,6 +77,30 @@ test('studio serves the packaged workbench and persists a design', async () => {
     form.height = 720.25;
     form.style = { ...form.style, background: 'rgba(255,255,255,.83)', borderRadius: 17.5 };
     form.responsive = { mobile: { x: 21.5, y: 812.25, width: 347.5, height: 508.75 } };
+    const magicCard = applyMagicUiComponentVariant(createMagicUiComponent('MagicCard', 1480.25, 620.75), 'editorial');
+    magicCard.pageId = exactDesign.pages[0].id;
+    magicCard.width = 512.5;
+    magicCard.height = 286.25;
+    magicCard.responsive = { mobile: { x: 18.25, y: 1420.5, width: 354.75, height: 236.5 } };
+    exactDesign.components.push(magicCard);
+    const spellChart = applySpellComponentVariant(createSpellComponent('Chart', 720.5, 1860.25), 'immersive');
+    spellChart.pageId = exactDesign.pages[0].id;
+    spellChart.library.props.values = [21, 35, 29, 64, 73, 91];
+    exactDesign.components.push(spellChart);
+    const inspiraUpload = applyInspiraComponentVariant(createInspiraComponent('FileUpload', 1320.75, 1940.5), 'editorial');
+    inspiraUpload.pageId = exactDesign.pages[0].id;
+    inspiraUpload.width = 518.25;
+    inspiraUpload.height = 346.75;
+    inspiraUpload.library.props.files = ['brand-system.fig', 'launch-visual.pdf'];
+    inspiraUpload.responsive = { mobile: { x: 18.5, y: 1710.25, width: 352.75, height: 318.5 } };
+    exactDesign.components.push(inspiraUpload);
+    const daisyCard = applyDaisyUiComponentVariant(createDaisyUiComponent('Card', 1900.25, 2010.75), 'side');
+    daisyCard.pageId = exactDesign.pages[0].id;
+    daisyCard.width = 548.5;
+    daisyCard.height = 312.25;
+    daisyCard.library.props.items = ['Design system', 'Responsive states', 'Publish'];
+    daisyCard.responsive = { mobile: { x: 17.25, y: 2058.5, width: 355.25, height: 302.75 } };
+    exactDesign.components.push(daisyCard);
     const saved = await fetch(`${base}/api/documents/${created.documentId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -83,6 +111,10 @@ test('studio serves the packaged workbench and persists a design', async () => {
     assert.deepEqual(reopened.viewport, exactDesign.viewport);
     assert.deepEqual(reopened.breakpoints, exactDesign.breakpoints);
     assert.deepEqual(saved.components, exactDesign.components);
+    assert.deepEqual(reopened.components.find((component) => component.id === magicCard.id), magicCard);
+    assert.deepEqual(reopened.components.find((component) => component.id === spellChart.id), spellChart);
+    assert.deepEqual(reopened.components.find((component) => component.id === inspiraUpload.id), inspiraUpload);
+    assert.deepEqual(reopened.components.find((component) => component.id === daisyCard.id), daisyCard);
   } finally {
     if (child.exitCode === null) {
       child.kill('SIGTERM');

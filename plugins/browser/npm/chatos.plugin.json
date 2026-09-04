@@ -21,7 +21,12 @@
     }
   },
   "skills": [
-    "./skills/browser-cdp-workflow"
+    "./skills/browser-cdp",
+    "./skills/browser-navigation",
+    "./skills/browser-interaction",
+    "./skills/browser-observation-verification",
+    "./skills/browser-network-debugging",
+    "./skills/browser-file-transfer"
   ],
   "interface": {
     "displayName": "Browser CDP",

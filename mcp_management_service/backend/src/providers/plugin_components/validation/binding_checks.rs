@@ -71,9 +71,10 @@ pub(in crate::providers::plugin_components) fn required_operation(
     }
 }
 
-pub(in crate::providers::plugin_components) fn validate_execute_identity(
+pub(in crate::providers::plugin_components) fn validate_execute_identity_for_operation(
     binding: &PluginLocalToolComponentBinding,
     response: &Value,
+    expected_operation: &str,
 ) -> Result<(), ProviderCallError> {
     for (field, expected) in [
         ("plugin_id", binding.runtime.plugin_id.as_str()),
@@ -85,7 +86,7 @@ pub(in crate::providers::plugin_components) fn validate_execute_identity(
             binding.runtime.component.component_key.as_str(),
         ),
         ("adapter_session_id", binding.adapter_session_id.as_str()),
-        ("operation", binding.operation.as_str()),
+        ("operation", expected_operation),
     ] {
         if response.get(field).and_then(Value::as_str) != Some(expected) {
             return Err(ProviderCallError::invalid_response(format!(
