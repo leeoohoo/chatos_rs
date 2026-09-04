@@ -50,6 +50,7 @@ fn protected_api(state: AppState) -> Router<AppState> {
             "/api/users",
             get(users::list_users).post(users::create_user),
         )
+        .route("/api/users/page", get(users::list_users_page))
         .route("/api/users/{id}", patch(users::update_user))
         .route(
             "/api/users/{id}/harness-provisioning",
@@ -237,8 +238,8 @@ pub async fn require_auth(
         return Err(unauthorized("token has been revoked"));
     }
 
-    let principal = CurrentPrincipal::from(claims);
-    ensure_principal_active(&state, &principal).await?;
+    let mut principal = CurrentPrincipal::from(claims);
+    refresh_principal_identity(&state, &mut principal).await?;
 
     request.extensions_mut().insert(principal);
     Ok(next.run(request).await)
@@ -260,9 +261,9 @@ async fn require_harness_repo_write_internal(
     Ok(next.run(request).await)
 }
 
-async fn ensure_principal_active(
+async fn refresh_principal_identity(
     state: &AppState,
-    principal: &CurrentPrincipal,
+    principal: &mut CurrentPrincipal,
 ) -> Result<(), (StatusCode, Json<Value>)> {
     match principal.principal_type.as_str() {
         PRINCIPAL_TYPE_HUMAN_USER => {
@@ -280,6 +281,9 @@ async fn ensure_principal_active(
             if !user.enabled {
                 return Err(unauthorized("user has been disabled"));
             }
+            principal.username = Some(user.username);
+            principal.display_name = Some(user.display_name);
+            principal.role = Some(user.role);
             Ok(())
         }
         PRINCIPAL_TYPE_AGENT_ACCOUNT => {
@@ -308,6 +312,11 @@ async fn ensure_principal_active(
             if !owner.enabled {
                 return Err(unauthorized("agent owner has been disabled"));
             }
+            principal.username = Some(agent.username);
+            principal.display_name = Some(agent.display_name);
+            principal.owner_user_id = Some(owner.id);
+            principal.owner_username = Some(owner.username);
+            principal.owner_display_name = Some(owner.display_name);
             Ok(())
         }
         _ => Err(unauthorized("unsupported principal type")),
@@ -470,6 +479,7 @@ mod tests {
             (reqwest::Method::GET, "/api/health"),
             (reqwest::Method::POST, "/api/auth/login"),
             (reqwest::Method::GET, "/api/users"),
+            (reqwest::Method::GET, "/api/users/page"),
         ] {
             let status = client
                 .request(method, format!("{base_url}{path}"))

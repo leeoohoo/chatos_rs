@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
+use serde::Deserialize;
 
 use crate::auth::{hash_password, normalize_display_name, normalize_username, CurrentPrincipal};
 use crate::integrations::{
@@ -10,13 +11,19 @@ use crate::integrations::{
 };
 use crate::models::{
     CreateUserRequest, ProvisionHarnessUserRequest, UpdateUserRequest, UserRecord,
-    UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
+    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
 };
 use crate::secrets::decrypt_secret;
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
 use super::{bad_request, forbidden, internal_error, not_found, require_super_admin, ApiResult};
+
+#[derive(Debug, Default, Deserialize)]
+pub struct UserListPageQuery {
+    limit: Option<i64>,
+    offset: Option<u64>,
+}
 
 pub async fn list_users(
     State(state): State<AppState>,
@@ -43,6 +50,40 @@ pub async fn list_users(
         return Err(not_found("user not found"));
     };
     Ok(Json(vec![summary]))
+}
+
+pub async fn list_users_page(
+    State(state): State<AppState>,
+    Extension(principal): Extension<CurrentPrincipal>,
+    Query(query): Query<UserListPageQuery>,
+) -> ApiResult<UserSummaryPageResponse> {
+    if principal.is_super_admin() {
+        return state
+            .store
+            .list_users_summary_page(
+                query.limit.unwrap_or(20).clamp(1, 100),
+                query.offset.unwrap_or(0),
+            )
+            .await
+            .map(Json)
+            .map_err(internal_error);
+    }
+
+    let Some(user_id) = principal.user_id.as_deref() else {
+        return Err(not_found("current user not found"));
+    };
+    let Some(summary) = state
+        .store
+        .get_user_summary(user_id)
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("user not found"));
+    };
+    Ok(Json(UserSummaryPageResponse {
+        items: vec![summary],
+        total: 1,
+    }))
 }
 
 pub async fn create_user(

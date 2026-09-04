@@ -1,9 +1,10 @@
 import { Select, Space, Typography } from 'antd';
-import { useState } from 'react';
+import { lazy, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { AuditLog, ConfigEditor, Dashboard, Instances, ReleaseHistory } from './pages';
-import { QueueOperationsPanel } from './QueueOperationsPanel';
+
+const QueueOperationsPanel = lazy(() => import('./QueueOperationsPanel').then((module) => ({ default: module.QueueOperationsPanel })));
 
 export default function ConfigCenterModuleRoutes() {
   const [environment, setEnvironment] = useState(localStorage.getItem('chatos.configuration-center.environment') || 'production');

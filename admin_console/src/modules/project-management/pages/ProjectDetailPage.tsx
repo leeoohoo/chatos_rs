@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Form, message } from 'antd';
 import { useParams } from 'react-router-dom';
@@ -16,7 +16,6 @@ import type {
   UpsertProjectProfilePayload,
 } from '../types';
 import { buildProjectDetailColumns } from './projectDetail/columns';
-import { ProjectDetailOverlays } from './projectDetail/ProjectDetailOverlays';
 import { ProjectDetailTabs } from './projectDetail/ProjectDetailTabs';
 import type {
   GraphRelationRow,
@@ -32,6 +31,7 @@ import {
 } from './projectDetail/utils';
 
 const emptyGraphNodes: DependencyGraphNode[] = [];
+const ProjectDetailOverlays = lazy(() => import('./projectDetail/ProjectDetailOverlays').then((module) => ({ default: module.ProjectDetailOverlays })));
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -304,7 +304,13 @@ export function ProjectDetailPage() {
         blockingRelations={blockingRelations}
         containsRelations={containsRelations}
       />
-      <ProjectDetailOverlays
+      {requirementModalOpen
+        || workItemModalOpen
+        || requirementDetailTarget
+        || workItemDetailTarget
+        || requirementDepTarget
+        || workItemDepTarget
+        || docTarget ? <Suspense fallback={null}><ProjectDetailOverlays
         requirementModalOpen={requirementModalOpen}
         onCloseRequirementModal={() => setRequirementModalOpen(false)}
         requirementForm={requirementForm}
@@ -340,7 +346,7 @@ export function ProjectDetailPage() {
         workItemDetailTarget={workItemDetailTarget}
         onCloseWorkItemDetail={() => setWorkItemDetailTarget(null)}
         requirements={requirements}
-      />
+      /></Suspense> : null}
     </div>
   );
 }

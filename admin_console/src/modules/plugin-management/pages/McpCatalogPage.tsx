@@ -12,7 +12,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Form, Popconfirm, Space, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 import { api } from '../api/client';
 import { CompactId, DateTimeCell } from '../components/DisplayCells';
@@ -20,13 +20,14 @@ import { EnabledTag, RuntimeKindTag, VisibilityTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
 import { mcpDisplayName } from '../i18n/labels';
 import type { CurrentUser, McpProviderSkill, McpRecord, RuntimeKind } from '../types';
-import { McpCatalogDialogs } from './mcpCatalog/McpCatalogDialogs';
 import {
   adminRuntimeKinds,
   buildMcpPayload,
   isSystemManagedMcp,
 } from './mcpCatalog/support';
 import { jsonText } from './formUtils';
+
+const McpCatalogDialogs = lazy(() => import('./mcpCatalog/McpCatalogDialogs').then((module) => ({ default: module.McpCatalogDialogs })));
 
 interface McpCatalogPageProps {
   user: CurrentUser;
@@ -382,7 +383,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
           },
         }}
       />
-      <McpCatalogDialogs
+      {modalOpen || descriptorModal || optimizeTarget ? <Suspense fallback={null}><McpCatalogDialogs
         form={form}
         optimizeForm={optimizeForm}
         editing={editing}
@@ -412,7 +413,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
         onStream={streamProviderSkillOptimization}
         onSaveOptimized={() => saveOptimizedSkillMutation.mutate()}
         saveOptimizedPending={saveOptimizedSkillMutation.isPending}
-      />
+      /></Suspense> : null}
     </div>
   );
 }

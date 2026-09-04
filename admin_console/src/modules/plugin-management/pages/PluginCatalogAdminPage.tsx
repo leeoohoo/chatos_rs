@@ -5,7 +5,7 @@ import { PlusOutlined, RocketOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 
 import { api } from '../api/client';
 import { CompactId, DateTimeCell } from '../components/DisplayCells';
@@ -13,7 +13,8 @@ import { EnabledTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
 import type { PluginCatalogListItem, PluginRuntimeTarget } from '../pluginTypes';
 import type { CurrentUser } from '../types';
-import { PluginPublishWizard } from './catalogForm/PluginPublishWizard';
+
+const PluginPublishWizard = lazy(() => import('./catalogForm/PluginPublishWizard').then((module) => ({ default: module.PluginPublishWizard })));
 
 interface PluginCatalogAdminPageProps {
   user: CurrentUser;
@@ -198,7 +199,7 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
           },
         }}
       />
-      <PluginPublishWizard
+      {modalOpen ? <Suspense fallback={null}><PluginPublishWizard
         open={modalOpen}
         marketplaces={marketplacesQuery.data?.items || []}
         plugins={wizardPluginsQuery.data?.items || []}
@@ -209,7 +210,7 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
           queryClient.invalidateQueries({ queryKey: ['plugin-management', 'plugin-releases', result.catalog.id] });
           onOpenReleases(result.catalog.id);
         }}
-      />
+      /></Suspense> : null}
     </div>
   );
 }

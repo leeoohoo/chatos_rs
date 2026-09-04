@@ -524,29 +524,13 @@ pub(crate) fn generate_invite_code() -> String {
 }
 
 pub async fn me(
-    State(state): State<AppState>,
     Extension(principal): Extension<CurrentPrincipal>,
 ) -> ApiResult<CurrentUserResponse> {
-    let Some(user_id) = principal.user_id.as_deref() else {
+    if principal.principal_type != crate::models::PRINCIPAL_TYPE_HUMAN_USER {
         return Err(not_found("current user not found"));
-    };
-    let Some(user) = state
-        .store
-        .find_user_by_id(user_id)
-        .await
-        .map_err(internal_error)?
-    else {
-        return Err(not_found("current user not found"));
-    };
+    }
     Ok(Json(CurrentUserResponse {
-        user: current_auth_user(
-            user.id,
-            user.username,
-            user.display_name,
-            user.role,
-            principal.jti,
-            principal.exp,
-        ),
+        user: principal.auth_user(),
     }))
 }
 

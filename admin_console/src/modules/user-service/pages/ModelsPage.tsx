@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -30,7 +30,6 @@ import type {
   UserModelProviderRecord,
   UserSummaryRecord,
 } from '../types';
-import { ModelProviderDrawer } from './models/ModelProviderDrawer';
 import {
   ALL_USERS_SCOPE,
   buildCreateProviderPayload,
@@ -41,6 +40,8 @@ import {
   type ProviderFormValues,
   userLabel,
 } from './models/modelPageUtils';
+
+const ModelProviderDrawer = lazy(() => import('./models/ModelProviderDrawer').then((module) => ({ default: module.ModelProviderDrawer })));
 
 type ModelTaskPreferencesDraft = {
   task_enabled: boolean;
@@ -574,7 +575,7 @@ export function ModelsPage() {
         )}
       </Card>
 
-      <ModelProviderDrawer
+      {drawerOpen ? <Suspense fallback={null}><ModelProviderDrawer
         open={drawerOpen}
         editingProvider={editingProvider}
         isSuperAdmin={isSuperAdmin}
@@ -583,7 +584,7 @@ export function ModelsPage() {
         saveLoading={createProviderMutation.isPending || updateProviderMutation.isPending}
         onClose={closeDrawer}
         onSubmit={submit}
-      />
+      /></Suspense> : null}
     </Space>
   );
 }

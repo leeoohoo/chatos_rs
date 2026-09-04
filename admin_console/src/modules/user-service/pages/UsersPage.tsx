@@ -62,13 +62,16 @@ export function UsersPage() {
   const [editingUser, setEditingUser] = useState<UserSummaryRecord | null>(null);
   const [harnessProvisionUser, setHarnessProvisionUser] = useState<UserSummaryRecord | null>(null);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [form] = Form.useForm<UserFormValues>();
   const [harnessForm] = Form.useForm<HarnessProvisionFormValues>();
   const [inviteForm] = Form.useForm<InviteCodeFormValues>();
 
   const usersQuery = useQuery({
-    queryKey: ['user-service', 'users'],
-    queryFn: () => api.listUsers(),
+    queryKey: ['user-service', 'users', page, pageSize],
+    queryFn: () => api.listUsersPage(pageSize, (page - 1) * pageSize),
+    placeholderData: (previousData) => previousData,
   });
 
   const isSuperAdmin = currentUser.role === 'super_admin';
@@ -460,9 +463,18 @@ export function UsersPage() {
       <Table<UserSummaryRecord>
         rowKey="id"
         columns={columns}
-        dataSource={usersQuery.data || []}
+        dataSource={usersQuery.data?.items || []}
         loading={usersQuery.isLoading}
-        pagination={{ pageSize: 10, showSizeChanger: true }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: usersQuery.data?.total || 0,
+          showSizeChanger: true,
+          onChange: (nextPage, nextPageSize) => {
+            setPage(nextPageSize === pageSize ? nextPage : 1);
+            setPageSize(nextPageSize);
+          },
+        }}
         locale={{
           emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无用户" />,
         }}

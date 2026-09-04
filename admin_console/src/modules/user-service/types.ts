@@ -39,6 +39,11 @@ export interface UserSummaryRecord {
   harness_provisioning?: HarnessProvisioningSummaryRecord | null;
 }
 
+export interface UserSummaryPageResponse {
+  items: UserSummaryRecord[];
+  total: number;
+}
+
 export interface InviteCodeRecord {
   id: string;
   label?: string | null;
