@@ -61,7 +61,7 @@ struct TaskReplyInlineInspectorView: View {
     }
 }
 
-private struct TaskReplyInspectorContent: View {
+struct TaskReplyInspectorContent: View {
     @ObservedObject var viewModel: TaskReplyInspectorViewModel
 
     @ViewBuilder
