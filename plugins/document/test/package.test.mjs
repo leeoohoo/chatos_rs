@@ -1,9 +1,44 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 const projectRoot = path.resolve(import.meta.dirname, '..');
+
+async function probeMcpStdout() {
+  const child = spawn(process.execPath, [path.join(projectRoot, 'bin', 'chatos-document-mcp'), 'mcp'], {
+    env: {
+      ...process.env,
+      CHATOS_WORKSPACE: os.tmpdir(),
+      CHATOS_PLUGIN_ARTIFACT_DIR: os.tmpdir(),
+      CHATOS_PLUGIN_ROOT: projectRoot
+    },
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.stdin.end(`${JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'stdout-probe', version: '1.0.0' }
+    }
+  })}\n`);
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  return { exitCode, stdout, stderr };
+}
 
 test('package and ChatOS manifest identities stay aligned', async () => {
   const packageJson = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8'));
@@ -44,4 +79,16 @@ test('package and ChatOS manifest identities stay aligned', async () => {
   ));
   assert.equal(pdfiumThirdParty.subject.wasmSha256, pdfiumManifest.asset.sha256);
   assert.equal(pdfiumThirdParty.components.length, 16);
+});
+
+test('stdio MCP reserves stdout for JSON-RPC messages', async () => {
+  const result = await probeMcpStdout();
+  assert.equal(result.exitCode, 0, result.stderr);
+  const lines = result.stdout.trim().split('\n');
+  assert.equal(lines.length, 1, result.stdout);
+  const response = JSON.parse(lines[0]);
+  assert.equal(response.jsonrpc, '2.0');
+  assert.equal(response.id, 1);
+  assert.equal(response.result.serverInfo.name, 'chatos-document-mcp');
+  assert.doesNotMatch(result.stdout, /Warning:/);
 });

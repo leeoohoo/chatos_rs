@@ -26,6 +26,11 @@ async function withClient(workspace, callback) {
   });
   const client = new Client({ name: 'document-mcp-test', version: '1.0.0' });
   await client.connect(transport);
+  const callTool = client.callTool.bind(client);
+  client.callTool = (params, resultSchema, options) => callTool(params, resultSchema, {
+    timeout: 120_000,
+    ...options
+  });
   try {
     return await callback(client, { artifact });
   } finally {

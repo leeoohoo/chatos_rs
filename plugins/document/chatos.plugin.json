@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-document-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Inspect, validate, render, and safely operate Word, Excel, PowerPoint, and PDF files inside a bound ChatOS workspace.",
   "author": {
     "name": "Chatos"
