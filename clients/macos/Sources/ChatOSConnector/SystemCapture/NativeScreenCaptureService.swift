@@ -24,13 +24,10 @@ public actor NativeScreenCaptureService {
             throw NativeScreenCaptureError.displayUnavailable
         }
 
-        // The selection overlays are ordered out before capture. Excluding the
-        // entire ChatOS application here would also remove the main window and
-        // leave transparent/blank areas whenever users capture ChatOS itself.
-        let excludedWindows = content.windows.filter {
-            region.excludedWindowIDs.contains($0.windowID)
-        }
-        let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
+        // Capture the display's real composited contents. In particular, do not
+        // filter windows by owning application, level, or type: floating ChatOS
+        // UI such as the desktop pet and its conversation must remain visible.
+        let filter = SCContentFilter(display: display, excludingWindows: [])
         let configuration = SCStreamConfiguration()
         configuration.sourceRect = region.sourceRect
         configuration.width = max(1, Int(region.outputSize.width.rounded()))

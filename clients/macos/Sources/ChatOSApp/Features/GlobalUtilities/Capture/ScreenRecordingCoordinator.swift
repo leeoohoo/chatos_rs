@@ -83,7 +83,6 @@ final class ScreenRecordingCoordinator {
         state = .preparing
         let isEnglish = model?.interfaceLanguage == .english
         controlPanel.prepare(isEnglish: isEnglish)
-        let excludedWindowIDs = controlPanel.windowID.map { [$0] } ?? []
         pickerPanel.closeAndRestorePreviousApplication()
         let temporaryURL = Self.recordingTemporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -96,8 +95,7 @@ final class ScreenRecordingCoordinator {
                 try await service.start(
                     target: target,
                     outputURL: temporaryURL,
-                    capturesSystemAudio: capturesSystemAudio,
-                    excludedWindowIDs: excludedWindowIDs
+                    capturesSystemAudio: capturesSystemAudio
                 )
                 state = .recording
                 controlPanel.present(isEnglish: isEnglish)

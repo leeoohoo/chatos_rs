@@ -83,18 +83,7 @@ final class ScreenshotCoordinator {
                 // being baked into the screenshot preview.
                 try await Task.sleep(for: .milliseconds(120))
                 try Task.checkCancellation()
-                let excludedWindowIDs = Array(Set(
-                    selection.captureRegion.excludedWindowIDs
-                        + ScreenshotWindowExclusion.visibleOverlayWindowIDs()
-                ))
-                let image = try await self.captureService.capture(
-                    region: NativeScreenCaptureRegion(
-                        displayID: selection.captureRegion.displayID,
-                        sourceRect: selection.captureRegion.sourceRect,
-                        outputSize: selection.captureRegion.outputSize,
-                        excludedWindowIDs: excludedWindowIDs
-                    )
-                )
+                let image = try await self.captureService.capture(region: selection.captureRegion)
                 try Task.checkCancellation()
                 self.captureTask = nil
                 self.presentInlineAnnotation(
