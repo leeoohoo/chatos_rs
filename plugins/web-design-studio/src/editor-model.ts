@@ -173,6 +173,7 @@ function synchronizeInstanceComponent(
   }
   if (!overrides.has('style')) {
     next.style = structuredClone(definition.style);
+    next.states = structuredClone(definition.states);
     for (const device of ['tablet', 'mobile'] as const) {
       const currentOverride = next.responsive?.[device];
       const definitionStyle = definition.responsive?.[device]?.style;
@@ -229,6 +230,7 @@ export function updateSymbolFromInstance(document: WebDesignDocument, componentI
     next.content = instance.content;
     next.interaction = structuredClone(instance.interaction);
     next.style = structuredClone(instance.style);
+    next.states = structuredClone(instance.states);
     next.layout = structuredClone(instance.layout);
     for (const device of ['desktop', 'tablet', 'mobile'] as const) {
       const frame = resolveComponent(instance, device);
@@ -344,6 +346,47 @@ export function updateComponentStyle(
       [device]: { ...override, style: { ...override.style, ...changes } }
     }
   };
+}
+
+export function constrainComponentFrame(
+  component: WebDesignComponent,
+  device: WebDesignDevice,
+  changes: Partial<Pick<ResolvedWebDesignComponent, 'width' | 'height'>>
+): Pick<ResolvedWebDesignComponent, 'width' | 'height'> {
+  const frame = resolveComponent(component, device);
+  const constraints = component.constraints?.[device];
+  const minWidth = constraints?.minWidth ?? 16;
+  const maxWidth = constraints?.maxWidth ?? 100000;
+  const minHeight = constraints?.minHeight ?? 16;
+  const maxHeight = constraints?.maxHeight ?? 100000;
+  let width = changes.width ?? frame.width;
+  let height = changes.height ?? frame.height;
+  if (constraints?.lockAspectRatio) {
+    const ratio = frame.width / Math.max(1, frame.height);
+    if (changes.width !== undefined && changes.height === undefined) height = width / ratio;
+    else if (changes.height !== undefined && changes.width === undefined) width = height * ratio;
+    else if (changes.width !== undefined && changes.height !== undefined) {
+      const widthDelta = Math.abs(width - frame.width) / Math.max(1, frame.width);
+      const heightDelta = Math.abs(height - frame.height) / Math.max(1, frame.height);
+      if (widthDelta >= heightDelta) height = width / ratio;
+      else width = height * ratio;
+    }
+    width = Math.max(minWidth, Math.min(maxWidth, width));
+    height = width / ratio;
+    if (height < minHeight) {
+      height = minHeight;
+      width = height * ratio;
+    } else if (height > maxHeight) {
+      height = maxHeight;
+      width = height * ratio;
+    }
+    width = Math.max(minWidth, Math.min(maxWidth, width));
+    height = width / ratio;
+  } else {
+    width = Math.max(minWidth, Math.min(maxWidth, width));
+    height = Math.max(minHeight, Math.min(maxHeight, height));
+  }
+  return { width: Math.round(width), height: Math.round(height) };
 }
 
 export function scaleFrameForBreakpoint(
@@ -487,7 +530,9 @@ function reflowHorizontalFrame(
     width = nextContainer.width - relativeX - right;
   }
 
-  width = Math.min(nextContainer.width, Math.max(responsiveMinimumWidth(component), Math.round(width)));
+  const sizeConstraints = component.constraints?.[device];
+  width = Math.max(sizeConstraints?.minWidth ?? responsiveMinimumWidth(component), Math.round(width));
+  width = Math.min(sizeConstraints?.maxWidth ?? nextContainer.width, nextContainer.width, width);
   x = Math.min(nextContainer.x + nextContainer.width - width, Math.max(nextContainer.x, Math.round(x)));
   return { ...frame, x, width };
 }
@@ -642,6 +687,19 @@ function alignedOffset(available: number, size: number, align: 'start' | 'center
   return 0;
 }
 
+function justifiedLine(available: number, sizes: number[], gap: number, justify: NonNullable<WebDesignComponent['layout']>['justify'] = 'start'): { offset: number; gap: number } {
+  const occupied = sizes.reduce((sum, size) => sum + size, 0) + Math.max(0, sizes.length - 1) * gap;
+  const remaining = Math.max(0, available - occupied);
+  if (justify === 'center') return { offset: remaining / 2, gap };
+  if (justify === 'end') return { offset: remaining, gap };
+  if (justify === 'space-between' && sizes.length > 1) return { offset: 0, gap: gap + remaining / (sizes.length - 1) };
+  if (justify === 'space-around' && sizes.length > 0) {
+    const extra = remaining / sizes.length;
+    return { offset: extra / 2, gap: gap + extra };
+  }
+  return { offset: 0, gap };
+}
+
 export function autoLayoutContainer(
   document: WebDesignDocument,
   containerId: string,
@@ -657,25 +715,52 @@ export function autoLayoutContainer(
   const padding = layout.padding;
   const gap = layout.gap;
   const align = layout.align ?? 'start';
+  const justify = layout.justify ?? 'start';
   const innerWidth = Math.max(16, parentFrame.width - padding * 2);
   const innerHeight = Math.max(16, parentFrame.height - padding * 2);
   const frames = new Map<string, Partial<Pick<ResolvedWebDesignComponent, 'x' | 'y' | 'width' | 'height'>>>();
 
   if (layout.mode === 'flex-row') {
-    let cursor = parentFrame.x + padding;
+    const lines: WebDesignComponent[][] = [];
+    let line: WebDesignComponent[] = [];
+    let lineWidth = 0;
     for (const child of children) {
-      const frame = resolveComponent(child, device);
-      const height = align === 'stretch' ? innerHeight : Math.min(frame.height, innerHeight);
-      frames.set(child.id, {
-        x: cursor,
-        y: parentFrame.y + padding + alignedOffset(innerHeight, height, align),
-        width: frame.width,
-        height
+      const width = Math.min(resolveComponent(child, device).width, innerWidth);
+      const nextWidth = line.length === 0 ? width : lineWidth + gap + width;
+      if (layout.wrap && line.length > 0 && nextWidth > innerWidth) {
+        lines.push(line);
+        line = [child];
+        lineWidth = width;
+      } else {
+        line.push(child);
+        lineWidth = nextWidth;
+      }
+    }
+    if (line.length > 0) lines.push(line);
+    let cursorY = parentFrame.y + padding;
+    for (const currentLine of lines) {
+      const sourceFrames = currentLine.map((child) => resolveComponent(child, device));
+      const lineHeight = Math.max(...sourceFrames.map((frame) => frame.height));
+      const distribution = justifiedLine(innerWidth, sourceFrames.map((frame) => Math.min(frame.width, innerWidth)), gap, justify);
+      let cursorX = parentFrame.x + padding + distribution.offset;
+      currentLine.forEach((child, index) => {
+        const frame = sourceFrames[index];
+        const width = Math.min(frame.width, innerWidth);
+        const height = align === 'stretch' ? lineHeight : frame.height;
+        frames.set(child.id, {
+          x: cursorX,
+          y: cursorY + alignedOffset(lineHeight, height, align),
+          width,
+          height
+        });
+        cursorX += width + distribution.gap;
       });
-      cursor += frame.width + gap;
+      cursorY += lineHeight + gap;
     }
   } else if (layout.mode === 'flex-column') {
-    let cursor = parentFrame.y + padding;
+    const sourceFrames = children.map((child) => resolveComponent(child, device));
+    const distribution = justifiedLine(innerHeight, sourceFrames.map((frame) => frame.height), gap, justify);
+    let cursor = parentFrame.y + padding + distribution.offset;
     for (const child of children) {
       const frame = resolveComponent(child, device);
       const width = align === 'stretch' ? innerWidth : Math.min(frame.width, innerWidth);
@@ -685,7 +770,7 @@ export function autoLayoutContainer(
         width,
         height: frame.height
       });
-      cursor += frame.height + gap;
+      cursor += frame.height + distribution.gap;
     }
   } else {
     const columns = Math.max(1, Math.min(Math.floor(layout.columns ?? 2), children.length));

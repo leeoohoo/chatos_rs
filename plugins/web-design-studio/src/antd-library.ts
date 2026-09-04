@@ -247,10 +247,16 @@ export const ANTD_COMPONENT_VARIANTS: Record<string, AntdComponentVariant[]> = {
     { id: 'datetime', label: '日期时间选择器', props: { variant: 'outlined', showTime: true, showNow: true }, width: 280 }
   ],
   Card: [
-    { id: 'default', label: '默认卡片', props: { size: 'default', bordered: true } },
-    { id: 'small', label: '紧凑卡片', props: { size: 'small', bordered: true } },
-    { id: 'borderless', label: '无边框卡片', props: { size: 'default', bordered: false } },
-    { id: 'hoverable', label: '悬浮卡片', props: { size: 'default', bordered: true, hoverable: true } }
+    { id: 'default', label: '基础信息卡', props: { size: 'default', bordered: true, showcase: 'basic' }, content: '用于承载一组相关信息，可继续编辑卡片内部内容。', width: 340, height: 176 },
+    { id: 'small', label: '紧凑卡片', props: { size: 'small', bordered: true, showcase: 'compact' }, content: '更小的标题栏和内边距，适合密集信息区域。', width: 320, height: 132 },
+    { id: 'borderless', label: '无边框卡片', props: { size: 'default', bordered: false, showcase: 'borderless' }, content: '融入有色页面背景，不显示外围描边。', width: 340, height: 176 },
+    { id: 'hoverable', label: '悬浮交互卡', props: { size: 'default', bordered: true, hoverable: true, showcase: 'hoverable' }, content: '移入卡片查看抬升、阴影和指针反馈。', width: 340, height: 176 },
+    { id: 'cover', label: '封面内容卡', props: { size: 'default', bordered: true, hoverable: true, showcase: 'cover' }, content: 'AI 产品设计工作台', width: 340, height: 252 },
+    { id: 'actions', label: '操作卡片', props: { size: 'default', bordered: true, showcase: 'actions' }, content: '包含明确的底部操作区，适合项目、成员和内容管理。', width: 360, height: 210 },
+    { id: 'meta', label: '人物信息卡', props: { size: 'default', bordered: true, showcase: 'meta' }, content: '产品设计师', width: 350, height: 176 },
+    { id: 'grid', label: '宫格数据卡', props: { size: 'small', bordered: true, showcase: 'grid' }, content: '关键指标', width: 380, height: 226 },
+    { id: 'inner', label: '嵌套卡片', props: { size: 'default', bordered: true, showcase: 'inner' }, content: '外层摘要与内层明细采用不同层级。', width: 390, height: 248 },
+    { id: 'loading', label: '加载骨架卡', props: { size: 'default', bordered: true, loading: true, showcase: 'loading' }, content: '数据加载中', width: 340, height: 188 }
   ],
   List: [
     { id: 'basic', label: '基础列表', props: { bordered: false, size: 'default', dataSource: ['设计页面结构', '选择视觉风格', '与 AI 一起完善细节'] }, width: 380, height: 180 },

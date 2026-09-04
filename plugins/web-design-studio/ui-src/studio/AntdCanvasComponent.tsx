@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Affix, Alert, Anchor, App as AntApp, AutoComplete, Avatar, Badge, BorderBeam, Breadcrumb, Button, Calendar, Card, Carousel, ConfigProvider,
   Cascader, Checkbox, Collapse, ColorPicker, DatePicker, Descriptions, Divider, Drawer, Dropdown,
@@ -10,10 +10,12 @@ import {
 } from 'antd';
 import { AntDesignOutlined, UploadOutlined } from '@ant-design/icons';
 import type { WebDesignComponent, WebDesignTokens } from '../../src/schema';
+import { componentStyleToCss, designStyleScopeProps } from './component-style';
 
 type AnyProps = Record<string, any>;
 
-export function AntdCanvasComponent({ component, preview, tokens, slotContent = {} }: { component: WebDesignComponent; preview: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
+export function AntdCanvasComponent({ component, preview, showcase = false, tokens, slotContent = {} }: { component: WebDesignComponent; preview: boolean; showcase?: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
+  const scope = designStyleScopeProps(component.style);
   return <ConfigProvider theme={{
     token: tokens ? {
       colorPrimary: tokens.colors.primary,
@@ -26,10 +28,10 @@ export function AntdCanvasComponent({ component, preview, tokens, slotContent = 
       fontFamily: tokens.typography.fontFamily,
       fontSize: tokens.typography.baseFontSize
     } : undefined
-  }} getPopupContainer={(triggerNode) => (triggerNode?.closest('.design-canvas') as HTMLElement | null) ?? document.body}><AntdCanvasRenderer component={component} preview={preview} slotContent={slotContent} /></ConfigProvider>;
+  }} getPopupContainer={(triggerNode) => (triggerNode?.closest('[data-library-portal-host], .design-canvas') as HTMLElement | null) ?? document.body}><div {...scope}><AntdCanvasRenderer component={component} preview={preview} showcase={showcase} slotContent={slotContent} /></div></ConfigProvider>;
 }
 
-function AntdCanvasRenderer({ component, preview, slotContent }: { component: WebDesignComponent; preview: boolean; slotContent: Record<string, ReactNode> }) {
+function AntdCanvasRenderer({ component, preview, showcase, slotContent }: { component: WebDesignComponent; preview: boolean; showcase: boolean; slotContent: Record<string, ReactNode> }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
@@ -53,19 +55,45 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
   const p = binding.props as AnyProps;
   const name = binding.component;
   const fill = { width: '100%', height: '100%' };
-  const designCanvasFor = (trigger: HTMLButtonElement | null): HTMLElement => (trigger?.closest('.design-canvas') as HTMLElement | null) ?? document.body;
+  const completeVisualStyle = componentStyleToCss(component.style);
+  const {
+    opacity: _opacity, filter: _filter, backdropFilter: _backdropFilter, WebkitBackdropFilter: _webkitBackdropFilter,
+    transform: _transform, overflow: _overflow, objectFit: _objectFit, objectPosition: _objectPosition,
+    mixBlendMode: _mixBlendMode, ...visualStyle
+  } = completeVisualStyle;
+  const textStyle = {
+    ...visualStyle,
+    background: undefined,
+    borderColor: undefined,
+    borderWidth: undefined,
+    borderStyle: undefined,
+    borderRadius: undefined,
+    boxShadow: undefined,
+    padding: undefined,
+    filter: undefined,
+    backdropFilter: undefined,
+    transform: undefined,
+    whiteSpace: 'pre-line' as const
+  };
+  const designCanvasFor = (trigger: HTMLButtonElement | null): HTMLElement => (trigger?.closest('[data-library-portal-host], .design-canvas') as HTMLElement | null) ?? document.body;
+  useEffect(() => {
+    if (!showcase) return;
+    if (name === 'Modal') setModalOpen(true);
+    if (name === 'Drawer') setDrawerOpen(true);
+    if (name === 'Tour') setTourOpen(true);
+  }, [showcase, name]);
 
   switch (name) {
     case 'Button': {
       const { gradient, ...buttonProps } = p;
-      return <Button {...buttonProps} style={gradient ? { border: 0, color: '#fff', background: 'linear-gradient(135deg,#1677ff,#722ed1)' } : p.style}>{component.content}</Button>;
+      return <Button {...buttonProps} style={{ ...fill, ...(p.style ?? {}), ...(gradient && !component.style.background ? { border: 0, color: '#fff', background: 'linear-gradient(135deg,#1677ff,#722ed1)' } : {}), ...visualStyle }}>{component.content}</Button>;
     }
     case 'FloatButton': return <div style={{ ...fill, position: 'relative' }}><FloatButton {...p} style={{ position: 'absolute', right: 6, bottom: 6 }} /></div>;
     case 'Icon': return <AntDesignOutlined style={{ color: p.color ?? '#1677ff', fontSize: p.size ?? 32 }} />;
     case 'Typography': {
-      if (binding.variant === 'paragraph') return <Typography.Paragraph style={{ margin: 0 }}>{component.content}</Typography.Paragraph>;
-      if (binding.variant === 'text') return <Typography.Text>{component.content}</Typography.Text>;
-      return <Typography.Title level={p.level ?? 3} style={{ margin: 0 }}>{component.content}</Typography.Title>;
+      if (binding.variant === 'paragraph') return <Typography.Paragraph style={{ margin: 0, ...textStyle }}>{component.content}</Typography.Paragraph>;
+      if (binding.variant === 'text') return <Typography.Text style={textStyle}>{component.content}</Typography.Text>;
+      return <Typography.Title level={p.level ?? 3} style={{ margin: 0, ...textStyle }}>{component.content}</Typography.Title>;
     }
     case 'Divider': return <Divider {...p}>{component.content}</Divider>;
     case 'Flex': return <Flex {...p} style={fill}>{slotContent.content ?? <><Button>按钮一</Button><Button type="primary">按钮二</Button><Tag color="blue">标签</Tag></>}</Flex>;
@@ -90,17 +118,17 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
     }
     case 'Anchor': return <Anchor {...p} />;
     case 'Breadcrumb': return <Breadcrumb {...p} />;
-    case 'Dropdown': return <Dropdown {...p}><Button>{component.content}⌄</Button></Dropdown>;
+    case 'Dropdown': return <Dropdown {...p} open={showcase ? true : undefined}><Button>{component.content}⌄</Button></Dropdown>;
     case 'Menu': return <Menu {...p} style={{ width: '100%' }} />;
     case 'Pagination': return <Pagination {...p} />;
     case 'Steps': return <Steps {...p} size="small" />;
-    case 'AutoComplete': return <AutoComplete {...p} style={{ width: '100%' }} placeholder={component.content} />;
-    case 'Cascader': return <Cascader {...p} style={{ width: '100%' }} placeholder={component.content} />;
+    case 'AutoComplete': return <AutoComplete {...p} open={showcase ? true : undefined} style={{ width: '100%' }} placeholder={component.content} />;
+    case 'Cascader': return <Cascader {...p} open={showcase ? true : undefined} style={{ width: '100%' }} placeholder={component.content} />;
     case 'Checkbox': return <Checkbox {...p}>{component.content}</Checkbox>;
     case 'ColorPicker': return <ColorPicker {...p} />;
     case 'DatePicker': {
       const { pickerMode, ...dateProps } = p;
-      return pickerMode === 'range' ? <DatePicker.RangePicker {...dateProps} style={{ width: '100%' }} /> : <DatePicker {...dateProps} style={{ width: '100%' }} />;
+      return pickerMode === 'range' ? <DatePicker.RangePicker {...dateProps} open={showcase ? true : undefined} style={{ width: '100%' }} /> : <DatePicker {...dateProps} open={showcase ? true : undefined} style={{ width: '100%' }} />;
     }
     case 'Form': {
       const { formTemplate, ...formProps } = p;
@@ -123,13 +151,13 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
     case 'Rate': return <Rate {...p} />;
     case 'Select': {
       const { optionGroups, ...selectProps } = p;
-      return <Select {...selectProps} options={binding.variant === 'grouped' ? optionGroups : p.options} style={{ width: '100%' }} placeholder={component.content} />;
+      return <Select {...selectProps} open={showcase ? true : undefined} options={binding.variant === 'grouped' ? optionGroups : p.options} style={{ width: '100%' }} placeholder={component.content} />;
     }
     case 'Slider': return <Slider {...p} style={{ width: '100%' }} />;
     case 'Switch': return <Space><Switch {...p} /><span>{component.content}</span></Space>;
     case 'TimePicker': return <TimePicker {...p} style={{ width: '100%' }} />;
     case 'Transfer': return <Transfer {...p} targetKeys={transferTargetKeys} onChange={(keys) => setTransferTargetKeys(keys.map(String))} render={(item: AnyProps) => item.title} listStyle={{ width: 190, height: 170 }} />;
-    case 'TreeSelect': return <TreeSelect {...p} style={{ width: '100%' }} placeholder={component.content} />;
+    case 'TreeSelect': return <TreeSelect {...p} open={showcase ? true : undefined} style={{ width: '100%' }} placeholder={component.content} />;
     case 'Upload': return binding.variant === 'dragger'
       ? <Upload.Dragger {...p} style={{ height: '100%' }}><p className="antd-upload-drag-icon"><UploadOutlined /></p><p>点击或拖拽文件到这里上传</p><small>支持单个或批量文件</small></Upload.Dragger>
       : binding.variant === 'picture'
@@ -138,7 +166,21 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
     case 'Avatar': return <Avatar {...p}>{component.content}</Avatar>;
     case 'Badge': return p.status ? <Badge {...p} /> : <Badge {...p}><Avatar shape="square" icon={<AntDesignOutlined />} /></Badge>;
     case 'Calendar': return <Calendar {...p} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />;
-    case 'Card': return <Card {...p} style={fill}>{slotContent.content ?? component.content}</Card>;
+    case 'Card': {
+      const { showcase = 'basic', ...cardProps } = p;
+      const cardStyle = { ...fill, ...(p.style ?? {}), ...visualStyle };
+      const bodyStyle = { height: '100%', ...(p.styles?.body ?? {}), ...textStyle };
+      const editableContent = slotContent.content ?? component.content;
+      if (showcase === 'cover') return <Card {...cardProps} title={undefined} cover={<div className="antd-card-cover-demo"><span>AI</span><strong>Design System</strong></div>} style={cardStyle} styles={{ ...(p.styles ?? {}), body: { ...bodyStyle, height: 'auto' } }}><Card.Meta title={editableContent} description="从想法到可编辑网站" /></Card>;
+      if (showcase === 'actions') return <Card {...cardProps} style={cardStyle} actions={[<button key="edit">编辑</button>, <button key="share">分享</button>, <button key="more">更多</button>]} styles={{ ...(p.styles ?? {}), body: { ...bodyStyle, height: 'auto' } }}><strong>设计项目</strong><p className="antd-card-demo-copy">{editableContent}</p><Space><Tag color="blue">进行中</Tag><Typography.Text type="secondary">刚刚更新</Typography.Text></Space></Card>;
+      if (showcase === 'meta') return <Card {...cardProps} title={undefined} style={cardStyle} styles={{ ...(p.styles ?? {}), body: { ...bodyStyle, height: 'auto', display: 'flex', alignItems: 'center' } }}><Card.Meta avatar={<Avatar size={48}>AI</Avatar>} title="Alex Chen" description={<><div>{editableContent}</div><Typography.Text type="secondary">负责官网与设计系统</Typography.Text></>} /></Card>;
+      if (showcase === 'grid') return <Card {...cardProps} title={editableContent} style={cardStyle} styles={{ ...(p.styles ?? {}), body: { ...bodyStyle, height: 'auto', padding: 0 } }}>{[['页面', '12'], ['组件', '86'], ['批注', '7'], ['进度', '72%']].map(([label, value]) => <Card.Grid key={label} hoverable style={{ width: '50%', padding: 15, textAlign: 'center' }}><strong className="antd-card-metric">{value}</strong><small>{label}</small></Card.Grid>)}</Card>;
+      if (showcase === 'inner') return <Card {...cardProps} title="项目概览" style={cardStyle} styles={{ ...(p.styles ?? {}), body: { ...bodyStyle, height: 'auto' } }}><p className="antd-card-demo-copy">{editableContent}</p><Card type="inner" size="small" title="本周数据" extra={<a>详情</a>}><Space size="large"><Statistic title="访问" value={12840} /><Statistic title="转化率" value={18.6} suffix="%" /></Space></Card></Card>;
+      if (showcase === 'hoverable') return <Card {...cardProps} style={{ ...cardStyle, cursor: 'pointer' }} styles={{ ...(p.styles ?? {}), body: bodyStyle }}><div className="antd-card-hover-hint"><span>↗</span><strong>移入查看悬浮反馈</strong></div><p className="antd-card-demo-copy">{editableContent}</p></Card>;
+      if (showcase === 'compact') return <Card {...cardProps} title="紧凑信息" extra={<a>查看</a>} style={cardStyle} styles={{ ...(p.styles ?? {}), body: { ...bodyStyle, height: 'auto' } }}>{editableContent}</Card>;
+      if (showcase === 'borderless') return <div className="antd-card-borderless-surface"><Card {...cardProps} style={cardStyle} styles={{ ...(p.styles ?? {}), body: bodyStyle }}>{editableContent}</Card></div>;
+      return <Card {...cardProps} style={cardStyle} styles={{ ...(p.styles ?? {}), body: bodyStyle }}>{editableContent}</Card>;
+    }
     case 'Carousel': return <Carousel {...p} style={{ width: '100%' }}>{['产品设计', 'AI 协作', '代码交付'].map((text, index) => <div key={text}><div className="antd-carousel-slide">{slotContent[`slide-${index + 1}`] ?? text}</div></div>)}</Carousel>;
     case 'Collapse': return <Collapse {...p} items={Array.isArray(p.items) ? p.items.map((item: AnyProps, index: number) => ({ ...item, children: slotContent[`panel-${String(item.key ?? index + 1).replace(/[^a-zA-Z0-9_-]/g, '-')}`] ?? item.children })) : p.items} style={{ width: '100%' }} />;
     case 'Descriptions': return <Descriptions {...p} style={{ width: '100%' }} />;
@@ -174,7 +216,7 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
           : (entry: AnyProps) => <div className="antd-listy-item"><span>{entry.name}</span><small>{entry.time}</small></div>;
       return <div className={`antd-listy-shell ${p.semanticStyle ? 'semantic-style' : ''}`}><Listy ref={listyRef} items={items} rowKey="id" height={listHeight} virtual={Boolean(p.virtual)} sticky={Boolean(p.sticky)} group={group} itemRender={itemRender} />{binding.variant === 'infinite' && <Button size="small" disabled={visibleCount >= total} onClick={() => preview && setListyCount((value) => Math.min(total, value + 20))}>{visibleCount >= total ? '已加载全部' : `加载更多 · ${visibleCount}/${total}`}</Button>}{binding.variant === 'scroll-control' && <Space size="small"><Button size="small" onClick={() => preview && listyRef.current?.scrollTo({ key: Math.min(79, total - 1), align: 'top' })}>跳到第 80 项</Button><Button size="small" onClick={() => preview && listyRef.current?.scrollTo(0)}>回到顶部</Button></Space>}</div>;
     }
-    case 'Popover': return <Popover {...p} content={slotContent.popup ?? p.content}><Button>{component.content}</Button></Popover>;
+    case 'Popover': return <Popover {...p} open={showcase ? true : undefined} content={slotContent.popup ?? p.content}><Button>{component.content}</Button></Popover>;
     case 'QRCode': return <QRCode {...p} value={p.value ?? 'https://ant.design'} />;
     case 'Segmented': return <Segmented {...p} options={p.options ?? ['日', '周', '月']} />;
     case 'Statistic': return <Statistic {...p} />;
@@ -191,16 +233,19 @@ function AntdCanvasRenderer({ component, preview, slotContent }: { component: We
       };
       return <Tabs {...p} items={baseItems as any} onEdit={binding.variant === 'editable' ? onEdit : undefined} style={{ width: '100%' }} />;
     }
-    case 'Tag': return <Tag {...p}>{component.content}</Tag>;
+    case 'Tag': return <Tag {...p} style={{ ...(p.style ?? {}), ...visualStyle }}>{component.content}</Tag>;
     case 'Timeline': return <Timeline {...p} style={{ width: '100%' }} />;
-    case 'Tooltip': return <Tooltip {...p}><Button>{component.content}</Button></Tooltip>;
+    case 'Tooltip': return <Tooltip {...p} open={showcase ? true : undefined}><Button>{component.content}</Button></Tooltip>;
     case 'Tour': return <><Button ref={tourTarget} type="primary" onClick={() => preview && setTourOpen(true)}>{component.content}</Button><Tour open={tourOpen} mask={p.mask} onClose={() => setTourOpen(false)} steps={[{ title: p.title ?? '功能引导', description: p.description ?? '了解这个组件。', placement: p.placement ?? 'bottom', target: () => tourTarget.current! }]} /></>;
     case 'Tree': return <Tree {...p} style={{ width: '100%' }} />;
     case 'Alert': return <Alert {...p} style={{ width: '100%' }} />;
-    case 'Modal': return <><Button ref={modalTrigger} type="primary" onClick={() => preview && setModalOpen(true)}>{component.content}</Button><Modal {...p} open={modalOpen} getContainer={() => designCanvasFor(modalTrigger.current)} onOk={() => setModalOpen(false)} onCancel={() => setModalOpen(false)}>{slotContent.content ?? <><p>这是可交互的 Ant Design 对话框。</p><Input placeholder="可以在这里输入内容" /></>}</Modal></>;
+    case 'Modal': {
+      const previewWidth = showcase ? Number(p.width ?? 520) >= 700 ? 'calc(100% - 12px)' : Number(p.width ?? 520) <= 420 ? 'calc(100% - 72px)' : 'calc(100% - 36px)' : p.width;
+      return <><Button ref={modalTrigger} type="primary" onClick={() => preview && setModalOpen(true)}>{component.content}</Button><Modal {...p} width={previewWidth} open={modalOpen} getContainer={() => designCanvasFor(modalTrigger.current)} rootStyle={{ position: 'absolute' }} onOk={() => setModalOpen(false)} onCancel={() => setModalOpen(false)}>{slotContent.content ?? <><p>这是可交互的 Ant Design 对话框。</p><Input placeholder="可以在这里输入内容" /></>}</Modal></>;
+    }
     case 'Drawer': return <><Button ref={drawerTrigger} onClick={() => preview && setDrawerOpen(true)}>{component.content}</Button><Drawer {...p} open={drawerOpen} getContainer={() => designCanvasFor(drawerTrigger.current)} rootStyle={{ position: 'absolute' }} onClose={() => setDrawerOpen(false)}>{slotContent.content ?? <Space direction="vertical" size="middle" style={{ width: '100%' }}><Typography.Paragraph>抽屉已经进入网页内部的真实交互状态，可以承载详情、表单或导航内容。</Typography.Paragraph><Input placeholder="输入内容" /><Button type="primary">保存修改</Button></Space>}</Drawer></>;
     case 'Message': return <>{messageContext}<Button onClick={() => preview && messageApi[p.type === 'success' ? 'success' : p.type === 'warning' ? 'warning' : p.type === 'error' ? 'error' : 'info'](p.content ?? '操作已完成')}>{component.content}</Button></>;
-    case 'Popconfirm': return <Popconfirm {...p} title={p.title ?? '确定执行吗？'} disabled={!preview}><Button danger>{component.content}</Button></Popconfirm>;
+    case 'Popconfirm': return <Popconfirm {...p} open={showcase ? true : undefined} title={p.title ?? '确定执行吗？'} disabled={!preview}><Button danger>{component.content}</Button></Popconfirm>;
     case 'Notification': return <>{notificationContext}<Button onClick={() => preview && notificationApi.open({ type: p.type ?? 'info', placement: p.placement ?? 'topRight', message: p.message ?? '设计已更新', description: p.description ?? '操作已经完成。' })}>{component.content}</Button></>;
     case 'Progress': return <Progress {...p} style={{ width: '100%' }} />;
     case 'Result': return <Result {...p} extra={slotContent.extra ?? p.extra} style={{ padding: 12 }} />;

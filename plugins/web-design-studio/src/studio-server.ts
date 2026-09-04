@@ -152,14 +152,23 @@ app.delete('/api/documents/:documentId', async (request, response, next) => {
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const uiDirectory = path.resolve(currentDirectory, '../ui');
 app.use(express.static(uiDirectory, {
-  etag: true,
+  etag: false,
+  lastModified: false,
   fallthrough: true,
   setHeaders(response) {
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
   }
 }));
-app.get('*path', (_request, response) => response.sendFile(path.join(uiDirectory, 'index.html')));
+app.get('*path', (_request, response) => {
+  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  response.setHeader('Pragma', 'no-cache');
+  response.setHeader('Expires', '0');
+  response.sendFile(path.join(uiDirectory, 'index.html'));
+});
 
 app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   const status = error instanceof RevisionConflictError ? 409 : (error as NodeJS.ErrnoException).code === 'ENOENT' ? 404 : 400;

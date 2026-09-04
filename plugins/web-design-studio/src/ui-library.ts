@@ -75,7 +75,12 @@ export function createUiLibraryComponent(catalog: UiLibraryCatalog, definitionId
   component.width = definition.width;
   component.height = definition.height;
   component.content = definition.content;
-  component.style = { background: 'transparent', color: '#1D1D1F', borderWidth: 0, borderRadius: 0, fontSize: 14, fontWeight: 400 };
+  // Library components must begin without visual overrides. Supplying neutral
+  // looking defaults here still activates the design-style scope and masks
+  // native variant colors, radii, borders, typography, and disabled states.
+  // The inspector supplies friendly fallback values without persisting them
+  // until the user actually changes a visual property.
+  component.style = {};
   component.library = {
     name: catalog.id,
     version: catalog.version,

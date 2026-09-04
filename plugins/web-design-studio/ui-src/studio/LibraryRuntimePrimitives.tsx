@@ -41,10 +41,12 @@ function portalThemeFor(anchor: HTMLElement | null): CSSProperties {
   return style as CSSProperties;
 }
 
-export function DesignOverlay({ anchorRef, open, side = 'center', title, className, children, onClose, footer }: {
+export function DesignOverlay({ anchorRef, open, side = 'center', size = 'md', scrollBehavior = 'outside', title, className, children, onClose, footer }: {
   anchorRef: RefObject<HTMLElement | null>;
   open: boolean;
   side?: string;
+  size?: string;
+  scrollBehavior?: string;
   title: string;
   className: string;
   children: ReactNode;
@@ -54,9 +56,10 @@ export function DesignOverlay({ anchorRef, open, side = 'center', title, classNa
   const target = portalHostFor(anchorRef.current);
   if (!open || !target) return null;
   const normalizedSide = side === 'end' ? 'right' : side === 'start' ? 'left' : side;
+  const normalizedSize = ['xs', 'sm', 'md', 'lg', 'xl', 'cover', 'full'].includes(size) ? size : 'md';
   return createPortal(<div className={`library-overlay-host ${className}`} style={portalThemeFor(anchorRef.current)} onPointerDown={(event) => event.stopPropagation()}>
     <button className="library-overlay-scrim" aria-label="关闭" onClick={onClose} />
-    <section className={`library-overlay-panel side-${normalizedSide}`}>
+    <section className={`library-overlay-panel side-${normalizedSide} size-${normalizedSize} scroll-${scrollBehavior === 'inside' ? 'inside' : 'outside'}`}>
       <header><strong>{title}</strong><button aria-label="关闭" onClick={onClose}>×</button></header>
       <div className="library-overlay-body">{children}</div>
       {footer && <footer>{footer}</footer>}

@@ -37,6 +37,7 @@
     "@ant-design/icons": "6.3.4",
     "@chakra-ui/react": "3.37.0",
     "@emotion/react": "11.14.0",
+    "@internationalized/date": "3.12.3",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@tiptap/react": "3.6.6",
     "@tiptap/starter-kit": "3.6.6",

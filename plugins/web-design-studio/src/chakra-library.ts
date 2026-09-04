@@ -270,16 +270,16 @@ export const CHAKRA_COMPONENT_VARIANTS: Record<string, ChakraComponentVariant[]>
     variant('csv', '下载 CSV 数据', { fileName: 'components.csv', mimeType: 'text/csv', data: 'component,status\\nButton,ready\\nInput,ready', variant: 'subtle', colorPalette: 'green' }, { width: 170, height: 44 })
   ],
   DateInput: [
-    variant('medium', '标准日期输入', { label: '出生日期', size: 'md', locale: 'zh-CN', granularity: 'day' }),
-    variant('small', '紧凑日期输入', { label: '选择日期', size: 'sm', locale: 'zh-CN', granularity: 'day' }, { width: 260, height: 70 }),
-    variant('month', '年月输入', { label: '账期', size: 'md', locale: 'zh-CN', granularity: 'month' }),
-    variant('time', '日期时间输入', { label: '发布时间', size: 'md', locale: 'zh-CN', granularity: 'minute' }, { width: 380, height: 78 })
+    variant('medium', '标准日期输入', { label: '出生日期', size: 'md', locale: 'zh-CN', granularity: 'day', defaultValue: '1994-06-18' }),
+    variant('small', '紧凑日期输入', { label: '选择日期', size: 'sm', locale: 'zh-CN', granularity: 'day', defaultValue: '2026-09-04' }, { width: 260, height: 70 }),
+    variant('range', '日期范围输入', { label: '请假日期', size: 'md', locale: 'zh-CN', granularity: 'day', selectionMode: 'range', defaultValue: ['2026-09-08', '2026-09-12'] }, { width: 420, height: 96 }),
+    variant('time', '日期时间输入', { label: '发布时间', size: 'md', locale: 'zh-CN', granularity: 'minute', defaultValue: '2026-09-04T14:30' }, { width: 420, height: 78 })
   ],
   DatePicker: [
-    variant('single', '单日期选择', { label: '交付日期', size: 'md', selectionMode: 'single', locale: 'zh-CN', closeOnSelect: true }),
-    variant('range', '日期范围选择', { label: '项目周期', size: 'md', selectionMode: 'range', locale: 'zh-CN', closeOnSelect: true }, { width: 360, height: 78 }),
-    variant('multiple', '多日期选择', { label: '可用日期', size: 'md', selectionMode: 'multiple', locale: 'zh-CN', closeOnSelect: false }, { width: 360, height: 78 }),
-    variant('large', '大号日期选择', { label: '活动日期', size: 'lg', selectionMode: 'single', locale: 'zh-CN', closeOnSelect: true }, { width: 380, height: 86 })
+    variant('single', '单日期选择', { label: '交付日期', size: 'md', variant: 'outline', colorPalette: 'purple', selectionMode: 'single', locale: 'zh-CN', closeOnSelect: true, defaultValue: ['2026-09-11'] }),
+    variant('range', '日期范围选择', { label: '项目周期', size: 'md', variant: 'outline', colorPalette: 'blue', selectionMode: 'range', locale: 'zh-CN', closeOnSelect: true, defaultValue: ['2026-09-11', '2026-09-20'] }, { width: 420, height: 82 }),
+    variant('multiple', '多日期选择', { label: '可用日期', size: 'md', variant: 'subtle', colorPalette: 'teal', selectionMode: 'multiple', locale: 'zh-CN', closeOnSelect: false, maxSelectedDates: 6, defaultValue: ['2026-09-03', '2026-09-11', '2026-09-21'] }, { width: 420, height: 118 }),
+    variant('large', '大号日期选择', { label: '活动日期', size: 'lg', variant: 'outline', colorPalette: 'orange', selectionMode: 'single', locale: 'zh-CN', closeOnSelect: true, defaultValue: ['2026-09-13'] }, { width: 400, height: 94 })
   ],
   Calendar: [
     variant('single', '单选日历', { size: 'md', selectionMode: 'single', locale: 'zh-CN', hideOutsideDays: false, showWeekNumbers: false }, { width: 360, height: 360 }),
@@ -315,16 +315,16 @@ export const CHAKRA_COMPONENT_VARIANTS: Record<string, ChakraComponentVariant[]>
   ],
   FileUpload: [
     variant('button', '按钮上传', { accept: 'image/*', multiple: false, maxFiles: 1, kind: 'button', label: '上传图片' }),
-    variant('multiple', '多文件上传', { accept: 'image/*', multiple: true, maxFiles: 5, kind: 'button', label: '选择多张图片' }),
+    variant('multiple', '多文件上传', { accept: 'image/*', multiple: true, maxFiles: 5, kind: 'button', label: '继续添加图片', sampleFiles: ['homepage-cover.png', 'feature-grid.png'] }, { width: 420, height: 190 }),
     variant('dropzone', '拖放上传区', { accept: 'image/*', multiple: true, maxFiles: 10, kind: 'dropzone', label: '拖入图片或点击选择' }, { width: 420, height: 190 }),
     variant('document', '文档上传', { accept: '.pdf,.doc,.docx', multiple: false, maxFiles: 1, kind: 'dropzone', label: '上传需求文档' }, { width: 420, height: 190 })
   ],
   NumberInput: [
-    variant('basic', '基础数字输入', { defaultValue: '10', min: 0, max: 100, step: 1, size: 'md', formatOptions: null }),
-    variant('currency', '货币数字输入', { defaultValue: '1299', min: 0, max: 999999, step: 100, size: 'md', format: 'currency', currency: 'CNY' }),
-    variant('percent', '百分比输入', { defaultValue: '68', min: 0, max: 100, step: 1, size: 'md', format: 'percent' }),
-    variant('stepper', '小数步进输入', { defaultValue: '1.5', min: 0, max: 10, step: 0.1, size: 'md', format: 'decimal' }),
-    variant('large', '大号数字输入', { defaultValue: '24', min: 0, max: 999, step: 1, size: 'lg', format: 'decimal' }, { width: 260, height: 56 })
+    variant('basic', '基础数字输入', { kind: 'basic', defaultValue: '10', min: 0, max: 100, step: 1, size: 'md', format: 'decimal' }),
+    variant('currency', '人民币金额输入', { kind: 'currency', defaultValue: '1299', min: 0, max: 999999, step: 100, size: 'md', format: 'currency', currency: 'CNY' }, { height: 74 }),
+    variant('percent', '百分比输入', { kind: 'percent', defaultValue: '68', min: 0, max: 100, step: 1, size: 'md', format: 'percent' }, { height: 74 }),
+    variant('stepper', '精密步进输入', { kind: 'stepper', defaultValue: '1.5', min: 0, max: 10, step: 0.1, size: 'md', format: 'decimal' }, { height: 82 }),
+    variant('large', '大号数量输入', { kind: 'large', defaultValue: '24', min: 0, max: 999, step: 1, size: 'lg', format: 'decimal' }, { width: 280, height: 72 })
   ],
   PasswordInput: [
     variant('basic', '基础密码框', { placeholder: '请输入密码', size: 'md', variant: 'outline', defaultVisible: false, showStrength: false }),
@@ -335,7 +335,7 @@ export const CHAKRA_COMPONENT_VARIANTS: Record<string, ChakraComponentVariant[]>
   PinInput: [
     variant('four', '四位验证码', { count: 4, size: 'md', type: 'numeric', mask: false }),
     variant('six', '六位验证码', { count: 6, size: 'md', type: 'numeric', mask: false }, { width: 360 }),
-    variant('masked', '掩码验证码', { count: 4, size: 'md', type: 'numeric', mask: true }),
+    variant('masked', '掩码验证码', { count: 4, size: 'md', type: 'numeric', mask: true, defaultValue: ['4', '8', '2', '6'] }),
     variant('large', '大号验证码', { count: 4, size: 'lg', type: 'numeric', mask: false }, { width: 340, height: 64 })
   ],
   RadioCard: [
@@ -364,10 +364,10 @@ export const CHAKRA_COMPONENT_VARIANTS: Record<string, ChakraComponentVariant[]>
     variant('many', '多标签输入', { label: '项目成员', defaultValue: ['产品', '设计', '前端', '后端', '测试'], size: 'md', max: 10, placeholder: '添加角色…' }, { width: 460, height: 100 })
   ],
   Combobox: [
-    variant('framework', '框架搜索选择', { label: '技术框架', placeholder: '输入并搜索', multiple: false, size: 'md' }),
-    variant('people', '成员搜索选择', { label: '负责人', placeholder: '搜索成员', multiple: false, size: 'md', dataKind: 'people' }),
-    variant('multiple', '多选搜索框', { label: '技术栈', placeholder: '搜索并多选', multiple: true, size: 'md' }, { width: 360, height: 80 }),
-    variant('small', '紧凑搜索框', { label: '快速选择', placeholder: '输入关键词', multiple: false, size: 'sm' }, { width: 280, height: 68 })
+    variant('framework', '框架搜索选择', { label: '技术框架', placeholder: '输入并搜索', multiple: false, size: 'md', defaultValue: ['react'] }),
+    variant('people', '成员搜索选择', { label: '负责人', placeholder: '搜索成员', multiple: false, size: 'md', dataKind: 'people', defaultValue: ['lin'] }),
+    variant('multiple', '多选搜索框', { label: '技术栈', placeholder: '搜索并多选', multiple: true, size: 'md', defaultValue: ['react', 'vue'] }, { width: 380, height: 106 }),
+    variant('small', '紧凑搜索框', { label: '快速选择', placeholder: '输入关键词', multiple: false, size: 'sm', defaultValue: ['nextjs'] }, { width: 280, height: 68 })
   ],
   Listbox: [
     variant('single', '单选列表框', { label: '选择框架', selectionMode: 'single', orientation: 'vertical', defaultValue: ['react'] }),
@@ -376,23 +376,23 @@ export const CHAKRA_COMPONENT_VARIANTS: Record<string, ChakraComponentVariant[]>
     variant('compact', '紧凑列表框', { label: '选择状态', selectionMode: 'single', orientation: 'vertical', defaultValue: ['ready'], dataKind: 'status' }, { width: 280, height: 190 })
   ],
   Select: [
-    variant('basic', '基础选择器', { label: '技术框架', placeholder: '请选择框架', multiple: false, size: 'md', variant: 'outline' }),
-    variant('multiple', '多选选择器', { label: '技术栈', placeholder: '请选择多项', multiple: true, size: 'md', variant: 'outline' }, { width: 360, height: 82 }),
-    variant('subtle', '柔和选择器', { label: '页面类型', placeholder: '请选择类型', multiple: false, size: 'md', variant: 'subtle', dataKind: 'pages' }),
-    variant('small', '紧凑选择器', { label: '状态', placeholder: '选择状态', multiple: false, size: 'sm', variant: 'outline', dataKind: 'status' }, { width: 260, height: 68 })
+    variant('basic', '基础选择器', { label: '技术框架', placeholder: '请选择框架', multiple: false, size: 'md', variant: 'outline', defaultValue: ['react'] }),
+    variant('multiple', '多选选择器', { label: '技术栈', placeholder: '请选择多项', multiple: true, size: 'md', variant: 'outline', defaultValue: ['react', 'vue'] }, { width: 380, height: 82 }),
+    variant('subtle', '柔和选择器', { label: '页面类型', placeholder: '请选择类型', multiple: false, size: 'md', variant: 'subtle', dataKind: 'pages', defaultValue: ['landing'] }),
+    variant('small', '紧凑选择器', { label: '状态', placeholder: '选择状态', multiple: false, size: 'sm', variant: 'outline', dataKind: 'status', defaultValue: ['ready'] }, { width: 260, height: 68 })
   ],
   TreeView: [
-    variant('files', '文件树', { label: '项目文件', selectionMode: 'single', defaultExpandedValue: ['src'], showGuide: true }),
-    variant('expanded', '默认展开文件树', { label: '组件目录', selectionMode: 'single', defaultExpandedValue: ['src', 'src/components'], showGuide: true }),
-    variant('multiple', '多选文件树', { label: '选择资源', selectionMode: 'multiple', defaultExpandedValue: ['src'], showGuide: true }),
+    variant('files', '文件树', { label: '项目文件', selectionMode: 'single', defaultExpandedValue: ['src'], defaultSelectedValue: ['src/app.tsx'], showGuide: true }),
+    variant('expanded', '默认展开文件树', { label: '组件目录', selectionMode: 'single', defaultExpandedValue: ['src', 'src/components'], defaultSelectedValue: ['src/components/form.tsx'], showGuide: true }),
+    variant('multiple', '多选文件树', { label: '选择资源', selectionMode: 'multiple', defaultExpandedValue: ['src', 'public'], defaultSelectedValue: ['src/app.tsx', 'public/logo.svg'], showGuide: true }),
     variant('plain', '简洁文件树', { label: '页面结构', selectionMode: 'single', defaultExpandedValue: ['src'], showGuide: false }, { width: 300, height: 250 })
   ],
-  ActionBar: [variant('selection', '选择操作栏', { selectedCount: 2, placement: 'bottom', actions: ['复制', '移动', '删除'] }), variant('bulk', '批量操作栏', { selectedCount: 8, placement: 'bottom', actions: ['发布', '归档', '删除'] }), variant('top', '顶部操作栏', { selectedCount: 3, placement: 'top', actions: ['对齐', '组合', '锁定'] })],
-  FloatingPanel: [variant('basic', '基础浮动面板', { title: '浮动工具', size: 'md', defaultOpen: false }), variant('open', '默认展开面板', { title: '图层属性', size: 'md', defaultOpen: true }), variant('large', '大型浮动面板', { title: '设计检查', size: 'lg', defaultOpen: false }, { width: 180 })],
-  HoverCard: [variant('profile', '资料悬浮卡', { title: 'Chakra UI', description: '现代 Web 应用的可组合组件工具箱。', openDelay: 250, closeDelay: 150 }), variant('product', '产品悬浮卡', { title: 'Web Design Studio', description: '让 AI 与人共同完成高质量网站设计。', openDelay: 200, closeDelay: 100 }), variant('instant', '即时悬浮卡', { title: '即时预览', description: '无需等待即可查看详细说明。', openDelay: 0, closeDelay: 100 })],
-  OverlayManager: [variant('dialog', '程序化对话框', { kind: 'dialog', title: '设计确认', description: '通过 Overlay Manager 打开的对话框。' }), variant('details', '程序化详情层', { kind: 'dialog', title: '组件详情', description: '浮层可以由代码统一创建、更新和关闭。' }), variant('form', '程序化表单层', { kind: 'form', title: '编辑项目', description: '提交后由管理器关闭浮层。' })],
-  ToggleTip: [variant('basic', '基础点击提示', { content: '点击触发、再次点击关闭。', showArrow: false, size: 'sm' }), variant('arrow', '带箭头点击提示', { content: '这是带方向箭头的 Toggle Tip。', showArrow: true, size: 'sm' }), variant('large', '大号点击提示', { content: '适合展示较长的辅助说明内容。', showArrow: true, size: 'md' }, { width: 180 })],
-  Carousel: [variant('basic', '基础轮播', { slideCount: 5, slidesPerPage: 1, loop: false, autoplay: false }), variant('loop', '循环轮播', { slideCount: 5, slidesPerPage: 1, loop: true, autoplay: false }), variant('cards', '多卡片轮播', { slideCount: 6, slidesPerPage: 2, loop: true, autoplay: false }, { width: 560, height: 260 }), variant('autoplay', '自动轮播', { slideCount: 5, slidesPerPage: 1, loop: true, autoplay: true })],
+  ActionBar: [variant('selection', '对象快捷操作栏', { kind: 'selection', selectedCount: 2, placement: 'bottom', actions: ['复制', '移动', '删除'] }), variant('bulk', '批量发布操作栏', { kind: 'bulk', selectedCount: 8, placement: 'bottom', actions: ['发布', '归档', '删除'] }, { width: 220, height: 52 }), variant('top', '布局编排操作栏', { kind: 'layout', selectedCount: 3, placement: 'top', actions: ['左对齐', '组合', '锁定'] }, { width: 230, height: 52 })],
+  FloatingPanel: [variant('basic', '工具浮动面板', { kind: 'tools', title: '快捷工具', size: 'md', defaultOpen: false }), variant('open', '图层浮动面板', { kind: 'layers', title: '图层属性', size: 'md', defaultOpen: true }), variant('large', '大型检查面板', { kind: 'audit', title: '设计检查', size: 'lg', defaultOpen: false }, { width: 220, height: 72 })],
+  HoverCard: [variant('profile', '资料悬浮卡', { kind: 'profile', title: '林设计师', description: '产品设计师 · 负责官网与设计系统', openDelay: 250, closeDelay: 150 }), variant('product', '产品悬浮卡', { kind: 'product', title: 'Web Design Studio', description: 'AI 与人共同完成高质量网站设计。', openDelay: 200, closeDelay: 100 }), variant('instant', '紧凑状态悬浮卡', { kind: 'compact', title: '设计已同步', description: '刚刚保存到当前项目', openDelay: 0, closeDelay: 100 })],
+  OverlayManager: [variant('dialog', '程序化确认框', { kind: 'confirm', title: '发布设计？', description: '确认后会把当前页面发布到预览环境。' }), variant('details', '程序化详情层', { kind: 'details', title: '组件详情', description: '统一管理浮层的创建、更新与关闭。' }), variant('form', '程序化表单层', { kind: 'form', title: '编辑项目', description: '提交后由管理器关闭浮层。' })],
+  ToggleTip: [variant('basic', '图标帮助提示', { kind: 'icon', content: '点击触发、再次点击关闭。', showArrow: false, size: 'sm' }, { width: 76, height: 48 }), variant('arrow', '带箭头快捷键提示', { kind: 'shortcut', content: '打开命令面板', shortcut: '⌘ K', showArrow: true, size: 'sm' }, { width: 160, height: 48 }), variant('large', '富内容操作提示', { kind: 'rich', content: '锁定后，协作者仍可查看和批注，但无法移动组件。', showArrow: true, size: 'md' }, { width: 220, height: 58 })],
+  Carousel: [variant('basic', '内容故事轮播', { kind: 'story', slideCount: 4, slidesPerPage: 1, defaultPage: 0, loop: false, autoplay: false }), variant('loop', '循环作品轮播', { kind: 'gallery', slideCount: 5, slidesPerPage: 1, defaultPage: 4, loop: true, autoplay: false }), variant('cards', '多卡片轮播', { kind: 'metrics', slideCount: 6, slidesPerPage: 2, defaultPage: 1, loop: true, autoplay: false }, { width: 560, height: 260 }), variant('autoplay', '自动营销轮播', { kind: 'campaign', slideCount: 4, slidesPerPage: 1, defaultPage: 2, loop: true, autoplay: true })],
   ProgressCircle: [variant('blue', '蓝色环形进度', { value: 75, size: 'xl', colorPalette: 'blue', showValue: true }), variant('success', '成功环形进度', { value: 100, size: 'xl', colorPalette: 'green', showValue: true }), variant('warning', '警告环形进度', { value: 42, size: 'lg', colorPalette: 'orange', showValue: true }), variant('plain', '纯环形进度', { value: 68, size: 'xl', colorPalette: 'purple', showValue: false })],
   Status: [variant('success', '成功状态', { colorPalette: 'green', label: '运行正常', size: 'md' }), variant('warning', '警告状态', { colorPalette: 'orange', label: '需要注意', size: 'md' }), variant('error', '错误状态', { colorPalette: 'red', label: '连接中断', size: 'md' }), variant('info', '信息状态', { colorPalette: 'blue', label: '正在同步', size: 'md' })],
   Toast: [variant('success', '成功通知', { type: 'success', title: '保存成功', description: '设计已经安全保存。', closable: true }), variant('error', '错误通知', { type: 'error', title: '保存失败', description: '请检查网络后重试。', closable: true }), variant('loading', '加载通知', { type: 'loading', title: '正在生成', description: 'AI 正在完善页面设计。', closable: false }), variant('info', '信息通知', { type: 'info', title: '新版本可用', description: '组件库目录已更新。', closable: true })],
@@ -407,14 +407,14 @@ export const CHAKRA_COMPONENT_VARIANTS: Record<string, ChakraComponentVariant[]>
   FormatNumber: [variant('decimal', '小数格式', { value: 1450.45, locale: 'zh-CN', style: 'decimal', maximumFractionDigits: 2 }), variant('currency', '人民币格式', { value: 12999, locale: 'zh-CN', style: 'currency', currency: 'CNY' }), variant('percent', '百分比格式', { value: 0.684, locale: 'zh-CN', style: 'percent', maximumFractionDigits: 1 }), variant('compact', '紧凑数字格式', { value: 2864200, locale: 'zh-CN', style: 'decimal', notation: 'compact' })],
   FormatByte: [variant('standard', '标准文件大小', { value: 1450.45, locale: 'zh-CN', unitSystem: 'decimal', unitDisplay: 'short' }), variant('binary', '二进制文件大小', { value: 10485760, locale: 'zh-CN', unitSystem: 'binary', unitDisplay: 'short' }), variant('long', '完整单位文件大小', { value: 2560000000, locale: 'zh-CN', unitSystem: 'decimal', unitDisplay: 'long' })],
   Checkmark: [variant('checked', '选中勾选标记', { checked: true, indeterminate: false, disabled: false, size: 'md', colorPalette: 'blue' }), variant('empty', '未选勾选标记', { checked: false, indeterminate: false, disabled: false, size: 'md', colorPalette: 'gray' }), variant('mixed', '半选勾选标记', { checked: false, indeterminate: true, disabled: false, size: 'md', colorPalette: 'purple' }), variant('disabled', '禁用勾选标记', { checked: true, indeterminate: false, disabled: true, size: 'md', colorPalette: 'gray' })],
-  ClientOnly: [variant('content', '仅客户端内容', { fallback: '正在连接客户端…', kind: 'content' }), variant('time', '客户端时间', { fallback: '正在读取本地时间…', kind: 'time' }), variant('viewport', '客户端视口信息', { fallback: '正在读取视口…', kind: 'viewport' })],
-  EnvironmentProvider: [variant('document', '当前文档环境', { environment: 'document', label: '使用当前页面 Document' }), variant('canvas', '画布环境说明', { environment: 'canvas', label: '浮层定位到设计画布环境' }), variant('iframe', '嵌入环境说明', { environment: 'iframe', label: '可适配 iframe 内部 Document' })],
+  ClientOnly: [variant('content', '客户端连接状态', { fallback: '正在连接客户端…', kind: 'content' }), variant('time', '本地时间卡片', { fallback: '正在读取本地时间…', kind: 'time' }, { height: 118 }), variant('viewport', '视口指标面板', { fallback: '正在读取视口…', kind: 'viewport' }, { width: 360, height: 128 })],
+  EnvironmentProvider: [variant('document', '文档运行环境', { environment: 'document', label: '当前页面 Document' }, { height: 120 }), variant('canvas', '画布浮层环境', { environment: 'canvas', label: '设计画布坐标空间' }, { height: 150 }), variant('iframe', '嵌入页面环境', { environment: 'iframe', label: 'iframe 隔离文档' }, { height: 150 })],
   For: [variant('cards', '循环卡片', { count: 4, kind: 'cards' }), variant('tags', '循环标签', { count: 6, kind: 'tags' }), variant('rows', '循环数据行', { count: 5, kind: 'rows' })],
-  Presence: [variant('visible', '默认显示', { present: true, lazyMount: false, unmountOnExit: false, animation: 'fade' }), variant('toggle', '可切换显示', { present: false, lazyMount: true, unmountOnExit: false, animation: 'fade' }), variant('scale', '缩放出现', { present: false, lazyMount: true, unmountOnExit: true, animation: 'scale' })],
+  Presence: [variant('visible', '常驻同步状态', { kind: 'status', present: true, lazyMount: false, unmountOnExit: false, animation: 'fade' }), variant('toggle', '按需展开详情', { kind: 'details', present: false, lazyMount: true, unmountOnExit: false, animation: 'fade' }, { height: 156 }), variant('scale', '缩放确认面板', { kind: 'confirm', present: false, lazyMount: true, unmountOnExit: true, animation: 'scale' }, { width: 340, height: 178 })],
   Portal: [variant('badge', '传送徽标', { kind: 'badge', placement: 'top-end' }), variant('panel', '传送面板', { kind: 'panel', placement: 'bottom-end' }), variant('message', '传送消息', { kind: 'message', placement: 'top-center' })],
   Radiomark: [variant('checked', '选中单选标记', { checked: true, disabled: false, size: 'md', colorPalette: 'blue' }), variant('empty', '未选单选标记', { checked: false, disabled: false, size: 'md', colorPalette: 'gray' }), variant('disabled', '禁用单选标记', { checked: true, disabled: true, size: 'md', colorPalette: 'gray' }), variant('large', '大号单选标记', { checked: true, disabled: false, size: 'lg', colorPalette: 'purple' })],
   Show: [variant('revealed', '条件已满足', { threshold: 3, initialCount: 4, label: '条件内容已显示' }), variant('hidden', '条件未满足', { threshold: 3, initialCount: 0, label: '点击达到条件后显示' }), variant('immediate', '立即显示', { threshold: 0, initialCount: 0, label: '始终满足显示条件' })],
-  SkipNav: [variant('basic', '跳过导航链接', { label: '跳到主要内容', navLabel: '页面导航', contentLabel: '主要内容' }), variant('english', '英文跳转链接', { label: 'Skip to content', navLabel: 'Navigation', contentLabel: 'Main content' }), variant('dashboard', '控制台跳转链接', { label: '跳过侧边栏', navLabel: '控制台侧边栏', contentLabel: '工作区域' })],
+  SkipNav: [variant('basic', '网站顶部导航跳转', { kind: 'website', label: '跳到主要内容', navLabel: '产品 / 方案 / 价格', contentLabel: '主视觉内容' }), variant('english', '英文产品导航跳转', { kind: 'product', label: 'Skip to content', navLabel: 'Product navigation', contentLabel: 'Product overview' }), variant('dashboard', '控制台侧栏跳转', { kind: 'dashboard', label: '跳过侧边栏', navLabel: '控制台侧边栏', contentLabel: '数据工作区域' }, { width: 460, height: 250 })],
   VisuallyHidden: [variant('notification', '通知无障碍文本', { hiddenText: '3 条未读通知', visibleText: '3', icon: 'bell' }), variant('icon-button', '图标按钮标签', { hiddenText: '打开设置', visibleText: '', icon: 'settings' }), variant('status', '状态补充文本', { hiddenText: '当前状态：运行正常', visibleText: '正常', icon: 'check' })],
   Theme: [variant('dark', '深色主题区域', { appearance: 'dark', colorPalette: 'teal' }), variant('light', '浅色主题区域', { appearance: 'light', colorPalette: 'blue' }), variant('purple', '紫色主题区域', { appearance: 'dark', colorPalette: 'purple' }), variant('green', '绿色浅色主题', { appearance: 'light', colorPalette: 'green' })],
   Textarea: [
@@ -435,14 +435,14 @@ export const CHAKRA_COMPONENT_VARIANTS: Record<string, ChakraComponentVariant[]>
     variant('vertical', '垂直滑块', { defaultValue: 64, min: 0, max: 100, colorPalette: 'orange', variant: 'solid', size: 'md', orientation: 'vertical' }, { width: 70, height: 220 })
   ],
   Fieldset: [
-    variant('small', '紧凑字段组', { legend: '联系信息', helperText: '填写常用联系方式。', size: 'sm', disabled: false }, { height: 220 }),
-    variant('medium', '标准字段组', { legend: '个人资料', helperText: '这些信息会展示在个人页面。', size: 'md', disabled: false }),
-    variant('disabled', '禁用字段组', { legend: '锁定资料', helperText: '当前信息暂不可修改。', size: 'md', disabled: true })
+    variant('small', '紧凑联系字段组', { kind: 'contact', legend: '联系信息', helperText: '填写常用联系方式。', size: 'sm', disabled: false }, { height: 220 }),
+    variant('medium', '完整个人资料字段组', { kind: 'profile', legend: '个人资料', helperText: '这些信息会展示在个人页面。', size: 'md', disabled: false }, { height: 390 }),
+    variant('disabled', '锁定只读字段组', { kind: 'locked', legend: '组织资料', helperText: '由管理员统一维护，当前不可修改。', size: 'md', disabled: true }, { height: 300 })
   ],
   Editable: [
-    variant('small', '小号可编辑文本', { placeholder: '输入名称', size: 'sm', activationMode: 'click' }, { height: 40 }),
-    variant('medium', '标准可编辑文本', { placeholder: '输入名称', size: 'md', activationMode: 'click' }),
-    variant('double-click', '双击编辑文本', { placeholder: '双击输入标题', size: 'lg', activationMode: 'dblclick' }, { width: 340, height: 56 })
+    variant('small', '小号预览文本', { value: '导航标题', placeholder: '输入名称', size: 'sm', activationMode: 'click', defaultEdit: false }, { height: 44 }),
+    variant('medium', '正在编辑文本', { value: '可直接修改的页面标题', placeholder: '输入名称', size: 'md', activationMode: 'click', defaultEdit: true }, { width: 340, height: 58 }),
+    variant('double-click', '双击编辑文本', { value: '双击修改产品标题', placeholder: '双击输入标题', size: 'lg', activationMode: 'dblclick', defaultEdit: false }, { width: 360, height: 64 })
   ],
   Breadcrumb: [
     variant('plain', '简洁面包屑', { variant: 'plain', size: 'md', separator: '/' }),

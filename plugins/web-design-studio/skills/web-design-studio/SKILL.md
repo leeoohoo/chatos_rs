@@ -38,9 +38,13 @@ Use Web Design Studio when the user wants an editable website, landing page, UI 
 27. Respect each symbol layer's `symbolOverrides` values: `content`, `style`, and `frame`.
 28. Use `interaction` with `{ type: "page", target: pageId }` or an HTTPS URL for preview click behavior.
 29. Export HTML, React, or Vue only when the user explicitly asks for a code deliverable.
-30. Prefer a returned production page template or section preset as the starting structure for product sites, brand sites, portfolios, and campaign pages. Do not approximate a marketing site by stacking dashboard cards and form controls.
+30. Treat page templates and section presets as optional starting material, never as the editor's design boundary. For a distinctive brief, freely construct an editable component tree from geometry, typography, media, library components, nesting, and visual effects instead of forcing the request into the nearest preset. Do not approximate a marketing site by stacking dashboard cards and form controls.
 31. Treat full-page templates and reusable page sections as editable component trees, not opaque screenshots. Preserve their parent relationships and responsive frames when refining them.
 32. Use `web_design_apply_page_template` for a new full product, brand, portfolio, campaign, or developer page when a matching template exists. Use `web_design_insert_section` to add a single narrative region without replacing the rest of the page.
+33. Build visual treatments through component `style`: gradients in `background`; fill and stroke; padding and radius; shadow, blur, backdrop blur, opacity, rotation, scale, overflow, and blend mode; typography controls; and media object fit/position. These fields may be overridden independently for tablet and mobile.
+34. Use component `states.hover`, `states.active`, and `states.focus` when interaction should visibly respond. Use per-device `constraints` for horizontal behavior, minimum/maximum width and height, and aspect-ratio locking; do not fake responsive behavior by creating disconnected duplicate components.
+35. When a requested visual treatment is not covered by a dedicated style field, use `style.customCss` (or a state-specific `customCss`) with valid CSS property/value pairs instead of refusing the design or approximating it with a fixed template. Prefer dedicated fields when they exist.
+36. Treat saved personal components as user-authored building blocks. Preserve their internal hierarchy, slots, responsive frames, visual states, and custom CSS when instantiating them in another design.
 
 ## Typical workflow
 
@@ -49,8 +53,8 @@ Use Web Design Studio when the user wants an editable website, landing page, UI 
 3. Call `web_design_list_documents` with that internal `projectId`.
 4. Reuse the intended document or call `web_design_create_document` with that internal `projectId`.
 5. Call `web_design_get_document` and inspect pages, components, annotations, requests, tokens, and revision.
-6. Call `web_design_get_component_library` when adding components or choosing a visual direction; inspect its `sections` and `pageTemplates` before assembling a visually rich public-facing page.
-7. Apply a suitable full-page starting point with `web_design_apply_page_template`, or add individual regions with `web_design_insert_section`.
+6. Call `web_design_get_component_library` when adding product UI components or when a returned section/page is genuinely useful; templates are optional accelerators rather than required construction paths.
+7. Establish the page's visual concept and construct the necessary editable hierarchy. Apply a suitable template or section only when it supports that concept without flattening its distinctiveness.
 8. Refine the result with focused operations through `web_design_apply_patch` instead of discarding the generated structure.
 9. If working from the request queue, call `web_design_resolve_request` after the requested design change succeeds.
 10. Call `web_design_validate` and fix layout or structural issues before finishing.
@@ -62,7 +66,10 @@ Use Web Design Studio when the user wants an editable website, landing page, UI 
 - Use `upsert_component` when adding or changing any UI library binding because it preserves the complete typed component record.
 - Use `move_component` and `resize_component` for layout changes.
 - Use `set_breakpoint` to change desktop, tablet, or mobile canvas dimensions.
-- Use `set_parent` to nest components and include `slot` when the parent exposes editable library content regions. Use `set_layout` to configure `free`, `flex-row`, `flex-column`, or `grid` containers.
+- Use `set_parent` to nest components and include `slot` when the parent exposes editable library content regions. Use `set_layout` to configure `free`, `flex-row`, `flex-column`, or `grid` containers; Flex layouts may use `justify` and row `wrap` for responsive composition.
+- Use structured style fields instead of hiding essential visual decisions in library-specific props. Supported visual fields include `background`, `color`, `borderColor`, `borderWidth`, `borderStyle`, `borderRadius`, `padding`, `fontSize`, `fontWeight`, `textAlign`, `lineHeight`, `letterSpacing`, `textTransform`, `textDecoration`, `opacity`, `shadow`, `blur`, `backdropBlur`, `rotate`, `scale`, `overflow`, `objectFit`, `objectPosition`, and `mixBlendMode`.
+- Put only differences from the default style into `states.hover`, `states.active`, or `states.focus`. Check contrast and focus visibility, and use state effects consistently across related controls.
+- Configure `constraints[device]` with `horizontal` plus optional `minWidth`, `maxWidth`, `minHeight`, `maxHeight`, and `lockAspectRatio` when resizing or viewport reflow must remain bounded.
 - For Tabs and Collapse, use the exact per-panel slot IDs returned by `editableSlots`; do not put every child into a generic content slot.
 - Use `web_design_auto_layout` after structural or container-layout changes.
 - Assign `pageId` on newly created components and keep parent-child relationships on the same page.

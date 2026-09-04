@@ -1,9 +1,44 @@
 import { breakpointFor, componentsForPage, resolveComponent } from './editor-model.js';
-import { pagesForDocument, tokensForDocument, type WebDesignDevice, type WebDesignDocument } from './schema.js';
+import { pagesForDocument, tokensForDocument, type WebComponentStyle, type WebDesignComponent, type WebDesignDevice, type WebDesignDocument } from './schema.js';
 
 export interface ExportedVueFile {
   filename: string;
   content: string;
+}
+
+function cssPropertyToKebab(property: string): string {
+  if (property.startsWith('--') || property.includes('-')) return property;
+  return property.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`);
+}
+
+function vueVisualStyle(style: WebComponentStyle): Record<string, string | number | undefined> {
+  return {
+    background: style.background, color: style.color, borderColor: style.borderColor,
+    borderWidth: style.borderWidth === undefined ? undefined : `${style.borderWidth}px`,
+    borderStyle: style.borderStyle ?? (style.borderWidth ? 'solid' : undefined),
+    borderRadius: style.borderRadius === undefined ? undefined : `${style.borderRadius}px`,
+    padding: style.padding === undefined ? undefined : `${style.padding}px`,
+    fontSize: style.fontSize === undefined ? undefined : `${style.fontSize}px`,
+    fontWeight: style.fontWeight, textAlign: style.textAlign, lineHeight: style.lineHeight,
+    letterSpacing: style.letterSpacing === undefined ? undefined : `${style.letterSpacing}px`,
+    textTransform: style.textTransform, textDecoration: style.textDecoration, opacity: style.opacity,
+    boxShadow: style.shadow, filter: style.blur ? `blur(${style.blur}px)` : undefined,
+    backdropFilter: style.backdropBlur ? `blur(${style.backdropBlur}px)` : undefined,
+    transform: [style.rotate === undefined ? undefined : `rotate(${style.rotate}deg)`, style.scale === undefined ? undefined : `scale(${style.scale})`].filter(Boolean).join(' ') || undefined,
+    overflow: style.overflow, objectFit: style.objectFit, objectPosition: style.objectPosition,
+    mixBlendMode: style.mixBlendMode,
+    ...style.customCss
+  };
+}
+
+function vueStateCss(component: WebDesignComponent): string {
+  const selectors = { hover: ':hover', active: ':active', focus: ':focus-visible' } as const;
+  return (Object.keys(selectors) as Array<keyof typeof selectors>).map((state) => {
+    const style = component.states?.[state];
+    if (!style) return '';
+    const declarations = Object.entries(vueVisualStyle(style)).filter(([, value]) => value !== undefined).map(([property, value]) => `${cssPropertyToKebab(property)}:${value}`).join(';');
+    return declarations ? `[data-component-id="${component.id}"]${selectors[state]}{${declarations}}` : '';
+  }).filter(Boolean).join('\n');
 }
 
 export function exportVueComponent(document: WebDesignDocument, device: WebDesignDevice = 'desktop'): ExportedVueFile {
@@ -24,18 +59,13 @@ export function exportVueComponent(document: WebDesignDocument, device: WebDesig
           hidden: frame.hidden,
           style: {
             position: 'absolute', left: `${frame.x}px`, top: `${frame.y}px`, width: `${frame.width}px`, height: `${frame.height}px`,
-            zIndex: component.zIndex, display: 'flex', overflow: 'hidden', whiteSpace: 'pre-wrap',
-            background: frame.style.background, color: frame.style.color, borderColor: frame.style.borderColor,
-            borderWidth: frame.style.borderWidth === undefined ? undefined : `${frame.style.borderWidth}px`,
-            borderStyle: frame.style.borderWidth ? 'solid' : undefined,
-            borderRadius: frame.style.borderRadius === undefined ? undefined : `${frame.style.borderRadius}px`,
-            fontSize: frame.style.fontSize === undefined ? undefined : `${frame.style.fontSize}px`,
-            fontWeight: frame.style.fontWeight, textAlign: frame.style.textAlign, opacity: frame.style.opacity,
-            boxShadow: frame.style.shadow, cursor: component.interaction ? 'pointer' : undefined
+            zIndex: component.zIndex, display: 'flex', whiteSpace: 'pre-wrap',
+            ...vueVisualStyle(frame.style), cursor: component.interaction ? 'pointer' : undefined
           }
         };
       })
   }));
+  const stateCss = document.components.map(vueStateCss).filter(Boolean).join('\n');
   const payload = JSON.stringify({ pages, viewport, background: document.viewport.background, tokens }).replace(/</g, '\\u003c');
   const content = `<script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
@@ -85,16 +115,16 @@ onBeforeUnmount(() => window.removeEventListener('popstate', updateRoute));
     </nav>
     <main class="page" :style="{ width: design.viewport.width + 'px', height: design.viewport.height + 'px', background: design.background }">
       <template v-for="component in page.components" :key="component.id">
-        <img v-if="!component.hidden && (component.type === 'image' || component.type === 'avatar') && /^(data:image\\/|https?:\\/\\/)/.test(component.content)" :class="['component', 'type-' + component.type]" :style="component.style" :src="component.content" :alt="component.name" @click="activate(component)" />
-        <video v-else-if="!component.hidden && component.type === 'video' && component.content" :class="['component', 'type-' + component.type]" :style="component.style" :src="component.content" controls @click="activate(component)" />
-        <input v-else-if="!component.hidden && component.type === 'input'" :class="['component', 'type-' + component.type]" :style="component.style" :placeholder="component.content" @click="activate(component)" />
-        <textarea v-else-if="!component.hidden && component.type === 'textarea'" :class="['component', 'type-' + component.type]" :style="component.style" :placeholder="component.content" @click="activate(component)" />
-        <select v-else-if="!component.hidden && component.type === 'select'" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><option v-for="option in component.content.split('\\n').filter(Boolean)" :key="option">{{ option }}</option></select>
-        <label v-else-if="!component.hidden && (component.type === 'checkbox' || component.type === 'switch')" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><input type="checkbox" :role="component.type === 'switch' ? 'switch' : undefined" checked />{{ component.content }}</label>
-        <button v-else-if="!component.hidden && component.type === 'button'" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)">{{ component.content }}</button>
-        <ul v-else-if="!component.hidden && component.type === 'list'" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><li v-for="item in component.content.split('\\n').filter(Boolean)" :key="item">{{ item }}</li></ul>
-        <table v-else-if="!component.hidden && component.type === 'table'" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><tbody><tr v-for="(row, rowIndex) in component.content.split('\\n').filter(Boolean)" :key="rowIndex"><td v-for="(cell, cellIndex) in row.split('|')" :key="cellIndex">{{ cell }}</td></tr></tbody></table>
-        <div v-else-if="!component.hidden" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)">{{ component.type === 'section' || component.type === 'divider' ? '' : component.content || (component.type === 'video' ? '▶ 视频' : component.type === 'image' ? '图片' : '') }}</div>
+        <img v-if="!component.hidden && (component.type === 'image' || component.type === 'avatar') && /^(data:image\\/|https?:\\/\\/)/.test(component.content)" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" :src="component.content" :alt="component.name" @click="activate(component)" />
+        <video v-else-if="!component.hidden && component.type === 'video' && component.content" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" :src="component.content" controls @click="activate(component)" />
+        <input v-else-if="!component.hidden && component.type === 'input'" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" :placeholder="component.content" @click="activate(component)" />
+        <textarea v-else-if="!component.hidden && component.type === 'textarea'" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" :placeholder="component.content" @click="activate(component)" />
+        <select v-else-if="!component.hidden && component.type === 'select'" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><option v-for="option in component.content.split('\\n').filter(Boolean)" :key="option">{{ option }}</option></select>
+        <label v-else-if="!component.hidden && (component.type === 'checkbox' || component.type === 'switch')" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><input type="checkbox" :role="component.type === 'switch' ? 'switch' : undefined" checked />{{ component.content }}</label>
+        <button v-else-if="!component.hidden && component.type === 'button'" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)">{{ component.content }}</button>
+        <ul v-else-if="!component.hidden && component.type === 'list'" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><li v-for="item in component.content.split('\\n').filter(Boolean)" :key="item">{{ item }}</li></ul>
+        <table v-else-if="!component.hidden && component.type === 'table'" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)"><tbody><tr v-for="(row, rowIndex) in component.content.split('\\n').filter(Boolean)" :key="rowIndex"><td v-for="(cell, cellIndex) in row.split('|')" :key="cellIndex">{{ cell }}</td></tr></tbody></table>
+        <div v-else-if="!component.hidden" :data-component-id="component.id" :class="['component', 'type-' + component.type]" :style="component.style" @click="activate(component)">{{ component.type === 'section' || component.type === 'divider' ? '' : component.content || (component.type === 'video' ? '▶ 视频' : component.type === 'image' ? '图片' : '') }}</div>
       </template>
     </main>
   </div>
@@ -117,6 +147,7 @@ onBeforeUnmount(() => window.removeEventListener('popstate', updateRoute));
 .type-table { border-collapse: collapse; display: table; }
 .type-table td { padding: 10px 12px; border-bottom: 1px solid rgba(128,128,145,.18); }
 .route-nav { display: flex; justify-content: center; gap: 8px; padding: 12px; }
+${stateCss}
 </style>
 `;
   return { filename: 'WebDesignApp.vue', content };

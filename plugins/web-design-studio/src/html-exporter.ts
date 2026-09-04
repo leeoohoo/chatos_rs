@@ -1,5 +1,5 @@
 import { breakpointFor, componentsForPage, resolveComponent } from './editor-model.js';
-import { pagesForDocument, tokensForDocument, type WebDesignComponent, type WebDesignDevice, type WebDesignDocument } from './schema.js';
+import { pagesForDocument, tokensForDocument, type WebComponentStyle, type WebDesignComponent, type WebDesignDevice, type WebDesignDocument } from './schema.js';
 
 export interface ExportedHtmlFile {
   pageId: string;
@@ -17,18 +17,51 @@ function cssValue(value: string | number | undefined, suffix = ''): string | und
   return value === undefined || value === '' ? undefined : `${value}${typeof value === 'number' ? suffix : ''}`;
 }
 
+function transformValue(rotate: number | undefined, scale: number | undefined): string | undefined {
+  const value = [rotate === undefined ? undefined : `rotate(${rotate}deg)`, scale === undefined ? undefined : `scale(${scale})`].filter(Boolean).join(' ');
+  return value || undefined;
+}
+
+function cssPropertyToKebab(property: string): string {
+  if (property.startsWith('--') || property.includes('-')) return property;
+  return property.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`);
+}
+
+function styleDeclarations(style: WebComponentStyle): Array<[string, string]> {
+  const declarations: Array<[string, string | undefined]> = [
+    ['background', cssValue(style.background)], ['color', cssValue(style.color)], ['border-color', cssValue(style.borderColor)],
+    ['border-width', cssValue(style.borderWidth, 'px')], ['border-style', style.borderStyle ?? (style.borderWidth ? 'solid' : undefined)],
+    ['border-radius', cssValue(style.borderRadius, 'px')], ['font-size', cssValue(style.fontSize, 'px')],
+    ['padding', cssValue(style.padding, 'px')], ['font-weight', cssValue(style.fontWeight)], ['text-align', cssValue(style.textAlign)],
+    ['line-height', cssValue(style.lineHeight)], ['letter-spacing', cssValue(style.letterSpacing, 'px')],
+    ['text-transform', cssValue(style.textTransform)], ['text-decoration', cssValue(style.textDecoration)],
+    ['opacity', cssValue(style.opacity)], ['box-shadow', cssValue(style.shadow)],
+    ['filter', style.blur ? `blur(${style.blur}px)` : undefined],
+    ['backdrop-filter', style.backdropBlur ? `blur(${style.backdropBlur}px)` : undefined],
+    ['transform', transformValue(style.rotate, style.scale)], ['overflow', cssValue(style.overflow)],
+    ['object-fit', cssValue(style.objectFit)], ['object-position', cssValue(style.objectPosition)],
+    ['mix-blend-mode', cssValue(style.mixBlendMode)]
+  ];
+  for (const [property, value] of Object.entries(style.customCss ?? {})) declarations.push([cssPropertyToKebab(property), cssValue(value)]);
+  return declarations.filter((item): item is [string, string] => item[1] !== undefined);
+}
+
+function componentStateCss(component: WebDesignComponent): string {
+  const selectors = { hover: ':hover', active: ':active', focus: ':focus-visible' } as const;
+  return (Object.keys(selectors) as Array<keyof typeof selectors>).map((state) => {
+    const declarations = component.states?.[state] ? styleDeclarations(component.states[state]!).map(([name, value]) => `${name}:${value}`).join(';') : '';
+    return declarations ? `[data-component-id="${component.id}"]${selectors[state]}{${declarations}}` : '';
+  }).filter(Boolean).join('\n    ');
+}
+
 function componentMarkup(component: WebDesignComponent, document: WebDesignDocument, device: WebDesignDevice): string {
   const frame = resolveComponent(component, device);
   if (frame.hidden) return '';
-  const declarations = [
+  const declarations: Array<[string, string]> = [
     ['left', cssValue(frame.x, 'px')], ['top', cssValue(frame.y, 'px')],
     ['width', cssValue(frame.width, 'px')], ['height', cssValue(frame.height, 'px')],
-    ['z-index', cssValue(component.zIndex)], ['background', cssValue(frame.style.background)],
-    ['color', cssValue(frame.style.color)], ['border-color', cssValue(frame.style.borderColor)],
-    ['border-width', cssValue(frame.style.borderWidth, 'px')], ['border-style', frame.style.borderWidth ? 'solid' : undefined],
-    ['border-radius', cssValue(frame.style.borderRadius, 'px')], ['font-size', cssValue(frame.style.fontSize, 'px')],
-    ['font-weight', cssValue(frame.style.fontWeight)], ['text-align', cssValue(frame.style.textAlign)],
-    ['opacity', cssValue(frame.style.opacity)], ['box-shadow', cssValue(frame.style.shadow)]
+    ['z-index', cssValue(component.zIndex)],
+    ...styleDeclarations(frame.style)
   ].filter((item): item is [string, string] => item[1] !== undefined);
   const style = declarations.map(([name, value]) => `${name}:${value}`).join(';');
   const libraryAttributes = component.library ? ` data-library="${escapeHtml(component.library.name)}" data-library-component="${escapeHtml(component.library.component)}"` : '';
@@ -80,6 +113,7 @@ export function exportPageHtml(document: WebDesignDocument, pageId: string, devi
     .map((component) => componentMarkup(component, document, device))
     .filter(Boolean)
     .join('\n    ');
+  const stateCss = componentsForPage(document, pageId).map(componentStateCss).filter(Boolean).join('\n    ');
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -108,6 +142,7 @@ export function exportPageHtml(document: WebDesignDocument, pageId: string, devi
     .media-placeholder { width: 100%; display: grid; place-items: center; align-content: center; gap: 7px; color: white; font-size: 34px; }
     .interaction-link { color: inherit; text-decoration: none; }
     .image-placeholder { width: 100%; display: grid; place-items: center; color: #6b7280; }
+    ${stateCss}
   </style>
 </head>
 <body>

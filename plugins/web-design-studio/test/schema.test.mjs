@@ -5,6 +5,7 @@ import {
   autoLayoutContainer,
   breakpointFor,
   cloneComponentSubtrees,
+  constrainComponentFrame,
   componentsForPage,
   createSymbolFromSelection,
   detachSymbolInstance,
@@ -42,6 +43,57 @@ test('landing page template is a valid editable document', () => {
   assert.ok(document.components.some((component) => component.id === 'hero-heading'));
   assert.equal(breakpointFor(document, 'mobile').width, 390);
   assert.equal(resolveComponent(document.components.find((component) => component.id === 'hero-heading'), 'mobile').style.fontSize, 39);
+});
+
+test('open visual style properties validate, persist responsively, and export', () => {
+  const document = createLandingPage('Visual System');
+  const heading = document.components.find((component) => component.id === 'hero-heading');
+  heading.style = {
+    ...heading.style,
+    background: 'linear-gradient(135deg,#111827,#7C3AED)',
+    borderColor: '#FFFFFF', borderWidth: 2, borderStyle: 'dashed', borderRadius: 28, padding: 18,
+    lineHeight: 1.08, letterSpacing: -1.4, textTransform: 'uppercase', textDecoration: 'underline',
+    opacity: .92, shadow: '0 28px 80px rgba(15,23,42,.28)', blur: 1.5, backdropBlur: 24,
+    rotate: -3, scale: 1.04, overflow: 'hidden', mixBlendMode: 'screen',
+    customCss: { 'clip-path': 'polygon(0 0, 100% 0, 92% 100%, 8% 100%)', transformOrigin: '50% 100%', '--hero-glow': 'rgba(99,102,241,.45)' }
+  };
+  heading.responsive.mobile.style = { ...heading.responsive.mobile.style, rotate: 0, scale: 1, letterSpacing: -.4 };
+  assertWebDesignDocument(document);
+  assert.equal(resolveComponent(heading, 'mobile').style.rotate, 0);
+  const html = exportPageHtml(document, 'home', 'desktop');
+  assert.match(html, /linear-gradient/);
+  assert.match(html, /border-style:dashed/);
+  assert.match(html, /backdrop-filter:blur\(24px\)/);
+  assert.match(html, /transform:rotate\(-3deg\) scale\(1\.04\)/);
+  assert.match(html, /clip-path:polygon/);
+  assert.match(html, /--hero-glow:rgba/);
+  assert.match(exportReactComponent(document).content, /mixBlendMode/);
+  assert.match(exportReactComponent(document).content, /clipPath/);
+  assert.match(exportVueComponent(document).content, /letterSpacing/);
+  assert.match(exportVueComponent(document).content, /clip-path/);
+});
+
+test('interactive visual states and size constraints remain editable and enforce resizing', () => {
+  const document = createLandingPage('Interactive States');
+  const button = document.components.find((component) => component.id === 'hero-primary-action');
+  button.states = {
+    hover: { background: '#5856D6', shadow: '0 14px 34px rgba(88,86,214,.35)', scale: 1.04 },
+    active: { background: '#3634A3', scale: .97 },
+    focus: { borderColor: '#FFFFFF', borderWidth: 3, shadow: '0 0 0 4px rgba(0,122,255,.28)' }
+  };
+  button.constraints = {
+    desktop: { horizontal: 'left', minWidth: 120, maxWidth: 240, minHeight: 40, maxHeight: 80, lockAspectRatio: true }
+  };
+  assertWebDesignDocument(document);
+  assert.deepEqual(constrainComponentFrame(button, 'desktop', { width: 300 }), { width: 240, height: 68 });
+  const updated = applyWebDesignPatch(document, [{
+    op: 'update_component', componentId: button.id, changes: { states: { ...button.states, hover: { ...button.states.hover, color: '#FFFFFF' } } }
+  }]);
+  assert.equal(updated.components.find((component) => component.id === button.id).states.hover.color, '#FFFFFF');
+  assertWebDesignDocument(updated);
+  assert.match(exportPageHtml(updated, 'home'), /:hover\{/);
+  assert.match(exportReactComponent(updated).content, /onPointerEnter/);
+  assert.match(exportVueComponent(updated).content, /:hover\{/);
 });
 
 test('canvas height grows to fit visible page content without shrinking other device breakpoints', () => {
@@ -294,6 +346,8 @@ test('Ant Design variants and structured sample data remain editable and persist
   assert.equal(variantsForAntdComponent('Menu').length, 4);
   assert.equal(variantsForAntdComponent('Drawer').length, 7);
   assert.equal(variantsForAntdComponent('Table').length, 7);
+  assert.equal(variantsForAntdComponent('Card').length, 10);
+  assert.equal(new Set(variantsForAntdComponent('Card').map((variant) => variant.props.showcase)).size, 10);
 
   const select = createAntdComponent('Select', 20, 80);
   select.library.props.options = [{ value: 'custom', label: '自定义选项' }];
@@ -569,6 +623,25 @@ test('container auto layout supports flex row, flex column, and grid', () => {
   assert.equal(first.width, 515);
   assert.equal(second.x, 605);
   assert.equal(third.y, 240);
+});
+
+test('flex auto layout can distribute and wrap arbitrary child compositions', () => {
+  const document = createLandingPage();
+  document.components = document.components.filter((component) => ['hero-section', 'hero-heading', 'hero-copy', 'hero-primary-action'].includes(component.id));
+  const container = document.components.find((component) => component.id === 'hero-section');
+  container.width = 700;
+  container.height = 500;
+  const children = document.components.filter((component) => component.id !== container.id);
+  for (const child of children) {
+    child.parentId = container.id;
+    child.width = 280;
+    child.height = 80;
+  }
+  container.layout = { mode: 'flex-row', gap: 20, padding: 20, align: 'center', justify: 'space-between', wrap: true };
+  const laidOut = autoLayoutContainer(document, container.id, 'desktop');
+  const frames = children.map((child) => resolveComponent(laidOut.components.find((component) => component.id === child.id), 'desktop'));
+  assert.deepEqual(frames.map((frame) => [frame.x, frame.y]), [[80, 80], [460, 80], [80, 180]]);
+  assertWebDesignDocument(laidOut);
 });
 
 test('auto layout preserves nested child offsets when moving a child container', () => {

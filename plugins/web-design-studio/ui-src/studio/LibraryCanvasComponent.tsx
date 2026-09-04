@@ -5,19 +5,20 @@ const AntdCanvasComponent = lazy(() => import('./AntdCanvasComponent').then((mod
 const ChakraCanvasComponent = lazy(() => import('./ChakraCanvasComponent').then((module) => ({ default: module.ChakraCanvasComponent })));
 const ShadcnCanvasComponent = lazy(() => import('./ShadcnCanvasComponent').then((module) => ({ default: module.ShadcnCanvasComponent })));
 
-export function LibraryCanvasComponent({ component, preview, tokens, slotContent = {} }: {
+export function LibraryCanvasComponent({ component, preview, showcase = false, tokens, slotContent = {} }: {
   component: WebDesignComponent;
   preview: boolean;
+  showcase?: boolean;
   tokens?: WebDesignTokens;
   slotContent?: Record<string, ReactNode>;
 }) {
   const library = component.library?.name;
   const renderer = library === 'antd'
-    ? <AntdCanvasComponent component={component} preview={preview} tokens={tokens} slotContent={slotContent} />
+    ? <AntdCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
     : library === 'chakra'
-      ? <ChakraCanvasComponent component={component} preview={preview} tokens={tokens} slotContent={slotContent} />
+      ? <ChakraCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
       : library === 'shadcn'
-        ? <ShadcnCanvasComponent component={component} preview={preview} tokens={tokens} slotContent={slotContent} />
+        ? <ShadcnCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
         : null;
   return <Suspense fallback={<span className="library-loading-placeholder">加载组件…</span>}>{renderer}</Suspense>;
 }

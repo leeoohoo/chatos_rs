@@ -152,7 +152,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'web_design_apply_patch',
-    description: 'Apply focused operations to components, annotations, requests, and the viewport without replacing unrelated user edits.',
+    description: 'Apply focused operations without replacing unrelated edits. Component style supports gradients, fill/stroke, effects, transforms, typography, and media fit; component states supports hover/active/focus style overrides; per-device constraints support min/max size and aspect-ratio locking.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -188,7 +188,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'web_design_auto_layout',
-    description: 'Apply a container\'s Flex row, Flex column, or Grid layout to its direct children for one responsive device.',
+    description: 'Apply a container\'s Flex row, Flex column, or Grid layout to its direct children for one responsive device, including justify distribution and Flex row wrapping.',
     inputSchema: {
       type: 'object',
       properties: {

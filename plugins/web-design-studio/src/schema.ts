@@ -6,10 +6,12 @@ export type WebDesignDevice = 'desktop' | 'tablet' | 'mobile';
 export type WebDesignLibraryName = 'antd' | 'chakra' | 'shadcn';
 export type WebContainerLayoutMode = 'free' | 'flex-row' | 'flex-column' | 'grid';
 export type WebContainerAlign = 'start' | 'center' | 'end' | 'stretch';
+export type WebContainerJustify = 'start' | 'center' | 'end' | 'space-between' | 'space-around';
 export type AnnotationStatus = 'open' | 'resolved';
 export type DesignRequestStatus = 'pending' | 'resolved';
 export type WebSymbolOverride = 'content' | 'style' | 'frame';
 export type WebHorizontalConstraint = 'auto' | 'left' | 'center' | 'right' | 'stretch' | 'scale';
+export type WebComponentVisualState = 'hover' | 'active' | 'focus';
 
 export interface WebDesignPage {
   id: string;
@@ -57,13 +59,36 @@ export interface WebComponentStyle {
   color?: string;
   borderColor?: string;
   borderWidth?: number;
+  borderStyle?: 'solid' | 'dashed' | 'dotted' | 'double' | 'none';
   borderRadius?: number;
+  padding?: number;
   fontSize?: number;
   fontWeight?: number;
   textAlign?: 'left' | 'center' | 'right';
+  lineHeight?: number;
+  letterSpacing?: number;
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+  textDecoration?: 'none' | 'underline' | 'line-through';
   opacity?: number;
   shadow?: string;
+  blur?: number;
+  backdropBlur?: number;
+  rotate?: number;
+  scale?: number;
+  overflow?: 'visible' | 'hidden' | 'auto' | 'scroll';
+  objectFit?: 'cover' | 'contain' | 'fill' | 'none' | 'scale-down';
+  objectPosition?: string;
+  mixBlendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'difference';
+  /**
+   * Open-ended CSS escape hatch for visual properties that do not yet have a
+   * dedicated inspector control. Keys may use CSS kebab-case, React camelCase,
+   * or custom-property syntax (`--name`). Dedicated fields above still win in
+   * the inspector, while custom CSS is applied last on the canvas.
+   */
+  customCss?: Record<string, string | number>;
 }
+
+export type WebComponentStates = Partial<Record<WebComponentVisualState, WebComponentStyle>>;
 
 export interface WebDesignInteraction {
   type: 'page' | 'url';
@@ -108,6 +133,7 @@ export interface WebDesignComponent {
   zIndex: number;
   content: string;
   style: WebComponentStyle;
+  states?: WebComponentStates;
   locked?: boolean;
   hidden?: boolean;
   layout?: WebContainerLayout;
@@ -118,6 +144,11 @@ export interface WebDesignComponent {
 
 export interface WebComponentConstraints {
   horizontal: WebHorizontalConstraint;
+  minWidth?: number;
+  maxWidth?: number;
+  minHeight?: number;
+  maxHeight?: number;
+  lockAspectRatio?: boolean;
 }
 
 export interface WebContainerLayout {
@@ -126,6 +157,8 @@ export interface WebContainerLayout {
   padding: number;
   columns?: number;
   align?: WebContainerAlign;
+  justify?: WebContainerJustify;
+  wrap?: boolean;
 }
 
 export interface WebComponentResponsiveOverride {
@@ -225,7 +258,7 @@ export type WebDesignPatchOperation =
   | { op: 'set_layout'; componentId: string; layout: WebContainerLayout }
   | { op: 'move_component'; componentId: string; x: number; y: number; device?: WebDesignDevice }
   | { op: 'resize_component'; componentId: string; width: number; height: number; device?: WebDesignDevice }
-  | { op: 'update_component'; componentId: string; device?: WebDesignDevice; changes: Partial<Pick<WebDesignComponent, 'name' | 'content' | 'zIndex' | 'style' | 'locked' | 'hidden' | 'symbolOverrides' | 'constraints'>> & { interaction?: WebDesignInteraction | null } }
+  | { op: 'update_component'; componentId: string; device?: WebDesignDevice; changes: Partial<Pick<WebDesignComponent, 'name' | 'content' | 'zIndex' | 'style' | 'states' | 'locked' | 'hidden' | 'symbolOverrides' | 'constraints'>> & { interaction?: WebDesignInteraction | null } }
   | { op: 'add_annotation'; componentId: string; annotation: WebDesignAnnotation }
   | { op: 'resolve_annotation'; componentId: string; annotationId: string }
   | { op: 'add_request'; request: WebDesignRequest }
@@ -241,8 +274,10 @@ const devices = new Set<WebDesignDevice>(['desktop', 'tablet', 'mobile']);
 const libraryNames = new Set<WebDesignLibraryName>(['antd', 'chakra', 'shadcn']);
 const layoutModes = new Set<WebContainerLayoutMode>(['free', 'flex-row', 'flex-column', 'grid']);
 const layoutAlignments = new Set<WebContainerAlign>(['start', 'center', 'end', 'stretch']);
+const layoutJustifications = new Set<WebContainerJustify>(['start', 'center', 'end', 'space-between', 'space-around']);
 const symbolOverrides = new Set<WebSymbolOverride>(['content', 'style', 'frame']);
 const horizontalConstraints = new Set<WebHorizontalConstraint>(['auto', 'left', 'center', 'right', 'stretch', 'scale']);
+const visualStates = new Set<WebComponentVisualState>(['hover', 'active', 'focus']);
 
 export const DEFAULT_WEB_DESIGN_PAGE: WebDesignPage = { id: 'home', name: '首页', slug: '/' };
 export const DEFAULT_WEB_DESIGN_TOKENS: WebDesignTokens = {
@@ -364,18 +399,46 @@ function finiteNumber(value: unknown, label: string, min: number, max: number): 
 function assertStyle(value: unknown): asserts value is WebComponentStyle {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Component style must be an object.');
   const style = value as WebComponentStyle;
-  for (const key of ['background', 'color', 'borderColor', 'shadow'] as const) {
+  for (const key of ['background', 'color', 'borderColor', 'shadow', 'objectPosition'] as const) {
     if (style[key] !== undefined && (typeof style[key] !== 'string' || style[key]!.length > 300)) {
       throw new Error(`Component style ${key} is invalid.`);
     }
   }
   if (style.borderWidth !== undefined) finiteNumber(style.borderWidth, 'borderWidth', 0, 40);
   if (style.borderRadius !== undefined) finiteNumber(style.borderRadius, 'borderRadius', 0, 999);
+  if (style.padding !== undefined) finiteNumber(style.padding, 'padding', 0, 2000);
   if (style.fontSize !== undefined) finiteNumber(style.fontSize, 'fontSize', 6, 240);
   if (style.fontWeight !== undefined) finiteNumber(style.fontWeight, 'fontWeight', 100, 1000);
+  if (style.lineHeight !== undefined) finiteNumber(style.lineHeight, 'lineHeight', 0.5, 5);
+  if (style.letterSpacing !== undefined) finiteNumber(style.letterSpacing, 'letterSpacing', -20, 100);
   if (style.opacity !== undefined) finiteNumber(style.opacity, 'opacity', 0, 1);
+  if (style.blur !== undefined) finiteNumber(style.blur, 'blur', 0, 200);
+  if (style.backdropBlur !== undefined) finiteNumber(style.backdropBlur, 'backdropBlur', 0, 200);
+  if (style.rotate !== undefined) finiteNumber(style.rotate, 'rotate', -360, 360);
+  if (style.scale !== undefined) finiteNumber(style.scale, 'scale', 0.01, 20);
   if (style.textAlign !== undefined && !['left', 'center', 'right'].includes(style.textAlign)) {
     throw new Error('Component textAlign is invalid.');
+  }
+  if (style.borderStyle !== undefined && !['solid', 'dashed', 'dotted', 'double', 'none'].includes(style.borderStyle)) throw new Error('Component borderStyle is invalid.');
+  if (style.textTransform !== undefined && !['none', 'uppercase', 'lowercase', 'capitalize'].includes(style.textTransform)) throw new Error('Component textTransform is invalid.');
+  if (style.textDecoration !== undefined && !['none', 'underline', 'line-through'].includes(style.textDecoration)) throw new Error('Component textDecoration is invalid.');
+  if (style.overflow !== undefined && !['visible', 'hidden', 'auto', 'scroll'].includes(style.overflow)) throw new Error('Component overflow is invalid.');
+  if (style.objectFit !== undefined && !['cover', 'contain', 'fill', 'none', 'scale-down'].includes(style.objectFit)) throw new Error('Component objectFit is invalid.');
+  if (style.mixBlendMode !== undefined && !['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference'].includes(style.mixBlendMode)) throw new Error('Component mixBlendMode is invalid.');
+  if (style.customCss !== undefined) {
+    if (!style.customCss || typeof style.customCss !== 'object' || Array.isArray(style.customCss)) throw new Error('Component customCss must be an object.');
+    const entries = Object.entries(style.customCss);
+    if (entries.length > 80) throw new Error('Component customCss supports at most 80 declarations.');
+    for (const [property, propertyValue] of entries) {
+      if (['__proto__', 'prototype', 'constructor'].includes(property) || !/^(?:--[a-zA-Z0-9_-]{1,80}|[a-zA-Z][a-zA-Z0-9-]{0,80})$/.test(property)) {
+        throw new Error(`Component customCss property is invalid: ${property}`);
+      }
+      if (typeof propertyValue === 'number') {
+        if (!Number.isFinite(propertyValue)) throw new Error(`Component customCss value is invalid: ${property}`);
+      } else if (typeof propertyValue !== 'string' || propertyValue.length > 1000) {
+        throw new Error(`Component customCss value is invalid: ${property}`);
+      }
+    }
   }
 }
 
@@ -390,6 +453,13 @@ function assertResponsiveOverride(value: unknown, label: string): asserts value 
   if (frame.style !== undefined) assertStyle(frame.style);
 }
 
+function assertStates(value: unknown): asserts value is WebComponentStates {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Component states must be an object.');
+  const states = value as WebComponentStates;
+  for (const state of visualStates) if (states[state] !== undefined) assertStyle(states[state]);
+  for (const key of Object.keys(states)) if (!visualStates.has(key as WebComponentVisualState)) throw new Error(`Unsupported component visual state: ${key}`);
+}
+
 function assertContainerLayout(value: unknown): asserts value is WebContainerLayout {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Component layout must be an object.');
   const layout = value as WebContainerLayout;
@@ -401,6 +471,8 @@ function assertContainerLayout(value: unknown): asserts value is WebContainerLay
     if (!Number.isInteger(layout.columns)) throw new Error('Component layout columns must be an integer.');
   }
   if (layout.align !== undefined && !layoutAlignments.has(layout.align)) throw new Error('Component layout alignment is invalid.');
+  if (layout.justify !== undefined && !layoutJustifications.has(layout.justify)) throw new Error('Component layout justification is invalid.');
+  if (layout.wrap !== undefined && typeof layout.wrap !== 'boolean') throw new Error('Component layout wrap is invalid.');
 }
 
 export function assertAnnotation(value: unknown): asserts value is WebDesignAnnotation {
@@ -473,6 +545,7 @@ export function assertComponent(value: unknown): asserts value is WebDesignCompo
   finiteNumber(component.zIndex, 'component.zIndex', -10000, 10000);
   if (typeof component.content !== 'string' || component.content.length > 100000) throw new Error('Component content is invalid.');
   assertStyle(component.style);
+  if (component.states !== undefined) assertStates(component.states);
   if (component.locked !== undefined && typeof component.locked !== 'boolean') throw new Error('Component locked is invalid.');
   if (component.hidden !== undefined && typeof component.hidden !== 'boolean') throw new Error('Component hidden is invalid.');
   if (component.layout !== undefined) assertContainerLayout(component.layout);
@@ -491,6 +564,12 @@ export function assertComponent(value: unknown): asserts value is WebDesignCompo
       if (!constraint || typeof constraint !== 'object' || Array.isArray(constraint) || !horizontalConstraints.has(constraint.horizontal)) {
         throw new Error(`Component ${device} horizontal constraint is invalid.`);
       }
+      for (const key of ['minWidth', 'maxWidth', 'minHeight', 'maxHeight'] as const) {
+        if (constraint[key] !== undefined) finiteNumber(constraint[key], `component.constraints.${device}.${key}`, 16, 100000);
+      }
+      if (constraint.minWidth !== undefined && constraint.maxWidth !== undefined && constraint.minWidth > constraint.maxWidth) throw new Error(`Component ${device} width constraints are invalid.`);
+      if (constraint.minHeight !== undefined && constraint.maxHeight !== undefined && constraint.minHeight > constraint.maxHeight) throw new Error(`Component ${device} height constraints are invalid.`);
+      if (constraint.lockAspectRatio !== undefined && typeof constraint.lockAspectRatio !== 'boolean') throw new Error(`Component ${device} aspect ratio constraint is invalid.`);
     }
   }
   if (!Array.isArray(component.annotations) || component.annotations.length > 1000) throw new Error('Component annotations are invalid.');
@@ -817,6 +896,7 @@ export function applyWebDesignPatch(document: WebDesignDocument, operations: Web
         if (operation.changes.locked !== undefined) component.locked = operation.changes.locked;
         if (operation.changes.symbolOverrides !== undefined) component.symbolOverrides = [...operation.changes.symbolOverrides];
         if (operation.changes.constraints !== undefined) component.constraints = structuredClone(operation.changes.constraints);
+        if (operation.changes.states !== undefined) component.states = structuredClone(operation.changes.states);
         if ('interaction' in operation.changes) component.interaction = operation.changes.interaction ? structuredClone(operation.changes.interaction) : undefined;
         const device = assertDevice(operation.device);
         if (device === 'desktop') {

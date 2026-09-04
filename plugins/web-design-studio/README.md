@@ -21,11 +21,16 @@ The product provides:
 - a scalable desktop canvas;
 - independently scrollable library, canvas, and inspector regions, including long-page canvas scrolling;
 - component selection, movement, resizing, deletion, and property editing;
+- a library-agnostic visual style system for gradients, fill, stroke, radius, padding, shadow, foreground/background blur, opacity, transforms, overflow, blend modes, typography, and media cropping;
+- separately editable default, hover, pressed, and focus visual states that work on native and library components in interactive preview;
+- a personal “My” library where any selected component or multi-layer composition can be named, saved across designs, inserted again, renamed, or removed without affecting existing canvas instances;
+- open-ended `customCss` declarations for visual effects that are not yet represented by a dedicated inspector control, while preserving validation, persistence, responsive overrides, and export;
+- per-breakpoint minimum/maximum size constraints and aspect-ratio locking for predictable manual resizing and responsive reflow;
 - desktop, tablet, and mobile breakpoint-specific frames and typography overrides;
 - a visual layer stack with visibility and locking controls;
 - hierarchical component layers, shift multi-selection, grouping/ungrouping, and grouped dragging;
 - canvas-edge and sibling snapping guides;
-- container Flex row, Flex column, and Grid auto layout;
+- container Flex row, Flex column, and Grid auto layout, including main-axis distribution and responsive row wrapping;
 - multiple isolated pages with create, duplicate, rename, route, and delete controls;
 - component-tree copy/paste within or across pages;
 - image import into a reusable document asset library;
@@ -50,9 +55,9 @@ The product provides:
 - revisioned JSON persistence shared by the visual workbench and MCP tools;
 - focused AI patch operations that preserve unrelated user edits.
 
-The native toolbox intentionally contains only rectangle, ellipse, and line primitives. Product UI comes from Ant Design, Chakra UI, or shadcn/ui, each searchable in Chinese or English and insertable by click or drag. Ant Design definitions track the current official documentation URL, introduced version, and deprecation state; the legacy List remains available for existing work while new long-list designs use Listy. Common components such as Input, Select, Button, Card, Alert, Progress, Badge, Tabs, Dialog, Drawer, and Sheet expose selectable visual variants. Data-driven components ship with sample data that can be edited as structured JSON in the inspector.
+The native toolbox intentionally contains only rectangle, ellipse, and line primitives. These are open visual building blocks rather than a finite business-component catalog: the shared inspector can turn them and library components into gradients, glass surfaces, glows, masks through overflow, typographic treatments, transformed layers, and responsive compositions. Product UI comes from Ant Design, Chakra UI, or shadcn/ui, each searchable in Chinese or English and insertable by click or drag. Ant Design definitions track the current official documentation URL, introduced version, and deprecation state; the legacy List remains available for existing work while new long-list designs use Listy. Common components such as Input, Select, Button, Card, Alert, Progress, Badge, Tabs, Dialog, Drawer, and Sheet expose selectable visual variants. Data-driven components ship with sample data that can be edited as structured JSON in the inspector.
 
-The left library is organized into AntD, Chakra, shadcn, Shapes, Sections, and Layers. Clicking a library item opens a live variant gallery; dragging inserts its default variant immediately. Each runtime is code-split and loads only when its components are present on the canvas. Content-bearing components from all three systems share the same nested-canvas contract, while default form/detail starters preserve the selected parent's library instead of mixing systems. The Sections view includes full-page templates and reusable user components; the canvas toolbar supports 25%–150% zoom, 100%, and fit-to-width controls.
+The left library is organized into AntD, Chakra, shadcn, Shapes, Sections, Pages, and Layers. Clicking a library item opens a live variant gallery; dragging inserts its default variant immediately. Each runtime is code-split and loads only when its components are present on the canvas. Content-bearing components from all three systems share the same nested-canvas contract, while default form/detail starters preserve the selected parent's library instead of mixing systems. Sections and Pages are optional editable starting points rather than the editor's design boundary; the canvas toolbar supports 25%–150% zoom, 100%, and fit-to-width controls.
 
 The implementation plan is in [docs/IMPLEMENTATION_PLAN.zh-CN.md](docs/IMPLEMENTATION_PLAN.zh-CN.md).
 

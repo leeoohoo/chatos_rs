@@ -26,6 +26,156 @@ const GENERIC_VARIANT_COMPONENTS = [
 
 export const SHADCN_COMPONENT_VARIANTS: Record<string, ShadcnComponentVariant[]> = {
   ...Object.fromEntries(GENERIC_VARIANT_COMPONENTS.map((component) => [component, genericExamples()])),
+  AspectRatio: [
+    { id: 'video', label: '16:9 视频画面', props: { kind: 'video', ratio: 16 / 9, label: '16:9', title: '产品演示视频' }, width: 400, height: 225 },
+    { id: 'square', label: '1:1 方形媒体', props: { kind: 'square', ratio: 1, label: '1:1', title: '品牌视觉素材' }, width: 240, height: 240 },
+    { id: 'portrait', label: '4:5 竖版海报', props: { kind: 'portrait', ratio: 4 / 5, label: '4:5', title: '移动端营销海报' }, width: 220, height: 275 }
+  ],
+  ButtonGroup: [
+    { id: 'pagination', label: '分页按钮组', props: { kind: 'pagination', orientation: 'horizontal' }, width: 300, height: 48 },
+    { id: 'split', label: '拆分操作按钮', props: { kind: 'split', orientation: 'horizontal' }, width: 260, height: 48 },
+    { id: 'vertical', label: '垂直工具按钮组', props: { kind: 'tools', orientation: 'vertical' }, width: 150, height: 150 }
+  ],
+  Resizable: [
+    { id: 'horizontal', label: '水平可调分栏', props: { direction: 'horizontal', defaultSizes: [42, 58], panelKind: 'layers' }, width: 460, height: 220 },
+    { id: 'vertical', label: '垂直可调分栏', props: { direction: 'vertical', defaultSizes: [55, 45], panelKind: 'preview' }, width: 420, height: 260 },
+    { id: 'code', label: '代码与预览分栏', props: { direction: 'horizontal', defaultSizes: [55, 45], panelKind: 'code' }, width: 520, height: 250 }
+  ],
+  ScrollArea: [
+    { id: 'updates', label: '组件更新列表', props: { kind: 'updates', itemCount: 10 }, width: 360, height: 220 },
+    { id: 'notifications', label: '通知滚动区域', props: { kind: 'notifications', itemCount: 8 }, width: 380, height: 240 },
+    { id: 'horizontal', label: '横向卡片滚动', props: { kind: 'horizontal', itemCount: 6 }, width: 460, height: 150 }
+  ],
+  Separator: [
+    { id: 'horizontal', label: '水平分隔线', props: { orientation: 'horizontal', label: '' }, width: 360, height: 28 },
+    { id: 'label', label: '带文字分隔线', props: { orientation: 'horizontal', label: '或者继续使用' }, width: 360, height: 42 },
+    { id: 'vertical', label: '垂直分隔线', props: { orientation: 'vertical', label: '' }, width: 40, height: 160 }
+  ],
+  Typography: [
+    { id: 'lead', label: '引导正文', props: { scale: 'lead' }, content: '设计不仅是外观，更是产品如何工作。', width: 420, height: 86 },
+    { id: 'heading', label: '产品大标题', props: { scale: 'heading' }, content: '让 AI 与人共同设计网站', width: 480, height: 100 },
+    { id: 'quote', label: '引用排版', props: { scale: 'quote' }, content: '好的工具不会替代设计判断，而是让每次判断更容易落地。', width: 460, height: 120 }
+  ],
+  Label: [
+    { id: 'default', label: '基础字段标签', props: { kind: 'default', required: false, disabled: false }, content: '电子邮箱' },
+    { id: 'required', label: '必填字段标签', props: { kind: 'required', required: true, disabled: false }, content: '项目名称' },
+    { id: 'helper', label: '带辅助说明标签', props: { kind: 'helper', required: false, disabled: false, helper: '仅团队成员可见' }, content: '内部备注', width: 220, height: 54 }
+  ],
+  Kbd: [
+    { id: 'single', label: '单个按键', props: { keys: ['K'] }, content: 'K' },
+    { id: 'combo', label: '组合快捷键', props: { keys: ['⌘', 'K'] }, content: '⌘ K', width: 130 },
+    { id: 'sequence', label: '连续快捷键', props: { keys: ['G', 'D'] }, content: 'G D', width: 130 }
+  ],
+  Toggle: [
+    { id: 'off', label: '未选切换按钮', props: { pressed: false, disabled: false, icon: 'B' }, content: '加粗' },
+    { id: 'on', label: '已选切换按钮', props: { pressed: true, disabled: false, icon: 'I' }, content: '斜体' },
+    { id: 'disabled', label: '禁用切换按钮', props: { pressed: true, disabled: true, icon: 'S' }, content: '删除线' }
+  ],
+  ToggleGroup: [
+    { id: 'align', label: '单选对齐工具组', props: { type: 'single', orientation: 'horizontal', defaultValue: 'center', items: [{ key: 'left', label: '左' }, { key: 'center', label: '中' }, { key: 'right', label: '右' }] }, width: 240, height: 48 },
+    { id: 'format', label: '多选格式工具组', props: { type: 'multiple', orientation: 'horizontal', defaultValue: ['bold', 'italic'], items: [{ key: 'bold', label: 'B' }, { key: 'italic', label: 'I' }, { key: 'underline', label: 'U' }] }, width: 220, height: 48 },
+    { id: 'vertical', label: '垂直视图工具组', props: { type: 'single', orientation: 'vertical', defaultValue: 'design', items: [{ key: 'design', label: '设计' }, { key: 'preview', label: '预览' }, { key: 'code', label: '代码' }] }, width: 120, height: 150 }
+  ],
+  Sidebar: [
+    { id: 'workspace', label: '工作区侧边栏', props: { kind: 'workspace', items: [{ key: 'home', label: '首页' }, { key: 'projects', label: '项目' }, { key: 'assets', label: '资源' }, { key: 'settings', label: '设置' }] }, width: 280, height: 420 },
+    { id: 'rail', label: '图标收起侧边栏', props: { kind: 'rail', items: [{ key: 'home', label: '首页' }, { key: 'projects', label: '项目' }, { key: 'assets', label: '资源' }, { key: 'settings', label: '设置' }] }, width: 82, height: 360 },
+    { id: 'settings', label: '设置分组侧边栏', props: { kind: 'settings', items: [{ key: 'profile', label: '个人资料', group: '账号' }, { key: 'billing', label: '账单', group: '账号' }, { key: 'members', label: '成员', group: '团队' }, { key: 'security', label: '安全', group: '团队' }] }, width: 280, height: 410 }
+  ],
+  Calendar: [
+    { id: 'single', label: '单日期日历', props: { kind: 'single', month: '2026-09', selectedDay: 3 }, width: 320, height: 350 },
+    { id: 'range', label: '日期范围日历', props: { kind: 'range', month: '2026-09', selectedDay: 8, endDay: 14 }, width: 340, height: 385 },
+    { id: 'events', label: '事件日历', props: { kind: 'events', month: '2026-09', selectedDay: 18, eventCount: 4 }, width: 360, height: 410 }
+  ],
+  Breadcrumb: [
+    { id: 'basic', label: '基础面包屑', props: { kind: 'basic', items: [{ key: 'home', label: '首页' }, { key: 'components', label: '组件' }, { key: 'button', label: '按钮' }] }, width: 360 },
+    { id: 'icons', label: '带图标面包屑', props: { kind: 'icons', items: [{ key: 'home', label: '⌂ 工作区' }, { key: 'design', label: '▦ 网站设计' }, { key: 'hero', label: 'Hero' }] }, width: 400 },
+    { id: 'collapsed', label: '折叠路径面包屑', props: { kind: 'collapsed', items: [{ key: 'home', label: '首页' }, { key: 'more', label: '…' }, { key: 'page', label: '页面' }, { key: 'settings', label: '响应式设置' }] }, width: 420 }
+  ],
+  Collapsible: [
+    { id: 'details', label: '设计详情折叠区', props: { kind: 'details', defaultOpen: true }, content: '设计详情', height: 170 },
+    { id: 'code', label: '代码片段折叠区', props: { kind: 'code', defaultOpen: true }, content: '查看生成代码', width: 420, height: 190 },
+    { id: 'filters', label: '筛选条件折叠区', props: { kind: 'filters', defaultOpen: false }, content: '高级筛选', width: 380, height: 62 }
+  ],
+  Menubar: [
+    { id: 'editor', label: '编辑器菜单栏', props: { kind: 'editor', menus: [{ key: 'file', label: '文件' }, { key: 'edit', label: '编辑' }, { key: 'view', label: '视图' }, { key: 'help', label: '帮助' }] }, width: 420 },
+    { id: 'media', label: '媒体工具菜单栏', props: { kind: 'media', menus: [{ key: 'image', label: '图片' }, { key: 'video', label: '视频' }, { key: 'audio', label: '音频' }] }, width: 330 },
+    { id: 'compact', label: '紧凑操作菜单栏', props: { kind: 'compact', menus: [{ key: 'undo', label: '↶' }, { key: 'redo', label: '↷' }, { key: 'zoom', label: '100%' }] }, width: 220 }
+  ],
+  NavigationMenu: [
+    { id: 'product', label: '产品站导航', props: { kind: 'product', items: [{ key: 'products', label: '产品' }, { key: 'solutions', label: '解决方案' }, { key: 'pricing', label: '定价' }] }, width: 460 },
+    { id: 'mega', label: '大型下拉导航', props: { kind: 'mega', items: [{ key: 'platform', label: '平台' }, { key: 'resources', label: '资源' }, { key: 'company', label: '公司' }] }, width: 500, height: 220 },
+    { id: 'account', label: '账户导航', props: { kind: 'account', items: [{ key: 'docs', label: '文档' }, { key: 'community', label: '社区' }, { key: 'account', label: 'AI' }] }, width: 380 }
+  ],
+  Pagination: [
+    { id: 'numbered', label: '数字分页', props: { kind: 'numbered', defaultPage: 2, totalPages: 8 }, width: 380 },
+    { id: 'compact', label: '紧凑分页', props: { kind: 'compact', defaultPage: 3, totalPages: 12 }, width: 250 },
+    { id: 'load-more', label: '加载更多分页', props: { kind: 'load-more', defaultPage: 2, totalPages: 6 }, width: 260, height: 54 }
+  ],
+  Avatar: [
+    { id: 'initials', label: '文字头像', props: { kind: 'initials', fallback: 'AI', status: '' }, content: 'AI', width: 64, height: 64 },
+    { id: 'image', label: '图片头像', props: { kind: 'image', fallback: '林', src: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22%3E%3Crect width=%22120%22 height=%22120%22 rx=%2260%22 fill=%22%235856d6%22/%3E%3Ccircle cx=%2260%22 cy=%2246%22 r=%2222%22 fill=%22%23fff%22/%3E%3Cpath d=%22M20 112c5-28 20-42 40-42s35 14 40 42%22 fill=%22%23fff%22/%3E%3C/svg%3E', status: '' }, width: 72, height: 72 },
+    { id: 'status', label: '在线状态头像', props: { kind: 'status', fallback: '陈', status: 'online' }, content: '陈', width: 72, height: 72 }
+  ],
+  Chart: [
+    { id: 'bar', label: '柱状趋势图', props: { kind: 'bar', title: '访问趋势', change: '+18.2%', labels: ['一月', '二月', '三月', '四月', '五月'], values: [42, 68, 51, 86, 73] }, width: 460, height: 260 },
+    { id: 'line', label: '折线趋势图', props: { kind: 'line', title: '转化率', change: '+6.4%', labels: ['周一', '周二', '周三', '周四', '周五'], values: [32, 48, 44, 72, 84] }, width: 460, height: 260 },
+    { id: 'donut', label: '环形构成图', props: { kind: 'donut', title: '流量来源', change: '100%', labels: ['自然搜索', '直接访问', '社交媒体'], values: [54, 28, 18] }, width: 420, height: 260 }
+  ],
+  DataTable: [
+    { id: 'projects', label: '项目数据表', props: { kind: 'projects', striped: false, columns: ['项目', '状态', '负责人'], rows: [['品牌官网', '设计中', '林设计师'], ['产品文档', '已发布', 'AI'], ['活动页面', '待审核', '陈产品']] }, width: 560, height: 250 },
+    { id: 'members', label: '成员条纹表', props: { kind: 'members', striped: true, columns: ['成员', '角色', '最近在线'], rows: [['林设计师', '设计师', '刚刚'], ['陈产品', '所有者', '10 分钟前'], ['AI Designer', '协作者', '在线']] }, width: 560, height: 250 },
+    { id: 'selectable', label: '可选择数据表', props: { kind: 'selectable', striped: false, selectable: true, columns: ['页面', '断点', '问题'], rows: [['首页', '桌面', '0'], ['定价页', '平板', '2'], ['登录页', '手机', '1']] }, width: 580, height: 270 }
+  ],
+  Table: [
+    { id: 'basic', label: '基础表格', props: { kind: 'basic', striped: false, columns: ['组件', '状态', '版本'], rows: [['Button', '稳定', '1.0'], ['Dialog', '稳定', '1.0'], ['Sidebar', '新增', '1.1']] }, width: 520, height: 230 },
+    { id: 'striped', label: '条纹表格', props: { kind: 'striped', striped: true, columns: ['页面', '访问', '转化率'], rows: [['首页', '42,860', '18.2%'], ['定价页', '18,420', '12.6%'], ['案例页', '9,860', '8.4%']] }, width: 540, height: 230 },
+    { id: 'toolbar', label: '带工具栏表格', props: { kind: 'toolbar', striped: false, columns: ['资源', '类型', '大小'], rows: [['Hero.png', '图片', '2.8 MB'], ['Intro.mp4', '视频', '18 MB'], ['Logo.svg', '矢量', '42 KB']] }, width: 580, height: 290 }
+  ],
+  Empty: [
+    { id: 'projects', label: '空项目状态', props: { kind: 'projects', title: '还没有网站项目', description: '创建第一个项目，让 AI 和你一起开始设计。', actionLabel: '新建项目' }, width: 360, height: 220 },
+    { id: 'search', label: '无搜索结果状态', props: { kind: 'search', title: '没有匹配的组件', description: '尝试缩短关键词或切换组件库。', actionLabel: '清除搜索' }, width: 360, height: 210 },
+    { id: 'offline', label: '离线错误状态', props: { kind: 'offline', title: '无法连接设计服务', description: '本地服务暂时不可用，请检查后重试。', actionLabel: '重新连接' }, width: 380, height: 230 }
+  ],
+  Spinner: [
+    { id: 'spinner', label: '基础旋转加载', props: { kind: 'spinner', size: 28 }, width: 80, height: 72 },
+    { id: 'label', label: '带文字加载', props: { kind: 'label', size: 24, label: '正在生成响应式布局…' }, width: 250, height: 72 },
+    { id: 'dots', label: '点状加载状态', props: { kind: 'dots', size: 10, label: 'AI 正在思考' }, width: 190, height: 60 }
+  ],
+  Toast: [
+    { id: 'success', label: '成功通知', props: { kind: 'success', title: '保存成功', description: '设计已同步到当前项目。', action: '' }, content: '显示成功通知' },
+    { id: 'error', label: '错误通知', props: { kind: 'error', title: '保存失败', description: '服务暂时不可用，请稍后重试。', action: '重试' }, content: '显示错误通知' },
+    { id: 'progress', label: '生成进度通知', props: { kind: 'progress', title: '正在生成页面', description: 'AI 正在完善视觉与响应式布局。', action: '后台运行' }, content: '显示生成进度' }
+  ],
+  AlertDialog: [
+    { id: 'delete', label: '删除确认框', props: { kind: 'delete', title: '删除这个页面？', description: '页面中的组件和批注将一并删除。', size: 'sm' }, content: '删除页面' },
+    { id: 'publish', label: '发布确认框', props: { kind: 'publish', title: '发布当前设计？', description: '将生成一个可分享的在线预览链接。', size: 'md' }, content: '发布设计' },
+    { id: 'discard', label: '放弃修改确认框', props: { kind: 'discard', title: '放弃未保存的修改？', description: '最近 3 分钟内的操作将无法恢复。', size: 'sm' }, content: '关闭编辑器' }
+  ],
+  DropdownMenu: [
+    { id: 'account', label: '账户菜单', props: { kind: 'account', items: [{ key: 'profile', label: '个人资料', shortcut: '⇧⌘P' }, { key: 'settings', label: '设置', shortcut: '⌘,' }, { key: 'logout', label: '退出登录', danger: true }] }, content: 'AI Designer' },
+    { id: 'checkbox', label: '显示选项菜单', props: { kind: 'checkbox', items: [{ key: 'grid', label: '显示网格', checked: true }, { key: 'guides', label: '显示参考线', checked: true }, { key: 'rulers', label: '显示标尺', checked: false }] }, content: '视图选项' },
+    { id: 'actions', label: '页面操作菜单', props: { kind: 'actions', items: [{ key: 'duplicate', label: '复制页面' }, { key: 'rename', label: '重命名' }, { key: 'delete', label: '删除页面', danger: true }] }, content: '页面操作' }
+  ],
+  ContextMenu: [
+    { id: 'canvas', label: '画布右键菜单', props: { kind: 'canvas', items: [{ key: 'paste', label: '粘贴' }, { key: 'select', label: '全选' }, { key: 'frame', label: '创建画框' }] }, content: '在空白画布右键' },
+    { id: 'text', label: '文字右键菜单', props: { kind: 'text', items: [{ key: 'edit', label: '编辑文本' }, { key: 'style', label: '复制样式' }, { key: 'convert', label: '转换为组件' }] }, content: '右键文字组件' },
+    { id: 'image', label: '图片右键菜单', props: { kind: 'image', items: [{ key: 'replace', label: '替换图片' }, { key: 'crop', label: '裁剪' }, { key: 'download', label: '下载原图' }] }, content: '右键图片组件' }
+  ],
+  HoverCard: [
+    { id: 'profile', label: '成员资料悬浮卡', props: { kind: 'profile', title: '林设计师', description: '产品设计师 · 负责官网与设计系统' }, content: '查看成员资料', width: 180 },
+    { id: 'project', label: '项目数据悬浮卡', props: { kind: 'project', title: '品牌官网改版', description: '12 个页面 · 86 个组件' }, content: '查看项目概览', width: 180 },
+    { id: 'status', label: '同步状态悬浮卡', props: { kind: 'status', title: '设计已同步', description: '刚刚保存到当前项目' }, content: '查看同步状态', width: 180 }
+  ],
+  Popover: [
+    { id: 'dimensions', label: '尺寸设置气泡', props: { kind: 'dimensions', title: '组件尺寸' }, content: '调整尺寸' },
+    { id: 'form', label: '快速表单气泡', props: { kind: 'form', title: '邀请协作者' }, content: '邀请成员', width: 170 },
+    { id: 'command', label: '快捷操作气泡', props: { kind: 'command', title: '快速操作' }, content: '打开快捷操作', width: 180 }
+  ],
+  Tooltip: [
+    { id: 'basic', label: '基础文字提示', props: { kind: 'basic', content: '保存当前设计' }, content: '保存' },
+    { id: 'shortcut', label: '快捷键提示', props: { kind: 'shortcut', content: '打开命令面板', shortcut: '⌘ K' }, content: '命令面板' },
+    { id: 'rich', label: '富内容提示', props: { kind: 'rich', content: '锁定后其他成员不能移动此组件。', title: '锁定组件' }, content: '锁定说明', width: 160 }
+  ],
   Button: [
     { id: 'default', label: '默认按钮', props: { variant: 'default', size: 'default' }, content: '主要操作' },
     { id: 'secondary', label: '次要按钮', props: { variant: 'secondary', size: 'default' }, content: '次要操作' },
@@ -49,10 +199,65 @@ export const SHADCN_COMPONENT_VARIANTS: Record<string, ShadcnComponentVariant[]>
     { id: 'invalid', label: '错误输入框', props: { invalid: true, disabled: false } },
     { id: 'disabled', label: '禁用输入框', props: { invalid: false, disabled: true } }
   ],
+  InputGroup: [
+    { id: 'email', label: '邮箱地址输入', props: { kind: 'email', prefix: '@', suffix: '.com', defaultValue: 'designer' }, content: '用户名' },
+    { id: 'search', label: '带快捷键搜索框', props: { kind: 'search', prefix: '⌕', suffix: '⌘ K', defaultValue: '' }, content: '搜索页面和组件…', width: 360 },
+    { id: 'currency', label: '人民币金额输入', props: { kind: 'currency', prefix: '¥', suffix: 'CNY', defaultValue: '12,800' }, content: '输入预算' }
+  ],
+  InputOTP: [
+    { id: 'six', label: '六位验证码', props: { length: 6, defaultValue: '' } },
+    { id: 'filled', label: '已填写验证码', props: { length: 6, defaultValue: '482619' } },
+    { id: 'grouped', label: '分组验证码', props: { length: 6, defaultValue: '482', groupAt: 3 }, width: 340 }
+  ],
+  Textarea: [
+    { id: 'default', label: '默认多行输入', props: { rows: 4, invalid: false, disabled: false, showCount: false }, content: '请输入详细说明' },
+    { id: 'count', label: '带字数统计输入', props: { rows: 5, invalid: false, disabled: false, showCount: true, maxLength: 200, defaultValue: '首页需要体现 AI 设计能力与可视化编辑体验。' }, height: 130 },
+    { id: 'invalid', label: '错误状态输入', props: { rows: 4, invalid: true, disabled: false, showCount: false, errorText: '项目说明不能少于 10 个字。' }, content: '补充项目说明', height: 120 }
+  ],
+  NativeSelect: [
+    { id: 'framework', label: '框架选择器', props: { kind: 'framework', defaultValue: 'react', disabled: false, options: [{ value: 'react', label: 'React' }, { value: 'vue', label: 'Vue' }, { value: 'html', label: 'HTML' }] } },
+    { id: 'status', label: '状态选择器', props: { kind: 'status', defaultValue: 'review', disabled: false, options: [{ value: 'draft', label: '草稿' }, { value: 'review', label: '待审核' }, { value: 'published', label: '已发布' }] } },
+    { id: 'disabled', label: '禁用选择器', props: { kind: 'disabled', defaultValue: 'locked', disabled: true, options: [{ value: 'locked', label: '由项目设置锁定' }] } }
+  ],
+  Select: [
+    { id: 'single', label: '单选设计方案', props: { kind: 'single', defaultValue: ['apple'], multiple: false, options: [{ value: 'apple', label: 'Apple 产品风格' }, { value: 'editorial', label: '杂志编辑风格' }, { value: 'dashboard', label: '数据看板风格' }] }, content: '选择设计方案', height: 210 },
+    { id: 'multiple', label: '多选页面标签', props: { kind: 'multiple', defaultValue: ['responsive', 'marketing'], multiple: true, options: [{ value: 'responsive', label: '响应式' }, { value: 'marketing', label: '营销页' }, { value: 'commerce', label: '电商' }, { value: 'editorial', label: '内容型' }] }, content: '选择页面标签', width: 360, height: 250 },
+    { id: 'disabled', label: '锁定选择器', props: { kind: 'disabled', defaultValue: ['system'], multiple: false, disabled: true, options: [{ value: 'system', label: '继承团队设计系统' }] }, content: '设计系统已锁定', height: 74 }
+  ],
+  Combobox: [
+    { id: 'framework', label: '框架搜索选择', props: { kind: 'framework', defaultValue: ['next'], multiple: false, options: [{ value: 'next', label: 'Next.js' }, { value: 'vite', label: 'Vite' }, { value: 'astro', label: 'Astro' }] }, content: '搜索技术框架', height: 245 },
+    { id: 'people', label: '成员搜索选择', props: { kind: 'people', defaultValue: ['lin'], multiple: false, options: [{ value: 'lin', label: '林设计师' }, { value: 'chen', label: '陈产品' }, { value: 'ai', label: 'AI Designer' }] }, content: '搜索项目成员', width: 340, height: 245 },
+    { id: 'multiple', label: '多选技术栈', props: { kind: 'multiple', defaultValue: ['react', 'typescript'], multiple: true, options: [{ value: 'react', label: 'React' }, { value: 'typescript', label: 'TypeScript' }, { value: 'tailwind', label: 'Tailwind CSS' }, { value: 'radix', label: 'Radix UI' }] }, content: '搜索并添加技术栈', width: 380, height: 280 }
+  ],
+  Checkbox: [
+    { id: 'unchecked', label: '未选复选框', props: { defaultChecked: false, disabled: false }, content: '接收产品更新' },
+    { id: 'checked', label: '已选复选框', props: { defaultChecked: true, disabled: false }, content: '接受服务条款' },
+    { id: 'disabled', label: '禁用复选框', props: { defaultChecked: true, disabled: true }, content: '企业策略强制启用' }
+  ],
+  Switch: [
+    { id: 'off', label: '关闭状态开关', props: { defaultChecked: false, disabled: false }, content: '公开预览链接' },
+    { id: 'on', label: '开启状态开关', props: { defaultChecked: true, disabled: false }, content: '自动保存设计' },
+    { id: 'disabled', label: '禁用状态开关', props: { defaultChecked: true, disabled: true }, content: '团队同步由管理员控制' }
+  ],
+  RadioGroup: [
+    { id: 'horizontal', label: '水平单选组', props: { kind: 'plain', orientation: 'horizontal', defaultValue: 'comfortable', options: [{ value: 'default', label: '默认' }, { value: 'comfortable', label: '舒适' }, { value: 'compact', label: '紧凑' }] }, width: 380 },
+    { id: 'vertical', label: '垂直单选组', props: { kind: 'plain', orientation: 'vertical', defaultValue: 'desktop', options: [{ value: 'desktop', label: '桌面优先' }, { value: 'mobile', label: '移动优先' }, { value: 'adaptive', label: '自适应' }] }, width: 280, height: 130 },
+    { id: 'cards', label: '单选方案卡片', props: { kind: 'cards', orientation: 'horizontal', defaultValue: 'pro', options: [{ value: 'basic', label: '基础版' }, { value: 'pro', label: '专业版' }, { value: 'team', label: '团队版' }] }, width: 440, height: 110 }
+  ],
+  Slider: [
+    { id: 'value', label: '单值滑块', props: { kind: 'value', defaultValue: [58], min: 0, max: 100, step: 1 } },
+    { id: 'range', label: '范围滑块', props: { kind: 'range', defaultValue: [24, 76], min: 0, max: 100, step: 1 }, height: 72 },
+    { id: 'steps', label: '离散步进滑块', props: { kind: 'steps', defaultValue: [3], min: 1, max: 5, step: 1, marks: ['小', '中', '大', '宽', '满'] }, width: 360, height: 82 }
+  ],
+  Field: [
+    { id: 'default', label: '基础字段', props: { kind: 'default', label: '用户名', description: '', error: '' }, content: '请输入用户名' },
+    { id: 'description', label: '带帮助说明字段', props: { kind: 'description', label: '网站域名', description: '发布后仍可在项目设置中修改。', error: '' }, content: 'example.com', height: 112 },
+    { id: 'error', label: '错误字段', props: { kind: 'error', label: '工作邮箱', description: '', error: '请输入有效的企业邮箱地址。' }, content: 'name@company.com', height: 112 }
+  ],
   Card: [
-    { id: 'default', label: '默认卡片', props: { density: 'default' } },
-    { id: 'compact', label: '紧凑卡片', props: { density: 'compact' }, height: 160 },
-    { id: 'featured', label: '重点卡片', props: { density: 'default', featured: true } }
+    { id: 'project', label: '项目概览卡片', props: { kind: 'project', title: '品牌官网改版', description: '最近更新于 10 分钟前' }, content: '12 个页面 · 86 个组件', height: 210 },
+    { id: 'activity', label: '协作动态卡片', props: { kind: 'activity', title: '团队动态', description: '今天有 6 项更新' }, content: '查看全部动态', height: 230 },
+    { id: 'metric', label: '数据指标卡片', props: { kind: 'metric', title: '本周访问', description: '较上周增长 18.2%', featured: true }, content: '128,420', height: 210 }
   ],
   Tabs: [
     { id: 'default', label: '默认标签页', props: { orientation: 'horizontal', defaultValue: 'account' } },

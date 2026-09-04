@@ -1,9 +1,31 @@
 import { breakpointFor, componentsForPage, resolveComponent } from './editor-model.js';
-import { pagesForDocument, tokensForDocument, type WebDesignDevice, type WebDesignDocument } from './schema.js';
+import { pagesForDocument, tokensForDocument, type WebComponentStyle, type WebDesignDevice, type WebDesignDocument } from './schema.js';
 
 export interface ExportedReactFile {
   filename: string;
   content: string;
+}
+
+function cssPropertyToReact(property: string): string {
+  if (property.startsWith('--') || !property.includes('-')) return property;
+  return property.replace(/-([a-z])/g, (_, character: string) => character.toUpperCase());
+}
+
+function reactVisualStyle(style: WebComponentStyle): Record<string, string | number | undefined> {
+  return {
+    background: style.background, color: style.color, borderColor: style.borderColor,
+    borderWidth: style.borderWidth, borderStyle: style.borderStyle ?? (style.borderWidth ? 'solid' : undefined),
+    borderRadius: style.borderRadius, padding: style.padding, fontSize: style.fontSize, fontWeight: style.fontWeight,
+    textAlign: style.textAlign, lineHeight: style.lineHeight, letterSpacing: style.letterSpacing,
+    textTransform: style.textTransform, textDecoration: style.textDecoration,
+    opacity: style.opacity, boxShadow: style.shadow,
+    filter: style.blur ? `blur(${style.blur}px)` : undefined,
+    backdropFilter: style.backdropBlur ? `blur(${style.backdropBlur}px)` : undefined,
+    transform: [style.rotate === undefined ? undefined : `rotate(${style.rotate}deg)`, style.scale === undefined ? undefined : `scale(${style.scale})`].filter(Boolean).join(' ') || undefined,
+    overflow: style.overflow, objectFit: style.objectFit, objectPosition: style.objectPosition,
+    mixBlendMode: style.mixBlendMode,
+    ...Object.fromEntries(Object.entries(style.customCss ?? {}).map(([property, value]) => [cssPropertyToReact(property), value]))
+  };
 }
 
 export function exportReactComponent(document: WebDesignDocument, device: WebDesignDevice = 'desktop'): ExportedReactFile {
@@ -22,14 +44,12 @@ export function exportReactComponent(document: WebDesignDocument, device: WebDes
           content: component.content,
           library: component.library,
           interaction: component.interaction,
+          states: Object.fromEntries(Object.entries(component.states ?? {}).map(([state, style]) => [state, reactVisualStyle(style)])),
           hidden: frame.hidden,
           style: {
             position: 'absolute', left: frame.x, top: frame.y, width: frame.width, height: frame.height,
-            zIndex: component.zIndex, display: 'flex', overflow: 'hidden', whiteSpace: 'pre-wrap',
-            background: frame.style.background, color: frame.style.color, borderColor: frame.style.borderColor,
-            borderWidth: frame.style.borderWidth, borderStyle: frame.style.borderWidth ? 'solid' : undefined,
-            borderRadius: frame.style.borderRadius, fontSize: frame.style.fontSize, fontWeight: frame.style.fontWeight,
-            textAlign: frame.style.textAlign, opacity: frame.style.opacity, boxShadow: frame.style.shadow
+            zIndex: component.zIndex, display: 'flex', whiteSpace: 'pre-wrap',
+            ...reactVisualStyle(frame.style)
           }
         };
       })
@@ -41,9 +61,11 @@ import * as Antd from 'antd';
 const design = ${payload};
 
 function DesignComponent({ component, activate }) {
+  const [visualState, setVisualState] = useState(null);
   if (component.hidden) return null;
   const className = \`component type-\${component.type}\${component.library?.name === 'antd' ? ' library-antd' : ''}\`;
-  const props = { className, style: { ...component.style, cursor: component.interaction ? 'pointer' : component.style.cursor }, onClick: () => activate(component) };
+  const stateStyle = visualState ? component.states?.[visualState] : null;
+  const props = { className, tabIndex: component.states?.focus ? 0 : undefined, style: { ...component.style, ...stateStyle, cursor: component.interaction ? 'pointer' : (stateStyle?.cursor || component.style.cursor), transition: component.states ? 'all .18s ease' : undefined }, onPointerEnter: () => setVisualState('hover'), onPointerLeave: () => setVisualState(null), onPointerDown: () => setVisualState('active'), onPointerUp: () => setVisualState('hover'), onFocus: () => setVisualState('focus'), onBlur: () => setVisualState(null), onClick: () => activate(component) };
   if (component.library?.name === 'antd') return <AntDesignComponent component={component} outerProps={props} />;
   if (component.type === 'image') {
     return component.content

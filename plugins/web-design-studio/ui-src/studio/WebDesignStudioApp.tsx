@@ -3,6 +3,7 @@ import {
   autoLayoutContainer,
   breakpointFor,
   cloneComponentSubtrees,
+  constrainComponentFrame,
   componentsForPage,
   createSymbolFromSelection,
   detachSymbolInstance,
@@ -27,7 +28,6 @@ import {
 import { exportPageHtml } from '../../src/html-exporter';
 import { exportReactComponent } from '../../src/react-exporter';
 import { exportVueComponent } from '../../src/vue-exporter';
-import { createBlockPreset, createPageTemplate, WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES, type WebDesignBlockPresetId, type WebDesignPageTemplateId } from '../../src/component-library';
 import {
   componentsInSlot,
   editableSlotsForUiComponent,
@@ -38,7 +38,7 @@ import {
   visibleComponentsInSlot
 } from '../../src/library-slots';
 import { applyUiLibraryVariant, createComponentFromUiLibrary, uiLibraryByName, UI_LIBRARIES, variantsForBoundComponent } from '../../src/ui-libraries';
-import type { UiEditableSlot } from '../../src/ui-library';
+import type { UiComponentVariant, UiEditableSlot } from '../../src/ui-library';
 import { WEB_DESIGN_THEME_PRESETS, type WebDesignThemePreset } from '../../src/design-themes';
 import { componentDefaults } from '../../src/templates';
 import {
@@ -51,6 +51,8 @@ import {
   pagesForDocument,
   tokensForDocument,
   type WebComponentStyle,
+  type WebComponentConstraints,
+  type WebComponentVisualState,
   type WebComponentType,
   type WebDesignAsset,
   type WebDesignComponent,
@@ -67,6 +69,7 @@ import {
 } from '../../src/schema';
 import { createRepository, type DesignRepository, type DesignSummary } from './repository';
 import { LibraryCanvasComponent } from './LibraryCanvasComponent';
+import { componentEffectStyleToCss, componentStyleToCss, mergeComponentStyles } from './component-style';
 
 type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
 
@@ -74,6 +77,22 @@ const palette: Array<{ id: BasicShapeId; type: WebComponentType; label: string; 
   { id: 'rectangle', type: 'section', label: '矩形', icon: '▭', keywords: ['rectangle', '矩形', '容器'] },
   { id: 'ellipse', type: 'section', label: '圆形', icon: '○', keywords: ['ellipse', 'circle', '圆形'] },
   { id: 'line', type: 'divider', label: '直线', icon: '—', keywords: ['line', 'divider', '直线'] }
+];
+
+const fillPresets = [
+  '#FFFFFF', '#F5F5F7', '#1D1D1F', '#007AFF', '#7C3AED', '#EC4899',
+  'linear-gradient(135deg,#007AFF,#5AC8FA)',
+  'linear-gradient(135deg,#7C3AED,#EC4899)',
+  'radial-gradient(circle at 30% 20%,rgba(255,255,255,.75),transparent 28%),linear-gradient(145deg,#111827,#312E81)'
+];
+
+const shadowPresets = [
+  '',
+  '0 8px 24px rgba(15,23,42,.10)',
+  '0 18px 48px rgba(15,23,42,.18)',
+  '0 28px 80px rgba(15,23,42,.28)',
+  '0 0 60px rgba(99,102,241,.45)',
+  'inset 0 0 0 1px rgba(255,255,255,.18)'
 ];
 
 function basicShapeDefaults(shapeId: BasicShapeId, x: number, y: number): WebDesignComponent {
@@ -279,9 +298,70 @@ type Interaction = {
 
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
-type LibraryTab = 'components' | WebDesignLibraryName | 'blocks' | 'pages' | 'layers';
+type LibraryTab = 'components' | WebDesignLibraryName | 'my' | 'layers';
 type VariantPickerTarget = { library: WebDesignLibraryName; componentId: string };
 type EditingSlot = { componentId: string; slotId: string };
+type InspectorVisualState = 'default' | WebComponentVisualState;
+
+const PERSONAL_SYMBOLS_STORAGE_KEY = 'web-design-studio:personal-symbols:v1';
+
+function loadPersonalSymbols(): WebDesignSymbol[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PERSONAL_SYMBOLS_STORAGE_KEY) ?? '[]') as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is WebDesignSymbol => Boolean(item && typeof item === 'object' && 'id' in item && 'components' in item)) : [];
+  } catch {
+    return [];
+  }
+}
+
+const VARIANT_PROP_LABELS: Record<string, Record<string, string> | string> = {
+  size: { small: '小尺寸', middle: '中尺寸', large: '大尺寸', default: '标准尺寸' },
+  type: { primary: '主色', default: '默认', dashed: '虚线', text: '文本', link: '链接', inner: '内嵌' },
+  variant: { outlined: '描边', filled: '填充', borderless: '无边框', underlined: '下划线', solid: '实心', ghost: '幽灵', link: '链接', text: '文本' },
+  bordered: { true: '有边框', false: '无边框' },
+  hoverable: { true: '悬浮反馈', false: '静态' },
+  disabled: { true: '禁用状态', false: '可用状态' },
+  danger: { true: '危险操作', false: '普通操作' },
+  block: { true: '撑满容器', false: '内容宽度' },
+  loading: { true: '加载状态', false: '完成状态' },
+  multiple: { true: '多选', false: '单选' },
+  showSearch: { true: '可搜索', false: '基础选择' },
+  allowClear: { true: '可清除', false: '不可清除' },
+  direction: { vertical: '纵向', horizontal: '横向' },
+  orientation: { vertical: '纵向', horizontal: '横向' },
+  shape: { circle: '圆形', round: '圆角', square: '方形', default: '标准外形' },
+  showcase: {
+    basic: '基础内容', compact: '高密度', borderless: '融合背景', hoverable: '悬浮交互', cover: '图片封面',
+    actions: '底部操作', meta: '头像信息', grid: '宫格数据', inner: '嵌套层级', loading: '骨架加载'
+  }
+};
+
+function variantDifferenceLabels(variant: UiComponentVariant): string[] {
+  const labels: string[] = [];
+  if (variant.width) labels.push(`${variant.width}×${variant.height ?? '自适应'}`);
+  for (const [key, value] of Object.entries(variant.props)) {
+    const configured = VARIANT_PROP_LABELS[key];
+    if (typeof configured === 'string') labels.push(`${configured} ${String(value)}`);
+    else if (configured) labels.push(configured[String(value)] ?? `${key}=${String(value)}`);
+    else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') labels.push(`${key}=${String(value)}`);
+  }
+  return [...new Set(labels)].slice(0, 4);
+}
+
+const INTERACTIVE_COMPONENT_PREVIEWS = new Set([
+  'ActionBar', 'AlertDialog', 'ColorPicker', 'Combobox', 'ContextMenu', 'DatePicker', 'Dialog', 'Drawer', 'Dropdown', 'DropdownMenu', 'Editable', 'FloatingPanel',
+  'HoverCard', 'Menu', 'Modal', 'OverlayManager', 'Popover', 'Portal', 'Select', 'Sheet', 'Toast', 'ToggleTip', 'Tooltip', 'Tour'
+]);
+
+const OPEN_OVERLAY_PREVIEWS = new Set([
+  'ActionBar', 'AlertDialog', 'AutoComplete', 'Cascader', 'Combobox', 'ContextMenu', 'DatePicker', 'Dialog', 'Drawer', 'Dropdown', 'DropdownMenu', 'FloatingPanel',
+  'HoverCard', 'Menu', 'Modal', 'OverlayManager', 'Popconfirm', 'Popover', 'Portal', 'Select', 'Sheet', 'Toast', 'ToggleTip', 'Tooltip', 'Tour', 'TreeSelect'
+]);
+
+function variantIsInteractive(variant: UiComponentVariant, componentId: string): boolean {
+  return INTERACTIVE_COMPONENT_PREVIEWS.has(componentId)
+    || ['hoverable', 'showSearch', 'multiple', 'allowClear', 'draggable', 'collapsible', 'editable', 'autoplay'].some((key) => variant.props[key] === true);
+}
 
 export function WebDesignStudioApp() {
   const [repository, setRepository] = useState<DesignRepository>();
@@ -311,6 +391,7 @@ export function WebDesignStudioApp() {
   const [aiInstruction, setAiInstruction] = useState('');
   const [paletteQuery, setPaletteQuery] = useState('');
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('antd');
+  const [personalSymbols, setPersonalSymbols] = useState<WebDesignSymbol[]>(loadPersonalSymbols);
   const [variantPickerTarget, setVariantPickerTarget] = useState<VariantPickerTarget>();
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
@@ -322,6 +403,7 @@ export function WebDesignStudioApp() {
   const [newDesignName, setNewDesignName] = useState('');
   const [newDesignBlank, setNewDesignBlank] = useState(true);
   const [editingSlot, setEditingSlot] = useState<EditingSlot>();
+  const [inspectorVisualState, setInspectorVisualState] = useState<InspectorVisualState>('default');
   const interaction = useRef<Interaction | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
   const assetInput = useRef<HTMLInputElement | null>(null);
@@ -385,6 +467,30 @@ export function WebDesignStudioApp() {
     const containerFrame = resolveComponent(editingContainer, device);
     return { ...selectedFrame, x: selectedFrame.x - containerFrame.x, y: selectedFrame.y - containerFrame.y };
   }, [selectedFrame, editingContainer, editingSlot, selected, document, device]);
+  const inspectedStyle = useMemo(() => inspectorVisualState === 'default'
+    ? inspectedFrame?.style
+    : mergeComponentStyles(inspectedFrame?.style ?? {}, selected?.states?.[inspectorVisualState]), [inspectorVisualState, inspectedFrame?.style, selected?.states]);
+
+  useEffect(() => setInspectorVisualState('default'), [selectedId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(PERSONAL_SYMBOLS_STORAGE_KEY, JSON.stringify(personalSymbols));
+  }, [personalSymbols]);
+
+  useEffect(() => {
+    if (!document?.symbols?.length) return;
+    setPersonalSymbols((current) => {
+      const byId = new Map(current.map((symbol) => [symbol.id, symbol]));
+      let changed = false;
+      for (const symbol of document.symbols ?? []) {
+        if (!byId.has(symbol.id)) {
+          byId.set(symbol.id, structuredClone(symbol));
+          changed = true;
+        }
+      }
+      return changed ? [...byId.values()] : current;
+    });
+  }, [document?.documentId]);
 
   useEffect(() => {
     void (async () => {
@@ -432,10 +538,10 @@ export function WebDesignStudioApp() {
         changeLiveWithCanvasGrowth(() => ({
           ...active.snapshot,
           components: active.snapshot.components.map((component) => component.id === active.componentId
-            ? setSymbolOverride(updateComponentFrame(component, device, {
-              width: Math.max(24, Math.round(active.frame.width + dx)),
-              height: Math.max(24, Math.round(active.frame.height + dy))
-            }), 'frame', true)
+            ? setSymbolOverride(updateComponentFrame(component, device, constrainComponentFrame(component, device, {
+              width: Math.max(24, active.frame.width + dx),
+              height: Math.max(24, active.frame.height + dy)
+            })), 'frame', true)
             : component)
         }));
       }
@@ -880,38 +986,6 @@ export function WebDesignStudioApp() {
     setSelectedIds([component.id]);
   }
 
-  function insertBlockPreset(presetId: WebDesignBlockPresetId) {
-    const current = documentRef.current;
-    if (!current) return;
-    const block = createBlockPreset(current, pageId, presetId);
-    commitWithCanvasGrowth(
-      (active) => ({ ...active, components: [...active.components, ...block.components] }),
-      ['desktop', 'tablet', 'mobile']
-    );
-    setSelectedId(block.rootIds[0]);
-    setSelectedIds(block.rootIds);
-    showToast(`已插入${WEB_DESIGN_BLOCK_PRESETS.find((preset) => preset.id === presetId)?.name ?? '成品区块'}`);
-  }
-
-  function applyPageTemplate(templateId: WebDesignPageTemplateId) {
-    const current = documentRef.current;
-    if (!current) return;
-    const existingIds = new Set(componentsForPage(current, pageId).map((component) => component.id));
-    if (existingIds.size > 0 && !window.confirm('应用页面模板会替换当前页面的全部组件，是否继续？')) return;
-    const template = createPageTemplate(current, pageId, templateId);
-    commit((active) => {
-      const nextComponents = [...active.components.filter((component) => !existingIds.has(component.id)), ...template.components];
-      return growAllCanvases({
-        ...active,
-        components: nextComponents,
-        requests: active.requests.filter((request) => !request.componentId || !existingIds.has(request.componentId))
-      });
-    });
-    setSelectedId(undefined);
-    setSelectedIds([]);
-    showToast(`已应用${WEB_DESIGN_PAGE_TEMPLATES.find((template) => template.id === templateId)?.name ?? '页面模板'}`);
-  }
-
   function beginInteraction(event: ReactPointerEvent, component: WebDesignComponent, kind: Interaction['kind']) {
     if (preview || interactionMode) return;
     event.preventDefault();
@@ -951,7 +1025,10 @@ export function WebDesignStudioApp() {
 
   function updateSelectedFrame(changes: Partial<Pick<ResolvedWebDesignComponent, 'x' | 'y' | 'width' | 'height' | 'hidden'>>) {
     if (!selected) return;
-    updateComponent(selected.id, (component) => setSymbolOverride(updateComponentFrame(component, device, changes), 'frame', true));
+    updateComponent(selected.id, (component) => {
+      const constrained = changes.width !== undefined || changes.height !== undefined ? constrainComponentFrame(component, device, changes) : undefined;
+      return setSymbolOverride(updateComponentFrame(component, device, { ...changes, ...constrained }), 'frame', true);
+    });
   }
 
   function updateInspectedFrame(changes: Partial<Pick<ResolvedWebDesignComponent, 'x' | 'y' | 'width' | 'height' | 'hidden'>>) {
@@ -968,14 +1045,40 @@ export function WebDesignStudioApp() {
 
   function updateSelectedStyle(changes: Partial<WebComponentStyle>) {
     if (!selected) return;
-    updateComponent(selected.id, (component) => setSymbolOverride(updateComponentStyle(component, device, changes), 'style', true));
+    updateComponent(selected.id, (component) => inspectorVisualState === 'default'
+      ? setSymbolOverride(updateComponentStyle(component, device, changes), 'style', true)
+      : setSymbolOverride({
+        ...component,
+        states: { ...component.states, [inspectorVisualState]: { ...component.states?.[inspectorVisualState], ...changes } }
+      }, 'style', true));
+  }
+
+  function clearSelectedVisualState() {
+    if (!selected || inspectorVisualState === 'default') return;
+    updateComponent(selected.id, (component) => {
+      const states = { ...component.states };
+      delete states[inspectorVisualState];
+      return setSymbolOverride({ ...component, states: Object.keys(states).length > 0 ? states : undefined }, 'style', true);
+    });
+  }
+
+  function updateSelectedCustomCss(customCss: Record<string, string | number>) {
+    updateSelectedStyle({ customCss: Object.keys(customCss).length > 0 ? customCss : undefined });
   }
 
   function updateSelectedHorizontalConstraint(horizontal: WebHorizontalConstraint) {
     if (!selected) return;
     updateComponent(selected.id, (component) => setSymbolOverride({
       ...component,
-      constraints: { ...component.constraints, [device]: { horizontal } }
+      constraints: { ...component.constraints, [device]: { ...component.constraints?.[device], horizontal } }
+    }, 'frame', true));
+  }
+
+  function updateSelectedSizeConstraints(changes: Partial<WebComponentConstraints>) {
+    if (!selected) return;
+    updateComponent(selected.id, (component) => setSymbolOverride({
+      ...component,
+      constraints: { ...component.constraints, [device]: { horizontal: component.constraints?.[device]?.horizontal ?? 'auto', ...component.constraints?.[device], ...changes } }
     }, 'frame', true));
   }
 
@@ -1285,7 +1388,7 @@ export function WebDesignStudioApp() {
     if (!selected) return;
     updateComponent(selected.id, (component) => setSymbolOverride({
       ...component,
-      layout: { mode: 'free', gap: 16, padding: 16, align: 'start', ...component.layout, ...changes }
+      layout: { mode: 'free', gap: 16, padding: 16, align: 'start', justify: 'start', wrap: false, ...component.layout, ...changes }
     }, 'frame', true));
   }
 
@@ -1302,9 +1405,14 @@ export function WebDesignStudioApp() {
   function saveSelectionAsSymbol() {
     const current = documentRef.current;
     if (!current || selectedIds.length === 0) return;
-    const symbol = createSymbolFromSelection(current, selectedIds, `${selected?.name ?? '组合'} 组件`);
+    const defaultName = selectedIds.length > 1 ? `${selected?.name ?? '组合'} · ${selectedIds.length} 层` : selected?.name ?? '我的组件';
+    const name = window.prompt('给这个组合起个名字', defaultName)?.trim();
+    if (!name) return;
+    const symbol = createSymbolFromSelection(current, selectedIds, name);
     commit((active) => ({ ...active, symbols: [...(active.symbols ?? []), symbol] }));
-    showToast(`已保存到组件库：${symbol.name}`);
+    setPersonalSymbols((symbols) => [...symbols.filter((candidate) => candidate.id !== symbol.id), structuredClone(symbol)]);
+    setLibraryTab('my');
+    showToast(`已保存到“我的”：${symbol.name}`);
   }
 
   function insertSymbol(symbol: WebDesignSymbol) {
@@ -1312,7 +1420,13 @@ export function WebDesignStudioApp() {
     if (!current) return;
     const instance = instantiateSymbol(current, symbol, pageId);
     commitWithCanvasGrowth(
-      (active) => ({ ...active, components: [...active.components, ...instance.components] }),
+      (active) => ({
+        ...active,
+        symbols: (active.symbols ?? []).some((candidate) => candidate.id === symbol.id)
+          ? (active.symbols ?? []).map((candidate) => candidate.id === symbol.id ? structuredClone(symbol) : candidate)
+          : [...(active.symbols ?? []), structuredClone(symbol)],
+        components: [...active.components, ...instance.components]
+      }),
       ['desktop', 'tablet', 'mobile']
     );
     setSelectedId(instance.rootIds[0]);
@@ -1327,18 +1441,17 @@ export function WebDesignStudioApp() {
     showToast(`已插入 ${symbol.name}`);
   }
 
-  function removeSymbol(symbolId: string) {
-    commit((current) => ({
-      ...current,
-      symbols: (current.symbols ?? []).filter((symbol) => symbol.id !== symbolId),
-      components: current.components.map((component) => component.symbolId === symbolId ? {
-        ...component,
-        symbolId: undefined,
-        symbolInstanceId: undefined,
-        symbolComponentId: undefined,
-        symbolOverrides: undefined
-      } : component)
-    }));
+  function renamePersonalSymbol(symbol: WebDesignSymbol) {
+    const name = window.prompt('重命名我的组件', symbol.name)?.trim();
+    if (!name || name === symbol.name) return;
+    setPersonalSymbols((symbols) => symbols.map((candidate) => candidate.id === symbol.id ? { ...candidate, name } : candidate));
+    commit((current) => ({ ...current, symbols: current.symbols?.map((candidate) => candidate.id === symbol.id ? { ...candidate, name } : candidate) }));
+  }
+
+  function removePersonalSymbol(symbolId: string) {
+    if (!window.confirm('从“我的”中移除这个组件？已放入画布的内容不会受影响。')) return;
+    setPersonalSymbols((symbols) => symbols.filter((symbol) => symbol.id !== symbolId));
+    showToast('已从“我的”移除，画布中的实例保持不变');
   }
 
   function toggleSelectedSymbolOverride(override: WebSymbolOverride) {
@@ -1645,10 +1758,8 @@ export function WebDesignStudioApp() {
   const normalizedPaletteQuery = paletteQuery.trim().toLowerCase();
   const filteredPalette = palette.filter((item) => !normalizedPaletteQuery
     || `${item.label} ${item.id} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const filteredPresets = WEB_DESIGN_BLOCK_PRESETS.filter((preset) => !normalizedPaletteQuery
-    || `${preset.name} ${preset.description} ${preset.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const filteredPageTemplates = WEB_DESIGN_PAGE_TEMPLATES.filter((template) => !normalizedPaletteQuery
-    || `${template.name} ${template.description} ${template.category} ${template.blocks.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
+  const filteredPersonalSymbols = personalSymbols.filter((symbol) => !normalizedPaletteQuery
+    || `${symbol.name} ${symbol.components.map((component) => component.name).join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const activeUiLibrary = libraryTab === 'antd' || libraryTab === 'chakra' || libraryTab === 'shadcn' ? uiLibraryByName(libraryTab) : undefined;
   const filteredUiLibraryComponents = activeUiLibrary?.components.filter((item) => !normalizedPaletteQuery
     || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery)) ?? [];
@@ -1700,15 +1811,14 @@ export function WebDesignStudioApp() {
             <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => setLibraryTab('chakra')}>Chakra</button>
             <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => setLibraryTab('shadcn')}>shadcn</button>
             <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>图形</button>
-            <button className={libraryTab === 'blocks' ? 'active' : ''} onClick={() => setLibraryTab('blocks')}>版块</button>
-            <button className={libraryTab === 'pages' ? 'active' : ''} onClick={() => setLibraryTab('pages')}>页面</button>
+            <button className={libraryTab === 'my' ? 'active' : ''} onClick={() => setLibraryTab('my')}>我的</button>
             <button className={libraryTab === 'layers' ? 'active' : ''} onClick={() => setLibraryTab('layers')}>图层</button>
           </div>
           <div className="palette-panel-content">
-            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索基础图形…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : libraryTab === 'pages' ? '搜索页面模板…' : '搜索版块…'} />}
+            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索视觉原语…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : '搜索我的组件…'} />}
 
             {libraryTab === 'components' && <>
-              <div className="panel-intro"><strong>基础图形</strong><span>只保留矩形、圆形和直线；产品组件统一使用成熟 UI 库</span></div>
+              <div className="panel-intro"><strong>视觉原语</strong><span>用矩形、圆形和直线组合背景、光效、装饰与容器；产品控件使用成熟 UI 库</span></div>
               <div className="palette-grid shapes-grid">{filteredPalette.map((item) => <div key={item.id} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.id)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}</div>
             </>}
 
@@ -1723,20 +1833,10 @@ export function WebDesignStudioApp() {
               })}
             </>}
 
-            {libraryTab === 'blocks' && <>
-              <div className="panel-intro"><strong>页面版块</strong><span>{WEB_DESIGN_BLOCK_PRESETS.length} 个完整设计区域，可单独插入并继续调整每个图层</span></div>
-              {Array.from(new Set(WEB_DESIGN_BLOCK_PRESETS.map((preset) => preset.category))).map((category) => {
-                const items = filteredPresets.filter((preset) => preset.category === category);
-                return items.length > 0 && <section className="block-preset-category" key={category}><div className="block-preset-category-title"><strong>{category}</strong><span>{items.length}</span></div><div className="block-preset-list">{items.map((preset) => <button key={preset.id} onClick={() => insertBlockPreset(preset.id)}><span>{preset.icon}</span><div><strong>{preset.name}</strong><small>{preset.description}</small></div><b>＋</b></button>)}</div></section>;
-              })}
-              <div className="panel-title section-title layer-title"><span>我的组件</span><small>{document.symbols?.length ?? 0}</small></div>
-              {selectedIds.length > 0 && <button className="secondary-button" onClick={saveSelectionAsSymbol}>将选中项保存为组件</button>}
-              <div className="symbol-list">{(document.symbols ?? []).map((symbol) => <div key={symbol.id} className="symbol-row"><button className="symbol-insert" onClick={() => insertSymbol(symbol)}><span>◇</span><strong>{symbol.name}</strong><small>{symbol.components.length} 层</small></button><button className="symbol-remove" title="移出组件库" onClick={() => removeSymbol(symbol.id)}>×</button></div>)}</div>
-            </>}
-
-            {libraryTab === 'pages' && <>
-              <div className="panel-intro"><strong>完整页面</strong><span>一键替换当前页面，生成结构、视觉和响应式均可继续编辑的长页面</span></div>
-              <div className="page-template-list rich">{filteredPageTemplates.map((template) => <button key={template.id} onClick={() => applyPageTemplate(template.id)}><span className="page-template-icon" style={{ background: `linear-gradient(145deg,${template.palette[1]},${template.palette[0]})`, color: template.palette[2] }}>{template.icon}</span><div><em>{template.category}</em><strong>{template.name}</strong><small>{template.description}</small><i>{template.blocks.length} 个版块</i></div><b>›</b></button>)}</div>
+            {libraryTab === 'my' && <>
+              <div className="panel-intro my-library-intro"><strong>我的组件</strong><span>把画布中设计好的单个组件或多个图层保存到这里，可在其他设计中继续使用。</span></div>
+              {selectedIds.length > 0 && <button className="my-library-save" onClick={saveSelectionAsSymbol}><span>＋</span><div><strong>保存当前选中</strong><small>{selectedIds.length === 1 ? selected?.name : `${selectedIds.length} 个图层的组合`}</small></div></button>}
+              {filteredPersonalSymbols.length > 0 ? <div className="my-library-grid">{filteredPersonalSymbols.map((symbol) => <article key={symbol.id} className="my-library-card"><button className="my-library-insert" onClick={() => insertSymbol(symbol)}><span className="my-library-preview"><i /><i /><i /></span><span><strong>{symbol.name}</strong><small>{symbol.components.length} 层 · 点击插入画布</small></span></button><footer><button onClick={() => renamePersonalSymbol(symbol)}>重命名</button><button className="danger" onClick={() => removePersonalSymbol(symbol.id)}>移除</button></footer></article>)}</div> : <div className="my-library-empty"><span>◇</span><strong>还没有保存的组件</strong><p>在画布中选择一个组件，或按住 Shift / Command 选择多个图层，再保存为自己的组合。</p></div>}
             </>}
 
             {libraryTab === 'layers' && <>
@@ -1834,7 +1934,7 @@ export function WebDesignStudioApp() {
                     const containerFrame = resolveComponent(editingContainer, device);
                     const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
                     if (resolved.hidden) return null;
-                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
                   })}
                 </div>
               </div>
@@ -1862,7 +1962,7 @@ export function WebDesignStudioApp() {
                 {[...pageComponents].filter((component) => !contentContainerAncestor(document, component)).sort((left, right) => left.zIndex - right.zIndex).map((component) => {
                   const resolved = resolveComponent(component, device);
                   if (resolved.hidden) return null;
-                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
                 })}
               </div>
             </div>}
@@ -1873,7 +1973,7 @@ export function WebDesignStudioApp() {
           {selected && inspectedFrame ? <>
             <div className="inspector-heading"><div><span className="eyebrow">已选择 {selectedIds.length > 1 ? `${selectedIds.length} 项` : ''} · {device}</span><strong>{selected.name}</strong></div><button className="danger-link" onClick={deleteSelected}>删除</button></div>
             <div className="inspector-actions"><button onClick={duplicateSelected}>复制 ⌘D</button><button className={selected.locked ? 'active' : ''} onClick={() => toggleLocked(selected)}>{selected.locked ? '解锁' : '锁定'}</button><button className={inspectedFrame.hidden ? 'active' : ''} onClick={() => toggleHidden(selected)}>{inspectedFrame.hidden ? '显示' : '隐藏'}</button></div>
-            <button className="secondary-button save-symbol-button" onClick={saveSelectionAsSymbol}>保存到可复用组件库</button>
+            <button className="secondary-button save-symbol-button" onClick={saveSelectionAsSymbol}>保存到“我的”</button>
             {selectedSymbol && selected.symbolInstanceId && <div className="symbol-instance-panel">
               <div><span>实例来源</span><strong>{selectedSymbol.name}</strong></div>
               <label><input type="checkbox" checked={(selected.symbolOverrides ?? []).includes('content')} onChange={() => toggleSelectedSymbolOverride('content')} />保留内容</label>
@@ -1921,17 +2021,51 @@ export function WebDesignStudioApp() {
             <div className="panel-title section-title">响应式布局 · {device}</div>
             <label className="field-label responsive-constraint-field">水平约束<select value={selected.constraints?.[device]?.horizontal ?? 'auto'} onChange={(event) => updateSelectedHorizontalConstraint(event.target.value as WebHorizontalConstraint)}>{horizontalConstraintOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
             <p className="helper-text responsive-constraint-help">{horizontalConstraintOptions.find((option) => option.id === (selected.constraints?.[device]?.horizontal ?? 'auto'))?.description}</p>
-            <div className="panel-title section-title">样式 · {device}</div>
-            <label className="field-label">背景<input value={inspectedFrame.style.background ?? ''} onChange={(event) => updateSelectedStyle({ background: event.target.value })} /></label>
-            <label className="field-label">文字颜色<input value={inspectedFrame.style.color ?? ''} onChange={(event) => updateSelectedStyle({ color: event.target.value })} /></label>
-            <div className="size-row"><NumberField label="字号" value={inspectedFrame.style.fontSize ?? 16} onChange={(fontSize) => updateSelectedStyle({ fontSize })} /><NumberField label="圆角" value={inspectedFrame.style.borderRadius ?? 0} onChange={(borderRadius) => updateSelectedStyle({ borderRadius })} /></div>
+            <div className="size-constraints-grid"><NumberField label="最小宽" value={selected.constraints?.[device]?.minWidth ?? 16} min={16} onChange={(minWidth) => updateSelectedSizeConstraints({ minWidth: Math.max(16, minWidth) })} /><NumberField label="最大宽" value={selected.constraints?.[device]?.maxWidth ?? 100000} min={16} onChange={(maxWidth) => updateSelectedSizeConstraints({ maxWidth: Math.max(16, maxWidth) })} /><NumberField label="最小高" value={selected.constraints?.[device]?.minHeight ?? 16} min={16} onChange={(minHeight) => updateSelectedSizeConstraints({ minHeight: Math.max(16, minHeight) })} /><NumberField label="最大高" value={selected.constraints?.[device]?.maxHeight ?? 100000} min={16} onChange={(maxHeight) => updateSelectedSizeConstraints({ maxHeight: Math.max(16, maxHeight) })} /></div>
+            <label className="ui-library-boolean-prop constraint-toggle"><input type="checkbox" checked={selected.constraints?.[device]?.lockAspectRatio === true} onChange={(event) => updateSelectedSizeConstraints({ lockAspectRatio: event.target.checked })} /><span>调整大小时保持当前宽高比</span></label>
+            <div className="panel-title section-title">视觉设计 · {device}</div>
+            <div className="visual-state-switcher"><button className={inspectorVisualState === 'default' ? 'active' : ''} onClick={() => setInspectorVisualState('default')}>默认</button><button className={inspectorVisualState === 'hover' ? 'active' : ''} onClick={() => setInspectorVisualState('hover')}>悬停</button><button className={inspectorVisualState === 'active' ? 'active' : ''} onClick={() => setInspectorVisualState('active')}>按下</button><button className={inspectorVisualState === 'focus' ? 'active' : ''} onClick={() => setInspectorVisualState('focus')}>聚焦</button></div>
+            {inspectorVisualState !== 'default' && <div className="visual-state-help"><p className="helper-text">正在设计“{inspectorVisualState === 'hover' ? '悬停' : inspectorVisualState === 'active' ? '按下' : '聚焦'}”状态；画布会立即显示效果，预览时由真实交互触发。</p><button onClick={clearSelectedVisualState} disabled={!selected.states?.[inspectorVisualState]}>清除状态样式</button></div>}
+            <section className="design-inspector-group">
+              <header><strong>填充</strong><span>颜色、渐变与透明材质</span></header>
+              <ColorValueField label="背景" value={inspectedStyle?.background ?? ''} onChange={(background) => updateSelectedStyle({ background })} allowComplex />
+              <div className="style-preset-grid fill-presets">{fillPresets.map((fill, index) => <button key={fill} title={fill} aria-label={`填充预设 ${index + 1}`} style={{ background: fill }} onClick={() => updateSelectedStyle({ background: fill })} />)}</div>
+              <div className="size-row"><NumberField label="内边距" value={inspectedStyle?.padding ?? 0} onChange={(padding) => updateSelectedStyle({ padding: Math.max(0, padding) })} /><NumberField label="透明度" value={inspectedStyle?.opacity ?? 1} step={0.05} min={0} max={1} onChange={(opacity) => updateSelectedStyle({ opacity: Math.min(1, Math.max(0, opacity)) })} /></div>
+            </section>
+            <section className="design-inspector-group">
+              <header><strong>描边</strong><span>边框与圆角</span></header>
+              <ColorValueField label="描边颜色" value={inspectedStyle?.borderColor ?? ''} onChange={(borderColor) => updateSelectedStyle({ borderColor })} />
+              <div className="size-row"><NumberField label="粗细" value={inspectedStyle?.borderWidth ?? 0} onChange={(borderWidth) => updateSelectedStyle({ borderWidth: Math.max(0, borderWidth) })} /><NumberField label="圆角" value={inspectedStyle?.borderRadius ?? 0} onChange={(borderRadius) => updateSelectedStyle({ borderRadius: Math.max(0, borderRadius) })} /></div>
+              <label className="field-label">线型<select value={inspectedStyle?.borderStyle ?? 'solid'} onChange={(event) => updateSelectedStyle({ borderStyle: event.target.value as NonNullable<WebComponentStyle['borderStyle']> })}><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option><option value="double">双线</option><option value="none">无</option></select></label>
+            </section>
+            <section className="design-inspector-group">
+              <header><strong>效果</strong><span>阴影、模糊与叠加</span></header>
+              <label className="field-label">阴影<input value={inspectedStyle?.shadow ?? ''} onChange={(event) => updateSelectedStyle({ shadow: event.target.value })} placeholder="0 18px 48px rgba(0,0,0,.18)" /></label>
+              <div className="style-preset-grid shadow-presets">{shadowPresets.map((shadow, index) => <button key={`${shadow}-${index}`} className={shadow ? '' : 'none'} title={shadow || '无阴影'} style={{ boxShadow: shadow || undefined }} onClick={() => updateSelectedStyle({ shadow })}>{shadow ? '' : '×'}</button>)}</div>
+              <div className="size-row"><NumberField label="元素模糊" value={inspectedStyle?.blur ?? 0} onChange={(blur) => updateSelectedStyle({ blur: Math.max(0, blur) })} /><NumberField label="背景模糊" value={inspectedStyle?.backdropBlur ?? 0} onChange={(backdropBlur) => updateSelectedStyle({ backdropBlur: Math.max(0, backdropBlur) })} /></div>
+              <div className="size-row"><NumberField label="旋转 °" value={inspectedStyle?.rotate ?? 0} onChange={(rotate) => updateSelectedStyle({ rotate })} /><NumberField label="缩放" value={inspectedStyle?.scale ?? 1} step={0.05} min={0.01} onChange={(scale) => updateSelectedStyle({ scale: Math.max(0.01, scale) })} /></div>
+              <div className="size-row"><label className="field-label">溢出<select value={inspectedStyle?.overflow ?? 'visible'} onChange={(event) => updateSelectedStyle({ overflow: event.target.value as NonNullable<WebComponentStyle['overflow']> })}><option value="visible">显示</option><option value="hidden">裁切</option><option value="auto">自动滚动</option><option value="scroll">始终滚动</option></select></label><label className="field-label">混合模式<select value={inspectedStyle?.mixBlendMode ?? 'normal'} onChange={(event) => updateSelectedStyle({ mixBlendMode: event.target.value as NonNullable<WebComponentStyle['mixBlendMode']> })}><option value="normal">正常</option><option value="multiply">正片叠底</option><option value="screen">滤色</option><option value="overlay">叠加</option><option value="difference">差值</option></select></label></div>
+            </section>
+            <section className="design-inspector-group">
+              <header><strong>排版</strong><span>所有文字型组件与 UI 内容</span></header>
+              <ColorValueField label="文字颜色" value={inspectedStyle?.color ?? ''} onChange={(color) => updateSelectedStyle({ color })} />
+              <div className="size-row"><NumberField label="字号" value={inspectedStyle?.fontSize ?? 16} onChange={(fontSize) => updateSelectedStyle({ fontSize: Math.max(6, fontSize) })} /><NumberField label="字重" value={inspectedStyle?.fontWeight ?? 400} step={50} min={100} max={1000} onChange={(fontWeight) => updateSelectedStyle({ fontWeight: Math.min(1000, Math.max(100, fontWeight)) })} /></div>
+              <div className="size-row"><NumberField label="行高" value={inspectedStyle?.lineHeight ?? 1.2} step={0.05} min={0.5} max={5} onChange={(lineHeight) => updateSelectedStyle({ lineHeight })} /><NumberField label="字间距" value={inspectedStyle?.letterSpacing ?? 0} step={0.1} onChange={(letterSpacing) => updateSelectedStyle({ letterSpacing })} /></div>
+              <div className="size-row"><label className="field-label">对齐<select value={inspectedStyle?.textAlign ?? 'left'} onChange={(event) => updateSelectedStyle({ textAlign: event.target.value as NonNullable<WebComponentStyle['textAlign']> })}><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select></label><label className="field-label">大小写<select value={inspectedStyle?.textTransform ?? 'none'} onChange={(event) => updateSelectedStyle({ textTransform: event.target.value as NonNullable<WebComponentStyle['textTransform']> })}><option value="none">保持</option><option value="uppercase">大写</option><option value="lowercase">小写</option><option value="capitalize">首字母大写</option></select></label></div>
+            </section>
+            {(selected.type === 'image' || selected.type === 'video' || selected.type === 'avatar') && <section className="design-inspector-group"><header><strong>媒体</strong><span>裁切与焦点</span></header><div className="size-row"><label className="field-label">适应方式<select value={inspectedStyle?.objectFit ?? 'cover'} onChange={(event) => updateSelectedStyle({ objectFit: event.target.value as NonNullable<WebComponentStyle['objectFit']> })}><option value="cover">覆盖裁切</option><option value="contain">完整显示</option><option value="fill">拉伸填充</option><option value="none">原始大小</option><option value="scale-down">自动缩小</option></select></label><label className="field-label">焦点<input value={inspectedStyle?.objectPosition ?? '50% 50%'} onChange={(event) => updateSelectedStyle({ objectPosition: event.target.value })} /></label></div></section>}
+            <section className="design-inspector-group advanced-css-group">
+              <header><strong>高级样式</strong><span>开放式 CSS，不受面板枚举限制</span></header>
+              <AdvancedCssEditor value={inspectorVisualState === 'default' ? inspectedFrame?.style.customCss ?? {} : selected.states?.[inspectorVisualState]?.customCss ?? {}} onChange={updateSelectedCustomCss} />
+            </section>
             <div className="token-apply-row"><button onClick={() => applyColorToken('background', 'primary')}>主色背景</button><button onClick={() => applyColorToken('background', 'surface')}>表面背景</button><button onClick={() => applyColorToken('color', 'text')}>正文色</button><button onClick={() => applyRadiusToken('medium')}>中圆角</button></div>
             {(selected.type === 'section' || directChildCount > 0) && selectedEditableSlots.length === 0 && <>
               <div className="panel-title section-title">容器布局 · {directChildCount} 个子组件</div>
               <label className="field-label">布局方式<select value={selected.layout?.mode ?? 'free'} onChange={(event) => updateSelectedLayout({ mode: event.target.value as NonNullable<WebDesignComponent['layout']>['mode'] })}><option value="free">自由布局</option><option value="flex-row">Flex 横向</option><option value="flex-column">Flex 纵向</option><option value="grid">Grid 网格</option></select></label>
               <div className="size-row"><NumberField label="间距" value={selected.layout?.gap ?? 16} onChange={(gap) => updateSelectedLayout({ gap })} /><NumberField label="内边距" value={selected.layout?.padding ?? 16} onChange={(padding) => updateSelectedLayout({ padding })} /></div>
               {selected.layout?.mode === 'grid' && <NumberField label="列数" value={selected.layout.columns ?? 2} onChange={(columns) => updateSelectedLayout({ columns: Math.max(1, Math.round(columns)) })} />}
-              <label className="field-label layout-align-field">对齐<select value={selected.layout?.align ?? 'start'} onChange={(event) => updateSelectedLayout({ align: event.target.value as NonNullable<WebDesignComponent['layout']>['align'] })}><option value="start">起点</option><option value="center">居中</option><option value="end">终点</option><option value="stretch">拉伸</option></select></label>
+              <div className="size-row"><label className="field-label layout-align-field">交叉轴<select value={selected.layout?.align ?? 'start'} onChange={(event) => updateSelectedLayout({ align: event.target.value as NonNullable<WebDesignComponent['layout']>['align'] })}><option value="start">起点</option><option value="center">居中</option><option value="end">终点</option><option value="stretch">拉伸</option></select></label><label className="field-label">主轴<select value={selected.layout?.justify ?? 'start'} onChange={(event) => updateSelectedLayout({ justify: event.target.value as NonNullable<WebDesignComponent['layout']>['justify'] })}><option value="start">起点</option><option value="center">居中</option><option value="end">终点</option><option value="space-between">两端分布</option><option value="space-around">环绕分布</option></select></label></div>
+              {selected.layout?.mode === 'flex-row' && <label className="ui-library-boolean-prop"><input type="checkbox" checked={selected.layout?.wrap === true} onChange={(event) => updateSelectedLayout({ wrap: event.target.checked })} /><span>空间不足时自动换行</span></label>}
               <button className="secondary-button" disabled={directChildCount === 0 || selected.layout?.mode === 'free'} onClick={applySelectedAutoLayout}>应用自动布局</button>
             </>}
             <div className="panel-title section-title">组件批注</div>
@@ -1947,7 +2081,12 @@ export function WebDesignStudioApp() {
           <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
           <div className="variant-preview-grid">{variantPickerVariants.map((variant) => {
             const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
-            return <article key={variant.id} className="variant-preview-card"><div className="variant-live-preview" style={{ minHeight: Math.max(118, Math.min(320, previewComponent.height + 24)) }}><LibraryCanvasComponent component={previewComponent} preview tokens={tokens} /></div><footer><strong>{variant.label}</strong><button onClick={() => insertUiLibraryComponent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id)}>插入此款式</button></footer></article>;
+            const differences = variantDifferenceLabels(variant);
+            const interactiveVariant = variantIsInteractive(variant, variantPickerDefinition.id);
+            const openOverlayPreview = OPEN_OVERLAY_PREVIEWS.has(variantPickerDefinition.id);
+            const inlinePickerPreview = variantPickerLibrary.id === 'chakra' && ['DatePicker', 'ColorPicker'].includes(variantPickerDefinition.id);
+            const previewHeight = inlinePickerPreview ? 440 : Math.max(openOverlayPreview ? 320 : 118, Math.min(360, previewComponent.height + 24));
+            return <article key={variant.id} className={`variant-preview-card ${interactiveVariant ? 'interactive-variant' : ''}`} style={{ minHeight: previewHeight + 58 }}><div data-library-portal-host className={`variant-live-preview ${openOverlayPreview ? 'overlay-showcase' : ''} ${inlinePickerPreview ? 'inline-picker-showcase' : ''} ${variant.props.bordered === false || variant.props.variant === 'borderless' ? 'contrast-surface' : ''}`} style={{ minHeight: previewHeight }}>{interactiveVariant && !openOverlayPreview && <span className="variant-interaction-hint">可交互 · 移入或点击查看</span>}<LibraryCanvasComponent component={previewComponent} preview showcase tokens={tokens} /></div><footer><div className="variant-preview-description"><strong>{variant.label}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><button onClick={() => insertUiLibraryComponent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id)}>插入此款式</button></footer></article>;
           })}</div>
         </section>
       </div>}
@@ -1968,8 +2107,50 @@ export function WebDesignStudioApp() {
   );
 }
 
-function NumberField({ label, value, onChange, disabled = false }: { label: string; value: number; onChange: (value: number) => void; disabled?: boolean }) {
-  return <label className="field-label">{label}<input type="number" disabled={disabled} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+function NumberField({ label, value, onChange, disabled = false, step, min, max }: { label: string; value: number; onChange: (value: number) => void; disabled?: boolean; step?: number; min?: number; max?: number }) {
+  return <label className="field-label">{label}<input type="number" disabled={disabled} step={step} min={min} max={max} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+}
+
+function ColorValueField({ label, value, onChange, allowComplex = false }: { label: string; value: string; onChange: (value: string) => void; allowComplex?: boolean }) {
+  const colorValue = /^#[0-9a-f]{6}$/i.test(value) ? value : '#000000';
+  return <label className="field-label color-value-field">{label}<span><input type="color" value={colorValue} onChange={(event) => onChange(event.target.value.toUpperCase())} /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={allowComplex ? '#FFFFFF 或 linear-gradient(...)' : '#1D1D1F'} /></span></label>;
+}
+
+function AdvancedCssEditor({ value, onChange }: { value: Record<string, string | number>; onChange: (value: Record<string, string | number>) => void }) {
+  const serialized = Object.entries(value).map(([property, propertyValue]) => `${property}: ${propertyValue}`).join('\n');
+  const [draft, setDraft] = useState(serialized);
+  const [error, setError] = useState('');
+  useEffect(() => { setDraft(serialized); setError(''); }, [serialized]);
+  function apply() {
+    try {
+      const next: Record<string, string | number> = {};
+      for (const rawLine of draft.split('\n')) {
+        const line = rawLine.trim().replace(/;$/, '');
+        if (!line || line.startsWith('/*') || line.startsWith('//')) continue;
+        const separator = line.indexOf(':');
+        if (separator <= 0) throw new Error(`缺少冒号：${line}`);
+        const property = line.slice(0, separator).trim();
+        const propertyValue = line.slice(separator + 1).trim();
+        if (!/^(?:--[a-zA-Z0-9_-]{1,80}|[a-zA-Z][a-zA-Z0-9-]{0,80})$/.test(property)) throw new Error(`属性名不正确：${property}`);
+        if (!propertyValue) throw new Error(`缺少属性值：${property}`);
+        next[property] = /^-?(?:\d+|\d*\.\d+)$/.test(propertyValue) ? Number(propertyValue) : propertyValue;
+      }
+      onChange(next);
+      setError('');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'CSS 格式不正确');
+    }
+  }
+  const suggestions = [
+    ['异形裁切', 'clip-path: polygon(0 0, 100% 0, 92% 100%, 8% 100%)'],
+    ['玻璃高光', 'background-image: linear-gradient(135deg, rgba(255,255,255,.28), rgba(255,255,255,0))'],
+    ['渐隐遮罩', 'mask-image: linear-gradient(to bottom, black 72%, transparent)'],
+    ['立体视角', 'perspective: 1000px']
+  ] as const;
+  function appendSuggestion(declaration: string) {
+    setDraft((current) => current.trim() ? `${current.trim()}\n${declaration}` : declaration);
+  }
+  return <div className="advanced-css-editor"><div className="advanced-css-suggestions">{suggestions.map(([label, declaration]) => <button key={label} onClick={() => appendSuggestion(declaration)}>{label}</button>)}</div><textarea rows={Math.min(10, Math.max(4, draft.split('\n').length))} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} placeholder={'clip-path: circle(48%)\ntransform-origin: 50% 100%\n--brand-glow: rgba(99,102,241,.45)'} /><div className="advanced-css-actions"><small>{error || '每行一个 CSS 属性；AI 也可以直接写入这些结构化样式。'}</small><button onClick={apply}>应用样式</button></div></div>;
 }
 
 function JsonPropertyEditor({ label, value, onChange }: { label: string; value: WebDesignJsonValue; onChange: (value: WebDesignJsonValue) => void }) {
@@ -1989,10 +2170,11 @@ function JsonPropertyEditor({ label, value, onChange }: { label: string; value: 
   return <div className="json-prop-editor"><div><strong>{label}</strong><button onClick={apply}>应用数据</button></div><textarea rows={Math.min(10, Math.max(4, draft.split('\n').length))} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} />{error && <small>{error}</small>}</div>;
 }
 
-function CanvasComponentContent({ component, interactive, tokens, slotContent }: { component: WebDesignComponent; interactive: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
-  if (component.library) return <div className={`ui-library-canvas-content library-${component.library.name} ${interactive ? 'preview' : ''}`}><LibraryCanvasComponent component={component} preview={interactive} tokens={tokens} slotContent={slotContent} /></div>;
-  if (component.type === 'image') return component.content ? <img src={component.content} alt={component.name} draggable={false} /> : <span className="image-placeholder">图片</span>;
-  if (component.type === 'video') return component.content ? <video src={component.content} controls={interactive} muted /> : <span className="media-placeholder">▶<small>视频</small></span>;
+function CanvasComponentContent({ component, style = component.style, interactive, tokens, slotContent }: { component: WebDesignComponent; style?: WebComponentStyle; interactive: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
+  const renderedComponent = style === component.style ? component : { ...component, style };
+  if (component.library) return <div className={`ui-library-canvas-content library-${component.library.name} ${interactive ? 'preview' : ''}`}><LibraryCanvasComponent component={renderedComponent} preview={interactive} tokens={tokens} slotContent={slotContent} /></div>;
+  if (component.type === 'image') return component.content ? <img src={component.content} alt={component.name} draggable={false} style={{ objectFit: style.objectFit, objectPosition: style.objectPosition }} /> : <span className="image-placeholder">图片</span>;
+  if (component.type === 'video') return component.content ? <video src={component.content} controls={interactive} muted style={{ objectFit: style.objectFit, objectPosition: style.objectPosition }} /> : <span className="media-placeholder">▶<small>视频</small></span>;
   if (component.type === 'input') return <span className="input-placeholder">{component.content}</span>;
   if (component.type === 'textarea') return <span className="input-placeholder textarea-placeholder">{component.content}</span>;
   if (component.type === 'select') return <span className="select-placeholder"><span>{component.content.split('\n')[0]}</span><b>⌄</b></span>;
@@ -2006,28 +2188,32 @@ function CanvasComponentContent({ component, interactive, tokens, slotContent }:
   return <span className="component-copy">{component.content}</span>;
 }
 
-function CanvasComponent({ component, resolved, selected, primary, interactive, tokens, slotContent, onPointerDown, onResizePointerDown, onPreviewActivate }: {
+function CanvasComponent({ component, resolved, selected, primary, interactive, forcedState, tokens, slotContent, onPointerDown, onResizePointerDown, onPreviewActivate }: {
   component: WebDesignComponent;
   resolved: ResolvedWebDesignComponent;
   selected: boolean;
   primary: boolean;
   interactive: boolean;
+  forcedState?: WebComponentVisualState;
   tokens?: WebDesignTokens;
   slotContent?: Record<string, ReactNode>;
   onPointerDown: (event: ReactPointerEvent) => void;
   onResizePointerDown: (event: ReactPointerEvent) => void;
   onPreviewActivate: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const runtimeState: WebComponentVisualState | undefined = forcedState ?? (pressed ? 'active' : focused ? 'focus' : hovered ? 'hover' : undefined);
+  const effectiveStyle = mergeComponentStyles(resolved.style, runtimeState ? component.states?.[runtimeState] : undefined);
   const style: CSSProperties = {
     left: resolved.x, top: resolved.y, width: resolved.width, height: resolved.height, zIndex: component.zIndex,
-    background: resolved.style.background, color: resolved.style.color, borderColor: resolved.style.borderColor,
-    borderWidth: resolved.style.borderWidth, borderStyle: resolved.style.borderWidth ? 'solid' : undefined,
-    borderRadius: resolved.style.borderRadius, fontSize: resolved.style.fontSize, fontWeight: resolved.style.fontWeight,
-    textAlign: resolved.style.textAlign, opacity: resolved.style.opacity, boxShadow: resolved.style.shadow
+    ...(component.library ? componentEffectStyleToCss(effectiveStyle) : componentStyleToCss(effectiveStyle)),
+    transition: component.states ? 'background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, opacity .18s ease, transform .18s ease' : undefined
   };
   return (
-    <div className={`canvas-component type-${component.type} ${component.library ? `library-component library-${component.library.name}` : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} onPointerDown={onPointerDown} onClick={(event) => { if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
-      <CanvasComponentContent component={component} interactive={interactive} tokens={tokens} slotContent={slotContent} />
+    <div className={`canvas-component type-${component.type} ${component.library ? `library-component library-${component.library.name}` : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} tabIndex={interactive && component.states?.focus ? 0 : undefined} onPointerEnter={() => interactive && setHovered(true)} onPointerLeave={() => { setHovered(false); setPressed(false); }} onPointerDown={(event) => { if (interactive) setPressed(true); onPointerDown(event); }} onPointerUp={() => setPressed(false)} onPointerCancel={() => setPressed(false)} onFocus={() => interactive && setFocused(true)} onBlur={() => setFocused(false)} onClick={(event) => { if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
+      <CanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} />
       {!interactive && component.annotations.some((annotation) => annotation.status === 'open') && <span className="annotation-badge">{component.annotations.filter((annotation) => annotation.status === 'open').length}</span>}
       {primary && !interactive && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
     </div>
@@ -2070,21 +2256,35 @@ function RuntimeSlotContent({ document, container, slot, device, interactive, to
       const frame = resolveComponent(child, device);
       if (frame.hidden) return null;
       const localFrame = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
-      const style: CSSProperties = {
-        position: 'absolute', left: localFrame.x, top: localFrame.y, width: localFrame.width, height: localFrame.height, zIndex: child.zIndex,
-        background: localFrame.style.background, color: localFrame.style.color, borderColor: localFrame.style.borderColor,
-        borderWidth: localFrame.style.borderWidth, borderStyle: localFrame.style.borderWidth ? 'solid' : undefined,
-        borderRadius: localFrame.style.borderRadius, fontSize: localFrame.style.fontSize, fontWeight: localFrame.style.fontWeight,
-        textAlign: localFrame.style.textAlign, opacity: localFrame.style.opacity, boxShadow: localFrame.style.shadow
-      };
-      return <div key={child.id} className={`runtime-slot-component type-${child.type}`} style={style} onClick={(event) => {
-        if (interactive && child.interaction) {
-          event.stopPropagation();
-          onPreviewActivate(child);
-        }
-      }}><CanvasComponentContent component={child} interactive={interactive} tokens={tokens} slotContent={runtimeSlotContentMap(document, child, device, interactive, tokens, onPreviewActivate)} /></div>;
+      return <RuntimeSlotCanvasComponent key={child.id} component={child} frame={localFrame} interactive={interactive} tokens={tokens} slotContent={runtimeSlotContentMap(document, child, device, interactive, tokens, onPreviewActivate)} onPreviewActivate={() => onPreviewActivate(child)} />;
     })}
   </div>;
+}
+
+function RuntimeSlotCanvasComponent({ component, frame, interactive, tokens, slotContent, onPreviewActivate }: {
+  component: WebDesignComponent;
+  frame: ResolvedWebDesignComponent;
+  interactive: boolean;
+  tokens?: WebDesignTokens;
+  slotContent?: Record<string, ReactNode>;
+  onPreviewActivate: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const runtimeState: WebComponentVisualState | undefined = pressed ? 'active' : focused ? 'focus' : hovered ? 'hover' : undefined;
+  const effectiveStyle = mergeComponentStyles(frame.style, runtimeState ? component.states?.[runtimeState] : undefined);
+  const style: CSSProperties = {
+    position: 'absolute', left: frame.x, top: frame.y, width: frame.width, height: frame.height, zIndex: component.zIndex,
+    ...(component.library ? componentEffectStyleToCss(effectiveStyle) : componentStyleToCss(effectiveStyle)),
+    transition: component.states ? 'background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, opacity .18s ease, transform .18s ease' : undefined
+  };
+  return <div className={`runtime-slot-component type-${component.type}`} style={style} tabIndex={interactive && component.states?.focus ? 0 : undefined} onPointerEnter={() => interactive && setHovered(true)} onPointerLeave={() => { setHovered(false); setPressed(false); }} onPointerDown={() => interactive && setPressed(true)} onPointerUp={() => setPressed(false)} onPointerCancel={() => setPressed(false)} onFocus={() => interactive && setFocused(true)} onBlur={() => setFocused(false)} onClick={(event) => {
+    if (interactive && component.interaction) {
+      event.stopPropagation();
+      onPreviewActivate();
+    }
+  }}><CanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} /></div>;
 }
 
 function formatProjectDate(value: string): string {
