@@ -73,7 +73,7 @@ For every AI-generated or structurally rewritten diagram:
 2. Choose exactly one diagram kind and one mode for the next document.
 3. Activate the matching dedicated Skill from the platform catalog with `skill_skill_activate`, using this router activation as `parent_activation_ref`.
 4. Read the dedicated Skill's linked examples or contract resource when its instructions require them.
-5. Call `diagram_prepare_generation` with the router and leaf activation evidence plus a bounded plan.
+5. Call `diagram_prepare_generation` with the router and leaf activation evidence, a stable `artifactKey`, and a bounded plan. Do not pass an operation or document ID; the plugin resolves create versus revise from that artifact key inside the injected scope.
 6. Call `diagram_commit_generation` with the same current Skill evidence and the returned `generationPermit`.
 7. If the result is not `ready`, revise the plan or split the diagram and obtain a new permit.
 8. Call `diagram_validate` before reporting completion.
@@ -109,7 +109,9 @@ Returns the complete editable document. Call it before revising an existing diag
 
 ### `diagram_prepare_generation`
 
-Submits the plan for one logical diagram and returns a signed `generationPermit`. The plan must state scope, excluded details, estimated size, boundaries or participants, split decisions, and the dedicated Skill checklist acknowledgements. Pass `kind`, optional `mode`, and the router plus leaf activation evidence. It takes no project ID.
+Submits the plan for one logical diagram and returns a signed `generationPermit`. The plan must state scope, excluded details, estimated size, boundaries or participants, split decisions, and the dedicated Skill checklist acknowledgements. Pass `kind`, optional `mode`, a stable `artifactKey`, and the router plus leaf activation evidence. It takes no project ID, operation, or document ID.
+
+The plugin resolves the write mode itself: an `artifactKey` not present in the current injected scope produces a create permit; an existing `artifactKey` produces a revision permit bound to that document. Never invent placeholder document IDs such as `create`, `none`, or `new`.
 
 A permit is bound to the injected runtime scope, diagram kind, mode, artifact key, operation, plan, and current guide version. Do not reuse it for another diagram.
 

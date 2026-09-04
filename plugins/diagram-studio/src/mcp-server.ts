@@ -26,7 +26,7 @@ import {
 } from './generation-guides.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.2.0';
+const SERVER_VERSION = '0.2.1';
 const store = new DiagramDocumentStore();
 const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
 
@@ -97,16 +97,14 @@ const generatedDiagramProperties = {
 const TOOL_DEFINITIONS = [
   {
     name: 'diagram_prepare_generation',
-    description: 'Submit one bounded diagram plan after activating the Diagram Studio router and the dedicated diagram-kind Skill. Returns a scope-, skill-contract-, plan-, kind-, title-, and artifact-bound generationPermit only when the plan is valid.',
+    description: 'Submit one bounded diagram plan after activating the Diagram Studio router and the dedicated diagram-kind Skill. The current injected scope and artifactKey automatically determine whether this creates a new diagram or revises the existing logical diagram; do not supply an operation or documentId. Returns a scope-, skill-contract-, plan-, kind-, title-, and artifact-bound generationPermit only when the plan is valid.',
     inputSchema: {
       type: 'object',
       properties: {
         skillEvidence: skillEvidenceProperty,
         kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'] },
         mode: { type: 'string', minLength: 1, maxLength: 64 },
-        artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
-        operation: { type: 'string', enum: ['create', 'revise'] },
-        documentId: { type: 'string', minLength: 1, maxLength: 128, description: 'Required only for revise.' },
+        artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable logical identity in the injected scope. A new key creates a diagram; an existing key revises that diagram.' },
         title: { type: 'string', minLength: 1, maxLength: 240 },
         plan: {
           type: 'object',
@@ -125,7 +123,7 @@ const TOOL_DEFINITIONS = [
           additionalProperties: false
         }
       },
-      required: ['skillEvidence', 'kind', 'artifactKey', 'operation', 'title', 'plan'],
+      required: ['skillEvidence', 'kind', 'artifactKey', 'title', 'plan'],
       additionalProperties: false
     },
     _meta: { ...policy, ...diagramSkillGate }
@@ -517,21 +515,22 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
     case 'diagram_prepare_generation': {
-      const operation = argumentsValue.operation === 'revise' ? 'revise' : argumentsValue.operation === 'create' ? 'create' : undefined;
-      if (!operation) throw new Error('Generation operation must be create or revise.');
-      const documentId = typeof argumentsValue.documentId === 'string' ? argumentsValue.documentId : undefined;
+      const artifactKey = String(argumentsValue.artifactKey);
+      const existing = (await store.listInScope(scopeKey)).find((document) => document.artifactKey === artifactKey);
+      const operation = existing ? 'revise' : 'create';
+      const documentId = existing?.documentId;
       const prepared = await prepareGenerationPermit({
         kind: requiredDiagramKind(argumentsValue.kind),
         mode: typeof argumentsValue.mode === 'string' ? argumentsValue.mode : undefined,
-        artifactKey: String(argumentsValue.artifactKey),
+        artifactKey,
         operation,
         documentId,
         title: String(argumentsValue.title),
         plan: argumentsValue.plan as GenerationPlan,
         scopeFingerprint: scopeKey
       });
-      if (operation === 'revise') {
-        const current = await store.readInScope(String(documentId), scopeKey);
+      if (documentId) {
+        const current = await store.readInScope(documentId, scopeKey);
         if (current.kind !== prepared.permit.kind) throw new Error(`The selected document is ${current.kind}, but the guide is for ${prepared.permit.kind}.`);
         if (current.artifactKey && current.artifactKey !== prepared.permit.artifactKey) throw new Error('The requested artifactKey does not match the selected document.');
       }
@@ -542,6 +541,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         mode: prepared.permit.mode,
         artifactKey: prepared.permit.artifactKey,
         operation: prepared.permit.operation,
+        ...(prepared.permit.documentId ? { documentId: prepared.permit.documentId } : {}),
         qualityProfile: prepared.permit.qualityProfile,
         budgets: {
           maxPrimaryItems: prepared.permit.maxPrimaryItems,

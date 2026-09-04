@@ -36,6 +36,8 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     const listedTools = await client.listTools();
     const tools = new Map(listedTools.tools.map((tool) => [tool.name, tool]));
     for (const name of ['diagram_prepare_generation', 'diagram_commit_generation']) assert.ok(tools.has(name));
+    assert.equal(Object.hasOwn(tools.get('diagram_prepare_generation').inputSchema.properties, 'operation'), false);
+    assert.equal(Object.hasOwn(tools.get('diagram_prepare_generation').inputSchema.properties, 'documentId'), false);
     assert.equal(tools.has('diagram_get_generation_guide'), false);
     for (const name of ['diagram_list_documents', 'diagram_create_document', 'diagram_import_plantuml']) {
       assert.equal(Object.hasOwn(tools.get(name).inputSchema.properties, 'projectId'), false, `${name} must not accept projectId`);
@@ -69,7 +71,7 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
       name: 'diagram_prepare_generation',
       arguments: {
         skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
-        artifactKey: 'token-refresh', operation: 'create', title: 'Token Refresh Sequence',
+        artifactKey: 'token-refresh', title: 'Token Refresh Sequence',
         plan: planFor('sequence', goal, { estimatedPrimaryItemCount: 9 })
       }
     });
@@ -78,9 +80,10 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
 
     const prepared = await call(client, 'diagram_prepare_generation', {
       skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
-      artifactKey: 'token-refresh', operation: 'create', title: 'Token Refresh Sequence',
+      artifactKey: 'token-refresh', title: 'Token Refresh Sequence',
       plan: planFor('sequence', goal)
     });
+    assert.equal(prepared.operation, 'create');
     const source = [
       '@startuml',
       'actor "User" as user',
@@ -110,6 +113,14 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     assert.equal(committed.document.kind, 'sequence');
     assert.equal(committed.document.generationProvenance.guideId, 'diagram-sequence');
     assert.equal(committed.document.generationProvenance.planHash, prepared.planHash);
+
+    const revisionPrepared = await call(client, 'diagram_prepare_generation', {
+      skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
+      artifactKey: 'token-refresh', title: 'Token Refresh Sequence',
+      plan: planFor('sequence', goal)
+    });
+    assert.equal(revisionPrepared.operation, 'revise');
+    assert.equal(revisionPrepared.documentId, committed.document.documentId);
 
     const retry = await call(client, 'diagram_commit_generation', {
       skillEvidence: ['router-evidence', 'sequence-evidence'],
