@@ -4,29 +4,27 @@ import Testing
 
 @Suite("Pet task inspector placement")
 struct PetTaskInspectorPlacementTests {
-    @Test("places the inspector above the conversation when it fits")
-    func placesAboveConversation() {
-        let origin = PetTaskInspectorPlacement.origin(
+    @Test("places the inspector to the left and shifts the conversation when needed")
+    func placesToTheLeft() {
+        let layout = PetTaskInspectorPlacement.layout(
             size: NSSize(width: 720, height: 620),
-            conversationFrame: NSRect(x: 600, y: 180, width: 420, height: 500),
-            petFrame: NSRect(x: 750, y: 60, width: 120, height: 120),
-            visibleFrame: NSRect(x: 0, y: 0, width: 1800, height: 1400)
+            conversationFrame: NSRect(x: 680, y: 200, width: 420, height: 500),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1500, height: 1000)
         )
 
-        #expect(origin.y == 690)
-        #expect(origin.x == 450)
+        #expect(layout.conversationOrigin == NSPoint(x: 740, y: 200))
+        #expect(layout.inspectorOrigin == NSPoint(x: 8, y: 80))
     }
 
-    @Test("places the inspector below the pet when the upper space is unavailable")
-    func placesBelowPet() {
-        let origin = PetTaskInspectorPlacement.origin(
+    @Test("keeps an already suitable conversation position and clamps vertically")
+    func preservesSuitableConversationPosition() {
+        let layout = PetTaskInspectorPlacement.layout(
             size: NSSize(width: 720, height: 620),
-            conversationFrame: NSRect(x: 600, y: 500, width: 420, height: 500),
-            petFrame: NSRect(x: 750, y: 360, width: 120, height: 120),
-            visibleFrame: NSRect(x: 0, y: -500, width: 1800, height: 1700)
+            conversationFrame: NSRect(x: 900, y: 600, width: 420, height: 500),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1500, height: 1000)
         )
 
-        #expect(origin.y == -270)
-        #expect(origin.x == 450)
+        #expect(layout.conversationOrigin == NSPoint(x: 900, y: 600))
+        #expect(layout.inspectorOrigin == NSPoint(x: 168, y: 372))
     }
 }

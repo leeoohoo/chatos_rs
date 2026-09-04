@@ -351,10 +351,13 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             .environmentObject(model)
         )
 
-        panel.setFrameOrigin(taskInspectorOrigin(
+        let layout = PetTaskInspectorPlacement.layout(
             size: size,
-            petWindow: petWindow
-        ))
+            conversationFrame: messagePanel.frame,
+            visibleFrame: (messagePanel.screen ?? petWindow.screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        )
+        messagePanel.setFrameOrigin(layout.conversationOrigin)
+        panel.setFrameOrigin(layout.inspectorOrigin)
         messagePanel.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         taskInspectorPanel = panel
@@ -367,17 +370,9 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         }
         panel.orderOut(nil)
         taskInspectorPanel = nil
-    }
-
-    private func taskInspectorOrigin(size: NSSize, petWindow: NSWindow) -> NSPoint {
-        let screen = messagePanel.screen ?? petWindow.screen ?? NSScreen.main
-        let visible = screen?.visibleFrame ?? .zero
-        return PetTaskInspectorPlacement.origin(
-            size: size,
-            conversationFrame: messagePanel.frame,
-            petFrame: petWindow.frame,
-            visibleFrame: visible
-        )
+        if messagePanel.isVisible {
+            positionMessagePanel()
+        }
     }
 
     private func applyMessageSize(_ size: NSSize) {
@@ -546,22 +541,40 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 }
 
 struct PetTaskInspectorPlacement {
-    static func origin(
+    struct Layout: Equatable {
+        let conversationOrigin: NSPoint
+        let inspectorOrigin: NSPoint
+    }
+
+    static func layout(
         size: NSSize,
         conversationFrame: NSRect,
-        petFrame: NSRect,
         visibleFrame: NSRect
-    ) -> NSPoint {
-        let centeredX = conversationFrame.midX - size.width / 2
-        let x = min(
-            max(centeredX, visibleFrame.minX + 8),
-            visibleFrame.maxX - size.width - 8
+    ) -> Layout {
+        let screenInset: CGFloat = 8
+        let gap: CGFloat = 12
+        let minimumX = visibleFrame.minX + screenInset
+        let maximumConversationX = visibleFrame.maxX
+            - conversationFrame.width
+            - screenInset
+        let requiredConversationX = minimumX + size.width + gap
+        let conversationX = min(
+            max(conversationFrame.minX, requiredConversationX),
+            maximumConversationX
         )
-        let aboveConversation = conversationFrame.maxY + 10
-        if aboveConversation + size.height <= visibleFrame.maxY - 8 {
-            return NSPoint(x: x, y: aboveConversation)
-        }
-        return NSPoint(x: x, y: petFrame.minY - size.height - 10)
+        let inspectorX = max(minimumX, conversationX - size.width - gap)
+        let preferredInspectorY = conversationFrame.maxY - size.height
+        let inspectorY = min(
+            max(preferredInspectorY, visibleFrame.minY + screenInset),
+            visibleFrame.maxY - size.height - screenInset
+        )
+        return Layout(
+            conversationOrigin: NSPoint(
+                x: conversationX,
+                y: conversationFrame.minY
+            ),
+            inspectorOrigin: NSPoint(x: inspectorX, y: inspectorY)
+        )
     }
 }
 
