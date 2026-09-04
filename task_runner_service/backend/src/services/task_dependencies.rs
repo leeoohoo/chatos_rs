@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::auth::CurrentUser;
 use crate::models::{
@@ -83,13 +83,24 @@ impl TaskService {
 
     pub(super) async fn hydrate_tasks_prerequisites(
         &self,
-        tasks: Vec<TaskRecord>,
+        mut tasks: Vec<TaskRecord>,
     ) -> Result<Vec<TaskRecord>, String> {
-        let mut out = Vec::with_capacity(tasks.len());
-        for task in tasks {
-            out.push(self.hydrate_task_prerequisites(task).await?);
+        let task_ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
+        let prerequisites = self
+            .store
+            .list_task_prerequisites_for_tasks(&task_ids)
+            .await?;
+        let mut prerequisites_by_task = HashMap::<String, Vec<String>>::new();
+        for prerequisite in prerequisites {
+            prerequisites_by_task
+                .entry(prerequisite.task_id)
+                .or_default()
+                .push(prerequisite.prerequisite_task_id);
         }
-        Ok(out)
+        for task in &mut tasks {
+            task.prerequisite_task_ids = prerequisites_by_task.remove(&task.id).unwrap_or_default();
+        }
+        Ok(tasks)
     }
 
     pub(super) async fn direct_prerequisite_ids(

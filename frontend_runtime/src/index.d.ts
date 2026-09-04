@@ -94,6 +94,7 @@ export interface JsonApiClientOptions {
   getAuthToken?: () => string | null;
   onUnauthorized?: () => void;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
   readErrorMessage?: (response: Response) => Promise<string>;
   createResponseError?: (response: Response) => Promise<Error>;
   readSuccessResponse?: (response: Response) => Promise<unknown>;

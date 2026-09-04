@@ -20,6 +20,25 @@ impl MongoStore {
         .await
     }
 
+    pub(in crate::store) async fn list_task_prerequisites_for_tasks(
+        &self,
+        task_ids: &[String],
+    ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
+        if task_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.load_collection_items_with_query(
+            &self.task_prerequisites,
+            doc! { "task_id": { "$in": task_ids } },
+            Some(mongo_find_options(
+                doc! { "task_id": 1, "created_at": 1, "prerequisite_task_id": 1 },
+                None,
+                None,
+            )),
+        )
+        .await
+    }
+
     pub(in crate::store) async fn list_task_dependents(
         &self,
         prerequisite_task_id: &str,

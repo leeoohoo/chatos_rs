@@ -51,6 +51,8 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
   const [optimizedInstructions, setOptimizedInstructions] = useState('');
   const [optimizationThinking, setOptimizationThinking] = useState('');
   const [optimizeStreaming, setOptimizeStreaming] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
   const optimizeAbortRef = useRef<AbortController | null>(null);
   const isAdmin = user.role === 'super_admin';
   const runtimeKinds = adminRuntimeKinds;
@@ -58,8 +60,13 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
   const editingSystemManaged = editing ? isSystemManagedMcp(editing) : false;
 
   const mcpsQuery = useQuery({
-    queryKey: ['plugin-management', 'mcps', isAdmin],
-    queryFn: () => api.listMcps({ include_system: isAdmin, limit: 500 }),
+    queryKey: ['plugin-management', 'mcps', isAdmin, page, pageSize],
+    queryFn: () => api.listMcps({
+      include_system: isAdmin,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    }),
+    placeholderData: (previousData) => previousData,
   });
 
   const descriptorQuery = useQuery({
@@ -364,7 +371,16 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
         loading={mcpsQuery.isLoading}
         tableLayout="fixed"
         scroll={{ x: 1400 }}
-        pagination={{ pageSize: 12 }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: mcpsQuery.data?.total || 0,
+          showSizeChanger: true,
+          onChange: (nextPage, nextPageSize) => {
+            setPage(nextPageSize === pageSize ? nextPage : 1);
+            setPageSize(nextPageSize);
+          },
+        }}
       />
       <McpCatalogDialogs
         form={form}

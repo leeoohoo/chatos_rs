@@ -23,6 +23,7 @@ import {
 } from 'antd';
 import { PlusOutlined, ReloadOutlined, RobotOutlined, SaveOutlined } from '@ant-design/icons';
 
+import { useAdminAuth } from '../../../app/auth/AuthProvider';
 import { api } from '../api/client';
 import type {
   UserModelConfigRecord,
@@ -63,6 +64,7 @@ const TASK_THINKING_LEVEL_OPTIONS = [
 
 export function ModelsPage() {
   const { message } = App.useApp();
+  const { user: currentUser } = useAdminAuth();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<UserModelProviderRecord | null>(null);
@@ -72,27 +74,22 @@ export function ModelsPage() {
   >({});
   const [form] = Form.useForm<ProviderFormValues>();
 
-  const currentUserQuery = useQuery({
-    queryKey: ['user-service', 'current-user'],
-    queryFn: () => api.currentUser(),
-  });
   const usersQuery = useQuery({
     queryKey: ['user-service', 'users'],
     queryFn: () => api.listUsers(),
   });
 
-  const currentUser = currentUserQuery.data?.user;
-  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isSuperAdmin = currentUser.role === 'super_admin';
 
   useEffect(() => {
-    if (!isSuperAdmin && !selectedUserId && currentUser?.id) {
+    if (!isSuperAdmin && !selectedUserId) {
       setSelectedUserId(currentUser.id);
     }
-  }, [currentUser?.id, isSuperAdmin, selectedUserId]);
+  }, [currentUser.id, isSuperAdmin, selectedUserId]);
 
   const scopedUserId = selectedUserId;
   const scopedQueryKey = scopedUserId || ALL_USERS_SCOPE;
-  const canLoadModelData = Boolean(currentUser) && (isSuperAdmin || Boolean(scopedUserId));
+  const canLoadModelData = isSuperAdmin || Boolean(scopedUserId);
 
   const providersQuery = useQuery({
     queryKey: ['user-service', 'model-providers', scopedQueryKey],

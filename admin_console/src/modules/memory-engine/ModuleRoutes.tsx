@@ -14,20 +14,30 @@ const RunsSectionContainer = lazy(() => import('./app/sections/RunsSectionContai
 export default function MemoryEngineModuleRoutes() {
   const { user } = useAdminAuth();
   const canAccessAdmin = user.role === 'super_admin';
-  const resources = useConsoleResources(canAccessAdmin);
   const requireSuperAdmin = (element: React.ReactElement) =>
     canAccessAdmin ? element : <Navigate to="data" replace />;
   return (
     <Suspense fallback={<Flex align="center" justify="center" style={{ minHeight: 320 }}><Spin size="large" /></Flex>}>
       <Routes>
         <Route index element={<Navigate to={canAccessAdmin ? 'dashboard' : 'data'} replace />} />
-        <Route path="dashboard" element={requireSuperAdmin(<DashboardSection loading={!resources.initialized || resources.loading} dashboardStats={resources.dashboardStats} jobStats={resources.dashboardJobStats} />)} />
+        <Route path="dashboard" element={requireSuperAdmin(<DashboardRoute />)} />
         <Route path="data" element={<DataSectionContainer refreshNonce={0} />} />
-        <Route path="sources" element={requireSuperAdmin(<SourcesSectionContainer refreshNonce={0} onCatalogMutated={() => void resources.loadDashboardOverview()} />)} />
+        <Route path="sources" element={requireSuperAdmin(<SourcesSectionContainer refreshNonce={0} />)} />
         <Route path="policies" element={requireSuperAdmin(<PoliciesSectionContainer refreshNonce={0} />)} />
         <Route path="runs" element={<RunsSectionContainer refreshNonce={0} />} />
         <Route path="*" element={<Navigate to={canAccessAdmin ? 'dashboard' : 'data'} replace />} />
       </Routes>
     </Suspense>
+  );
+}
+
+function DashboardRoute() {
+  const resources = useConsoleResources();
+  return (
+    <DashboardSection
+      loading={!resources.initialized || resources.loading}
+      dashboardStats={resources.dashboardStats}
+      jobStats={resources.dashboardJobStats}
+    />
   );
 }

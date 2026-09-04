@@ -22,6 +22,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, KeyOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
+import { useAdminAuth } from '../../../app/auth/AuthProvider';
 import { api } from '../api/client';
 import type {
   AgentAccountListItem,
@@ -45,6 +46,7 @@ type ResetPasswordValues = {
 
 export function AgentAccountsPage() {
   const { message } = App.useApp();
+  const { user: currentUser } = useAdminAuth();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentAccountListItem | null>(null);
@@ -52,10 +54,6 @@ export function AgentAccountsPage() {
   const [form] = Form.useForm<AgentFormValues>();
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
 
-  const currentUserQuery = useQuery({
-    queryKey: ['user-service', 'current-user'],
-    queryFn: () => api.currentUser(),
-  });
   const usersQuery = useQuery({
     queryKey: ['user-service', 'users'],
     queryFn: () => api.listUsers(),
@@ -65,8 +63,7 @@ export function AgentAccountsPage() {
     queryFn: () => api.listAgentAccounts(),
   });
 
-  const currentUser = currentUserQuery.data?.user;
-  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isSuperAdmin = currentUser.role === 'super_admin';
   const userOptions = (usersQuery.data || []).map((item: UserSummaryRecord) => ({
     label: `${item.display_name || item.username} (${item.username})`,
     value: item.id,
@@ -178,7 +175,7 @@ export function AgentAccountsPage() {
     form.resetFields();
     form.setFieldsValue({
       enabled: true,
-      owner_user_id: currentUser?.id,
+      owner_user_id: currentUser.id,
     });
     setDrawerOpen(true);
   }

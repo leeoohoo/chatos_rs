@@ -24,6 +24,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
+import { useAdminAuth } from '../../../app/auth/AuthProvider';
 import { api } from '../api/client';
 import type {
   CreateInviteCodePayload,
@@ -55,6 +56,7 @@ type InviteCodeFormValues = {
 
 export function UsersPage() {
   const { message } = App.useApp();
+  const { user: currentUser } = useAdminAuth();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserSummaryRecord | null>(null);
@@ -64,17 +66,12 @@ export function UsersPage() {
   const [harnessForm] = Form.useForm<HarnessProvisionFormValues>();
   const [inviteForm] = Form.useForm<InviteCodeFormValues>();
 
-  const currentUserQuery = useQuery({
-    queryKey: ['user-service', 'current-user'],
-    queryFn: () => api.currentUser(),
-  });
   const usersQuery = useQuery({
     queryKey: ['user-service', 'users'],
     queryFn: () => api.listUsers(),
   });
 
-  const currentUser = currentUserQuery.data?.user;
-  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isSuperAdmin = currentUser.role === 'super_admin';
 
   const inviteCodesQuery = useQuery({
     queryKey: ['user-service', 'invite-codes'],
@@ -98,10 +95,7 @@ export function UsersPage() {
     onSuccess: async () => {
       message.success('用户已更新');
       closeDrawer();
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['user-service', 'users'] }),
-        queryClient.invalidateQueries({ queryKey: ['user-service', 'current-user'] }),
-      ]);
+      await queryClient.invalidateQueries({ queryKey: ['user-service', 'users'] });
     },
     onError: showError,
   });

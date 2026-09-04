@@ -50,6 +50,7 @@ export function clearAuthToken(): void {
 
 const rawRequest = createJsonApiClient({
   baseUrl: API_BASE_URL,
+  timeoutMs: 30_000,
   getAuthToken,
   onUnauthorized: clearAuthToken,
 });

@@ -1,10 +1,10 @@
 import { Flex, Spin } from 'antd';
-import { useQuery } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
-import { api } from './api/client';
+import { useAdminAuth } from '../../app/auth/AuthProvider';
 import { I18nProvider } from './i18n/I18nProvider';
+import type { CurrentUser } from './types';
 
 const McpCatalogPage = lazy(() => import('./pages/McpCatalogPage').then((module) => ({ default: module.McpCatalogPage })));
 const RuntimePreviewPage = lazy(() => import('./pages/RuntimePreviewPage').then((module) => ({ default: module.RuntimePreviewPage })));
@@ -18,11 +18,14 @@ const PluginReleasesPage = lazy(() => import('./pages/PluginReleasesPage').then(
 const AgentPromptVersionsPage = lazy(() => import('./pages/agentPrompts/AgentPromptVersionsPage').then((module) => ({ default: module.AgentPromptVersionsPage })));
 
 export default function PluginManagementModuleRoutes() {
-  const currentUserQuery = useQuery({ queryKey: ['plugin-management', 'plugin-management-current-user'], queryFn: api.currentUser, retry: false });
-  if (currentUserQuery.isLoading || !currentUserQuery.data) {
-    return <Flex align="center" justify="center" style={{ minHeight: 320 }}><Spin size="large" /></Flex>;
-  }
-  const user = currentUserQuery.data;
+  const { user: adminUser } = useAdminAuth();
+  const user: CurrentUser = {
+    principal_type: adminUser.principal_type || 'human_user',
+    user_id: adminUser.id,
+    username: adminUser.username,
+    display_name: adminUser.display_name,
+    role: adminUser.role,
+  };
   const requireSuperAdmin = (element: React.ReactElement) =>
     user.role === 'super_admin' ? element : <Navigate to="mcp" replace />;
   return (
@@ -47,22 +50,22 @@ export default function PluginManagementModuleRoutes() {
   );
 }
 
-function PluginCatalogRoute({ user }: { user: Awaited<ReturnType<typeof api.currentUser>> }) {
+function PluginCatalogRoute({ user }: { user: CurrentUser }) {
   const navigate = useNavigate();
   return <PluginCatalogAdminPage user={user} onOpenReleases={(pluginId) => navigate(`/plugins/releases?plugin_id=${encodeURIComponent(pluginId)}`)} />;
 }
 
-function PluginReleasesRoute({ user }: { user: Awaited<ReturnType<typeof api.currentUser>> }) {
+function PluginReleasesRoute({ user }: { user: CurrentUser }) {
   const [searchParams] = useSearchParams();
   return <PluginReleasesPage user={user} initialPluginId={searchParams.get('plugin_id')} />;
 }
 
-function SystemAgentsRoute({ user }: { user: Awaited<ReturnType<typeof api.currentUser>> }) {
+function SystemAgentsRoute({ user }: { user: CurrentUser }) {
   const navigate = useNavigate();
   return <SystemAgentsPage user={user} onOpenPromptSettings={(agentKey) => navigate(`/plugins/agents/${encodeURIComponent(agentKey)}/prompts`)} />;
 }
 
-function AgentPromptRoute({ user }: { user: Awaited<ReturnType<typeof api.currentUser>> }) {
+function AgentPromptRoute({ user }: { user: CurrentUser }) {
   const navigate = useNavigate();
   const { agentKey = '' } = useParams();
   return <AgentPromptVersionsPage user={user} agentKey={decodeURIComponent(agentKey)} onBack={() => navigate('/plugins/agents')} />;

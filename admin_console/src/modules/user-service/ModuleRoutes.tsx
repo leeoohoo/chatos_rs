@@ -1,9 +1,10 @@
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
-import { AgentAccountsPage } from './pages/AgentAccountsPage';
-import { ModelsPage } from './pages/ModelsPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { UsersPage } from './pages/UsersPage';
+const AgentAccountsPage = lazy(() => import('./pages/AgentAccountsPage').then((module) => ({ default: module.AgentAccountsPage })));
+const ModelsPage = lazy(() => import('./pages/ModelsPage').then((module) => ({ default: module.ModelsPage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
+const UsersPage = lazy(() => import('./pages/UsersPage').then((module) => ({ default: module.UsersPage })));
 
 export default function UserServiceModuleRoutes() {
   return (

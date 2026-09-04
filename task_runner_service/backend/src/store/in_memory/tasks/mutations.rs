@@ -63,6 +63,16 @@ impl InMemoryStore {
             .collect()
     }
 
+    pub(in crate::store) fn list_task_prerequisites_for_tasks(
+        &self,
+        task_ids: &[String],
+    ) -> Vec<TaskPrerequisiteRecord> {
+        task_ids
+            .iter()
+            .flat_map(|task_id| self.list_task_prerequisites(task_id))
+            .collect()
+    }
+
     pub(in crate::store) fn list_task_dependents(
         &self,
         prerequisite_task_id: &str,

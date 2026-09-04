@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Form,
@@ -19,19 +19,13 @@ import {
 } from './tasks/taskPageUtils';
 import { buildTaskTableColumns } from './tasks/taskTableColumns';
 import { TaskStatsCards } from './tasks/TaskStatsCards';
-import {
-  TaskMemoryDrawer,
-  type TaskMemoryRoleFilter,
-  type TaskMemorySummaryFilter,
+import type {
+  TaskMemoryRoleFilter,
+  TaskMemorySummaryFilter,
 } from './tasks/TaskMemoryDrawer';
-import { TaskDetailDrawer } from './tasks/TaskDetailDrawer';
-import { TaskEditorDrawer } from './tasks/TaskEditorDrawer';
-import { BatchTaskRunModal, TaskRunModal } from './tasks/TaskRunModals';
 import { TaskBatchActionsBar } from './tasks/TaskBatchActionsBar';
 import { TaskListToolbar } from './tasks/TaskListToolbar';
 import { TaskListTable } from './tasks/TaskListTable';
-import { TaskMcpPromptPreviewModal } from './tasks/TaskMcpPromptPreviewModal';
-import { TaskSubtasksDrawer } from './tasks/TaskSubtasksDrawer';
 import { useTasksPageEffects } from './tasks/useTasksPageEffects';
 import { useTaskMutations } from './tasks/useTaskMutations';
 import { useTasksPageData } from './tasks/useTasksPageData';
@@ -40,6 +34,14 @@ import type {
   TaskRecord,
   TaskStatus,
 } from '../types';
+
+const TaskDetailDrawer = lazy(() => import('./tasks/TaskDetailDrawer').then((module) => ({ default: module.TaskDetailDrawer })));
+const TaskEditorDrawer = lazy(() => import('./tasks/TaskEditorDrawer').then((module) => ({ default: module.TaskEditorDrawer })));
+const TaskMcpPromptPreviewModal = lazy(() => import('./tasks/TaskMcpPromptPreviewModal').then((module) => ({ default: module.TaskMcpPromptPreviewModal })));
+const TaskMemoryDrawer = lazy(() => import('./tasks/TaskMemoryDrawer').then((module) => ({ default: module.TaskMemoryDrawer })));
+const TaskSubtasksDrawer = lazy(() => import('./tasks/TaskSubtasksDrawer').then((module) => ({ default: module.TaskSubtasksDrawer })));
+const TaskRunModal = lazy(() => import('./tasks/TaskRunModals').then((module) => ({ default: module.TaskRunModal })));
+const BatchTaskRunModal = lazy(() => import('./tasks/TaskRunModals').then((module) => ({ default: module.BatchTaskRunModal })));
 
 export function TasksPage() {
   const { t } = useI18n();
@@ -61,6 +63,7 @@ export function TasksPage() {
   const [keywordFilter, setKeywordFilter] = useState('');
   const [tagFilter, setTagFilter] = useState<string | undefined>(undefined);
   const [scheduledOnly, setScheduledOnly] = useState(false);
+  const [taskIndexEnabled, setTaskIndexEnabled] = useState(false);
   const [taskPage, setTaskPage] = useState(1);
   const [taskPageSize, setTaskPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [memoryRoleFilter, setMemoryRoleFilter] = useState<TaskMemoryRoleFilter>('all');
@@ -122,6 +125,7 @@ export function TasksPage() {
     mcpPreviewTask,
     batchRunTaskIds,
     editingTaskId: editingTask?.id,
+    taskIndexEnabled,
   });
 
   const { taskSubtasksQuery } = useTasksPageEffects({
@@ -213,12 +217,14 @@ export function TasksPage() {
   }
 
   function openEditDrawer(task: TaskRecord) {
+    setTaskIndexEnabled(true);
     setEditingTask(task);
     form.setFieldsValue(buildEditTaskFormValues(task));
     setDrawerOpen(true);
   }
 
   function openDetailDrawer(task: TaskRecord) {
+    setTaskIndexEnabled(true);
     setDetailTaskId(task.id);
     setDetailTaskPreview(task);
     const next = new URLSearchParams(searchParams);
@@ -343,6 +349,7 @@ export function TasksPage() {
           statusFilterOptions={statusFilterOptions}
           onKeywordFilterChange={setKeywordFilter}
           onTagFilterChange={setTagFilter}
+          onTagDropdownOpen={() => setTaskIndexEnabled(true)}
           onModelFilterChange={(value) => {
             const next = new URLSearchParams(searchParams);
             if (value) {
@@ -415,7 +422,8 @@ export function TasksPage() {
         />
       </Space>
 
-      <TaskDetailDrawer
+      <Suspense fallback={null}>
+      {detailTaskId ? <TaskDetailDrawer
         t={t}
         open={Boolean(detailTaskId)}
         task={selectedTask}
@@ -452,9 +460,9 @@ export function TasksPage() {
           navigate(`/task-runner/prompts?${search.toString()}`);
         }}
         onOpenDetail={openDetailDrawer}
-      />
+      /> : null}
 
-      <TaskEditorDrawer
+      {drawerOpen ? <TaskEditorDrawer
         t={t}
         open={drawerOpen}
         editingTask={editingTask}
@@ -465,9 +473,9 @@ export function TasksPage() {
         prerequisiteTaskOptions={prerequisiteTaskOptions}
         onClose={closeTaskDrawer}
         onSubmit={handleSubmit}
-      />
+      /> : null}
 
-      <TaskMcpPromptPreviewModal
+      {mcpPreviewTask ? <TaskMcpPromptPreviewModal
         t={t}
         title={mcpPreviewTask
           ? t('tasks.preview.titleWithName', { title: mcpPreviewTask.title })
@@ -476,9 +484,9 @@ export function TasksPage() {
         preview={taskMcpPromptPreviewQuery.data}
         loading={taskMcpPromptPreviewQuery.isLoading}
         onClose={closeTaskMcpPreviewModal}
-      />
+      /> : null}
 
-      <TaskMemoryDrawer
+      {memoryTask ? <TaskMemoryDrawer
         t={t}
         task={memoryTask}
         roleFilter={memoryRoleFilter}
@@ -500,9 +508,9 @@ export function TasksPage() {
           ]);
         }}
         onSummarize={(taskId) => summarizeTaskMemoryMutation.mutate(taskId)}
-      />
+      /> : null}
 
-      <TaskSubtasksDrawer
+      {subtasksParentTask ? <TaskSubtasksDrawer
         t={t}
         open={Boolean(subtasksParentTask)}
         parentTask={subtasksParentTask}
@@ -512,9 +520,9 @@ export function TasksPage() {
         onClose={closeSubtasksDrawer}
         onOpenDetail={openDetailDrawer}
         onOpenRunHistory={jumpToRunHistory}
-      />
+      /> : null}
 
-      <TaskRunModal
+      {runningTask ? <TaskRunModal
         t={t}
         task={runningTask}
         form={runForm}
@@ -522,9 +530,9 @@ export function TasksPage() {
         loading={runTaskMutation.isPending}
         onClose={closeRunModal}
         onSubmit={handleRunTask}
-      />
+      /> : null}
 
-      <BatchTaskRunModal
+      {batchRunTaskIds.length ? <BatchTaskRunModal
         t={t}
         taskIds={batchRunTaskIds}
         tasks={batchRunTasks}
@@ -533,7 +541,8 @@ export function TasksPage() {
         loading={batchStartTaskRunsMutation.isPending}
         onClose={closeBatchRunModal}
         onSubmit={handleBatchRunTask}
-      />
+      /> : null}
+      </Suspense>
     </>
   );
 }

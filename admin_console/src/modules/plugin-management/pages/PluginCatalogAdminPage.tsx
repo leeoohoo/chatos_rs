@@ -53,21 +53,32 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
   const isAdmin = user.role === 'super_admin';
   const pluginsQuery = useQuery({
-    queryKey: ['plugin-management', 'admin-plugins'],
-    queryFn: () => api.listAdminPlugins({ limit: 500 }),
+    queryKey: ['plugin-management', 'admin-plugins', page, pageSize],
+    queryFn: () => api.listAdminPlugins({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    }),
     enabled: isAdmin,
+    placeholderData: (previousData) => previousData,
   });
   const marketplacesQuery = useQuery({
     queryKey: ['plugin-management', 'plugin-marketplaces'],
     queryFn: api.listPluginMarketplaces,
-    enabled: isAdmin,
+    enabled: isAdmin && modalOpen,
   });
   const publishersQuery = useQuery({
     queryKey: ['plugin-management', 'plugin-publishers', 'admin'],
     queryFn: () => api.listAdminPluginPublishers({ limit: 500 }),
-    enabled: isAdmin,
+    enabled: isAdmin && modalOpen,
+  });
+  const wizardPluginsQuery = useQuery({
+    queryKey: ['plugin-management', 'admin-plugins', 'publish-wizard'],
+    queryFn: () => api.listAdminPlugins({ limit: 500 }),
+    enabled: isAdmin && modalOpen,
   });
   const columns = useMemo<ColumnsType<PluginCatalogListItem>>(
     () => [
@@ -176,12 +187,21 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
         dataSource={pluginsQuery.data?.items || []}
         loading={pluginsQuery.isLoading}
         scroll={{ x: 1450 }}
-        pagination={{ pageSize: 12 }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: pluginsQuery.data?.total || 0,
+          showSizeChanger: true,
+          onChange: (nextPage, nextPageSize) => {
+            setPage(nextPageSize === pageSize ? nextPage : 1);
+            setPageSize(nextPageSize);
+          },
+        }}
       />
       <PluginPublishWizard
         open={modalOpen}
         marketplaces={marketplacesQuery.data?.items || []}
-        plugins={pluginsQuery.data?.items || []}
+        plugins={wizardPluginsQuery.data?.items || []}
         publishers={publishersQuery.data?.items || []}
         onClose={() => setModalOpen(false)}
         onPublished={(result) => {

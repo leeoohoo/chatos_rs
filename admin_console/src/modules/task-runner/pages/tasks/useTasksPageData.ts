@@ -44,6 +44,7 @@ type UseTasksPageDataParams = {
   mcpPreviewTask: TaskRecord | null;
   batchRunTaskIds: string[];
   editingTaskId?: string;
+  taskIndexEnabled: boolean;
 };
 
 function normalizeProjectId(value?: string | null) {
@@ -90,6 +91,7 @@ export function useTasksPageData({
   mcpPreviewTask,
   batchRunTaskIds,
   editingTaskId,
+  taskIndexEnabled,
 }: UseTasksPageDataParams) {
   const scheduleModeLabels = useMemo(
     () =>
@@ -147,6 +149,7 @@ export function useTasksPageData({
   const taskIndexQuery = useQuery({
     queryKey: ['task-runner', 'task-index'],
     queryFn: api.getTaskIndex,
+    enabled: taskIndexEnabled || Boolean(detailTaskId) || Boolean(editingTaskId),
   });
   const selectedTaskQuery = useQuery({
     queryKey: ['task-runner', 'task', detailTaskId],

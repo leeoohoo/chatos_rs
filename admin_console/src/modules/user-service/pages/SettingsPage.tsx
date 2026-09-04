@@ -4,13 +4,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Card, Descriptions, Space, Typography } from 'antd';
 
+import { useAdminAuth } from '../../../app/auth/AuthProvider';
 import { api } from '../api/client';
 
 export function SettingsPage() {
-  const currentUserQuery = useQuery({
-    queryKey: ['user-service', 'current-user'],
-    queryFn: () => api.currentUser(),
-  });
+  const { user: currentUser } = useAdminAuth();
   const systemConfigQuery = useQuery({
     queryKey: ['user-service', 'system-config'],
     queryFn: () => api.getSystemConfig(),
@@ -34,22 +32,16 @@ export function SettingsPage() {
         description="这版用户微服务负责统一用户、Agent 账号和共享模型配置。Task Runner 的短期访问凭证由 chatos 后端按需自动换取，用户不需要手动生成。"
       />
 
-      <Card title="当前登录用户" loading={currentUserQuery.isLoading}>
-        {currentUserQuery.data ? (
-          <Descriptions bordered column={1} size="small">
-            <Descriptions.Item label="ID">{currentUserQuery.data.user.id}</Descriptions.Item>
-            <Descriptions.Item label="Username">
-              {currentUserQuery.data.user.username}
-            </Descriptions.Item>
-            <Descriptions.Item label="Display Name">
-              {currentUserQuery.data.user.display_name}
-            </Descriptions.Item>
-            <Descriptions.Item label="Role">{currentUserQuery.data.user.role}</Descriptions.Item>
-            <Descriptions.Item label="Principal Type">
-              {currentUserQuery.data.user.principal_type}
-            </Descriptions.Item>
-          </Descriptions>
-        ) : null}
+      <Card title="当前登录用户">
+        <Descriptions bordered column={1} size="small">
+          <Descriptions.Item label="ID">{currentUser.id}</Descriptions.Item>
+          <Descriptions.Item label="Username">{currentUser.username}</Descriptions.Item>
+          <Descriptions.Item label="Display Name">{currentUser.display_name}</Descriptions.Item>
+          <Descriptions.Item label="Role">{currentUser.role}</Descriptions.Item>
+          <Descriptions.Item label="Principal Type">
+            {currentUser.principal_type}
+          </Descriptions.Item>
+        </Descriptions>
       </Card>
 
       <Card title="系统配置" loading={systemConfigQuery.isLoading}>

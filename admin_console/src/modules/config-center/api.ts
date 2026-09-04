@@ -31,6 +31,7 @@ export function clearToken(): void {
 
 const rawRequest = createJsonApiClient({
   baseUrl: ADMIN_SERVICE_BASES.configCenter,
+  timeoutMs: 30_000,
   getAuthToken: getToken,
   onUnauthorized: clearToken,
   readSuccessResponse: (response) => response.json(),

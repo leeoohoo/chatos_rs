@@ -54,6 +54,7 @@ export function ProjectDetailPage() {
   const [editingProfileField, setEditingProfileField] =
     useState<ProfileMarkdownFieldName | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
 
   const projectQuery = useQuery({
     queryKey: ['project-management', 'project', projectId],
@@ -78,7 +79,7 @@ export function ProjectDetailPage() {
   const graphQuery = useQuery({
     queryKey: ['project-management', 'project-graph', projectId, showArchived],
     queryFn: () => api.getProjectDependencyGraph(projectId!, { include_archived: showArchived }),
-    enabled: Boolean(projectId),
+    enabled: Boolean(projectId) && activeTab === 'graph',
   });
   const requirementDepsQuery = useQuery({
     queryKey: ['project-management', 'requirement-deps', requirementDepTarget?.id],
@@ -274,8 +275,12 @@ export function ProjectDetailPage() {
           profileQuery.refetch();
           requirementsQuery.refetch();
           workItemsQuery.refetch();
-          graphQuery.refetch();
+          if (activeTab === 'graph') {
+            graphQuery.refetch();
+          }
         }}
+        activeTab={activeTab}
+        onActiveTabChange={setActiveTab}
         profileForm={profileForm}
         profileBackground={profileBackground}
         profileIntroduction={profileIntroduction}
