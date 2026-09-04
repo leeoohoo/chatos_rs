@@ -16,7 +16,7 @@ struct MCPService: Sendable {
     func makeServer() async -> Server {
         let server = Server(
             name: "visual-computer-use",
-            version: "0.8.12",
+            version: "0.8.13",
             title: "Visual Computer Use for macOS",
             instructions: "Treat screenshots as the source of UI truth; do not infer DOM or application internals. Every screenshot includes a visibly non-system AI orbit reticle and virtualCursorGlobal. When the cursor is inside the capture, cursorScreenshotPixel gives its top-left-origin image pixel coordinate; otherwise an edge indicator points toward it. After full-screen discovery, reuse the smallest recognizable global region for move_mouse and click to reduce capture and vision latency. Never skip the move_mouse or click image. key_press and type_text may set capture_after=false only for deterministic intermediate keyboard steps after the app and focus were verified; the next visible state change must still be observed. Read captureRegionGlobal, globalDesktopBounds, display frames, and globalPointsPerScreenshotPixelX/Y from every observation. move_mouse only animates the visible virtual reticle; click posts a real CoreGraphics click at its verified cyan center hotspot.",
             capabilities: .init(tools: .init(listChanged: false)),

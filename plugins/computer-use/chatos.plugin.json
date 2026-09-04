@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "open-computer-use",
-  "version": "0.8.12",
+  "version": "0.8.13",
   "description": "Visual-first macOS Computer Use MCP that observes real screenshots and sends real CoreGraphics input events.",
   "author": {
     "name": "Open Computer Use"

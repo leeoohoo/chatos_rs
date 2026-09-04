@@ -21,7 +21,7 @@ test('package has no install lifecycle scripts', () => {
 });
 
 test('manifest launches the installed stdio binary', () => {
-  assert.deepEqual(manifest.mcpServers['browser-cdp'], {
+  assert.deepEqual(manifest.mcpServers['browser-cdp-mcp'], {
     type: 'stdio',
     bin: 'chatos-browser-cdp',
     requiresExclusiveExecution: true,

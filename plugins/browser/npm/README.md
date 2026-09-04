@@ -6,7 +6,7 @@ Automated clicks use a visible virtual mouse. Browser mode is not a model input;
 result reports the actual mode. The npm package is a platform launcher only and never downloads a
 browser or executable during installation.
 
-The current `0.1.11` milestone supports managed Chrome, bounded Console/Network/
+The current `0.1.12` milestone supports managed Chrome, bounded Console/Network/
 WebSocket observation, HAR export, safe request routes, dialog handling, grant-only uploads,
 artifact-confined downloads, raw CDP commands, and an authenticated Existing-Chrome backend. The
 Existing-Chrome path requires the Chatos Browser Bridge Chrome extension. The installed Browser MCP
