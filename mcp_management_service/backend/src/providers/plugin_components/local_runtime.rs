@@ -110,6 +110,7 @@ impl PluginComponentProvider {
         route: &ResolvedMcpRoute,
         original_tool_name: &str,
         arguments: Value,
+        invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
         let host_binding = snapshot
             .plugin_local_tool_component_bindings
@@ -262,6 +263,7 @@ impl PluginComponentProvider {
                 "adapter_session_id".to_string(),
                 json!(binding.adapter_session_id),
             ),
+            ("invocation_id".to_string(), json!(invocation_id)),
             ("operation".to_string(), json!(execution_operation)),
         ]);
         if let Some(max_chars) = snapshot.tool_result_max_chars {
@@ -308,7 +310,12 @@ impl PluginComponentProvider {
                 "Plugin Local component execute returned invalid JSON: {error}"
             ))
         })?;
-        validate_execute_identity_for_operation(binding, &response, execution_operation)?;
+        validate_execute_identity_for_operation(
+            binding,
+            &response,
+            execution_operation,
+            invocation_id,
+        )?;
         let result = response.get("result").ok_or_else(|| {
             ProviderCallError::invalid_response(
                 "Plugin Local component execute response is missing result",
@@ -687,14 +694,23 @@ fn skill_activation_payload(
     instructions: &str,
     deduplicated: bool,
 ) -> Value {
+    let activation_receipt = json!({
+        "activation_ref": activation.claims.activation_ref,
+        "activation_evidence": activation.evidence,
+        "skill_ref": activation.claims.skill_ref,
+        "name": skill.metadata.name,
+        "parent_activation_ref": activation.parent_activation_ref,
+        "depth": activation.depth,
+    });
     json!({
         "content": [{
             "type": "text",
             "text": format!(
-                "{}\n\n[Activated Plugin Skill: {}]\n{}",
+                "{}\n\n[Activated Plugin Skill: {}]\n{}\n\n[Plugin Skill Activation Receipt]\n{}\nUse activation_evidence only as an exact gated-tool argument. Never edit it, substitute activation_ref for it, or disclose it in user-facing output.",
                 super::THIRD_PARTY_PLUGIN_ENVELOPE,
                 skill.metadata.name,
                 instructions,
+                serde_json::to_string(&activation_receipt).unwrap_or_else(|_| "{}".to_string()),
             )
         }],
         "structuredContent": {

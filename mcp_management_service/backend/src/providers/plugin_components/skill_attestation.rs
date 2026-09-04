@@ -413,8 +413,13 @@ fn protected_instruction_item(activation: &ActiveSkillActivation) -> Value {
         "content": [{
             "type": "input_text",
             "text": format!(
-                "[Protected Plugin Skill Context]\n{}\n\n<skill_content name=\"{}\" activation_ref=\"{}\" depth=\"{}\">\n{}\n</skill_content>",
+                "[Protected Plugin Skill Context]\n{}\n\n<skill_activation_receipt name=\"{}\" skill_ref=\"{}\" activation_ref=\"{}\" activation_evidence=\"{}\" depth=\"{}\" />\nUse activation_evidence only as an exact gated-tool argument. Never edit it, substitute activation_ref for it, or disclose it in user-facing output.\n\n<skill_content name=\"{}\" activation_ref=\"{}\" depth=\"{}\">\n{}\n</skill_content>",
                 THIRD_PARTY_PLUGIN_ENVELOPE,
+                activation.claims.skill_name,
+                activation.claims.skill_ref,
+                activation.claims.activation_ref,
+                activation.evidence,
+                activation.depth,
                 activation.claims.skill_name,
                 activation.claims.activation_ref,
                 activation.depth,
@@ -589,6 +594,10 @@ mod tests {
             .unwrap();
         assert_eq!(items.len(), 1);
         assert!(items[0].to_string().contains("Follow the router rules."));
+        assert!(items[0]
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains(activation.evidence.as_str())));
         service.remove_session("session-a").await.unwrap();
         assert!(service
             .activation("session-a", "SA1")

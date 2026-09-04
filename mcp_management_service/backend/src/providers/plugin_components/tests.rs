@@ -430,6 +430,7 @@ async fn local_command_is_approved_once_during_prepare_and_reused_without_duplic
             &routes[0],
             COMMAND_TOOL_NAME,
             json!({"arguments": " src/lib.rs "}),
+            "invocation-command-1",
         )
         .await
         .unwrap();
@@ -446,6 +447,7 @@ async fn local_command_is_approved_once_during_prepare_and_reused_without_duplic
             &routes[0],
             COMMAND_TOOL_NAME,
             json!({"arguments": "README.md"}),
+            "invocation-command-2",
         )
         .await
         .expect_err("arguments outside the Runtime Session selection must be rejected");
@@ -496,6 +498,7 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
                         "artifact_sha256": binding.artifact_sha256,
                         "component_key": binding.component.component_key,
                         "adapter_session_id": "adapter-progressive-skill-1",
+                        "invocation_id": body["invocation_id"],
                         "operation": SKILL_READ_RESOURCE_OPERATION,
                         "result": {
                             "skill_id": "review-skill",
@@ -514,6 +517,7 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
                         "artifact_sha256": binding.artifact_sha256,
                         "component_key": binding.component.component_key,
                         "adapter_session_id": "adapter-progressive-skill-1",
+                        "invocation_id": body["invocation_id"],
                         "operation": SKILL_ACTIVATE_OPERATION,
                         "result": {
                             "skill_id": "review-skill",
@@ -574,6 +578,7 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
             &routes[0],
             SKILL_ACTIVATE_TOOL_NAME,
             json!({"skill_ref": skill_ref(&local_bindings[&immutable.resource_id])}),
+            "invocation-skill-activate-1",
         )
         .await
         .unwrap();
@@ -584,12 +589,19 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
     assert!(outcome.result["structuredContent"]["activation_evidence"]
         .as_str()
         .is_some_and(|value| value.split('.').count() == 3));
+    assert_eq!(
+        requests.lock().unwrap()[1].1["invocation_id"],
+        "invocation-skill-activate-1"
+    );
     let activation_ref = outcome.result["structuredContent"]["activation_ref"]
         .as_str()
         .unwrap();
     let activation_evidence = outcome.result["structuredContent"]["activation_evidence"]
         .as_str()
         .unwrap();
+    assert!(outcome.result["content"][0]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains(activation_evidence)));
     let listed = provider
         .call_tool(
             &runtime,
@@ -599,6 +611,7 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
                 "activation_ref": activation_ref,
                 "activation_evidence": activation_evidence
             }),
+            "invocation-skill-list-1",
         )
         .await
         .unwrap();
@@ -618,11 +631,13 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
                 "offset": 0,
                 "max_chars": 8
             }),
+            "invocation-skill-read-1",
         )
         .await
         .unwrap();
     assert_eq!(read.result["content"][0]["text"], "# Guide\n");
     let resource_request = requests.lock().unwrap()[2].1.clone();
+    assert_eq!(resource_request["invocation_id"], "invocation-skill-read-1");
     assert!(resource_request["arguments"]
         .get("activation_evidence")
         .is_none());

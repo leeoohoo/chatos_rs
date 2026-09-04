@@ -196,16 +196,22 @@ pub fn normalize_responses_request_input(input: &Value) -> Value {
         items
             .iter()
             .map(|item| {
-                let Some(content) = item.get("content").filter(|content| content.is_array()) else {
-                    return item.clone();
-                };
-                let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
                 let mut normalized = item.clone();
                 if let Some(map) = normalized.as_object_mut() {
-                    map.insert(
-                        "content".to_string(),
-                        normalize_response_content_parts_for_role(content, role),
-                    );
+                    // `_meta` belongs to ChatOS' internal runtime envelope. It is used while
+                    // composing and de-duplicating protected Skill context, but it is not a
+                    // valid Responses API input-item field and must never cross the provider
+                    // request boundary.
+                    map.remove("_meta");
+
+                    if let Some(content) = item.get("content").filter(|content| content.is_array())
+                    {
+                        let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
+                        map.insert(
+                            "content".to_string(),
+                            normalize_response_content_parts_for_role(content, role),
+                        );
+                    }
                 }
                 normalized
             })
@@ -399,8 +405,8 @@ mod tests {
 
     use super::{
         append_input_items, assistant_visible_text, content_parts_to_text,
-        convert_parts_to_response_input, response_content_has_image_part, to_message_item,
-        to_message_item_with_reasoning,
+        convert_parts_to_response_input, normalize_responses_request_input,
+        response_content_has_image_part, to_message_item, to_message_item_with_reasoning,
     };
 
     #[test]
@@ -519,5 +525,26 @@ mod tests {
         ]);
 
         assert!(response_content_has_image_part(&content));
+    }
+
+    #[test]
+    fn responses_request_input_strips_internal_item_metadata() {
+        let input = json!([{
+            "type": "message",
+            "role": "system",
+            "content": [{"type": "input_text", "text": "protected skill rules"}],
+            "_meta": {
+                "chatos/protectedSkillActivationRef": "SA-router",
+                "chatos/pluginId": "plugin-browser"
+            }
+        }]);
+
+        let normalized = normalize_responses_request_input(&input);
+
+        assert_eq!(normalized[0].get("_meta"), None);
+        assert_eq!(
+            normalized[0]["content"],
+            json!([{"type": "input_text", "text": "protected skill rules"}])
+        );
     }
 }

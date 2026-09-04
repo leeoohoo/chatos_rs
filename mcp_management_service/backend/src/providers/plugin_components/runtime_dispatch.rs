@@ -15,14 +15,21 @@ impl PluginComponentProvider {
         route: &ResolvedMcpRoute,
         original_tool_name: &str,
         arguments: Value,
+        invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
         if route.provider_kind != McpProviderKind::PluginLocal {
             return Err(ProviderCallError::provider_unavailable(
                 "Plugin component route is not local",
             ));
         }
-        self.call_local(snapshot, route, original_tool_name, arguments)
-            .await
+        self.call_local(
+            snapshot,
+            route,
+            original_tool_name,
+            arguments,
+            invocation_id,
+        )
+        .await
     }
 
     pub(in crate::providers) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
