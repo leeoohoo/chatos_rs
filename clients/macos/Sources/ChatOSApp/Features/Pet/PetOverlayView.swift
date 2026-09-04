@@ -50,7 +50,6 @@ struct PetMessageView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var store: PetOverlayStore
     @ObservedObject var interactionState: PetOverlayInteractionState
-    @ObservedObject var preferences: PetPreferencesStore
     @ObservedObject var approvalViewModel: LocalConnectorControlCenterViewModel
     let onOpen: (PetActivity) -> Void
     let onRetry: (PetActivity, String) async throws -> Void
@@ -59,7 +58,6 @@ struct PetMessageView: View {
     let onLoadPrompt: (PetActivity) async throws -> AskUserPrompt
     let onSubmitPrompt: (AskUserPrompt, AskUserSubmission) async throws -> Void
     let onCancelPrompt: (AskUserPrompt) async throws -> Void
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     @State private var retryInstruction = ""
     @State private var isRetrying = false
@@ -69,14 +67,7 @@ struct PetMessageView: View {
     @State private var cancellationErrors: [String: String] = [:]
 
     var body: some View {
-        if interactionState.isQuickChatPresented {
-            PetQuickChatView(
-                interactionState: interactionState,
-                resources: model.petQuickChatResources,
-                hasPendingNotification: store.presentation.primaryActivity != nil,
-                onInspectTaskReply: onInspectTaskReply
-            )
-        } else if let primaryActivity = store.presentation.primaryActivity
+        if let primaryActivity = store.presentation.primaryActivity
             ?? interactionState.inspectedTaskActivity {
             let activity = interactionState.inspectedTaskActivity
                 ?? (interactionState.isMessageExpanded
@@ -146,7 +137,6 @@ struct PetMessageView: View {
 
     private func compactCard(_ activity: PetActivity) -> some View {
         Button {
-            interactionState.isQuickChatPresented = false
             interactionState.selectedActivityID = activity.id
             interactionState.isMessageExpanded = true
         } label: {

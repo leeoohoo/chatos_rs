@@ -4,8 +4,6 @@ import SwiftUI
 struct PetQuickChatView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var interactionState: PetOverlayInteractionState
-    let resources: [PetQuickChatResource]
-    let hasPendingNotification: Bool
     let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
@@ -35,6 +33,10 @@ struct PetQuickChatView: View {
         interactionState.selectedQuickChatResourceID.flatMap { selectedID in
             resources.first(where: { $0.id == selectedID })
         }
+    }
+
+    private var resources: [PetQuickChatResource] {
+        model.petQuickChatResources
     }
 
     private var resourceList: some View {
@@ -84,22 +86,6 @@ struct PetQuickChatView: View {
                         .padding(.top, 10)
                     }
                 }
-                .padding(12)
-            }
-
-            if hasPendingNotification {
-                Divider()
-                Button {
-                    close()
-                } label: {
-                    Label(
-                        model.localized("返回任务通知", english: "Back to Task Notification"),
-                        systemImage: "bell.badge.fill"
-                    )
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
                 .padding(12)
             }
         }

@@ -200,6 +200,26 @@ struct NativeConnectorGateway: Sendable {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/gzip, application/octet-stream", forHTTPHeaderField: "Accept")
         request.setValue("local-connector-swift", forHTTPHeaderField: "X-Chatos-Client-Surface")
+        var lastError: Error?
+        for attempt in 0..<Self.artifactDownloadAttemptCount {
+            do {
+                return try await downloadPluginArtifact(request: request, token: token)
+            } catch {
+                lastError = error
+                guard attempt + 1 < Self.artifactDownloadAttemptCount,
+                      Self.shouldRetryArtifactDownload(after: error) else {
+                    throw error
+                }
+                try await Task.sleep(for: .milliseconds(500 * (attempt + 1)))
+            }
+        }
+        throw lastError ?? NativeConnectorError.pluginInstallation("Plugin 安装包下载失败")
+    }
+
+    private func downloadPluginArtifact(
+        request: URLRequest,
+        token: String
+    ) async throws -> URL {
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
@@ -218,6 +238,21 @@ struct NativeConnectorGateway: Sendable {
             .appendingPathComponent("chatos-plugin-\(UUID().uuidString).tgz")
         try FileManager.default.moveItem(at: temporaryURL, to: retainedURL)
         return retainedURL
+    }
+
+    private static let artifactDownloadAttemptCount = 3
+
+    static func shouldRetryArtifactDownload(after error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        return [
+            .timedOut,
+            .cannotFindHost,
+            .cannotConnectToHost,
+            .networkConnectionLost,
+            .dnsLookupFailed,
+            .notConnectedToInternet,
+            .resourceUnavailable,
+        ].contains(urlError.code)
     }
 
     private func request<Response: Decodable & Sendable>(

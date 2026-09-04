@@ -2,7 +2,6 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var showingNotepad = false
 
     var body: some View {
         AuthenticationGateView(authentication: model.authentication) {
@@ -11,7 +10,7 @@ struct RootView: View {
     }
 
     private var workspace: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $model.navigationSplitVisibility) {
             ResourceSidebar()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 244, max: 290)
         } detail: {
@@ -40,11 +39,11 @@ struct RootView: View {
             .workspaceFill()
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .sidebarToggle)
         .tint(.accentColor)
-        .toolbar { WorkspaceToolbar(showingNotepad: $showingNotepad) }
-        .sheet(isPresented: $showingNotepad) {
+        .sheet(isPresented: $model.isNotepadPresented) {
             NotepadSheet(service: model.notepadService) {
-                showingNotepad = false
+                model.isNotepadPresented = false
             }
         }
     }
@@ -76,6 +75,7 @@ struct RootView: View {
                 TerminalWorkspaceView()
             case let .remote(remoteID):
                 RemoteConnectionDetailView(connectionID: remoteID)
+                    .id(remoteID)
             case nil:
                 ContentUnavailableView(
                     model.localized("选择一个资源开始", english: "Select a resource to begin"),
@@ -91,19 +91,39 @@ struct RootView: View {
     }
 }
 
-private struct WorkspaceToolbar: ToolbarContent {
-    @EnvironmentObject private var model: AppModel
-    @Binding var showingNotepad: Bool
+struct WorkspaceTitlebarActionsView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject private var authentication: AuthenticationViewModel
 
-    var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button { showingNotepad = true } label: {
-                Image(systemName: "note.text")
+    init(model: AppModel) {
+        self.model = model
+        _authentication = ObservedObject(wrappedValue: model.authentication)
+    }
+
+    var body: some View {
+        Group {
+            if case .authenticated = authentication.phase {
+                controls
             }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 36)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 8) {
+            Button { model.isNotepadPresented = true } label: {
+                Image(systemName: "note.text")
+                    .frame(width: 28, height: 28)
+                    .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+            }
+            .buttonStyle(.plain)
             .help(model.localized("打开记事本", english: "Open Notepad"))
 
             Menu {
-                SettingsLink {
+                Button {
+                    model.openGlobalSearchSettings()
+                } label: {
                     Label(model.localized("设置", english: "Settings"), systemImage: "gear")
                 }
                 Divider()
@@ -115,7 +135,11 @@ private struct WorkspaceToolbar: ToolbarContent {
                 }
             } label: {
                 Image(systemName: "person.crop.circle")
+                    .frame(width: 28, height: 28)
+                    .background(Color(nsColor: .controlBackgroundColor), in: Circle())
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.visible)
             .help(model.localized("账号", english: "Account"))
         }
     }

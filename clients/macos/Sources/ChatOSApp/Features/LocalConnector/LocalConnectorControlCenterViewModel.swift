@@ -22,6 +22,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isPerformingAction = false
     @Published private(set) var pluginOperationIDs: Set<String> = []
+    @Published private(set) var pluginErrorMessages: [String: String] = [:]
     @Published private(set) var errorMessage: String?
     @Published private(set) var notice: String?
 
@@ -101,6 +102,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         isLoading = false
         isPerformingAction = false
         pluginOperationIDs = []
+        pluginErrorMessages = [:]
         errorMessage = nil
         notice = nil
         status = nil
@@ -468,6 +470,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         _ operation: @escaping @MainActor () async throws -> Void
     ) {
         pluginOperationIDs.insert(id)
+        pluginErrorMessages[id] = nil
         errorMessage = nil
         notice = nil
         Task {
@@ -478,6 +481,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                 onSuccess?()
             } catch {
                 errorMessage = error.localizedDescription
+                pluginErrorMessages[id] = error.localizedDescription
             }
             pluginOperationIDs.remove(id)
         }

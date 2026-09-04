@@ -73,6 +73,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var category: String
     public var publisher: String
     public var latestVersion: String
+    public var installedVersion: String?
     public var installed: Bool
     public var updateAvailable: Bool
     public var installAvailable: Bool
@@ -91,6 +92,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         category: String,
         publisher: String,
         latestVersion: String,
+        installedVersion: String? = nil,
         installed: Bool,
         updateAvailable: Bool,
         installAvailable: Bool,
@@ -106,6 +108,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         self.category = category
         self.publisher = publisher
         self.latestVersion = latestVersion
+        self.installedVersion = installedVersion
         self.installed = installed
         self.updateAvailable = updateAvailable
         self.installAvailable = installAvailable

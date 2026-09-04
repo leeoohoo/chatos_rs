@@ -7,6 +7,7 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
 
     private var mainWindowController: NSWindowController?
+    private var settingsWindowController: NSWindowController?
     private var mainWindowPresentationGeneration = 0
     private var didReceiveFileOpenRequest = false
 
@@ -16,6 +17,9 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         super.init()
         model.mainWindowPresentationHandler = { [weak self] in
             self?.showMainWindow()
+        }
+        model.settingsWindowPresentationHandler = { [weak self] in
+            self?.showSettingsWindow()
         }
     }
 
@@ -130,10 +134,58 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         window.minSize = NSSize(width: 1_100, height: 720)
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
+        installTitlebarActions(in: window)
         window.setFrameAutosaveName("ChatOSMainWindow")
         if !window.setFrameUsingName("ChatOSMainWindow") {
             window.center()
         }
         return NSWindowController(window: window)
+    }
+
+    private func showSettingsWindow() {
+        let controller = settingsWindowController ?? makeSettingsWindowController()
+        settingsWindowController = controller
+        NSApp.activate(ignoringOtherApps: true)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeSettingsWindowController() -> NSWindowController {
+        let content = SettingsView()
+            .environmentObject(model)
+            .environment(\.locale, model.interfaceLocale)
+            .environment(\.interfaceFontScale, model.interfaceFontScale)
+            .dynamicTypeSize(model.interfaceDynamicTypeSize)
+        let hostingController = NSHostingController(rootView: content)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_050, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = model.localized("设置", english: "Settings")
+        window.minSize = NSSize(width: 900, height: 620)
+        window.contentViewController = hostingController
+        window.isReleasedWhenClosed = false
+        window.tabbingMode = .disallowed
+        window.setFrameAutosaveName("ChatOSSettingsWindow")
+        if !window.setFrameUsingName("ChatOSSettingsWindow") {
+            window.center()
+        }
+        return NSWindowController(window: window)
+    }
+
+    private func installTitlebarActions(in window: NSWindow) {
+        let actions = WorkspaceTitlebarActionsView(model: model)
+            .environment(\.locale, model.interfaceLocale)
+            .environment(\.interfaceFontScale, model.interfaceFontScale)
+            .dynamicTypeSize(model.interfaceDynamicTypeSize)
+        let hostingView = NSHostingView(rootView: actions)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 96, height: 36)
+
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .right
+        accessory.view = hostingView
+        window.addTitlebarAccessoryViewController(accessory)
     }
 }

@@ -5,6 +5,54 @@ import Testing
 
 struct NativeConnectorStateStoreTests {
     @Test
+    func pluginUpdateStateUsesInstalledReleaseVersionAndArtifact() {
+        let installed = NativeInstalledPluginRecord(
+            pluginID: "plugin-a",
+            releaseID: "release-1",
+            version: "0.1.2",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: "/tmp/plugin-a/0.1.2",
+            installedAt: "2026-09-04T00:00:00Z"
+        )
+        #expect(!NativeLocalConnectorService.pluginUpdateAvailable(
+            installed: installed,
+            release: .init(
+                id: "release-1",
+                version: "0.1.2",
+                artifactSHA256: String(repeating: "a", count: 64),
+                npmPackage: nil
+            )
+        ))
+        #expect(!NativeLocalConnectorService.pluginUpdateAvailable(
+            installed: installed,
+            release: .init(
+                id: "release-republished",
+                version: "0.1.2",
+                artifactSHA256: String(repeating: "a", count: 64),
+                npmPackage: nil
+            )
+        ))
+        #expect(NativeLocalConnectorService.pluginUpdateAvailable(
+            installed: installed,
+            release: .init(
+                id: "release-2",
+                version: "0.1.3",
+                artifactSHA256: String(repeating: "b", count: 64),
+                npmPackage: nil
+            )
+        ))
+        #expect(!NativeLocalConnectorService.pluginUpdateAvailable(
+            installed: installed,
+            release: .init(
+                id: "release-missing-version",
+                version: nil,
+                artifactSHA256: String(repeating: "b", count: 64),
+                npmPackage: nil
+            )
+        ))
+    }
+
+    @Test
     func stateRoundTripsWithoutLosingSecurityOrPluginSettings() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

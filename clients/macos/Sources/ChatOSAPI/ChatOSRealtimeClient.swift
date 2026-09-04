@@ -123,8 +123,13 @@ public actor ChatOSRealtimeClient: ConversationRealtimeStreaming, PetActivityStr
         let socket = session.webSocketTask(with: url)
         socket.resume()
         let heartbeat = Self.startHeartbeat(for: socket)
+        let reconciliation = Self.startConversationReconciliation(
+            sessionID: sessionID,
+            continuation: continuation
+        )
         defer {
             heartbeat.cancel()
+            reconciliation.cancel()
             socket.cancel(with: .goingAway, reason: nil)
         }
 
@@ -178,6 +183,24 @@ public actor ChatOSRealtimeClient: ConversationRealtimeStreaming, PetActivityStr
             eventName: "conversation.reconcile",
             timestamp: ISO8601DateFormatter().string(from: Date())
         )
+    }
+
+    static func startConversationReconciliation(
+        sessionID: String,
+        continuation: AsyncThrowingStream<ConversationRealtimeSignal, Error>.Continuation,
+        interval: Duration = .seconds(15)
+    ) -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                continuation.yield(reconcileSignal(sessionID: sessionID))
+            }
+        }
     }
 
     private static func startHeartbeat(

@@ -161,6 +161,7 @@ struct PluginDTO: Decodable, Sendable {
             pluginID: pluginID, packageName: packageName, pluginKey: pluginKey,
             displayName: displayName, description: description,
             category: category, publisher: publisher, latestVersion: latestVersion,
+            installedVersion: installation?.version,
             installed: installation != nil, updateAvailable: updateAvailable,
             installAvailable: installAvailable, enabled: preference?.enabled ?? true,
             hasUI: hasUI
@@ -168,7 +169,14 @@ struct PluginDTO: Decodable, Sendable {
     }
 }
 
-struct PluginInstallationDTO: Decodable, Sendable { var pluginID: String? = nil }
+struct PluginInstallationDTO: Decodable, Sendable {
+    var pluginID: String? = nil
+    var version: String? = nil
+    enum CodingKeys: String, CodingKey {
+        case version
+        case pluginID = "plugin_id"
+    }
+}
 struct PluginPreferenceDTO: Decodable, Sendable { var enabled: Bool }
 struct UninstallPluginDTO: Encodable {
     var acknowledgePluginDataRemoval: Bool

@@ -28,3 +28,28 @@ struct PetTaskInspectorPlacementTests {
         #expect(layout.inspectorOrigin == NSPoint(x: 168, y: 372))
     }
 }
+
+@Suite("Pet stacked panel placement")
+struct PetStackedPanelPlacementTests {
+    @Test("places a new activity card directly above the open conversation")
+    func stacksAboveConversation() {
+        let origin = PetStackedPanelPlacement.origin(
+            size: NSSize(width: 310, height: 112),
+            anchorFrame: NSRect(x: 500, y: 180, width: 420, height: 500),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        )
+
+        #expect(origin == NSPoint(x: 555, y: 690))
+    }
+
+    @Test("keeps the activity card visible when there is no room above")
+    func fallsBackBesideConversation() {
+        let origin = PetStackedPanelPlacement.origin(
+            size: NSSize(width: 400, height: 470),
+            anchorFrame: NSRect(x: 500, y: 180, width: 420, height: 650),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        )
+
+        #expect(origin == NSPoint(x: 930, y: 360))
+    }
+}

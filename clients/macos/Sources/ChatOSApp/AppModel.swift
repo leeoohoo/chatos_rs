@@ -16,6 +16,8 @@ final class AppModel: ObservableObject {
 
     @Published var selection: SidebarSelection?
     @Published var projectTab: ProjectWorkspaceTab = .messages
+    @Published var isNotepadPresented = false
+    @Published var navigationSplitVisibility: NavigationSplitViewVisibility = .all
     @Published var interfaceLanguage = ChatOSLanguage(normalizing: UserDefaults.standard.string(
         forKey: "ChatOS.interfaceLanguage"
     )) {
@@ -110,6 +112,7 @@ final class AppModel: ObservableObject {
     let workspaceResourceCreationService: ChatOSWorkspaceResourceCreationService
     let remoteConnectionService: NativeRemoteConnectionService
     let remoteFileService: NativeRemoteFileService
+    let remoteConnectionWorkspaceStore: RemoteConnectionWorkspaceStore
     let projectFilesystemService: NativeProjectFilesystemService
     let projectCodeNavigationService: NativeProjectCodeNavigationService
     let projectGitService: NativeProjectGitService
@@ -130,6 +133,7 @@ final class AppModel: ObservableObject {
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
     var mainWindowPresentationHandler: (() -> Void)?
+    var settingsWindowPresentationHandler: (() -> Void)?
 
     init() {
         let credentialStore = KeychainCredentialStore()
@@ -165,8 +169,13 @@ final class AppModel: ObservableObject {
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.workspaceResourceCreationService = ChatOSWorkspaceResourceCreationService(client: apiClient)
+        let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService
-        self.remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
+        self.remoteFileService = remoteFileService
+        self.remoteConnectionWorkspaceStore = RemoteConnectionWorkspaceStore(
+            terminalService: remoteConnectionService,
+            fileService: remoteFileService
+        )
         self.projectFilesystemService = NativeProjectFilesystemService(connector: localConnectorService)
         self.projectCodeNavigationService = NativeProjectCodeNavigationService(connector: localConnectorService)
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
@@ -279,6 +288,12 @@ final class AppModel: ObservableObject {
         interfaceLanguage == .english ? english : chinese
     }
 
+    func toggleNavigationSidebar() {
+        navigationSplitVisibility = navigationSplitVisibility == .detailOnly
+            ? .all
+            : .detailOnly
+    }
+
     func startPetOverlayIfNeeded() {
         guard petOverlayCoordinator == nil else { return }
         petOverlayCoordinator = PetOverlayCoordinator(
@@ -331,11 +346,7 @@ final class AppModel: ObservableObject {
 
     func openPetActivity(_ activity: PetActivity?) {
         if activity?.source == .localApproval {
-            requestConnectorSettings(.approvals)
-            NSApp.activate(ignoringOtherApps: true)
-            if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-            }
+            openGlobalSearchSettings(tab: .approvals)
             return
         }
 
@@ -389,6 +400,10 @@ final class AppModel: ObservableObject {
     func openGlobalSearchSettings(tab: LocalConnectorControlTab? = nil) {
         if let tab {
             requestConnectorSettings(tab)
+        }
+        if let settingsWindowPresentationHandler {
+            settingsWindowPresentationHandler()
+            return
         }
         NSApp.activate(ignoringOtherApps: true)
         if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
@@ -826,6 +841,7 @@ final class AppModel: ObservableObject {
             workspaceProjects = []
             workspaceContacts = []
             remoteConnections = []
+            remoteConnectionWorkspaceStore.removeAllWorkspaces()
             pluginApplicationsLoadGeneration += 1
             pluginApplications = []
             isPluginApplicationsLoading = false
@@ -1052,6 +1068,7 @@ final class AppModel: ObservableObject {
     }
 
     func registerRemoteConnection(_ connection: RemoteConnection) {
+        remoteConnectionWorkspaceStore.removeWorkspace(for: connection.id)
         if let index = remoteConnections.firstIndex(where: { $0.id == connection.id }) {
             remoteConnections[index] = connection
         } else {
@@ -1063,6 +1080,7 @@ final class AppModel: ObservableObject {
 
     func deleteRemoteConnection(id: String) async throws {
         try await remoteConnectionService.deleteConnection(id: id)
+        remoteConnectionWorkspaceStore.removeWorkspace(for: id)
         remoteConnections.removeAll(where: { $0.id == id })
         if selection == .remote(id) {
             selection = projects.first.map { .project($0.id) }

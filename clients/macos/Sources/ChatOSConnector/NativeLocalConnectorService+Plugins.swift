@@ -122,8 +122,12 @@ extension NativeLocalConnectorService {
                     ?? source.catalog.interface?.developerName
                     ?? "ChatOS",
                 latestVersion: source.release.version ?? source.release.id,
+                installedVersion: installedRecord?.version,
                 installed: installed,
-                updateAvailable: installedRecord.map { $0.version != source.release.version } ?? false,
+                updateAvailable: Self.pluginUpdateAvailable(
+                    installed: installedRecord,
+                    release: source.release
+                ),
                 installAvailable: source.release.artifactSHA256 != nil
                     && source.release.npmPackage != nil,
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
@@ -131,6 +135,25 @@ extension NativeLocalConnectorService {
                 permissions: permissions
             )
         }
+    }
+
+    static func pluginUpdateAvailable(
+        installed: NativeInstalledPluginRecord?,
+        release: GatewayPluginReleaseDTO
+    ) -> Bool {
+        guard let installed else { return false }
+        guard installed.releaseID != release.id else { return false }
+        guard let latestVersion = normalizedPluginVersion(release.version) else { return false }
+        let latestArtifact = release.artifactSHA256?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedPluginVersion(installed.version) != latestVersion
+            || latestArtifact.map { installed.artifactSHA256 != $0 } == true
+    }
+
+    private static func normalizedPluginVersion(_ value: String?) -> String? {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized?.isEmpty == false ? normalized : nil
     }
 
     public func installPlugin(id: String) async throws {

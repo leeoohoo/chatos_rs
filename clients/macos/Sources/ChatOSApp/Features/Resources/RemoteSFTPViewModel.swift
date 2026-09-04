@@ -22,6 +22,7 @@ final class RemoteSFTPViewModel: ObservableObject {
 
     let connectionID: String
     private let service: any RemoteFileServicing
+    private var hasLoaded = false
 
     init(connectionID: String, service: any RemoteFileServicing) {
         self.connectionID = connectionID
@@ -59,6 +60,11 @@ final class RemoteSFTPViewModel: ObservableObject {
         selectedRemoteEntry?.kind == .file && !isTransferring
     }
 
+    func loadIfNeeded() async {
+        guard !hasLoaded else { return }
+        await load()
+    }
+
     func load() async {
         notice = nil
         errorMessage = nil
@@ -67,8 +73,10 @@ final class RemoteSFTPViewModel: ObservableObject {
             isLoadingRemote = true
             let initial = try await service.initialDirectory(connectionID: connectionID)
             await loadRemote(path: initial)
+            hasLoaded = errorMessage == nil
         } catch {
             isLoadingRemote = false
+            hasLoaded = false
             errorMessage = error.localizedDescription
         }
     }

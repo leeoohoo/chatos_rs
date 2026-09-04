@@ -111,7 +111,7 @@ struct LocalConnectorPluginsView: View {
         let isOperating = viewModel.pluginOperationIDs.contains(plugin.id)
         return LocalConnectorCard(
             plugin.displayName,
-            subtitle: "\(plugin.publisher) · \(plugin.latestVersion)",
+            subtitle: pluginVersionSubtitle(plugin),
             systemImage: "puzzlepiece.extension.fill"
         ) {
             VStack(alignment: .leading, spacing: 12) {
@@ -154,6 +154,12 @@ struct LocalConnectorPluginsView: View {
                 if plugin.installed, BrowserExtensionGuide.isBrowserPlugin(plugin) {
                     browserExtensionSection(plugin, isOperating: isOperating)
                 }
+                if let operationError = viewModel.pluginErrorMessages[plugin.id] {
+                    Label(operationError, systemImage: "exclamationmark.triangle.fill")
+                        .appFont(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     Text(plugin.category)
                         .appFont(.caption2.weight(.medium))
@@ -185,6 +191,22 @@ struct LocalConnectorPluginsView: View {
                 .disabled(isOperating)
             }
         }
+    }
+
+    private func pluginVersionSubtitle(_ plugin: LocalConnectorPlugin) -> String {
+        guard let installedVersion = plugin.installedVersion else {
+            return "\(plugin.publisher) · \(plugin.latestVersion)"
+        }
+        if plugin.updateAvailable {
+            return model.localized(
+                "\(plugin.publisher) · 已安装 \(installedVersion) · 最新 \(plugin.latestVersion)",
+                english: "\(plugin.publisher) · Installed \(installedVersion) · Latest \(plugin.latestVersion)"
+            )
+        }
+        return model.localized(
+            "\(plugin.publisher) · 已安装 \(installedVersion)",
+            english: "\(plugin.publisher) · Installed \(installedVersion)"
+        )
     }
 
     private func browserExtensionSection(

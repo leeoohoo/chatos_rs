@@ -4,6 +4,22 @@ import Testing
 
 struct NativeConnectorGatewayDTOTests {
     @Test
+    func pluginArtifactDownloadRetriesTransientNetworkFailuresOnly() {
+        #expect(NativeConnectorGateway.shouldRetryArtifactDownload(
+            after: URLError(.networkConnectionLost)
+        ))
+        #expect(NativeConnectorGateway.shouldRetryArtifactDownload(
+            after: URLError(.timedOut)
+        ))
+        #expect(!NativeConnectorGateway.shouldRetryArtifactDownload(
+            after: URLError(.userAuthenticationRequired)
+        ))
+        #expect(!NativeConnectorGateway.shouldRetryArtifactDownload(
+            after: NativeConnectorError.server(status: 404, message: "missing")
+        ))
+    }
+
+    @Test
     func authenticatedUnauthorizedResponsePublishesSessionExpiration() async {
         let center = NotificationCenter()
         await confirmation("connector authentication expiration") { confirmed in

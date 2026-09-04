@@ -167,6 +167,30 @@ final class RealtimeDTOTests: XCTestCase {
         XCTAssertNil(signal.turnID)
     }
 
+    func testConversationConnectionPeriodicallyProducesReconcileSignal() async throws {
+        let (stream, continuation) = AsyncThrowingStream.makeStream(
+            of: ConversationRealtimeSignal.self,
+            throwing: Error.self
+        )
+        let reconciliation = ChatOSRealtimeClient.startConversationReconciliation(
+            sessionID: "conversation-1",
+            continuation: continuation,
+            interval: .milliseconds(1)
+        )
+        defer {
+            reconciliation.cancel()
+            continuation.finish()
+        }
+
+        var iterator = stream.makeAsyncIterator()
+        let nextSignal = try await iterator.next()
+        let signal = try XCTUnwrap(nextSignal)
+
+        XCTAssertEqual(signal.sessionID, "conversation-1")
+        XCTAssertEqual(signal.kind, .reconcile)
+        XCTAssertEqual(signal.eventName, "conversation.reconcile")
+    }
+
     func testTaskRunnerEventDoesNotBypassPetInbox() throws {
         let envelope = try JSONDecoder().decode(
             PetRealtimeEnvelopeDTO.self,
