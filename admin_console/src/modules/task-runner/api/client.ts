@@ -385,10 +385,11 @@ export const api = {
       }),
       { signal },
     ),
-  listPromptTaskCounts: (filters?: { status?: AskUserPromptStatus }) =>
+  listPromptTaskCounts: (filters?: { status?: AskUserPromptStatus; taskIds?: string[] }) =>
     request<AskUserPromptTaskCountRecord[]>(
       withQuery('/api/prompts/task-counts', {
         status: filters?.status,
+        task_ids: filters?.taskIds?.length ? filters.taskIds.join(',') : undefined,
       }),
     ),
   getPrompt: (id: string) => request<AskUserPromptRecord>(`/api/prompts/${id}`),

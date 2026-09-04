@@ -125,6 +125,7 @@ impl InMemoryStore {
     pub(in crate::store) fn list_ask_user_prompt_task_counts(
         &self,
         status: Option<AskUserPromptStatus>,
+        task_ids: Option<&[String]>,
     ) -> Vec<AskUserPromptTaskCountRecord> {
         let data = self.inner.read();
         let mut counts = BTreeMap::<String, usize>::new();
@@ -136,6 +137,9 @@ impl InMemoryStore {
             let Some(task_id) = prompt.task_id.as_deref() else {
                 continue;
             };
+            if task_ids.is_some_and(|ids| !ids.iter().any(|id| id == task_id)) {
+                continue;
+            }
             *counts.entry(task_id.to_string()).or_default() += 1;
         }
 
@@ -224,6 +228,44 @@ mod tests {
         ] {
             assert!(store.get_ask_user_prompt(prompt_id).is_some());
         }
+    }
+
+    #[test]
+    fn prompt_task_counts_are_scoped_to_requested_tasks() {
+        let store = test_store();
+        let mut task_one = prompt(
+            "pending-task-1",
+            "run-1",
+            AskUserPromptStatus::Pending,
+            false,
+            "2026-08-05T00:00:00Z",
+        );
+        task_one.task_id = Some("task-1".to_string());
+        let mut task_two = prompt(
+            "pending-task-2",
+            "run-2",
+            AskUserPromptStatus::Pending,
+            false,
+            "2026-08-05T00:00:00Z",
+        );
+        task_two.task_id = Some("task-2".to_string());
+        store.save_ask_user_prompt(task_one);
+        store.save_ask_user_prompt(task_two);
+
+        let task_ids = vec!["task-2".to_string()];
+        let counts = store
+            .list_ask_user_prompt_task_counts(Some(AskUserPromptStatus::Pending), Some(&task_ids));
+
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0].task_id, "task-2");
+        assert_eq!(counts[0].count, 1);
+        let no_task_ids = Vec::<String>::new();
+        assert!(store
+            .list_ask_user_prompt_task_counts(
+                Some(AskUserPromptStatus::Pending),
+                Some(&no_task_ids),
+            )
+            .is_empty());
     }
 
     fn prompt(

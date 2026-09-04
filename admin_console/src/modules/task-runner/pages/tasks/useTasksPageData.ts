@@ -207,9 +207,17 @@ export function useTasksPageData({
     queryKey: ['task-runner', 'task-projects', 'active'],
     queryFn: () => api.listProjects('active'),
   });
+  const visibleTaskIds = useMemo(
+    () => (tasksQuery.data?.items || []).map((task) => task.id),
+    [tasksQuery.data?.items],
+  );
   const pendingPromptTaskCountsQuery = useQuery({
-    queryKey: ['task-runner', 'prompt-task-counts', 'pending'],
-    queryFn: () => api.listPromptTaskCounts({ status: 'pending' }),
+    queryKey: ['task-runner', 'prompt-task-counts', 'pending', visibleTaskIds],
+    queryFn: () => api.listPromptTaskCounts({
+      status: 'pending',
+      taskIds: visibleTaskIds,
+    }),
+    enabled: visibleTaskIds.length > 0,
   });
   const taskMemoryContextQuery = useQuery({
     queryKey: ['task-runner', 'task-memory-context', memoryTask?.id],

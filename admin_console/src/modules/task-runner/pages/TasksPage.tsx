@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Form,
@@ -60,6 +60,7 @@ export function TasksPage() {
   const [mcpPreviewTask, setMcpPreviewTask] = useState<TaskRecord | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | TaskStatus>('all');
+  const [keywordInput, setKeywordInput] = useState('');
   const [keywordFilter, setKeywordFilter] = useState('');
   const [tagFilter, setTagFilter] = useState<string | undefined>(undefined);
   const [scheduledOnly, setScheduledOnly] = useState(false);
@@ -76,6 +77,11 @@ export function TasksPage() {
   const routeTaskId = searchParams.get('task_id');
   const routeModelConfigId = searchParams.get('model_config_id') || undefined;
   const routeProjectId = searchParams.get('project_id') || undefined;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setKeywordFilter(keywordInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [keywordInput]);
 
   const {
     tasksQuery,
@@ -337,7 +343,7 @@ export function TasksPage() {
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <TaskListToolbar
           t={t}
-          keywordFilter={keywordFilter}
+          keywordFilter={keywordInput}
           tagFilter={tagFilter}
           modelConfigId={routeModelConfigId}
           projectId={routeProjectId}
@@ -347,7 +353,7 @@ export function TasksPage() {
           modelOptions={modelOptions}
           projectOptions={projectOptions}
           statusFilterOptions={statusFilterOptions}
-          onKeywordFilterChange={setKeywordFilter}
+          onKeywordFilterChange={setKeywordInput}
           onTagFilterChange={setTagFilter}
           onTagDropdownOpen={() => setTaskIndexEnabled(true)}
           onModelFilterChange={(value) => {

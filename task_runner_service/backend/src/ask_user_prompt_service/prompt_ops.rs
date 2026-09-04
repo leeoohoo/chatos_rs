@@ -67,8 +67,11 @@ impl AskUserPromptService {
     pub async fn list_prompt_task_counts(
         &self,
         status: Option<AskUserPromptStatus>,
+        task_ids: Option<&[String]>,
     ) -> Result<Vec<AskUserPromptTaskCountRecord>, String> {
-        self.store.list_ask_user_prompt_task_counts(status).await
+        self.store
+            .list_ask_user_prompt_task_counts(status, task_ids)
+            .await
     }
 
     pub async fn list_prompts_page(

@@ -15,6 +15,7 @@ pub(super) struct PromptListQuery {
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct PromptTaskCountQuery {
     status: Option<AskUserPromptStatus>,
+    task_ids: Option<String>,
 }
 
 pub(super) async fn list_prompts(
@@ -40,9 +41,18 @@ pub(super) async fn list_prompt_task_counts(
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<PromptTaskCountQuery>,
 ) -> Result<Json<Vec<AskUserPromptTaskCountRecord>>, ApiError> {
+    let task_ids = query.task_ids.as_deref().map(|task_ids| {
+        task_ids
+            .split(',')
+            .map(str::trim)
+            .filter(|task_id| !task_id.is_empty())
+            .take(200)
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>()
+    });
     let counts = state
         .ask_user_prompt_service
-        .list_prompt_task_counts(query.status)
+        .list_prompt_task_counts(query.status, task_ids.as_deref())
         .await
         .map_err(ApiError::bad_request)?;
     if current_user.is_admin() {
