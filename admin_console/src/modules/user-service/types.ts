@@ -44,6 +44,12 @@ export interface UserSummaryPageResponse {
   total: number;
 }
 
+export interface UserOptionRecord {
+  id: string;
+  username: string;
+  display_name: string;
+}
+
 export interface InviteCodeRecord {
   id: string;
   label?: string | null;

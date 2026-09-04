@@ -11,8 +11,8 @@ import type {
   CreateUserModelProviderPayload,
   UpdateUserModelProviderPayload,
   UserModelConfigRecord,
+  UserOptionRecord,
   UserModelProviderRecord,
-  UserSummaryRecord,
 } from '../../types';
 
 export type ProviderFormValues = {
@@ -74,7 +74,7 @@ export function providerCatalogStatusLabel(status?: string | null) {
   }
 }
 
-export function userLabel(users: UserSummaryRecord[] | undefined, ownerUserId: string): string {
+export function userLabel(users: UserOptionRecord[] | undefined, ownerUserId: string): string {
   const owner = (users || []).find((item) => item.id === ownerUserId);
   return owner ? `${owner.display_name || owner.username} (${owner.username})` : ownerUserId;
 }
@@ -128,7 +128,7 @@ export function buildProviderColumns({
   onDelete,
   deleteLoading,
 }: {
-  users?: UserSummaryRecord[];
+  users?: UserOptionRecord[];
   onRefresh: (record: UserModelProviderRecord) => void;
   onEdit: (record: UserModelProviderRecord) => void;
   onDelete: (id: string) => void;

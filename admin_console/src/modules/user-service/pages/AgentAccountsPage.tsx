@@ -29,7 +29,7 @@ import type {
   CreateAgentAccountPayload,
   ResetAgentPasswordPayload,
   UpdateAgentAccountPayload,
-  UserSummaryRecord,
+  UserOptionRecord,
 } from '../types';
 
 type AgentFormValues = {
@@ -55,8 +55,9 @@ export function AgentAccountsPage() {
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
 
   const usersQuery = useQuery({
-    queryKey: ['user-service', 'users'],
-    queryFn: () => api.listUsers(),
+    queryKey: ['user-service', 'user-options'],
+    queryFn: () => api.listUserOptions(),
+    enabled: currentUser.role === 'super_admin' && drawerOpen,
   });
   const agentsQuery = useQuery({
     queryKey: ['user-service', 'agent-accounts'],
@@ -64,7 +65,11 @@ export function AgentAccountsPage() {
   });
 
   const isSuperAdmin = currentUser.role === 'super_admin';
-  const userOptions = (usersQuery.data || []).map((item: UserSummaryRecord) => ({
+  const availableUsers = new Map<string, UserOptionRecord>([
+    [currentUser.id, currentUser],
+    ...(usersQuery.data || []).map((item): [string, UserOptionRecord] => [item.id, item]),
+  ]);
+  const userOptions = [...availableUsers.values()].map((item) => ({
     label: `${item.display_name || item.username} (${item.username})`,
     value: item.id,
   }));
@@ -330,6 +335,7 @@ export function AgentAccountsPage() {
             <Select
               disabled={!isSuperAdmin}
               options={userOptions}
+              loading={usersQuery.isLoading}
               placeholder="选择真实用户"
             />
           </Form.Item>

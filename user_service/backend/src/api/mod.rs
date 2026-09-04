@@ -51,6 +51,7 @@ fn protected_api(state: AppState) -> Router<AppState> {
             get(users::list_users).post(users::create_user),
         )
         .route("/api/users/page", get(users::list_users_page))
+        .route("/api/users/options", get(users::list_user_options))
         .route("/api/users/{id}", patch(users::update_user))
         .route(
             "/api/users/{id}/harness-provisioning",
@@ -480,6 +481,7 @@ mod tests {
             (reqwest::Method::POST, "/api/auth/login"),
             (reqwest::Method::GET, "/api/users"),
             (reqwest::Method::GET, "/api/users/page"),
+            (reqwest::Method::GET, "/api/users/options"),
         ] {
             let status = client
                 .request(method, format!("{base_url}{path}"))

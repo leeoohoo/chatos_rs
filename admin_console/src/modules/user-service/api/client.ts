@@ -22,6 +22,7 @@ import type {
   UserModelConfigRecord,
   UserModelProviderRecord,
   UserModelSettingsRecord,
+  UserOptionRecord,
   UserSummaryRecord,
   UserSummaryPageResponse,
   InviteCodeRecord,
@@ -82,6 +83,7 @@ export const api = {
   currentUser: () => request<CurrentUserResponse>('/api/auth/me'),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
   listUsers: () => request<UserSummaryRecord[]>('/api/users'),
+  listUserOptions: () => request<UserOptionRecord[]>('/api/users/options'),
   listUsersPage: (limit: number, offset: number) =>
     request<UserSummaryPageResponse>(`/api/users/page?limit=${limit}&offset=${offset}`),
   listInviteCodes: () => request<InviteCodeRecord[]>('/api/invite-codes'),

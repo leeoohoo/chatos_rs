@@ -28,7 +28,7 @@ import { api } from '../api/client';
 import type {
   UserModelConfigRecord,
   UserModelProviderRecord,
-  UserSummaryRecord,
+  UserOptionRecord,
 } from '../types';
 import {
   ALL_USERS_SCOPE,
@@ -69,24 +69,20 @@ export function ModelsPage() {
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<UserModelProviderRecord | null>(null);
-  const [selectedUserId, setSelectedUserId] = useState<string>();
+  const [selectedUserId, setSelectedUserId] = useState<string | undefined>(currentUser.id);
+  const [userOptionsRequested, setUserOptionsRequested] = useState(false);
   const [modelTaskDrafts, setModelTaskDrafts] = useState<
     Record<string, ModelTaskPreferencesDraft>
   >({});
   const [form] = Form.useForm<ProviderFormValues>();
 
   const usersQuery = useQuery({
-    queryKey: ['user-service', 'users'],
-    queryFn: () => api.listUsers(),
+    queryKey: ['user-service', 'user-options'],
+    queryFn: () => api.listUserOptions(),
+    enabled: currentUser.role === 'super_admin' && userOptionsRequested,
   });
 
   const isSuperAdmin = currentUser.role === 'super_admin';
-
-  useEffect(() => {
-    if (!isSuperAdmin && !selectedUserId) {
-      setSelectedUserId(currentUser.id);
-    }
-  }, [currentUser.id, isSuperAdmin, selectedUserId]);
 
   const scopedUserId = selectedUserId;
   const scopedQueryKey = scopedUserId || ALL_USERS_SCOPE;
@@ -202,12 +198,17 @@ export function ModelsPage() {
   });
 
   const userOptions = useMemo(
-    () =>
-      (usersQuery.data || []).map((item: UserSummaryRecord) => ({
+    () => {
+      const users = new Map<string, UserOptionRecord>([
+        [currentUser.id, currentUser],
+        ...(usersQuery.data || []).map((item): [string, UserOptionRecord] => [item.id, item]),
+      ]);
+      return [...users.values()].map((item) => ({
         label: `${item.display_name || item.username} (${item.username})`,
         value: item.id,
-      })),
-    [usersQuery.data],
+      }));
+    },
+    [currentUser, usersQuery.data],
   );
 
   const currentProviders = providersQuery.data || [];
@@ -353,6 +354,12 @@ export function ModelsPage() {
               value={selectedUserId || ALL_USERS_SCOPE}
               options={[{ label: 'All users', value: ALL_USERS_SCOPE }, ...userOptions]}
               onChange={(value) => setSelectedUserId(value === ALL_USERS_SCOPE ? undefined : value)}
+              onOpenChange={(open) => {
+                if (open) {
+                  setUserOptionsRequested(true);
+                }
+              }}
+              loading={usersQuery.isLoading}
               style={{ width: 280 }}
               placeholder="Select owner user"
             />

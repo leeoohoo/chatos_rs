@@ -16,8 +16,8 @@ use crate::config::AppConfig;
 use crate::models::{
     AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
     InviteCodeRecord, LocalConnectorAuthTicketRecord, RegistrationEmailCodeRecord,
-    UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord, UserRecord,
-    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord, UserOptionRecord,
+    UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 
 mod model_configs;
@@ -191,6 +191,26 @@ impl AppStore {
             .build();
         let users = self.load_users(options).await?;
         self.user_summaries_from_records(users).await
+    }
+
+    pub async fn list_user_options(&self) -> Result<Vec<UserOptionRecord>, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "username": 1 })
+            .projection(doc! {
+                "_id": 0,
+                "id": 1,
+                "username": 1,
+                "display_name": 1,
+            })
+            .build();
+        self.users
+            .clone_with_type::<UserOptionRecord>()
+            .find(None, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub async fn list_users_summary_page(

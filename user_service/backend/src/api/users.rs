@@ -10,8 +10,8 @@ use crate::integrations::{
     provision_harness_user_public_register, provision_harness_user_public_register_result,
 };
 use crate::models::{
-    CreateUserRequest, ProvisionHarnessUserRequest, UpdateUserRequest, UserRecord,
-    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
+    CreateUserRequest, ProvisionHarnessUserRequest, UpdateUserRequest, UserOptionRecord,
+    UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
 };
 use crate::secrets::decrypt_secret;
 use crate::state::AppState;
@@ -84,6 +84,30 @@ pub async fn list_users_page(
         items: vec![summary],
         total: 1,
     }))
+}
+
+pub async fn list_user_options(
+    State(state): State<AppState>,
+    Extension(principal): Extension<CurrentPrincipal>,
+) -> ApiResult<Vec<UserOptionRecord>> {
+    if principal.is_super_admin() {
+        return state
+            .store
+            .list_user_options()
+            .await
+            .map(Json)
+            .map_err(internal_error);
+    }
+
+    let Some(user_id) = principal.user_id else {
+        return Err(not_found("current user not found"));
+    };
+    let username = principal.username.unwrap_or_default();
+    Ok(Json(vec![UserOptionRecord {
+        id: user_id,
+        display_name: principal.display_name.unwrap_or_else(|| username.clone()),
+        username,
+    }]))
 }
 
 pub async fn create_user(
