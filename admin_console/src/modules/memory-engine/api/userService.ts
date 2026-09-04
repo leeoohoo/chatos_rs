@@ -7,18 +7,10 @@ import {
 } from '../../../shared/auth/tokenStore';
 import { ADMIN_SERVICE_BASES, buildAdminServiceUrl } from '../../../shared/api/servicePaths';
 
-export type UserRole = 'super_admin' | 'admin' | 'user' | string;
-
-export interface UserSummaryRecord {
+export interface UserOptionRecord {
   id: string;
   username: string;
   display_name: string;
-  role: UserRole;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-  last_login_at?: string | null;
-  agent_count: number;
 }
 
 export function buildUserServiceApiUrl(path: string): string {
@@ -72,5 +64,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const userServiceApi = {
-  listUsers: () => request<UserSummaryRecord[]>('/api/users'),
+  listUserOptions: (userIds: string[]) =>
+    request<UserOptionRecord[]>(
+      `/api/users/options?ids=${encodeURIComponent(userIds.join(','))}`,
+    ),
 };

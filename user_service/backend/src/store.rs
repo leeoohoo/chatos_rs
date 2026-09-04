@@ -68,14 +68,20 @@ impl AppStore {
     }
 
     pub async fn initialize(&self) -> Result<(), String> {
+        self.create_unique_index(&self.users, "id").await?;
         self.create_unique_index(&self.users, "username").await?;
+        self.create_unique_index(&self.agent_accounts, "id").await?;
         self.create_unique_index(&self.agent_accounts, "username")
             .await?;
         self.create_unique_index(&self.revoked_tokens, "jti")
             .await?;
         self.create_index(&self.agent_accounts, "owner_user_id")
             .await?;
+        self.create_unique_index(&self.user_model_configs, "id")
+            .await?;
         self.create_index(&self.user_model_configs, "owner_user_id")
+            .await?;
+        self.create_unique_index(&self.user_model_providers, "id")
             .await?;
         self.create_index(&self.user_model_providers, "owner_user_id")
             .await?;
@@ -89,7 +95,10 @@ impl AppStore {
             .await?;
         self.create_unique_index(&self.invite_codes, "code_hash")
             .await?;
+        self.create_unique_index(&self.invite_codes, "id").await?;
         self.create_index(&self.invite_codes, "created_at").await?;
+        self.create_unique_index(&self.local_connector_auth_tickets, "id")
+            .await?;
         self.create_unique_index(&self.local_connector_auth_tickets, "ticket_hash")
             .await?;
         self.create_index(&self.local_connector_auth_tickets, "expires_at_unix")
@@ -193,7 +202,14 @@ impl AppStore {
         self.user_summaries_from_records(users).await
     }
 
-    pub async fn list_user_options(&self) -> Result<Vec<UserOptionRecord>, String> {
+    pub async fn list_user_options(
+        &self,
+        user_ids: Option<&[String]>,
+    ) -> Result<Vec<UserOptionRecord>, String> {
+        if user_ids.is_some_and(|ids| ids.is_empty()) {
+            return Ok(Vec::new());
+        }
+        let filter = user_ids.map(|ids| doc! { "id": { "$in": ids } });
         let options = FindOptions::builder()
             .sort(doc! { "username": 1 })
             .projection(doc! {
@@ -205,7 +221,7 @@ impl AppStore {
             .build();
         self.users
             .clone_with_type::<UserOptionRecord>()
-            .find(None, options)
+            .find(filter, options)
             .await
             .map_err(|err| err.to_string())?
             .try_collect()
@@ -420,9 +436,20 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
 
+        let owner_ids = agents
+            .iter()
+            .map(|agent| agent.owner_user_id.clone())
+            .collect::<Vec<_>>();
+        let owners = self
+            .list_user_options(Some(&owner_ids))
+            .await?
+            .into_iter()
+            .map(|owner| (owner.id.clone(), owner))
+            .collect::<HashMap<_, _>>();
+
         let mut items = Vec::with_capacity(agents.len());
         for agent in agents {
-            let Some(owner) = self.find_user_by_id(agent.owner_user_id.as_str()).await? else {
+            let Some(owner) = owners.get(agent.owner_user_id.as_str()) else {
                 continue;
             };
             items.push(AgentAccountListItem {
@@ -430,8 +457,8 @@ impl AppStore {
                 username: agent.username,
                 display_name: agent.display_name,
                 owner_user_id: agent.owner_user_id,
-                owner_username: owner.username,
-                owner_display_name: owner.display_name,
+                owner_username: owner.username.clone(),
+                owner_display_name: owner.display_name.clone(),
                 enabled: agent.enabled,
                 created_at: agent.created_at,
                 updated_at: agent.updated_at,

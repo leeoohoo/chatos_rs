@@ -25,6 +25,11 @@ pub struct UserListPageQuery {
     offset: Option<u64>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct UserOptionsQuery {
+    ids: Option<String>,
+}
+
 pub async fn list_users(
     State(state): State<AppState>,
     Extension(principal): Extension<CurrentPrincipal>,
@@ -89,11 +94,20 @@ pub async fn list_users_page(
 pub async fn list_user_options(
     State(state): State<AppState>,
     Extension(principal): Extension<CurrentPrincipal>,
+    Query(query): Query<UserOptionsQuery>,
 ) -> ApiResult<Vec<UserOptionRecord>> {
     if principal.is_super_admin() {
+        let requested_ids = query.ids.as_deref().map(|ids| {
+            ids.split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .take(200)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        });
         return state
             .store
-            .list_user_options()
+            .list_user_options(requested_ids.as_deref())
             .await
             .map(Json)
             .map_err(internal_error);
