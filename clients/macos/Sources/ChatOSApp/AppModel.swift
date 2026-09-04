@@ -4,10 +4,16 @@ import ChatOSCore
 import AppKit
 import Combine
 import Foundation
+import OSLog
 import SwiftUI
 
 @MainActor
 final class AppModel: ObservableObject {
+    private static let pluginApplicationLogger = Logger(
+        subsystem: "com.chatos.swift-client",
+        category: "PluginApplication"
+    )
+
     @Published var selection: SidebarSelection?
     @Published var projectTab: ProjectWorkspaceTab = .messages
     @Published var interfaceLanguage = ChatOSLanguage(normalizing: UserDefaults.standard.string(
@@ -662,11 +668,74 @@ final class AppModel: ObservableObject {
         _ application: LocalConnectorPluginApplication,
         context: LocalConnectorPluginApplicationContext? = nil
     ) async throws -> LocalConnectorPluginApplicationLaunch {
-        try await localConnectorService.launchPluginApplication(
-            pluginID: application.pluginID,
-            componentKey: application.componentKey,
-            context: context
-        )
+        do {
+            return try await localConnectorService.launchPluginApplication(
+                pluginID: application.pluginID,
+                componentKey: application.componentKey,
+                context: context
+            )
+        } catch NativeConnectorError.workspaceUnavailable {
+            let projectID = context?.projectID ?? "none"
+            Self.pluginApplicationLogger.notice(
+                "Plugin 应用工作区暂不可用，刷新状态后重试：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
+            )
+
+            let refreshedContext = await refreshPluginApplicationLaunchContext(context)
+            do {
+                return try await localConnectorService.launchPluginApplication(
+                    pluginID: application.pluginID,
+                    componentKey: application.componentKey,
+                    context: refreshedContext
+                )
+            } catch NativeConnectorError.workspaceUnavailable {
+                guard PluginApplicationLaunchRecovery.allowsProjectOnlyFallback(application),
+                      let fallbackContext = PluginApplicationLaunchRecovery.projectOnlyContext(
+                          refreshedContext ?? context
+                      ) else {
+                    Self.pluginApplicationLogger.error(
+                        "Plugin 应用刷新后仍找不到工作区：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
+                    )
+                    throw NativeConnectorError.workspaceUnavailable
+                }
+                Self.pluginApplicationLogger.warning(
+                    "Plugin 应用降级为仅项目上下文启动：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
+                )
+                return try await localConnectorService.launchPluginApplication(
+                    pluginID: application.pluginID,
+                    componentKey: application.componentKey,
+                    context: fallbackContext
+                )
+            }
+        }
+    }
+
+    private func refreshPluginApplicationLaunchContext(
+        _ context: LocalConnectorPluginApplicationContext?
+    ) async -> LocalConnectorPluginApplicationContext? {
+        // fetchStatus asks the native connector to restore/import its local
+        // workspace registry before the project URI is resolved again.
+        _ = try? await localConnectorService.fetchStatus()
+
+        guard context?.projectID?.pluginLaunchValue != nil else { return context }
+        do {
+            let snapshot = try await workspaceService.fetchWorkspace()
+            await projectRunService.updateProjects(snapshot.projects)
+            workspaceProjects = snapshot.projects
+            workspaceContacts = snapshot.contacts
+            let resources = WorkspaceResourceResolver.resolve(snapshot)
+            contacts = resources.contacts
+            projects = resources.projects
+            reconcileSelection()
+            return PluginApplicationLaunchRecovery.refreshedContext(
+                context,
+                projects: snapshot.projects
+            )
+        } catch {
+            Self.pluginApplicationLogger.error(
+                "刷新 Plugin 应用项目上下文失败：\(error.localizedDescription, privacy: .public)"
+            )
+            return context
+        }
     }
 
     private func reconcilePluginApplicationSelection() {
