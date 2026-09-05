@@ -62,10 +62,29 @@ if [[ "$current_branch" != "$DEPLOY_BRANCH" ]]; then
   exit 1
 fi
 
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+dirty_status="$(git status --porcelain --untracked-files=no)"
+blocked_dirty_status=""
+ignored_dirty_count=0
+while IFS= read -r dirty_line; do
+  [[ -n "$dirty_line" ]] || continue
+  dirty_path="${dirty_line:3}"
+  case "$dirty_path" in
+    clients/macos/*|clients/windows/*|plugins/web-design-studio/*)
+      ignored_dirty_count=$((ignored_dirty_count + 1))
+      ;;
+    *)
+      blocked_dirty_status+="$dirty_line"$'\n'
+      ;;
+  esac
+done <<< "$dirty_status"
+
+if [[ -n "$blocked_dirty_status" ]]; then
   echo "[ERROR] tracked files are not clean; commit and push the release first" >&2
-  git status --short --untracked-files=no >&2
+  printf '%s' "$blocked_dirty_status" >&2
   exit 1
+fi
+if (( ignored_dirty_count > 0 )); then
+  echo "[WARN] ignoring $ignored_dirty_count tracked client/Web Design development changes; cloud deployment uses the pushed commit only" >&2
 fi
 
 echo "[INFO] checking origin/$DEPLOY_BRANCH"
