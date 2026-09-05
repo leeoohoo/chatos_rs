@@ -70,21 +70,17 @@ async function resolveFileBelowRoot(
 
 export async function resolveWorkspaceFile(relativePath: string): Promise<ResolvedWorkspaceFile> {
   const configuredRoot = process.env.CHATOS_WORKSPACE?.trim();
-  if (!configuredRoot) {
-    throw new DocumentError(
-      'WORKSPACE_NOT_CONFIGURED',
-      'CHATOS_WORKSPACE is required to access project documents.'
-    );
-  }
   const components = relativeComponents(relativePath);
-  try {
-    return await resolveFileBelowRoot(
-      configuredRoot,
-      components,
-      new DocumentError('WORKSPACE_NOT_CONFIGURED', 'CHATOS_WORKSPACE must be an existing non-symlink directory.')
-    );
-  } catch (error) {
-    if (!(error instanceof DocumentError) || error.code !== 'FILE_NOT_FOUND') throw error;
+  if (configuredRoot) {
+    try {
+      return await resolveFileBelowRoot(
+        configuredRoot,
+        components,
+        new DocumentError('WORKSPACE_NOT_CONFIGURED', 'CHATOS_WORKSPACE must be an existing non-symlink directory.')
+      );
+    } catch (error) {
+      if (!(error instanceof DocumentError) || error.code !== 'FILE_NOT_FOUND') throw error;
+    }
   }
 
   const artifactRoot = process.env.CHATOS_PLUGIN_ARTIFACT_DIR?.trim();
@@ -98,6 +94,12 @@ export async function resolveWorkspaceFile(relativePath: string): Promise<Resolv
     } catch (error) {
       if (!(error instanceof DocumentError) || error.code !== 'FILE_NOT_FOUND') throw error;
     }
+  }
+  if (!configuredRoot) {
+    throw new DocumentError(
+      'WORKSPACE_NOT_CONFIGURED',
+      'No project workspace is bound and the requested current-session artifact does not exist.'
+    );
   }
   throw new DocumentError('FILE_NOT_FOUND', 'The requested workspace file or current-session artifact does not exist.');
 }

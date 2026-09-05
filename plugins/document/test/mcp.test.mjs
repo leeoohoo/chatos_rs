@@ -13,12 +13,13 @@ const launcher = path.join(projectRoot, 'bin', 'chatos-document-mcp');
 
 async function withClient(workspace, callback) {
   const artifact = await mkdtemp(path.join(os.tmpdir(), 'document-mcp-artifacts-'));
+  const workspaceEnv = workspace ? { CHATOS_WORKSPACE: workspace } : {};
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [launcher, 'mcp'],
     env: {
       ...process.env,
-      CHATOS_WORKSPACE: workspace,
+      ...workspaceEnv,
       CHATOS_PLUGIN_ARTIFACT_DIR: artifact,
       CHATOS_PLUGIN_ROOT: projectRoot
     },
@@ -37,6 +38,28 @@ async function withClient(workspace, callback) {
     await client.close();
   }
 }
+
+test('reads current-session artifacts without a project workspace', async () => {
+  await withClient(undefined, async (client, { artifact }) => {
+    await writeFile(path.join(artifact, 'public-session.docx'), minimalDocx());
+
+    const inspected = await client.callTool({
+      name: 'document_inspect',
+      arguments: { inputPath: 'public-session.docx' }
+    });
+
+    assert.equal(inspected.isError, false, JSON.stringify(inspected.structuredContent));
+    assert.equal(inspected.structuredContent.format, 'docx');
+    assert.equal(inspected.structuredContent.source.relativePath, 'public-session.docx');
+
+    const missing = await client.callTool({
+      name: 'document_inspect',
+      arguments: { inputPath: 'not-created.docx' }
+    });
+    assert.equal(missing.isError, true);
+    assert.equal(missing.structuredContent.error.code, 'WORKSPACE_NOT_CONFIGURED');
+  });
+});
 
 function minimalDocx() {
   return zipSync({

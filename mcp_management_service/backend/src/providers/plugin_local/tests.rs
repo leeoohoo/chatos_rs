@@ -65,6 +65,7 @@ fn immutable_binding() -> PluginMcpRuntimeBinding {
         tool_blocklist: Vec::new(),
         required: true,
         allow_writes: true,
+        allow_device_fallback: false,
     }
 }
 

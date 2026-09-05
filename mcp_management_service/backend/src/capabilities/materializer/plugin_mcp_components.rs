@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use crate::runtime::PluginMcpRuntimeBinding;
 use chatos_mcp_management_sdk::{McpRouteCandidate, McpRouteResourceKind};
 use chatos_plugin_management_sdk::{
-    normalized_plugin_manifest_sha256, PluginComponentKind, ResolvedPlugin,
+    normalized_plugin_manifest_sha256, PluginComponentKind, PluginRuntimeContextMissingContext,
+    ResolvedPlugin,
 };
 use sha2::Digest;
 
@@ -83,6 +84,17 @@ pub(super) fn materialize_plugin_mcp_components(
             .get("allow_writes")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(true);
+        let allow_device_fallback = release
+            .normalized_manifest
+            .runtime_context
+            .as_ref()
+            .is_some_and(|context| {
+                context.missing_context == PluginRuntimeContextMissingContext::Device
+                    && context
+                        .components
+                        .iter()
+                        .any(|key| key == &component.component_key)
+            });
         let binding = PluginMcpRuntimeBinding {
             provider_ref: provider_ref.clone(),
             resource_id: resource_id.clone(),
@@ -109,6 +121,7 @@ pub(super) fn materialize_plugin_mcp_components(
             tool_blocklist: component_metadata_string_array(component, "tool_blocklist")?,
             required,
             allow_writes,
+            allow_device_fallback,
         };
         if bindings.insert(resource_id.clone(), binding).is_some() {
             return Err(format!(

@@ -1,6 +1,6 @@
 {
   "name": "open-computer-use",
-  "version": "0.8.13",
+  "version": "0.8.14",
   "description": "Visual-first macOS Computer Use MCP server for ChatOS.",
   "license": "MIT",
   "bin": {

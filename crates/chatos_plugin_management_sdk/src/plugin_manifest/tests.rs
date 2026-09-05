@@ -80,21 +80,23 @@ fn omits_absent_runtime_context_from_canonical_manifest() {
 }
 
 #[test]
-fn preserves_published_manifest_hashes_without_runtime_context() {
+fn preserves_published_manifest_hashes() {
     let fixtures = [
         (
             include_str!("../../../../plugins/computer-use/chatos.plugin.json"),
-            "97275ab2cb710a193d24369f3b5b8048595f74ced800e2153129d7004d0be3d1",
+            "0238257797138f3c7bceb8ac697d087ab4ca6d7467216a57f8c211ff15f00d2a",
+            false,
         ),
         (
             include_str!("../../../../plugins/document/chatos.plugin.json"),
-            "b3b73e8d032c9f9aca19351fc916917b29a6bb8249b3f68c838ad4a227be7f0e",
+            "b09510774c58d9bed8fd5debe2c2f377b5f3ffb0d0af7ee50c068d56a7c6c9dd",
+            true,
         ),
     ];
 
-    for (raw, expected_hash) in fixtures {
+    for (raw, expected_hash, expects_runtime_context) in fixtures {
         let manifest = parse_plugin_manifest(raw).expect("published manifest");
-        assert!(manifest.runtime_context.is_none());
+        assert_eq!(manifest.runtime_context.is_some(), expects_runtime_context);
         assert_eq!(
             normalized_plugin_manifest_sha256(&manifest).expect("manifest hash"),
             expected_hash

@@ -116,6 +116,7 @@ pub(in crate::providers::plugin_components) fn validate_local_bound_route(
         &snapshot.project_context,
         immutable.installation_device_id.as_deref(),
         immutable.permission_snapshot.as_slice(),
+        false,
     )
     .map_err(ProviderCallError::provider_unavailable)?;
     if snapshot.expires_at_unix.min(binding.expires_at_unix) <= chrono::Utc::now().timestamp()

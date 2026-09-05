@@ -114,6 +114,7 @@ impl PluginLocalProvider {
             context,
             immutable.installation_device_id.as_deref(),
             immutable.permission_snapshot.as_slice(),
+            immutable.allow_device_fallback,
         )
         .map_err(ProviderCallError::provider_unavailable)?;
         let mut body = serde_json::Map::from_iter([

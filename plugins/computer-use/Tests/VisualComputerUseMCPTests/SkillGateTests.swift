@@ -21,3 +21,9 @@ import Testing
         #expect(skills.contains(.string("visual-computer-use")))
     }
 }
+
+@Test func zeroDisplayIDUsesAutomaticDisplaySelection() {
+    #expect(MCPService.normalizedDisplayID(nil) == nil)
+    #expect(MCPService.normalizedDisplayID(0) == nil)
+    #expect(MCPService.normalizedDisplayID(42) == 42)
+}

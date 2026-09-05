@@ -432,6 +432,7 @@ mod tests {
             tool_blocklist: Vec::new(),
             required: true,
             allow_writes: false,
+            allow_device_fallback: false,
         }
     }
 

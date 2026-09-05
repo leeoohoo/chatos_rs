@@ -26,6 +26,8 @@ pub struct PluginMcpRuntimeBinding {
     pub tool_blocklist: Vec<String>,
     pub required: bool,
     pub allow_writes: bool,
+    #[serde(default)]
+    pub allow_device_fallback: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,6 +125,7 @@ pub(crate) fn resolve_plugin_local_execution_target(
     context: &ProjectExecutionContext,
     installation_device_id: Option<&str>,
     permission_snapshot: &[String],
+    allow_device_fallback: bool,
 ) -> Result<PluginLocalExecutionTarget, String> {
     let installation_device_id = installation_device_id
         .map(str::trim)
@@ -166,12 +169,14 @@ pub(crate) fn resolve_plugin_local_execution_target(
                     "Plugin Local route has a workspace without a workspace provider".to_string(),
                 );
             }
-            if permission_snapshot.iter().any(|permission| {
-                permission
-                    .trim()
-                    .to_ascii_lowercase()
-                    .starts_with("workspace.")
-            }) {
+            if !allow_device_fallback
+                && permission_snapshot.iter().any(|permission| {
+                    permission
+                        .trim()
+                        .to_ascii_lowercase()
+                        .starts_with("workspace.")
+                })
+            {
                 return Err(
                     "Plugin requires workspace permissions but no project workspace is available"
                         .to_string(),
@@ -224,6 +229,7 @@ mod tests {
             &device_only_context(),
             Some("device-1"),
             &["network.domain:github.com".to_string()],
+            false,
         )
         .expect("device-only Plugin target");
 
@@ -238,10 +244,26 @@ mod tests {
             &device_only_context(),
             Some("device-1"),
             &["workspace.read".to_string()],
+            false,
         )
         .expect_err("workspace permission must fail closed");
 
         assert!(error.contains("workspace permissions"));
+    }
+
+    #[test]
+    fn declared_device_fallback_allows_workspace_capable_plugin_without_a_project() {
+        let target = resolve_plugin_local_execution_target(
+            &device_only_context(),
+            Some("device-1"),
+            &["workspace.read".to_string(), "artifact.create".to_string()],
+            true,
+        )
+        .expect("device fallback target");
+
+        assert_eq!(target.device_id, "device-1");
+        assert_eq!(target.workspace_id, None);
+        assert_eq!(target.project_root, None);
     }
 
     #[test]
@@ -250,6 +272,7 @@ mod tests {
             &project_context("device-1"),
             Some("device-1"),
             &["workspace.read".to_string()],
+            false,
         )
         .expect("project Plugin target");
 
@@ -260,6 +283,7 @@ mod tests {
             &project_context("device-2"),
             Some("device-1"),
             &["workspace.read".to_string()],
+            false,
         )
         .expect_err("mismatched project device must fail closed");
         assert!(error.contains("Project Context device"));

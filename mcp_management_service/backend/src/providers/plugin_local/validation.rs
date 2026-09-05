@@ -114,6 +114,7 @@ pub(super) fn validate_bound_route(
         &snapshot.project_context,
         immutable.installation_device_id.as_deref(),
         immutable.permission_snapshot.as_slice(),
+        immutable.allow_device_fallback,
     )
     .map_err(ProviderCallError::provider_unavailable)?;
     if !snapshot

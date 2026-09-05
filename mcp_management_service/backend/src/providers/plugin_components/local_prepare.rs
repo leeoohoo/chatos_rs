@@ -31,6 +31,7 @@ impl PluginComponentProvider {
             context,
             immutable.installation_device_id.as_deref(),
             immutable.permission_snapshot.as_slice(),
+            false,
         )
         .map_err(ProviderCallError::provider_unavailable)?;
         let mut body = serde_json::Map::from_iter([
