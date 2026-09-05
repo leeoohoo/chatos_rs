@@ -235,6 +235,25 @@ impl PluginManagementClient {
         parse_response(response).await
     }
 
+    pub async fn download_plugin_artifact_for_service(
+        &self,
+        artifact_sha256: &str,
+    ) -> Result<reqwest::Response, PluginManagementClientError> {
+        let url = format!(
+            "{}/api/internal/local-connector/plugin-artifacts/{}",
+            self.config.internal_base_url,
+            urlencoding::encode(artifact_sha256),
+        );
+        self.internal_request(Method::GET, url, PLUGIN_INSTALL_MANAGE_SCOPE)?
+            .header(
+                reqwest::header::ACCEPT,
+                "application/gzip, application/octet-stream",
+            )
+            .send()
+            .await
+            .map_err(PluginManagementClientError::Transport)
+    }
+
     pub async fn update_user_plugin_preference_for_service(
         &self,
         plugin_id: &str,

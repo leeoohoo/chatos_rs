@@ -89,7 +89,8 @@ use plugin_marketplaces::{
 };
 use plugin_oauth::{list_plugin_oauth_connections, sync_plugin_oauth_status_internal};
 use plugin_package_publish::{
-    analyze_plugin_package, download_plugin_artifact, publish_uploaded_plugin,
+    analyze_plugin_package, download_plugin_artifact, download_plugin_artifact_internal,
+    publish_uploaded_plugin,
 };
 use plugin_publishers::{
     list_admin_plugin_publishers, list_plugin_publishers, review_admin_plugin_publisher,
@@ -393,6 +394,10 @@ pub fn build_internal_router(state: AppState) -> Router {
         .route(
             "/api/internal/local-connector/plugins/install-sources/{plugin_id}/{release_id}",
             get(get_plugin_install_source_internal),
+        )
+        .route(
+            "/api/internal/local-connector/plugin-artifacts/{artifact_sha256}",
+            get(download_plugin_artifact_internal),
         )
         .route(
             "/api/internal/local-connector/plugins/{plugin_id}/preference",

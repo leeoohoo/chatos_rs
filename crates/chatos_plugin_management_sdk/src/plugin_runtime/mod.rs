@@ -21,6 +21,9 @@ pub use components::{
 };
 pub use ui_artifacts::*;
 
+pub const PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY: &str = "admin_registry";
+pub const PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY: &str = "official_registry";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginInstallStatus {

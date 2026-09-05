@@ -398,6 +398,26 @@ pub(super) async fn download_plugin_artifact(
     Ok(response)
 }
 
+pub(super) async fn download_plugin_artifact_internal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(artifact_sha256): Path<String>,
+) -> Result<Response, ApiError> {
+    let identity =
+        require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
+    let mut audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        None,
+        "plugin_artifact",
+        artifact_sha256.as_str(),
+        "download",
+    );
+    audit.resource_name(Some(artifact_sha256.as_str()));
+    let response = download_plugin_artifact(State(state), Path(artifact_sha256)).await?;
+    audit.succeeded();
+    Ok(response)
+}
+
 fn persist_and_analyze_package(
     state: &AppState,
     package_bytes: Vec<u8>,

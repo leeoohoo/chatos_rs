@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use axum::http::HeaderValue;
 use mongodb::Client;
+use sha2::Digest;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -13,6 +14,54 @@ use super::super::*;
 use crate::config::AppConfig;
 use crate::pressure::{PluginManagementPressurePolicy, PluginManagementPressureState};
 use crate::store::AppStore;
+
+#[tokio::test]
+async fn internal_artifact_download_uses_local_connector_identity() {
+    let mut state = test_state_with_secret(Some("internal-secret")).await;
+    let storage_dir = std::env::temp_dir().join(format!(
+        "chatos-plugin-artifact-internal-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    tokio::fs::create_dir_all(storage_dir.as_path())
+        .await
+        .expect("create artifact test directory");
+    state.config.plugin_artifact_storage_dir = storage_dir.clone();
+    let artifact = b"managed-plugin-artifact";
+    let artifact_sha256 = hex::encode(sha2::Sha256::digest(artifact));
+    tokio::fs::write(storage_dir.join(format!("{artifact_sha256}.tgz")), artifact)
+        .await
+        .expect("write artifact fixture");
+
+    let token = chatos_service_runtime::issue_internal_service_token(
+        "internal-secret",
+        "local-connector-service",
+        INTERNAL_TOKEN_AUDIENCE,
+        PLUGIN_INSTALL_MANAGE_SCOPE,
+        60,
+    )
+    .expect("issue local connector token");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-plugin-management-caller-service",
+        HeaderValue::from_static("local-connector-service"),
+    );
+    headers.insert(
+        "x-plugin-management-internal-token",
+        HeaderValue::from_str(token.as_str()).expect("token header"),
+    );
+
+    let response = download_plugin_artifact_internal(State(state), headers, Path(artifact_sha256))
+        .await
+        .expect("download managed artifact");
+    let body = axum::body::to_bytes(response.into_body(), artifact.len())
+        .await
+        .expect("read artifact body");
+
+    assert_eq!(body.as_ref(), artifact);
+    tokio::fs::remove_dir_all(storage_dir)
+        .await
+        .expect("remove artifact test directory");
+}
 
 #[tokio::test]
 async fn internal_capability_resolver_requires_secret() {
