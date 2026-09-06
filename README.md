@@ -1,12 +1,24 @@
-# Okra
+# ChatOS
 
 English · [简体中文](./README.zh-CN.md)
 
 > Bring AI into your project—and get things done.
 
-Okra is the product built by this repository. The codebase and protocols still use the ChatOS name in many places.
+ChatOS is a native desktop workspace that lets AI keep working inside real projects. It goes beyond answering questions: it can read project context, break down requirements, execute background tasks, use local files, Git, terminals, and plugins, and present the full execution process, permission requests, and results to the user.
 
-Okra is a native desktop AI workspace for long-running project collaboration. It connects conversation, plans, background tasks, project memory, local files, Git, terminals, MCP tools, plugins, and human approvals in one reviewable workflow.
+The cloud coordinates conversations, tasks, memory, and capabilities. Native clients and the Local Connector execute operations only on explicitly authorized devices and workspaces. Together they provide a long-running workflow that users can inspect, guide, stop, and audit.
+
+## Product interfaces
+
+![ChatOS native desktop client preview](./official_website_service/frontend/public/showcase/chatos-main.png)
+
+| Project management | Background task execution |
+| --- | --- |
+| ![ChatOS project management interface](./official_website_service/frontend/public/showcase/project-management.png) | ![ChatOS Task Runner interface](./official_website_service/frontend/public/showcase/task-runner.png) |
+
+| Long-term memory | Sandbox and execution isolation |
+| --- | --- |
+| ![ChatOS Memory Engine interface](./official_website_service/frontend/public/showcase/memory-engine.png) | ![ChatOS sandbox management interface](./official_website_service/frontend/public/showcase/sandbox-manager.png) |
 
 ## What the project is today
 
@@ -17,7 +29,7 @@ Okra is a native desktop AI workspace for long-running project collaboration. It
 - **Long-term project context:** conversation summaries, project facts, and role-specific memory can be reused across sessions.
 - **Extensible local capabilities:** the plugin platform supports MCP servers, skills, managed artifacts, and sandboxed local application surfaces.
 
-Okra does not silently move a device-scoped operation to a server filesystem or another machine. If the bound Local Connector is offline, the operation waits or fails explicitly.
+ChatOS does not silently move a device-scoped operation to a server filesystem or another machine. If the bound Local Connector is offline, the operation waits or fails explicitly.
 
 ## Architecture
 
@@ -48,15 +60,15 @@ The boundary is intentional:
 
 ### Conversation, planning, and tasks
 
-Okra supports direct conversation and structured project work. Requirements can be refined into plans and dependency-aware tasks, then executed through a background task lifecycle. Users can inspect intermediate output, provide additional guidance, approve sensitive actions, stop work, and retry failures.
+ChatOS supports direct conversation and structured project work. Requirements can be refined into plans and dependency-aware tasks, then executed through a background task lifecycle. Users can inspect intermediate output, provide additional guidance, approve sensitive actions, stop work, and retry failures.
 
 ### Project workspace
 
 The native clients provide project browsing, full-text search, file viewing and editing, Git state and diffs, terminals, run configurations, logs, and project-scoped resource creation. Workspace operations remain inside the authorized local boundary.
 
-### Agents and memory
+### Project context and memory
 
-Projects can use different AI contacts with their own role, model, skills, and tool capabilities. The memory system maintains conversation summaries and reusable project context instead of relying on one unbounded chat transcript.
+Each project keeps its conversations, requirements, tasks, run history, and reusable context isolated. The memory system supports long-running collaboration through conversation summaries and layered project memory instead of relying on one unbounded transcript. Models, skills, and tool capabilities are supplied jointly by platform configuration and the local runtime.
 
 ### Native desktop capabilities
 
@@ -223,7 +235,7 @@ npm --prefix plugins/diagram-studio test
 
 ## Current status
 
-Okra is under active development. Keep these constraints in mind:
+ChatOS is under active development. Keep these constraints in mind:
 
 - A project workspace requires its bound native Local Connector to be online for local operations.
 - macOS and Windows share protocols and product intent, but platform-specific features can land at different times.

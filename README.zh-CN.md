@@ -1,12 +1,24 @@
-# Okra
+# ChatOS
 
 [English](./README.md) · 简体中文
 
 > 让 AI 进入项目，把事情做完。
 
-Okra 是这个仓库正在构建的产品；代码、服务与协议中仍有许多地方沿用 ChatOS 名称。
+ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作台。它不只回答问题，还能围绕项目读取上下文、拆解需求、执行后台任务，调用本机文件、Git、终端和插件，并把执行过程、权限请求与最终结果完整呈现给用户。
 
-Okra 是一套面向长期项目协作的原生桌面 AI 工作空间。它把对话、计划、后台任务、项目记忆、本机文件、Git、终端、MCP 工具、插件和人工审批连接成一条可以检查、干预和追踪的工作流。
+云端负责对话、任务、记忆与能力编排；原生客户端和 Local Connector 负责在用户明确授权的设备与工作区内执行操作。两者共同组成一条可以检查、干预、停止和追踪的长期协作工作流。
+
+## 产品界面
+
+![ChatOS 原生桌面客户端视觉预览](./official_website_service/frontend/public/showcase/chatos-main.png)
+
+| 项目管理 | 后台任务执行 |
+| --- | --- |
+| ![ChatOS 项目管理界面](./official_website_service/frontend/public/showcase/project-management.png) | ![ChatOS Task Runner 界面](./official_website_service/frontend/public/showcase/task-runner.png) |
+
+| 长期记忆 | 沙箱与执行隔离 |
+| --- | --- |
+| ![ChatOS Memory Engine 界面](./official_website_service/frontend/public/showcase/memory-engine.png) | ![ChatOS 沙箱管理界面](./official_website_service/frontend/public/showcase/sandbox-manager.png) |
 
 ## 现在的项目是什么
 
@@ -17,7 +29,7 @@ Okra 是一套面向长期项目协作的原生桌面 AI 工作空间。它把�
 - **长期项目上下文：** 会话摘要、项目事实和角色记忆可以跨会话继续使用。
 - **可扩展本机能力：** 插件平台支持 MCP Server、Skill、受管理产物以及沙箱化的本地应用界面。
 
-Okra 不会把设备侧操作静默切换到服务端文件系统或另一台机器。绑定的 Local Connector 离线时，相关操作会明确等待或失败。
+ChatOS 不会把设备侧操作静默切换到服务端文件系统或另一台机器。绑定的 Local Connector 离线时，相关操作会明确等待或失败。
 
 ## 架构
 
@@ -48,15 +60,15 @@ flowchart LR
 
 ### 对话、计划与任务
 
-Okra 同时支持直接对话和结构化项目工作。需求可以逐步整理成计划与带依赖的任务，再进入后台任务生命周期。用户可以检查中间输出、发送补充引导、审批敏感操作、停止执行，并在失败后重试。
+ChatOS 同时支持直接对话和结构化项目工作。需求可以逐步整理成计划与带依赖的任务，再进入后台任务生命周期。用户可以检查中间输出、发送补充引导、审批敏感操作、停止执行，并在失败后重试。
 
 ### 项目工作区
 
 原生客户端提供项目文件浏览、全文搜索、查看与编辑、Git 状态与 Diff、终端、运行配置、实时日志和项目资源创建。所有工作区操作都保持在已授权的本机边界内。
 
-### 智能体与记忆
+### 项目上下文与记忆
 
-不同项目可以选择不同的 AI 联系人，并分别配置角色、模型、Skill 和工具能力。记忆系统通过会话摘要与分层项目上下文支持长期协作，而不是无限堆积单个聊天记录。
+每个项目独立保存会话、需求、任务、运行记录和可复用上下文。记忆系统通过会话摘要与分层项目记忆支持长期协作，而不是无限堆积单个聊天记录；模型、Skill 和工具能力由平台配置与本机运行环境共同提供。
 
 ### 原生桌面能力
 
@@ -223,7 +235,7 @@ npm --prefix plugins/diagram-studio test
 
 ## 当前状态
 
-Okra 仍在快速开发中，需要留意：
+ChatOS 仍在快速开发中，需要留意：
 
 - 本机操作要求项目绑定的原生 Local Connector 在线。
 - macOS 与 Windows 共享协议和产品目标，但平台专属能力可能不会在同一时间完成。
